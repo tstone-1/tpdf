@@ -2,11 +2,11 @@
 
 Status: **Phase 0 closed; Phase 1 in progress; Phase 2 met 2026-08-31; Phase 3 in progress;
 Phase 4 shipped in 26.9.5; Phase 5 first application editor shipped in 26.9.7.** The viewer
-runs --- sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
-session restore and printing --- on **macOS arm64 and Windows x64**. The first edits that
+runs — sandboxed worker pool, virtual scroller, selection, find, outline, page strip,
+session restore and printing — on **macOS arm64 and Windows x64**. The first edits that
 change a document landed 2026-08-16 and 2026-08-17: a page can be turned, moved, deleted,
-cropped or extracted. Annotations followed between 2026-08-18 and 2026-08-23 --- highlight,
-underline, strike-out, squiggly, drawing, box, ellipse, text box, stamp and comment --- and a
+cropped or extracted. Annotations followed between 2026-08-18 and 2026-08-23 — highlight,
+underline, strike-out, squiggly, drawing, box, ellipse, text box, stamp and comment — and a
 document has been written **in place** since 2026-08-19. Redaction shipped in `26.8.11` on
 2026-08-27, end to end: mark a region, review the list, remove the words from the page's own
 instructions, and read the result back as *verified* or *not verified, and why*.
@@ -89,9 +89,9 @@ records the relaunch isolation requirement. The subsequent text editor is record
 
 
 That last sentence read *"Annotations, forms and redaction are not started, and no document is
-written in place"* until 2026-08-28 --- wrong on three of its four clauses, against work that
+written in place"* until 2026-08-28 — wrong on three of its four clauses, against work that
 had shipped in a release. Recorded rather than quietly overwritten, for the same reason as the
-Windows paragraph below --- a status line is read first and re-read by nobody, so it outlives
+Windows paragraph below — a status line is read first and re-read by nobody, so it outlives
 the work that closes it. `docs/TRAPS.md`: *A "Not done" note outlives the work that closes it,
 and it is the recommendation nobody re-checks*, and *The only document nobody re-reads is the
 one strangers read*.
@@ -114,10 +114,10 @@ than unfinished:
   on both.
 
 **Nothing measurable is missing on Windows as of 2026-07-31.** What stood here was
-`worker-bench`'s seven POSIX modes --- and the sentence already contained its own answer: *only
+`worker-bench`'s seven POSIX modes — and the sentence already contained its own answer: *only
 `latency` measures anything nothing else covers*. That one is now covered by `latency-bench`,
 which is a spike rather than a port, drives the **production** worker instead of `worker-bench`'s
-private POSIX one, and therefore builds on both --- though it has so far only been *run* on
+private POSIX one, and therefore builds on both — though it has so far only been *run* on
 Windows. The other six were already answered
 elsewhere and are listed in `worker-bench`'s own refusal: `pool-bench` for parallel scaling,
 `win-sandbox-probe` for the authority rungs, `backend-probe` for crash and timeout, and the job
@@ -129,7 +129,7 @@ does not run on Windows; it was only ever a gap that something it measured went 
 The cold-double-click harness phase has no Windows counterpart, and
 that is a decision rather than a gap: Explorer hands the path over in `argv`, which another phase
 already covers. The installer shipping all 17 probe binaries *was* listed here as the second such
-decision, and it stopped being one on 2026-07-31 --- they are `[[example]]` targets now and the
+decision, and it stopped being one on 2026-07-31 — they are `[[example]]` targets now and the
 payload is three files.
 
 This paragraph replaced "Windows has never been built", which was two days stale and directly
@@ -159,7 +159,7 @@ Every PDF tool in daily use fails in a specific, diagnosable way.
 
 **Adobe Acrobat** is slow to start, slow to scroll, and its capability is buried. The
 tools exist but finding them takes longer than using them. Much of the slowness is not
-PDF work at all --- it is a plugin host, a JavaScript runtime, telemetry, and cloud sync
+PDF work at all — it is a plugin host, a JavaScript runtime, telemetry, and cloud sync
 sitting between the user and a bitmap.
 
 **Foxit** is the same architecture with different chrome. Faster, still modal, still a
@@ -192,7 +192,7 @@ These are the tie-breakers when a decision is otherwise balanced.
    over-redaction, and silent truncation are the same defect in different clothes.
 5. **Measure, do not assert.** Any performance claim comes with interleaved A/B numbers
    on real documents. Wall clock on these machines drifts several percent over minutes,
-   which is larger than most changes worth making --- so alternate A,B,A,B over several
+   which is larger than most changes worth making — so alternate A,B,A,B over several
    rounds and compare pairwise. Never two blocks back to back.
 
 ---
@@ -227,7 +227,7 @@ from two independent directions at once.
 - **Security.** PDFium is native C++ parsing attacker-controlled input. A malformed file
   should cost a worker, not the application and not the user's home directory. Chrome
   sandboxes PDFium for this reason.
-- **Parallelism.** Concurrent in-process PDFium calls are undefined behaviour --- upstream
+- **Parallelism.** Concurrent in-process PDFium calls are undefined behaviour — upstream
   gives no thread-safety guarantee and recommends parallel processes over threads, and
   `pdfium-render`'s `thread_safe` feature does not serialize them despite its README
   saying so (measured 2026-07-27; see AGENTS.md). Two threads rendering a complex page
@@ -239,8 +239,8 @@ parallel". That does not work, and it is recorded in `AGENTS.md` as a corrected 
 Retrofitting a process boundary later is a rewrite, so it is Phase 0 work.
 
 **Half done: the writers.** The right-hand box was never built as a box, and it turns out it
-did not need to be. Every path that writes a document --- `save_document`, `save_copy`,
-`extract_pages` --- parsed the source with `lopdf` inside the coordinator, under
+did not need to be. Every path that writes a document — `save_document`, `save_copy`,
+`extract_pages` — parsed the source with `lopdf` inside the coordinator, under
 `tauri::async_runtime::spawn_blocking`, which moves the work off the runtime's threads and not
 out of the process holding the window, the journal and the user's filesystem authority.
 Printing had been disclosed as the coordinator's parser exception since 2026-07-28; the edit
@@ -248,7 +248,7 @@ writers joined it without the disclosure being widened, and an outside review ca
 2026-08-22.
 
 **The append moved that day, into the worker that already holds the document.** A save that
-only adds marks is `Request::Append`, answered by `save::append_update` --- a pure function of
+only adds marks is `Request::Append`, answered by `save::append_update` — a pure function of
 the document's bytes and the plan, running in a process that has no filesystem authority and
 has already parsed that document with `lopdf` for its comments, links and properties. It
 inherits the render worker's sandbox, deadline, resource limits and restart for free, which is
@@ -256,13 +256,13 @@ the argument for not building a second process kind: the surgery worker's requir
 render worker's requirements, and they were already met.
 
 The split is by *authority*, not by convenience. `save::append_ready` stays in the coordinator
-and asks only about a path --- has this file changed, how long is it. `save::appended` then
+and asks only about a path — has this file changed, how long is it. `save::appended` then
 compares what the builder says it built against with what the caller measured, which is a check
 that could not exist while one function did both halves: the two lengths were the same number
 under two names.
 
 Evidence: `worker-probe` builds an update section through a real contained worker, appends it
-to the fixture and re-parses the result --- **865 bytes on a 775-page document, re-read as 775
+to the fixture and re-parses the result — **865 bytes on a 775-page document, re-read as 775
 pages** (macOS, 2026-08-22, 17/17).
 
 **What is left is the rewrite, and the obstacle is memory rather than the protocol.** A
@@ -280,26 +280,26 @@ The first thing to know is what these cost, because it rules an option out. Meas
 
 **The output buffer is the file's size, and it is the whole cost of a rewrite.** The
 `idle -> parsed` step looks free, and that is the benchmark's baseline moving rather than a
-parse costing nothing --- read the worker measurement below for the honest number, and the trap
+parse costing nothing — read the worker measurement below for the honest number, and the trap
 about a clamped delta for how the first version of this table hid it.
 
 The worker measurement is the one that decides the design. `worker-probe` on
 `incr-scan-40p.pdf`, macOS, same day: a real contained worker holding that document sits at
-**362.7 MB**, and asking it for an *append* --- which parses the document and carries `lopdf`'s
-discarded copy of the previous revision --- takes it to **1029.8 MB**. A Windows worker is
+**362.7 MB**, and asking it for an *append* — which parses the document and carries `lopdf`'s
+discarded copy of the previous revision — takes it to **1029.8 MB**. A Windows worker is
 capped at **1024 MB of commit** by its job object.
 
 So a worker that had to hold a rewrite's output as well would need roughly another file's
 worth on top of that, and the cap makes it unreachable for anything like this fixture. Three
 shapes remain, re-ranked by that measurement:
 
-1. **A writable output mapping**, handed over the way a document already is --- `SCM_RIGHTS` on
+1. **A writable output mapping**, handed over the way a document already is — `SCM_RIGHTS` on
    macOS, `DuplicateHandle` on Windows. The parent creates the staging file with the exclusive
    create `save::stage` already performs, maps it, and hands the mapping across; the worker
    writes into it and never learns a path. **Now the only design that fits**, because a
    file-backed mapping is not private commit: it takes the output term out of the cap
    entirely. The cost is a second handover on two platforms, and the existing one maps
-   read-only in the child --- though `Shm::from_fd`/`from_handle` already take a `writable`
+   read-only in the child — though `Shm::from_fd`/`from_handle` already take a `writable`
    flag, so the mapping side is there.
 2. **Streaming through the tile mapping.** `lopdf::save_to` takes a `Write`, so the worker
    could fill the 16 MB mapping it already has, signal, and continue once the parent has
@@ -312,44 +312,44 @@ shapes remain, re-ranked by that measurement:
 **Closed, measured on Windows 2026-08-22, and the reasoning it replaces was wrong.** What
 stood here: everything above is macOS `phys_footprint`, which counts dirty file-backed pages,
 while Windows `ProcessMemoryLimit` counts private commit and the document's mapping is not
-commit there --- so the number to compare against the cap is the **667 MB the append added**, not
+commit there — so the number to compare against the cap is the **667 MB the append added**, not
 the 1029.8 MB total, which leaves a comfortable margin.
 
 The mapping half holds and the conclusion does not. `phys_footprint` excludes *clean*
 file-backed pages, and a read-only document mapping is clean, so the mapping is absent from the
 1029.8 as well; the 362.7 MB baseline taken for it is PDFium's own allocation, which is private
 commit on Windows exactly as it is anonymous memory on macOS. **The two metrics measure the same
-thing here, and they agree to 0.2%** --- `worker-probe` on `incr-scan-40p.pdf` peaks at 980.3 MiB
+thing here, and they agree to 0.2%** — `worker-probe` on `incr-scan-40p.pdf` peaks at 980.3 MiB
 of commit (1027.9 MB) against the macOS 1029.8 MB. The whole footprint was the term to compare,
 and the margin is **43.7 MiB, 4.3%**.
 
-The append still fits on the largest fixture in the repository --- 16/16 --- and it is close to
+The append still fits on the largest fixture in the repository — 16/16 — and it is close to
 the last size that does. Bracketed rather than extrapolated: a 345.0 MB scan saves at 98.1% of
 the cap, a 361.9 MB scan aborts, and so does a 404.0 MB one. **Above roughly 350 MB an append
 cannot be built on Windows.**
 
 **Bounded rather than left to fail, 2026-08-22.** `save::mode_for` now takes the file's size
-and answers `Rewrite` above `save::APPEND_MAX_BYTES` --- 256 MiB, chosen well under the ~350 MB
+and answers `Rewrite` above `save::APPEND_MAX_BYTES` — 256 MiB, chosen well under the ~350 MB
 ceiling because that ceiling is one machine, one PDFium build and one document's content mix.
 So a large marks-only save is reserialised in the app process instead of being prepared in the
 worker, which is slower and does not leave the previous revision byte for byte intact. That
 loss is real and it is the better half of the only choice available: the alternative is a save
 that cannot be completed. The bound applies on **both** platforms, and macOS is the reason
-rather than the exception --- it has no kernel bound at all (§T3), so an unbounded parse there
+rather than the exception — it has no kernel bound at all (§T3), so an unbounded parse there
 is bounded by the machine.
 
 It is an interim answer, not the design. What removes the trade is making the parse cheaper:
 roughly half of the 668 MB is `IncrementalDocument::create_from` demanding an owned `Vec<u8>` of
 the previous revision, which `save.rs` shows is read for a length and a last byte. Removing it
-roughly doubles the ceiling, and needs `lopdf` to want less --- an upstream change or a shim.
+roughly doubles the ceiling, and needs `lopdf` to want less — an upstream change or a shim.
 Until then the bound is what keeps a reader's document saveable.
 
 Two consequences for the ranking above. The **writable output mapping** (option 1) was already
 the only design that fits and is now more so: it takes the *output* term out of the cap, and this
 measurement says the *input* term alone leaves 4% of headroom, so holding a rewrite's output in
 the worker is not merely unreachable for this fixture but unreachable at any size near it. And
-the cap does not bind the path a rewrite takes today --- `save::Mode::Rewrite` runs in the app
-process through `spawn_blocking`, under no job object --- so on a large scan the cheap path fails
+the cap does not bind the path a rewrite takes today — `save::Mode::Rewrite` runs in the app
+process through `spawn_blocking`, under no job object — so on a large scan the cheap path fails
 where the expensive one it replaced would not. What a reader gets is a refusal before the
 document is closed (nothing written, edits kept) carrying the text `worker stopped answering
 (exited with 3221226505 (0xC0000409))`, which names neither the size nor the cap. `BUILD.md` has
@@ -506,8 +506,8 @@ still crosses the boundary with allocation, copying and per-request dispatch. Th
 argued as a reason to prefer many small tiles; §4 measures the opposite, so per-request
 dispatch is charged far fewer times than the first draft assumed.
 
-One audit correction worth recording: `createImageBitmap()` *can* consume raw pixels ---
-via `new ImageData(new Uint8ClampedArray(buf), w, h)` --- so an uncompressed path is
+One audit correction worth recording: `createImageBitmap()` *can* consume raw pixels —
+via `new ImageData(new Uint8ClampedArray(buf), w, h)` — so an uncompressed path is
 available and does not force PNG encode/decode.
 
 ### Transfer format: send raw pixels, measured 2026-07-26
@@ -633,7 +633,7 @@ render. Four consequences, all load-bearing:
 **All four now rest on two platforms, and the constants are worse on the second.** Re-measured
 on Windows 2026-07-30 against the same generated A0 fixture and the same PDFium pin: spatial
 culling is intact (a 256² tile is **3.8%** of a full render, against 4.3% here), and the floor
-is real but larger --- **~1.3 s** per render call, a full page **35.1 s at 1×** and **88.3 s at
+is real but larger — **~1.3 s** per render call, a full page **35.1 s at 1×** and **88.3 s at
 2×**. So the ratios that drove the architecture reproduce and the absolute numbers are 1.5--1.8×
 higher, which means any latency budget written against the figures above is optimistic on
 Windows by about a third. `BUILD.md` has the table and the cross-check.
@@ -1004,7 +1004,7 @@ the case to design the correction behaviour around.
 place was weaker than an estimate: `App.svelte` passed `doc.pages[0]` and nothing else, and
 `Scroller` held one `PageSize` and multiplied it by the page index. There was no per-page
 table, so there was nothing to learn from and nothing that adjusted. Nor was the assumption
-confined to the scrollbar --- the same single size decided the tile grid, so a page larger
+confined to the scrollbar — the same single size decided the tile grid, so a page larger
 than page 1 was only ever *requested* as far as page 1 reached and was drawn cropped,
 silently, while every page after a differing one sat at a wrong offset. Recorded rather than
 deleted because the passage above explains why lazy geometry exists at all, and because the
@@ -1015,12 +1015,12 @@ showing.
 and accumulates each page's own height into the next page's top; the tile grid, the tier-1
 placeholder's scale, the centring and the scrollbar extent are all per page. Unknown pages
 are laid out at the **mean of the sizes that are known**, which is page 1's size until a
-second one arrives --- so the uniform case, which is almost every document, is exact
+second one arrives — so the uniform case, which is almost every document, is exact
 immediately and costs nothing.
 
 The learning channel is the one that was already there: `viewer.ts` reads the size out of the
 `PageText` it fetches for every visible page and hands it to `Scroller.notePageSize`. No new
-command and no second request --- the round trip was happening anyway, which is why the
+command and no second request — the round trip was happening anyway, which is why the
 correction is affordable on the critical path the 86 ms measurement ruled out. Three
 consequences worth stating because each was a decision:
 
@@ -1034,7 +1034,7 @@ consequences worth stating because each was a decision:
   overflowing the window with no way to reach its edge.
 
 `testdata/make_mixed_pdf.py` generates the document that discriminates all of this, and
-`mixed-geometry.json` beside it states every page's size and every marker's position --- so
+`mixed-geometry.json` beside it states every page's size and every marker's position — so
 the viewer check compares the layout against a file a different program wrote rather than
 against the backend it renders through. The rest of the corpus is uniform, and the three
 layout checks say `[SKIP]` there with that as the reason.
@@ -1148,22 +1148,22 @@ On a small document the append is **slower**, because it verifies its result by 
 file and the rewrite verifies nothing about what it produced.
 
 **The bytes-written claim survives completely, and it is the reason to append.** 839 bytes
-against 337 megabytes is what matters for a document in a synced folder --- where a rewrite
-re-uploads the whole scan on every save --- for the life of the disk, and because the previous
+against 337 megabytes is what matters for a document in a synced folder — where a rewrite
+re-uploads the whole scan on every save — for the life of the disk, and because the previous
 revision survives byte for byte inside the new file, so what a signature covered stays exactly
 where it was. Speed is not the argument and this document should not be read as making it.
 
 **What is appended is narrower than what §5 classifies**, and the bound is the evidence rather
-than caution: a plan that adds *only marks* --- every page present, in order, unturned and
-uncropped --- is appended, and everything else is rewritten. Spike 0.6 put an appended
+than caution: a plan that adds *only marks* — every page present, in order, unturned and
+uncropped — is appended, and everything else is rewritten. Spike 0.6 put an appended
 annotation to four parsers. It never put an appended deletion, reorder, rotation or crop to
 any of them. `Plan::only_adds_marks` is that rule and `save::mode_for` is the choice.
 
 **And it is the one write in the codebase that is not an atomic rename**, which
 `docs/TRAPS.md` records along with the three things that bound it: the file's length is
 checked before the update goes on, the trailer goes in a write of its own so a partial write
-leaves the previous revision's as the last complete one, and every failure --- including the
-verification refusing --- cuts the file back to the length it had.
+leaves the previous revision's as the last complete one, and every failure — including the
+verification refusing — cuts the file back to the length it had.
 
 **The speed claim is true, but only once the file is on disk.** In memory a full rewrite
 of a 336 MB scan costs 12.4 ms against the append's 12.3 ms, because `lopdf`'s rewrite is
@@ -1269,7 +1269,7 @@ Nothing is wired to the viewer yet. The seam for that is `Page::source`: a viewp
 indexes `Working::order()`, which yields a `PageId`, whose `source` is the baseline page to
 ask a worker for, with `extra_turns` composed on top of the page's own `/Rotate`.
 
-### External modification --- built 2026-08-19
+### External modification — built 2026-08-19
 
 The first draft keyed recovery on a file hash and had no story for live races. If another
 process replaces the file while tpdf holds unsaved commands, saving would overwrite it or
@@ -1280,7 +1280,7 @@ reconciliation.
 
 **Until this landed there was exactly one guard: the page count.** `save.rs` compared the
 plan's baseline against the file it was about to rewrite, which catches a file that gained
-or lost pages and nothing else. Every modification that keeps the count was invisible ---
+or lost pages and nothing else. Every modification that keeps the count was invisible —
 a colleague re-exporting the same report over the top, a sync client landing a newer copy,
 a signing tool rewriting in place. The reader's edits then replayed onto a graph they were
 never made against, and because the write is atomic the result was a confidently wrong
@@ -1288,7 +1288,7 @@ file rather than a visibly broken one. That went from theoretical to live in `26
 which shipped Save in place; before it the worst case was a bad copy beside an intact
 original.
 
-`fingerprint.rs` holds what the file was at open --- length, modification time, and a
+`fingerprint.rs` holds what the file was at open — length, modification time, and a
 SHA-256 of every byte, streamed in 64 KiB chunks so the 550 MB incremental fixture is
 never held in memory. It rides on `Plan` beside `baseline`, because it is the same kind of
 fact with the same lifetime, and a plan carrying one without the other could check a
@@ -1298,7 +1298,7 @@ document's shape while missing that every byte of it changed.
 synchronously at open it costs, on this machine: **452 ms cold and 156 ms warm for the
 337 MB scan fixture**, 3.8 ms for a 3 MB drawing, 0.1 ms for a small text page. Priority 1
 is a cold start under 300 ms, so the sync version spent more than the entire budget on
-exactly the documents a reader most needs opened promptly --- and it spent it invisibly,
+exactly the documents a reader most needs opened promptly — and it spent it invisibly,
 since nothing about a slow open looks like a new check. So `Edits::open` takes the *path*,
 starts a thread, and returns; the cell is a `OnceLock` and everything that needs the answer
 waits on it. The only waiter is `Edits::plan`, reached by a save or a print, both of which
@@ -1306,7 +1306,7 @@ are about to read the whole file anyway.
 
 Two things that had to be got right rather than assumed. The wait happens **outside** the
 `docs` mutex, or a save on a large file would hold the lock for half a second and block
-every other edit command --- a hang rather than a slow save. And a document opened with no
+every other edit command — a hang rather than a slow save. And a document opened with no
 path **settles the cell immediately** rather than leaving it unset, because a cell nobody
 sets makes every later `plan` wait for ever; that control is a test, and it is the one whose
 failure mode would have been a hang rather than a red line.
@@ -1320,24 +1320,24 @@ Five checks, and they are deliberately not the same check:
 - **`stage_in_place`, additionally, on a missing fingerprint.** Fail closed. "Could not
   look" and "looked, and it was fine" are different facts, and collapsing them writes over
   a file there is no evidence about. `write_copy` deliberately tolerates it, which is what
-  keeps the fallback the refusal names reachable --- a refusal pointing at a door that is
+  keeps the fallback the refusal names reachable — a refusal pointing at a door that is
   also locked is a dead end wearing a helpful sentence.
 - **Before the rename, length and mtime only.** The window the staging split opens is real:
   staging reads and writes the whole document and closing it is a round trip to the worker,
   so the check made before all that describes a moment that has passed. A third full read
   to narrow a window measured in milliseconds is the wrong trade. It compares against what
   **staging** read, handed back in `Staged { path, verified }`, not against what the reader
-  opened --- see below.
+  opened — see below.
 - **Before a print job is built, the full comparison again**, in `save::print_ready`. Added
   2026-08-31, and the paragraph above was the finding: the print waits for the fingerprint
   and, until then, never read the answer. All three routes resolve the pathname afresh, so
   a newer copy landing over it is printed with the reader's marks placed at coordinates
-  measured on the document they are still looking at --- the mapping serving their screen is
+  measured on the document they are still looking at — the mapping serving their screen is
   of the inode that was there at open, so nothing on screen says the paper will differ. The
   state that gets a save refused printed silently. It is the *deep* comparison rather than
   the cheap one, because it is asked against what the reader **opened** and an hour can pass
   in between; a missing fingerprint prints rather than being refused, which is where it
-  parts company with `stage_in_place` and for the reason that entry gives --- what is at
+  parts company with `stage_in_place` and for the reason that entry gives — what is at
   stake is a sheet of paper. Since 2026-09-01 the refusal also crosses to the window whole:
   `print_document` rejects with the `Refusal` rather than its message, so the prompt carries
   the same Save a copy and Reload a refused save's does, instead of a sentence naming a
@@ -1347,12 +1347,12 @@ Five checks, and they are deliberately not the same check:
   `append_in_place`, against `Appended { was, verified }`. Two differences from the rewrite,
   both forced by what an append is: it compares through the file descriptor it is about to
   write to rather than by looking the pathname up again, and it asks one further question
-  after the write --- whether the pathname still names that file.
+  after the write — whether the pathname still names that file.
 
 **The append was doing none of that until 2026-08-22, and an outside review is what found
 it.** `Appended::verified` carried a full fingerprint, its doc comment called it *"the
 caller's last look before it writes"*, and no code read the field. What guarded the write
-was `metadata(source).len() != appended.was` --- a length, and only a length --- so a
+was `metadata(source).len() != appended.was` — a length, and only a length — so a
 document replaced by a distinct revision of the same size had this update's byte offsets
 appended to an object graph they were never computed for, and the read-back could not see
 it, since a same-shape replacement keeps the page count. The comment at the call site in
@@ -1361,7 +1361,7 @@ timestamp, which is the wrong way round and which this file and `docs/TRAPS.md` 
 already said was the wrong way round.
 
 The second half of the fix is about *which file* rather than *which bytes*. Everything now
-goes through one handle --- the check, the writes, the read-back and the roll-back --- so a
+goes through one handle — the check, the writes, the read-back and the roll-back — so a
 rename landing on the pathname mid-save cannot redirect the roll-back onto a file that was
 never ours to truncate. `FileId` is what makes the last question answerable: `st_dev`/
 `st_ino` on Unix, `GetFileInformationByHandle` on Windows. When it reports a replacement the
@@ -1372,7 +1372,7 @@ asked, which is the fact; nothing that has the name now is touched.
 
 **What this still does not catch, stated rather than left to be discovered:** a replacement
 that keeps both the length and the modification time. That is what `cp -p` and
-`rsync --times` do, and neither save path sees it --- the rewrite has had the same limit
+`rsync --times` do, and neither save path sees it — the rewrite has had the same limit
 since it was written, for the reason the next paragraph gives. Catching it needs a third
 full read and a digest, which on the 337 MB fixture is 582 ms added to a 637 ms save. The
 append is deliberately held to the rewrite's standard rather than a stricter one, because
@@ -1384,7 +1384,7 @@ design and the correction is worth the paragraph, because the first design was t
 one: `agrees_with` called `agrees_shallowly` and then compared digests. Two defects, one
 visible only by mutation.
 
-The digest comparison was **proved by nothing** --- deleting it left all seven of the
+The digest comparison was **proved by nothing** — deleting it left all seven of the
 module's tests green, including the two named for it, because a rewrite moves the mtime and
 the shallow refusal says *"it was modified"*, which the assertions could not tell from the
 digest's message. And it produced a **false refusal**: `cp -p` preserves an mtime across a
@@ -1398,7 +1398,7 @@ no new assertion written for it.
 
 The same reasoning is why the pre-rename look compares against staging's fingerprint rather
 than the open's. Comparing against the open would refuse a `touch` the deep check had just
-examined and forgiven --- and would do it **after the document is closed**, which is the
+examined and forgiven — and would do it **after the document is closed**, which is the
 worst moment there is. `agrees_with` therefore returns what it read, and `Staged::verified`
 is a `Fingerprint` rather than an `Option<Fingerprint>`: an `Option` there would give that
 last look a `None` arm, and the only thing a `None` arm can mean is *skip the check*.
@@ -1410,7 +1410,7 @@ reddens the test named for it.
 
 The third check moved out of `save_document` and into `save::verify_before_commit` on the
 same day, for the same reason: it was written inline in a Tauri command, where no test can
-reach it --- and `lib.rs`'s comment cited that very rule about the guard three lines above
+reach it — and `lib.rs`'s comment cited that very rule about the guard three lines above
 it while this one sat below. Two tests and two mutations now cover the refusal and the
 staged-file cleanup.
 
@@ -1419,16 +1419,16 @@ covered.** Deleting the `verify_before_commit(...)` line from `save_document` re
 nothing: the tests call the function directly, because the command around it needs a Tauri
 runtime. That is *A guard is only covered when a mutation removes the CALL*, and the honest
 statement is that the guard cannot be wrong while nothing proves it is still wired. The
-other two guards do not have this gap --- both are reached through `stage_in_place`, which
+other two guards do not have this gap — both are reached through `stage_in_place`, which
 tests drive.
 
 `fingerprint::` itself carries five more, and the module needed them: no mutation named one
-of its tests, so nothing refused to start --- a module whose tests are invisible to the
+of its tests, so nothing refused to start — a module whose tests are invisible to the
 harness *and* unaimed-at is silent in both directions, where the five earlier instances of
 this list being forgotten were all loud.
 
 **Two of the three exist as actions since 2026-08-19.** The refusal carries `changed` as a
-field --- for the reason `SaveFailure::reopen` is one --- and `src/lib/recovery.ts` turns
+field — for the reason `SaveFailure::reopen` is one — and `src/lib/recovery.ts` turns
 that into the buttons the window shows: Save a copy first, Reload second, and *nothing* for
 a refusal that is not about the file changing, where a Reload beside it would discard the
 reader's work in exchange for nothing. Reload itself no longer spends an edited journal
@@ -1445,7 +1445,7 @@ path asks. `docs/TRAPS.md` has the entry, including why a passing test encoded t
 
 **What is not done, and it is the expensive half.** §5's third option, *explicit
 reconciliation*, does not exist: there is no side-by-side, and no rebase of the journal onto
-the changed file --- the same rebasing this section already records as absent for an
+the changed file — the same rebasing this section already records as absent for an
 ordinary save. A reader can now put their edits somewhere and start again from what is on
 disk; what they cannot do is carry those edits across. Applying them by hand is the move,
 and it is a real cost on a document with many of them.
@@ -1455,30 +1455,30 @@ corruption is impossible, and every route out of the refusal is reachable from t
 that states it.
 
 **Also not done: this is a change detector, not a security boundary.** SHA-256 is used
-because it was already in the dependency graph --- declaring it added no package --- and
+because it was already in the dependency graph — declaring it added no package — and
 not because a crafted collision is in the threat model. An adversary who can write to the
 reader's file at the moment they save has better things to do.
 
 ---
 
-### Recent documents in the shell --- built 2026-08-19 (Windows)
+### Recent documents in the shell — built 2026-08-19 (Windows)
 
 Reported by a reader: right-clicking tpdf's taskbar icon showed nothing. The cause was not
-a broken registration --- `tauri.conf.json` declares the `pdf` association and the installer
-writes it --- but that **nothing had ever called `SHAddToRecentDocs`**. tpdf's own recent
+a broken registration — `tauri.conf.json` declares the `pdf` association and the installer
+writes it — but that **nothing had ever called `SHAddToRecentDocs`**. tpdf's own recent
 list, `src/lib/recents.ts`, is a separate thing the OS never sees, and having one had never
 implied having the other.
 
 `recentdocs.rs` is one call, made once per successful open, after the document exists.
 Deliberately not in the dialog handler: `IFileOpenDialog` would file it by itself, and four
-of the five routes in --- a drop on the window, a double-click in Explorer, a path in argv,
-the single-instance forward --- do not go through a dialog.
+of the five routes in — a drop on the window, a double-click in Explorer, a path in argv,
+the single-instance forward — do not go through a dialog.
 
 **The conversion is a seam, and it had to be.** The FFI call returns nothing and what it did
 is a Jump List a person looks at, so `shell_path` is a separate function four tests read the
 output of: absolute, NUL-terminated UTF-16, no `\\?\` verbatim prefix, and `None` for a file
 that cannot be resolved. The first draft tested a *copy* of that logic living in the test
-module, which is the writer agreeing with its own reader --- every assertion passed and no
+module, which is the writer agreeing with its own reader — every assertion passed and no
 change to the real code could have moved one.
 
 **And it is verified from outside the process**, which unit tests structurally cannot do:
@@ -1498,13 +1498,13 @@ running it.
 **The hop is `run_on_main_thread`, and the requirement is carried by the type rather than
 by a comment**: `sharedDocumentController` takes a `MainThreadMarker`, which cannot be
 forged. The path is resolved *before* the hop and the closure carries a `String`, because
-`Retained<NSURL>` is not `Send` --- which is not a workaround but the right split, since it
+`Retained<NSURL>` is not `Send` — which is not a workaround but the right split, since it
 leaves the fallible half on a thread that can return and the main thread holding two
 infallible calls.
 
 **`resolved` is now one function for both platforms**, and that is the increment's other
 change. Windows files a relative path against the *shell's* current directory and AppKit
-resolves one against the *process's* --- two different wrong files from one mistake --- so
+resolves one against the *process's* — two different wrong files from one mistake — so
 the rule that a path must be absolute and must exist is written once. Two of the five
 mutations aimed at this module now run on both platforms instead of one.
 
@@ -1516,11 +1516,11 @@ obvious places all report absence for a feature that is working:
 way through 75 s of running and a clean quit; `NSUserDefaults` does not hold the key when
 read from *inside* the process immediately after the call, so it is not a `cfprefsd` flush
 delay; `sfltool list-info` hangs; and
-`~/Library/Application Support/com.apple.sharedfilelist/` is TCC-protected --- which I
+`~/Library/Application Support/com.apple.sharedfilelist/` is TCC-protected — which I
 first recorded as *empty*, because the `ls` ran with `2>/dev/null` and
 `Operation not permitted` became `total 0`. One of the four was not an absence at all.
 
-The conclusion those four support --- filed, then dropped, ship it disclaimed --- was
+The conclusion those four support — filed, then dropped, ship it disclaimed — was
 drafted here before the fifth measurement was taken, and it was wrong. **Two launches
 settle it.** Open `text-heavy.pdf`, quit, open `rotated.pdf`: the second process starts
 with `AppKit holds 1` carrying `text-heavy.pdf`, which it never filed, and ends with both
@@ -1530,7 +1530,7 @@ prints the list either side of the call; `BUILD.md` has the procedure.
 
 The near-miss is worth more than the result: **the wrong conclusion was the modest one.**
 A disclaimer reading "filed, but it does not survive a launch" would have looked like
-caution and been false --- the shape *a mitigation present and disclaimed is quieter than
+caution and been false — the shape *a mitigation present and disclaimed is quieter than
 one claimed and absent* already warns about, arriving in a measurement rather than in a
 document.
 
@@ -1542,44 +1542,44 @@ menu a person looks at.
 
 The mistake it is aimed at is a specific one. `URLWithString:` parses its argument as a
 URL, so an ASCII path comes back with no scheme and a path with a space comes back **nil**
---- and a reader's Documents folder is full of spaces. The mutation that swaps the
+— and a reader's Documents folder is full of spaces. The mutation that swaps the
 constructor reddens two tests.
 
 **And the fixture is what decides whether a rule can be told apart.** The first test
-asserted `Path::new(&url_path) == absolute` and passed --- on an ASCII scratch name.
+asserted `Path::new(&url_path) == absolute` and passed — on an ASCII scratch name.
 `fileURLWithPath:` hands the path back **decomposed**: the file on disk is `c3 bc` (APFS
 preserved what `canonicalize` gave it) and `path()` returns `75 cc 88`, so the assertion is
 false for the first name with an umlaut in it, and the failure prints two strings that look
-identical. It is not a mangled name --- APFS looks a filename up normalisation-insensitively
---- so both tests now assert a *resolution* rather than an equality, including the ASCII
+identical. It is not a mangled name — APFS looks a filename up normalisation-insensitively
+— so both tests now assert a *resolution* rather than an equality, including the ASCII
 one, which otherwise encodes a rule that holds only for its own fixture.
 
 ##### What a reader actually sees, stated exactly
 
 The measurement above says AppKit accepts the document, retains it across launches and
 orders the list most-recent-first. What that surfaces is the **Dock icon's Recent
-Documents**, which is AppKit's own menu over that list --- not measured here, and worth
+Documents**, which is AppKit's own menu over that list — not measured here, and worth
 saying so rather than implying a screenshot was taken.
 
 **It does not surface *File ▸ Open Recent*, because tpdf has no such submenu.** The menu
 bar is built from `menubar.ts`'s own spec, and its `NOT_IN_MENU` table already records why
 the recent list is absent from it: the list is rebuilt whenever a file is opened, so a menu
 following it has to be rebuilt with it, and that is its own piece of work. This increment
-does not change that --- it fills the list the submenu would read. Anything claiming
+does not change that — it fills the list the submenu would read. Anything claiming
 *Open Recent* works on macOS today is wrong, and an earlier draft of this section said it.
 
 **Not covered:** that `note_opened` is still *called*. Deleting the line from
 `open_document` reddens nothing on either platform, because no test can reach a Tauri
-command --- the same gap `verify_before_commit`'s call site has, and the honest statement is
+command — the same gap `verify_before_commit`'s call site has, and the honest statement is
 the same one: the conversion cannot be wrong while nothing proves it is still wired. The
 two-launch check is what covers it, by hand.
 
-### Opening a locked document --- built 2026-08-23
+### Opening a locked document — built 2026-08-23
 
 Until now an encrypted PDF behind a user password could be chosen from the file dialog
 and then not opened, by any route. The backend had diagnosed it correctly since
-`open_failure` was written --- *"This document needs a password, and tpdf cannot ask for
-one yet"* --- and that sentence was the whole of it: there was nowhere to type one. A
+`open_failure` was written — *"This document needs a password, and tpdf cannot ask for
+one yet"* — and that sentence was the whole of it: there was nowhere to type one. A
 class of document was reachable and unreadable, and the message said so.
 
 **The spike came first, because two questions decide the architecture and neither is
@@ -1603,7 +1603,7 @@ that tried one knows, which is why the second sentence a reader sees is chosen i
 
 **The distinction is a field the whole way, never a recognisable sentence.**
 `progressive::Refusal` carries `{reason, locked}`, `Response` carries `locked` beside
-`abandoned`, and the Tauri command serialises both --- so `App.svelte` decides to prompt
+`abandoned`, and the Tauri command serialises both — so `App.svelte` decides to prompt
 on a flag. A string match would have been simpler and would rot the first time the
 wording changed, which this increment changed twice.
 
@@ -1615,7 +1615,7 @@ statement about a document it can already read. So the parent sends `Unlock` bef
 
 **The password is held for the document's lifetime, and that is the pool's requirement
 rather than a convenience.** Every worker maps the same bytes, so every worker meets the
-same encryption --- the second one `checkout` grows under contention, and every
+same encryption — the second one `checkout` grows under contention, and every
 replacement for one that crashed. `Held::password` is what `spawn_into` replays. Without
 it a locked document renders the page a reader is looking at and refuses the next, which
 is what the probe's mutation produces: **8 tiles served, then locked**.
@@ -1627,18 +1627,18 @@ neither is defended against something that can read this process's memory.
 **Done 2026-08-23, and the note above was wrong about where the password was needed.** It
 said `save::append_ready`; that function asks only questions about a *path* and never
 parses, so it needs nothing. The parse is `save::append_update`, which runs in the worker
-that already holds the document --- so the password was already in the right process and the
+that already holds the document — so the password was already in the right process and the
 whole build half was one argument.
 
 What the note did get right is that this is a genuine increment rather than a follow-on: the
 case it unblocks is not the case the password prompt opened. A document behind a real
-password could not be opened at all; one behind an **empty** user password --- what most
+password could not be opened at all; one behind an **empty** user password — what most
 permission-restricted files carry, the RoHS certificate in *What a document says about
-itself* included --- has always opened, rendered and searched fine, and was refused only when
+itself* included — has always opened, rendered and searched fine, and was refused only when
 a reader tried to put a highlight on it.
 
 **The frontend's half is testable because it was moved out of `App.svelte`.** The decision
---- prompt on the flag, loop while a password is offered, rethrow otherwise --- is
+— prompt on the flag, loop while a password is offered, rethrow otherwise — is
 `unlock.ts`, and the component keeps the `invoke` and the dialog. That is the lesson of the
 `wiring` gate applied before it was needed: nothing imports `App.svelte`, so anything left
 in it is covered by the type-checker and by a person. `unlock.test.ts` has seven cases and
@@ -1646,7 +1646,7 @@ three mutations; `passworddialog.test.ts` has ten and four.
 
 Two defects came out of writing them, and neither was reachable by reading. The dialog
 answered `isOpen` by reading `backdrop.style.display` back out of the DOM, which is a trap
-this file's index names --- right in the browser, wrong under test. And `instanceof
+this file's index names — right in the browser, wrong under test. And `instanceof
 HTMLElement`, copied from `propertiesdialog.ts`, *throws* where the constructor does not
 exist rather than answering no; `palette.ts` and `propertiesdialog.ts` still have that
 line, harmlessly, because no test reaches it there.
@@ -1658,29 +1658,29 @@ the signed fixtures. `password-probe` runs for real on a hosted runner instead o
 twelve `[SKIP]`s.
 
 It cost more than tidiness. The save path's encryption guard was wrong for four weeks with
-every gate green, and the fixture that catches it is the one no runner could build --- see
+every gate green, and the fixture that catches it is the one no runner could build — see
 the trap *The guard that could not fire, because the library removes the evidence first*.
 **A check that only ever runs on one machine is a check with one reader**, and a defect it
 would catch waits for that reader to look.
 
-### Saving an encrypted document --- built 2026-08-23
+### Saving an encrypted document — built 2026-08-23
 
 **The mode decides, and there is only one that can work.** `lopdf`'s full serialiser writes
 every object in the clear and drops the `/Encrypt` dictionary, so a rewrite of an encrypted
-document ~~is refused --- through this writer it always will be, and QPDF is the candidate in
+document ~~is refused — through this writer it always will be, and QPDF is the candidate in
 the stack table for the day that matters~~ was refused until 2026-08-28; `Document::encrypt`
 puts the encryption back as the rewrite's last step (see the strike-through below). An append never rewrites the previous revision:
 `IncrementalDocument::save_to` encrypts each appended object with the state the load
 recorded and puts `/Encrypt` back in the appended trailer. So `save::mode_for` already
 routes this correctly, and a plan that only adds marks goes through while anything else
---- a deletion, a move, a turn, a crop --- is refused with a message that says why.
+— a deletion, a move, a turn, a crop — is refused with a message that says why.
 
 Measured end to end by `examples/password_probe.rs`, through the production path: **986
 bytes appended to a 2,346-byte AES-256 document**, reopened afterwards with `swordfish` and
 refused with nothing.
 
 **The password takes two hops, and only the first is obvious.** `save::append_update` runs
-in the worker, which holds the document and now holds the password on `RawDocument` --- so
+in the worker, which holds the document and now holds the password on `RawDocument` — so
 the build half needed one argument. `save::append_in_place` runs in the app process, and it
 re-reads the file it wrote to check the cross-reference chained correctly; `lopdf` parses no
 objects at all without the key, so that check would count zero pages against the two it
@@ -1691,7 +1691,7 @@ in-process backend keeps its documents somewhere the pool cannot see.
 **Two defects were found on the way and both had been shipping.**
 
 The rewrite's guard was `doc.trailer.has(b"Encrypt")`. `lopdf` removes that entry the
-instant it authenticates, and it tries the empty user password by itself, unprompted --- so
+instant it authenticates, and it tries the empty user password by itself, unprompted — so
 every permission-restricted document, the commonest encrypted PDF there is, went past the
 guard and was reserialised in the clear. Measured with `qpdf --is-encrypted`: exit 0 for the
 source, exit 2 for what `write_copy` wrote. The predicate is `was_encrypted()` now, with
@@ -1701,7 +1701,7 @@ The properties panel reported **no encryption at all** for those same documents,
 over and for the same reason: `read_encryption` reads the trailer, and by the time it looks
 the entry is gone. `encryption_from_state` reads the version, revision, key length,
 permissions and crypt filters out of `Document::encryption_state`, which survives.
-`Encryption::opened_without_password` had no reachable `true` until then --- the only route
+`Encryption::opened_without_password` had no reachable `true` until then — the only route
 to a value at all was the one where authentication had *failed*.
 
 **The `lopdf` readers take the password too**, which is the same field reaching four more
@@ -1709,15 +1709,15 @@ call sites: comments, links, properties and the character mapping are each a sec
 the same bytes. Without the key each answers something a reader cannot tell from the truth,
 and `password-probe` checks each against what PDFium says about the same document rather
 than against zero. The comments check exists because taking the password away from
-`annots::scan` reddened nothing without it --- the fixture carries no comments, so counting
+`annots::scan` reddened nothing without it — the fixture carries no comments, so counting
 them cannot tell *none* from *could not look*.
 
 **And the same defect was in the print path, found by grepping for the predicate the fix
 had just taught.** `print::build` had no encryption guard on the branch that reserialises:
 a one-page selection of `incr-encrypted-open.pdf` built 1,278 bytes with the encryption
 gone, and a locked document refused with *"page 1 is not in this document, which has 0"*.
-`Job::is_passthrough` was doing the job for the whole document --- which is handed over byte
-for byte and is correct --- and its own comment says the risk is "a rewrite that changes
+`Job::is_passthrough` was doing the job for the whole document — which is handed over byte
+for byte and is correct — and its own comment says the risk is "a rewrite that changes
 nothing", which is where the reasoning stopped. It refuses now, rather than taking a
 password, because even with the key `lopdf`'s writer cannot put the encryption back. An
 encrypted document prints whole or not at all.
@@ -1733,14 +1733,14 @@ back after the last step that adds an object.
 
 Two things about that repair are not guessable from the API. `encrypt` begins
 `if self.is_encrypted() { return Err(AlreadyEncrypted) }` and a decrypt leaves the state set,
-so the state must be **taken** rather than borrowed --- a document that was decrypted refuses
+so the state must be **taken** rather than borrowed — a document that was decrypted refuses
 to be re-encrypted until it is. And the re-encryption has to run *after* the sweep and after
 everything that adds an object, because `encrypt` walks the object map once: anything added
 afterwards is written in the clear beside objects that are not, which is a file no reader
 opens.
 
 Measured through the production path by `examples/encrypted_rewrite_probe.rs`, and the
-verdict comes from `qpdf` rather than from the writer's own reader --- 17 encryption fields
+verdict comes from `qpdf` rather than from the writer's own reader — 17 encryption fields
 agree between source and output on `incr-encrypted-pw.pdf`, `R = 6`, `P = -4`, AESv3 for
 streams, strings and file, both passwords unchanged, a page dropped. **The page count is
 always read back with the password**, because a `lopdf` load without one parses no objects at
@@ -1767,7 +1767,7 @@ confident lie. The audit was hardest on this section and largely right.
 1. **Mark.** Drag regions, select text, or pattern-search (emails, order numbers, a word
    list) and mark all hits. Marks are journal commands rendered as an overlay; nothing is
    destroyed and everything is undoable. *Built, all three shapes: a dragged region, a
-   selection, and every match of the pattern in the find field --- each with the model, the
+   selection, and every match of the pattern in the find field — each with the model, the
    overlay and the undo.*
 2. **Review.** Every mark listed with page, extracted text and thumbnail. The last chance
    to catch an over- or under-selection. *Built: the panel, in page order, with the words
@@ -1775,7 +1775,7 @@ confident lie. The audit was hardest on this section and largely right.
 3. **Apply.** Destructive, full-rewrite, journal truncated at that point. *Built both ways.
    **Redact and save as** points the removal at a new file, leaving the open document and
    its marks alone; **Redact and save** points it at the file the reader opened, warns
-   first, and spends the journal whole rather than truncating it --- the document is closed
+   first, and spends the journal whole rather than truncating it — the document is closed
    by the write and reopened from disk, so there is no undo that reaches across.*
 4. **Verify.** Mandatory. Reports *verified*, or *not verified* with specifics — never a
    bare success. *Built: the written file is read back and scanned for the words that
@@ -1977,53 +1977,53 @@ the instrument. Reading it as "images are fine" is the one way to turn this into
 confident lie the section opens by forbidding, so `an_image_carrier_does_not_certify` pins
 it and a mutation that lets it through goes red.
 
-Steps 1 and 2 are built as of 2026-08-26 --- marking by dragged region, and the panel that
+Steps 1 and 2 are built as of 2026-08-26 — marking by dragged region, and the panel that
 reviews what was marked. **Step 3's text primitive is built and headless**, and **step 5 is
-partly built with its ceiling measured** --- both below.
+partly built with its ceiling measured** — both below.
 
-#### Steps 1 and 2: the marking model --- built 2026-08-26
+#### Steps 1 and 2: the marking model — built 2026-08-26
 
 `docmodel.rs` holds pending redactions beside marks, and `edits.rs` reports them beside
 marks, and **that "beside" is the whole design**. A mark is written into the saved file as
 an annotation; a redaction must never be. The two are separate types with separate id
-spaces, separate tables and separate lists in the state reply, so the writer's input ---
-`Plan::marks`, built from `EditState::marks` --- cannot carry a redaction at all. The
+spaces, separate tables and separate lists in the state reply, so the writer's input —
+`Plan::marks`, built from `EditState::marks` — cannot carry a redaction at all. The
 alternative was a `MarkKind::Redaction` and an exclusion in `save.rs`, which is a rule
 somebody has to remember on the day the next kind is added.
 
 `Redaction` is deliberately smaller than `Mark`, and every absent field is absent for a
 reason. No kind, because it has one. No colour, because what a *pending* redaction is drawn
 in is the overlay's decision and nothing about it survives the apply. No note and no author,
-because nothing here is written into a file for anyone to read. `/OverlayText` --- the word
-a reader can leave in the hole --- would be a field and a command of its own.
+because nothing here is written into a file for anyone to read. `/OverlayText` — the word
+a reader can leave in the hole — would be a field and a command of its own.
 
 It is a journal command, so undo takes one back off and redo puts the same one back, with
 its id rather than a fresh one wearing its number. That is what makes step 2 a review
 rather than a formality. A deleted page takes its pending redactions with it and tombstones
-them, so naming one afterwards says *removed* rather than claiming it never existed --- the
+them, so naming one afterwards says *removed* rather than claiming it never existed — the
 same wrong-diagnosis rule marks already follow, and sharper here, because a redaction left
 behind would be an instruction about a page nobody can see.
 
 **The gesture is the crop's, deliberately.** `armRedact` sets a flag beside `cropping` and
-the two share one `PointerDrag`, because `armDraw`'s own note --- a second method would be a
-second copy of the whole gesture --- does not stop at the third tool. What is *not* shared is
+the two share one `PointerDrag`, because `armDraw`'s own note — a second method would be a
+second copy of the whole gesture — does not stop at the third tool. What is *not* shared is
 anything a reader sees or anything that commits: separate palette entry, separate menu group,
 separate status line, separate callback, and an inverted preview. A crop shades the four
 bands outside the rectangle; a redaction shades the rectangle. `scrimBands` in `markband.ts`
 is the one line that decides which, and it is a function rather than a branch inside the
-painter because **no test in this project can reach a branch inside a painter** --- see the
+painter because **no test in this project can reach a branch inside a painter** — see the
 trap of that name.
 
 Neither has a keyboard binding, for the reason `edit.deletePage` has none.
 
-**What is not built**: nothing applies them --- `redact.rs` below is still reachable from no
+**What is not built**: nothing applies them — `redact.rs` below is still reachable from no
 command. A region is a rectangle a reader dragged; marking by selection or by pattern is
 step 1's other two shapes and is not here.
 
 > Both halves of that closed later the same week and the note is kept as it was written,
 > because the sections below are the record of closing them: the commands arrived on
-> 2026-08-27, *Redact selection* on the same day, and *Redact every search result* --- step
-> 1's third shape --- with them.
+> 2026-08-27, *Redact selection* on the same day, and *Redact every search result* — step
+> 1's third shape — with them.
 
 Twelve mutations stand behind it, nine in Rust and three in the frontend, and the one worth
 naming is *snapshot a document without its pending redactions*: `SNAPSHOT_EVERY` is 32, so a
@@ -2031,7 +2031,7 @@ rebuild that dropped them would be correct on every short journal and would sile
 the review list on a long one. That is the failure this subsystem must never have, and it
 would arrive with the document looking entirely normal.
 
-#### Step 2's review panel --- built 2026-08-26
+#### Step 2's review panel — built 2026-08-26
 
 A sixth sidebar tab, `redactlist.ts`, listing every pending region down the document with
 the page it is on and the words under it. It is what turns marking into a reviewable act:
@@ -2047,7 +2047,7 @@ reports whatever is there as unhandled.
 
 **It is also the only way a region comes off other than undo**, which is chronological: a
 reader who drew six and wants the second one back cannot get there by undoing. That is why
-the remove control is on every row including one the model could not place --- listed rather
+the remove control is on every row including one the model could not place — listed rather
 than dropped, because a review panel that silently loses a row tells a reader a pending
 redaction is no longer pending.
 
@@ -2066,12 +2066,12 @@ inside, so an apply takes at least these words and commonly the rest of the line
 removal would actually take is a plan against the page's own objects, and it belongs with
 step 3.
 
-**A row has four states rather than the sibling panel's two** --- words, no words, not read
+**A row has four states rather than the sibling panel's two** — words, no words, not read
 yet, could not be read. The second trap named for this increment says why none of them may
 be collapsed, and the one-character version of the mistake is `?? ""` on the lookup.
 
 The extraction is scheduled the way the comments panel's covered words are: one page at a
-time, awaited, and only once somebody opens the tab --- and additionally after an edit, so a
+time, awaited, and only once somebody opens the tab — and additionally after an edit, so a
 region just dragged fills in while the reader is looking at it. Its *asked* set is keyed by
 **page id** rather than by slot, which the comments walk is not; a slot is renumbered by
 every deletion.
@@ -2081,24 +2081,24 @@ region on the thread drawing the page, and it wants the scheduling argument the 
 had to have.
 
 Twenty-one mutations stand behind it. The one worth naming is *review a region with the
-annotation's containment rule*, which is the whole increment in one word --- and one written
+annotation's containment rule*, which is the whole increment in one word — and one written
 beside it survived, correctly: a `touchedText` assertion could not see the unplaced-box
 guard, because `readingOrder` drops an unplaced character before that assertion can look.
 
-#### Steps 3 and 4: the redaction a reader can run --- built 2026-08-26
+#### Steps 3 and 4: the redaction a reader can run — built 2026-08-26
 
 **Redact and save as**, in the palette and in File beside *Save a copy*. It writes a new
 file with every marked region's text removed and then reports what it could prove about
 it. Four steps, and the order is the safety of it.
 
-**Ask.** For each page holding regions, a worker computes what a removal would take ---
+**Ask.** For each page holding regions, a worker computes what a removal would take —
 against PDFium's own object list, behind the sandbox, which is where every parse of the
 reader's bytes belongs. `objects.rs` is that enumeration; it lived in `redact_probe` until
 today, which is to say the only thing that could produce a plan was a probe.
 
 **Write.** The ordinals go into `edits::Plan` and `save::write_copy` takes the ordinary
 rewrite path. `save::apply_redactions` runs **last**, after the page tree, the marks, the
-turns and the crops --- and that is a property rather than an ordering preference: the
+turns and the crops — and that is a property rather than an ordering preference: the
 ordinals were worked out against the *file's* objects, so anything that reordered a content
 stream first would address the wrong words while reporting success. Nothing above it
 touches a content stream, which is what makes them still true.
@@ -2111,7 +2111,7 @@ as a type.
 and neither mentions a redaction on its own.** `Plan::is_identity` is what lets the print
 path hand the original bytes over; `Plan::only_adds_marks` is what routes a save to the
 append, which adds objects and never touches a content stream. A plan that only redacts
-satisfies every other clause of both --- the reader has changed nothing else --- so each was
+satisfies every other clause of both — the reader has changed nothing else — so each was
 one predicate away from writing a file with every word still in it. Both have mutations,
 and the second one's first test could not fail: with no mark in the plan the empty-marks
 clause refused the input before the new one was reached, which is this repository's
@@ -2121,7 +2121,7 @@ predicate that decides whether a save removes anything.
 **An object the removal cannot take does not stop the write, and that is a decision.**
 §6's deny-by-default rule says such an object is a verification failure rather than a shrug,
 and it is honoured as a failure to *verify*: the file is written and the reader is told it
-could not be proved clean and why. Refusing instead was written first and measured ---
+could not be proved clean and why. Refusing instead was written first and measured —
 `text-base14`'s own region overlaps a path, and a rule under a line of text is what almost
 every real document has, so refusing means tpdf can never redact anything and tells the
 reader the same thing with nothing to show for it. One rule, *never claim clean*, beats two.
@@ -2131,7 +2131,7 @@ The panel warns before the reader commits, which is what the second line of a ro
 `remove_shows` removes by position and refuses when `lopdf`'s show operators disagree with
 PDFium's text objects; spike 0.3 measured 4:4 on four fixtures and said a `TJ` split across
 objects would break it, without saying how often that happens. `--survey` walks every page of
-every fixture: **1720 pages across 48 files, 0 disagreements.** Read with its limit ---
+every fixture: **1720 pages across 48 files, 0 disagreements.** Read with its limit —
 `testdata/` is mostly fixtures this project generates, so it is not a sample of the wild, and
 what the number supports is *the guard did not fire once across everything here* rather than
 *it never fires*.
@@ -2139,14 +2139,14 @@ what the number supports is *the guard did not fire once across everything here*
 **`examples/redact_apply_probe.rs` is the evidence**, and it runs the whole path on
 `text-base14.pdf`: a rectangle built from the character boxes becomes a plan, becomes
 ordinals, becomes a written file. The needle is gone and a word on another line survives,
-asserted through **two independent readers** --- `verify::scan` over the bytes and PDFium
+asserted through **two independent readers** — `verify::scan` over the bytes and PDFium
 re-extracting the written file. The survivor is the control: a scan that finds nothing
 because it cannot look is the failure this repository has recorded from several directions.
 
-What is **not** built: the carriers this still does not reach --- page labels, embedded files
+What is **not** built: the carriers this still does not reach — page labels, embedded files
 and the targets of annotation actions, every one of which §6's table names; and a region over
 a **path**, which is reported and left. **Text inside a Form XObject and a region over an
-image are both reached since 2026-08-27** --- 9,310 and 2,979 of 154,095 regions --- and each
+image are both reached since 2026-08-27** — 9,310 and 2,979 of 154,095 regions — and each
 has a subsection of its own below. Five rows of that table **are** reached
 since 2026-08-27: the shadow-text row in both of its homes, the marked-content property list *and*
 the structure element the span belongs to; an annotation whose rectangle is over a region,
@@ -2157,7 +2157,7 @@ copy of every answer a reader typed.
 **In-place apply and the journal truncation landed the same day** and have a subsection of
 their own below. The six subsections say what each does and does not cover.
 
-#### Step 3's primitive: removing text from a region --- built 2026-08-26
+#### Step 3's primitive: removing text from a region — built 2026-08-26
 
 `src/redact.rs`, route B, headless and wired to no command yet. Given the objects PDFium
 enumerated on a page and a rectangle, [`covered`] names which show operators the region
@@ -2192,17 +2192,17 @@ must survive, because a removal that emptied the page would pass every other che
 
 What is not built here: paths, which are reported and left. Text inside a Form XObject and a
 region over an image **are** built, since 2026-08-27. That is the whole of
-it now, and the sentence used to go on for two more lines --- annotations, form values,
-metadata, the outline --- because when it was written this module removed text and nothing
+it now, and the sentence used to go on for two more lines — annotations, form values,
+metadata, the outline — because when it was written this module removed text and nothing
 else. Every one of those is in `redact.rs` today, in its own subsection below; the shadow
-text *inside* the content stream is cleared here. **A command reaches this now** --- see the
+text *inside* the content stream is cleared here. **A command reaches this now** — see the
 section above, which is what turned this from a primitive into a feature.
 
-#### The carriers inside the content stream --- done 2026-08-27
+#### The carriers inside the content stream — done 2026-08-27
 
 The show operator is the drawing; `/ActualText` is the words. A tagged document writes the
-line a second time into the marked-content span around it --- it is what a screen reader
-speaks and what a well-behaved extractor prefers over the glyphs --- and spike 0.3 measured
+line a second time into the marked-content span around it — it is what a screen reader
+speaks and what a well-behaved extractor prefers over the glyphs — and spike 0.3 measured
 it surviving a surgical removal on `text-marked.pdf` while every pixel-based check passed.
 `redact::clear_shadow_text` takes it, along with `/Alt` and `/E`, which are the same carrier
 under two other names in the same dictionary.
@@ -2224,12 +2224,12 @@ renumbers every one after it. With one span the two orders agree and no test can
 apart; with two, the second span's `EMC` has moved down by the time the walk reaches it, the
 frame is popped before the removal inside it is seen, and its copy of the words survives. The
 mutation is a straight swap of the two blocks, and it reddens exactly the test written for
-it --- a two-span fixture, because a one-span fixture is where the claim holds by
+it — a two-span fixture, because a one-span fixture is where the claim holds by
 construction.
 
 **A shared property list is refused rather than edited.** The other spelling of a span's
 property list is a *name* into `/Resources /Properties`, and that dictionary may be used by
-any number of other pages --- which is §6's clone-on-write rule, and cloning it is a
+any number of other pages — which is §6's clone-on-write rule, and cloning it is a
 page-resource edit this does not do. So where the named dictionary carries one of the three
 keys, the answer is the correspondence guard's: the redaction did not happen, and nothing was
 written. **The refusal is keyed on the key and not on the name**, which is not fastidiousness:
@@ -2239,35 +2239,35 @@ have a test, and the over-refusal control is the one that would have shipped the
 
 **What this is not.** One row of the carrier table, and one of that row's two homes. The same
 keys hang off a **structure element** in `/StructTreeRoot`, reached by `/MCID` rather than by
-nesting, and those are untouched --- as are an annotation's `/Contents`, a form field's value,
+nesting, and those are untouched — as are an annotation's `/Contents`, a form field's value,
 `/Info`, the outline, and everything else outside the page's content stream.
 `text-marked.pdf` holds two of them on purpose, and `redact-probe` goes on measuring that
 they are still there, which is what keeps *not verified* the honest answer for a real tagged
 document.
 
 **The tripwire this was meant to trip could not fire, and that is the finding rather than the
-feature.** `redact-probe`'s carrier check asserted one thing --- that `verify::scan` still
-finds the word after the removal --- and its own doc comment promised that the day
+feature.** `redact-probe`'s carrier check asserted one thing — that `verify::scan` still
+finds the word after the removal — and its own doc comment promised that the day
 `/ActualText` was cleared it would go red and say so. It stayed green. The fixture carries
 the line three times, the check's observable is a single boolean over the whole file, and the
 two document-level copies satisfy it on their own; nothing about the property list was ever
 being measured. It reads the carriers apart now: the key must be **gone from the content
 stream**, with a control proving it was there, while the whole-file scan keeps watching for
 the annotation and `/Info` and names them when they go. `docs/TRAPS.md` has the entry, and
-the generalisation is about tripwires rather than about this one --- the day a tripwire should
+the generalisation is about tripwires rather than about this one — the day a tripwire should
 fire is the day nobody is looking at it.
 
-#### The annotation over the words --- done 2026-08-27
+#### The annotation over the words — done 2026-08-27
 
 The second carrier, and a different kind of one. The first lived in the content stream and
 came off with the drawing; this one is an object hanging off `/Annots`, and it is the copy a
-person sees. A comment about a passage quotes the passage --- that is what a comment is ---
+person sees. A comment about a passage quotes the passage — that is what a comment is —
 and every reader goes on displaying it after the glyphs are gone.
 
 `redact::covered_annots` decides which. An annotation whose `/Rect` overlaps any region on
 the page is taken, under the same strict rule `covered` uses for page objects, so one flush
 against a region is not eaten. Its `/Popup` goes with it, and so does any annotation whose
-`/IRT` points at one being taken --- to a fixed point, because a chain of replies is a chain
+`/IRT` points at one being taken — to a fixed point, because a chain of replies is a chain
 of copies of the same conversation and cutting it half way leaves the half that quotes what
 went.
 
@@ -2279,7 +2279,7 @@ giving up on it.
 
 **The region has to be carried, because the writer cannot work it out.** An annotation is
 not a page object and has no ordinal among them, so the only question that can be asked of
-it is geometric --- and turning a reader's drag into page coordinates needs the page's
+it is geometric — and turning a reader's drag into page coordinates needs the page's
 `/Rotate` and its crop box, which is `render::crop_from_display` and is where the one
 mapping lives. `RegionPlan::area` and `PlannedRedaction::areas` carry it. A second attempt
 at that arithmetic in the writer would be a second geometry to disagree with the first,
@@ -2287,8 +2287,8 @@ which is a shape this repository has already been caught by from three direction
 
 **That the two spaces agree was measured rather than assumed**, on `links-cropped.pdf`
 (`/CropBox [50 50 545 742]` over `/MediaBox [0 0 595 842]`). `FPDFPageObj_GetBounds`
-reported the heading at `716.98..739.47` --- bracketing the 722 it was drawn at, so absolute
-media-origin space, the same space that page's `/Rect [100 710 300 734]` is in --- while
+reported the heading at `716.98..739.47` — bracketing the 722 it was drawn at, so absolute
+media-origin space, the same space that page's `/Rect [100 710 300 734]` is in — while
 `FPDF_GetPageWidthF` answered 495, the crop box's width. One PDFium page object, two
 questions, two spaces. The existing crop-box trap says this of `FPDFText_GetCharBox`; it is
 the same family and it now says so of object bounds too.
@@ -2297,7 +2297,7 @@ the same family and it now says so of object bounds too.
 of several places an annotation is named: a structure element's `/OBJR`, an AcroForm's
 `/Fields`, another annotation's `/IRT`. Pruning the one list a caller has in mind leaves the
 object reachable, written out, and still carrying the comment. `forget` is the half of
-`drop_pages` that was already doing this for pages, extracted rather than written twice ---
+`drop_pages` that was already doing this for pages, extracted rather than written twice —
 one pass over the graph dropping every reference, then the objects. A redaction that took an
 annotation joins the two conditions that already run the sweep, because the appearance
 stream that *drew* the comment is then reachable from nothing.
@@ -2308,7 +2308,7 @@ the region goes with the rest. The file being written is a copy and the open doc
 it.
 
 **Two mutations survived, and they meant opposite things.** The loop that takes replies to a
-fixed point was collapsed to a single pass and nothing went red --- against a fixture built
+fixed point was collapsed to a single pass and nothing went red — against a fixture built
 with two links in the chain precisely so that it would. The chain was long enough and the
 *order* was wrong: `/Annots` held the note, then its reply, then the reply to that, which is
 how anyone describes a conversation and is exactly the order one pass handles, since each
@@ -2319,19 +2319,19 @@ and the normalisation now happens in one place. One survivor indicted the fixtur
 indicted the code, and the run printed the same word for both. `docs/TRAPS.md` has the entry.
 
 **The fixture grew the pair it needed.** `text-marked.pdf` carried one annotation, away from
-every line, which is a control and nothing else --- there was no case for the rule to fire
+every line, which is a control and nothing else — there was no case for the rule to fire
 on. It now carries two: `ANNOT-OVER` squarely over the target line, `ANNOT-AWAY` where it
 was. Both hidden (`/F 2`), which is the case no visual check can reach. `redact-apply-probe`
 runs the whole path on it and asserts the first is gone, the second is not, and the secret is
-still in the file --- because `/Info /Title` and the surviving annotation both hold it, and
+still in the file — because `/Info /Title` and the surviving annotation both hold it, and
 this command touches neither. Each of those was proved red by a mutation of its own: one that
 takes nothing, one that takes everything.
 
-#### The shadow text the page does not mention --- done 2026-08-27
+#### The shadow text the page does not mention — done 2026-08-27
 
 The row closed on the same day had two homes and this is the second. `/ActualText`, `/Alt`
 and `/E` sit on a marked-content property list in the content stream, which the removal
-reaches because it is already rewriting that stream --- and on a **structure element**, which
+reaches because it is already rewriting that stream — and on a **structure element**, which
 it cannot, because nothing in the content stream leads there. The link runs the other way:
 the page's `/StructParents` is a key into `/StructTreeRoot /ParentTree`, a number tree whose
 entry for that key is an array indexed by `/MCID`, and the span carries the `/MCID`.
@@ -2342,12 +2342,12 @@ to carry. `redact::clear_struct_shadow_text` follows it.
 
 **Ancestors go too**, for the reason an enclosing span does, and the cost is larger here: a
 `/Sect` covering ten paragraphs loses its alternate text because one word inside it went. The
-fixture shows that rather than arguing it --- `text-marked.pdf`'s ancestor also covers a line
+fixture shows that rather than arguing it — `text-marked.pdf`'s ancestor also covers a line
 nobody redacted, and its marker is asserted gone.
 
 **The parent tree is walked, not assumed flat.** A producer with more than a handful of pages
 writes a balanced tree of `/Kids` with `/Limits`, and a lookup reading only `/Nums` finds
-nothing on every one of those documents --- silently, because a miss and an untagged page give
+nothing on every one of those documents — silently, because a miss and an untagged page give
 the same answer. `/Limits` is used only to *skip* a subtree and never to conclude one holds
 the key, since a tree whose limits are wrong is malformed and a search trusting them would
 answer nothing where an exhaustive one answers correctly. Both walks are bounded: the tree by
@@ -2355,7 +2355,7 @@ depth, the `/P` chain by a count and a visited set, because a cycle in either is
 dictionary away and this runs on somebody else's file.
 
 **Nothing here is an error.** No structure tree, no `/StructParents`, a tree this cannot
-follow, an `/MCID` naming no element --- all mean there is no second copy to take, which is the
+follow, an `/MCID` naming no element — all mean there is no second copy to take, which is the
 ordinary case for every untagged document. A failure to *find* one is not a failure to remove
 it, and anything the walk could not reach is still a copy of the words that `verify::scan`
 finds and reports.
@@ -2363,7 +2363,7 @@ finds and reports.
 **Two mutations survived here as well, and again they meant different things.** One was
 aimed wrong: replacing `entries.get(index)` with `entries.first()` is the same element on
 every fixture whose removal is at `/MCID 0`, so it reddened the out-of-range test instead of
-the over-removal one it named. The other was right to survive --- a visited-set filter on the
+the over-removal one it named. The other was right to survive — a visited-set filter on the
 `/P` walk, deleted with no test noticing, because an element already collected is not
 collected twice and the loop's count is what ends a cycle either way. Two guards, one limit;
 the one kept is the one that holds for every shape, since a visited set terminates a simple
@@ -2373,20 +2373,20 @@ loop and a count terminates a chain a thousand deep as well. `docs/TRAPS.md` car
 `STRUCT-CARRIER` on the element owning the redacted line's `/MCID`, `STRUCT-ANCESTOR` on the
 element above it, and `STRUCT-OTHER` on the element for a line nobody marked.
 `redact-apply-probe` asserts the first two are gone and the third is not, with a control that
-all five carrier markers were in the file to begin with --- without which no direction could
+all five carrier markers were in the file to begin with — without which no direction could
 fail. `Removed` counts the two homes apart, because a run that cleared one and not the other
 is the interesting case and a single total could not say which.
 
-#### What the document says about itself --- done 2026-08-27
+#### What the document says about itself — done 2026-08-27
 
 `/Info` and the catalog's `/Metadata` are §6's *Document level* row, and a title or a subject
-routinely restates what a document is about --- which is the thing a reader is redacting.
+routinely restates what a document is about — which is the thing a reader is redacting.
 Both go, whole, on any save that redacts.
 
 **Taken rather than matched, and the measurement is the argument.** Of the 41 real PDFs on
 this machine, 15 carry `dc:creator`, 14 `dc:title`, 5 `dc:description` and 5 `pdf:Keywords`:
 free text written by the producer to describe the document. A rule removing entries that
-*contain* the redacted words would clear an exact copy and leave a paraphrase --- and a
+*contain* the redacted words would clear an exact copy and leave a paraphrase — and a
 paraphrase is not reachable by any string rule, because there is nothing to match it against.
 So the only rule that reaches this carrier is to remove it.
 
@@ -2400,19 +2400,19 @@ for a redacted release and it is the visible half of the trade; a reader who wan
 kept is one line away from getting it back, and this note is where that conversation starts.
 
 **The guard is the part that is about every other save.** `save::apply_redactions` runs on
-every rewrite, so the strip asks whether anything was redacted --- without which a plain copy,
+every rewrite, so the strip asks whether anything was redacted — without which a plain copy,
 an extract, a split and a merge would all quietly lose their metadata, and §T6.1's position
 that a copy is a serialisation rather than a sanitation would stop being true. The control is
 `a_copy_that_is_not_a_redaction_keeps_its_metadata`, and its mutation is the one that matters:
 strip on every save and the two removal checks stay green.
 
-Both halves are removed through `pagetree::forget` for the annotations' reason --- the trailer
+Both halves are removed through `pagetree::forget` for the annotations' reason — the trailer
 names `/Info` and the catalog names `/Metadata`, and removing an object without its references
 leaves a dangling name where there was a description. Each half has its own mutation, because
 `/Info` and XMP hold the same title in two forms and taking one is the plausible way to get
 this wrong.
 
-#### The outline that still names what went --- done 2026-08-27
+#### The outline that still names what went — done 2026-08-27
 
 `docs/PLAN.md` §6's *Document level* row again, and the one carrier a reader can see in tpdf
 itself: `outline.rs` feeds the sidebar, so a heading redacted off the page comes back on
@@ -2429,12 +2429,12 @@ by key through `qpdf --json=2`:
 | embedded files | 0 |
 | XFA | 0 |
 
-(8 have outline *entries* against 10 with an `/Outlines` key --- an empty root and a
+(8 have outline *entries* against 10 with an `/Outlines` key — an empty root and a
 hex-encoded title are both skipped, so 8 is a lower bound.)
 
 **A string rule here, where the same rule was refused for metadata one increment earlier, and
 the difference is measured.** The claim behind ranking this at all is that a bookmark title
-*is* the heading it points at. **163 of 165 titles are verbatim page text --- 99% --- against
+*is* the heading it points at. **163 of 165 titles are verbatim page text — 99% — against
 4% when each document's titles are matched against the *next* document's pages.** Without
 that control the 99% would mean nothing, because a short string turns up in a long document
 by accident. `/Info /Title` is a *description* of the document, and a description that
@@ -2448,7 +2448,7 @@ four characters are left alone: a bookmark called `1` is a substring of almost a
 **The entry and its subtree go; its ancestors do not**, which is the opposite of the
 structure-tree walk and deliberate. A structure element's `/Alt` on an ancestor *restates*
 what is beneath it, including what was removed. An outline ancestor is a different heading
-nobody redacted, and taking it would cost the reader their table of contents --- one redacted
+nobody redacted, and taking it would cost the reader their table of contents — one redacted
 heading must not cost 131 bookmarks, which is a real figure from one of the 41.
 
 **`pagetree::forget` is the wrong instrument, and it looks like the right one.** It drops an
@@ -2460,7 +2460,7 @@ complaining. `drop_outline_items` splices first. `docs/TRAPS.md` has the full ac
 including the measurement that three of the probe's four outline checks stay green under
 exactly that defect.
 
-`/Count` is **recomputed** rather than decremented, preserving each node's sign --- a negative
+`/Count` is **recomputed** rather than decremented, preserving each node's sign — a negative
 count means the reader had that section collapsed, which a removal has no business changing.
 
 **What is not this.** `pagetree::drop_outline` removes the whole outline and is still right
@@ -2469,22 +2469,22 @@ operations and the difference is which entries are still meaningful afterwards.
 
 **The taken text is carried on the plan**, `PlannedRedaction::taking`, from PDFium through the
 font's own encoding. Not read off the operands `remove_shows` deletes: those are font-encoded
-bytes, and on a Type0 document they are CIDs rather than characters --- so a writer that read
+bytes, and on a Type0 document they are CIDs rather than characters — so a writer that read
 them would be right on the easy fixture and wrong on the document that matters.
 
 **Evidence.** Seven mutations, each caught by the test named for it, and four probe checks
-reading the outline back **through `outline::read`** --- the reader that feeds the sidebar,
+reading the outline back **through `outline::read`** — the reader that feeds the sidebar,
 so a title it still returns is a title a reader still sees. Deleting the splice turns exactly
 one of those four red and leaves the other three green, which is the whole reason the fixture
 puts the carrier in the middle of the chain.
 
-#### The answers the form still holds --- done 2026-08-27
+#### The answers the form still holds — done 2026-08-27
 
 `docs/PLAN.md` §6's *Forms* row: field values, default values, widgets outside the redacted
 rectangle, and XFA. Four things, and the last of them is a refusal rather than a removal.
 
 **Measured before it was written, and the measurement contradicted the recommendation.** I
-ranked this second on frequency --- 4 of 41 documents carry an `/AcroForm`. Reading what is
+ranked this second on frequency — 4 of 41 documents carry an `/AcroForm`. Reading what is
 *in* those four: one is a blank form (13 fields, 7 of them `/Tx`, **none filled in**) and
 three carry a single `/Sig`. So the frequency argument was for a carrier this corpus does not
 actually exercise, and I said so before building it. What justifies it instead is the shape of
@@ -2508,7 +2508,7 @@ drawing and left the answer.
 **Two rules, and each has a subject the other cannot reach.** A field goes when every widget
 under it has gone, or when its value is text that went. The first covers `parent`; the second
 covers a widget on another page holding the same answer, which is §6's *widgets outside the
-redacted rectangle* stated as a property rather than a location. `/DV` is read beside `/V` ---
+redacted rectangle* stated as a property rather than a location. `/DV` is read beside `/V` —
 a default is the string the field was pre-filled from, in the same dictionary, so taking the
 answer and leaving the default removed nothing.
 
@@ -2517,7 +2517,7 @@ answer and leaving the default removed nothing.
 is one line and the reason a checkbox is never taken by what it says.
 
 **Four characters, and this is the over-removal control that matters.** A form is full of
-short answers --- `Yes`, an initial, a title --- and `ME` occurs inside `MERGED` and inside
+short answers — `Yes`, an initial, a title — and `ME` occurs inside `MERGED` and inside
 most other words. Matching them would empty the form on the first redaction of any line, and a
 form is a document's usefulness.
 
@@ -2527,7 +2527,7 @@ correctly. The outline's doubly-linked chain was the exception, not the rule.
 
 **The XFA refusal is the most important part of this increment, and it is the part that was
 already promised.** §6 has said since before any of this was written that an XFA form is
-refused, and there was no `XFA` string anywhere in the redaction path --- a *Not done* note
+refused, and there was no `XFA` string anywhere in the redaction path — a *Not done* note
 that read as a decision. An XFA packet is a complete XML copy of every answer, so a redaction
 that took the field values and left it removed nothing a reader could not recover. It is now a
 refusal in the pre-flight, before anything is touched.
@@ -2538,29 +2538,29 @@ packet to falsify; refusing it too would make tpdf unable to open and save a who
 document for a promise it is not making. Both directions have a test.
 
 **Evidence.** Nine mutations and three probe checks, and **four of the mutations survived the
-first run** --- all four for one reason, which is the finding. Every field in the fixture was decided by *both* rules at
+first run** — all four for one reason, which is the finding. Every field in the fixture was decided by *both* rules at
 once, so deleting either left the outcome identical: the parent field is orphaned *and* holds
 what went, and a mutation disabling the orphan rule changed nothing observable. The repair is
-four shapes each decided by exactly one rule --- `orphan` (widgets gone, value naming nothing
+four shapes each decided by exactly one rule — `orphan` (widgets gone, value naming nothing
 that went), `held` (value that went, widget nowhere near), `defaulted` (`/DV` and no `/V`),
 `short` (two letters). None of the assertions was weak; the fixture could not discriminate,
 which is the failure a surviving mutation reports and the reason it indicts the fixture as
 often as the check.
 
 **The ninth was an uncovered branch rather than a survivor.** `drop_fields` removes an
-`/AcroForm` whose fields have all gone --- kept empty it reads as a document that never had a
+`/AcroForm` whose fields have all gone — kept empty it reads as a document that never had a
 form, while `/DA`, `/DR` and `/NeedAppearances` go on describing fields that are not there.
 Nothing tested it, and by this repository's own rule a guard whose deletion reddens nothing is
 either uncovered or not a guard. It is called directly, because no redaction of the fixture
 takes every field: the over-removal controls exist precisely to stop that happening.
 
 **The probe's subject is the carrier fixture rather than a hand-built document**, which is the
-part the unit tests structurally cannot reach --- every one of them builds its document in
+part the unit tests structurally cannot reach — every one of them builds its document in
 Rust, so the *parser* is untested. `text-marked.pdf` carries the form now, written by the
 generator and read by `lopdf`, and its widget is placed so that the value rule is the only
 thing that can decide the field.
 
-#### Applying it to the reader's own file --- done 2026-08-27
+#### Applying it to the reader's own file — done 2026-08-27
 
 **Redact and save**, beside *Redact and save as*. Same removal, same verification, same
 report; the difference is the writer, and it is the whole difference, because there is no
@@ -2574,14 +2574,14 @@ repository records under two copies of a distinction.
 
 **The order is the save's**, for the save's reasons: stage a sibling while the document is
 still open and every refusal can arrive harmlessly, close, rename. The verification then
-reads back the path the reader now has rather than the buffer that produced it --- the same
+reads back the path the reader now has rather than the buffer that produced it — the same
 rule the copy and the append both follow, and sharper here, because those are the only bytes
 left.
 
 **The journal truncation §6 asks for is the close, and it is stronger than a truncation.**
 Truncating at the apply would leave every earlier command undoable, so a reader could step
 back to a state whose regions were still pending while the file in front of them no longer
-had the words in it. The close spends the journal whole --- §5's *the journal is spent* ---
+had the words in it. The close spends the journal whole — §5's *the journal is spent* —
 and the reader reopens from the path. Nothing was built for this; it is what an in-place
 write already does, and saying so is worth more than a mechanism would be.
 
@@ -2597,13 +2597,13 @@ save as* asks nothing because a reader who dislikes the result still has the ori
 Take the original away and the last chance to stop moves to the moment before the command
 runs. `recovery::beforeRedactingInPlace` is that sentence and it is unconditional, where
 `beforeReload` asks whether there is anything to lose: there always is. Save a copy leads,
-which here is more than an ordering --- the working document is still unredacted while the
+which here is more than an ordering — the working document is still unredacted while the
 prompt is on screen, so it is the only way left to keep an unredacted copy.
 
 **What this made visible, and it is the finding rather than the feature.** `App.svelte`
 rendered the offer buttons by matching `saveCopy` and letting an `{:else}` draw everything
 else as *Reload from disk*. Correct with two variants, and one variant away from putting a
-button that discards the reader's work under a prompt about destroying their file --- a wrong
+button that discards the reader's work under a prompt about destroying their file — a wrong
 button being strictly worse than no button. Every variant has its own arm now and there is no
 catch-all, so an unwired one draws nothing. Nothing renders `App.svelte`, so no unit test can
 reach that block; what a test can reach is every rule that decides what goes in it, and
@@ -2611,7 +2611,7 @@ reach that block; what a test can reach is every rule that decides what goes in 
 turns it red and names the template.
 
 **`examples/redact_apply_probe.rs` gained the phase**, on a copy of `text-base14.pdf` made
-into a file of its own --- pointing it at the fixture would leave every later run of every
+into a file of its own — pointing it at the fixture would leave every later run of every
 other probe reading a redacted one. Four checks, two of them controls: the needle gone from
 the reader's own path, `KEEP` still there so a scan that cannot look would fail the first,
 the file still opening in PDFium with every page it had, and the staged sibling gone. That
@@ -2621,17 +2621,17 @@ unredacted bytes.
 **What no check here reaches**, and it is the same gap the copy has: the Tauri command
 itself. `redact_document` needs a running app, a render service and a real file, so nothing
 in `cargo test` calls it, and the probe exercises the write path underneath it rather than
-the command. The frontend half --- the warning, the offers, the registration, the action it
-reaches --- is covered by five mutations.
+the command. The frontend half — the warning, the offers, the registration, the action it
+reaches — is covered by five mutations.
 
-#### Saying what to remove by selecting it --- done 2026-08-27
+#### Saying what to remove by selecting it — done 2026-08-27
 
 Step 1's second shape. A dragged rectangle is a *guess* about where the words are; a
 selection **names the glyphs**, and a reader who has already highlighted the line should not
 have to aim at it again.
 
 **Ranked by measurement, and the measurement went against my first two instincts.** §6's
-remaining carrier rows were swept the way the outline was --- 41 real PDFs, counts and shapes
+remaining carrier rows were swept the way the outline was — 41 real PDFs, counts and shapes
 only:
 
 | carrier | documents |
@@ -2648,7 +2648,7 @@ only:
 
 Annotation actions lead on frequency, so on the outline's own argument they should have been
 next. **They fail the outline's own test.** What licensed a string rule there was that a
-bookmark title *is* the page's words --- 163 of 165 verbatim, against a 4% cross-document
+bookmark title *is* the page's words — 163 of 165 verbatim, against a 4% cross-document
 control. The same question asked of link targets: **69 of 2,659 URIs have a last path or
 query segment that is verbatim page text, 2.6%**; named destinations, 1,202 of 12,778 at
 9.4%, and only two documents in the corpus use named destinations at all. A link over a
@@ -2658,7 +2658,7 @@ region is already removed, because a link is an annotation. A link elsewhere is 
 The second instinct was images: a region over a picture is reported rather than removed, and
 a scanned page *is* a picture, so redacting a scan does nothing today. **Zero image-only
 pages in 1,189**, across all 41 documents. That is a fact about this corpus rather than about
-the world --- these are born-digital documents --- but it is not a ranking I can support with
+the world — these are born-digital documents — but it is not a ranking I can support with
 what is in front of me, and the honest answer is to say so rather than to build on the
 guess.
 
@@ -2668,31 +2668,31 @@ is a *way of saying what to remove* rather than another thing to remove.
 **It is small because everything under it already exists.** `Viewer.selectionQuadsByPage`
 already hands `markSelection` one run-quad array per page, out of the crop and in the file's
 own space. `Edits.redact` documents itself as taking a region *in exactly the space
-`Edits.mark` takes its quads in* --- so the two consumers agree by what is written down
+`Edits.mark` takes its quads in* — so the two consumers agree by what is written down
 rather than by anyone re-deriving the geometry, which is the rotation trap this repository
 has eleven call sites' worth of.
 
 **One region per run, not one box per page**, and that is the decision the increment
 contains. Route B removes a whole text-showing operation, so the *lines* that go are the same
-either way; what differs is everything else a bounding box swallowed --- the other column on
+either way; what differs is everything else a bounding box swallowed — the other column on
 a two-column page, a figure, a marginal note. A region a reader did not draw is a region they
 cannot check.
 
 **The decision lives in `areasFrom`, in `selection.ts`, and not in the loop that calls it.**
-That loop is in `App.svelte`, which no unit test imports and no harness constructs --- the
+That loop is in `App.svelte`, which no unit test imports and no harness constructs — the
 layer where a feature can be inert while three layers of tests pass. Putting the decision one
 call earlier is the seam this repository has already recorded as the fix, rather than a
 cleverer harness. `selection.ts` had no test file at all before this; it has eight tests now.
 
 **A run with no side is dropped.** A selection that ends exactly where a line does contributes
-an empty run, and a region with no area holds no glyph's centre --- so it can only ever remove
+an empty run, and a region with no area holds no glyph's centre — so it can only ever remove
 nothing, while adding a row the reader has to read and certify. A list that overstates what
 is about to happen is the one thing the review panel must not do. The bound is on each
 **side** rather than on the area, because a run a hundredth of a point wide and two hundred
 long has a larger area than many real words and is still nothing.
 
 **Evidence.** Eight mutations, one of which survived and was right to. It loosened the loop
-bound so a partial trailing run was read --- and `noUncheckedIndexedAccess` had already forced
+bound so a partial trailing run was read — and `noUncheckedIndexedAccess` had already forced
 a check on those values that the bound made unreachable, so the two were one limit with two
 mechanisms and neither could be observed. The fix is to keep one, not to sharpen the test:
 the loop iterates unbounded and one length check decides, with `NaN` rather than `0` as the
@@ -2701,9 +2701,9 @@ region equal to nothing instead of a plausible one at the page's corner. `docs/T
 it.
 
 Two of the eight are tests that exist because the registry sweep cannot see
-what they check: `edit.redactSelection` reaching *its own* action rather than the drag's ---
+what they check: `edit.redactSelection` reaching *its own* action rather than the drag's —
 `redactRegion` is an action, so a copy-and-paste that left it there passes "reaches an action
-rather than doing nothing" --- and the `hasSelection` guard, with the control that it is
+rather than doing nothing" — and the `hasSelection` guard, with the control that it is
 offered when there *is* a selection.
 
 **The README gate written on 2026-08-24 fired on the first new command since, in both
@@ -2711,17 +2711,17 @@ directions**: `edit.redactSelection` was still listed under *Not built yet* and 
 claimed anywhere in the prose, and the suite named both. That is the invariant working
 exactly as its own entry says it should, one command after it was built.
 
-#### Saying what to remove by searching for it --- done 2026-08-27
+#### Saying what to remove by searching for it — done 2026-08-27
 
 Step 1's third and last shape, and the one that does work the other two cannot: an order
 number on two hundred pages is not something anybody drags or selects. **The pattern is
 whatever is already in the find field**, so the reader has seen the results before they mark
-them --- which is the review list's own principle, one step earlier.
+them — which is the review list's own principle, one step earlier.
 
 **The bound is measured, and it is the only real decision here.** Across the same 41 real
 PDFs, the patterns somebody actually redacts by are small: an email address matches a median
 of 2 times and at most 31, an IBAN 3, a six-digit-or-longer number a median of 3 and at most
-123, a date a median of 2. The pathological case is four orders of magnitude away --- the
+123, a date a median of 2. The pathological case is four orders of magnitude away — the
 single letter `e` matches a median of **722** times and, in one document, **85,337**.
 
 `MAX_MATCHES_TO_MARK` is 500: four times the largest realistic count, and nowhere near the
@@ -2729,7 +2729,7 @@ degenerate one.
 
 **It refuses above the bound rather than truncating**, and that is the substance. Marking the
 first five hundred and reporting success would leave a reader reviewing a list that
-*understates* their own search, then applying it and being told the file is clean --- which
+*understates* their own search, then applying it and being told the file is clean — which
 is what §6 forbids in its first paragraph. A refusal costs them a narrower search; a
 truncation costs them the words they thought had gone. The message names the count, because
 that is the number they can check against the results panel in front of them.
@@ -2738,7 +2738,7 @@ that is the number they can check against the results panel in front of them.
 answers `null` rather than a shorter list. This is not the selection command's situation: a
 selection is on pages the reader is looking at, and a search runs over the document, where
 `TextCache` is bounded at roughly 150 pages. Peeking would have contributed nothing for every
-match on an evicted page --- silently, and in the direction that understates.
+match on an evicted page — silently, and in the direction that understates.
 
 So the quads are **loaded**, chunked sixteen pages at a time for `selectionText`'s reason,
 through a new `TextCache.loadUnturned`. That is `load` followed by `peekUnturned` rather than
@@ -2748,12 +2748,12 @@ argument to drift apart.
 **Evidence.** Seven mutations, and the one worth naming survived the first run and was right
 to. `permits the bound itself and refuses one more` is written against
 `MAX_MATCHES_TO_MARK` itself, so its expectation moves with the constant and it cannot see
-the constant move --- raising the bound to 100,000 left it green. That is the trap of a check
+the constant move — raising the bound to 100,000 left it green. That is the trap of a check
 that measures along the axis it is policing, arriving in a check written the same week as the
 entry for it. The fix is a check on the **value**, in absolute numbers taken from the sweep:
 above 123 and below 722. Both directions of the constant now redden it.
 
-#### Step 4's control: what an OCR gate is allowed to believe --- built 2026-08-27
+#### Step 4's control: what an OCR gate is allowed to believe — built 2026-08-27
 
 Step 4 renders the redacted regions and OCRs them, "confirming no legible text survives". It
 is the only check in the list that can say anything at all about an **image** carrier, because
@@ -2761,7 +2761,7 @@ step 3's byte scan cannot see into a `/DCTDecode` stream and refusing every such
 refuse every scanned page in existence.
 
 **Ranked by measurement, and this time the number is large.** Treating every text object's own
-box as the region a reader would draw over that line, across the same 41 real documents ---
+box as the region a reader would draw over that line, across the same 41 real documents —
 154,095 regions:
 
 | | |
@@ -2772,25 +2772,25 @@ box as the region a reader would draw over that line, across the same 41 real do
 | documents where *every* region is one | 8 of 41 |
 
 By kind, counting each region once: **path 49,521**, form 9,310, image 2,979, shading 23. The
-form and image rows are both closed as of 2026-08-27 --- see the two subsections below --- so
+form and image rows are both closed as of 2026-08-27 — see the two subsections below — so
 what these numbers size today is **paths**. ~~And the 39.1% above is correspondingly too high
 by an amount nobody has re-measured.~~ **Re-measured the same day**: 33.1%, over a population
-of word-sized regions rather than whole text objects --- see *What a removal can take,
+of word-sized regions rather than whole text objects — see *What a removal can take,
 re-measured*. A
 rule under a line of text is what almost every real document has, which is why paths dominate
---- and a path cannot be waved through, because text converted to outlines is a path that
+— and a path cannot be waved through, because text converted to outlines is a path that
 draws the shape of the words. So today, on one document in two, a reader who redacts a line
 gets a file with the words gone and a sentence saying it could not be proved clean.
 
 ⚠ **This paragraph ended "Step 4 is what turns those into an answer" and that is not what the
-wiring does.** `redact_copy` assembles its reasons as `concerns` --- one per object the removal
-could not take --- and then *extends* them with the gate's, so a region whose path the gate
+wiring does.** `redact_copy` assembles its reasons as `concerns` — one per object the removal
+could not take — and then *extends* them with the gate's, so a region whose path the gate
 proves illegible keeps its concern and the file stays uncertified. The gate can only ever
 **add** a reason. That is defensible and is probably right: proving a region holds no legible
 text is not proving it holds nothing, and §6's deny-by-default rule is what says the
 difference matters. What is not defensible is the sentence, which promised a reader that the
-39.1% would shrink when step 4 landed. The gate is a **catcher** --- it finds a removal that
-looked complete and left readable pixels --- and that is what the measurement below asks about
+39.1% would shrink when step 4 landed. The gate is a **catcher** — it finds a removal that
+looked complete and left readable pixels — and that is what the measurement below asks about
 instead.
 
 **A gate is only as good as its control**, and `docs/TRAPS.md`'s entry *a control that is
@@ -2806,7 +2806,7 @@ the redaction leaves behind, and three properties decide a candidate, each of th
 gate could otherwise certify a page it had proved nothing about.
 
 1. **No region covers it.** A word the removal was supposed to take is not evidence that the
-   engine can read --- it is evidence the removal failed. The test is `redact::overlaps`, made
+   engine can read — it is evidence the removal failed. The test is `redact::overlaps`, made
    `pub` for this, because it is the same question that decided which words the removal took
    and two answers to it would let the gate certify against a word that should be gone.
 2. **It is set no larger than the smallest box the regions covered.** A control in 12 pt says
@@ -2815,7 +2815,7 @@ gate could otherwise certify a page it had proved nothing about.
 
 **The constant is four, measured against the same corpus and with the price in front of it.**
 Coverage runs 71.9% at two characters, 68.5% at three, **58.3% at four**, 45.9% at six and
-35.5% at eight. There is no flat part to sit on --- every character costs coverage --- so the
+35.5% at eight. There is no flat part to sit on — every character costs coverage — so the
 value is a judgement taken against a curve rather than a threshold the data picked. Four,
 because `adjudicate` matches by asking whether one recognised span *contains* the token, and a
 two- or three-character token is a fragment an engine emits from noise; a fragment matching by
@@ -2828,14 +2828,14 @@ because that is what has to be rendered; a `Control`'s band is in the *probe ima
 that is where `adjudicate` partitions items. The band is not the crop moved: the probe image is
 the region under test with the control strip appended below it, so the band's top is the
 region's height. `ControlChoice::placed(band)` takes that rectangle from its caller and
-nothing else --- returning a `Control` from the chooser would mean guessing an offset only the
+nothing else — returning a `Control` from the chooser would mean guessing an offset only the
 caller knows, and this repository has more than one entry about a rectangle produced in one
 space and read in another.
 
 **The token is a word and not the line it sits on, and that is the finding of this
 increment.** The first version took the whole of a chosen text object, which on a page of
 prose is a whole line. `ocr-probe` on `text-base14.pdf` then reported *NotVerified* on a page
-where nothing was wrong --- the 52-character line was not read back --- while the identical
+where nothing was wrong — the 52-character line was not read back — while the identical
 line on `text-marked.pdf` and `text-truetype.pdf` came back perfectly. `adjudicate` asks
 whether **one** recognised span contains the token, so a line-long token is only matched when
 the engine happens to return that line in one piece, and whether it does turns on the font. A
@@ -2844,7 +2844,7 @@ The token is the longest run of non-whitespace in the chosen text; it is still m
 position first, so a word occurring elsewhere on the page cannot stand in for it.
 
 **The second finding is a fixture disagreeing with its own page, and the gate is right to
-refuse.** `encodings.pdf` has no usable `/ToUnicode`, so PDFium returns plausible garbage ---
+refuse.** `encodings.pdf` has no usable `/ToUnicode`, so PDFium returns plausible garbage —
 the chooser's token is `"(QFRGLQJ\u{3}SUREH\u{3}$%&"`, which is nowhere on the page Vision
 reads. A control chosen from the document's own text is only evidence when that text says what
 the page draws. So the probe's check runs **both ways**: on a page where the two agree the
@@ -2853,7 +2853,7 @@ check with two directions, because the version that only knew the first would ha
 `encodings.pdf` a defect in the chooser.
 
 **Evidence.** Nine mutations, each caught by the test named for it, and every rule above has
-one aimed at it --- including *widen the height slack to a whole point*, which is the absolute
+one aimed at it — including *widen the height slack to a whole point*, which is the absolute
 check `docs/TRAPS.md`'s *a bound written against its own constant* asks for. `ocr-probe`
 carries the chooser against the real engine on seven fixtures: `text-base14`, `text-marked`,
 `text-truetype`, `text-cid`, `rotated` and `links` certify, and `encodings` refuses. The three
@@ -2862,8 +2862,8 @@ engine agreeing with itself; this one chooses from what the document says, and i
 place that claim meets an engine at all.
 
 **And on `links.pdf` the two disagree, which is the argument for the chooser as a
-measurement rather than as a preference.** The strip control picked `"Donn"` --- Vision's own
-earlier reading of those rows --- and Vision, handed the same rows inside a composite, read
+measurement rather than as a preference.** The strip control picked `"Donn"` — Vision's own
+earlier reading of those rows — and Vision, handed the same rows inside a composite, read
 `"Dann 1"`; that check has been red on that fixture and nothing about the page is wrong. The
 chooser passes on the same fixture with `"lantern"`, taken from the object graph. Giving those
 three checks the same control source is the obvious next thing for this probe and is
@@ -2873,9 +2873,9 @@ changing what they are built on is its own piece of work.
 ~~**Not done, and neither half is hidden by this.** There is no OCR **worker**: `ocr.rs`'s own
 ladder measured Vision killed by SIGTRAP under the parser worker's profile and needing general
 `file-read` to run at all, so it needs a process of its own under `OCR_SANDBOX_PROFILE` and
-nothing spawns one. And nothing calls the gate --- `redact_copy` and `redact_in_place` still
+nothing spawns one. And nothing calls the gate — `redact_copy` and `redact_in_place` still
 verify by byte scan alone, so the 39.1% above is unchanged today.~~ **Both halves closed
-2026-08-27**, by the two sections immediately below --- `ocr_worker.rs` is the process, and
+2026-08-27**, by the two sections immediately below — `ocr_worker.rs` is the process, and
 `redact_copy` and `redact_document` call `ocr_gate::run` on the file they just wrote. This
 increment is the part that decides whether step 4 can be honest; the process and the caller
 are the two after it, and both are done.
@@ -2884,13 +2884,13 @@ are the two after it, and both are done.
 The paragraph one section down struck its own note the same day (*"Not done when this was
 written, and closed the same day"*) and this one was left, so the document said in one place
 that nothing calls the gate and in two others that something does. That is the trap this file
-already carries --- *A "Not done" note outlives the work that closes it, and it is the
-recommendation nobody re-checks* --- arriving in the section that names the two increments
+already carries — *A "Not done" note outlives the work that closes it, and it is the
+recommendation nobody re-checks* — arriving in the section that names the two increments
 that were about to close it. It was found by someone reading the roadmap to ask what came
 next, which is the reader a stale note costs most: the answer would have been an OCR worker
 that has existed since 2026-08-27.
 
-#### Step 4's process: the engine somewhere else --- built 2026-08-27
+#### Step 4's process: the engine somewhere else — built 2026-08-27
 
 The chooser above decides what the engine must read back. This is the process that reads it.
 
@@ -2904,16 +2904,16 @@ a hostile document must not be able to read the user's files.
 **That table is executable now**, `examples/ocr_sandbox_probe.rs`, and it had to be: this
 repository's own index says a safety net that has never fired looks exactly like one that
 keeps passing, and the table had not been re-run in four weeks. It also did not measure the
-constant that shipped --- the rung that worked allowed reads and said nothing about *writes*,
+constant that shipped — the rung that worked allowed reads and said nothing about *writes*,
 while `OCR_SANDBOX_PROFILE` denies `file-write*` and `network*`. Three rungs, each in a
 re-exec'd child that renders a page **before** the profile comes down, because the parser
 worker maps PDFium first too and sandboxing earlier would measure a different program:
 
 | rung | writes a file | reaches the listener | runs Vision |
 |---|---|---|---|
-| `bare` --- the control | ok | ok | 4 spans |
-| `ocr` --- `OCR_SANDBOX_PROFILE` | **PermissionDenied** | **PermissionDenied** | **4 spans** |
-| `parser` --- the render worker's | --- | --- | **killed by signal 5** |
+| `bare` — the control | ok | ok | 4 spans |
+| `ocr` — `OCR_SANDBOX_PROFILE` | **PermissionDenied** | **PermissionDenied** | **4 spans** |
+| `parser` — the render worker's | — | — | **killed by signal 5** |
 
 7/7, on OS build 25G83. So the shipped constant is measured rather than inherited from a
 neighbouring rung, and the SIGTRAP reproduces on a build four weeks newer than the one that
@@ -2923,7 +2923,7 @@ something to connect to, every rung reports a refusal and the row measures nothi
 
 **`ocr_worker.rs` is the worker, and both ends of the wire are in that one file.** `worker.rs`
 and `worker_child.rs` are split because they are 1,400 and 900 lines; this is neither, and the
-split cost something there worth not repeating --- `docs/TRAPS.md`'s *one untyped reply
+split cost something there worth not repeating — `docs/TRAPS.md`'s *one untyped reply
 carrier, and the two ways serde refuses to replace it* is a payload whose shape lived in two
 processes with nothing holding the copies together, and it had already produced one wrong
 measurement. `Ask` and `Said` are written once.
@@ -2937,7 +2937,7 @@ Three decisions in it are not guessable from the feature:
   processes can see. The child maps it **read-only**: it never writes pixels, and a mapping it
   cannot write is one it cannot be made to write.
 - **`Said` is externally tagged**, serde's default and the only one of the three encodings that
-  is safe here --- the trap index records internal tagging refusing a bare payload at runtime
+  is safe here — the trap index records internal tagging refusing a bare payload at runtime
   and untagged silently swapping two variants of the same shape. A test asserts a bare payload
   does not parse, which is the check that the encoding is not the third one.
 - **The reply deadline is the parent's, because the engine ignores the one it is given.**
@@ -2949,7 +2949,7 @@ Three decisions in it are not guessable from the feature:
 **And a finding that cost a check its claim.** The first version of the worker probe asserted
 what `backend-probe` asserts about the parser: that the process which asks never maps the
 engine. It fails, and it always would: `pdfium-render` **`dlopen`s** its library, so a process
-that never binds it never maps it, while `objc2-vision` links Vision the ordinary way --- so
+that never binds it never maps it, while `objc2-vision` links Vision the ordinary way — so
 **every binary linking `ocr_vision` maps the framework at launch, called or not**, two images
 before a single call. Linking is not calling; what the worker buys is that Vision *code* runs
 somewhere else, which is what the SIGTRAP row is about. The check states the measured fact now,
@@ -2960,8 +2960,8 @@ with an emptiness control beside it, and `docs/TRAPS.md` has the entry.
 the same program reads in-process on the same bytes, the engine identity survives the wire and
 resolves, a second call reuses the same process, both refusals are checked apart, the worker
 still answers after one, and a worker killed from outside reports inside its own deadline
-rather than hanging. `vector-heavy.pdf` is skipped with the number in the reason --- A0 at
-scale 2 is 128 MB against a 16 MB buffer --- rather than rendered smaller, because shrinking
+rather than hanging. `vector-heavy.pdf` is skipped with the number in the reason — A0 at
+scale 2 is 128 MB against a 16 MB buffer — rather than rendered smaller, because shrinking
 the subject to fit the harness is how a probe comes to measure something other than what it
 names. Twelve unit tests and six mutations stand behind the parts that are decidable without
 an engine.
@@ -2969,7 +2969,7 @@ an engine.
 **Not done when this was written, and closed the same day** by the section below: nothing
 called it, so the 39.1% was unchanged.
 
-#### Step 4, wired --- built 2026-08-27
+#### Step 4, wired — built 2026-08-27
 
 `redact_copy` and `redact_document` run the gate on the file they just wrote, and a region
 that still reads as text is a reason in `Applied::why` beside the byte scan's. That is the
@@ -2984,22 +2984,22 @@ shown, and what a verdict is called when a reader sees it.
 because that is where PDFium reports an object's bounds; the reader's regions arrive in
 display space; `PageText`'s character boxes are display space too. Everything here is display
 space, using the reader's own rectangles rather than the file-space ones
-`render::redaction_plans_of` derives --- safe because `redact::overlaps` survives the map
+`render::redaction_plans_of` derives — safe because `redact::overlaps` survives the map
 between them (quarter turns and a flip take an axis-aligned rectangle to an axis-aligned
 rectangle), and worth it because the render, the crop and the character boxes then agree with
 no conversion anywhere.
 
 **The words come from before the removal and the pixels from after it, and neither may be
 taken from the other's moment.** The control has to be no larger than the smallest box the
-regions covered, and after the write those boxes are gone by construction --- for
-`redact_document` the file is gone too --- so the word list is captured while the reader's
+regions covered, and after the write those boxes are gone by construction — for
+`redact_document` the file is gone too — so the word list is captured while the reader's
 document is still open, one text extraction per page. The pixels are the opposite:
 `ocr::RedactedPixels` already makes it a type-level rule that only already-redacted pixels may
 be judged, because OCR over the pre-redaction image reinstates the secret as a text layer,
 which is one of the carriers §6 exists to defeat.
 
 **It renders strips, not pages, and that is what makes the scale worth choosing.** Both
-mappings the pixels cross are 16 MB, and a whole A4 sheet at 4x is 32 MB --- so a gate that
+mappings the pixels cross are 16 MB, and a whole A4 sheet at 4x is 32 MB — so a gate that
 rendered pages would be stuck at 2x and could never prove anything about small text. Measured
 on this machine at scale 2: a whole A4 page costs **195 ms** through the engine, a 1190 x 128
 strip **9 ms**. Rendering the page costs 13--48 ms warm; spawning the OCR worker, 1.5 ms.
@@ -3019,7 +3019,7 @@ beside it already reads the whole file.
 **The strips must not touch, and that is a finding rather than a detail.** Butted together
 they cost the gate its answer: on `text-base14` the control word `quartz,` came back as
 `auartz,` and a clean redaction was refused. Each line is cropped flush against the other, and
-a recogniser needs the whitespace around a line as much as it needs the line --- which
+a recogniser needs the whitespace around a line as much as it needs the line — which
 `ocr_probe`'s own strip chooser had already learned from the other direction. There is a blank
 gap between them now and a margin at each end, **white rather than more page pixels**: real
 paper either side would pull in whatever line of text sits there, which is then read as a
@@ -3028,7 +3028,7 @@ the gap, because `Control::contains` tests a span's centre and an engine's box i
 rather than a measurement.
 
 **Evidence.** `redact-gate-probe`, which drives the real `ocr_gate::run` against a real
-service, a real worker and a real engine --- 5/5 on `text-base14`, `text-marked`, `rotated`,
+service, a real worker and a real engine — 5/5 on `text-base14`, `text-marked`, `rotated`,
 `links`, `text-cid` and `outline-simple`. **The control is the same gate run against the file
 that was not redacted**: a gate that certifies everything passes "the redacted file has no
 reasons" perfectly, so that row alone is worth nothing. The unredacted file comes back
@@ -3036,7 +3036,7 @@ reasons" perfectly, so that row alone is worth nothing. The unredacted file come
 for is refused rather than certified; and the region's pixels are shown to have changed.
 Twenty-five unit tests and ten mutations stand behind the parts decidable without an engine.
 
-`columns` and `encodings` skip with their reasons stated --- no word long enough to redact, and
+`columns` and `encodings` skip with their reasons stated — no word long enough to redact, and
 a page whose single text object is every word on it, so nothing is left to read a control back
 from. The second is `encodings.pdf`'s known shape and the refusal is correct.
 
@@ -3046,22 +3046,22 @@ checked by the probe on the platform that has no engine, which is the only place
 can be reached.
 
 **What the gate still does not cover.** A region whose page yields no control is *not
-verified* --- 45.9% of realistic regions had no qualifying survivor at `MIN_CONTROL_CHARS`,
+verified* — 45.9% of realistic regions had no qualifying survivor at `MIN_CONTROL_CHARS`,
 which is the coverage ceiling this design has and the measured curve has no flat part to move
 to. Nothing here reads a scanned page's own image separately from the region: the strip is
 whatever the region covers, so a redaction over part of a scan is judged on those pixels and
 no others, which is right, and a `/DCTDecode` image *outside* every region is still the byte
 scan's `deferred` list rather than anything this reads.
 
-#### The text inside a Form XObject --- done 2026-08-27
+#### The text inside a Form XObject — done 2026-08-27
 
 The largest carrier a redaction could not take that is made of **ordinary text**.
 `docs/PLAN.md`'s own by-kind measurement puts it at **9,310 of 154,095** realistic
-regions across 41 real documents --- three times the image count, and second only to
+regions across 41 real documents — three times the image count, and second only to
 paths, which are mostly the rule under a line of text and cannot be taken wholesale.
 
 **The asymmetry is what made it worth doing next.** PDFium enumerates a form as one
-page object, so `remove_shows` has no ordinal that names the text inside it --- but the
+page object, so `remove_shows` has no ordinal that names the text inside it — but the
 page's *text page* reaches in. `form-xobject.pdf` extracts 157 characters from page 1
 including both lines of a form and one from a form nested inside a form. A reader could
 therefore search for those words, select them, mark them, and get a file with the words
@@ -3074,11 +3074,11 @@ guessable from the API:
 |---|---|
 | what does `FPDFText_GetTextObject` return for a character inside a form? | the **inner** text object, so one pointer-keyed map serves the page and every form, and one character walk fills both |
 | what space are a form child's bounds in? | the **form's**. A form placed at (60, 600) reports its first line at (0.9, 19.9) |
-| can the children be enumerated at all? | yes --- `FPDFFormObj_CountObjects` and `FPDFFormObj_GetObject`, checked with `nm` against the vendored build |
+| can the children be enumerated at all? | yes — `FPDFFormObj_CountObjects` and `FPDFFormObj_GetObject`, checked with `nm` against the vendored build |
 
 So the bounds go through `FPDFPageObj_GetMatrix` on the form, all four corners, because
 a matrix may turn and two corners then describe a rectangle whose left is greater than
-its right --- which overlaps nothing, so the removal would take nothing and report
+its right — which overlaps nothing, so the removal would take nothing and report
 success.
 
 `redact::remove_form_shows` is `remove_shows` against the form's own stream, with the
@@ -3088,7 +3088,7 @@ disagreement in the counts is a refusal rather than a removal aimed at whichever
 happens to sit there.
 
 **A shared form is refused, and the check is two counts rather than one.** A form's
-stream belongs to the form, so removing from it changes every place it is drawn ---
+stream belongs to the form, so removing from it changes every place it is drawn —
 which is the posture `clear_struct_shadow_text` already takes for a structure element
 shared between pages. Counting references to the form's object id catches a form drawn
 on two pages; it is blind to one drawn **twice on one page**, which is one entry in one
@@ -3106,7 +3106,7 @@ for the matrix, and eleven mutations each caught by the test named for it.
 
 **Its own fixture, and the fixture is most of the design.** Every other file in
 `testdata/` carrying `/Subtype /Form` carries it as an annotation *appearance stream*,
-which is a different thing in a different place --- so nothing in the corpus exercised
+which is a different thing in a different place — so nothing in the corpus exercised
 this at all. `make_form_xobject_pdf.py` places its forms with a translating matrix so a
 bounds convention error cannot pass, gives one form two lines so *removed the right one*
 can be told from *removed everything*, nests a form inside a form so the one-level limit
@@ -3119,12 +3119,12 @@ stream two deep, and neither is measured. An image or a path inside a form is th
 refusal the page level already makes, one level down. A form written into the page as a
 direct stream rather than as its own object is refused, because rewriting it in place is
 not possible and copying it out would be a structural change made by a removal asked
-only to delete text. And the two carriers `remove_shows` clears --- the marked-content
-property list and the structure element --- are addressed from the **page**, so a span
+only to delete text. And the two carriers `remove_shows` clears — the marked-content
+property list and the structure element — are addressed from the **page**, so a span
 inside a form carrying an `/MCID` in the page's own numbering is already reached by
 `clear_shadow_text`; nothing new was needed and nothing is claimed.
 
-#### A region over a picture --- done 2026-08-27
+#### A region over a picture — done 2026-08-27
 
 The carrier a reader meets head-on: drag a region over a scanned page or a figure, and
 until now nothing was removed and the report said the file could not be shown clean.
@@ -3132,21 +3132,21 @@ Images ≥10% of the sheet sit on **99 pages in 18 of 40** real documents.
 
 **It needs no decoder**, which is the thing that made this affordable and which an
 earlier note in this file got wrong. Removing an image is removing the `Do` operation
-that draws it --- the same mechanism as a show operator --- and `sweep::collect`, which
+that draws it — the same mechanism as a show operator — and `sweep::collect`, which
 every rewrite already runs, drops the object once nothing points at it.
 
 **Whole images, and that is a decision.** An image cannot be partly removed without
 decoding and re-encoding it, so the choice is all of it or none, and none of it means a
 region dragged over a face leaves the face. It is route B's posture one level up:
 removing part of a line means removing the operation that drew it. The cost is a page
-whose background image goes because a reader redacted one line over it --- measured at
-**35 of 930** placed images covering more than half their sheet, 3.8% --- and the
+whose background image goes because a reader redacted one line over it — measured at
+**35 of 930** placed images covering more than half their sheet, 3.8% — and the
 review panel now says how many pictures a region takes before anything is written.
 
 **Two removals, and only the second one redacts.** Deleting the `Do` stops the page
 drawing the picture; the stream is still an object, still reachable from the page's
 resources, and every pixel is still in the file. The resource entry goes too, which
-leaves it unreferenced for the sweep. That is not a subtlety --- the first working
+leaves it unreferenced for the sweep. That is not a subtlety — the first working
 version did the first half only, and the file it wrote held the whole picture.
 
 **What found it is the shape of the check.** `redact-apply-probe` greps the written
@@ -3158,7 +3158,7 @@ an image removal was not on it; every existing sweep test calls `sweep::collect`
 hand, so none of them could see the condition being wrong. `docs/TRAPS.md` carries it.
 
 **A picture drawn more than once is refused**, by the same two counts `remove_form_shows`
-uses --- a graph reference count is blind to one page drawing the same XObject twice.
+uses — a graph reference count is blind to one page drawing the same XObject twice.
 Removing one of its `Do` operations would hide it here and leave it drawn elsewhere, so
 the object stays reachable and the pixels stay: a redaction that removed the picture
 from view and nothing else.
@@ -3174,11 +3174,11 @@ panel sentence.
 
 **`redact-probe`'s refusal check was measuring the wrong thing and still passing.** It
 asserted that a whole-page region on `hostile-scan.pdf` reports an incomplete plan,
-which it does --- on the two **path** objects that page also carries. The image stopped
+which it does — on the two **path** objects that page also carries. The image stopped
 being the reason and nothing went red. It now asserts both halves: no image is reported
 unremovable, at least one is named removable, and the paths are still refused.
 
-**Not done, and stated rather than discovered.** Paths are still reported and left ---
+**Not done, and stated rather than discovered.** Paths are still reported and left —
 49,521 of 154,095 regions, and a rule under a line of text is what almost every document
 has, so taking them wholesale would damage every redaction. An **inline** image
 (`BI…ID…EI`) has no `Do` to remove, so the correspondence guard refuses; measured across
@@ -3188,16 +3188,16 @@ this and the form carrier, so it is now too high by an amount nobody has measure
 **Measured 2026-08-27 by the section below**, and it was too high for a reason nobody
 predicted.
 
-#### What a removal can take, re-measured --- 2026-08-27
+#### What a removal can take, re-measured — 2026-08-27
 
 The 39.1% above was measured before the form carrier existed, before the image carrier
 did, and before there was an OCR gate at all. It is quoted in four places in this file
 and in `ocr_gate.rs`'s own module documentation, and it is the number that decides which
-increment comes next --- so it is worth exactly as much as the date on it.
+increment comes next — so it is worth exactly as much as the date on it.
 
 `examples/redact_reach_probe.rs` is the instrument, and it asks two questions with two
 different tools. **How often is a region incomplete, and what carries it?** answered by
-`redaction_plans` alone --- no write, no render, no engine --- so it runs over every
+`redaction_plans` alone — no write, no render, no engine — so it runs over every
 sampled region. **What does the gate say about a region the removal took whole?**
 answered only by writing the file and reading the pixels back.
 
@@ -3223,8 +3223,8 @@ control so nothing but the two edited files differs:
 | ...a shading | 1 | 1 |
 
 **Re-run 2026-09-02 and it reproduces**, which is the only thing that keeps a dated figure
-worth its date. 41 documents and 2,973 regions --- the corpus is a real `~/Downloads` and had
-gained one document --- gave **67.7%** taken whole against the 66.9% above, with the carrier
+worth its date. 41 documents and 2,973 regions — the corpus is a real `~/Downloads` and had
+gained one document — gave **67.7%** taken whole against the 66.9% above, with the carrier
 breakdown almost unchanged: path 566 against 564, path-in-form 94 against 94, picture-in-form
 350 against 350, shading 1 against 1, and no form-in-form. The ratio moving 0.8 of a point
 while three of the five carrier counts are identical is what agreement looks like on a corpus
@@ -3233,26 +3233,26 @@ above insists on a ratio. The cheap half ran in 2.5 s.
 
 **Measured on Windows 2026-09-02, the ratio travels and one carrier does not.** Release
 step 8's Windows half, which had never run: 109 documents and 8,940 regions of a real
-`%USERPROFILE%\Downloads` gave **68.1%** taken whole, against 67.7% and 66.9% on macOS ---
+`%USERPROFILE%\Downloads` gave **68.1%** taken whole, against 67.7% and 66.9% on macOS —
 three corpora, two platforms, 0.8 and 1.2 of a point apart. That is the ratio doing exactly
 what the paragraph above claims for it, over a sample three times the size and a document
 set with nothing in common with the Mac's.
 
 The carrier counts are the half that does not travel, and one of them is a finding rather
 than a corpus difference. Path 2,555, path-in-form 231, image-in-form 2, no page-level
-image, no shading --- all of that is a different pile of documents, and the counts are not
+image, no shading — all of that is a different pile of documents, and the counts are not
 comparable to the table above by construction. **Form-in-form is 169 (1.9% of all regions,
 5.9% of the refusals), where both macOS runs had 0.** The table above reads 8 then 0 for that
 carrier, which is the fix working; a reader arriving at it without this row would take the 0
-as the case being closed. It is not closed --- it is a *Not done* two sections up, where a
-nested form is reported and never followed --- and on a corpus of datasheets and supplier
+as the case being closed. It is not closed — it is a *Not done* two sections up, where a
+nested form is reported and never followed — and on a corpus of datasheets and supplier
 packets it is the third-largest carrier there is. **A zero on one corpus is not evidence of
 absence, and this one sat next to the number that made it look like a result.**
 
 The removal half is deterministic, so both runs of it printed the same figures; the gate
 half is below.
 **The first thing the run found is that every image refusal in the corpus was a form
-child**, and not one was a page-level picture --- so the carrier closed the day before
+child**, and not one was a page-level picture — so the carrier closed the day before
 really is closed, which no check here could otherwise have said. The second is the
 defect.
 
@@ -3260,8 +3260,8 @@ defect.
 
 `covered` asked whether each *page* object overlaps the region, and then reported every
 unreachable child of every form the region touched, unconditionally. `FormObject`'s own
-doc comment said those two were the same rule --- *"an image or a path inside a form is
-the same refusal the page level already makes, one level down"* --- and it was a claim
+doc comment said those two were the same rule — *"an image or a path inside a form is
+the same refusal the page level already makes, one level down"* — and it was a claim
 about intent rather than about the code.
 
 A form is routinely a whole-page container: a letterhead, a header band, a chart, a
@@ -3271,8 +3271,8 @@ marked. **174 of the 1,131 refusals, 15.4%, were about objects the region does n
 cover**, and the reader was told their redaction could not be shown clean because of
 them.
 
-The fix is one overlap test and one box. Every child *can* be placed --- a nested form
-has a bounding box of its own even though its contents are not followed --- so `descend`
+The fix is one overlap test and one box. Every child *can* be placed — a nested form
+has a bounding box of its own even though its contents are not followed — so `descend`
 now puts each non-text child through the form's matrix exactly as it already did for
 text, into a `FormOther` carrying `bounds` and `kind`. `FormOther` is separate from
 `Unhandled` rather than a widening of it, because a box is no use to the panel that
@@ -3280,7 +3280,7 @@ renders the sentence and this never leaves the worker.
 
 **What does not move is the destructive direction.** A child PDFium enumerated and would
 not hand over gets `UNMEASURABLE`, which overlaps every region, so an object that cannot
-be placed still cannot be excluded --- and that has a test of its own, because the fix
+be placed still cannot be excluded — and that has a test of its own, because the fix
 without it would have turned *"could not measure it"* into *"it is not there"*. The other
 property the old comment defended also survives: a region over a form holding nothing but
 a nested form still reports it, because the test is on the child rather than on whether
@@ -3290,15 +3290,15 @@ second was ever being asked.
 **No fixture could tell the two rules apart, and that is why this survived.** Every form
 in `form-xobject.pdf` had its unreachable child sitting on top of its own text, so
 "report a child the region covers" and "report every child of a form the region touches"
-gave the same answer on all of them --- `docs/TRAPS.md`'s *a fixture where the right rule
+gave the same answer on all of them — `docs/TRAPS.md`'s *a fixture where the right rule
 and the wrong rule agree cannot tell them apart*, with every ingredient present and the
 discrimination absent. Page 3 is the repair: one form carrying text at its origin and a
 filled rectangle 300 points to the right, far enough apart that no region reaches both.
 The probe asserts that separation before it asserts anything else, since two children
 that overlapped would make both of its checks pass on either rule.
 
-**Evidence.** Three unit tests in `redact.rs` --- the region that misses, the region that
-covers, and the child that cannot be placed --- two mutations each caught by the test
+**Evidence.** Three unit tests in `redact.rs` — the region that misses, the region that
+covers, and the child that cannot be placed — two mutations each caught by the test
 named for it, and four checks in `redact-apply-probe`, which is 48/48. Adding the page
 turned that probe red immediately and correctly: `form_plan` had `baseline: 2` written
 into it, and the save refused with *"the document on disk has 3 page(s) and the edits
@@ -3310,11 +3310,11 @@ The second question does not have an honest answer yet, and the shape of why is 
 finding.
 
 `ocr_gate::strip` renders *"the rows one point rectangle covers, rendered as a full-width
-tile"* --- its own doc comment, and the reason is real: two strips have to stack, and two
+tile"* — its own doc comment, and the reason is real: two strips have to stack, and two
 crops of different widths do not. So the engine is shown a full-width band at the
 region's height. A reader who drags across a whole line gets a band that is their region.
-A reader who marks a name in the middle of a sentence --- which is what *Redact selection*
-and *Redact every match* both produce --- gets a band holding the rest of the sentence,
+A reader who marks a name in the middle of a sentence — which is what *Redact selection*
+and *Redact every match* both produce — gets a band holding the rest of the sentence,
 which the removal was never asked to take and must not.
 
 Whether that is a false refusal turns on the producer. Route B removes the whole
@@ -3329,18 +3329,18 @@ columns or beside them.
 **The control was worth running and answered a different question than it was asked.**
 `--full-width` widens every region to the page, which leaves the row band identical, so
 the prediction was that no verdict would move. Nine moved to *still readable* where 54
-had, and *shown unreadable* went from 28 to 79. Not because the columns are read ---
+had, and *shown unreadable* went from 28 to 79. Not because the columns are read —
 `strip` provably ignores them, `rows_of` reads only `rect[1]` and `rect[3]` and the tile
-request is `x: 0` --- but because a wider region covers more words, which changes the
+request is `x: 0` — but because a wider region covers more words, which changes the
 control the gate is allowed to choose, which changes the render scale, which changes what
 the engine reads. So the experiment did not isolate the variable it was aimed at, and
 what it establishes instead is worth more: **the gate's verdict on identical pixels of
 interest turns heavily on its control choice.**
 
 ~~**Not done, and ranked here because this is where it was found:** the gate's spatial
-unit.~~ **Built the same day --- see below.**
+unit.~~ **Built the same day — see below.**
 
-#### The gate reads the region, not the row --- built 2026-08-27
+#### The gate reads the region, not the row — built 2026-08-27
 
 `ocr_gate::mask_columns` blanks every pixel of the region strip outside the region's own
 columns, before [`stack`] appends the control and before the engine sees any of it. White,
@@ -3349,7 +3349,7 @@ blank space rather than as an edge.
 
 **It is sound rather than approximate, and the reason is route B.** `redact::covered` marks
 a text object when it *overlaps* the region, and a removal takes the whole text-showing
-operation --- so after a correct removal no glyph overlapping the region survives.
+operation — so after a correct removal no glyph overlapping the region survives.
 Everything the mask erases is therefore something the reader did not mark and the removal
 was right to keep, and there is no half-erased survivor to misread, because a survivor
 straddling the edge would have been removed with its operation.
@@ -3362,14 +3362,14 @@ straddling the edge would have been removed with its operation.
 | ...with every span inside the region's own columns | 9 | **6** |
 | could not be shown unreadable | 32 | 35 |
 | ...because the control was not read back | 20 | 23 |
-| **shown unreadable --- the only verdict that certifies** | **18 (17.3%)** | **63 (60.6%)** |
+| **shown unreadable — the only verdict that certifies** | **18 (17.3%)** | **63 (60.6%)** |
 
 So **45 of the 54 were neighbours**, and the gate went from certifying one region in six to
 three in five. That is the number that matters: step 4 shipped able to speak about almost
 nothing, and the reason was geometry rather than the engine.
 
 **The third row is the argument for masking rather than filtering.** The obvious cheaper fix
-is to keep the full-width band and discard any span whose box falls outside the region ---
+is to keep the full-width band and discard any span whose box falls outside the region —
 and that reading gave **9** where masking gives 6. Three spans had a box overlapping the
 region's columns while their ink was mostly beside it, which is `docs/TRAPS.md`'s *an OCR
 engine's bounding box is a detection, not a measurement* arriving in the obvious repair. Not
@@ -3382,7 +3382,7 @@ verified*, which is the direction §6 requires.
 
 **A larger sample agrees and leaves one question open.** 448 gate regions over the same 40
 documents: 5.4% still reads as text against 5.8%, 55.8% shown unreadable against 60.6%, and
-**every one of the 24 surviving reads had every span inside the region's own columns** ---
+**every one of the 24 surviving reads had every span inside the region's own columns** —
 which is what the masked gate is supposed to guarantee and is now measured rather than
 argued. The open question is the other column: 174 regions could not be shown unreadable and
 only 68 of those were the control. ~~**The remaining 106 have no attributed reason**, and that
@@ -3393,23 +3393,23 @@ And the third of the gate's regions was the sampling density, not the gate.**
 
 Every figure in this paragraph is the 2026-08-27 reading and is left as it was measured. The
 same command gives 56.7% and 64 on 2026-08-28, because the scale fix two subsections down moved
-the verdict columns; the masking conclusion it is here to support --- every surviving read inside
-the region's own columns --- holds at both.
+the verdict columns; the masking conclusion it is here to support — every surviving read inside
+the region's own columns — holds at both.
 
-#### Where a *not verified* region goes --- attributed 2026-08-28
+#### Where a *not verified* region goes — attributed 2026-08-28
 
 The 106 are 60 *no surviving word is long enough*, 36 *the regions cover every word* and 10
 *every surviving word is larger*. That run reproduces the 448-region measurement above to the
-digit --- 5.36% still reads, 55.80% shown unreadable, 24 surviving reads, 174 unanswered, 68 of
-them the control --- which is the control saying the attribution changed no verdict.
+digit — 5.36% still reads, 55.80% shown unreadable, 24 surviving reads, 174 unanswered, 68 of
+them the control — which is the control saying the attribution changed no verdict.
 
 **It could not be answered before because the reason was thrown away twice over.**
 `Legibility::NotVerified` carried only a sentence written for a person, so
-`redact-reach-probe` bucketed it with `why.contains("control token")` --- a second parser over
+`redact-reach-probe` bucketed it with `why.contains("control token")` — a second parser over
 prose, where rewording the sentence makes the bucket read zero and a step that never failed
 looks identical to a step nobody is counting. Worse, the probe matched `PageOutcome::Whole(_)`
-and `Judged::Refused(_)`, discarding the verdict entirely, so every **page-wide** refusal ---
-which is to say the commonest kind --- reached the total with no reason attached at all. Three
+and `Judged::Refused(_)`, discarding the verdict entirely, so every **page-wide** refusal —
+which is to say the commonest kind — reached the total with no reason attached at all. Three
 of the causes could not be reported by construction.
 
 `NotVerifiedCause` is the repair: one variant per step of the gate, carried beside the
@@ -3417,7 +3417,7 @@ sentence, never seen by a reader. The probe matches it exhaustively, so a step t
 be counted is `error[E0004]` rather than a bucket silently reading zero, and it subtracts its
 own buckets from the unanswered total and prints a `[WARN]` if a region reached that total by a
 route carrying no cause. `ControlTooEasy` carries one too, because collapsing its four
-refusals into a single label reproduced this defect one level down --- and that label was
+refusals into a single label reproduced this defect one level down — and that label was
 holding 90% of the answer.
 
 ##### The rate was a property of the sampling density, and this section's own numbers were read as the gate's
@@ -3443,13 +3443,13 @@ measurement.
 
 **A reader marks a name or a line, not forty words on a page.** At a reader-like density the
 gate certifies about two in three, and the control-selection failures that dominate the dense
-run --- 850 of 934 --- are 8 of 41. What is left is *the control was not read back*: 33 of 41,
+run — 850 of 934 — are 8 of 41. What is left is *the control was not read back*: 33 of 41,
 80.5%, which is the priced cost of masking the region strip and is larger than the three
 regions this section predicted when the mask shipped.
 
 **This section already contained the reason and did not draw it.** *The region feeds two
 mechanisms, so varying it isolates neither* is written above about `--full-width`. The same is
-true of the region **count**, which nobody said --- so the 39.1%, the 33.1% and every gate
+true of the region **count**, which nobody said — so the 39.1%, the 33.1% and every gate
 percentage here are quoted at whatever `--regions` produced them. The heading above says *A
 ratio travels between populations and a count does not*, and this is the case where the ratio
 does not travel either, because the population is an input to the mechanism rather than a
@@ -3460,13 +3460,13 @@ densities, and did not move when the scale did, so the masked gate's guarantee i
 wrong: 40 regions is a legitimate stress of the control rule, and what it establishes is that
 the rule degrades sharply under load rather than that a reader meets it.
 
-#### The control was rendered under the floor the gate sets for it --- answered 2026-08-28
+#### The control was rendered under the floor the gate sets for it — answered 2026-08-28
 
 The question above was ranked next and asked which of three things the unread control was: the
 scale, the masking, or the choice of token. **It was the scale, and the mechanism is that the
 rule was enforced against the wrong one of two heights.**
 
-`ocr_gate::MIN_CONTROL_PX` is 16 px, and `scale_for` was given `ControlChoice::size_pt` --- the
+`ocr_gate::MIN_CONTROL_PX` is 16 px, and `scale_for` was given `ControlChoice::size_pt` — the
 height of the smallest box any region covered. But `control_from_page` guarantees the control
 *word* is no taller than that box, so `size_pt` is an upper bound on the height the engine is
 actually shown. A surviving word with neither ascender nor descender is roughly half its line's
@@ -3474,8 +3474,8 @@ box, and lands near 8 px while the rule believes it produced 16.
 
 `ocr_gate::geometry_for` now chooses the scale from the control's own height. It is a strict
 improvement rather than a trade, because `control_pt <= size_pt` makes the new scale no smaller
-than the old one in any case, and the safety rule --- a control may not be set *larger* than what
-was removed --- is enforced in `control_from_page` and is untouched. Same 40 documents, same
+than the old one in any case, and the safety rule — a control may not be set *larger* than what
+was removed — is enforced in `control_from_page` and is untouched. Same 40 documents, same
 `--pages 3 --regions 4`, one variable:
 
 | the control rendered at | before | after |
@@ -3508,8 +3508,8 @@ is a numerator with no denominator**, and adding one refuted it:
 | 8 or more | 29 / 128 | **22.7%** | 52 / 271 | **19.2%** |
 
 29 of 33 were long because **128 of 148 controls are long**. A long token fails *less* often than
-a middle one at both densities, so preferring a middle-length word --- the experiment this section
-proposed --- moves the chooser toward the worst bucket. The proposal was measured before it was
+a middle one at both densities, so preferring a middle-length word — the experiment this section
+proposed — moves the chooser toward the worst bucket. The proposal was measured before it was
 built and would have made the gate worse.
 
 **Padding the control's crop was measured too, and is also worse.** The crop is the word's glyph
@@ -3523,18 +3523,18 @@ The ten still under 8 px are a separate and smaller thing, and there are two way
 reading: a control box under 2 pt at the `MAX_SCALE` ceiling, or a probe image halved toward
 `MIN_SCALE` to fit the buffer. Nothing records which, and no measurement has separated them.
 
-~~**Ranked next on this subsystem --- and it is a question rather than a candidate.** The failure
+~~**Ranked next on this subsystem — and it is a question rather than a candidate.** The failure
 rate is roughly flat at 19--33% across every token length of five or more, which is the signature
 of something that is a property of the *page or the image* rather than of the control the chooser
 picked. The one hypothesis of the original three never tested is band geometry: `adjudicate`
 partitions the engine's items by `Control::contains`, and a span that holds the token while
 falling outside the band produces exactly this verdict and is indistinguishable from the engine
 not reading it. Testing that needs the engine's items at the moment of refusal, which no caller
-has --- `adjudicate` returns a `Legibility`, and `NotVerified` carries a sentence and no evidence.
+has — `adjudicate` returns a `Legibility`, and `NotVerified` carries a sentence and no evidence.
 So the increment is to give it some, and the measurement follows from that rather than preceding
-it.~~ **Answered 2026-08-28 --- and the answer is no.** See below.
+it.~~ **Answered 2026-08-28 — and the answer is no.** See below.
 
-#### It was not the band, and it was not the scale either --- measured 2026-08-28
+#### It was not the band, and it was not the scale either — measured 2026-08-28
 
 The instrument the paragraph above asked for, built and run. `ocr::Unread` rides on
 `Legibility::NotVerified` and carries three numbers taken at the moment of the refusal: how many
@@ -3543,7 +3543,7 @@ how far outside the band the nearest span *containing the token* sat. `None` on 
 means no span anywhere held it.
 
 Three numbers rather than the items themselves, for two reasons. Engine text is page content and
-has no business travelling with a verdict --- `redact-reach-probe` runs against a corpus of real
+has no business travelling with a verdict — `redact-reach-probe` runs against a corpus of real
 documents and prints counts and shapes only. And the question is a count question: a probe can
 bucket three integers and cannot bucket a list of strings.
 
@@ -3557,8 +3557,8 @@ bucket three integers and cannot bucket a list of strings.
 
 Not one span in the corpus held the control token and fell outside its band. `Control::contains`
 is a centre test over a band that spans the image's full width, so the only way to fall outside
-it is vertically, and nothing does. The centre rule earned that in 2026-08-27 --- it replaced
-strict containment precisely because Vision reports a box 1.5 pt above the strip it came from ---
+it is vertically, and nothing does. The centre rule earned that in 2026-08-27 — it replaced
+strict containment precisely because Vision reports a box 1.5 pt above the strip it came from —
 and this says the tolerance it bought is sufficient at every density measured.
 
 **And the scale is not what is left.** The rendered-height axis and the shape axis are two
@@ -3573,7 +3573,7 @@ The probe now does:
 | total | 40 | 56 | 96 |
 
 **40 of the 80 silent refusals were shown a control at or above `MIN_CONTROL_PX`.** The two
-marginals --- 80 silent, 40 under the floor --- bound that anywhere between 40 and 80 and cannot
+marginals — 80 silent, 40 under the floor — bound that anywhere between 40 and 80 and cannot
 measure it, which is why the cross-tabulation was worth the field rather than the arithmetic.
 `docs/TRAPS.md` carries the entry.
 
@@ -3582,21 +3582,21 @@ contains a control it should be able to read.** That is the majority shape at ev
 is not explained by how tall the control landed, and it is a statement about the image rather
 than about anything the chooser or the band does. Two readings sharpen it: at `--regions 40`
 every one of the 40 sub-floor controls is silent and every one of the 16 partial readings is at
-or above the floor, so below the floor the engine does not read *less*, it reads nothing --- but
+or above the floor, so below the floor the engine does not read *less*, it reads nothing — but
 at `--regions 4` the sub-floor ten split 6 silent to 4 partial, so that is an observation at one
 density and not a rule.
 
-#### The one bucket that never moved, and the remedy that was arithmetic --- 2026-08-28
+#### The one bucket that never moved, and the remedy that was arithmetic — 2026-08-28
 
-Across every reading in the sections below --- shape, points, the crossing, and before and after
-an intervention --- one bucket never moved: **a control under 2 pt is unread, 24 of 24 and 40 of
+Across every reading in the sections below — shape, points, the crossing, and before and after
+an intervention — one bucket never moved: **a control under 2 pt is unread, 24 of 24 and 40 of
 40.** 2 pt is `MIN_CONTROL_PX / MAX_SCALE`, so no scale `scale_for` may pick brings such a control
 to the floor.
 
 **Raising the ceiling does not serve them, and that was decidable without writing it.** The probe
 now computes, for every unread control, the scale it would have needed and whether the image would
 fit at it. **0 of 24 and 0 of 40 would fit.** The largest asks for **31.1x** against a ceiling of
-8, and a page-wide probe image at that scale is past the worker's 16 MB capacity --- so a higher
+8, and a page-wide probe image at that scale is past the worker's 16 MB capacity — so a higher
 ceiling moves the refusal from *the ceiling could not reach it* to *the probe image will not fit*
 and changes nothing else. Two constants, one division and one multiplication, an hour. The
 previous section spent a day building a remedy that a comparable calculation could not have
@@ -3607,39 +3607,39 @@ in its own kindly rendered image says nothing about whether the same text would 
 the region strip, which is the entire job of a control. That is the reason it is not the answer,
 and it is worth writing down because it looks like the obvious way out.
 
-**So the gate says so instead.** `NotVerifiedCause::ControlTooSmall` --- *no scale renders the
-control legibly* --- with a message naming what the page removed, the scale it would have taken and
+**So the gate says so instead.** `NotVerifiedCause::ControlTooSmall` — *no scale renders the
+control legibly* — with a message naming what the page removed, the scale it would have taken and
 the ceiling. It is not a fix and does not pretend to be: no region becomes provable.
 
 | `--regions 12` | before | after |
 |---|---|---|
 | control not read back | 66 | **42** |
-| no scale renders the control legibly | --- | **24** |
+| no scale renders the control legibly | — | **24** |
 | still reads as text | 24 | 24 |
 | shown unreadable | 276 (58.47%) | 276 (58.47%) |
 
 `--regions 40` is the same shape: 96 to 56, with 40 stated. **No region's outcome changed**, which
-is the point --- and the evidence that refusing costs nothing was already in hand, because the
+is the point — and the evidence that refusing costs nothing was already in hand, because the
 points axis prints its denominator: every region whose control was under 2 pt went unread, so
 there was none to lose. The gate also stops rendering a page-wide image it cannot use.
 
 **`geometry_for` returns a typed error now**, because its one caller hard-coded
-`ScaleRefused` for whatever came back. Two refusals from one function with different remedies ---
-the buffer is too small, or the control is --- and a `String` cannot tell them apart. Sending a
+`ScaleRefused` for whatever came back. Two refusals from one function with different remedies —
+the buffer is too small, or the control is — and a `String` cannot tell them apart. Sending a
 reader to `capacity` for a problem that is the control's size is the same defect as the
 `ControlUnread` it replaces, one layer up.
 
 **Ranked next**: nothing in this subsystem. Three increments have narrowed the gate's unverifiable
 regions to two populations, and both are now honestly reported: a control too small to render
 (24 and 40, stated) and an engine that answers without the token (42 and 56, evidence attached).
-Neither has a remedy that measurement supports, and the next one to try --- a different recogniser,
-or a control chosen for legibility rather than for size --- is a larger piece of work than a
+Neither has a remedy that measurement supports, and the next one to try — a different recogniser,
+or a control chosen for legibility rather than for size — is a larger piece of work than a
 session. `docs/PLAN.md` §6's other open items are better value.
 
-#### The gate on Windows, and what two engines disagree about --- measured 2026-09-02
+#### The gate on Windows, and what two engines disagree about — measured 2026-09-02
 
 Release step 8's Windows half, run for the first time. 109 documents, 8,940 regions,
-5,254 of them read back on 186 pages, 23.5 s with the gate on against 5.3 s without ---
+5,254 of them read back on 186 pages, 23.5 s with the gate on against 5.3 s without —
 so the gate costs 4.4x here, where the macOS note in `BUILD.md` puts it at 40x. Windows
 OCR is simply much faster than Vision. Every bucket closes: the twelve causes plus zero
 run-refusals sum to 3,263 exactly, and no `[WARN]` printed.
@@ -3655,13 +3655,13 @@ run-refusals sum to 3,263 exactly, and no `[WARN]` printed.
 verification gate must not drift in.** *Still reads as text* is the verdict that says the
 removal left something readable; on macOS it is 4.7--6.4% and the section below calls it
 stable across all four densities, and here it is 0 of 5,254. At the same time *shown
-unreadable* --- the only verdict that certifies --- is ten points higher. Both figures move
+unreadable* — the only verdict that certifies — is ten points higher. Both figures move
 the same way: this engine says *proved clean* more often and *still readable* never.
 
 ⚠ **Platform and corpus vary together here, so this run cannot say which one did it.** The
 Mac's `~/Downloads` and this box's share no document. A weaker recogniser and a corpus of
 cleaner, larger type produce the same two numbers, and nothing in these two runs separates
-them --- the trap of that name, arriving in the measurement that decides whether the gate
+them — the trap of that name, arriving in the measurement that decides whether the gate
 can be trusted equally on both platforms. **The experiment that separates them is one
 corpus on both machines**, which is a fixture problem rather than a probe problem: the
 sweep needs real documents and neither corpus can travel. The cheap approximation is
@@ -3673,19 +3673,19 @@ already covers and `docs/THREAT-MODEL.md` §20 says is not enough. Recorded as o
 *The scale rule clears its bound here.* Of 372 controls not read back, **332 rendered at or
 above `MIN_CONTROL_PX`** and 40 below, with the two clamps in `ocr_gate::scale_for`
 attributing every one of the 332 to *neither*. On 2026-08-28 the Mac read 34 of 38 *below*
-the floor. So on this corpus the failure is not the scale rule missing what it aims at ---
+the floor. So on this corpus the failure is not the scale rule missing what it aims at —
 it is the engine declining a control that was rendered legibly, which is a different
 problem with a different fix.
 
 *The under-2 pt bucket is empty.* The section below ranks that control as the next
-increment, on the strength of its being the one bucket absolute in every axis --- 24 of 24
+increment, on the strength of its being the one bucket absolute in every axis — 24 of 24
 and 40 of 40 unread. Here it is **0 of 0**: every control in 109 documents landed in 2--6 pt
 (1,586) or 6--12 pt (782). The ranking is not wrong, but its subject does not occur in this
 corpus at all, so the increment would be unfalsifiable on this machine.
 
 ⚠ *Token length reverses.* `BUILD.md`'s `redact-reach-probe` section carries a ⚠ paragraph
-arguing from the denominator that long tokens fail **less** --- 22.7% for eight-or-more
-against 33.3% for five-to-seven --- and concludes that moving `control_from_page` off the
+arguing from the denominator that long tokens fail **less** — 22.7% for eight-or-more
+against 33.3% for five-to-seven — and concludes that moving `control_from_page` off the
 longest qualifying word would push the chooser toward the worse bucket. On Windows the rate
 climbs monotonically with length: **7.6%** at four characters, **10.9%** at five-to-seven,
 **23.6%** at eight-or-more. The two engines agree almost exactly on long tokens (23.6%
@@ -3694,14 +3694,14 @@ paragraph's arithmetic is right and its conclusion is macOS-only; the repair it 
 against is the right one here. **A rate argument is about the engine that produced it**, and
 this one had no platform label until now.
 
-#### Padding was built, measured and reverted --- 2026-08-28
+#### Padding was built, measured and reverted — 2026-08-28
 
 The section below ranked padding with a falsifiable prediction: bring every probe image into the
 8:1--16:1 band and the regions silent beyond 16:1 should become silent-free, matching the zero that
 band already produces at every control size. It was built, it worked mechanically, and the
 prediction is **false**.
 
-`ocr_gate::padded_height_pt` was one rule with two callers --- `geometry_for` for the scale budget
+`ocr_gate::padded_height_pt` was one rule with two callers — `geometry_for` for the scale budget
 and `stack` for the rows, because an image that grows after `scale_for` has outgrown the capacity
 computed for it. Blank rows went above the region strip, the side `ocr-probe`'s sweep measured as
 safe. Six mutations, four new and two re-aimed, all caught by the test named for each.
@@ -3718,7 +3718,7 @@ safe. Six mutations, four new and two re-aimed, all caught by the test named for
 
 Every figure identical. At `--regions 12` it was worse than neutral: the silent count stayed at
 **36**, *read spans, none holding it* went 30 to **42**, and *shown unreadable* fell from 276 to
-**264**. Padding fixed nothing and cost 12 regions their control --- consistent with the sweep,
+**264**. Padding fixed nothing and cost 12 regions their control — consistent with the sweep,
 which loses the token at the squarest shapes.
 
 **So the shape is a proxy after all, and the intervention says so where the stratification did
@@ -3726,17 +3726,17 @@ not.** The section below concluded from a cross-tabulation that at a fixed contr
 6 pt the shape flips the silent rate from 0 of 517 to 52 of 104. That reading is arithmetically
 correct and it was not causal: move those same regions into the band and they stay silent. The
 2 to 6 pt bucket is four points wide, and on a page of ordinary width the aspect and the control's
-size are tied within it too --- the bucket was not fine enough to break a relation the geometry
+size are tied within it too — the bucket was not fine enough to break a relation the geometry
 imposes continuously. **An intervention outranks a stratified observation**, and this cost a day
 to learn twice in opposite directions.
 
-**The change is reverted rather than kept.** It is not neutral --- it costs 12 provable regions at
-one density and nothing at the other --- and keeping a change whose own prediction was refuted
+**The change is reverted rather than kept.** It is not neutral — it costs 12 provable regions at
+one density and nothing at the other — and keeping a change whose own prediction was refuted
 because it is principled is how a codebase acquires machinery nobody can argue against. What is
 kept is the measurement, `testdata/text-wide.pdf`, and the probe axes that took it.
 
 **Ranked next, and it is the one thing every measurement here has agreed on**: the *under 2 pt*
-control. 24 of 24 and 40 of 40 unread, at every shape, before and after padding --- the only bucket
+control. 24 of 24 and 40 of 40 unread, at every shape, before and after padding — the only bucket
 in any axis that is absolute. `scale_for` cannot serve it, because 2 pt is
 `MIN_CONTROL_PX / MAX_SCALE` and no scale it may pick reaches the floor. Two routes, and they want
 measuring against each other rather than picking: raise `MAX_SCALE`, which costs buffer on exactly
@@ -3745,7 +3745,7 @@ legibly and say so, which turns 24 wrong-looking refusals into 24 honest ones wi
 region provable. The second is not a fix, and the gate saying *not verified* for a stated reason is
 worth more than saying it for none.
 
-#### The control's size in points, and a correction to the section below --- measured 2026-08-28
+#### The control's size in points, and a correction to the section below — measured 2026-08-28
 
 `redact-reach-probe` now buckets by the control's height **in points**, crosses it with the probe
 image's shape, and attributes every sub-floor control to one of the two clamps in
@@ -3760,7 +3760,7 @@ documents, with `--regions 40` in brackets:
 | under 2 pt (unreachable) | 24 / 24 [40 / 40] | **100.0%** | 12 [40] |
 | 2 to 6 pt | 31 / 193 [56 / 464] | 16.1% [12.1%] | 24 [40] |
 | 6 to 12 pt | 11 / 149 [0 / 75] | 7.4% [0.0%] | **0** [0] |
-| 12 pt and over | 0 / 0 | --- | 0 |
+| 12 pt and over | 0 / 0 | — | 0 |
 
 **Every control under 2 pt failed, at both densities.** That bucket's boundary is not chosen for
 reading: 2 pt is `MIN_CONTROL_PX / MAX_SCALE`, the size below which no scale the rule may pick
@@ -3776,18 +3776,18 @@ the control's size fixed in the 2 to 6 pt band and change only the shape:
 | wider than 16:1 | 12 / 24 [40 / 80] | **50.0%** |
 
 Same control band, 517 regions against 104, and the silent rate goes from zero to half. The
-sparser run adds the same comparison at the other control size --- under 2 pt is 0 of 12 silent
-inside the band and 12 of 12 outside it --- though that one rests on a single 12-region cell and
+sparser run adds the same comparison at the other control size — under 2 pt is 0 of 12 silent
+inside the band and 12 of 12 outside it — though that one rests on a single 12-region cell and
 the denser run has no population there at all.
 
-⚠ **Refuted by intervention the same day --- see the section above.** Padding those regions into
+⚠ **Refuted by intervention the same day — see the section above.** Padding those regions into
 the band left every one of them silent, so the shape is a proxy for something the 2 to 6 pt bucket
 does not resolve. The paragraph that follows is the reading this crossing supports, and it is
 wrong.
 
 **So silence needs a wide image *and* a small control, and neither alone.** The fixture in the
 section below is still correct and was over-read: it showed a 28:1 image with a **34.5 pt** control
-reading back perfectly, and 34.5 pt is a control size this corpus never contains --- the *12 pt and
+reading back perfectly, and 34.5 pt is a control size this corpus never contains — the *12 pt and
 over* row is empty at both densities. What it established is that the shape's effect is conditional
 on a small control, not that the shape does not matter. Writing *"the aspect was never the cause"*
 generalised one combination to a variable.
@@ -3800,19 +3800,19 @@ fired on real input. The doc comment is corrected rather than left standing.
 
 **Ranked next, and padding is back on with a prediction rather than a hope**: bound the probe
 image's aspect into the 8:1--16:1 band by padding, one term in `stack`'s `total`. The prediction is
-now specific and falsifiable --- the 24 regions at `--regions 12` that are silent beyond 16:1 should
+now specific and falsifiable — the 24 regions at `--regions 12` that are silent beyond 16:1 should
 become silent-free, matching the 0 of 133 and 0 of 149 the band already produces at every control
 size. The controls are unchanged: the middle-band regions must not move, and the sweep on
 `text-wide.pdf` must still read back at every shape. What padding cannot fix is the *under 2 pt*
-bucket inside the band, which is 0 of 12 silent but 12 of 12 unread --- those need `scale_for` or
+bucket inside the band, which is 0 of 12 silent but 12 of 12 unread — those need `scale_for` or
 `control_from_page`, and they are the next thing after.
 
-#### The aspect was never the cause --- measured 2026-08-28
+#### The aspect was never the cause — measured 2026-08-28
 
 `testdata/text-wide.pdf` was written to reach the band the corpus goes silent in, and it does.
 A 1684 pt sheet with **ordinary 14 pt text** builds an 18.1:1 probe image and sweeps to 28.1:1,
 where A4 with the same text caps out at 10.8:1. The lever is the page's width, not the text's
-size, which is what lets the control stay a comfortable 34.5 pt strip --- A4's is 30.5 --- while the
+size, which is what lets the control stay a comfortable 34.5 pt strip — A4's is 30.5 — while the
 image goes wide. On A4 those two pull against each other; that is the arithmetic in the section
 below, and it is why no existing fixture could do this.
 
@@ -3834,7 +3834,7 @@ So a probe image four times wider than anything the corpus calls silent reads pe
 control of ordinary size.
 
 ⚠ **This paragraph read "the aspect is not the cause, and the padding repair is dead" and that was
-too strong --- corrected the same day, see the section above.** A 34.5 pt control is a size this
+too strong — corrected the same day, see the section above.** A 34.5 pt control is a size this
 corpus never contains, so the run establishes that a wide image with an *ordinary* control is fine,
 which is one combination rather than a verdict on the variable. Holding the control at 2 to 6 pt
 and changing only the shape takes the silent rate from 0 of 517 to 52 of 104. Silence needs both.
@@ -3850,8 +3850,8 @@ was standing in for.
 **The two widest existing fixtures could not have answered this, and their own control says so.**
 `text-heavy.pdf` and `incr-xrefstream.pdf` reach 12.2:1, and on both the sweep's second control
 fails: the token does not read back at the gate's own shape, so no column of theirs is evidence
-about shape. That is the check firing for a second time on a second cause --- it was written after
-it failed for a first reason the same day --- and it is what stopped 12.2:1 being read as a clean
+about shape. That is the check firing for a second time on a second cause — it was written after
+it failed for a first reason the same day — and it is what stopped 12.2:1 being read as a clean
 wide-band result.
 
 **One asymmetry worth keeping.** The squarest end does lose the token: at 2.0:1 the engine returns
@@ -3860,12 +3860,12 @@ a span and the token is not in it. That is `read spans, none holding it`, not si
 ends, and only the squarer one reproduces here at all.
 
 **Ranked next**: measure the control's height in points on the corpus, as its own axis beside the
-existing four. `redact-reach-probe` already has the value --- `control_shape` computes
-`geometry.control_px` and the scale that produced it --- so it is one more bucket and one more
+existing four. `redact-reach-probe` already has the value — `control_shape` computes
+`geometry.control_px` and the scale that produced it — so it is one more bucket and one more
 denominator, not a new instrument. If the silence tracks control points rather than aspect, the
 repair is in `scale_for` or in `control_from_page`, and neither is padding.
 
-#### Padding was called a candidate on a confounded measurement --- corrected 2026-08-28
+#### Padding was called a candidate on a confounded measurement — corrected 2026-08-28
 
 The item ranked below was a repair aimed at the wide tail, and it carried one caveat: on
 `outline-simple` the earlier shape sweep had shown padding losing the control token while the
@@ -3877,7 +3877,7 @@ something the sweep could not have found in its old shape.
 margin`; `Vec::resize` appends white to the end of the buffer, so it grew the image *below the
 bottom margin* and left the control near the top. A padding change would not do that. Building
 each row through `stack` instead puts the white in the region strip, which is where a real page's
-extra height comes from --- and at the same height and the same aspect the answer flips:
+extra height comes from — and at the same height and the same aspect the answer flips:
 
 | `outline-simple`, 1190 px wide | white in the region strip | white appended below the margin |
 |---|---|---|
@@ -3890,13 +3890,13 @@ on `text-base14`, `outline-simple` and `encodings`. Both constructions are legit
 disagreement is the finding, so the sweep prints them side by side rather than choosing one.
 
 **The wide tail cannot be reproduced on these fixtures at all, and that is structural.** `stack`'s
-fixed rows --- two margins, the gap and the control strip --- are 104 to 117 px of a 1190-wide
+fixed rows — two margins, the gap and the control strip — are 104 to 117 px of a 1190-wide
 image here, capping the aspect at **10.1:1 to 11.3:1**. Every target at 12:1 and wider prints how
 many rows short it is instead of a blank reading, because a shape that was never built must not
 read like one the engine answered nothing for. Reaching past 16:1 needs a shorter control: the
 aspect is `width_pt / (tallest + control_pt + padding)` and the render scale cancels, so with
 `padding` fixed at 24 pt a 595 pt page needs the region and the control together under about
-13 pt. **That is a characterisation of the wide tail worth having** --- it is short regions with
+13 pt. **That is a characterisation of the wide tail worth having** — it is short regions with
 small controls, not wide pages.
 
 **The sweep's own control could not pass, and failed loudly.** The conclusion rests on the token
@@ -3908,25 +3908,25 @@ image explicitly now. A control that cannot pass is the lucky direction.
 **And the fixture table in `BUILD.md` was two counts behind.** The sweep's first control was added
 in the commit that last touched that table and the row was not moved with it, so every fixture the
 sweep runs on read one low before today. Re-measured from runs: 9/9, 8/8, 7/7, 7/8. `columns` and
-`vector-heavy` are unchanged, which is the tell that the drift is the sweep --- it is skipped on
+`vector-heavy` are unchanged, which is the tell that the drift is the sweep — it is skipped on
 both.
 
 ~~**Ranked next, and the caveat is gone rather than the risk**: pad the probe image toward the
 8:1--16:1 band from the wide side, one term in `stack`'s `total`. The destination is now measured
---- the token reads back at every shape `stack` can build --- and the origin still is not, because
+— the token reads back at every shape `stack` can build — and the origin still is not, because
 no fixture here reaches past 11:1. Building one that does is the cheaper half and comes first: it
 needs a page with a small control, which is a fixture parameter rather than a new instrument.~~
-**Done the same day, and it killed the repair rather than confirming it --- see the section
+**Done the same day, and it killed the repair rather than confirming it — see the section
 above.** The fixture reaches 28:1 and nothing goes silent, so the origin shape is innocent too.
 The two corpus controls stand for whatever replaces it: the 294 middle-band regions must not move,
 and the 12 sub-floor middle-band regions must stay silent-free.
 
-#### The two twelves are different regions --- measured 2026-08-28
+#### The two twelves are different regions — measured 2026-08-28
 
 The section below left one thing explicitly unmeasured, and named it as the reason: 12 of the 36
 silent refusals had rendered their control under 8 px, and 12 sat in a probe image at 8:1 or
 squarer, and two marginals of one population bound that overlap between 0 and 12 without
-measuring it. The two ends mean opposite things --- at 12 the squarer tail *is* the scale clamp
+measuring it. The two ends mean opposite things — at 12 the squarer tail *is* the scale clamp
 seen from the other side, at 0 they are separate defects. Crossing the axes costs one map at a
 call site that already holds both values, and `redact-reach-probe` now takes it. `--regions 12`,
 40 documents:
@@ -3941,7 +3941,7 @@ call site that already holds both values, and `redact-reach-probe` now takes it.
 | 16 px and over | wider than 16:1 | **12 / 24** | 50.0% |
 
 **The overlap is 0**, the end that says two defects. The cell that would have made them the same
-twelve --- *under 8 px* crossed with *up to 8:1* --- is not a zero rate, it has **no population at
+twelve — *under 8 px* crossed with *up to 8:1* — is not a zero rate, it has **no population at
 all**: no region in the squarest bucket ever rendered its control below the floor. So the squarer
 tail's silence is not the height rule seen from another angle. Every one of its 12 silent
 refusals was shown a control at or above 16 px, which is the height `scale_for` exists to
@@ -3956,14 +3956,14 @@ two marginals invited: the shape is the discriminator and the height is a multip
 reproduce the two rows it was derived from, which are counted at three different call sites.
 Keying the crossing on a constant aspect reported 36 silent refusals in the squarest bucket where
 the shape row says 12, and 0 in the widest where it says 24, while the height control stayed
-silent; keying it on a constant height did the mirror. One axis broken, one control --- which a
+silent; keying it on a constant height did the mirror. One axis broken, one control — which a
 single `[WARN]` over the cross-tabulated total could not have said. `docs/TRAPS.md` carries the
 entry.
 
-**A denser sample moves the population, and not by shape --- so only within-run readings
+**A denser sample moves the population, and not by shape — so only within-run readings
 compare.** At `--regions 40` the squarest bucket holds no regions at all and the widest holds 120,
 which is the opposite direction from more regions producing a taller image. It is not the
-capacity rule: *probe image will not fit* is 0 in both runs. It is the page set --- covering more
+capacity rule: *probe image will not fit* is 0 in both runs. It is the page set — covering more
 words leaves fewer survivors to choose a control from, so *no surviving word is long enough* goes
 from 60 to 594 and the pages that still have a control are a smaller, different set. What holds
 across both runs is what matters: the 8:1--16:1 band produced **zero** silent refusals over 294
@@ -3971,24 +3971,24 @@ regions and again over 459, and *under 8 px* with *wider than 16:1* was 100% sil
 (12/12 and 40/40).
 
 ~~**Ranked next, and now aimed at one tail rather than two**: pad the probe image toward the
-8:1--16:1 band from the **wide** side only --- blank rows are what `stack` already writes for its
+8:1--16:1 band from the **wide** side only — blank rows are what `stack` already writes for its
 margins and gap, so the change is one term in `total`. The wide tail is where the mechanism is
 (80 of 80 silent refusals at `--regions 40`, and it is the only tail that survives both
 densities), and it is the direction the fixture sweep never took, because padding a 7:1 fixture
 makes it *squarer*. It stays a candidate rather than an obvious win for the reason that sweep
 gave: on `outline-simple` padding lost the token while the engine went on returning a span, so
-the experiment has to read the token back.~~ **The caveat was a confound --- see the section
+the experiment has to read the token back.~~ **The caveat was a confound — see the section
 above.** Two controls are ready-made and still stand: the 294 middle-band regions must not move,
 and the 12 sub-floor middle-band regions must stay silent-free.
 
-#### The silence lives at the extremes of the probe image's shape --- measured 2026-08-28
+#### The silence lives at the extremes of the probe image's shape — measured 2026-08-28
 
 The step below was ranked and taken the same day. It did not go where it expected to, and
 both halves are worth recording.
 
 **On a fixture the silence does not reproduce at all.** `ocr-probe` now builds the gate's own
-probe image from a fixture --- one line's height of white where the region was, the control
-strip under it, through `ocr_gate::stack` --- and re-asks Vision at that shape and at two, four
+probe image from a fixture — one line's height of white where the region was, the control
+strip under it, through `ocr_gate::stack` — and re-asks Vision at that shape and at two, four
 and eight times its height, the content byte-identical in every row. Four fixtures, sixteen
 shapes, a span returned at every one:
 
@@ -4000,7 +4000,7 @@ shapes, a span returned at every one:
 | `outline-simple` | 1190x160, 7.4:1 | 0.9:1 | 1 at every shape | **no at 1.9:1 and 0.9:1** |
 
 The first draft of that sweep measured the wrong thing, and its own number said so: it used the
-page's *tallest blank band* as the region strip --- hundreds of rows --- and produced a 548 px
+page's *tallest blank band* as the region strip — hundreds of rows — and produced a 548 px
 image at 2.2:1, which is not the shape under suspicion. What the gate stacks is the rows one
 dragged region covers, and after the removal took the ink and `mask_columns` blanked the columns
 beside it, those rows are white. A line's height of white is that, and the real shape is 7:1.
@@ -4010,7 +4010,7 @@ made the engine stop reading the token back while it went on returning a span.
 
 **On the corpus the shape explains a great deal, and it is the extremes rather than one
 direction.** `redact-reach-probe` now takes the probe image's proportions from
-`ocr_gate::geometry_for` --- a ratio, so the render scale cancels out of it --- and buckets the
+`ocr_gate::geometry_for` — a ratio, so the render scale cancels out of it — and buckets the
 failures and the population together. `--regions 12`, 40 documents:
 
 | the probe image was | unread / all | rate | of those, silent |
@@ -4021,7 +4021,7 @@ failures and the population together. `--regions 12`, 40 documents:
 
 Four fifths of the population sits in the middle band and fails at 9.5% with **no silent refusal
 at all**. Every one of the 36 silent refusals is in a tail: 24 beyond 16:1 and 12 below 8:1. The
-engine is not degrading with width --- it answers over the range an ordinary page produces and
+engine is not degrading with width — it answers over the range an ordinary page produces and
 stops answering outside it, at both ends.
 
 **The two tails are not the same thing, and this cannot say what the lower one is.** A probe
@@ -4029,7 +4029,7 @@ image at 8:1 or squarer means the tallest region is large against the page's wid
 also when `scale_for` halves the image toward `MIN_SCALE` to fit the buffer. The two axes agree
 in a way that is suggestive and not more: 12 of the 36 silent refusals rendered their control
 under 8 px, and 12 sat at 8:1 or squarer. Whether those are the same twelve is a third
-cross-tabulation, and it has not been taken --- two axes that each report a 12 do not establish
+cross-tabulation, and it has not been taken — two axes that each report a 12 do not establish
 that they are counting one set of regions.
 
 **The denominator was wrong for one run, and the tell was every row reading 100.0%.** The
@@ -4040,22 +4040,22 @@ half of that entry.
 
 ~~**Ranked next, and it is a candidate rather than a question**: bound the probe image's aspect by
 padding it toward the middle band, rather than by rendering less of the page. It is one change in
-`ocr_gate::stack` with an obvious control --- the 294 regions between 8:1 and 16:1 must not move
---- and it is a candidate rather than an obvious win because `outline-simple` shows padding losing
+`ocr_gate::stack` with an obvious control — the 294 regions between 8:1 and 16:1 must not move
+— and it is a candidate rather than an obvious win because `outline-simple` shows padding losing
 the token, so the experiment has to read the token back and not merely count spans.~~
-**Superseded the same day --- see the section above.** It aimed at both tails; the crossing says
+**Superseded the same day — see the section above.** It aimed at both tails; the crossing says
 the lower one is a separate population, so the padding is one-sided.
 
 ~~**Ranked next: reproduce the silence on a fixture.** Everything above is measured on a corpus
 whose pixels deliberately never leave the process, so nothing here can look at the image the
 engine was handed. `testdata/` can: if a probe image built from a fixture reproduces a zero-item
-answer, the two candidates worth trying are cheap to separate --- a probe image that is a page
+answer, the two candidates worth trying are cheap to separate — a probe image that is a page
 wide and a few dozen rows tall may be outside what Vision accepts at all, and a control strip
 whose crop lands on rows the word does not occupy would be blank without any step failing. Both
 are properties of the image, which is where the evidence now points, and neither can be
-distinguished from the other by any count this harness can take.~~ **Done the same day --- see the section above.**
+distinguished from the other by any count this harness can take.~~ **Done the same day — see the section above.**
 
-**And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` --- either
+**And the verdicts now leave the module.** `ocr_gate::judge_all` returns `Judged` — either
 one `Refused` sentence about the machine or the file, or one `PageVerdicts` per page whose
 `PageOutcome` is either `Whole` (the page could not be judged at all: no control survived,
 the probe image will not fit, the control strip would not render) or `Regions`, one
@@ -4070,19 +4070,19 @@ region judged. `redact-gate-probe` asserts both shapes.
 corpus draws a line as one text object, so redacting a word in it takes the whole line and
 leaves no neighbour on those rows to misread; `columns.pdf` puts `alpha n` and `beta n` at
 the same *y* as two separate objects. Its longest word is `alpha`, five characters, and the
-probe's target filter was *six* --- so the one fixture that could tell the two rules apart
+probe's target filter was *six* — so the one fixture that could tell the two rules apart
 was the one it skipped. Lowering the floor to five moves no other corpus, because the choice
 is the longest word on the page.
 
-**Evidence.** Six unit tests on `mask_columns` --- the columns it keeps, rounding outward
+**Evidence.** Six unit tests on `mask_columns` — the columns it keeps, rounding outward
 rather than inward, a region wider than the page, a region dragged right to left, a region
-off the page refused rather than blanked, and a strip that is not whole rows --- five
+off the page refused rather than blanked, and a strip that is not whole rows — five
 mutations each caught by the test named for it, and `redact-gate-probe` at 8/8 on seven
 corpora. Removing the mask call turns `columns.pdf` red on two checks and no other corpus on
 any, which is the control: it is the only fixture where the right rule and the wrong rule
 disagree.
 
-#### Step 5, the independent parser --- measured 2026-08-26
+#### Step 5, the independent parser — measured 2026-08-26
 
 The step asks for a parser that did not write the file to re-check it, on the strength of
 spike 0.4: our own mark-and-sweep left `/Size` claiming more objects than the file held,
@@ -4091,74 +4091,74 @@ putting four readers to it is what decided the shape:
 
 | reader | on a stale `/Size` |
 |---|---|
-| a byte scan --- header, `%%EOF` count, trailing bytes, `startxref` offset | silent |
+| a byte scan — header, `%%EOF` count, trailing bytes, `startxref` offset | silent |
 | `lopdf`'s loader, the strict one that refuses a mis-chained xref | *OK, 8 pages* |
 | PDFKit, sharing no code with `lopdf` or PDFium | *OK, 8 pages*, 0.2 ms |
 | `qpdf --check` | **exit 3** |
 
-**No parser in the process catches it.** `lopdf` is the strict one by measurement --- it is
+**No parser in the process catches it.** `lopdf` is the strict one by measurement — it is
 what names a cross-reference table PDFium silently repairs, which is why the append's
-read-back uses it --- and it does not validate `/Size`. So the step cannot be delivered by
+read-back uses it — and it does not validate `/Size`. So the step cannot be delivered by
 asking a reader we already have, and **QPDF's place is now named rather than kept open**: it
 is the validator, it is a C++ dependency, and taking it is a Phase 3 decision.
 
 **The obvious repair was written and it was worse than nothing.** The rule *`/Size` must
 equal the number of entries the cross-reference table declares* is exactly what the defect
-looks like. Across the corpus it condemned a healthy swept rewrite of `links.pdf` --- 91
+looks like. Across the corpus it condemned a healthy swept rewrite of `links.pdf` — 91
 entries in three subsections against `/Size 102`, because sweeping makes object numbers
-sparse and an unlisted number is free --- and every `incr-*.pdf` fixture, whose `/Size` counts
+sparse and an unlisted number is free — and every `incr-*.pdf` fixture, whose `/Size` counts
 all revisions while the last section lists only what changed. Both are correct PDF and
 `qpdf --check` passes them. A validator that fires on correct input is worse than none.
 
 **What shipped is the narrow half**, `verify::structure`, on the single seam where every
 writer turns a `Document` into bytes: a PDF header, **exactly one `%%EOF`**, **no trailing
 data**, and a `startxref` whose offset is inside the file. The middle two are this section's
-own words for step 3, now assertions rather than prose. It costs a byte scan --- 65.8 ms on
-the 321 MB fixture --- and it is not cross-reference validation, which its own doc comment
+own words for step 3, now assertions rather than prose. It costs a byte scan — 65.8 ms on
+the 321 MB fixture — and it is not cross-reference validation, which its own doc comment
 says.
 
 **Its failing branch has no reachable input today**, and that is stated where it lives rather
 than left for whoever writes the mutation: `lopdf` 0.44 writes a header, one `%%EOF` and a
 `startxref` for every document it will serialise, an empty one included. It is kept as the
-standing assertion on the seam --- reachable by a `lopdf` bump, by a rewrite that starts
+standing assertion on the seam — reachable by a `lopdf` bump, by a rewrite that starts
 writing update sections, or by a redaction path that assembles bytes rather than serialising
-a graph --- and its logic is covered head-on, every complaint with a case, against a corpus of
+a graph — and its logic is covered head-on, every complaint with a case, against a corpus of
 43 real documents rewritten through the writer a reader uses.
 
 **The corpus control is the part to copy.** A hand-built fixture agrees with whatever the
 check's author had in mind, and it passed the bad `/Size` rule happily; 43 real rewrites are
-what killed it. The population had to be the **output** rather than the source, too --- a
+what killed it. The population had to be the **output** rather than the source, too — a
 source sweep reported `hostile-trailing.pdf`, correctly, since that fixture exists to carry
 84 bytes past its `%%EOF`, and excluding it would have meant an exclusion list that rots.
 
 **The gap is exercised rather than merely disclosed**, by `examples/qpdf_probe.rs`: every
 fixture through the real `save::write_copy`, two plans each, and `qpdf --check` on every
-output. First clean run 2026-08-26 --- 66 rewrites checked, 3 plans refused by the writer, 0
+output. First clean run 2026-08-26 — 66 rewrites checked, 3 plans refused by the writer, 0
 findings. Its two controls are the whole of its value: a planted stale `/Size` must be refused
 by qpdf, and planted trailing bytes must be refused by us, so neither reader can be silently
 absent. A finding is compared against the **source's** verdict, because a rewrite carries an
-input's defects faithfully --- the first run reported `outline-hostile.pdf` for a loop in its
+input's defects faithfully — the first run reported `outline-hostile.pdf` for a loop in its
 `/Outlines` tree, which is what that fixture is for.
 
 **qpdf's actual rule is now known, and it is implementable here.** It is *`/Size` equals one
-plus the highest object number*, not the entry count that was tried first --- and `lopdf`
+plus the highest object number*, not the entry count that was tried first — and `lopdf`
 answers both halves for every form measured: classic tables, xref streams, object streams and
 incremental files, and it separates the planted defect from a healthy file. So the in-app gap
 is closable, at the price of a parse of the output.
 
-**It is not closed by a check, and it is closed by an invariant --- which is better.** The
+**It is not closed by a check, and it is closed by an invariant — which is better.** The
 guard was written first and could not ship: asserting `doc.max_id` equals the highest object
 number fails on **both encrypted fixtures**, because `lopdf` removes the `/Encrypt` object
 when it authenticates while `max_id` stays put. Those files are correct and qpdf passes them.
 A carve-out would sit on exactly the family this repository has been caught by twice, and it
-would be unreachable anyway --- the encryption guard refuses those rewrites first, which is the
+would be unreachable anyway — the encryption guard refuses those rewrites first, which is the
 *"a caller that validates first cannot reach the guard beneath it"* shape.
 
 So `save::serialise` sets `max_id` to the highest object number it holds, before writing. Two
 lines, no verdict, no refusal, and **the defect class cannot occur** rather than being
 detected. It is also the only version of this with a reachable failing input, which is why it
 is the only one with a test that can go red: a `Document` with an inflated `max_id` is one line
-to build. Both directions are pinned, since the repair lowers a number --- one mutation leaves
+to build. Both directions are pinned, since the repair lowers a number — one mutation leaves
 `max_id` alone, the other lowers it one too far so `/Size` stops covering the highest object,
 and the second would be exactly as invisible to every reader here as the first.
 
@@ -4170,12 +4170,12 @@ tried, all three over-refusals, and why the thing that shipped is not a rule at 
 
 **Step 3 grew a piece on 2026-08-26, and it is smaller than it sounds.** `save::rewrite`
 now runs `sweep::collect` when the plan dropped or moved a page, so a page a reader removed
-takes its content stream --- and anything only it referenced --- out of the file with it.
+takes its content stream — and anything only it referenced — out of the file with it.
 That is the mark-and-sweep this section requires, on the path a reader already uses, and it
 was found by measuring rather than by reading: extracting page 1 of `links.pdf` produced a
 one-page file carrying all eight pages' content. What it is **not** is the sanitation this
 section is about. It collects what *that rewrite* orphaned, in a graph whose reachability
-is exactly `lopdf`'s idea of it, and touches none of the carriers in the table above ---
+is exactly `lopdf`'s idea of it, and touches none of the carriers in the table above —
 `/ActualText`, an appearance stream, a form field's value, a thumbnail, a prior incremental
 revision. A reader who has to be told which of those two a command did is being told the
 wrong thing; the difference has to be in the command, which is what steps 1 and 2 are.
@@ -4866,7 +4866,7 @@ discovery.
 - **No modal dialogs for routine work.**
 - **Sidebar** with thumbnails, outline, annotations and search results as tabs. All four
   exist as of 2026-08-16. The annotations tab was read-only until 2026-08-29, when a
-  comment's *body* became editable --- everything else about somebody else's annotation still
+  comment's *body* became editable — everything else about somebody else's annotation still
   is. See *Reading comments* below.
 - Dark and light themes following the system.
 
@@ -5094,18 +5094,18 @@ rediscovered:
 - ~~**The A0 vector page scrolls blank.**~~ Closed 2026-07-27 against the criterion as
   written — it never drops below its tier-1 placeholder — and not against what anyone would
   call a good experience, since it stays 6–10% sharp while moving. See Phase 1.
-- ~~**Windows is entirely unverified** --- no build, no gate run, no measurement --- and the
+- ~~**Windows is entirely unverified** — no build, no gate run, no measurement — and the
   tree does not currently compile there.~~ **Closed 2026-07-30.** It builds, gates, runs the
   viewer, ships an MSI and an NSIS installer, and parses in contained workers. Each of the
   three obstacles named here was real and each was removed: the ungated `libc::getrusage`
   calls in `sanitize_rewrite.rs` and `tile_bench.rs`; `pdfium_library_dir()` not knowing
   that the loadable library is `bin/pdfium.dll` there rather than `lib/libpdfium.dylib`; and
-  the worker sandbox being `sandbox_init` SBPL, which needed its own answer and got one --- a
+  the worker sandbox being `sandbox_init` SBPL, which needed its own answer and got one — a
   low-integrity token inside a job object, applied while the child is still suspended, with
   the evidence external (`scripts/win_modules.py` reads the app's module table from outside
   and finds no `pdfium`). `BUILD.md` keeps the list.
 - ~~**There are no tests.**~~ Started 2026-07-27, with the request queue and the `tile://`
-  parser --- 26 of them, each shown to fail against a deliberate mutation of the code it
+  parser — 26 of them, each shown to fail against a deliberate mutation of the code it
   covers. Rendering is still asserted by the spike probes rather than by tests, which is the
   right split while it needs a PDF and a PDFium build to say anything.
 
@@ -5242,7 +5242,7 @@ them would be a trap, which is the same reason the page article is focusable onl
 programmatically; `⌥⌘L` is the traversal.
 
 **What is still not here:** creating, editing or deleting a link. **Opening a web link was on
-this list until 2026-09-07 and is built** --- §11 has the decision, the three sub-choices it
+this list until 2026-09-07 and is built** — §11 has the decision, the three sub-choices it
 turned on, and what each file does.
 
 **Evidence.** 23 unit tests in `links.rs`, 49 in `links.test.ts` and 13 in `a11y.test.ts`;
@@ -5320,7 +5320,7 @@ working document, the journal or a save, so it landed against Phase 1's exit cri
 than waiting for Phase 2's.
 
 **Marks were never the missing half.** `progressive.rs` renders with `FPDF_ANNOT`, so PDFium
-already paints a sticky note's icon and a highlight's wash --- generating an appearance stream
+already paints a sticky note's icon and a highlight's wash — generating an appearance stream
 where the file supplies none, measured at 637 of the 756 pixels inside a note's own rectangle
 and 6,690 of 9,436 inside a highlight's. What was missing was the author, the date, the body
 and the reply, and `annots.rs` reads all four out of the object graph.
@@ -5331,27 +5331,27 @@ starts *writing* annotations:
 - **The scan is `lopdf` at document level, not PDFium per page.** PDFium's annotation API
   needs a loaded page and `FPDF_LoadPage` costs up to 44 ms on a complex one, so listing a
   document's comments through it is a page load per page. The object graph answers the same
-  question from one parse --- the parse `encoding.rs` already pays for --- and hands over
+  question from one parse — the parse `encoding.rs` already pays for — and hands over
   `/IRT`, which `pdfium-render` does not expose at all.
 - **The reply graph is made acyclic in the backend.** A file can make `/IRT` a loop in two
   objects, and every consumer would otherwise need a visited set. `resolve_replies` cuts the
   link that closes a loop and counts it, so the panel walks a thread with no guard of its own.
 - **No field the frontend receives can carry a URL.** The kind is an enum of ours rather than
   the document's `/Subtype`, the date is rebuilt from parsed digits rather than passed through,
-  and `no_comment_field_may_carry_a_url` is the exhaustive-match test that says so --- the same
+  and `no_comment_field_may_carry_a_url` is the exhaustive-match test that says so — the same
   arrangement `outline.rs` has with `Target`, and the reason `docs/THREAT-MODEL.md` T8 still
   holds now that a document's own prose reaches the DOM in quantity.
 
 `testdata/comments.pdf` is the corpus, with `comments-rotated.pdf` beside it, and
 `examples/comments-probe` reads both (26/26 and 5/5, plus a `--mode clean` control on a
-document with no annotations). It found nothing in the product --- it was written first ---
+document with no annotations). It found nothing in the product — it was written first —
 and five defects in itself and in the harnesses, all recorded in `docs/TRAPS.md`:
 
 - a square rectangle that could not tell a rotation from an identity;
 - three malformed `/Annots` entries written after 1,200 notes, which the per-page bound meant
   nothing ever read;
 - a sidecar named `comments-manifest.json`, which `viewer_check.py` binds to
-  `TPDF_READING_MANIFEST` by suffix alone --- so a manifest keyed by page number reached a
+  `TPDF_READING_MANIFEST` by suffix alone — so a manifest keyed by page number reached a
   consumer expecting a list of pages, threw, and ended the run sixteen checks in;
 - a `/Rotate 90` page inside an otherwise upright document, which makes it *mixed-size* and
   turned two rotation checks red against a viewer behaving as designed. It has its own file
@@ -5366,12 +5366,12 @@ state" from "this fixture meets a documented gap" in a single build.
 **What is deliberately not here:** creating, editing or deleting a comment, and any change to
 the file. That is Phase 2 and needs the working document.
 
-##### Naming one so it can be edited --- the model and the write, 2026-08-29
+##### Naming one so it can be edited — the model and the write, 2026-08-29
 
 The README says a note somebody else wrote is read-only *because the model knows nothing about
 it*, and the blocker was narrower and more specific than that: `Comment::id` is **a position in
 one scan**. Inserting a comment on an earlier page renumbers every later one, and the plan
-crosses a process boundary --- so an id cannot name the thing a reader edited by the time the
+crosses a process boundary — so an id cannot name the thing a reader edited by the time the
 edit is written.
 
 The file already has a name for it. `Comment::object` is the annotation's own object as
@@ -5381,7 +5381,7 @@ name" cannot mean different things in two places.
 
 **`None` is a structural limit, not a gap.** PDF permits an annotation to be a *direct
 dictionary* inside a page's `/Annots` array rather than an object of its own, and this scan
-accepts those --- they are on the page and somebody wrote them. Such an annotation has no object
+accepts those — they are on the page and somebody wrote them. Such an annotation has no object
 number, so an incremental update has nothing to override: changing it means rewriting the page
 that contains it. That is also why it can never be an `/IRT` target, which is a property the
 scan has always had and nobody had written down.
@@ -5389,8 +5389,8 @@ scan has always had and nobody had written down.
 The write is `save::write_note_edits`, in the worker, on the append path (the guard inside it
 became `save::set_note` the next day, when the rewrite path gained a caller). It needed no new
 machinery: an incremental update *is* a new version of an object, so bringing the annotation
-across with `opt_clone_object_to_new_document` --- the same call each page's `/Annots` already
-uses --- and setting `/Contents` and `/M` is the whole of it. `/M` moves because the note did;
+across with `opt_clone_object_to_new_document` — the same call each page's `/Annots` already
+uses — and setting `/Contents` and `/M` is the whole of it. `/M` moves because the note did;
 every viewer shows that date, and a reader whose own words appear over somebody else's timestamp
 has been told something false. The date is carried **in the plan** rather than read from a clock
 in the worker, exactly as `PlannedMark::made` is, so the same plan writes the same bytes.
@@ -5400,12 +5400,12 @@ lesson rather than tidying: it asked *does this plan only add marks*, which was 
 as *can this be an append* only while marks were the only thing an append could write. A
 predicate named after the population it happens to cover is renamed by every kind somebody adds.
 Two mutations were aimed at its body and had already been re-aimed once, three days earlier, for
-a redaction clause --- so the anchor now lives in one named constant, and the next clause moves
+a redaction clause — so the anchor now lives in one named constant, and the next clause moves
 one string rather than two.
 
 ~~**Not done: nothing constructs such a plan.** There is no command, so no reader can edit a
-comment yet --- the model does not hold note edits, which is where undo and the journal come in.~~
-**The model holds them since 2026-08-29 --- see the subsection below.** What is still missing is
+comment yet — the model does not hold note edits, which is where undo and the journal come in.~~
+**The model holds them since 2026-08-29 — see the subsection below.** What is still missing is
 narrower and is named there: no reader can reach the command.
 What exists is proved rather than merely present: `a_comment_out_of_the_file_is_overridden_by_its_object`
 drives `append_update` end to end and asserts the new body, the new `/M`, **and that the original
@@ -5413,7 +5413,7 @@ bytes survive byte for byte as a prefix**, which is what an append is and the pr
 break first if this were quietly rewriting. Three mutations are registered and all three are
 caught.
 
-##### The model holds the edit, and both writers write it --- 2026-08-29
+##### The model holds the edit, and both writers write it — 2026-08-29
 
 The half above could write a note edit and nothing could make one. The model holds them now:
 `Command::Rewrite` is a journal command like every other, so a rewritten comment is undoable,
@@ -5422,7 +5422,7 @@ marks come from.
 
 **Three fields where `Renote` has two**, and the extra one carries the whole difference between
 editing your own mark and editing somebody else's comment. A mark's page is in a table this
-model owns; a foreign comment's is not, because the model has never read the file --- the scan
+model owns; a foreign comment's is not, because the model has never read the file — the scan
 runs in the worker. So the page comes in with the command, and it is what lets a deletion take
 the edit with it rather than leaving an instruction about a comment the written file does not
 contain.
@@ -5430,19 +5430,19 @@ contain.
 **What the model cannot check, it does not pretend to.** "No such object", "not a dictionary"
 and "not an annotation" are all refusals about *the file*, and they stay in
 `save::set_note`, where the bytes are. The one thing refused on this side is object **0**,
-which is the head of the free list and can never be an indirect object at all --- a plan naming
+which is the head of the free list and can never be an indirect object at all — a plan naming
 it is a defect in tpdf rather than a document that changed under the reader. Everything else
 this layer refuses is about the page.
 
 **Undo has nothing to restore to, and that is the design rather than a gap.** A mark's note
 reverts to the previous `Renote` or to the `Annotate` that made it. There is no `Annotate`
-here, so undoing the first rewrite leaves the model with *nothing to say about that object* ---
+here, so undoing the first rewrite leaves the model with *nothing to say about that object* —
 and a save then writes the file's own text, because `planned_notes` reports what the model
 holds and it holds nothing. There is no "revert this comment" command and none is needed.
 
 **The defect this increment actually fixed was in the other writer.** `Plan::notes` had one
 reader, on the append path, and `Plan::is_appendable` says no the moment the pages are not the
-file --- so *edit a comment, delete a page, save* wrote a successful file with the edit gone.
+file — so *edit a comment, delete a page, save* wrote a successful file with the edit gone.
 `save::rewrite_note_edits` closes it, sharing `set_note` with the append so that the
 `/Subtype` guard cannot be lost by a second copy of the loop, and running **first** in the
 rewrite, before anything can make the annotation unreachable. `docs/TRAPS.md` has it under *a
@@ -5457,12 +5457,12 @@ at the walk dies every time rather than two runs in three. That entry is in the 
 Twelve mutations, all caught by the test named for each: five in the model, four across the two
 writers, two at the `edits.rs` boundary, and one for the accounting observable that no document
 can otherwise distinguish. Two of the three the previous increment registered had to be
-re-aimed --- `set_note` moved their lines out of `write_note_edits` --- and the anchor gate is
+re-aimed — `set_note` moved their lines out of `write_note_edits` — and the anchor gate is
 what said so.
 
-~~**Not done: no reader can reach it.**~~ **Done 2026-08-29 --- see below.**
+~~**Not done: no reader can reach it.**~~ **Done 2026-08-29 — see below.**
 
-##### The reader's path, and the join that makes it visible --- 2026-08-29
+##### The reader's path, and the join that makes it visible — 2026-08-29
 
 `annot_rewrite` had no caller and the panel had no idea the model held anything. Both halves
 of that are closed, and the second is the one worth stating first because it is the half a
@@ -5473,14 +5473,14 @@ through.** The comments a reader sees come from a scan of the file on disk; what
 typed since lives in the model. A consumer that saw the first without the second would show
 somebody the words they had just replaced. Putting the join in the translator means the panel,
 the popup and the overlay's hit test are all answered from one place rather than each
-remembering to look --- and it is matched on the **object**, never on `Comment.id`, for the
+remembering to look — and it is matched on the **object**, never on `Comment.id`, for the
 reason that whole increment exists.
 
 **The date moves with the body**, and `annots::parse_date` became `pub(crate)` so that the two
 are built by one function. The panel puts an edited comment's date in the same byline as the
 date of a comment nobody has touched; two formatters would show one row in a different shape
 from the row above it. A reader whose own words appear under somebody else's timestamp has been
-told something false, and this is the second place that sentence has had to be written --- the
+told something false, and this is the second place that sentence has had to be written — the
 first is in `save.rs`, about `/M`.
 
 **The body is read-only until the reader arms it.** A textarea sitting in the popup from the
@@ -5488,7 +5488,7 @@ moment it opens would read as the reader's own note and would let a stray keystr
 colleague's words. So there is an Edit button, and `edit.editForeignMark` beside it for a
 reader on the keyboard. That is the posture *Redact region by dragging* takes and for its
 reason: arming silently costs more than one press. Once armed it is `markpopup.ts`'s
-discipline exactly --- the text commits when the box closes, Escape included, and only a
+discipline exactly — the text commits when the box closes, Escape included, and only a
 changed body is sent.
 
 **A comment with no object of its own offers no button rather than a disabled one.** There is
@@ -5497,30 +5497,30 @@ and a disabled control that is never enabled for a given comment is a promise th
 keep.
 
 **Two mechanical findings, both from checks that already existed.** The command sweep in
-`appcommands.test.ts` went red because a correctly-guarded command reaches no action --- the
+`appcommands.test.ts` went red because a correctly-guarded command reaches no action — the
 same treatment its six siblings get, and the sweep's own comment says why. And the fake DOM's
 `querySelector` matches tag names only and has no `replaceWith`: the obvious implementation,
 finding the body and swapping the editor over it, would have worked in a browser and thrown
 under the unit suite. The popup repaints its children instead, which needs neither.
 
 ~~**Not done:** replying to a comment, changing its author or its subject, and deleting one.~~
-The first of those is done --- see below. Changing an author or a subject, and deleting a
-comment somebody else wrote, are not. The panel's own rows are still not editable --- the
+The first of those is done — see below. Changing an author or a subject, and deleting a
+comment somebody else wrote, are not. The panel's own rows are still not editable — the
 editor is in the popup, and a reader reaches it from the page or from the row.
 
-##### Answering a comment, which is a comment --- 2026-08-29
+##### Answering a comment, which is a comment — 2026-08-29
 
 **A reply is a `MarkKind::Note` with a parent, and nothing else is new.** That variant's own
-doc comment already argued the case for this shape --- *"It reuses the rest of the machinery
+doc comment already argued the case for this shape — *"It reuses the rest of the machinery
 deliberately... A parallel type would have duplicated all of it to express one absent
-field"* --- and a reply is the same argument one field further on. It is a `/Text` annotation
+field"* — and a reply is the same argument one field further on. It is a `/Text` annotation
 the reader authored, so removal, body editing, colour, undo, the id table and the whole state
 reply come free, and it saves through the append path that already existed. The journal did
 not change at all: `Command::Annotate` carries identities only, so `Mark::reply_to` lives on
 the mark body in `Doc`'s table and the enum stays `Copy`.
 
 **The refusal is one-directional, which is the thing to be careful about.** `Mark::strokes`
-and `Mark::stamp` are biconditionals --- the field is present exactly when the kind says so.
+and `Mark::stamp` are biconditionals — the field is present exactly when the kind says so.
 A parent is not: a comment with no parent is an ordinary sticky note and is what almost every
 comment is, so `Doc::annotate` refuses a parent on a kind that cannot carry one and refuses
 nothing in the other direction. A test asserting both halves would have been asserting
@@ -5530,7 +5530,7 @@ something the model deliberately does not do.
 `check_replies` cannot live inside `write_marks`, because the two save paths hand that
 function different documents: the rewrite gives it the one being written, and the append gives
 it a *new, empty* one whose previous revision holds the annotation being answered. So the
-lookup happens once in each path --- and a refusal with two call sites is exactly the shape
+lookup happens once in each path — and a refusal with two call sites is exactly the shape
 `docs/TRAPS.md` records drifting, where one caller reaches the writer directly and never meets
 the guard its sibling has. `write_marks` takes a `RepliesChecked` as an argument, so a third
 save path cannot write a mark until it has produced one.
@@ -5539,13 +5539,13 @@ save path cannot write a mark until it has produced one.
 `write_marks`, which is the obvious spot, it refused correctly and diagnosed wrongly: by then
 `materialise` had unlinked the dropped page and `sweep::collect` had deleted it, so a reply
 naming a page was refused with *"the comment being answered is not in this document any
-more"* --- a true sentence about the file being built, and the one explanation about the
+more"* — a true sentence about the file being built, and the one explanation about the
 reader's own document that is certainly wrong. It belongs beside `rewrite_note_edits`, which
 had learned the same thing one increment earlier and carries a comment saying so. Both
 placements refuse, so only an assertion on the refusal's *wording* can tell them apart.
 
 **Read back through `annots.rs`, never through PDFium.** `pdfium-render` does not expose
-`/IRT` at all --- which is why comments are read through `lopdf` in the first place --- so a
+`/IRT` at all — which is why comments are read through `lopdf` in the first place — so a
 reply that failed to set it would arrive through that reader as an unrelated second note by
 another author, with nothing going red. `annots.rs` is a separate implementation from
 `save.rs`, which is what makes the round trip a differential rather than the writer agreeing
@@ -5555,7 +5555,7 @@ checks it.
 
 **In the popup, one editor with two destinations.** `edit()` and `reply()` share the arming;
 what differs is where the words go, which is the one thing a reader would not forgive getting
-wrong. A reply opens **empty** where a rewrite opens at what the comment says --- a reply box
+wrong. A reply opens **empty** where a rewrite opens at what the comment says — a reply box
 pre-filled with somebody else's words is the shape of mistake that gets sent. And an empty
 reply is not sent, where an empty rewrite is a legitimate clearing of a body: that is the only
 place the two operations differ at the destination, and it has a test on each side.
@@ -5566,7 +5566,7 @@ guards ask the same question today, and one flag driving both would let a mutati
 them survive.
 
 **Not done:** changing a comment's author or its subject, and ~~deleting one somebody else
-wrote~~ (done 2026-08-29 --- see *Deleting a comment the file came with* below; the design
+wrote~~ (done 2026-08-29 — see *Deleting a comment the file came with* below; the design
 question this note raised was answered by taking the rewrite, and `is_appendable` gained the
 clause that forces it). The first two are fields beside the body and would go through the same
 override. The panel's rows are still not editable.
@@ -5735,7 +5735,7 @@ One thing is known and not yet done:
 - **A cancelled tile is a real partial composite**, not an untouched buffer, but whether it
   is worth showing is unmeasured: the A0 fixture saturates every similarity metric tried
   (see `AGENTS.md`). That needs a realistic drawing, not a stress fixture.
-##### Form-field appearances --- done 2026-07-31
+##### Form-field appearances — done 2026-07-31
 
 The progressive path now owns the same form lifecycle as the safe wrapper: a pinned
 `FPDF_FORMFILLINFO` for the document lifetime, `FORM_OnAfterLoadPage` and
@@ -5747,7 +5747,7 @@ complete widget over a partial page would make incomplete pixels look authoritat
 `/AP` appearance stream, so only the form environment can make it visible. Before the fix,
 the safe and progressive paths differed in **4,587 of 4,194,304 bytes**; afterwards they
 are byte-identical without slicing and through a forced pause/resume. The existing
-`hostile-unused-form.pdf` is the opposite control --- an unused AcroForm still compares
+`hostile-unused-form.pdf` is the opposite control — an unused AcroForm still compares
 byte-identically, so initialising the environment does not alter an ordinary page.
 
 This work also found `progressive-probe` still hardcoding `vendor/pdfium/lib` after the app
@@ -6064,7 +6064,7 @@ characters the query did not contain; none is guessed at. A query of only whites
 refused rather than run, because the fold has already destroyed the only distinction such
 a query could be drawing.
 
-**One page per request, sequentially --- sixteen since 26.9.2.** The render thread is FIFO
+**One page per request, sequentially — sixteen since 26.9.2.** The render thread is FIFO
 and shared with tiles, so a single job that scanned the document would hold it and every tile
 behind it would wait. At page granularity a search interleaves, and cancellation is not asking
 for the next page — there is nothing to withdraw. A generation counter drops replies belonging
@@ -6079,7 +6079,7 @@ it — the worst case, since nothing can stop early — took **843 ms**, about 1
 page, when every page was extracted afresh for every query. That is the extraction measured
 above, not the matching. Since 26.9.2 the characters are kept in a per-document store and the
 query is compiled once for the walk rather than once per page, which is 587.7 ms to 13.3 ms
-on the same corpus for a query that does hit --- measured interleaved by `search-probe --mode
+on the same corpus for a query that does hit — measured interleaved by `search-probe --mode
 scan`, and the first query still pays the extraction, because it is the one that fills the
 store. The first hit appears in the time it takes to reach the page it is on, which for a
 search from where the reader is standing is the first request.
@@ -6120,13 +6120,13 @@ rediscovering — a test that cannot distinguish its own silence from a pass.
   and nothing was comparing them; they are compared now.
 
 ~~Not done: regular expressions, search within a selection, and matching across a page
-boundary.~~ **All three done 2026-08-01 --- see below.**
+boundary.~~ **All three done 2026-08-01 — see below.**
 
-##### Recent documents in the palette --- 2026-07-30
+##### Recent documents in the palette — 2026-07-30
 
 The list is not new and neither is the ordering: `session.rs` has kept every document that
 has been read, most recent first, deduplicated by path and truncated, since session restore
-needed it. **Reaching the second one has never been possible** --- a reader who wanted
+needed it. **Reaching the second one has never been possible** — a reader who wanted
 yesterday's *other* document went through the file dialog for a file the application already
 knew about. Nothing was built here except the way in.
 
@@ -6137,32 +6137,32 @@ part of a name.
 The registry became append-only-plus-one: `replace(prefix, commands)` swaps a whole group,
 because the ordering changes whenever a document is opened and re-registering without removing
 would leave yesterday's ordering beside today's. It also drops the replaced ids from the
-recently-run list --- inert today, since ranking looks an id up and finds nothing, and wrong
+recently-run list — inert today, since ranking looks an id up and finds nothing, and wrong
 the moment an id is reused for a different document, which is exactly what these ids do.
 
 The part with an answer that can be wrong is the **label**. A basename is what a reader
 recognises and is not unique: `report.pdf` in three client folders is the normal case, and
 three identical rows are worse than no list. A full path is unique and unreadable at a glance.
 So the basename is shown and **only the colliding labels** lengthen, one directory at a time,
-until they differ --- one awkward pair does not make every other row longer. Two labels that
+until they differ — one awkward pair does not make every other row longer. Two labels that
 can never differ grow to the whole path and stop, which is what makes it terminate on any
 input.
 
 The list is refreshed from disk when the palette opens, behind the palette rather than in
 front of it: it only changes when a document is opened, so it is almost always already right,
 and blocking a keystroke on a file read to cover the case where it is not would make every
-use of the palette pay for it. Nothing checks that the files still exist --- one filesystem
+use of the palette pay for it. Nothing checks that the files still exist — one filesystem
 call per entry on a path a keystroke waits behind, to prevent an error `openPath` already
 produces correctly, and a document on an unmounted volume is one a reader may well want
 offered.
 
 13 unit tests over the labels and the group replacement, all proved by mutation. The one
-thing no unit test can reach is that the *chain* exists --- session file written by Rust,
-read back, turned into commands, registered --- so `session_check.py` asserts the restored
+thing no unit test can reach is that the *chain* exists — session file written by Rust,
+read back, turned into commands, registered — so `session_check.py` asserts the restored
 document is the **first** recent command offered, with the empty-session phase as its
 control: no session, nothing offered.
 
-##### The results sidebar --- 2026-07-30
+##### The results sidebar — 2026-07-30
 
 §8's third tab. Worth building rather than leaving the find bar's counter to stand for it,
 for the same reason the palette exists: `12 of 5712` says how much there is and nothing
@@ -6170,7 +6170,7 @@ about what is in it.
 
 **The snippets come from the backend**, and that is not an optimisation. A row shows the
 words around its hit; those words are on the page, and the frontend does not have the page
---- `search.rs` extracts the text, matches against it, and drops it again. Building snippets
+— `search.rs` extracts the text, matches against it, and drops it again. Building snippets
 here would mean re-fetching every page a hit is on, which on the 775-page corpus is the whole
 document's text in order to show a screenful of it. So a `Match` carries `before`, `hit` and
 `after`, built where the characters already are, and the cost is stated: a query matching
@@ -6189,30 +6189,30 @@ that stopped at 2,000 without saying so is a document that appears to contain 2,
 
 13 unit tests and 4 functional checks, taking `viewer_check.py` to 101 names. The split is
 the one `sidebar.ts` already implies: the state machine and the status line are unit-tested
-against the fake DOM, and what only a real webview can answer --- that a row *says* what the
-page says at the indices the match reported, and that pressing one moves the document ---
+against the fake DOM, and what only a real webview can answer — that a row *says* what the
+page says at the indices the match reported, and that pressing one moves the document —
 is functional. The load-bearing check is the first of those, and it is the same shape as the
 search check beside it: a row is tied to specific content, re-extracted independently. A
 check that a row is non-empty passes for a row describing the wrong hit.
 
 **A mutation reported SURVIVED for a mistake in the harness**, which is the most misleading
 verdict a mutation pass can print: its `expect` named a functional check, and
-`mutate_frontend.py` runs vitest. Both harnesses now derive the list of test names --- from
-vitest's verbose reporter and from libtest's `--list` --- and refuse to run a mutation naming
+`mutate_frontend.py` runs vitest. Both harnesses now derive the list of test names — from
+vitest's verbose reporter and from libtest's `--list` — and refuse to run a mutation naming
 one that does not exist. Proved by pointing an `expect` at a name that is not there and
 watching it refuse, because a guard that has never fired looks exactly like one that keeps
 passing.
 
-##### A bound on the text cache --- 2026-07-30
+##### A bound on the text cache — 2026-07-30
 
-Named twice above as missing, and search is what made it matter --- though not in the
+Named twice above as missing, and search is what made it matter — though not in the
 obvious way. A whole-document scan never touches the front-end cache at all: the matching is
 in Rust and only the hits cross. What fills it is a reader **stepping through** the results,
 because each jump loads the page it lands on to know where to scroll. 5,712 matches over 775
 pages is 775 pages of characters retained by somebody holding down ⌘G.
 
-Least-recently-used, bounded at **400,000 characters** --- about 16 MB, since a character
-costs a code point plus four box coordinates --- with a floor of **8 pages** kept whatever
+Least-recently-used, bounded at **400,000 characters** — about 16 MB, since a character
+costs a code point plus four box coordinates — with a floor of **8 pages** kept whatever
 they cost. Characters rather than pages because that is what the memory tracks and page size
 varies by three orders of magnitude across this repository's own corpus: 177 characters a
 page on `text-base14`, none at all on `vector-heavy`. The floor is what stops a single page
@@ -6222,14 +6222,14 @@ turning a memory concern into an IPC storm on every frame.
 `peek` counts as a use, which is the part worth stating: it is the paint path, so the pages
 on screen are continuously the youngest and are the last things that could be dropped.
 
-8 unit tests, and the first run of them found **two that could not fail** --- which is the
+8 unit tests, and the first run of them found **two that could not fail** — which is the
 whole point of running it and is the more interesting half of this entry:
 
 - The re-arrival correction in `remember` was **unreachable**. `load` returns from the cache
   before it issues a request and `pending` dedupes a race, so `remember` is only ever called
   for a page the cache does not hold. Deleted, and the test with it.
 - **A stale turned view is invisible.** Eviction has to drop the rotated copy too, or the
-  leak moves rather than closing --- and on a rotated document that map is the larger of the
+  leak moves rather than closing — and on a rotated document that map is the larger of the
   two. But `view` consults `pages` first and never reaches `turned` for a page that has gone,
   so "an evicted page reads as null" passes whether or not the view was dropped. The claim is
   only testable against a *count*, so the cache exposes one.
@@ -6241,7 +6241,7 @@ Deliberately **no functional check**. The scenario the bound exists for needs a 
 page visits to reach on a real document, which is minutes in `viewer_check.py` to re-assert
 what eight unit tests already prove by mutation.
 
-##### Matching case and whole words --- 2026-07-30
+##### Matching case and whole words — 2026-07-30
 
 Two options, `search::Options`, defaulting to off so that a reader who never opens the
 toggles gets exactly the search described above. They are passed to the matcher rather than
@@ -6250,36 +6250,36 @@ whole-word filter on this side would need each hit's *neighbours*, which is the 
 which is the whole document's characters to answer a question about a dozen hits.
 
 **Matching case turns off half the fold and nothing else.** Whitespace still collapses and
-soft hyphens still disappear, because neither is about case --- someone who wants `Raster`
+soft hyphens still disappear, because neither is about case — someone who wants `Raster`
 rather than `raster` has not asked for a phrase to stop matching across a line break.
 
 **Whole word is `\b`**: a boundary sits between two characters when one is a word character
 and the other is not, and the ends of the page are boundaries. It is tested on the *folded*
-sequence, which is what makes a soft hyphen not break a word --- it is gone by then --- and a
+sequence, which is what makes a soft hyphen not break a word — it is gone by then — and a
 line break count as one.
 
 Two things in it are not obvious and both have a test named for them. A rejected candidate
 advances the scan by **one character, not by the needle's length**: `ab-a` occurs twice in
 `ab-ab-a`, overlapping, and only the second is a whole word, so skipping the span walks past
-it. And the word class is letters, digits and underscore --- **not** combining marks, which
+it. And the word class is letters, digits and underscore — **not** combining marks, which
 `src/lib/text.ts` does count, so a whole-word search for `cafe` still matches a decomposed
 `café`. That divergence is deliberate: the standard library exposes no general-category
 data, and the consequence is a case the unrestricted search matches anyway.
 
-10 new unit tests, and `scripts/mutate_rust.py` is new with them --- the backend had no
+10 new unit tests, and `scripts/mutate_rust.py` is new with them — the backend had no
 mutation harness at all, and `search.rs` is its densest piece of pure logic. 16 mutations,
 every one caught by the test named for it, after three rounds: one mutation was a no-op
 (`to_ascii_lowercase().to_lowercase()` is `to_lowercase`), one predicted the wrong test, and
 one anchored on text `rustfmt` had reflowed. Three functional checks take `viewer_check.py`
 to 97 names; `backend-probe` gains one that fails if the options do not cross the worker
-boundary, and *skips* --- naming why --- on a page where the option changes nothing, since
+boundary, and *skips* — naming why — on a page where the option changes nothing, since
 agreement there would not show the option arriving.
 
 Writing it turned up two defects that had nothing to do with search. `keys.ts` rendered
 Shift before Option while the comment inside it said the opposite, unreachable because no
 binding held both; splitting `render(binding)` out of `label(id)` makes it assertable, and
 the mutation now goes red. And `mutate_rust.py` reproduced, through `shutil.copy2`, the
-mtime-restore defect this document records two paragraphs above as a `mv` problem --- it was
+mtime-restore defect this document records two paragraphs above as a `mv` problem — it was
 never a `mv` problem. Both are in `docs/TRAPS.md`.
 
 #### The command palette, and the registry under it — 2026-07-27
@@ -6327,7 +6327,7 @@ expected victim written down first. All fourteen were caught. Two results worth 
   is recorded next to the line so the next reader does not "fix" it.
 
 ~~Not done, and unchecked rather than merely unfinished: **Cmd-K itself and the command
-list `App.svelte` registers are covered by nothing.**~~ **Closed 2026-08-01 --- see below.**
+list `App.svelte` registers are covered by nothing.**~~ **Closed 2026-08-01 — see below.**
 Still absent: user-rebindable keys and persisted recents.
 
 Two items listed here are now done and are recorded where they were closed rather than
@@ -6375,7 +6375,7 @@ tests rather than the one that usually fails.
 #### Fitting the page, and typing a zoom — done 2026-07-30
 
 Fit-width was the only fit there was, `⌘0` reached it, and everything else was the zoom
-ladder --- which is deliberately coarse, since each stop throws away every tier-2 tile, so a
+ladder — which is deliberately coarse, since each stop throws away every tier-2 tile, so a
 reader who wanted 175% could not get there at all. Three commands and a mode close it:
 **fit page** (`⌘9`), **actual size** (`⌘1`), and **zoom to…** (`⌥⌘Z`), which is the second
 command to take a value and goes through the same palette argument the page jump does.
@@ -6383,13 +6383,13 @@ command to take a value and goes through the same palette argument the page jump
 **The fit became a mode rather than a flag, and that is the substance of the change.** It was
 `fitting: boolean`, and a boolean cannot hold three answers. Both fits have to survive a
 resize *and* a rotation, so the viewer has to remember which one to re-apply, not merely that
-it is applying something --- and the boolean is gone rather than kept beside the mode,
+it is applying something — and the boolean is gone rather than kept beside the mode,
 including out of the session file, because two records of one fact drift and only one of them
 is the one the viewer reads.
 
 The arithmetic moved to `src/lib/zoom.ts`, which needs no DOM and is therefore unit-testable:
 the fits, the ladder, the clamp, and the parse behind the typed value. **Fit-page is the
-smaller of the two fits** and nothing more --- fitted to its height alone a page is cut off at
+smaller of the two fits** and nothing more — fitted to its height alone a page is cut off at
 the sides in any wide window, and fitted to its width alone it is what fit-width already does.
 There is no vertical margin, unlike the horizontal one, because pages are laid out flush and
 there is no air at the top of the first one to leave room for.
@@ -6398,7 +6398,7 @@ there is no air at the top of the first one to leave room for.
 functional checks take `viewer_check.py` to **107 names**, identical across all six corpora.
 
 **One of those six could not fail, and only a mutation said so.** It asserted the laid-out
-page box against `root.clientWidth` --- which is 12 px wider than the width a page is fitted
+page box against `root.clientWidth` — which is 12 px wider than the width a page is fitted
 into, because the scrollbar sits in a gutter over that edge. Deleting the refit on rotation
 left an upright A4 at 700 px wide when turned, exactly `clientWidth`, and the check passed. The
 run still went red: the *existing* rotation check caught it at once. So the suite was working
@@ -6408,7 +6408,7 @@ rather than copied, and the trap is in `docs/TRAPS.md`.
 
 The control beside it is the one this repository keeps having to add: on a page short enough
 to fit the window at fit-width already, "fit page shows the whole page" is satisfied by doing
-nothing. It skips there, naming the measurement --- which is what `rotated-90` does, its pages
+nothing. It skips there, naming the measurement — which is what `rotated-90` does, its pages
 being landscape.
 
 #### Reading order, where the file's order is not the page's — done 2026-07-30
@@ -6424,8 +6424,8 @@ alpha one beta one / alpha two beta two / ...   (emitted line by line across the
 ```
 
 The second is what landed on the clipboard and what a screen reader read aloud. It was
-**measured before anything was built** --- `text-probe --mode order` is new and prints a
-page's characters in PDFium's own order --- because the whole feature rests on the claim
+**measured before anything was built** — `text-probe --mode order` is new and prints a
+page's characters in PDFium's own order — because the whole feature rests on the claim
 that the two differ, and that claim is about PDFium rather than about us.
 
 **`src/lib/reading.ts` recovers the order by recursive XY-cut.** The page is split at a
@@ -6433,7 +6433,7 @@ band of whitespace no fragment touches, and each half split again; a gutter and 
 under a heading are the same operation on different axes, which is what handles the
 heading case that defeats clustering by x position. Two rules make it behave: a column cut
 is taken whenever one exists, and row cuts are taken one at a time at the widest gap.
-Taking every row cut is precisely what produces `alpha one beta one` --- every band of
+Taking every row cut is precisely what produces `alpha one beta one` — every band of
 whitespace between two lines crosses the page, so each band ends up holding one line from
 each column.
 
@@ -6443,17 +6443,17 @@ genuinely ambiguous, and what it degrades to is each part ordered correctly with
 and the parts interleaved with each other.
 
 **Rotation is carried in the algorithm rather than around it.** Every rule is written over
-two axes --- along a line, across the lines --- with which screen axis each is, *and which
+two axes — along a line, across the lines — with which screen axis each is, *and which
 direction each runs*, derived from `to_device` in `text.rs`. The signs are the part that
 is easy to omit and impossible to see: without them the order is right at 0 and 1 and
 exactly reversed at 2 and 3, which reads as a document with its paragraphs shuffled rather
-than as a rotation bug. The test never restates the table --- it asserts that the same
+than as a rotation bug. The test never restates the table — it asserts that the same
 document viewed at all four rotations reads the same, which only the right signs satisfy.
 
 **Wired into copy and the accessibility tree, and not into the drag.** Select-all then copy
 is the dominant case and now comes out column by column; `a11y.ts` builds its paragraphs
 from `readingLines`. A drag still selects a *contiguous range of character indices*, which
-on such a page is not the region dragged over --- making it so means carets that carry a
+on such a page is not the region dragged over — making it so means carets that carry a
 reading position rather than a character index, which is a change to the selection model
 and is the next step rather than part of this one.
 
@@ -6461,7 +6461,7 @@ and is the next step rather than part of this one.
 take `viewer_check.py` to **109 names** across seven corpora, and they are the ones with an
 external oracle: the fixture's generator writes a manifest of what each page should read
 as, and the check asserts against that rather than against anything this process computed.
-Beside it is the differential assertion, which needs no manifest --- two pages laid out
+Beside it is the differential assertion, which needs no manifest — two pages laid out
 identically and emitted oppositely must read the same, and no amount of self-consistency
 can satisfy that.
 
@@ -6469,7 +6469,7 @@ Three things this turned up that were not the feature:
 
 - **`text-heavy` reads identically before and after** (`0 in another position`), which is
   the control that says a single column is undisturbed. `rotated-90` moves **493 of 534
-  characters** --- PDFium extracts that document's lines backwards, which `docs/TRAPS.md`
+  characters** — PDFium extracts that document's lines backwards, which `docs/TRAPS.md`
   had already recorded from the other side, and the corrected order is now what a screen
   reader gets.
 - **Two existing checks rested on the assumption this feature removes.** The drag-ordering
@@ -6482,11 +6482,11 @@ Three things this turned up that were not the feature:
 - **A precondition guarding the first of those was wrong twice before it was right**, and
   survived only because it printed what it measured. See the traps.
 
-#### The command list, moved somewhere a check can reach it --- done 2026-08-01
+#### The command list, moved somewhere a check can reach it — done 2026-08-01
 
 The gap struck out above was real and it was structural, not an oversight: `viewercheck.ts`
-runs *instead of* `App.svelte` booting --- it is the first thing the setup effect tries, and
-it exits the process when it is done --- so anything defined inside that component is
+runs *instead of* `App.svelte` booting — it is the first thing the setup effect tries, and
+it exits the process when it is done — so anything defined inside that component is
 unreachable by it. The palette check therefore built its own four-command registry, and said
 so. What it proved was that the palette works. Whether a command a reader can actually type
 reached anything was covered by nothing at all, and the file recorded that as a known gap for
@@ -6495,7 +6495,7 @@ five days.
 `src/lib/appcommands.ts` is the fix, and it is the same move `viewer.ts` and `palette.ts`
 already made: the twenty-nine commands and the window-key routing move out of the component
 into a module, parameterised by an `AppActions` interface. `App.svelte` keeps the half that is
-genuinely the shell --- the file dialog, the print panel, the Svelte state --- and implements
+genuinely the shell — the file dialog, the print panel, the Svelte state — and implements
 that interface with it.
 
 **The move was verified mechanically rather than by eye**, because a restructure that silently
@@ -6505,13 +6505,13 @@ byte-identical to `HEAD` apart from three import lines.
 
 Thirty-six checks came with it, and two of them are the ones worth having:
 
-- **A coverage audit.** Every registered command is classified in a table --- driven against
-  the viewer, driven against a recorded action, or not driven with the reason --- and the check
+- **A coverage audit.** Every registered command is classified in a table — driven against
+  the viewer, driven against a recorded action, or not driven with the reason — and the check
   asserts the table and the registry are the same *set*. A command added tomorrow turns it red
   until somebody decides how it is covered, and a renamed one turns it red from the other side.
   `AGENTS.md` says to diff the names rather than compare totals; this is that, for commands.
 - **Each command run the way a reader runs it**: open the palette, type the command's title,
-  press Enter --- with the assertion that the title ranked *first* before Enter, since pressing
+  press Enter — with the assertion that the title ranked *first* before Enter, since pressing
   it on whatever happened to be highlighted would run some other command and then assert against
   it. The ones that reach the viewer are asserted against a real viewer moving, each with a
   control establishing it was not already where the command would take it.
@@ -6524,7 +6524,7 @@ Two defects in the new checks came out of running them, both of a kind already i
 `docs/TRAPS.md`. The phase left the viewer rotated three quarter-turns and turned **eight**
 later assertions red across three phases, which is the contamination trap; it now restores what
 it found and says so in a check of its own. And the guard on `enabled` was written by taking
-the document away from the shared actions object --- a reading this file cannot explain, which
+the document away from the shared actions object — a reading this file cannot explain, which
 is its own entry, and which is why the check now builds a second registry whose viewer is null
 by construction.
 
@@ -6536,13 +6536,13 @@ counted the wrapper's `[FAIL] exit 1` as a check, so all ten mutations came back
 one and were reported as **broken runs** rather than as caught or survived. That is the
 cross-check working.
 
-#### Three things search could not do --- done 2026-08-01
+#### Three things search could not do — done 2026-08-01
 
 The find bar had a literal query, two toggles and a whole-document walk. The three gaps struck
 out above are closed, and each cost something worth recording.
 
 **Regular expressions.** `regex` is a third option, matched against the **folded** sequence a
-literal query gets --- one space for a run of whitespace, no soft hyphens, case decided by the
+literal query gets — one space for a run of whitespace, no soft hyphens, case decided by the
 same match-case switch rather than by an inline flag. One haystack, so a pattern and a literal
 mean the same thing by the same options and a hit stays expressible in the character indices
 the highlight already uses. The cost is stated rather than discovered: `\n` never occurs and
@@ -6556,7 +6556,7 @@ goes. "No matches" for `foo(` is a statement about the document, and a reader ty
 expects to get it wrong.
 
 **Search within a selection.** A scope is a snapshot of the selection, taken when the reader
-scopes the search and held until they release it --- not a live reading, because clicking on
+scopes the search and held until they release it — not a live reading, because clicking on
 the page is how a selection is dismissed and a live scope would silently widen to the whole
 document while the label still said otherwise. It is applied in the frontend, and that is a
 decision rather than laziness: the whole-word boundary is decided by the characters either side
@@ -6568,7 +6568,7 @@ part that would have cost anything.
 
 **Matching across a page boundary.** The walk is sequential, so the tail of each page is handed
 to the request about the next one and the join is matched there. A hit that straddles is
-anchored on the page it *starts* on --- that is where the search should take the reader --- and
+anchored on the page it *starts* on — that is where the search should take the reader — and
 carries `endPage`, and the highlight paints one half on each page because two pages share no
 coordinate space.
 
@@ -6579,8 +6579,8 @@ or ends *on* the break belong to one page's own reply rather than being reported
 consequence follows and is deliberate: a word the break splits is not rejoined, exactly as a
 word a line break splits is not.
 
-The wrapped walk left one join unexamined --- starting at page 400 means 399 is scanned last, so
-the break between them has no request after it --- and one extra request closes it, taking only
+The wrapped walk left one join unexamined — starting at page 400 means 399 is scanned last, so
+the break between them has no request after it — and one extra request closes it, taking only
 the cross-page hits from the reply.
 
 Five checks in the running app, three of them tying a position to specific content: the
@@ -6590,10 +6590,10 @@ half is resolved against a fresh extraction of the page it claims to be on.
 
 The scoped check took three attempts to become able to fail, and the two failures are both
 already-known traps arriving in new clothes. First it compared the scoped count against the
-*document* total, which the page list alone explains --- an outcome two mechanisms can produce.
+*document* total, which the page list alone explains — an outcome two mechanisms can produce.
 Then it computed "there is something outside the range to drop" from the matches it got back,
 so a mutation that stopped clipping widened the numbers the precondition was measured against
-and turned the check into a `[SKIP]` --- a defect switching off the check that would have caught
+and turned the check into a `[SKIP]` — a defect switching off the check that would have caught
 it. It now measures both ends against the **scope**, which nothing under test can move.
 
 #### The accessibility tree — 2026-07-27
@@ -6647,25 +6647,25 @@ text comparison cannot see a property that is not about text:
 
 ~~Not done, and the first of these is a real limitation rather than a missing nicety:
 **reading order is derived from geometry, not from the document's own tagged structure.**~~
-**Read, proved and wired 2026-08-01 --- see below. A tagged page is now read in the order its
+**Read, proved and wired 2026-08-01 — see below. A tagged page is now read in the order its
 tags give, and an untagged one falls back to the geometry as before.**
 ~~Also absent: headings and table semantics,~~ **headings done 2026-08-01, see below;**
 table semantics still absent and now blocked on a named thing rather than unstarted. Also
 absent: a document language attribute, visible keyboard navigation between pages, and any
 high-contrast handling.
 
-#### The document's own reading order, read and proved --- 2026-08-01
+#### The document's own reading order, read and proved — 2026-08-01
 
 A tagged PDF carries a `/StructTree` that says what is a heading, what is a table cell, and in
 what order it should be read. `reading.ts` infers all of that from character boxes, which is
-what an untagged document forces and is strictly worse for one that has bothered to say ---
+what an untagged document forces and is strictly worse for one that has bothered to say —
 which is what the paragraph above recorded as a real limitation.
 
 `src-tauri/src/structure.rs` reads it. The part that made this tractable rather than expensive
 is the route: `FPDFText_GetTextObject` gives the page object a character was drawn by and
 `FPDFPageObj_GetMarkedContentID` gives that object's mark, so **a character index resolves to a
-marked-content id directly**. The obvious alternative --- parse the content stream, find the
-marked-content operators, correlate what they contain with what the extractor returned --- would
+marked-content id directly**. The obvious alternative — parse the content stream, find the
+marked-content operators, correlate what they contain with what the extractor returned — would
 have been the third independent extraction in this codebase, each self-consistent and
 disagreeing with the others in ways no test catches. `text.rs` opens by warning about exactly
 that, and this avoids it entirely: a run lands in the same character indices the selection, the
@@ -6674,8 +6674,8 @@ search and the accessibility tree already use.
 **The fixture is the half that decides whether any of this is testable.** A tagged page whose
 tag order happens to match what geometry would infer tests nothing at all: both implementations
 agree and the check passes whether or not the tags were read. `testdata/make_tagged_pdf.py`
-therefore puts a margin note beside the first paragraph --- geometry reads it third, the tags
-read it last --- and it **asserts the discrimination itself**, refusing to write a fixture that
+therefore puts a margin note beside the first paragraph — geometry reads it third, the tags
+read it last — and it **asserts the discrimination itself**, refusing to write a fixture that
 has lost it. Page 2 is the control, tagged in the order geometry would have inferred anyway,
 which a tagged reader must leave alone; without it, "the tags are read" and "the tags are read
 and everything is scrambled" look identical. `text-base14.pdf` is the third control: an untagged
@@ -6683,29 +6683,29 @@ page must report **no** runs rather than an order it inferred, because that empt
 caller tells "fall back to geometry" from "the document says its order is this".
 
 Two independent parsers accept the file, and one of them is evidence rather than validation:
-poppler's `pdftotext` reads page 1 in **geometric** order --- heading, margin note, body ---
+poppler's `pdftotext` reads page 1 in **geometric** order — heading, margin note, body —
 which is the wrong answer the tags exist to correct.
 
 `examples/structure-probe` is 10/10, and it resolves every run through a fresh extraction of the
 page rather than trusting the run's own report. Its first run reported **ten runs for four
 blocks**, and the reason is a trap of its own: a paragraph is one marked-content id and one text
 object *per line*, and the separator PDFium generates between two text objects belongs to no
-page object, so it carries no mark. Bridging those gaps needs both halves of a condition ---
-unmarked *and* whitespace --- because bridging on unmarked alone would let a run silently swallow
+page object, so it carries no mark. Bridging those gaps needs both halves of a condition —
+unmarked *and* whitespace — because bridging on unmarked alone would let a run silently swallow
 visible text the producer failed to tag. It also means "every character is claimed" is not the
 invariant and would fail on a correct implementation; what is asserted is that nothing
 **visible** is left out.
 
 The tree is hostile input like the outline, so the walk is bounded in depth and in elements and
-the truncation is reported --- a partial reading order shown as a complete one is worse here than
+the truncation is reported — a partial reading order shown as a complete one is worse here than
 for an outline, because the missing part is text on the page.
 
 ~~**Not wired to anything yet, deliberately**, in the shape the OCR interfaces landed in before
-an engine did.~~ **Wired on 2026-08-01 --- see below.** The design was recorded here first and
+an engine did.~~ **Wired on 2026-08-01 — see below.** The design was recorded here first and
 was followed as written, so it is left in place rather than deleted:
 
 - **No new request.** `PageText` already crosses the worker boundary and reaches the frontend,
-  and `readingLines(text)` is the single funnel every consumer goes through --- `a11y.ts`
+  and `readingLines(text)` is the single funnel every consumer goes through — `a11y.ts`
   directly, `selection.ts` via `readingTextOf`. So the runs belong *on* `PageText`, and both
   consumers then get the tagged order with no call-site change at all. A separate
   `page_structure` command would need plumbing through five files and leave two callers to
@@ -6715,28 +6715,28 @@ was followed as written, so it is left in place rather than deleted:
   for one is the same as the fallback for no tags.
 - **The fallback decision is `reading.ts`'s**, made on the characters it already has: use the
   tagged order when the runs claim every *visible* character, and geometry otherwise. That is
-  why `untagged_chars` is reported rather than assumed to be zero --- a producer that tagged
+  why `untagged_chars` is reported rather than assumed to be zero — a producer that tagged
   three of four paragraphs must not have the fourth silently disappear from what a screen reader
   reads.
 
 The one genuinely open question was **granularity**, and it is a product decision rather than a
 mechanical one. A tagged run is a *paragraph*; `readingLines` returns lines, and `a11y.ts` emits
 one element per line. Handing a screen reader a paragraph per element is arguably better than a
-line per element --- it is what the document says --- but it changes what that layer emits, and
+line per element — it is what the document says — but it changes what that layer emits, and
 the accessibility and selection checks are written against lines.
 
 **Settled the conservative way, and it is a real answer rather than a deferral: the tags decide
 the order of the blocks, and the geometry still decides the lines inside one.** A tagged run is
 a paragraph and a screen reader is handed lines, so the two answer different questions and both
-are needed --- `readingLines` uses the runs where the geometry used its own blocks, and splits
+are needed — `readingLines` uses the runs where the geometry used its own blocks, and splits
 each one into lines exactly as before. Nothing downstream changed shape, so the accessibility
 and selection checks kept their meaning instead of being rewritten alongside the thing they
 check. Emitting a paragraph per element remains open and is now a change to `a11y.ts` alone.
 
-#### Wiring it, and the two defects the fixture found --- 2026-08-01
+#### Wiring it, and the two defects the fixture found — 2026-08-01
 
 Both consumers reach it through `readingLines`, which is the single funnel, so `a11y.ts` and
-`selection.ts` needed no call-site change at all --- the design above holds. `usableRuns` is the
+`selection.ts` needed no call-site change at all — the design above holds. `usableRuns` is the
 whole of the decision and is exported so a check can assert *which route ran*, rather than
 inferring it from an order the two routes might agree on anyway.
 
@@ -6745,14 +6745,14 @@ Two defects, and the more interesting one was not mine:
 - **The tagged path dropped every character no run claimed.** Tolerating an unclaimed whitespace
   character in the *decision* to trust the tags says nothing about what to *emit*, and emitting
   only the claimed characters lost the six `\r\n` separators between paragraphs: a page came
-  back six characters shorter than the page. Every character now gets an owner --- its own run,
-  or the run of the nearest character before it --- so the tagged order is a permutation of the
+  back six characters shorter than the page. Every character now gets an owner — its own run,
+  or the run of the nearest character before it — so the tagged order is a permutation of the
   page, exactly as the geometric one is. The invariant is one line to assert and was not being
   asserted.
 
 - **A comma opened a line of its own, and every space on the line joined it.** Pre-existing, in
   the *geometric* path, and it produced `inthemaincolumnandclosesthesection` beside a second
-  "line" holding a comma, a full stop and six spaces --- read aloud and copied exactly like that.
+  "line" holding a comma, a full stop and six spaces — read aloud and copied exactly like that.
   PDFium reports a comma as a box that drops below the baseline, overlapping the line by 46% of
   itself, which is under the banding threshold; the spaces are 0.01 pt tall and then match the
   comma's new band by 100% of themselves. The rule now is that a box too short to be a line of
@@ -6762,7 +6762,7 @@ Two defects, and the more interesting one was not mine:
 **The untagged early-out costs nothing measurable**, which is the claim the design rested on
 and is now a number rather than an argument: `text-probe --mode extract` on `text-heavy` reports
 **1.436 ms** cached against the **1.42 ms** recorded in the table above, i.e. unchanged within
-noise. That is the null result it should be --- three of the four corpora carry no
+noise. That is the null result it should be — three of the four corpora carry no
 `/StructTreeRoot` at all, so extraction pays one `FPDF_StructTree_GetForPage` and returns. It is
 stated as "no measurable change" rather than as a win: a single pair across sessions cannot
 support a stronger claim, and none is needed.
@@ -6770,26 +6770,26 @@ support a stronger claim, and none is needed.
 `tagged.pdf` is the eighth corpus for `viewer_check.py` and its manifest gained the three fields
 that harness already reads, so the reading-order check asserts its **lines**, in tagged order,
 against a file a different program wrote. Adding it also exposed three checks whose preconditions
-were written as assertions and had never met a two-page document --- see the traps; all three now
+were written as assertions and had never met a two-page document — see the traps; all three now
 skip with the reason printed rather than failing.
 
-#### Headings announced as headings --- 2026-08-01
+#### Headings announced as headings — 2026-08-01
 
 The reason to read element *types* at all, rather than only the order. "Jump to the next
 heading" and "list the headings" are how a screen-reader user skims a document, and neither
 works on a page of paragraphs however correctly ordered. A PDF states its levels, so `H1`
-through `H6` map across and a bare `/H` becomes `h2` --- the document has said "heading"
+through `H6` map across and a bare `/H` becomes `h2` — the document has said "heading"
 without saying which, and competing with the page's own `H1` would put two titles in the
 outline.
 
 **Granularity follows who drew the boundary**, which turned out to be the answer to the
 question left open above rather than a separate decision. A **tagged** block is a paragraph
 the producer declared, so it is handed over whole and the screen reader moves through its
-lines itself --- better than we can, since it re-wraps to the user's own settings. An
+lines itself — better than we can, since it re-wraps to the user's own settings. An
 **inferred** block came out of the XY-cut, whose boundaries are a guess, so its lines stay
 separate: an over-eager cut then costs a reader nothing, where merging on one would silently
 join two columns into a paragraph. `ReadingBlock.tag` is `null` for the inferred case, and
-that `null` means *"inferred"* rather than *"unknown"* --- the distinction the whole split
+that `null` means *"inferred"* rather than *"unknown"* — the distinction the whole split
 exists to carry.
 
 `readingBlocks` is the new funnel and `readingLines` is written in terms of it, so the two
@@ -6798,8 +6798,8 @@ cannot disagree about the order; a test asserts exactly that.
 **Two things are deliberately not given their obvious element**, and the first is the useful
 finding:
 
-- **Table cells.** `TD` outside a `<table>` is not a table cell --- it is an element screen
-  readers ignore or mis-announce --- so emitting one would be worse than a paragraph.
+- **Table cells.** `TD` outside a `<table>` is not a table cell — it is an element screen
+  readers ignore or mis-announce — so emitting one would be worse than a paragraph.
   Building a real table needs to know which cells share a **row**, and `TaggedRun.path`
   carries element *types*: two different `/TR`s have the identical path, so the information
   is not there. It needs element **identity** from `structure.rs` (a child-index path, or a
@@ -6809,7 +6809,7 @@ finding:
   A `<figure>` holding the figure's own characters says nothing a paragraph does not.
 
 Every block carries the document's own word for it in `data-tag`, including the ones that
-become a paragraph. It is not announced --- it is there so a type nobody handled is *visible*
+become a paragraph. It is not announced — it is there so a type nobody handled is *visible*
 to a check and to anyone reading the DOM, rather than flattened into `p` with nothing
 recording that something was dropped. Two of the four new checks use it, and the second is
 the one that matters: a layer emitting `h1` for everything passes "the headings the tags
@@ -6819,13 +6819,13 @@ headings.
 **The fixture needed a second heading level to make any of this checkable.** With one `/H1` on
 the page, the mutation that announces every heading as `h1` produces the right answer, so the
 check named *"at the document's own level"* passed without the level being read. One line of
-fixture --- an `/H2` subheading, which also gives page 1 a five-block reading order --- turned it
+fixture — an `/H2` subheading, which also gives page 1 a five-block reading order — turned it
 red. A property with one value present is the same as none, and the unit test on the mapping
 table had been catching that mutation the whole time: when a viewer check survives a mutation its
 unit test catches, the fixture is thin rather than the suite.
 
 `spokenText` in `viewercheck.ts` had to be widened in the same change: it selected `p`, and a
-tagged page's headings would have been missing from what it read --- surfacing as *the page's
+tagged page's headings would have been missing from what it read — surfacing as *the page's
 text* being short rather than as the selector being narrow.
 
 #### The outline, and a sidebar to put it in — 2026-07-27
@@ -6868,7 +6868,7 @@ scanner reporting clean on a carrier it could not decode.
   height. `FPDF_LoadPage` costs 44 ms on a complex page and an outline can name hundreds;
   `FPDF_GetPageSizeByIndexF` reads the page dictionary's boxes instead, and since 26.9.2 the
   rotation comes out of the page tree rather than out of a loaded page, so the walk loads none
-  at all --- which `outline-probe` asserts by reading `RawDocument::page_loads`. The whole walk of
+  at all — which `outline-probe` asserts by reading `RawDocument::page_loads`. The whole walk of
   the ordinary fixture is **0.17 ms**, and of the hostile one — 44 entries, two cycles, a
   50,000-character title — **1.6 ms**.
 
@@ -6929,7 +6929,7 @@ only fixture with the pair has them at 240 and 440. It now takes the highest and
 any shared page. That check is the y-flip discriminator, so a silent skip there was the
 expensive kind.
 
-At that point all four corpora passed and every run reported the same 53 check names --- the
+At that point all four corpora passed and every run reported the same 53 check names — the
 strip below adds a fifth corpus and ten more names: `outline-simple` 51/51,
 `outline-hostile` 52/52, `text-heavy` 43/43, `vector-heavy` 29/29, the differences being
 skips with their reasons.
@@ -7007,7 +7007,7 @@ All five corpora then reported the same **63 check names**: `outline-simple` 58/
 the differences being skips with their reasons. A sixth arrives in the entry below.
 
 Not done: ~~reordering pages by dragging a thumbnail (that is Phase 2, and needs the
-editing model)~~ (done 2026-08-17 --- `23300f7`, *Let a reader drag a thumbnail to move
+editing model)~~ (done 2026-08-17 — `23300f7`, *Let a reader drag a thumbnail to move
 a page*; the editing model it named arrived with it), a resizable panel, and any
 persistence of which tab was open. The last two are still open, checked 2026-08-26.
 
@@ -7061,7 +7061,7 @@ is still split character by character, as before.
 
 **Reading the rotation cost a page load until 26.9.2, and the schedule still carries the
 mark of it.** `FPDFPage_GetRotation` needs a loaded page, while the rest of the outline walk
-reads the page dictionary --- measured on `outline-simple`, interleaved: **0.17 ms -> 7.5 ms**
+reads the page dictionary — measured on `outline-simple`, interleaved: **0.17 ms -> 7.5 ms**
 steady state, 45.7 ms on a cold first run, about 1 ms per distinct page named with
 coordinates. A three-hundred-entry table of contents was a third of a second of the render
 thread, which is FIFO, so the outline was moved to after the first screen is up rather than at
@@ -7069,8 +7069,8 @@ open, with a one-second grace so a document whose first page is slow still gets 
 
 The load is gone: `pagetree::rotations_from` reads `/Rotate` through the same inheritance walk
 and the same formula the displayed-box table already used, and `docgraph::DocumentGraph` holds
-one parse for it and five other questions. **The deferral was kept anyway** --- the walk is not
-the only thing on that thread, and re-measuring it is a smaller job than deciding again --- so
+one parse for it and five other questions. **The deferral was kept anyway** — the walk is not
+the only thing on that thread, and re-measuring it is a smaller job than deciding again — so
 this paragraph is the record of why the schedule looks the way it does, not a live measurement
 of it. The new steady state has not been re-measured, which is why no number is quoted for it.
 
@@ -7560,8 +7560,8 @@ auto-rotate is offered only when no page carries a rotation, since it turns a pa
 sheet and would otherwise spin back the exact turn the reader asked for.
 
 The half worth the writeup is [`print_macos::read`], which is not on the printing path at all.
-Every check on the print job had been reading it back with `lopdf` --- the library that wrote
-it --- and that tests the round trip rather than the document. The mutation demonstrating it
+Every check on the print job had been reading it back with `lopdf` — the library that wrote
+it — and that tests the round trip rather than the document. The mutation demonstrating it
 leaves `/Pages /Count` at its pre-subset value: every `lopdf` check passes, and PDFKit reports
 **five pages for a two-page document**, the two real ones followed by three blank pages it
 manufactures to satisfy the count. Two correct sheets and three blank ones, invisible to the
@@ -7571,14 +7571,14 @@ assert through PDFKit instead.
 ##### The Windows half, and where the analogy stops
 
 Written 2026-07-30 in `src-tauri/src/print_win.rs`. The readback corresponds exactly:
-`Windows.Data.Pdf` is the operating system's own PDF stack --- what Explorer uses for thumbnails
-and what sits behind Edge's viewer --- so it is a third parser in the same sense PDFKit is, and
+`Windows.Data.Pdf` is the operating system's own PDF stack — what Explorer uses for thumbnails
+and what sits behind Edge's viewer — so it is a third parser in the same sense PDFKit is, and
 `present_job` refuses to open a panel for a job it cannot read. Three of the four
 `a_third_parser_*` checks now run on both platforms as a result; the fourth needs per-page text,
 which this parser has none of, and skips out loud.
 
 **The printing itself has no analogue, and that is a property of Windows rather than a decision.**
-There is no in-box "print this PDF" API at any layer --- not Win32, not WinRT --- so pages are
+There is no in-box "print this PDF" API at any layer — not Win32, not WinRT — so pages are
 rasterised onto a printer device context, which is what SumatraPDF and every other Windows PDF
 viewer does. The consequences, both stated rather than left to be found: output is raster at
 300 dpi, so text is not selectable in a print-to-PDF result; and the DPI constant is not the
@@ -7589,13 +7589,13 @@ Two things this half has that the macOS half does not:
 
 - **It is verified to a real spooler.** `examples/print_probe.rs` opens a DC for "Microsoft Print to
   PDF" directly and names an output file in `DOCINFOW.lpszOutput`, so the driver writes instead of
-  prompting --- everything except the panel runs unattended, and the result is re-read by the OS
+  prompting — everything except the panel runs unattended, and the result is re-read by the OS
   parser. The two decisions above that "need paper" on macOS are still unverified as *choices*,
   but the pipeline they sit in is no longer unexercised. It asserts ink per page and not a page
   count, since a broken blit yields the right number of blank sheets.
 - **It distinguishes Cancel from failure.** `PrintDlgW` returns zero for both and
   `CommDlgExtendedError` separates them, where `runOperation` answers one boolean for "printed"
-  and "cancelled" alike --- so macOS cannot report a print failure without also reporting a
+  and "cancelled" alike — so macOS cannot report a print failure without also reporting a
   Cancel as one, and deliberately reports neither.
 
 ##### Two defects the real corpora found, and a third the profile nearly hid
@@ -7604,16 +7604,16 @@ The synthetic fixtures said the print path was fine. Running it over the actual 
 otherwise, twice, and both were on the critical path to a print panel.
 
 **`lopdf::delete_pages` does not scale.** It calls `delete_object` per page, and that calls
-`traverse_objects` --- the quadratic walk this plan already recorded for `prune_objects`, here
+`traverse_objects` — the quadratic walk this plan already recorded for `prune_objects`, here
 run once *per deleted page*. Keeping two pages of the 775-page corpus: **620.5 ms**. A single
-pass doing the same work --- drop `/Kids` entries and dictionary keys naming a doomed page,
-decrement `/Count` up every `/Parent` chain --- costs **1.2 ms**, a 533x difference, and its
+pass doing the same work — drop `/Kids` entries and dictionary keys naming a doomed page,
+decrement `/Count` up every `/Parent` chain — costs **1.2 ms**, a 533x difference, and its
 output is **byte-identical** on the synthetic fixture and on six corpora. `incr-xrefstream`
 reproduces it at 663.1 ms against 1.0 ms. The byte comparison is kept as a test.
 
 **The verification was the expensive half.** `print_macos::read` extracted every page's text,
 which only the checks use, and that is **1,017 ms** on 775 pages and **467 ms** on twelve A0
-pages --- a second of waiting in front of a print panel to fill a field nothing on that path
+pages — a second of waiting in front of a print panel to fill a field nothing on that path
 reads. Split into a structural read (count and rotations, **62 ms** and **0.6 ms**) and a
 text-carrying one for the checks. `PageReading::text` became `Option<String>` in the process,
 because "not extracted" and "no extractable text" are different facts and one empty string for
@@ -7621,13 +7621,13 @@ both is the leak-scanner defect again.
 
 **And the first number here was a debug-profile measurement, written into a doc comment as
 fact.** `delete_pages` measured 15,912 ms under `cargo test` and 620 ms under
-`cargo test --release` --- 26x apart. The conclusion survived; the number would not have. Now
+`cargo test --release` — 26x apart. The conclusion survived; the number would not have. Now
 an `AGENTS.md` entry, because the existing rule named `tauri dev` and this arrived through a
 test runner.
 
 ##### Eleven more mutations, and a page tree with a middle
 
-Eleven, all as predicted, plus the earlier eleven re-run as a control on the refactor --- since
+Eleven, all as predicted, plus the earlier eleven re-run as a control on the refactor — since
 `build` changed underneath them, their previous result no longer said anything.
 
 One predicted **survivor** is kept rather than dropped: `pageCount` disagreeing with what
@@ -7635,20 +7635,20 @@ One predicted **survivor** is kept rather than dropped: `pageCount` disagreeing 
 to be.
 
 A second predicted survivor was closed instead. Deleting a page must decrement `/Count` on
-**every** ancestor, and every fixture here built its pages directly under the root --- where
+**every** ancestor, and every fixture here built its pages directly under the root — where
 "the page's parent" and "the whole chain" are the same node, so a walk that stops after one
 step is indistinguishable from a correct one. Real producers balance the tree. A nested fixture
 (three groups of two, resources two levels up) makes the mutation fail, and the check asserts
 different deltas at different levels so that decrementing per *group* rather than per *page* is
 wrong in the other direction.
 
-`⌘P` is bound, and prevented even with no document open --- WKWebView's own `⌘P` prints the
+`⌘P` is bound, and prevented even with no document open — WKWebView's own `⌘P` prints the
 *chrome*. No page-range field of ours: the system panel has one, and its numbers refer to the
 document handed over, which is every page. `print::build` takes a range because printing
 selected thumbnails will need it, not because anything asks today.
 
 **Windows was not written when this section was first published**, and `present_job` said so
-with an error rather than doing nothing. It landed on 2026-07-30 --- see *The Windows half, and
+with an error rather than doing nothing. It landed on 2026-07-30 — see *The Windows half, and
 where the analogy stops* above, which is the account to read. The sentence is corrected rather
 than deleted because it stood for a day directly contradicting its own section, and a reader
 who reached the end first would have concluded the platform could not print.
@@ -7656,8 +7656,8 @@ who reached the end first would have concluded the platform could not print.
 #### The installers shipped no PDF engine — found and fixed 2026-07-31
 
 `tauri.conf.json` declared no `bundle.resources`, so nothing ever copied PDFium into a
-bundle. `pdfium_library_dir` has always had the fallback --- dev tree first, then the resource
-directory --- and the second branch pointed at a directory the bundler never created. So the
+bundle. `pdfium_library_dir` has always had the fallback — dev tree first, then the resource
+directory — and the second branch pointed at a directory the bundler never created. So the
 Windows MSI and NSIS installers built on 2026-07-30, and every macOS bundle before them,
 produced an app that opens a window and cannot parse a document on any machine without this
 repository checked out at the same absolute path.
@@ -7665,7 +7665,7 @@ repository checked out at the same absolute path.
 Nothing caught it because **every check ran where the dev tree exists**. `viewer_check.py`
 against the bundle passes on this machine either way: the first candidate hits, and the second
 is never exercised. That is the "a test whose precondition is already satisfied never runs"
-shape, and the missing control is the cheap half --- hide the dev library, and the check has to
+shape, and the missing control is the cheap half — hide the dev library, and the check has to
 fail.
 
 Fixed with `tauri.windows.conf.json` and `tauri.macos.conf.json`, which are the platform
@@ -7695,15 +7695,15 @@ rather than on anything about the bundle.
 #### The worker boundary — started 2026-07-28, parent half landed
 
 The one Phase 0 constraint that never landed. Every PDF was still parsed in the app process
-**on the day this was written**, which is no longer true on either platform --- read the
-present tense in this entry as 2026-07-28's, not today's --- and `AGENTS.md` is explicit that
+**on the day this was written**, which is no longer true on either platform — read the
+present tense in this entry as 2026-07-28's, not today's — and `AGENTS.md` is explicit that
 this cannot be a later hardening pass — retrofitting
 a process boundary is an architectural rewrite, so it is one now rather than one later. Note
 the justification is `docs/THREAT-MODEL.md` and **not** the coverage floor: measured above, a
 pool buys 3.2× on a screenful of the A0 sheet and leaves it just as unscrollable.
 
-`src/worker.rs` is the parent half --- spawn/call/withdraw, the epitaph, footprint
-supervision, and the measured SBPL profile --- with the shared contract beside it in the
+`src/worker.rs` is the parent half — spawn/call/withdraw, the epitaph, footprint
+supervision, and the measured SBPL profile — with the shared contract beside it in the
 modules split out on 2026-08-02: `worker_proto.rs` (the wire protocol), `worker_shm.rs` (the
 shared mapping), `worker_handover.rs` (the macOS document handover) and `worker_argv.rs` (the
 Windows command line). Every
@@ -8190,7 +8190,7 @@ The harness's own cross-check earned its place immediately — it parsed twice a
 as vitest's summary reported, because `FAIL ` matches the file-level block as well as each
 test, and it said so instead of reporting either number.
 
-**Was open, and closed on 2026-07-29:** Windows had no containment ---
+**Was open, and closed on 2026-07-29:** Windows had no containment —
 `Backend::default_here()` selected in-process off macOS, so hostile input was parsed in the app
 process and it failed open rather than refusing. It now selects workers there, contained by a
 low-integrity token inside a job object, and the evidence is external: `scripts/win_modules.py`
@@ -8312,7 +8312,7 @@ stamps — as real PDF annotation objects.
 **Reading them is already done** (Phase 1, *Reading comments*): `annots.rs` extracts every
 markup annotation with its author, date, body and reply, the sidebar lists them and a note
 opens on the page. What Phase 2 adds is the writing half, and it inherits two things from
-that work --- the `Kind` enum, which is the set of subtypes tpdf understands, and the rule
+that work — the `Kind` enum, which is the set of subtypes tpdf understands, and the rule
 that a reply is `/IRT` plus `/RT /R` rather than a nesting of its own.
 
 **Exit criterion:** a document can be marked up, saved, reopened in Acrobat and Preview,
@@ -8322,7 +8322,7 @@ through `Windows.Data.Pdf` (`--mode winreader`, 2026-08-31), and Acrobat by eye 
 day, because that program exposes no automation interface in the copy installed here.
 Each run is written up where the work is, and the Acrobat one is the last of the three.
 
-#### Turning a page, and writing it out --- done 2026-08-16
+#### Turning a page, and writing it out — done 2026-08-16
 
 The first thing that changes a document, and the first user of the model built four days
 earlier. `docmodel.rs` had 26 tests and no caller: a working document, a journal, undo by
@@ -8332,9 +8332,9 @@ turn now runs model -> layout -> tiles -> text layer -> file.
 **Rotation alone, and the reason is the invalidation rather than the model.** `Delete` and
 `Move` are already in `Command` and already tested, and neither is wired. A page turn
 changes one page's shape and nothing's identity; a deletion changes the page *count*, and
-every consumer that addresses a page by its position --- `page_text`, `search_page`, the
+every consumer that addresses a page by its position — `page_text`, `search_page`, the
 outline's destinations, the link and comment scans, the tile request, the session's
-remembered place --- is then addressing a different page than it was. That is a
+remembered place — is then addressing a different page than it was. That is a
 document-wide invalidation with eight consumers and it deserves its own increment rather
 than riding along with the first one. `edits.rs` says so in its own header, because the
 equality it depends on is invisible in the code.
@@ -8342,27 +8342,27 @@ equality it depends on is invisible in the code.
 **The two vocabularies meet at the command boundary, and only there.** The frontend
 addresses pages by position, because that is what a reader points at and what every array
 it holds is indexed by. The model addresses them by identity, for the reason §5 gives. So
-a state reply carries both and a command carries the id --- and that is not ceremony over
+a state reply carries both and a command carries the id — and that is not ceremony over
 what is currently an identity mapping: it is what makes a stale frontend safe, since a
 rotate aimed at a page that a command in flight has deleted comes back as
 `PageDeleted` rather than turning whatever moved into that slot.
 
 What was *not* added is a slot-to-source translation in the render path. It would be the
-identity function today, and no test could tell a correct one from a broken one --- the
+identity function today, and no test could tell a correct one from a broken one — the
 trap index has that under *"a property that holds by construction cannot test the thing it
 resembles"*.
 
 **One number, added in one place.** A page drawn under a reader's view rotation *and* an
 edit is turned by the sum, and four things need to agree about it: the layout, the tile
 request, the placeholder request and the text layer. `Scroller.effectiveTurns` is the only
-place the two are added, which is the same argument `displayedSize` was extracted for ---
+place the two are added, which is the same argument `displayedSize` was extracted for —
 three copies of a quarter-turn swap had already grown, and they do not fail in ways that
 look like the same bug.
 
 The text layer is the half that is easy to leave out and hard to read afterwards. Its boxes
 are turned by the view so that selection lands where the pointer is; a page turned by an
 edit and *not* turned in the cache produces tiles at one angle and a caret at another,
-which does not look like a bug in the text layer --- it looks like selection being slightly
+which does not look like a bug in the text layer — it looks like selection being slightly
 wrong on one page of a document.
 
 **A half turn is where a size-driven invalidation fails.** The scroller already invalidates
@@ -8374,13 +8374,13 @@ before it consults the geometry at all.
 
 `save.rs` takes **one turn per page, in order**, and that signature is the specification: a
 plan that drops or moves a page cannot be spelled. Deleting and reordering will need a
-different one, which is the point --- a general plan parameter would need a guard for the
+different one, which is the point — a general plan parameter would need a guard for the
 shapes the code cannot honour, and the type carries the same statement with nothing to
 test.
 
 - **An encrypted document is refused.** `lopdf` drops encryption on save silently, so the
   copy opens with every restriction gone and nothing says so. 3 of the 39 PDFs in a real
-  Downloads folder carry `/Encrypt` --- the same measurement `progressive::open_failure`
+  Downloads folder carry `/Encrypt` — the same measurement `progressive::open_failure`
   was written from.
 - **A page count that disagrees with the plan is refused**, which is the external
   modification §5 describes arriving in the one place it can currently be detected.
@@ -8394,13 +8394,13 @@ opens, and it is missing pages.
 
 **A page nobody turned is not written to at all**, and the reason first written here was
 wrong. It said that setting `/Rotate 0` on a page that *inherits* a rotation would change
-it --- a true sentence about PDF, and not what this code would do, since the value composed
+it — a true sentence about PDF, and not what this code would do, since the value composed
 for an untouched page is `effective_rotation + 0`, which is the inherited one. Writing it
 changes nothing in the ordinary case.
 
 The real reason is the bound. `effective_rotation` walks the `/Parent` chain 64 hops and
 answers **0** when it gives up or meets a cycle, so writing its answer onto every page
-silently flattens the rotation of any page whose chain is longer --- pages nobody asked to
+silently flattens the rotation of any page whose chain is longer — pages nobody asked to
 change. The skip also keeps an unedited page byte-identical, which is what "save a copy"
 should mean.
 
@@ -8409,37 +8409,37 @@ in the corpus states its own rotation and none of them can see this. **The first
 that test could not fail either**: it asserted the page's *effective* rotation, which is 90
 whether the page states it or inherits it, so the mutation that writes to every page moved
 no number it read. It asserts the absence of the `/Rotate` key now, with the turned page
-asserted to carry one as the control --- "no key" being equally satisfied by a save that
+asserted to carry one as the control — "no key" being equally satisfied by a save that
 writes nothing.
 
 ##### What the checks are built around
 
 Telling a page turn apart from a view rotation, and nothing else is difficult. Every
-statement about the page that was turned --- it is the right shape, its tiles were
-discarded, its text runs sideways --- is equally true of a defect that turned the whole
+statement about the page that was turned — it is the right shape, its tiles were
+discarded, its text runs sideways — is equally true of a defect that turned the whole
 view. So the assertions that carry the weight are the negative ones: a page nobody touched
 keeps its **proportions**, its text stays upright, and `viewer.rotation` does not move.
 Written with only the positive half, a `setPageTurns` implemented as `rotateBy` would pass
-every one --- which is why that is one of the four mutations aimed at this phase.
+every one — which is why that is one of the four mutations aimed at this phase.
 
 **Proportions rather than pixels, and the first sweep is what taught that.** The check
 compared the neighbour's rendered box before and after, within a pixel. On `text-heavy` it
 went 640x828 to 495x640 and reported a defect that is not there: fit-width sizes the layout
 to the widest page, so turning page 1 to landscape makes it the widest and every other page
-is legitimately rescaled --- by 22% here, at an identical ratio to three decimals. The ratio
+is legitimately rescaled — by 22% here, at an identical ratio to three decimals. The ratio
 is what discriminates, because a page that really was turned reports the reciprocal and no
 rescale can produce that. The check had been written and watched pass on a single corpus;
 the run across all fourteen is what found the one whose fit moves.
 
 The window harness gets nine names for it, skipping together with a stated reason on a
 one-page document and on a page too near square for a quarter turn to be visible in its
-shape --- which is the honest answer rather than three assertions that hold whatever the
+shape — which is the honest answer rather than three assertions that hold whatever the
 code does.
 
 **What no check covers, said rather than implied.** The join is in `App.svelte`: a command
 reaches `rotatePage`, which asks the backend and hands the answer to the viewer. The window
 harness runs *instead of* the shell, so it sees the command reach the action and it sees the
-viewer respond to a turn, and nothing exercises the wire between them --- the same gap every
+viewer respond to a turn, and nothing exercises the wire between them — the same gap every
 shell action has, and the same one `opencheck.ts` states for the file dialog. The save
 dialog is in that gap too: `save.rs` is unit-tested against real documents and
 `Edits.saveCopy` is asserted to send the right payload, and the panel that produces the path
@@ -8451,11 +8451,11 @@ would be a writer agreeing with its own reader. `rotated.pdf` is the fixture tha
 *which* page was turned observable, since its four pages carry 0/90/180/270 and are
 otherwise identical; the run says which of the two cases each fixture was.
 
-#### Deleting a page, and the translation it forces --- done 2026-08-17
+#### Deleting a page, and the translation it forces — done 2026-08-17
 
 The second edit that changes a document, and the one that makes the viewer's *slots* and the
-file's *pages* different numbers for the first time. Rotation could be wired without that ---
-a turn changes one page's shape and nothing's identity --- which is exactly why the previous
+file's *pages* different numbers for the first time. Rotation could be wired without that —
+a turn changes one page's shape and nothing's identity — which is exactly why the previous
 increment stopped there and said so.
 
 **The translation is one module and it is the frontend's.** `src/lib/pages.ts` holds a
@@ -8471,7 +8471,7 @@ same rule, able to disagree with the first about which page is where; what cross
 is one answer.
 
 **The consumers, and what each does with the news.** The interesting work was not the
-translation but everything already keyed by a slot --- `docs/TRAPS.md` has the general shape
+translation but everything already keyed by a slot — `docs/TRAPS.md` has the general shape
 under *"state keyed by a slot belongs to whatever moves into that slot"*. Three answers:
 
 - **Carried with the page, by identity**: the scroller's learned page sizes, each page's own
@@ -8479,7 +8479,7 @@ under *"state keyed by a slot belongs to whatever moves into that slot"*. Three 
   old slot, so a page's size travels to wherever it went. The epochs are carried and **not**
   bumped, which is a correction: bumping them as well was written first, and the mutation
   removing it survived the whole suite. `clearTiles` bumps the generation in the same call,
-  and that already drops every outstanding reply --- so the per-page bump was a second
+  and that already drops every outstanding reply — so the per-page bump was a second
   mechanism for one outcome, which is a shape `docs/TRAPS.md` names. What the carry is for is
   the value, which must not go backwards when a page moves.
 - **Thrown away**: the tiles, the tier-1 placeholders, the page strip's thumbnails, the
@@ -8490,11 +8490,11 @@ under *"state keyed by a slot belongs to whatever moves into that slot"*. Three 
   the file because that is what a page's text belongs to.
 
   ⚠ **The translation was written at three of the eighteen boundaries, and this paragraph is
-  the reason nobody looked --- corrected 2026-08-30.** Fourteen calls into the cache from
+  the reason nobody looked — corrected 2026-08-30.** Fourteen calls into the cache from
   `viewer.ts` passed the slot, and `selection.ts` took the cache itself and did the same. The
   cost is not subtle: on any document with a deletion, a move or an insert in it, **pressing on
   a page placed no caret and dragging selected nothing**, the character count stayed at zero
-  and the search highlights were not drawn --- while the text sat in memory under the page's
+  and the search highlights were not drawn — while the text sat in memory under the page's
   own number. The class's own doc comment said `viewer.ts` "translates at the four call sites",
   which is a count with nothing behind it, and it was believed for as long as it stood.
 
@@ -8512,24 +8512,24 @@ it.
 
 ##### The file half: saving and printing
 
-`save.rs` takes an `edits::Plan` --- the pages that were kept, in order, each with its turn,
+`save.rs` takes an `edits::Plan` — the pages that were kept, in order, each with its turn,
 plus the baseline the edits were made against. The baseline is what lets the external-
 modification check survive a deletion: comparing the plan's *length* against the file would
 call every deletion a changed file.
 
 The page-tree surgery moved to `pagetree.rs`, shared by the two things that write a document.
 `drop_pages` was print's and `agreed_turns` was save's, and this increment needed both in both
---- a second copy of either is the failure this repository has already recorded from other
+— a second copy of either is the failure this repository has already recorded from other
 directions.
 
 ⚠ **"Carries the edits" meant the page operations and not the marks, and read as though it
-meant both --- corrected 2026-08-22.** A reader who highlighted a paragraph and pressed Print
+meant both — corrected 2026-08-22.** A reader who highlighted a paragraph and pressed Print
 got paper with no highlight on it; a page they had cropped printed at its full size. Both had
 been true since marks existed, and the paragraph below is what a reader of this document would
 have used to conclude otherwise.
 
-Two causes, and only the second is interesting. `Plan::is_identity` --- the predicate that
-decides whether the file goes to the printer byte for byte --- listed marks, page count, order
+Two causes, and only the second is interesting. `Plan::is_identity` — the predicate that
+decides whether the file goes to the printer byte for byte — listed marks, page count, order
 and turns, and had never been told about crops, so a cropped document reported itself as the
 file. And `print::build` had its own page walk, grown when printing came first and needed a
 subset of what saving does; `save.rs` later learned to write marks and crops and nothing
@@ -8537,7 +8537,7 @@ compared the two. Measured before anything changed: a job built from a plan carr
 and one crop came back with no page carrying `/Annots` and none carrying `/CropBox`.
 
 There is one writer now. `save::print_bytes` is the save path's `planned_bytes` plus the one
-input a print job has and a save does not --- the reader's own rotation --- and `print::Route`
+input a print job has and a save does not — the reader's own rotation — and `print::Route`
 names the three producers so that which one a job uses is a pure function. `docs/TRAPS.md` has
 the entry, including the two mutations that survived on the way: routing through the other
 writer dropped the view rotation with every test still green, and the test written for *that*
@@ -8547,11 +8547,11 @@ survived a second mutation because its fixture had no page carrying an edit turn
 the parameter is true and the half about the reader was never true, corrected 2026-08-23.**
 `Pages::Only` does say a range carries no edits, and `print_document`'s `pages` argument is
 passed by exactly one caller in the tree: `viewercheck.ts`. `App.svelte` sends `pages: null`
-on every print, because tpdf has no page-range field of its own --- `appcommands.ts` says so at
+on every print, because tpdf has no page-range field of its own — `appcommands.ts` says so at
 the command, deliberately. So no reader can reach the code this note was about.
 
 What a reader types goes into the *system* panel, and the system panel filters the job we
-already handed over --- which is `save::print_bytes`'s output, marks and crops included. So
+already handed over — which is `save::print_bytes`'s output, marks and crops included. So
 "2-4 of a marked-up document" has always come out marked up on macOS. **On Windows it could
 not be typed at all**, which is the defect this note hid by looking like the same subject; see
 *A page range, on the platform that could not take one* below.
@@ -8559,13 +8559,13 @@ not be typed at all**, which is the defect this note hid by looking like the sam
 The note is left struck rather than deleted because of what it cost: it sat in the ranked list
 for a week as the print gap, describing a route with no reader in it, while the real gap was
 one platform's dialog. A *Not done* is a claim about the product and is worth checking against
-the callers the way any other claim is --- `grep -rn "print_document" src/` answers this one in
+the callers the way any other claim is — `grep -rn "print_document" src/` answers this one in
 one call.
 
 **Printing carries the edits now, and did not before.** That was live from the day page
 rotation landed: a reader who turned page 3 and pressed print got page 3 as it is on disk.
 `print::Job` takes one entry per page rather than one rotation for the document, and
-`print::select` turns the model's plan into one --- read from the model rather than sent by
+`print::select` turns the model's plan into one — read from the model rather than sent by
 the frontend, so a stale frontend cannot print a page the reader deleted. It is a pure
 function of the plan and the reader's range, which is what lets it be tested without a
 document open; it lived in `lib.rs` for an hour, where the mutation harness could not see its
@@ -8578,12 +8578,12 @@ through.
 
 - A **plan out of document order**. `write_copy` deletes what is not wanted and leaves the
   survivors where they were, so a reordering is unspellable rather than approximated. Nothing
-  in the application can produce one --- `Command::Move` is written, tested and wired to
-  nothing --- and the guard is here because the failure the day it *is* wired is a file whose
+  in the application can produce one — `Command::Move` is written, tested and wired to
+  nothing — and the guard is here because the failure the day it *is* wired is a file whose
   pages are silently in the old order.
 
   **That day came one increment later, and the refusal is gone**: the section below on moving
-  a page has what replaced it. The guard did the job it was written for --- the first thing
+  a page has what replaced it. The guard did the job it was written for — the first thing
   the reordering work met was its own test, which is a better outcome than the file it
   describes.
 - A **page two page numbers share, half-deleted**. Removing it means removing one entry from a
@@ -8591,11 +8591,11 @@ through.
   with a control proving that removing *both* numbers is still accepted.
 - The **outline of a document that lost pages**, dropped whole. Its destinations name pages
   that are gone, and the pass that removes references leaves a destination array with no page
-  in it --- malformed rather than dead. A real loss, stated in `CHANGELOG.md` rather than
+  in it — malformed rather than dead. A real loss, stated in `CHANGELOG.md` rather than
   hidden, and repairing it is `links.rs`'s resolver on the write side.
 
 ~~**What a saved copy still carries, and it is worth being exact.** A deleted page's
-*content* --- its stream, and anything only it referenced --- stays in the file as an
+*content* — its stream, and anything only it referenced — stays in the file as an
 unreachable object.~~ **Closed 2026-08-26, and the paragraph is kept because the reasoning
 in it is what made the hole survive.** It was right that `save.rs` did not run the print
 path's mark-and-sweep, right that §T6.1 takes that position, and wrong that the position
@@ -8604,7 +8604,7 @@ a document, and a plan that *drops* a page is not a copy of it. `save::rewrite` 
 whenever the plan dropped or moved a page.
 
 The sentence that did the damage is the last one. Deleting was called *the first operation
-where a reader could plausibly believe otherwise* --- and Extract pages was already shipped
+where a reader could plausibly believe otherwise* — and Extract pages was already shipped
 on this same `planned_bytes` -> `rewrite` path, where the belief is not merely plausible but
 is the command's own name. Measured on `links.pdf`: extracting page 1 of 8 produced a file
 reporting one page and holding **all eight** content streams, 4,139 decodable bytes apiece.
@@ -8616,7 +8616,7 @@ is still where "removed" comes to mean removed for everything that is not the pa
 **Identity, because a count cannot see it.** A document one page shorter is equally the result
 of dropping the wrong page, or the last one, or renumbering without moving anything. The window
 harness asserts that the slot below the gap now holds the page that was under it, compared by
-its text --- and where a corpus's pages read alike it says so and skips, rather than passing on
+its text — and where a corpus's pages read alike it says so and skips, rather than passing on
 a comparison that cannot fail.
 
 **A defect found by the fixture the check needed.** Resolving the print plan against the
@@ -8626,7 +8626,7 @@ Caught by an existing check, and only because its fixture keeps pages 1 and 4 of
 whose four pages carry four different rotations.
 
 **The `page_delete` round trip is covered; the join is not.** Ten of the thirteen new window
-checks drive `Viewer.setPages` directly --- that is the seam that lets a check watch a real
+checks drive `Viewer.setPages` directly — that is the seam that lets a check watch a real
 layout rearrange itself, and it says nothing about the command a reader runs. Three more ask
 the backend for real, from inside the running app: the command is registered, it names a page
 by the identity a state reply gave it, a second deletion of that id is refused as *deleted*
@@ -8635,10 +8635,10 @@ that is asserted rather than assumed.
 
 What none of it covers is `App.svelte`, which carries the answer from one to the other: one
 function, `applyPageOrder`, and the four lines around it. The harness runs *instead of* the
-shell --- the same gap every shell action has, and the same one `opencheck.ts` states for the
+shell — the same gap every shell action has, and the same one `opencheck.ts` states for the
 file dialog.
 
-#### A stamp --- done 2026-08-23
+#### A stamp — done 2026-08-23
 
 The last markup kind, and the tenth. `/Stamp` with a `/Name` from PDF 32000-1's standard list,
 placed by a drag exactly as the box, the ellipse and the text box are.
@@ -8652,18 +8652,18 @@ appearance for a comment on purpose, because every reader synthesises a `/Text` 
 That inference is wrong here, and the measurement took three lines. On one page through one
 code path, with no `/AP`: a bare page draws **0** non-white pixels, a `/Stamp` with `/Name
 /Approved` draws **0**, and a `/Text` with `/Name /Comment` draws **336**. So a stamp is on
-`MarkKind::Square`'s side of the line --- we write the appearance or nothing appears at all.
+`MarkKind::Square`'s side of the line — we write the appearance or nothing appears at all.
 
 **The `/Text` row is the whole measurement.** Two zeroes are also what a probe that rendered
 nothing produces, so without a positive control the reading establishes nothing. `/Name` is
-written regardless, because it is what a reader that *would* synthesise draws from --- which is
+written regardless, because it is what a reader that *would* synthesise draws from — which is
 why the list is the specification's own and not four words we chose.
 
 ##### The name is a field, not a variant, and that is `strokes`'s argument
 
 `Mark::stamp` is `Option<StampName>`, non-`None` exactly for `MarkKind::Stamp`. Putting it
 inside the variant would carry the biconditional in the type and would cost `MarkKind` its
-`Copy`, which `Command` is built on --- the argument `Mark::strokes` already makes, applied to a
+`Copy`, which `Command` is built on — the argument `Mark::strokes` already makes, applied to a
 second field.
 
 It gets its **own** refusal rather than a third case in `ShapeMismatch`, whose doc comment says
@@ -8672,7 +8672,7 @@ biconditionals are two rules, and a caller told only "shape mismatch" would have
 
 ##### Four commands, not one that asks
 
-`edit.stamp.{approved,confidential,draft,final}`, built by one `map` --- the shape
+`edit.stamp.{approved,confidential,draft,final}`, built by one `map` — the shape
 `edit.color.*` already has. The palette can take a value (`nav.goToPage` does) and a stamp is
 not that: four names a reader picks between are four commands, and typing "draft" into a prompt
 is slower than typing it into the palette that is already open.
@@ -8685,7 +8685,7 @@ second consumer; `STAMP_CAP` is Helvetica's capital height, 718 of 1000, because
 stamp draws is upper case and centring on the font size instead leaves it visibly high.
 
 The overlay measures with `ctx.measureText` and the file computes from the table, so the two
-agree approximately rather than exactly --- the text box's situation, and the reason a stamp is
+agree approximately rather than exactly — the text box's situation, and the reason a stamp is
 one *word*: a word that overflows is visibly wrong, where a paragraph broken in a different
 place is not.
 
@@ -8693,19 +8693,19 @@ place is not.
 
 **`annot-probe --mode stamp`, and it exists because `--mode outline` cannot fail for this
 kind.** A stamp is a box with something in it, so every reading that mode takes of a box is
-satisfied by a stamp except the one it has backwards --- it requires an empty middle and a
+satisfied by a stamp except the one it has backwards — it requires an empty middle and a
 stamp's middle carries its word. The new mode reads the whole quad, the middle third and the top
 edge: 11,309 px, 717 and 513 against a source page reading 0. The border band began one pixel
 wide and read **5 px**, which is a passing reading five above its bound; a tenth of the width
 reads 513.
 
 `--mode roundtrip` and `--mode preview` took the kind with a list entry each. The preview is the
-strongest: PDFKit --- an independent parser and renderer --- reads the annotation as `Stamp`,
+strongest: PDFKit — an independent parser and renderer — reads the annotation as `Stamp`,
 draws 1,306 px the source page does not, and draws them across the rectangle rather than into a
 corner of it.
 
 `viewer_check.py`: **281/281** on `columns`, with the overlay reading that separates a stamp
-from both its neighbours --- `edges === 4` (which a text box fails) and `core > 0.02` (which a
+from both its neighbours — `edges === 4` (which a text box fails) and `core > 0.02` (which a
 box fails). The agreement phase from earlier the same day now covers ten kinds: all ten put ink
 in the file, and the worst hue disagreement across the nine it can compare is **1 degree**.
 
@@ -8718,14 +8718,14 @@ model's biconditional switched off, and the overlay drawing an empty box.
 **A check read the palette's rendered rows.** Adding four commands took the enabled count past
 `palette.ts`'s `.slice(0, 64)`, and three unrelated commands fell off the bottom of the list and
 were reported as *withheld from the reader*. The check now asks the registry. It had been one
-command away from that for some time and nothing could have said so --- 63 reads exactly like 5.
+command away from that for some time and nothing could have said so — 63 reads exactly like 5.
 
 **A blanket `prettier --write` over `src/**` reformatted 78 files this change never touched**,
 which is not this repository's formatter. Reverted and the edits re-applied by hand; the diff is
 the feature and nothing else. A formatter that has never been run over a tree is not a formatter
 that agrees with it.
 
-#### The overlay against the file --- done 2026-08-23
+#### The overlay against the file — done 2026-08-23
 
 Two renderers draw every mark, and each was measured only against the model's own numbers.
 `viewer_check.py` reads the overlay's pixels; `annot-probe` reads the saved file's. Neither
@@ -8734,15 +8734,15 @@ and inset, none of which any check compared.
 
 It is not a hypothetical seam. `markband.ts` is a deliberate second copy of `save.rs`'s
 geometry constants across a language boundary and its own module comment says so, and the
-reader sees drift as their document changing under them at the moment they save --- which is
+reader sees drift as their document changing under them at the moment they save — which is
 the defect that made the overlay phase exist in the first place.
 
 ##### One sampler, two pictures, and no screenshot
 
 The question proposed a screenshot comparison. It does not need one: the overlay's pixels come
 off its canvas and a render of the saved file comes down the tile protocol, so both are already
-readable inside the window. The phase makes nine marks --- one of every kind, in nine bands down
-one page --- reads the overlay, saves a copy, opens it, renders the same page and reads that.
+readable inside the window. The phase makes nine marks — one of every kind, in nine bands down
+one page — reads the overlay, saves a copy, opens it, renders the same page and reads that.
 
 **The file's ink is isolated by diffing renders, not by its colour.** The obvious classifier is
 "pixels whose hue matches what we sent", and it cannot be used here, because the hue is the
@@ -8750,16 +8750,16 @@ thing under test: counting only hue-matching pixels and then comparing their mea
 deriving its input from its own subject. So the page is rendered **before** any mark is made and
 again from the saved copy, and a file pixel counts as ink when the two differ. Page content
 cancels exactly, the classifier knows nothing about colour, and it makes the reading independent
-of what the mark sits on --- a highlight over dense type and one over blank paper are both
+of what the mark sits on — a highlight over dense type and one over blank paper are both
 measured by what the mark added.
 
 ##### Two controls, and they are not decoration
 
 A diff of two identical pictures is empty, and an empty diff satisfies "the file covers about as
-much as the overlay" for every mark whose overlay reading is also empty --- so the comparison
+much as the overlay" for every mark whose overlay reading is also empty — so the comparison
 would pass on a save that wrote nothing. One control refuses that. Its mirror reads a band no
 mark was placed on and requires it to be **identical**, because a render that differs everywhere
---- a different scale, a stale tile, a document laid out differently on reopening --- satisfies
+— a different scale, a stale tile, a document laid out differently on reopening — satisfies
 the first control and makes every reading meaningless.
 
 The first was not written for show: it went red on the first run, correctly. The mark payload
@@ -8770,14 +8770,14 @@ copy was a copy of an unmarked document.
 
 **Eight of the nine kinds agree to 0 degrees of hue.** Coverage agrees within **2.7x**, which is
 the text box and is the largest legitimate disagreement in the set: both sides draw *type*, and
-by design not the same type --- the overlay uses whatever the system resolved, the file is set in
+by design not the same type — the overlay uses whatever the system resolved, the file is set in
 Helvetica by our own metrics. The bound is 4, set above that with margin and an order of
 magnitude below the smallest defect it has to catch, since a wash and a rule differ by fourteen
 times and a frame and a filled box by ten.
 
 **The ninth is a gap in the product, and nothing else could have found it.** A comment's icon is
-the reader's colour on screen and PDFium's yellow in the file. The file is right --- `save.rs`
-writes `/C` with the chosen colour --- and deliberately carries no appearance stream, because
+the reader's colour on screen and PDFium's yellow in the file. The file is right — `save.rs`
+writes `/C` with the chosen colour — and deliberately carries no appearance stream, because
 every reader synthesises its own `/Text` icon. PDFium's ignores `/C`. Measured with a control
 rather than inferred: blue read 224 degrees on screen and 60 in the file, red read 0 on screen
 and 60 again. The kind is excluded from the hue comparison with that measurement as its reason,
@@ -8786,7 +8786,7 @@ and the decision it leaves is in §10 question 8.
 ##### Evidence
 
 Three mutations, all in `save.rs` rather than in the overlay, because what has to be proved is
-that the comparison reads the **saved file** --- a mutation of the overlay alone could be caught
+that the comparison reads the **saved file** — a mutation of the overlay alone could be caught
 by a check that never opens one. A fixed appearance colour reddens the hue check; giving every
 kind the highlight's wash reddens the coverage check; padding every rectangle 120 points down
 the page reddens the untouched control.
@@ -8794,23 +8794,23 @@ the page reddens the untouched control.
 That third one **survived its first version**, which replaced the rectangle with the whole page.
 It reddened two other checks and not the control, because `bounds` works in the page's own space
 where y grows upward, so growing the box moved the ink away from the band below it. The survivor
-was a statement about the mutation and not about the control --- which is what the harness is
+was a statement about the mutation and not about the control — which is what the harness is
 for, and is why the fix was to aim it rather than to weaken anything.
 
-#### A page range, on the platform that could not take one --- done 2026-08-23
+#### A page range, on the platform that could not take one — done 2026-08-23
 
 A reader on macOS could print pages 2 to 4. A reader on Windows could print everything or
 nothing, and the field they would have typed it into was greyed out.
 
 **The cause is a default nobody set.** `PRINTDLGW`'s `nMinPage` and `nMaxPage` arrived from
 `..Default::default()` as zero and zero, and Win32 disables the Pages radio button and both of
-its edit controls whenever those two are equal. Nothing was ignored and nothing was wrong ---
+its edit controls whenever those two are equal. Nothing was ignored and nothing was wrong —
 the capability was simply never offered, through a struct field rather than through a decision,
 and the diff that would show it is the one that does not exist.
 
 **Nothing here could have caught it, and that is the part worth keeping.** `print_probe.rs`
-drives the entire Windows print path to a real spooler --- parse, rasterise, `StartPage`,
-`EndPage`, and a readback of what the driver wrote --- and it reaches the dialog at no point,
+drives the entire Windows print path to a real spooler — parse, rasterise, `StartPage`,
+`EndPage`, and a readback of what the driver wrote — and it reaches the dialog at no point,
 because a dialog needs a person. Every check about printing was about the *job*, and this was
 about the panel. A capability that is absent produces no failures, no wrong output and no log
 line; the only instrument that reports it is a reader trying to use it.
@@ -8821,7 +8821,7 @@ line; the only instrument that reports it is a reader trying to use it.
 module on purpose: it is the half that decides which page comes out, so it compiles and is
 tested on macOS, Windows and CI alike. `print_win::spool` prints the indices it is handed
 rather than `0..count`. That split is what makes any of this provable from a machine that
-cannot run it --- three tests and three mutations, none of which needs a printer.
+cannot run it — three tests and three mutations, none of which needs a printer.
 
 It refuses rather than repairs, which is `print::build`'s existing rule restated: "3 to 99" on
 a four-sheet job is not silently "3 to 4". A clamped range is a plausible answer to a question
@@ -8834,7 +8834,7 @@ beside the function, because the next reader to sweep for unused code on a Mac w
 ##### What is proved, and what is not
 
 Proved without paper: the arithmetic (three tests, three mutations, each reddening the test
-named for it), and that `spool` sends the sheets it is given and no others ---
+named for it), and that `spool` sends the sheets it is given and no others —
 `print_probe --- a page range spools only the sheets it names`, with a second check that the
 sheet is the one that was asked for rather than the first, since a loop ignoring its range
 prints from the beginning. That check **skips with its reason** on a fixture whose first and
@@ -8850,13 +8850,13 @@ the instrument. `BUILD.md` says so beside the invocation rather than leaving it 
 **Copies are the same shape and are left alone deliberately.** `nCopies` is set to 1 going in
 and the reader's answer is never read back. Whether three copies come out therefore depends on
 the driver: `PD_RETURNDC` hands back a DC built from the dialog's own `DEVMODE`, which carries
-the reader's choice, and many drivers act on it --- so the outcome is unknown rather than known
+the reader's choice, and many drivers act on it — so the outcome is unknown rather than known
 to be one, and saying "you get one copy" would be a claim nobody here has measured. That is a second
 unverifiable Windows behaviour, and guessing at it in the same increment would put two
 unmeasured claims where there is now one. Recorded here so it is a known gap rather than a
 discovery.
 
-#### Moving a page --- done 2026-08-17
+#### Moving a page — done 2026-08-17
 
 The third of the three commands the model has held since it was built, and the last one that
 was wired to nothing. It cost almost nothing on the frontend and a page-tree rebuild in the
@@ -8864,13 +8864,13 @@ backend, which is the reverse of the deletion increment and worth saying why.
 
 **The frontend was already written.** `Viewer.setPages` takes an order and re-indexes
 everything keyed by a slot; `PageMap` translates both ways; `slotFrom` follows a reader by
-identity. All of that was built for deleting a page and none of it is about deletion --- a
+identity. All of that was built for deleting a page and none of it is about deletion — a
 reorder goes through the same path and needed one new method, `Edits.move`, plus two palette
 entries. That is what a general mechanism buys, and it was not free: the deletion increment
 chose the order-shaped design over a shorter one, and this is where that is repaid.
 
 **The arithmetic that had to be added is an inversion, not a rule.** `Command::Move` names a
-neighbour --- put this page behind that one --- and a reader names a destination. The
+neighbour — put this page behind that one — and a reader names a destination. The
 translation lives in `edits.ts`, because the model refuses an index for the reason `edits.rs`
 gives and inverting it in Rust would need the order the frontend already holds. It is read out
 of the order *without* the moved page in it, since that is the order the model inserts into;
@@ -8882,20 +8882,20 @@ the page strip's drop handling is its own piece of work.
 
 ##### The file half: a page tree that has to be rebuilt
 
-A deletion can be done in place --- take pages out, leave the survivors where they are. A move
+A deletion can be done in place — take pages out, leave the survivors where they are. A move
 cannot, and the reason is the one `print.rs`'s module note has carried since printing landed:
 `/Resources`, `/MediaBox`, `/CropBox` and `/Rotate` are **inheritable**, so what a page has
 belongs to the node it hangs under. Shuffling pages between nodes silently changes their size
 and their angle.
 
-So `pagetree::reorder_pages` writes those four attributes onto each page --- only where the
-value would otherwise change --- and rebuilds the tree one level deep. Both writers use it,
+So `pagetree::reorder_pages` writes those four attributes onto each page — only where the
+value would otherwise change — and rebuilds the tree one level deep. Both writers use it,
 and both ask first whether the order really differs, which is a correctness property rather
 than a saving: a rebuild reparents every page of every document, and a plan in document order
 must not pay that.
 
 **The control for that is not readable from the pages.** A document nobody rearranged, put
-through the rebuild, comes out with the same pages in the same order at the same angles ---
+through the rebuild, comes out with the same pages in the same order at the same angles —
 every check that reads the document agrees, third-parser ones included. What differs is the
 shape of the tree, so the two checks that hold this read the `/Type` of the first thing the
 catalog's `/Pages` node points at.
@@ -8905,7 +8905,7 @@ own doc comment that a selection prints in *document* order rather than the orde
 because `build` produced a subset by deleting: accurate, deliberate, and harmless only while
 nothing could produce an order the file did not have. `save.rs` had closed the same gap with
 a refusal; print had a sentence. Now both honour the order, and `expect_pages` still cannot
-see it --- it compares how many pages came out, never which --- so what covers it is a
+see it — it compares how many pages came out, never which — so what covers it is a
 third-parser read of `rotated.pdf`, whose four distinct rotations are the only thing that
 names a page.
 
@@ -8916,14 +8916,14 @@ opposite of what a deletion does, one operation apart, and there is a check for 
 ##### What the checks are built around
 
 **The page count, which is the observable a move does not have.** Every assertion the deletion
-phase rests on --- one page shorter, an empty last slot, coverage dropping --- reads
+phase rests on — one page shorter, an empty last slot, coverage dropping — reads
 identically for a move that worked and a move that did nothing. So the move phase is its own,
 its first check asserts the length *stayed*, and the rest is identity by the text on each page,
 skipped with a stated reason wherever two pages read alike.
 
 **One property the text cannot see**, and it is the one the layout genuinely owns: a page
 carries its *measured* size to wherever it moved. Only observable on `mixed.pdf`, the single
-corpus whose pages are different sizes, so the mutation aimed at it has a runner of its own ---
+corpus whose pages are different sizes, so the mutation aimed at it has a runner of its own —
 on a uniform document the estimate and the truth are the same number, the check skips, and a
 mutation aimed at a check that skips reports SURVIVED.
 
@@ -8931,18 +8931,18 @@ mutation aimed at a check that skips reports SURVIVED.
 reader-follows-their-page check has a landing slot that can reach the top of the viewport.
 The last page of a short document cannot, which this file has paid for once.
 
-#### Dragging a thumbnail to move a page --- done 2026-08-17
+#### Dragging a thumbnail to move a page — done 2026-08-17
 
 The gesture the two palette commands were built to call, and the last of Phase 2's page
 operations that a reader reaches with a pointer rather than a menu.
 
 **Two pure functions carry the whole decision**, in the file's existing idiom
 (`stripWindow`, `nextWanted`). `insertionGap` turns a pointer position into one of the
-`pageCount + 1` places a page can be dropped --- a gap rather than a row, because a row
+`pageCount + 1` places a page can be dropped — a gap rather than a row, because a row
 index cannot say *after the last one*. `landingSlot` turns that gap into the destination
 `Edits.move` takes, and is off by one in exactly half the cases: the gap is read against
 the order the page is still in, and the answer indexes the order it will be in once the
-page has left. That falls out as the property that a drag going nowhere is a no-op ---
+page has left. That falls out as the property that a drag going nowhere is a no-op —
 both gaps either side of the page itself come back as the page's own slot.
 
 **A press is not a drag until it has travelled**, and the press still navigates
@@ -8952,7 +8952,7 @@ navigates is coherent because the viewer follows a page by identity and ends up 
 wherever it lands.
 
 **The edge scroll is a frame loop rather than a step per event.** The case that needs it is
-a pointer held still against the bottom of the panel --- a strip is three or four rows tall,
+a pointer held still against the bottom of the panel — a strip is three or four rows tall,
 so without it a drag could only reach what is already on screen, which is a smaller move
 than the palette commands make. Per frame rather than per event also means a 120 Hz
 trackpad and a 60 Hz mouse scroll at one speed.
@@ -8960,7 +8960,7 @@ trackpad and a 60 Hz mouse scroll at one speed.
 **The strip does not scroll while a pointer is down on a row.** Pressing a row navigates, and
 the strip follows the page being read, so without this the content slides out from under a
 drag at the instant it begins. The guard starts at the press rather than at the drag, because
-the navigation happens on `pointerdown` --- before the pointer has travelled far enough for the
+the navigation happens on `pointerdown` — before the pointer has travelled far enough for the
 press to be a drag.
 
 **A drag is abandoned, never completed, by `setPages`.** That is the path a drop's *own*
@@ -8973,23 +8973,23 @@ the release *is* the drop and there would otherwise be no way out.
 tested, the gesture's state machine has nine mutations against a fake DOM, and the edit a
 drop runs is covered by `moveCommandChecks` and `edits.test.ts`. None of those can say
 whether WKWebView captures the pointer, keeps delivering moves after it has left the row,
-and lays out geometry the gap arithmetic can read --- so that is all the window is asked,
+and lays out geometry the gap arithmetic can read — so that is all the window is asked,
 with a handler that records rather than edits. Two names, and the control is the one that
 found something: its first version could not fail, for two unrelated reasons. Both are in
 `docs/TRAPS.md`.
 
-#### Extracting pages to a second file --- done 2026-08-17
+#### Extracting pages to a second file — done 2026-08-17
 
 The first page operation that does not change the document. Everything before it
---- rotate, delete, move --- edits the working document and is undone by pressing
+— rotate, delete, move — edits the working document and is undone by pressing
 undo; this reads it and writes somewhere else, so there is nothing to undo and
 nothing marked dirty. That is why `plan_subset` is a **plan** rather than a
 `Command`: putting it in the journal would mean the model had to know how to
 replay an operation with no effect on itself.
 
 **It shares the whole write path with `Save a copy`**, which is most of why it is
-small. `save.rs` already writes a subset in order --- that is what deleting a page
-produces --- so extract needed no new page-tree surgery, and the three refusals
+small. `save.rs` already writes a subset in order — that is what deleting a page
+produces — so extract needed no new page-tree surgery, and the three refusals
 that path already states (an encrypted source, a page count that disagrees with
 the baseline, a write over the source) apply unchanged and are not restated
 anywhere.
@@ -8998,13 +8998,13 @@ anywhere.
 ten-page document carries `baseline: 10`, because that field answers *how many
 pages did the file have* and is what catches a document modified under the open
 one. Setting it to the selection's length would make every extract look like an
-external modification, or --- worse, and this is the direction the mutation is
-aimed at --- make a genuine one invisible when the numbers happened to agree.
+external modification, or — worse, and this is the direction the mutation is
+aimed at — make a genuine one invisible when the numbers happened to agree.
 
 **Slots, not ids, and this is the one place that is right.** Every command takes
 a `PageId` for the reason §5 gives. A selection is different in kind: it is what
 a reader typed, in the vocabulary they typed it in, and it is resolved inside the
-same lock that reads the order --- so there is no window in which it can go stale.
+same lock that reads the order — so there is no window in which it can go stale.
 A reader who moves a page and then extracts "1 to 3" gets the three they can see.
 
 **Three normalisations and three refusals, and which is which is the whole
@@ -9012,8 +9012,8 @@ design.** `parsePageRange` merges an overlap (`1-3,2` is three pages: a subset i
 a set) and returns document order whatever order was typed (`5,1` is pages 1 and
 5). It refuses a reversed range rather than correcting it, for the reason
 `nav.goToPage` refuses 900 in a 775-page document rather than clamping. The
-backend then refuses what the frontend cannot send --- empty, out of range,
-repeated, descending --- rather than normalising it a second time, because two
+backend then refuses what the frontend cannot send — empty, out of range,
+repeated, descending — rather than normalising it a second time, because two
 normalisers are two readers of one rule and the second one agrees with the first
 by construction.
 
@@ -9024,7 +9024,7 @@ predict from what dragging a thumbnail does.
 ##### What the tests can and cannot say
 
 The arithmetic is 30 unit tests over two pure functions, `parsePageRange` and its
-inverse `namePages` --- which exists because the one thing a reader cannot tell
+inverse `namePages` — which exists because the one thing a reader cannot tell
 from a file called `report copy.pdf` is which three pages of the report are in
 it. The subset plan is ten Rust tests. The command is four more, and one of them
 had to be rewritten: driving it through `registry.run` meant the registry
@@ -9032,12 +9032,12 @@ refused the value before the command's own guard ran, so the mutation that
 deletes that guard **survived** a test that could not execute it.
 
 Two fixtures were wrong before they were right, and both are recorded traps
-arriving again. The sort test used pages 1, 10 and 2 --- slots 0, 9 and 1, which a
+arriving again. The sort test used pages 1, 10 and 2 — slots 0, 9 and 1, which a
 lexicographic sort orders exactly as a numeric one does, so the mutation removing
 the comparator survived it; slots 2 and 10 are the smallest pair that
 discriminates. And five mutations named tests in a file `mutate_frontend.py` had
 never been told to run, which the harness refused to start over rather than
-reporting as survivors --- the fourth time that guard has caught this list.
+reporting as survivors — the fourth time that guard has caught this list.
 
 The window check drives the command with a real argument, `1-2`, because the
 value is where the work is: it has to survive the palette's input, reach the
@@ -9054,33 +9054,33 @@ identical name sets is that a skip is visible where a quietly diminished check
 is not.
 
 ~~**Not done:** splitting a document into several files at once. Split
-is this operation repeated and needs a second question answered --- how the files
-are named --- rather than new machinery.~~ (Done 2026-08-26 --- `file.splitDocument`.
+is this operation repeated and needs a second question answered — how the files
+are named — rather than new machinery.~~ (Done 2026-08-26 — `file.splitDocument`.
 The prediction held exactly: no new machinery, and the naming *was* the second
 question. See *Splitting a document* below.) ~~Merge is its inverse and is the larger
 one: nothing in the model creates a page, and `docmodel`'s note has the
-id-allocator property that would need proving first.~~ (Merge done 2026-08-24 ---
+id-allocator property that would need proving first.~~ (Merge done 2026-08-24 —
 `fb1c15d`, *Merge documents into a new file*, registered as `file.mergeDocuments`.
 Checked 2026-08-26.)
 
 ⚠ **This is the sixth stale claim in this file and the one that says most about how
 they are found.** The sweep two commits ago checked the greppable notes against the
 tree and reported split *and merge* as open, because it grepped for `document.merge`
-and `fn split_document` --- names it made up. `file.mergeDocuments` had been
+and `fn split_document` — names it made up. `file.mergeDocuments` had been
 registered for two days. That is the failure the entry *"a gate over claimed
 absences only catches the name the claim guessed"* describes, committed in the same
 session that wrote a trap about it. **Check a capability against the registry, not
 against a name you invented for it:** `node -e` over `appcommands.ts` prints all
 sixty-eight ids in one command, and reading that list is what found this.
 
-#### Splitting a document --- done 2026-08-26
+#### Splitting a document — done 2026-08-26
 
 `extract_pages` repeated, which is what the note above predicted, and the prediction
 held: no new machinery, and **the naming was the whole of the second question.**
 
 **The grammar is the cuts, not the files.** `3,7` on ten pages writes 1-3, 4-7, 8-10.
 The numbers are the *last page of a file* rather than the first page of the next,
-because that is how a reader describes a document --- "the report ends on page 7" ---
+because that is how a reader describes a document — "the report ends on page 7" —
 and because it makes the first file's boundary sayable at all, which "first page of the
 next" cannot do without naming page 1 and meaning nothing.
 
@@ -9094,7 +9094,7 @@ collision.
 dialog, so the platform has already asked them about replacing it. A split derives
 `count - 1` further paths that no dialog ever showed, and `write_atomically` finishes
 with a rename, which replaces. So `write_split` checks **every** destination before
-writing **any** --- and the test plants its file at part *two*, because a guard checking
+writing **any** — and the test plants its file at part *two*, because a guard checking
 as it goes would have written part one before noticing, and the property is that nothing
 is written. It is a check and not a guarantee: a file appearing between the check and the
 rename is still replaced, and closing that means committing with `create_new` throughout
@@ -9102,7 +9102,7 @@ this module. The value is turning "destroys files without saying so" into "refus
 
 **The chosen name is never one of the parts.** `report.pdf` gives `report-1.pdf`,
 `report-2.pdf`, `report-3.pdf`. Writing the first part to the chosen name would make the
-set inconsistent --- one unnumbered file and two numbered --- and the unnumbered one is
+set inconsistent — one unnumbered file and two numbered — and the unnumbered one is
 the one that reads as the whole document. The cost, stated because it is real: the save
 dialog may have asked about replacing a file this never writes. `afterSplit` therefore
 always reports, where `afterCopy` is silent on success: the file the reader named is not
@@ -9118,31 +9118,31 @@ inclusively reddens six checks and would redden none written as counts.
 `not-built` marker in `README.md` guessed `edit.splitDocument`; this shipped as
 `file.splitDocument`, grouped with extract and merge because all three change nothing
 about the open document. So the absence direction stayed **green** through a capability
-shipping, exactly as it did for stamps, and the classification direction --- every
-registered command named in prose or excluded with a reason --- is what went red. Third
+shipping, exactly as it did for stamps, and the classification direction — every
+registered command named in prose or excluded with a reason — is what went red. Third
 instance of that pattern, and the first observed prospectively rather than in a sweep.
 
 Nine mutations, four Rust and five frontend, each caught by the test named for it.
 
-#### Highlighting a selection --- done 2026-08-18
+#### Highlighting a selection — done 2026-08-18
 
 The first thing tpdf **adds** to a document rather than rearranging, and the
 first user of the id allocator `docmodel`'s note deferred. A reader drags across
 a line, chooses *Highlight selection*, and the mark is on the page immediately
-and in the file when they save a copy --- as a real `/Highlight` annotation that
+and in the file when they save a copy — as a real `/Highlight` annotation that
 Preview and Acrobat both render, not a rectangle tpdf alone knows about.
 
 **The allocator property is now live, and it is carried by types rather than by
 care.** `Doc::next_mark` only counts up, and undo rewinds the *cursor*; a command
 carries the id it was issued, so replay allocates nothing. Together those make
 "an id released by an undo is re-issued to a different mark" unreachable rather
-than merely unlikely --- and both halves are asserted, because a document where
+than merely unlikely — and both halves are asserted, because a document where
 redo restored a mark that was not the one undone would look entirely normal.
 
 **Marks are held in display space and mapped at the moment of writing**, which is
 the decision the whole increment turns on. The reader's drag produces rectangles
-in the space the viewer lays glyphs out in --- points from the displayed page's
-top-left, after `/Rotate` --- and `/QuadPoints` wants the page's own space, y
+in the space the viewer lays glyphs out in — points from the displayed page's
+top-left, after `/Rotate` — and `/QuadPoints` wants the page's own space, y
 upwards, from the media box. Storing the display-space form means the overlay
 draws exactly what the model holds, with no conversion between what a reader
 dragged and what they see; `save.rs` converts once, where the crop box and the
@@ -9154,14 +9154,14 @@ implementation from the one `annots.rs` uses to read a rectangle *back*, and tha
 is deliberate: `annot-probe --mode roundtrip` writes a mark through one and reads
 it through the other, so an agreement between them is evidence rather than a
 tautology. On ten fixtures the rectangle comes back **exact**, including a page
-carrying `/Rotate 90` and one with a `/CropBox` inset by 50 points --- and each of
+carrying `/Rotate 90` and one with a `/CropBox` inset by 50 points — and each of
 those two is the only fixture that catches its own mutation: dropping the crop
 origin reddens `links-cropped` alone, and mapping with no rotation reddens
 `rotated-90` alone.
 
 **Pixels are the independent evidence**, because two mappings wrong in the same
 way agree perfectly. `--mode ink` renders the saved page and counts wash inside
-each quad, with the *source* page as the control --- and `--mode legible` counts
+each quad, with the *source* page as the control — and `--mode legible` counts
 the glyph ink before and after, which is what says the wash is a wash: the blend
 mode is `/Multiply`, and removing it leaves **0 of 2,744** ink pixels in the band
 on `text-base14`, a highlight that hides what it marks.
@@ -9171,15 +9171,15 @@ Measured before deciding: a `/Highlight` with no `/AP` renders in Preview and in
 PDFium. What a reader generates is *its* wash, though, so the same file would
 differ between them and could differ again after an update; an `/AP` makes the
 appearance the document's own. The cost is that nothing then reads
-`/QuadPoints` --- a mutation reordering every quad's corners changed no pixel and
-passed every other check --- so `--mode noap` strips the appearance and renders
+`/QuadPoints` — a mutation reordering every quad's corners changed no pixel and
+passed every other check — so `--mode noap` strips the appearance and renders
 what the numbers alone produce, and the corner order is additionally pinned
 against the bytes.
 
 **Two renderers draw this mark and they must agree**, which is §10 question 8
 answered for this shape: the overlay draws it while the document is open, PDFium
 draws the saved file's appearance stream after a reopen. The overlay was the
-cheap half --- the canvas already composites the search hits and the selection
+cheap half — the canvas already composites the search hits and the selection
 with `multiply`, so a highlight is a third fill in the same pass, painted under
 both so a search hit stays legible over a marked line.
 
@@ -9191,7 +9191,7 @@ model does not have.
 
 **No keyboard binding, deliberately.** ⌘H is macOS's hide; ⌘⇧H is free and was
 not taken, because a chord for a command that only ever applies to a selection
-teaches itself badly --- pressed with nothing selected it does nothing and
+teaches itself badly — pressed with nothing selected it does nothing and
 explains nothing. It is in the palette, the Edit menu, and the right-click menu
 over a selection, which is where a reader who has just dragged across a line is
 already looking.
@@ -9201,7 +9201,7 @@ command. *"`edit.highlightSelection` runs from the palette"* is the ordinary
 wiring check every command gets. The pair beside it is what protects the
 decision above: it takes the selection's rectangles, rotates the view, takes
 them again, and asserts they are **identical**. Built from the view's boxes
-instead --- which is the obvious source, and what the selection paints with ---
+instead — which is the obvious source, and what the selection paints with —
 they would turn with the window, and a mark made at 90° would sit somewhere else
 at 0°. With the view upright the two sources agree exactly, so nothing else in
 the harness can tell them apart.
@@ -9213,11 +9213,11 @@ than subtracting a count, so a new one in that class has to be named.
 **Not done, and none of it is hidden by this:** editing a mark's note, ~~choosing
 a colour~~ (done 2026-08-20), removing one from the page (the model and the
 command exist; no UI reaches them), the other sixteen markup subtypes, and writing a reply.
-`MarkKind` has one variant on purpose --- a variant there is a promise that the
+`MarkKind` has one variant on purpose — a variant there is a promise that the
 write path can produce something both readers render, so growing it is a change
 to `save.rs` and not to a list of names.
 
-#### Taking a mark off, and typing on one --- done 2026-08-18
+#### Taking a mark off, and typing on one — done 2026-08-18
 
 The two items the increment above left with a model and no route in. A press on a
 highlight opens a box: what the reader types is the annotation's `/Contents`, and
@@ -9226,7 +9226,7 @@ undo steps over them and the document is dirty until it is saved.
 
 **A note is a version, not a field**, and that is the one structural decision
 here. Everything else on a `Mark` is fixed when the mark is made, which is what
-lets `Doc` hold one body per id and never touch it again --- but a note changes,
+lets `Doc` hold one body per id and never touch it again — but a note changes,
 and everything that changes has to be rebuildable by replay, because undo rebuilds
 the working document and nothing else. So the text lives in a table keyed by a
 `NoteId` and `Working` holds which version each mark is on. `Command::Renote`
@@ -9236,7 +9236,7 @@ carries the id rather than the string, for the reason `Annotate` carries a
 The allocator behind it has the same property `next_mark` does and needs it for
 the same reason: it only counts up, so the text an undone `Renote` named is still
 the text its id names when a redo re-applies it. Two versions are dropped rather
-than kept --- the ones whose commands went with a discarded redo tail --- and
+than kept — the ones whose commands went with a discarded redo tail — and
 `note_bodies()` is the only observable that can see the difference, exactly as
 `mark_bodies()` is for marks.
 
@@ -9253,19 +9253,19 @@ cancel.** Not on every keystroke, which would put a journal entry between two
 letters; not on a button, because a reader who types and clicks away has said what
 they meant. Escape commits for the same reason: the thing it would discard is text
 somebody just typed, and a reflex press must not lose work. The two cases that do
-*not* commit are a removal --- the note is going with the mark --- and a mark that
+*not* commit are a removal — the note is going with the mark — and a mark that
 disappears under an open box, which is what an undo of the highlight looks like;
 committing there would send a note for a mark the model no longer has and put a
 refusal in front of a reader for their own undo.
 
 **Which mark is always "the one whose note is open."** The popup's own button and
 the Edit menu's *Remove highlight* both go through one method on the viewer that
-reads that, rather than each naming an id --- two ways to name the subject of a
+reads that, rather than each naming an id — two ways to name the subject of a
 command is how they come to disagree.
 
 **Adding the menu item found a defect in the one already there.** Menu-bar
 enablement is a map *pushed* to AppKit, and it was pushed after an edit, after an
-open, and when the updater moved --- so a guard reading the *selection* was never
+open, and when the updater moved — so a guard reading the *selection* was never
 refreshed while a selection existed, and Highlight selection had been greyed at
 exactly the moment it applied since the day it shipped. It is pushed from the
 frame loop now, compared against the last one so nothing crosses the boundary
@@ -9275,30 +9275,30 @@ the push sites is wrong between them.
 
 **Seven window checks, and each of the two that matter has its control beside
 it.** Closing after typing sends the note; closing without typing sends nothing
---- a popup that committed on every close would pass the first and fail the
+— a popup that committed on every close would pass the first and fail the
 second, and nothing in the document would show the difference, only the undo
 stack. Removing types *first* and then presses the button, so a popup that
 committed unconditionally fails it. They are driven against a synthetic mark the
 harness hands the viewer rather than one made through the backend, which is what
 lets them run on the two corpora with no extractable text: the model is tested in
 `docmodel.rs`, the file in `annot-probe`, and this phase tests the half neither
-can reach --- a rectangle on screen, a press landing on it, and the box that
+can reach — a rectangle on screen, a press landing on it, and the box that
 opens.
 
-**Not done:** ~~a colour~~ (done 2026-08-20 --- see *A colour a reader can
+**Not done:** ~~a colour~~ (done 2026-08-20 — see *A colour a reader can
 choose*), a keyboard route to a mark (the pointer is the only way to
-open one), editing a comment that came *out of* a file --- the model knows nothing
-about those, and giving it a command that names one is its own increment --- and
+open one), editing a comment that came *out of* a file — the model knows nothing
+about those, and giving it a command that names one is its own increment — and
 a note long enough to be worth bounding, which nothing does today.
 
-**And one finding this increment did not act on --- since measured, and it was
+**And one finding this increment did not act on — since measured, and it was
 real. See the section below. Kept as written, because what it got right and what
 it got wrong are both worth having on the record: the defect was there, and the
 extent was under half of it.** Stated at the time as what it was: read from
 the code and not measured. The reader's own marks are placed with
 `scroller.effectiveTurns(slot)`, which is the view's rotation *plus* the turn an
 edit applied to that page. Comments and links are placed with `this.turns`
-alone --- `commentUnder`, `anchorFor`, `topPtOf` and `linksOn` all pass it --- and
+alone — `commentUnder`, `anchorFor`, `topPtOf` and `linksOn` all pass it — and
 nothing else adds the page's own edit turn on their behalf: `pages.commentsIn`
 maps page numbers and leaves the rectangle exactly as the backend sent it. The
 tile *is* drawn with both turns, so on a page a reader has rotated with
@@ -9306,7 +9306,7 @@ tile *is* drawn with both turns, so on a page a reader has rotated with
 hit-tested in another.
 
 That is a complete argument from the code with the obvious alternative
-explanation checked, and it is still not a measurement --- `docs/TRAPS.md` has an
+explanation checked, and it is still not a measurement — `docs/TRAPS.md` has an
 entry about exactly this shape, where five rounds of reading produced four wrong
 answers to one question about runtime behaviour. **So the next increment here
 starts with the experiment, not with the fix**: press a comment on an
@@ -9314,7 +9314,7 @@ edit-rotated page and see. If it reproduces, the fix is `effectiveTurns` at four
 call sites and it needs a check per subsystem, which is why it is not folded into
 this one.
 
-#### The turn a page carries, as against the turn the view has --- done 2026-08-18
+#### The turn a page carries, as against the turn the view has — done 2026-08-18
 
 The experiment the section above called for, run first and settled in two
 minutes. It reproduces, and the instrument is a differential rather than a
@@ -9328,18 +9328,18 @@ turn=1 eff=1 viewTurns=0  painted=(730,120) -> comment -1  | lookedUp=(120,70) -
 ```
 
 Disjoint. The mark path was already right and has window checks behind it, so
-nothing here rests on a theory about where PDFium paints an annotation --- the
+nothing here rests on a theory about where PDFium paints an annotation — the
 comment is the one that moved.
 
 **The extent was the surprise.** The estimate above said four call sites; there
 were eleven, plus a twelfth that wrote the sum out by hand. Six turned a
-rectangle by the view's rotation alone --- the two link twins of the comment
+rectangle by the view's rotation alone — the two link twins of the comment
 calls were missed because they sit a screen further down. Four decided whether a
 vertical offset within a page means anything by `this.turns === 0`, which is the
 same mistake spelled as a comparison rather than as an argument:
 `goToDestination`, `position`, and both restores. And `learnGeometry` removes a
 turn from a size that has every turn in it, which is the one that does not
-correct itself --- a page turned before it has ever been on screen learns its
+correct itself — a page turned before it has ever been on screen learns its
 size **transposed**, 800x600 for a 600x800 page, and keeps it for the life of
 the document, because a size is learned once.
 
@@ -9356,7 +9356,7 @@ land on it.
 
 **The fix is one primitive rather than eleven corrections.** `Viewer.turnsOn`
 returns the effective turns and the document's size for a page, and everything
-that places a rectangle goes through it --- including `viewQuadsOf`, which held
+that places a rectangle goes through it — including `viewQuadsOf`, which held
 its own correct copy of the same two lines and is now the third caller rather
 than a second implementation. Four uses of `this.turns` are left and all four
 are right: the status report, the getter, and `rotateBy`'s own arithmetic.
@@ -9365,12 +9365,12 @@ are right: the status report, the getter, and `rotateBy`'s own arithmetic.
 turn and a view rotation are the same picture on screen. Every check that
 rotates rotates the *view*, where the two numbers are equal; every check with a
 comment in it leaves the page upright. The defect needs both at once and no
-fixture had both --- which is this repository's *"a fixture where the right rule
+fixture had both — which is this repository's *"a fixture where the right rule
 and the wrong rule agree cannot tell them apart"*, arriving as a fixture where
 the two rules never meet.
 
 Thirteen checks in `viewerturns.test.ts`, every one proved able to fail. Eight
-compare a comment's and a link's found region against a *mark's* --- a grid of
+compare a comment's and a link's found region against a *mark's* — a grid of
 presses collected into a set, at each of the four turns, so the test recomputes
 no geometry the code computes. A ninth is their control: the region has to
 **move** when the page turns, since a placement that ignored every turn would
@@ -9379,14 +9379,14 @@ satisfy all eight by having all three subsystems ignore it together.
 **And the collapse onto one primitive is what made that control load-bearing,
 which was measured rather than foreseen.** Re-running the mutation on the
 finished tree reddened *two* checks where it had reddened eight before
-`viewQuadsOf` was routed through `turnsOn` --- because three subsystems sharing
+`viewQuadsOf` was routed through `turnsOn` — because three subsystems sharing
 an implementation agree by construction, so a fault in it moves all three
 regions together and every comparison stays green. The absolute half is a bound
 that comes from somewhere else: a rectangle on a page has to be found **within**
 that page, measured against the laid-out pitch. Two mutations now stand against
 that one line, and they are opposite: no turn at all, caught by the control, and
 one turn too many, caught by the bound. `docs/TRAPS.md` has it, and the general
-form --- deduplication changes what a suite proves, in the direction of proving
+form — deduplication changes what a suite proves, in the direction of proving
 less, and nothing goes red at the moment it happens.
 
 The other four are the offset guards, the learned size, and the links memo. That
@@ -9400,8 +9400,8 @@ writing end.
 implementation worth more than three agreeing ones: a mutation turning every
 rectangle a quarter too far reddens three of the mark phase's checks against a
 real window, with no new check name added. Substituting the view's number there
-would have been a no-op --- that phase runs before anything turns a page or the
-view, so both numbers are zero --- which is why the mutation adds a turn rather
+would have been a no-op — that phase runs before anything turns a page or the
+view, so both numbers are zero — which is why the mutation adds a turn rather
 than swapping the source.
 
 **Not done, and none of it is a placement question:** the `/Rotate` a save writes
@@ -9410,7 +9410,7 @@ sidebar's comment rows and the outline's destinations are page granularity and
 carry no rectangle; and nothing here touches how a *selection* behaves on a
 turned page, which goes through `caretFrom` and has its own checks.
 
-#### Underline and strike out --- done 2026-08-18
+#### Underline and strike out — done 2026-08-18
 
 The second and third things a reader can do to a run of text, and the first
 increment the model was explicitly built for: `MarkKind` had one variant and a
@@ -9436,14 +9436,14 @@ decides all four.** `is_wash` says whether a kind covers its quads or draws a
 line across them, and from it follow the geometry, the blend mode and both
 opacities. A wash multiplies with the words under it at 40%; a line is drawn
 over them at full strength, because a multiplied red line over black text is
-black --- a strikeout nobody can see. One mutation of that predicate reddens
+black — a strikeout nobody can see. One mutation of that predicate reddens
 three tests, which is the shape a single decision should have.
 
 The rule is proportional to the marked text rather than PDFium's fixed 1 pt.
 Both are defensible for body text and only one survives a heading: a 1 pt
 strikeout across 36 pt type is a hairline, and a reader who cannot see the line
 they just drew draws it again. And it **stays inside the quad**, which is not a
-nicety --- the appearance stream's `/BBox` is the bounds of the quads, so an
+nicety — the appearance stream's `/BBox` is the bounds of the quads, so an
 underline centred on the bottom edge loses its lower half in every reader and
 looks like a thinner line rather than like a defect.
 
@@ -9470,14 +9470,14 @@ for red, and `docs/TRAPS.md` has why the fix was to derive the classifier from
 what the probe sent rather than to correct a constant.
 
 **Nine checks and twelve mutations, every check proved able to fail.** Four in
-`save.rs` --- the subtype, the opacity-and-blend pair, the line staying inside
+`save.rs` — the subtype, the opacity-and-blend pair, the line staying inside
 its quad, and where it sits, which is the only thing that tells an underline
 from a strikeout drawn in the wrong place. One in `edits.rs` for the kind
 reaching the plan and the reply, which is the only check that can see a boundary
 hardcoding a kind, since the file is then correct for whatever the mark claims
 to be. Two in `markpopup.test.ts`: one over all three kinds asserting both the
 header and the button, and a control beside it for a second mark of another kind
-taking the box over --- a box labelled once when it is built is right for the
+taking the box over — a box labelled once when it is built is right for the
 first mark and wrong from the second. One in `edits.test.ts` for the colours,
 asserted as a set of three so a table giving every kind the same colour cannot
 pass. And one more in `edits.rs` for the colour clamp, which is the finding
@@ -9497,7 +9497,7 @@ command reachable only from the palette is a decision, and this one makes it be
 written down rather than defaulted into.
 
 Three of the window sweep's probes now aim at the three kinds separately,
-carrying the argument in the expectation --- one action taking a parameter is
+carrying the argument in the expectation — one action taking a parameter is
 the shape this file's own note about `movePage` warns about, and a copy that
 left all three passing `"highlight"` gives a reader a Strike out that
 highlights. The backend phase gained a check that drives each kind through
@@ -9509,7 +9509,7 @@ saying what a caller *can* choose, and the colour is it: three floats that reach
 `/C` and the appearance stream's `rg` operator, with `Mark::color` documented as
 "in 0..=1" and nothing making it so. The sentence being drafted was that JSON
 cannot express a non-finite number, which is true and does not give the
-conclusion --- `1e40` is valid JSON and is `f32::INFINITY` by the time it is an
+conclusion — `1e40` is valid JSON and is `f32::INFINITY` by the time it is an
 `f32`, and `format!` writes that as `inf`, three letters in the middle of a
 content stream. tpdf would have written a file no reader can open. Measured in a
 throwaway crate rather than reasoned about, clamped at the boundary where a wire
@@ -9517,23 +9517,23 @@ value becomes a model value, and the test asserts finiteness separately from the
 range because that is the property `format!` needs. Nothing user-visible
 changed, so it is not in the changelog; `docs/TRAPS.md` has the general form.
 
-**Not done:** the remaining markup kinds --- squiggly, and the ones that are not
+**Not done:** the remaining markup kinds — squiggly, and the ones that are not
 about a text selection at all (ink, shapes, text boxes, stamps), each of which
 needs a way to *draw* rather than a way to select. (Ink, the box, the ellipse,
-squiggly and text boxes have all landed since, and so have stamps --- 2026-08-23,
+squiggly and text boxes have all landed since, and so have stamps — 2026-08-23,
 `c9bdead`. Every kind named in this sentence is built; checked 2026-08-26, because
 this parenthetical had itself gone stale about stamps for three days.) ~~A colour a reader can
 choose, which is still the UI question the `MARK_COLORS` table's comment names
-rather than a missing constant.~~ (Done 2026-08-20 --- that comment was the
+rather than a missing constant.~~ (Done 2026-08-20 — that comment was the
 brief, and `markcolors.ts` answers it.) And a keyboard route to a mark, unchanged from the last
 increment: the pointer is still the only way to open one.
 
-#### Reaching a mark from the keyboard --- done 2026-08-18
+#### Reaching a mark from the keyboard — done 2026-08-18
 
 Two increments in a row had ended by recording the same gap: *"a keyboard route
 to a mark, unchanged from the last increment: the pointer is still the only way
 to open one."* This is that route, and it turned out to have a prerequisite
-nobody had noticed --- the box it lands the reader in was not safe to type in.
+nobody had noticed — the box it lands the reader in was not safe to type in.
 
 **A shipped defect, found by measuring rather than by reading.** Every key
 `viewer.ts` handles was firing while the reader typed a note: "n" turned the page
@@ -9549,8 +9549,8 @@ The correct reasoning was already in the repository, two files away, and did not
 transfer. `appcommands.ts` guards ⌘Z and ⌘⇧Z and nothing else, and explains that
 every other binding it holds is *"a chord no text field claims, so taking it from
 the find bar is what a reader wants"*. That is right about the window handler,
-whose bindings are all chords. The viewer's handler holds the opposite half ---
-the bare letters and the navigation keys --- and a rule stated with its reasoning
+whose bindings are all chords. The viewer's handler holds the opposite half —
+the bare letters and the navigation keys — and a rule stated with its reasoning
 still has to be re-derived for the next surface, because the reasoning is what
 varies. `docs/TRAPS.md` has the general form.
 
@@ -9565,7 +9565,7 @@ disagree.
 about `hitTest`: a second copy of "the next one after the viewport, and it does
 not wrap" is a second thing to keep right, and a mutation of one of them survives
 the other's tests. What the two callers do *not* share is the list, and that is
-the half that genuinely differs --- `orderedLinks` bands lines across a page,
+the half that genuinely differs — `orderedLinks` bands lines across a page,
 `markWalk` resolves page **ids** to slots.
 
 That resolution is the increment's one real piece of arithmetic. A `MarkView`
@@ -9578,7 +9578,7 @@ on an edited one.
 **The walk opens the note rather than drawing a focus ring, and the asymmetry
 with links is the point.** A link is a thing you go *through*, so focusing it and
 following it are two steps. A mark is a thing you go *to*, and everything a
-reader can do with one --- read the note, change it, take the mark off --- is in
+reader can do with one — read the note, change it, take the mark off — is in
 the box; a ring would be a step that only ever precedes opening it. It opens the
 box **without taking the keyboard**, which is not a nicety: with the guard above
 in place, a walk that focused the field would strand the reader on the first mark
@@ -9591,7 +9591,7 @@ ladder Escape already uses there.
 written, and its own doc comment had predicted the day: *"every route in is a
 press on the mark itself, so it is on screen by construction. The day a panel
 lists these, that stops being true and this needs the same treatment."* A press
-is unaffected --- a mark you can press is on screen, so the test is false for it.
+is unaffected — a mark you can press is on screen, so the test is false for it.
 
 ##### What the checks can and cannot say
 
@@ -9600,14 +9600,14 @@ sixteen mutations, every check proved able to fail.** The guard's tests all come
 in pairs: a key delivered from a text field must do nothing **and** the same key
 delivered from the page must do the thing. A guard tested only on its refusal is
 satisfied by a viewer that ignores every key, which is why there are two
-mutations of that one line --- `if (false)` and `return` --- and they fail
+mutations of that one line — `if (false)` and `return` — and they fail
 opposite halves of the same four tests.
 
 **Four checks in a real webview**, because the unit tests state something about
 the *handler* and the thing that actually has to be true is about the *DOM the
 handler is installed in*: vitest dispatches on the root with a target of its own
 choosing, and the webview check dispatches on the note field and lets it bubble.
-The same split runs through the Enter check --- focus is `document.activeElement`
+The same split runs through the Enter check — focus is `document.activeElement`
 there and a recorded `focus()` call in the fake DOM here, so neither harness can
 stand in for the other.
 
@@ -9619,7 +9619,7 @@ construction, so the probe plants two and puts them back afterwards.
 **Two findings from the run, and both were instruments rather than code.**
 
 The probe written to measure the leak reported that "n", "p", Home and End were
-already guarded while the arrows and the space bar leaked --- a tidy split that
+already guarded while the arrows and the space bar leaked — a tidy split that
 matched no distinction in the code, and was taken at face value for two rounds.
 `matches` tests every modifier in both directions, so an event object omitting
 `shiftKey` has `undefined !== false` and matches no chorded binding at all; the
@@ -9627,7 +9627,7 @@ keys that looked guarded were the ones reached through `matches`, and the ones
 that leaked were the literal arms below it. Adding four booleans turned four
 "guarded" keys into four leaks, ⌘R among them.
 
-The `nav.nextMark` probe went red on its first run reporting `-1 -> -1` --- a
+The `nav.nextMark` probe went red on its first run reporting `-1 -> -1` — a
 working command measured as dead. It was written from `nav.nextLink` beside it,
 and a link walk starts from the focused link while a mark walk starts from where
 the reader is looking, so clearing the focus is a complete reset for one and
@@ -9636,7 +9636,7 @@ that looks like a pass. `docs/TRAPS.md` has both.
 
 **One mutation survived and stayed survived until the check moved.**
 `focusField`'s `if (this.shown === null) return;` is unreachable from the viewer,
-whose Enter arm tests the same thing one level up --- two mechanisms with one
+whose Enter arm tests the same thing one level up — two mechanisms with one
 limit, so a mutation of either is invisible through the other, and both traps are
 already in the index. The resolution was to test `focusField` where it *is*
 reachable, directly on `MarkPopup`, and to give the viewer's arm an observable
@@ -9646,7 +9646,7 @@ look like there; a link that gets followed is what separates them.
 
 ~~**Not done:** a panel that lists the reader's marks, which is the other thing
 `showMark`'s comment anticipated and is a UI decision rather than an engineering
-one --- a fifth sidebar tab, or rows in the comments panel, which today lists what
+one — a fifth sidebar tab, or rows in the comments panel, which today lists what
 `annots.rs` read out of the *file* and would then be listing two kinds of thing
 with two activation paths.~~ (Done 2026-08-20, as a fifth tab, and for the reason
 this sentence names: two kinds of thing with two activation paths.) The remaining markup kinds are unchanged from the last
@@ -9657,17 +9657,17 @@ ellipse; squiggly and text boxes landed the same day, so what is left of that
 list is stamps.) ~~And a colour a reader can choose, still the UI question the
 `MARK_COLORS` table's comment names.~~ (Done 2026-08-20.)
 
-#### Cropping a page --- done 2026-08-18
+#### Cropping a page — done 2026-08-18
 
 The last command in `docmodel`'s `Command` with no caller. `Crop { page, to }`
 had been there since the model was written, with tests, a `Refusal` for a
 degenerate rectangle and a `Rect` whose `is_proper` already refused a `NaN`
-corner --- exactly the shape `Delete` and `Move` were in before their own
+corner — exactly the shape `Delete` and `Move` were in before their own
 increments.
 
 **The experiment came first, and it decided the whole design.** The question was
-whether a crop has to be threaded through every consumer --- the render, the text
-extraction, the links, the comments, the marks, the layout, the writer --- or
+whether a crop has to be threaded through every consumer — the render, the text
+extraction, the links, the comments, the marks, the layout, the writer — or
 whether one of them can carry it for the others. Setting `FPDFPage_SetCropBox` on
 the loaded page and reading everything back answered it in about ten minutes:
 
@@ -9688,7 +9688,7 @@ and now it is the reader's.
 Two things do not follow, and both are real work rather than tidying.
 
 **The page cache makes a crop sticky.** `RawDocument` holds four loaded pages, so
-a crop set on a handle is in force for every later request for that page --- a
+a crop set on a handle is in force for every later request for that page — a
 tile rendered cropped because a text extraction two seconds earlier asked for it
 that way. The fix is not a rule for callers: `RawDocument::page` **restores the
 file's own box** and `page_cropped(index, Some(box))` is the explicit opt-in, so
@@ -9701,7 +9701,7 @@ in the frontend.** A comment, a link and one of the reader's own marks arrive
 measured from the **file's** displayed corner; a cropped page's own corner is
 somewhere else. Rather than teaching three subsystems about crops, everything
 stays in the file's space and is drawn at `rect - (left, top)`: `crop.ts` holds
-the pair and both directions of it, and the *inverse* matters as much --- a mark
+the pair and both directions of it, and the *inverse* matters as much — a mark
 is **sent** in the file's space, so a highlight made while cropped and saved
 after the crop changed is still written where the words are.
 
@@ -9712,7 +9712,7 @@ either could be got wrong.
 
 The offset itself is asked for rather than computed. A crop box is in the page's
 own space, a layout is in display space, and the turn between them is the page's
-`/Rotate` --- which the frontend is never told, deliberately, because the renderer
+`/Rotate` — which the frontend is never told, deliberately, because the renderer
 already composes it. `page_geometry` answers with the cropped size **and** where
 the crop sits inside the file's page, and it derives the two by different routes:
 the rectangle through `text::to_device`'s rotation table, the size from PDFium.
@@ -9722,8 +9722,8 @@ tautology precisely because they are two derivations.
 ##### Crop to content, and why it is measured in pixels
 
 There is deliberately **no crop-by-dragging**. A rectangle a reader draws needs a
-drag mode this application does not have --- every gesture on a page today means
-select, open or follow --- and inventing one is its own increment. What a reader
+drag mode this application does not have — every gesture on a page today means
+select, open or follow — and inventing one is its own increment. What a reader
 wants from a crop is answered without it: remove the margins.
 
 `content.rs` renders the page 400 pixels wide and takes the bounding box of every
@@ -9749,7 +9749,7 @@ Measured across the whole corpus, cropping to the content box and re-rendering:
 The last row is the control and it is the honest kind: an A0 drawing that reaches
 its own edges has no margins, and a "content box" that always shrank by a fixed
 amount would pass every row above it. `rotated-90.pdf` is the row that says the
-rotation is right --- a wrong table crops the wrong region, and the density does
+rotation is right — a wrong table crops the wrong region, and the density does
 not rise.
 
 ##### What the checks can and cannot say
@@ -9759,7 +9759,7 @@ mutations**, every check proved able to fail. The pure half is where the
 assertions are: `ink_bounds` against a buffer whose ink is at known coordinates,
 `intoCrop`/`outOfCrop` as inverses, `agreed_crops` refusing one page cropped two
 ways, and `apply_crops` writing on the page rather than on the `/Pages` node it
-inherits from --- which is the one that matters most, since `/CropBox` is
+inherits from — which is the one that matters most, since `/CropBox` is
 inheritable and a write onto the parent crops every page under it.
 
 **A differential in `viewercrop.test.ts`** puts one rectangle through the comment
@@ -9781,7 +9781,7 @@ quietly.
 The first was a real defect in this repository, months old, and it is why the
 crop rule now reads the media box. `RawPage::crop_pt` fell back to
 `[0, 0, width_pt(), height_pt()]` for a page whose crop box PDFium would not
-report --- and those are the page's **displayed** dimensions, after `/Rotate`,
+report — and those are the page's **displayed** dimensions, after `/Rotate`,
 where a crop box is in the page's own space. On an unrotated page the two are the
 same four numbers, so thirteen of the fourteen corpora cannot tell. On
 `rotated-90.pdf` the sheet is 612 by 792 and the displayed page 792 by 612, and
@@ -9793,8 +9793,8 @@ It had been harmless because its only consumer was `origin_pt`, which takes the
 coordinate system of whoever wrote it**, and the second consumer is where that
 stops being invisible.
 
-The first write-up of that trap blamed PDFium --- "`GetCropBox` answers with the
-displayed rectangle" --- and was wrong. `FPDFPage_GetCropBox` returns *false* for
+The first write-up of that trap blamed PDFium — "`GetCropBox` answers with the
+displayed rectangle" — and was wrong. `FPDFPage_GetCropBox` returns *false* for
 a page with no `/CropBox` and answers in page space when there is one; every
 reading that suggested otherwise had been taken through a code path that had
 already written a crop. What settled it was reading the success flag separately
@@ -9804,7 +9804,7 @@ written once.
 
 The other two are the probe's own arithmetic and each produced a number that
 cannot exist. A density of **1.23** came from reading the page's size after
-cropping it through a second handle --- two `RawPage` values for one cached page
+cropping it through a second handle — two `RawPage` values for one cached page
 are aliases. A skip guard comparing the two renders' **pixel counts** compared
 aspect ratios rather than areas, because both renders are 200 pixels wide
 whatever shape the page is: a crop keeping a fifth of the sheet read as "247% of
@@ -9814,28 +9814,28 @@ available for a round before being read. `docs/TRAPS.md` has all three.
 **The window sweep is 267 check names on all fourteen corpora**, seven more than
 before and every corpus seven runs richer. All seven are one backend phase
 driving `page_content_box`, `page_geometry` and `page_crop` against the real
-backend --- the only place that can say the three are *registered*, which is the
+backend — the only place that can say the three are *registered*, which is the
 failure every layer below passes through. The two palette commands are
 deliberately not driven from the palette: cropping to content is two IPC replies
 deep and the probe framework's settle is a frame-loop wait, so their wiring is
 covered by `appcommands.test.ts`'s sweep over every registered command instead.
 
 **Not done:** ~~a crop a reader drags, which is the gesture question above and
-needed a drag mode --- `drag.ts` is that mode as of 2026-08-19, so this now needs
+needed a drag mode — `drag.ts` is that mode as of 2026-08-19, so this now needs
 only a second caller of it and the same `fileRectOn` the box uses~~ (done
-2026-08-23 --- and the estimate was right about the gesture and wrong about the
+2026-08-23 — and the estimate was right about the gesture and wrong about the
 rest: a mark's rectangle is *stored* in the space the viewer hands it over in,
 and a crop box is one further turn away, so it needed a new command through both
 backends. See *A crop the reader drags* below); cropping
-several pages at once, which is a selection question rather than a new mechanism; and `insert`, `split` and `merge`, unchanged --- the
+several pages at once, which is a selection question rather than a new mechanism; and `insert`, `split` and `merge`, unchanged — the
 first two need a page the model creates, and `docmodel`'s note has the
 id-allocator property that would have to be proved first.
 
-#### Saving over the file the reader opened --- done 2026-08-19
+#### Saving over the file the reader opened — done 2026-08-19
 
 Everything before this increment wrote a document *somewhere else*. A reader
 could turn a page, delete one, rearrange them, crop one and highlight a line, and
-the only way to keep any of it was **Save a copy** --- which leaves them reading
+the only way to keep any of it was **Save a copy** — which leaves them reading
 the file they started with, so the copy has to be found again and reopened before
 the next edit. `save.rs` had said since it was written that saving in place is a
 different operation with its own rebase and that §5 has it. This is it.
@@ -9854,7 +9854,7 @@ across the rename:
 ```
 
 So the rename succeeds and the worker goes on serving the document that is no
-longer at that path --- not for a moment, but for as long as it stays open. That
+longer at that path — not for a moment, but for as long as it stays open. That
 is the worst of the three possible outcomes: a crash is loud and a refusal is
 loud, and this is a reader scrolling a document that disagrees with their own file
 while everything looks right. Windows fails the other way and refuses the rename
@@ -9864,9 +9864,9 @@ only one of them says so.
 **One order is right on both, and it is what the code now enforces by shape.**
 `save.rs`'s single write became `stage_in_place` and `commit_in_place`, and
 `commands/save.rs`'s `save_document` is the only thing that holds them together: stage,
-close, commit. Every guard `planned_bytes` states --- an encrypted document, a
+close, commit. Every guard `planned_bytes` states — an encrypted document, a
 file whose page count no longer matches the baseline, a plan that names a page
-that is not there --- runs during the staging, which is the half where nothing
+that is not there — runs during the staging, which is the half where nothing
 the reader has is disturbed.
 
 **Two failures, not one, and they cross the IPC boundary as a field.**
@@ -9879,8 +9879,8 @@ message text instead would have the frontend matching on wording.
 
 **The reopen is the rebase, and it is deliberately not §5's.** §5 describes a
 rebase that keeps the journal: new baseline, regenerated stable-ID mapping,
-compacted journal. Nothing here does that. The journal is *spent* --- the file now
-says what it said --- so the document is closed and opened again from the path,
+compacted journal. Nothing here does that. The journal is *spent* — the file now
+says what it said — so the document is closed and opened again from the path,
 which is the correct answer for a save that succeeded and is the whole cost of one
 that fails after the close: the reader's unsaved commands go with the model.
 Carrying a journal across a reopen is a piece of work of its own, and the failure
@@ -9891,22 +9891,22 @@ written to.
 could quietly have been wrong.** `currentPlace` maps a viewport slot back to the
 *baseline* page it came from, because a `Place` names a page of the file and the
 file is the baseline. After a save in place the file's pages **are** the reader's
-order, so the mapping would send them to whichever page used to be there --- on a
+order, so the mapping would send them to whichever page used to be there — on a
 document with a deletion in it, off by the deletion. One caller passes
 `inFile: false`, and it is the only one.
 
 **A note the reader is typing is not in the model yet.** `markpopup.ts` commits
 when its box closes, and closing it journals a `renote` that is an IPC round trip
 away from landing. So the save closes the box and waits for the edit in flight
-before it reads the plan --- otherwise the file gets the highlight with an empty
+before it reads the plan — otherwise the file gets the highlight with an empty
 note while the box on screen shows the words. This is a property of the code
 rather than something observed: `applyEdit` is asynchronous and twenty callers
 fire it without awaiting, which is why the promise is recorded rather than the
 call made to wait.
 
-**Seven mutations, all caught.** Three in Rust --- put the save in place during
+**Seven mutations, all caught.** Three in Rust — put the save in place during
 the staging rather than after the close, report a commit that never renamed
-anything, stage before the guards have run --- and four in the frontend, covering
+anything, stage before the guards have run — and four in the frontend, covering
 both directions of Save's guard, the ⌘S chord with nothing to save, and a save in
 place routed to the copy command.
 
@@ -9919,10 +9919,10 @@ command left out of the sweep.
 
 **Not done:** ~~an incremental save. §5 measures the append at **8.2x faster**
 than the rewrite on a 337 MB scan, and describes the mode classification that
-would choose between them. This increment writes the full rewrite every time ---
+would choose between them. This increment writes the full rewrite every time —
 correct on every document, including the encrypted ones it refuses, and 239 ms
 rather than 29 ms on the largest fixture here. There is no save-mode
-classification~~ (done 2026-08-22 --- `save::mode_for` classifies every save into
+classification~~ (done 2026-08-22 — `save::mode_for` classifies every save into
 `Mode::Append` or `Mode::Rewrite`, bounded by `APPEND_MAX_BYTES`, and
 `a_plan_that_only_adds_marks_is_appended_and_anything_else_is_rewritten` is the
 test for it. Struck 2026-08-30, eight days late, which is the cost this file's own
@@ -9932,20 +9932,20 @@ preserves a signature's trust, which §5 says plainly cannot be preserved at all
 
 ⚠ **The paragraph ended here with a second *Not done* that stopped being true on
 2026-08-19 and was still being read on 2026-08-21.** It said: *"nothing warns the
-reader that the file changed on disk before they try to save --- the page-count
+reader that the file changed on disk before they try to save — the page-count
 check catches the case it can, at the moment of saving, and §5's
 identity-plus-mtime watch is not here."* The last clause is false. §5's
 *External modification* section records that watch as **built 2026-08-19**:
 `fingerprint.rs` holds the file's length, mtime and a streamed SHA-256 from open,
 it rides on `Plan`, and three separate checks refuse a save or a copy planned
-against a file that has moved --- with a Reload the refusal offers and
+against a file that has moved — with a Reload the refusal offers and
 `recovery.ts` makes reachable. It was left where it was because the work landed
 in another section, and nothing links a *Not done* to the increment that closes
 it.
 
 The cost was not hypothetical: on 2026-08-21 it was read as the ranked next piece
 of work and recommended as such, on the grounds that a reader could still
-overwrite somebody else's change. They cannot --- the save is refused. **A
+overwrite somebody else's change. They cannot — the save is refused. **A
 document contradicting itself is worse than one saying nothing**, and this is the
 shape that does it: a claim of absence, written truthfully, that no later commit
 has any reason to revisit.
@@ -9954,7 +9954,7 @@ What is genuinely still absent is narrower and is not a data-loss risk: nothing
 **watches** the file while it is open, so the reader learns at the moment they
 press Save rather than while they are working. Nothing is overwritten either way.
 
-#### A rectangle a reader draws --- done 2026-08-19
+#### A rectangle a reader draws — done 2026-08-19
 
 The first mark whose shape the reader chooses by dragging rather than by
 selecting, and the increment is two things: a drag primitive, and the smallest
@@ -9962,7 +9962,7 @@ mark that can use one.
 
 **The primitive came first because the plan already said it would.** Four
 separate *Not done* notes above name the same blocker in almost the same words
---- a crop a reader drags "needs a drag mode", and ink, shapes, text boxes and
+— a crop a reader drags "needs a drag mode", and ink, shapes, text boxes and
 stamps "each of which needs a way to draw rather than a way to select". One
 mechanism unblocks five features, which is why it beat building any one of them.
 
@@ -9970,7 +9970,7 @@ mechanism unblocks five features, which is why it beat building any one of them.
 `pointermove` and a `pointerup` listener, reports two client coordinates and a
 verdict, and takes both listeners away again. Every question about pages, points,
 zoom or rotation belongs to the caller. `viewer.ts` already had two drags written
-out longhand --- the text selection and the scrollbar thumb --- each hand-rolling
+out longhand — the text selection and the scrollbar thumb — each hand-rolling
 the same four steps, and a third copy was the one to refuse: the trap index
 carries *two copies of a distinction drift, and a mutation of one survives*, and
 a drag that forgets a `removeEventListener` goes on tracking a pointer with the
@@ -9979,8 +9979,8 @@ missing line.
 
 **Cancelling is a first-class outcome**, not an error. `end` takes a `committed`
 flag rather than the caller reading some other state, because a drag ends three
-ways --- the button comes up, the browser takes the pointer away, or something
-asks it to stop --- and only the first means *do it*. Handing back a rectangle
+ways — the button comes up, the browser takes the pointer away, or something
+asks it to stop — and only the first means *do it*. Handing back a rectangle
 with no way to say which happened is how an Escape ends up drawing a box.
 
 **A box, not ink, and the reason is the model.** `NewMark.quads` is four numbers
@@ -9999,8 +9999,8 @@ that on the same commit as a new gesture gives a failure two places to be.
 - **It carries no `/QuadPoints` and needs an `/AP`.** Those two used to be one
   question. `is_note` decided the icon name, the absent quads *and* the absent
   appearance, and that was correct only because the comment was the one kind for
-  which all three answers coincided. A box skips the quads --- `/Square` is not a
-  text-markup subtype --- and very much needs an appearance, because nothing
+  which all three answers coincided. A box skips the quads — `/Square` is not a
+  text-markup subtype — and very much needs an appearance, because nothing
   synthesises a rectangle and a `/Square` with no `/AP` is an annotation Acrobat
   draws as nothing. Three predicates now, one caller each.
 - **Its path is inset by half the stroke width.** A stroke straddles its path, so
@@ -10021,7 +10021,7 @@ those four have never been independent.
 no alternative: every existing gesture reads a point and acts on what is under
 it, and nothing in a press can distinguish "select this text" from "draw a box
 here" without being told first. What the principle decides instead is that the
-tool is **one-shot** --- armed by a command, spent by one rectangle, dropped by
+tool is **one-shot** — armed by a command, spent by one rectangle, dropped by
 Escape or by the document closing. A reader can never be stuck in it and never
 has to find the way out, which is the failure the principle is actually about.
 
@@ -10034,7 +10034,7 @@ Two consequences the tests found rather than the design:
 - **Escape drops the tool before it dismisses anything else**, and that ordering
   is defensive rather than load-bearing. A mutation swapping the two survived,
   because `armDraw` closes both note boxes and a press with a tool armed is
-  intercepted before one can open --- so no reachable input tells them apart. The
+  intercepted before one can open — so no reachable input tells them apart. The
   comment claiming otherwise was the defect and has been corrected; the ordering
   stays for the change that does make them co-exist.
 
@@ -10042,11 +10042,11 @@ Two consequences the tests found rather than the design:
 
 Everything in this application travels one way: from the file, through the crop,
 through the turn, onto the screen. A reader who *draws* travels the other, and
-`fileRectOn` is the one step back --- `unturnQuad` plus `outOfCrop`, composed
+`fileRectOn` is the one step back — `unturnQuad` plus `outOfCrop`, composed
 once.
 
 Writing it exposed a defect in the comment bubble shipped the day before.
-`commentAt` took `pageAndPoint`'s answer --- the page's **laid-out** space --- and
+`commentAt` took `pageAndPoint`'s answer — the page's **laid-out** space — and
 handed it to the model, which holds the file's; it also clamped against the
 un-turned page size. On an unrotated, uncropped page the two are the same four
 numbers, which is thirteen of the fourteen corpora and every check that had run.
@@ -10055,7 +10055,7 @@ the rectangle the reader can see.
 
 The test that proves it is the corner, not the numbers. The first version drew
 the same screen rectangle on an unturned page and a quarter-turned one and
-asserted the answers differed --- which the defect also satisfies, because the
+asserted the answers differed — which the defect also satisfies, because the
 turned page lays out 800 wide against 600 and is therefore fitted at a different
 zoom. The mutation said so. What only the correct answer can satisfy is that the
 same drag near the screen's top-left walks round the *sheet*: top-left,
@@ -10066,8 +10066,8 @@ bottom-left, bottom-right, top-right.
 `annot-probe --mode outline` is the end-to-end half, and it measures the one
 thing every file-level assertion is blind to: a stroked box and a solid block of
 colour satisfy the subtype, the rectangle, the absent quads and the presence of
-an `/AP` equally. Three readings on the rendered page --- the source as control,
-the whole quad, and the middle inset well clear of the stroke --- plus the
+an `/AP` equally. Three readings on the rendered page — the source as control,
+the whole quad, and the middle inset well clear of the stroke — plus the
 thinner of the two horizontal edges' thickness in pixels. On `text-base14.pdf`:
 10,545 px in the quad, **0 inside it**, 5 px of an expected 6 on the thinner
 edge. Filling the box instead puts 3,556 px in the middle; removing the inset
@@ -10079,13 +10079,13 @@ make the documented invocation red at its own default.
 
 **The box shipped inert, and finding that is the increment's most useful result.**
 `onDrawn` was added to `ViewerOptions`, the viewer fired it, and the object
-literal in `App.svelte` never gained the key --- so the tool armed, drew its
+literal in `App.svelte` never gained the key — so the tool armed, drew its
 preview and reached no model. Three layers of tests passed over it:
 `viewerdraw.test.ts` supplies its own callback, the window harness drives a
 recorder, and `appcommands.test.ts` only asks that the command reach an action.
 None of them looks at the literal that joins the viewer to the application,
 because it lives in a `.svelte` file no unit test imports and no harness
-constructs --- and every callback is optional by design, so a missing key is not
+constructs — and every callback is optional by design, so a missing key is not
 a type error either.
 
 `scripts/check_viewer_wiring.py` is the sixteenth gate and it diffs the two sets
@@ -10096,14 +10096,14 @@ and neither greys when there is nowhere to go. That is the argument for a set
 diff over a spot fix, in one run.
 
 **And the overlay is measured now, which it never was.** Every mark is drawn
-twice --- by `paintMarks` while the document is open, and by PDFium from the
-appearance stream after it is saved --- and only the second had ever been read in
+twice — by `paintMarks` while the document is open, and by PDFium from the
+appearance stream after it is saved — and only the second had ever been read in
 pixels. That asymmetry is exactly how the underline defect reached a reader two
 days earlier: the file was right and the screen was wrong, so neither renderer
 could be trusted from what the other showed. `overlayInkChecks` reads the overlay
-canvas back and reports three numbers per kind --- the fraction of the mark's own
+canvas back and reports three numbers per kind — the fraction of the mark's own
 rectangle inked, the fraction of a small box at its dead centre, and how many of
-its four sides carry ink --- which separate all five without knowing where any
+its four sides carry ink — which separate all five without knowing where any
 band sits, and therefore work on a page at `/Rotate 90` where an underline is
 drawn down the side of the screen.
 
@@ -10112,8 +10112,8 @@ and neither was a bound that needed loosening. `docs/TRAPS.md` has both.
 
 Beside it: 16/16 gates, 557 Rust tests, 899 frontend tests across 44 files, and
 the window harness at 0 failures with `edit.drawBox runs from the palette` among
-its names. **32 mutations** were written for this increment --- 6 in Rust, 22 in the
-frontend unit harness, 4 in the window harness --- and every one is caught by the
+its names. **32 mutations** were written for this increment — 6 in Rust, 22 in the
+frontend unit harness, 4 in the window harness — and every one is caught by the
 check named for it.
 
 Four of them had to be repaired after the run said what they actually did, and
@@ -10123,35 +10123,35 @@ named a check whose twin in another file shared its name, which made the
 harness's two failure counts disagree by one. One was aimed at the wrong guard:
 a click is zero in both dimensions, so the height bound catches it whatever the
 width bound does. And one was aimed at an ordering that no reachable input can
-distinguish --- that one was removed and the comment claiming the ordering
+distinguish — that one was removed and the comment claiming the ordering
 mattered was corrected, which is the finding.
 
 **Not done:** ~~ink, which is the next consumer and needs the wire struct widened
-to a list of point lists~~ (done 2026-08-20 --- `22ad78f`, *Draw freehand on a page*,
+to a list of point lists~~ (done 2026-08-20 — `22ad78f`, *Draw freehand on a page*,
 and the struct is a list of point lists: `save::user_strokes` returns one `(x, y)`
 list per stroke); ~~an ellipse, which is `/Circle` and the same rectangle
-with a different subtype~~ (done 2026-08-20 --- `5da94a3`, *An ellipse*, and it is
+with a different subtype~~ (done 2026-08-20 — `5da94a3`, *An ellipse*, and it is
 `MarkKind::Ellipse => b"Circle"`, exactly as predicted); ~~a crop a reader drags, which now needs only a second
 caller of the primitive~~ (done 2026-08-23, and it needed a backend command too);
 a tool that stays armed for several boxes; ~~and a
 colour a reader can choose, still the UI question `MARK_COLORS` names~~ (done
 2026-08-20). The two existing
-drags in `viewer.ts` were **not** converted onto the primitive --- the scrollbar's
+drags in `viewer.ts` were **not** converted onto the primitive — the scrollbar's
 would be mechanical and the selection's owns a granularity state machine, and
 converting either on the commit that introduced the primitive gives a regression
 two places to hide.
 
-#### Drawing freehand --- done 2026-08-20
+#### Drawing freehand — done 2026-08-20
 
 The next consumer of the drag primitive, and the increment that finds out whether
-`Mark` generalises past a rectangle. It does, with one field --- but the answer is
+`Mark` generalises past a rectangle. It does, with one field — but the answer is
 less interesting than what asking it cost, which is set out below.
 
 **`Mark` gains `strokes`, and the geometry did not become an enum.** The
 alternative was replacing `quads` with `Shape::Quads | Shape::Strokes`, which
 carries the biconditional in the type. It was rejected because five consumers ask
-*where* a mark is --- `/Rect`, the popup anchor, hit-testing, the mark list and
-the state reply --- and ink answers that with the bounds of what was drawn,
+*where* a mark is — `/Rect`, the popup anchor, hit-testing, the mark list and
+the state reply — and ink answers that with the bounds of what was drawn,
 exactly as every other kind answers with its rectangle. An enum would force all
 five to handle a case none of them cares about. It is the same argument
 `MarkKind::Note` already makes for reusing `Mark` rather than building a parallel
@@ -10159,7 +10159,7 @@ type to express one *absent* field; here it is one present one.
 
 The cost is an invariant the type does not carry: `strokes` is non-empty exactly
 when the kind is ink. `Doc::annotate` refuses both halves and both have a test,
-because a rule with no failing case is a comment --- and neither half is reachable
+because a rule with no failing case is a comment — and neither half is reachable
 from the window, so those tests are the only place the rule can fail.
 
 **A rename came with it.** `save.rs` had a private `enum Ink { Wash, Line,
@@ -10170,7 +10170,7 @@ as `Square` has: serde `ink`, PDF `/Ink`, and **Draw** in the menu.
 
 ##### What the file gets, and why it is two things
 
-The appearance stream is `m`/`l`/`S` per stroke, at `INK_WIDTH` with `1 J 1 j` ---
+The appearance stream is `m`/`l`/`S` per stroke, at `INK_WIDTH` with `1 J 1 j` —
 round caps and joins, because a mitre on a hand-drawn corner spikes out to a
 point that reads as a rendering fault rather than as a style. **One `S` per
 stroke and not one at the end**, which is the whole reason `/InkList` is a list of
@@ -10190,7 +10190,7 @@ stroke to the lower one with a diagonal crossing that gap across its full width.
 Measured on `text-base14`: 20401 px in the rectangle, 10200 upper, 10201 lower,
 **0 in the gap**; flattening the list puts **4242** in it and reddens that check
 alone. Emitting only the first stroke reddens the *lower* check and leaves the
-gap green --- which is why the pair is not redundant.
+gap green — which is why the pair is not redundant.
 
 **And the first version of that check passed with two hundredths of a point of
 headroom.** The strokes sat at 15% of the text box and the band boundary was
@@ -10201,7 +10201,7 @@ rectangle too short for its bands to separate rather than reading one.
 
 `--mode roundtrip` is the structural half: `/InkList` present on ink and absent
 on every other kind, one array per stroke, an even count of numbers in each, and
-every point inside the annotation's own `/Rect` --- which is the assertion with
+every point inside the annotation's own `/Rect` — which is the assertion with
 teeth, since `/Rect` is computed from the quads by a different route, so a
 mapping that disagreed would land outside. Both directions proved by mutation,
 and green on `rotated-90.pdf` as well.
@@ -10209,13 +10209,13 @@ and green on `rotated-90.pdf` as well.
 ##### The padding, and the check it took away
 
 `Stroke::bounds` grows the rectangle by half the line width. That is correct PDF
---- a stroke straddles its path --- and it was added for a plainer reason: tight
+— a stroke straddles its path — and it was added for a plainer reason: tight
 bounds of a straight vertical line have **no width**, and `covers_area` rejects
 those, so ruling a line down a margin came back as *"that mark covers nothing"*.
 
 The pad fixes that and disables the emptiness check on the way past, because now
 *every* ink mark covers area, including one whose stroke is a single point
-repeated --- which is what a click produces. So `annotate` asks
+repeated — which is what a click produces. So `annotate` asks
 `Stroke::is_drawable` for ink and `covers_area` for everything else. `docs/TRAPS.md`
 has the entry; the shape is one predicate that was answering two questions while
 the rectangle and the gesture were the same thing.
@@ -10223,13 +10223,13 @@ the rectangle and the gesture were the same thing.
 ##### Eleven mutations, and the one that survived is the yield
 
 Six in Rust, five in the frontend unit harness, and every one caught by the check
-named for it --- after a repair. **`edits: take ink's rectangle tight against the
+named for it — after a repair. **`edits: take ink's rectangle tight against the
 strokes` came back SURVIVED**, aimed at
 `a_straight_stroke_is_accepted_because_its_bounds_are_padded`, which is a test
 about exactly that padding and which passes.
 
 It is in `docmodel.rs`, and it builds its `Mark` by hand. So it exercises
-`Stroke::bounds` and says nothing whatever about who calls it or with what ---
+`Stroke::bounds` and says nothing whatever about who calls it or with what —
 and the pad is chosen in `edits.rs`, on the other side of the boundary. Taking it
 to zero there broke nothing any test could see: a reader ruling a straight line
 down a margin would have been told their drawing covers no area, and the suite
@@ -10238,7 +10238,7 @@ would have stayed green.
 That is the trap this repository already records as *"your unit tests build their
 fixtures directly, so the PARSER is untested"*, arriving in the same shape one
 layer up. The repair is a test that goes through `Edits::annotate` with a
-vertical stroke and reads the derived rectangle back --- which is now the only
+vertical stroke and reads the derived rectangle back — which is now the only
 test that reaches the derivation at all, and the mutation names it.
 
 Worth stating plainly because the tempting reading was the other one: a survivor
@@ -10257,14 +10257,14 @@ which is the defect that shipped with the box; it does not cover the arming.
 ##### The overlay, measured on both sides
 
 `overlayInkChecks` gains a sixth kind: *"a drawing follows its strokes and does
-not fill its rectangle"*, reading two inked edges and an empty centre --- a
+not fill its rectangle"*, reading two inked edges and an empty centre — a
 combination none of the other five produces, since an underline has one edge, a
 strikeout fills the centre and a frame has four.
 
 Run on **`comments`, 244/244 with 35 not applicable**, and the reading is
 `17% of the rectangle, 0% of its centre, ink on 2 of its 4 sides`. On
 **`rotated-90`, 227/227 with 52 not applicable**, it reads `25% / 0% / 2 of 4`
---- the rectangle is a different shape there and the discrimination is the same,
+— the rectangle is a different shape there and the discrimination is the same,
 which is what the phase's anchor-relative design is for. `rotated-90` skips the
 distinctness check beside it, saying *"not every kind could be sampled"* rather
 than passing on five readings.
@@ -10273,7 +10273,7 @@ All three runs report the **same 279 names**, compared as sets rather than
 counted. That is the invariant; the ran/skipped split is not.
 
 **And it was shown to fail**, which is the half that makes the first number mean
-anything. The mutation is the one-line fallback the check exists for --- ink
+anything. The mutation is the one-line fallback the check exists for — ink
 painted from `markBand`, which answers the whole quad for this kind:
 
 | | rectangle | centre | sides | |
@@ -10288,38 +10288,38 @@ against 177/177, and `viewer.ts` restored byte-identical afterwards.
 This ran a session later than the rest of the increment, and the paragraph here
 said the check was unproved until it did. Worth leaving that fact rather than
 overwriting it: a check nobody has watched fail is a claim, and the screen being
-locked is enough to stop one --- `viewer_check.py` refuses rather than hanging,
+locked is enough to stop one — `viewer_check.py` refuses rather than hanging,
 which is the only reason the gap was visible instead of being a green run.
 
 **The first of those runs was pointed at `text-base14`, which is not a window
-corpus at all** --- `viewer_sweep.py --list` says so in as many words. It passed,
+corpus at all** — `viewer_sweep.py --list` says so in as many words. It passed,
 with the same 279 names, because the name set is the harness's and is identical
 whatever you open; only the split is a fact about the document. So the mistake
 cost nothing except a wrong row briefly written into `BUILD.md`'s table, and it
 is the trap that file's own corpus gate exists to prevent.
 
 **279 check names, not the 111 predicted here.** That prediction was BUILD.md's
-documented `109` plus the two added --- and `109` was measured on 2026-07-31,
+documented `109` plus the two added — and `109` was measured on 2026-07-31,
 before marks, crops, print and the comment panel. Arithmetic on a stale number is
 exactly what that file's own paragraph warns against, and it produced a figure
 wrong by 168. The measured count is in `BUILD.md`.
 
 **Not done:** ~~an ellipse, which is `/Circle` and the same rectangle with a
-different subtype~~ (done 2026-08-20 --- and *"the same rectangle with a different
+different subtype~~ (done 2026-08-20 — and *"the same rectangle with a different
 subtype"* was wrong in the half that mattered: a content stream has no ellipse
 operator, so it is four Bézier arcs and a new `Paint`. See *An ellipse* below);
 ~~a crop a reader drags, still only a second caller of the
-primitive~~ (done 2026-08-23 --- it needed a backend command as well, see below); ~~and a colour a reader can choose, still the UI question
+primitive~~ (done 2026-08-23 — it needed a backend command as well, see below); ~~and a colour a reader can choose, still the UI question
 `MARK_COLORS` names~~ (done 2026-08-20). (*A tool that stays armed for several
-strokes* was on this list and was built the same day --- see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
+strokes* was on this list and was built the same day — see below.) Pressure and smoothing are deliberately absent: `/InkList` has nowhere to
 put a width per point, and a Bézier fit would make the saved path something other
 than what the reader drew.
 
-#### A drawing of several strokes --- done 2026-08-20
+#### A drawing of several strokes — done 2026-08-20
 
 The gap the increment above left, and it was not polish: `/InkList` is a list of
 lists so that one annotation holds several strokes, the writer and the model were
-built for that from the start, and `annot-probe --mode strokes` sends **two** ---
+built for that from the start, and `annot-probe --mode strokes` sends **two** —
 so the harness was creating a document the window could not. A drawing is
 normally several strokes, and each one cost a trip to the menu.
 
@@ -10329,7 +10329,7 @@ worse than one they ask for, and every tool until now spent itself on the next
 gesture so there was nothing to be stuck in. Three things pay that off.
 
 - **Enter finishes, Escape discards.** Escape has meant abandon since the box, so
-  the finish had to be a different key --- a mode whose only exit throws away the
+  the finish had to be a different key — a mode whose only exit throws away the
   work is one a reader uses once. First on the Enter ladder, and unlike the
   Escape one that ordering is load-bearing: a drawing cannot co-exist with an
   open note, but it very much can with a *focused link*, which `armDraw` does not
@@ -10348,14 +10348,14 @@ to wherever the pen was, and their line appeared only on release. It shipped wit
 ink and nothing caught it: every check in the overlay phase reads marks the
 *model* holds, and a preview is by definition not one of those.
 
-`--mode strokes` could not have seen it either --- it measures the saved file.
+`--mode strokes` could not have seen it either — it measures the saved file.
 The overlay had a phase and the preview had nothing, which is the same gap that
 let the underline ship looking like a highlight.
 
 Two checks close it, and they are in the window harness because a unit test
 cannot: the fake DOM returns `null` from `getContext`, so nothing paints. A
-diagonal is drawn and held; its own bounding box is read at the centre --- inked
-by a line, empty for a rectangle that outlines the same box --- and a corner a
+diagonal is drawn and held; its own bounding box is read at the centre — inked
+by a line, empty for a rectangle that outlines the same box — and a corner a
 rubber band would trace is asserted empty. Then a second stroke elsewhere, read
 as the viewer's own count rather than in pixels, because two strokes far apart
 would make a band measure position rather than identity. Measured on `comments`:
@@ -10370,7 +10370,7 @@ all three are in `docs/TRAPS.md`:
 - **The status field was a copy.** `ViewerStatus.drawing` and `drawnStrokes`
   computed the same thing one line apart; the tests read the accessor and the
   window renders the status, so emptying the status broke nothing any test could
-  see. The repair is that the field *is* the accessor --- one expression, nothing
+  see. The repair is that the field *is* the accessor — one expression, nothing
   to drift.
 - **A bound stopped discriminating when the mode changed.** The
   fewer-than-two-points refusal was asserted through `drawArmed`, which implied
@@ -10384,7 +10384,7 @@ all three are in `docs/TRAPS.md`:
 ##### And the harness broke twice while being extended
 
 Both in `docs/TRAPS.md`, and the second was found by the first. A check named by
-its **position** in a names array was renamed by two entries appended after it ---
+its **position** in a names array was renamed by two entries appended after it —
 for the second time in an hour, the first "fix" having been `length - 1`, which
 encodes *distinctness is last*. The names are keyed now, and
 `Report.finish` fails a run in which two checks share a name, because the roll is
@@ -10399,22 +10399,22 @@ now 3"*.
 
 **Still not done:** pressure and smoothing, for the reasons the previous section
 gives; and an eraser, which is now the obvious next thing a reader will reach for
-and which is a different subsystem --- removing a mark exists, removing *part* of
+and which is a different subsystem — removing a mark exists, removing *part* of
 one does not.
 
-#### What somebody else's reader shows --- measured 2026-08-20
+#### What somebody else's reader shows — measured 2026-08-20
 
 Phase 2's exit criterion is that a document "can be marked up, saved, reopened in
 Acrobat and Preview, and look right". `BUILD.md` has named that gap since ink
-landed --- *"what it cannot prove is that somebody else's reader shows the mark
-at all"* --- with the remedy written as a by-hand step once per release. It had
+landed — *"what it cannot prove is that somebody else's reader shows the mark
+at all"* — with the remedy written as a by-hand step once per release. It had
 never been done, and a by-hand step that leaves no record is one nobody can tell
 was skipped.
 
 **Done, and it holds.** All six kinds written to `text-base14.pdf` and opened
 with PDFKit, which is what Preview is: each comes back with the right
 `/Subtype`, author and note, at the rectangle it was written at, painting pixels
-the source page does not --- highlight 81% of its own box, note 77%, ink 37%,
+the source page does not — highlight 81% of its own box, note 77%, ink 37%,
 box 27%, strikeout 9%, underline 8%, against a control of the original read
 against itself at 0 annotations and 0 pixels. There is still no standing check;
 `BUILD.md` now carries the result, the method and the two ways it misleads.
@@ -10428,7 +10428,7 @@ against itself at 0 annotations and 0 pixels. There is still no standing check;
 and the content layer are in different frames, and "coverage inside its own
 bounds" reads **0.0%** for a mark that is drawn perfectly. That is
 `docs/TRAPS.md`'s existing warning about cross-checking in the wrong convention,
-met again from the opposite side --- the entry there assigns the rotation to
+met again from the opposite side — the entry there assigns the rotation to
 `bounds` and the identity to the drawing, and the measurement says the reverse.
 
 poppler's `pdftoppm` honours the turn properly and draws annotations, which is
@@ -10436,8 +10436,8 @@ what made it the usable oracle. It is a spike tool, not a dependency.
 
 ##### And it found a check that could not fail
 
-`annot-probe --mode strokes` on `rotated-90` --- an invocation `BUILD.md` has
-recommended since the mode landed --- was **5 of 5 green while every stroke was
+`annot-probe --mode strokes` on `rotated-90` — an invocation `BUILD.md` has
+recommended since the mode landed — was **5 of 5 green while every stroke was
 11.9 pt long instead of 246.7**, 545 px against 10200. Two stubs at the ends of a
 rectangle put ink in both outer thirds and none in the middle, which is exactly
 what two full-length strokes do.
@@ -10451,9 +10451,9 @@ The cause was the probe's own input. `save::user_strokes` mapped what it was
 handed; `mark_and_save` synthesised its strokes at 5% and 95% of the box's
 *height* spanning left to right, and on a page displayed sideways the lines
 advance across the screen while the characters run down it. **The rule was
-already written down forty lines below**, in `quads_for`'s doc comment --- *"The
+already written down forty lines below**, in `quads_for`'s doc comment — *"The
 axis is not always the vertical one, and the first version of this assumed it
-was"* --- and did not transfer to either function added later that needed it.
+was"* — and did not transfer to either function added later that needed it.
 
 `--mode rule` had the same assumption in the loud direction: 330/330/332 and two
 failures on a sideways underline drawn correctly. Nobody had seen it, because
@@ -10466,16 +10466,16 @@ outline` needed nothing: a box draws on all four edges.
 
 Both fixes proved, with the upright page as a control that stayed 7/7 throughout.
 Reverting the synthesis reddens the gap check; reverting the band split reddens
-the gap check and both new span checks; **reverting both --- the code exactly as
-it shipped --- leaves all four original checks green and is caught only by the
+the gap check and both new span checks; **reverting both — the code exactly as
+it shipped — leaves all four original checks green and is caught only by the
 new ones**, at `14.2 pt of 224.5, needs 179.6`. On `--mode rule`, collapsing the
 turn table to one answer reddens 90 and 180 only, and splitting down the page
 regardless reddens 90 and 270 only, which is the derivation confirmed cell by
 cell.
 
 The fifth mutation is the one worth keeping. The span check's first version asked
-along the axis `sideways` had chosen --- making it a second reader of the
-decision it exists to police --- and against the shipped code it reported
+along the axis `sideways` had chosen — making it a second reader of the
+decision it exists to police — and against the shipped code it reported
 **"14.2 pt of 14.4, needs 11.5"** and passed, because a wrong `sideways` shrinks
 the expectation by exactly as much as it shrinks the measurement. It takes the
 maximum over both axes against `width.max(height)` now, and shares nothing with
@@ -10484,14 +10484,14 @@ the band split.
 ##### A claim corrected on the way past
 
 `--mode noap`'s justification said PDFKit is a reader that ignores `/AP`.
-Blanking the `/AP` key of a saved highlight with spaces --- same file length, so
-every xref offset holds --- changed what PDFKit draws: **43634 px over a 13.2 pt
+Blanking the `/AP` key of a saved highlight with spaces — same file length, so
+every xref offset holds — changed what PDFKit draws: **43634 px over a 13.2 pt
 band with the appearance present, 33680 over 10.8 pt without**. It reads ours.
 The mode is unaffected, since it is the only thing here that reads `/QuadPoints`
 at all; what goes is the reassurance that some named reader in the wild
 regenerates our appearance. Nobody has shown one.
 
-~~**Not done:** a standing check for any of this.~~ Done the same day --- see
+~~**Not done:** a standing check for any of this.~~ Done the same day — see
 below. The shape it took is the one predicted: metadata on every page, the
 positional assertion upright-only. What was wrong in the prediction is the
 Windows half; ~~`Windows.Data.Pdf` renders and exposes no annotation object model,
@@ -10499,21 +10499,21 @@ so there is nothing there to ask these questions of.~~
 
 ⚠ **That last clause was over-broad, and it closed the Windows half of the exit
 criterion for eleven days on an argument that only covers part of it.** The
-premise is right --- there is no annotation object model --- and it settles the
+premise is right — there is no annotation object model — and it settles the
 *metadata* questions `--mode preview` asks: the subtype, the author, the note,
 the rectangle. It settles nothing about the **pixels**. A renderer draws our mark
 or it does not, whether or not it will answer questions about it, and *does
 somebody else's reader show the mark* is the pixel question. `--mode winreader`
-asks it and the answer is yes for all nine kinds --- see *The OS's own renderer
+asks it and the answer is yes for all nine kinds — see *The OS's own renderer
 draws them too*, below.
 
 The shape of the mistake is worth more than the sentence: **a true reason for
 half a claim, stated as the whole claim.** Nothing about it reads as
-provisional --- it names a real limitation of a real API --- and the way out was
+provisional — it names a real limitation of a real API — and the way out was
 not more thought about the API but noticing that "these questions" is two
 populations with different answers.
 
-#### `--mode preview`, and what a two-reader check can never see --- 2026-08-20
+#### `--mode preview`, and what a two-reader check can never see — 2026-08-20
 
 The by-hand run above, made repeatable. `annot-probe --mode preview` opens the
 saved file with PDFKit and asks eight questions: that PDFKit opens it at all,
@@ -10525,7 +10525,7 @@ collapsing into a corner. 18 runs green across three fixtures and six kinds.
 
 **The kind comparison goes through `annots::Kind::of`, which is neither reader's
 own table**, and that detail is the increment's main lesson. The first version
-compared against `save::subtype` --- the writer's table, made `pub` for the
+compared against `save::subtype` — the writer's table, made `pub` for the
 purpose, citing this repository's own rule against keeping two copies of a
 distinction. Mutating that table to write `/Underline` for a strikeout left the
 check green, because the expectation moved with the code. **The rule against a
@@ -10535,8 +10535,8 @@ second copy is right and applying it here produced the worse defect.**
 
 | mutation in `save.rs` | `--mode preview` | what does catch it |
 |---|---|---|
-| no `/Contents` | red | --- |
-| no `/T` | red | --- |
+| no `/Contents` | red | — |
+| no `/T` | red | — |
 | appearance `/BBox` shrunk to a 1x1 corner | red on 5 of 6 kinds | nothing else |
 | `/Subtype` written as `/Underline` for a strikeout | green | a unit test, and `--mode roundtrip` |
 | `/Rect` shifted three points sideways | green | `--mode roundtrip` |
@@ -10545,20 +10545,20 @@ second copy is right and applying it here produced the worse defect.**
 The bottom three are one fact: **every check here is between two readers, so a
 writer that moves something legally moves it for both.** A differential is
 evidence about parsing, never about geometry. Recorded as its own trap, because
-the practical rule --- when adding a check to a differential, ask which
-population could move without the other --- generalises well past this file.
+the practical rule — when adding a check to a differential, ask which
+population could move without the other — generalises well past this file.
 
 The `/BBox` row is what justifies the mode beside the PDFium ones. PDFKit drew
 **196 px into a 14 pt corner** where a correct box draws 1306 across 254, while
 PDFium scaled the same form up until the frame filled the rectangle solid: two
 renderers, two different wrong pictures, and only one of them is Preview. The
-kind that survives it is the comment, correctly --- `save.rs` writes a `/Text` no
+kind that survives it is the comment, correctly — `save.rs` writes a `/Text` no
 appearance at all, so there is no `/BBox` to shrink.
 
 ##### Two facts about the oracle, both surprising
 
 **PDFKit replaces a `/Text` annotation's rectangle.** A comment written at
-`[60.322 717.074 313.652 730.192]` comes back as `(60.322, 706.192) 24 x 24` ---
+`[60.322 717.074 313.652 730.192]` comes back as `(60.322, 706.192) 24 x 24` —
 the standard icon on the rectangle's top-left corner, `730.192 - 24 = 706.192`
 exactly. It reads as a 229 pt error and is not one. The mode asserts the anchor
 and the size for that kind instead, which still proves PDFKit found our
@@ -10566,7 +10566,7 @@ rectangle, and measures containment against the rectangle PDFKit reports, since
 the icon hangs below ours.
 
 **PDFKit draws an annotation that has no appearance stream**, generating its own
---- 1056 px for a `/Square` against 1306 with ours. ~~Which also means
+— 1056 px for a `/Square` against 1306 with ours. ~~Which also means
 `docmodel.rs`'s note that Acrobat draws such a square as nothing is still
 unchecked: PDFKit is not Acrobat, and nothing here has asked it.~~ **Asked
 2026-08-31, and the note was wrong: Acrobat draws it too.** See the Acrobat run
@@ -10574,12 +10574,12 @@ below.
 
 ~~**Not done:** an Acrobat run, which is the other half of the criterion's own
 wording and needs a licence and a person; and any of this on Windows.~~ **Both
-halves are done --- Windows below, Acrobat below that.** The reason recorded
+halves are done — Windows below, Acrobat below that.** The reason recorded
 against the Acrobat half was wrong twice over: it needed neither a licence nor
 an automation interface, only twelve files and five minutes of somebody's eyes.
 
 
-#### An eraser --- done 2026-08-20
+#### An eraser — done 2026-08-20
 
 The thing a reader reaches for immediately after drawing, and the first command
 here that changes a mark's *shape* rather than putting one on a page or taking
@@ -10592,7 +10592,7 @@ appearance around a hole; it is a real feature and it is not this one.
 
 Which is the whole design problem. `Working` exists because everything that
 changes about a document has to be rebuildable by replay, and until now a
-drawing's points were written once by `annotate` and never again --- so they sat
+drawing's points were written once by `annotate` and never again — so they sat
 in the body table beside the colour and the author. `Command::Reink` is
 `Renote`'s twin, down to the argument: a whole stroke list rather than an edit to
 one, named by an `InkId` so the enum stays `Copy` and replay stays
@@ -10606,8 +10606,8 @@ kinds that have no strokes at all. Carrying one would have put an id on every
 
 **`quads_of` is the accessor that had to exist.** Erasing a stroke moves the
 rectangle, and a caller reading `Mark::quads` off the body would hit-test, anchor
-the popup and write a `/Rect` around a stroke nobody can see. Two callers ---
-`snapshot` for the window and `plan` for the file --- and each has its own
+the popup and write a `/Rect` around a stroke nobody can see. Two callers —
+`snapshot` for the window and `plan` for the file — and each has its own
 mutation, because the second is the one that reaches a saved document.
 
 **Erasing everything removes the mark**, and that decision is in `edits.rs`
@@ -10620,14 +10620,14 @@ that draws nothing must not exist, and only the layer above knows the sweep mean
 The first version asked which strokes were within the radius of the point the
 pointer had just reported. A pointer reports at the display's rate and a hand
 crosses several strokes between two reports, so a drag down a column of three
-took the outer two and left the middle one --- **the same failure the hit test
+took the outer two and left the middle one — **the same failure the hit test
 already avoided one level down**, where `strokeTouches` measures to the nearest
 *segment* precisely because a fast hand leaves points far apart. Two polylines,
 and only one of them was being treated as one.
 
 `strokeSwept` is segment-to-polyline: the travel from the last report to this
 one, against each segment of each stroke, with a crossing test as well as the
-four endpoint distances --- an X of two long strokes is at distance zero with all
+four endpoint distances — an X of two long strokes is at distance zero with all
 four ends a hundred points apart. A press is a segment of no length, so
 `strokeTouches` is now that function called with `from === to` and every test
 written for it still holds.
@@ -10638,13 +10638,13 @@ Sixteen mutations, all caught, and three of them are the increment's yield.
 
 - **The `snapshot` mutation survived its first aiming.** It was pointed at a test
   in `docmodel.rs` that calls `quads_of` directly, which says nothing about
-  whether the *reply* asks it --- the trap about unit tests that build their
+  whether the *reply* asks it — the trap about unit tests that build their
   fixtures below the layer under test. A test that erases and reads the reply's
   rectangle catches it.
 - **The kind guard in the sweep is unreachable for every input the backend can
   send.** A well-formed highlight has no strokes, so `if (!isPath(mark.kind))`
   changes nothing and a mutation deleting it survived. The fixture that makes it
-  reachable is a malformed one --- a highlight carrying three strokes, which the
+  reachable is a malformed one — a highlight carrying three strokes, which the
   model's biconditional forbids and the wire format cannot rule out.
 - **The first mutation written for the travel survived too**, because it
   degenerated two of the four endpoint distances and three other terms still read
@@ -10653,29 +10653,29 @@ Sixteen mutations, all caught, and three of them are the increment's yield.
 
 Window harness: **249/249 on `comments`, 284 names, all distinct.** Its first run
 went red on *"every registered command is classified"* with
-`unclassified [edit.erase]` --- the check written for exactly that, firing on a
+`unclassified [edit.erase]` — the check written for exactly that, firing on a
 command that was not meant to be left out.
 
 **Not done:** splitting a stroke where the nib crosses it; ~~an eraser for marks
 that are not drawings, which is `Unannotate` and already has a command~~ (done
-2026-08-23 --- see *An eraser that takes any mark* below); and ~~a nib whose size
-the reader can choose~~ (done 2026-08-30 --- see *A nib the reader picks* below.
+2026-08-23 — see *An eraser that takes any mark* below); and ~~a nib whose size
+the reader can choose~~ (done 2026-08-30 — see *A nib the reader picks* below.
 The clause this note carried, *the same open question the ink eraser left*, was
 wrong: the eraser's nib is view pixels and open, the drawing nib is points and the
 file format decides it).
 
 
-#### A colour a reader can choose --- done 2026-08-20
+#### A colour a reader can choose — done 2026-08-20
 
 `MARK_COLORS` had a doc comment saying what it was not: *"A palette is a
-different question --- where the swatches live, whether a reader picks before or
-after marking --- and answering it with a constant here would be answering it
+different question — where the swatches live, whether a reader picks before or
+after marking — and answering it with a constant here would be answering it
 invisibly."* `src/lib/markcolors.ts` answers it.
 
 ##### Both directions are one notion, so they are one command
 
-A reader picks a colour **before** marking --- the next highlight is green ---
-and **after** --- this highlight is green now. Preview and Word both treat those
+A reader picks a colour **before** marking — the next highlight is green —
+and **after** — this highlight is green now. Preview and Word both treat those
 as one thing and so does this: picking sets the choice, and applies it to the
 mark whose note is open if there is one. The alternative is two families of
 commands, *"mark in green"* beside *"recolour this green"*, which doubles the
@@ -10687,13 +10687,13 @@ is how two ways come to disagree.
 
 ##### The choice can be *none*, and that is not the same as yellow
 
-With nothing chosen each kind keeps its own colour --- a wash yellow, a line red,
+With nothing chosen each kind keeps its own colour — a wash yellow, a line red,
 for the reasons `MARK_COLORS` gives. `DEFAULT_SWATCH` is how a reader gets back,
 and it earns its place rather than being tidiness: without it, anyone who tried
 green could never again have a yellow highlight *and* a red underline without
 picking twice, which is a choice they never made. It carries `null`, not a
 colour, and `Viewer.recolorOpenMark` resolves it against the **mark's own kind**
---- a red underline recoloured "default" stays red.
+— a red underline recoloured "default" stays red.
 
 ##### Three surfaces, and the context menu deliberately gains nothing
 
@@ -10707,7 +10707,7 @@ the mark's note, and the swatch row is the first thing in it.
 
 Same shape, same argument: a whole colour named by a `ColorId` so the enum stays
 `Copy` and replay stays allocation-free. It differs from `Reink` in having **no
-shape check** --- `/C` is written for all six kinds, so the only thing that can
+shape check** — `/C` is written for all six kinds, so the only thing that can
 go wrong is the id.
 
 `color_of` is `quads_of`'s counterpart and had to exist for the same reason:
@@ -10717,7 +10717,7 @@ the first colour. Each has its own mutation.
 
 ##### Evidence
 
-Eighteen mutations, all caught --- sixteen for the feature, two for the two
+Eighteen mutations, all caught — sixteen for the feature, two for the two
 defects below. Sixteen of them go through `gates.py`'s harnesses; two run the
 window check.
 
@@ -10725,12 +10725,12 @@ Two findings, and neither is about colour:
 
 - **`Doc::ink_bodies` was an accounting observable nobody read, and the eraser's
   bodies leaked.** It was added a week ago for the stated reason that a version
-  kept after its command was discarded produces an *identical document* --- and
+  kept after its command was discarded produces an *identical document* — and
   then no test read it for that case, and the GC's `match` has a catch-all arm.
   Found by asking what the note's version of that test looked like. The test was
   written first and went red.
 - **`viewer_check.py`'s strikeout check had never once passed.** `core > 0.8`
-  against a sample band of 10% of the quad's height and a rule of 7% --- a
+  against a sample band of 10% of the quad's height and a rule of 7% — a
   ceiling of 0.70, read as 0.71 on every run. It landed red on 2026-08-19 and
   stayed red on a `main` CI called green on both platforms, because this harness
   is not a gate and CI cannot run it. The bound is 0.5 now, chosen for what it
@@ -10743,11 +10743,11 @@ popup and the callbacks directly, so nothing in them varies by corpus.
 
 **Not done:** a colour a reader mixes rather than picks, which is a colour picker
 and a different piece of work; a per-kind choice, so that green highlights can
-sit beside red underlines --- today a choice applies to every kind; and carrying
+sit beside red underlines — today a choice applies to every kind; and carrying
 the choice across a restart, which is `session.rs`'s question rather than this
 one.
 
-#### An ellipse --- done 2026-08-20
+#### An ellipse — done 2026-08-20
 
 The other member of the family `MarkKind::Square`'s own doc comment names: `/Square`
 is the specification's word for the group that contains `/Circle`, and this is the
@@ -10764,7 +10764,7 @@ One line of the drag path *did* change, and saying "nothing changed" would have 
 the kind of round claim this file distrusts. `paintDrawing` draws the rubber band, and
 it now draws a dashed **ellipse** when the ellipse tool is armed. That is not a
 concession, it is the note directly above it: a rectangle was the wrong preview for
-ink, shipped that way, and no check saw it --- the overlay phase paints marks the
+ink, shipped that way, and no check saw it — the overlay phase paints marks the
 model has and a preview is by definition not one. The same argument reaches the same
 answer here, which is why the preview is the shape that will be committed. The *appearance* half is wrong, and a kind that really differed only in its
 subtype would have drawn as a rectangle in every reader: a PDF content stream has no
@@ -10775,8 +10775,8 @@ ellipse operator, so `re` becomes four Bézier arcs and `Paint` gains a variant.
 The same, and deliberately so: the gesture, the colour (both default to the lines'
 red, because both are strokes and yellow on white paper is nearly invisible), the
 note box, removal, and **the hit test**. That last one is a decision rather than an
-omission. An ellipse's `/Rect` is mostly not drawn --- its curve touches the
-rectangle at four points and is inside it everywhere else --- so pressing a corner
+omission. An ellipse's `/Rect` is mostly not drawn — its curve touches the
+rectangle at four points and is inside it everywhere else — so pressing a corner
 opens a mark that has no ink there. The box already makes that bargain with its own
 empty middle, being stroked and selectable throughout, and two shapes a reader drags
 out identically should not answer a press by two different rules.
@@ -10796,8 +10796,8 @@ approximation stays in the one place that cannot avoid it.
 
 `--mode outline` took `--kind ellipse`, and taking it was not enough. Its three
 existing readings are satisfied by a rectangle and an ellipse *alike*: both put ink
-in the quad, both leave the inner half empty --- an ellipse cannot enter it, since
-`|dx| <= rx/2` forces `|dy| >= 0.866 ry` --- and both cross the centre column at full
+in the quad, both leave the inner half empty — an ellipse cannot enter it, since
+`|dx| <= rx/2` forces `|dy| >= 0.866 ry` — and both cross the centre column at full
 thickness, because an ellipse touches its bounding box exactly where that column
 reads. So the mode would have passed a `Paint` that drew `re`.
 
@@ -10824,7 +10824,7 @@ fourth way of saying ink appeared.
 The overlay has the identical hole and it is not the same code: the file's ellipse could
 be written as `re`, and the overlay's could be drawn with `strokeRect`. `viewer_check.py`
 samples each kind as `{whole, core, edges}`, and **a rectangle satisfies all three of the
-box's bounds** --- an ellipse touches its quad exactly where `edges` samples, at the middle
+box's bounds** — an ellipse touches its quad exactly where `edges` samples, at the middle
 of each side, and its centre is as empty as a box's. So giving the ellipse the box's
 predicate would have produced a check that could not fail.
 
@@ -10837,7 +10837,7 @@ A fourth number, `corners`, is what makes it a check. Measured on `comments.pdf`
 
 The box's `corners === 4` is asserted on the line above the ellipse's `corners === 0`, so
 the emptiness assertion has its control beside it rather than nowhere. The distinctness
-check reads seven distinct readings from seven kinds, and `corners` is in its key --- the
+check reads seven distinct readings from seven kinds, and `corners` is in its key — the
 two shapes' `whole` differs only by a corner against a curve, which is not a margin to
 rest a rounding on.
 
@@ -10855,34 +10855,34 @@ other's defect: a `/Circle` drawn with `re` is a rectangle every reader files un
 "ellipse", and correct arcs under `/Square` are an ellipse every reader calls a
 rectangle.
 
-Three in `mutate_rust.py`, one in `mutate_frontend.py`, and one in `mutate_viewer.py` ---
+Three in `mutate_rust.py`, one in `mutate_frontend.py`, and one in `mutate_viewer.py` —
 drawing the ellipse with the box's `strokeRect` on the overlay, which is the mutation the
 corner reading exists for and goes **2 red**.
 
 `viewer_check.py`: **264/264** on `comments.pdf`, 35 not applicable. `annot-probe`: **5/5**
 `--mode outline`, **11/11** `--mode roundtrip`, **8/8**
-`--mode preview` --- PDFKit and `annots.rs` agreeing the kind is `Circle`, which is
+`--mode preview` — PDFKit and `annots.rs` agreeing the kind is `Circle`, which is
 the assertion no rendering check can stand in for.
 
 Two findings, and both are about instruments rather than about the ellipse:
 
 - **The `anchors` gate refused the first version of the new unit test**, because it
-  wrote `let inset = OUTLINE_WIDTH / 2.0;` --- a line an existing mutation was already
+  wrote `let inset = OUTLINE_WIDTH / 2.0;` — a line an existing mutation was already
   aimed at, in `outline_path`. A test that duplicates a mutation's anchor makes that
   mutation ambiguous, and the gate caught it on the first run, which is the trap of
   that name arriving from the direction nobody watches: the anchor did not drift, a
   *new* copy of it appeared.
 - **The menu-coverage test went red as the mutation harness's control**, not as a
   check of the increment. `edit.drawEllipse` was registered and not placed, which is
-  exactly the state that test was written for --- and it surfaced as *"the control run
+  exactly the state that test was written for — and it surfaced as *"the control run
   is not green"*, one layer away from where it would read as a defect in the mutation.
 
 **Not done:** a circle constrained to be round, which is a modifier on the drag
 rather than a kind and belongs with the other drag refinements; and the remaining
-markup kinds, unchanged --- squiggly, and text boxes and stamps, each of which needs
+markup kinds, unchanged — squiggly, and text boxes and stamps, each of which needs
 a way to place something rather than a way to drag a rectangle.
 
-#### A squiggly underline --- done 2026-08-20
+#### A squiggly underline — done 2026-08-20
 
 The fourth text-markup kind, and the last one there is: PDF 32000-1 lists `/QuadPoints`
 on `/Highlight`, `/Underline`, `/Squiggly` and `/StrikeOut` and on no other subtype, so
@@ -10890,7 +10890,7 @@ tpdf now writes all four. It takes a selection, carries quads, follows the words
 than the page, and is made, moved, coloured and removed by machinery that did not change.
 
 **The whole increment is one question: how is it drawn, and how would anyone know.**
-`markSelection` already took a kind, so there is no new action --- only a command entry, a
+`markSelection` already took a kind, so there is no new action — only a command entry, a
 menu line, a `Paint` variant and a band.
 
 ##### It is the underline's twin, which is a hazard rather than a convenience
@@ -10908,14 +10908,14 @@ existed is also true of a squiggle, in **both** harnesses:
 | **the strip above a rule** | **0%** | **58%** |
 
 Only the last line separates them, and it did not exist before this kind. Giving the
-squiggle the underline's bounds --- which is the obvious move, since it is the underline's
-sibling --- would have produced a check that reports green for the whole life of the
+squiggle the underline's bounds — which is the obvious move, since it is the underline's
+sibling — would have produced a check that reports green for the whole life of the
 defect. This is the trap recorded with the ellipse a few hours earlier, arriving again
 immediately, which is the argument for having written it down.
 
 `SQUIGGLE_HEIGHT` is 0.18 against the rule's `LINE_FRACTION` of 0.07, and the gap between
 them is not decoration: it is the strip every discriminating check reads. **No check
-derives its band from either constant** --- they read fixed fractions, 10% to 16%, chosen
+derives its band from either constant** — they read fixed fractions, 10% to 16%, chosen
 to sit inside the gap with margin at both ends. A band computed from the number it
 polices moves with it and stops being able to fail.
 
@@ -10928,7 +10928,7 @@ The file's squiggle could be written as a flat rule; the overlay's could be draw
 `--mode wave` is a mode of its own because `--mode rule` **cannot fail for this kind**.
 That mode splits a quad into thirds and asks which one holds the ink; both kinds put all
 of theirs in the bottom third. Squiggly is admitted to `rule` anyway, where it says the
-true and useful thing --- the ink is under the baseline, not through the words --- and the
+true and useful thing — the ink is under the baseline, not through the words — and the
 comment there says plainly what it cannot say.
 
 Both modes are run **as a pair with the underline as the control**. Asserting the strip is
@@ -10943,14 +10943,14 @@ thing to keep in step across two languages, for a shape whose peak-to-trough hei
 under two points on body text. `l` and `lineTo` say the same thing exactly.
 
 The `Wave` arm is the only one that emits its own `w`. The header writes one line width for
-the stream, and a wave's thickness is `LINE_FRACTION` of *its own quad's* height --- which
+the stream, and a wave's thickness is `LINE_FRACTION` of *its own quad's* height — which
 differs per quad on a run crossing a heading. The overlay takes its pen from the quad for
 the same reason, not from the band: a wave drawn at the band's fraction would be two and a
 half times heavier than the rule beside it.
 
 ##### Evidence
 
-Seven mutations, all caught. Four in `mutate_rust.py` --- a flat rule for the wave,
+Seven mutations, all caught. Four in `mutate_rust.py` — a flat rule for the wave,
 `/Underline` for its subtype, the underline's band, and dropping it from the quad-carrying
 kinds. Two in `mutate_frontend.py`. One in `mutate_viewer.py`, drawing it as the
 underline's flat rule on the overlay, which is the mutation the strip reading exists for
@@ -10959,7 +10959,7 @@ and goes **2 red**.
 `viewer_check.py`: **266/266** on `comments.pdf`, 35 not applicable, eight distinct
 readings from eight kinds. `annot-probe`: **3/3** `--mode wave` on each of the squiggle
 and its underline control, **11/11** `--mode roundtrip` with its quad carried, **4/4**
-`--mode rule`, **8/8** `--mode preview` --- PDFKit and `annots.rs` agreeing the kind is
+`--mode rule`, **8/8** `--mode preview` — PDFKit and `annots.rs` agreeing the kind is
 `Squiggly`.
 
 Three findings, none about the mark itself:
@@ -10967,7 +10967,7 @@ Three findings, none about the mark itself:
 - **`--mode wave` read the top of the quad on its first run.** `union` returns display
   coordinates, where y grows *downward*, and the band was written in the page's convention
   where it grows up. An underline drawn perfectly reported 0 px. **The control is what
-  caught it**, one run in, before any squiggle had been rendered --- which is the whole
+  caught it**, one run in, before any squiggle had been rendered — which is the whole
   argument for a control that must find ink rather than only one that must not.
 - **A test renamed to fix a false name was falsified again within the day.**
   `only_a_box_is_stroked` became `the_text_markup_kinds_fill_and_are_not_stroked` when the
@@ -10980,12 +10980,12 @@ Three findings, none about the mark itself:
   belonged in the anchor, which is the opposite of yesterday's case where the fix belonged
   in the test.
 
-**Not done:** nothing in the markup family --- this is the last of the four. What remains
+**Not done:** nothing in the markup family — this is the last of the four. What remains
 of the kinds list is text boxes and stamps. (Text boxes landed the same day; see *A text
-box* below. Stamps landed 2026-08-23 --- `c9bdead` --- so nothing in the kinds list
+box* below. Stamps landed 2026-08-23 — `c9bdead` — so nothing in the kinds list
 this sentence names is left; checked 2026-08-26.)
 
-#### A text box --- done 2026-08-20
+#### A text box — done 2026-08-20
 
 The first kind whose **note is the mark rather than a remark about it.** Take a
 highlight's note away and the highlight is still there; take a text box's away and
@@ -10994,13 +10994,13 @@ and it has three consequences.
 
 **Editing the note changes what is drawn.** `Command::Renote` already rebuilds
 `Working` and `save.rs` already builds its plan from the model on every save, so this
-needed no new machinery --- but it is the first kind for which that mattered. A design
+needed no new machinery — but it is the first kind for which that mattered. A design
 that had cached an appearance per mark at creation would have had to be undone here.
 
 **The writer has to lay text out**, which needs the width of every glyph. `textbox.rs`
 is the only place in this repository that measures text, and it exists solely for this.
 
-**What a reader types can be unwritable**, so `Edits::renote` refuses it --- the only
+**What a reader types can be unwritable**, so `Edits::renote` refuses it — the only
 kind that refuses a note at all.
 
 ##### Helvetica, and how 95 hand-written numbers were made trustworthy
@@ -11032,7 +11032,7 @@ actually extends, and compares that against what `advance` predicts:
 to the last one's right; an advance includes the trailing side bearing, so a correct
 table comes in *under* and never over. A string ending in `A` or `V` under-runs by more
 than one ending in `l`, which is exactly the spread the table shows. Ink *exceeding*
-the advance is a hard failure --- that is text outside the box the wrap arithmetic
+the advance is a hard failure — that is text outside the box the wrap arithmetic
 promised.
 
 The German line's original agreement to 0.44 pt did not establish every character's
@@ -11051,7 +11051,7 @@ table.
 
 **A word wider than the whole box is broken mid-word.** Without it a pasted URL or a
 long German compound emits one line past the rectangle, the appearance stream's `/BBox`
-clips it, and the text disappears at the edge --- invisibly. Breaking is ugly and
+clips it, and the text disappears at the edge — invisibly. Breaking is ugly and
 visible; overflowing is invisible and loses words.
 
 **An empty leftover is not pushed as a line.** A test written to prove the degenerate
@@ -11065,21 +11065,21 @@ every paragraph after the first in a longer one.
 The content stream is built as a Rust `String`, which is UTF-8. Pushing `ü` into it as a
 literal writes `C3 BC` where WinAnsi wants `FC`: every English text box perfect, every
 German one drawing `Ã¼`. A hex string removes the question, and removes the escaping
-question with it --- a literal has to escape `(`, `)` and `\`, and typing `:-)` into a
+question with it — a literal has to escape `(`, `)` and `\`, and typing `:-)` into a
 text box is not unusual.
 
 ##### One layout, in one language
 
 `MarkView` gained `lines`, the note already broken into the lines it will be drawn in.
 The webview *can* measure text, and measuring it there would be measuring whatever font
-the system resolved while the file is set in Helvetica by our own metrics --- two
+the system resolved while the file is set in Helvetica by our own metrics — two
 measurements of two fonts break lines in different places, so a reader would see three
 lines and save four with no way to tell which was right. The backend wraps; the overlay
 draws what it is handed.
 
 ##### Evidence
 
-Eight mutations, all caught --- six in `mutate_rust.py`, one in `mutate_frontend.py`,
+Eight mutations, all caught — six in `mutate_rust.py`, one in `mutate_frontend.py`,
 one in `mutate_viewer.py`.
 
 `viewer_check.py`: **268/268** on `comments.pdf`, nine distinct readings from nine
@@ -11089,13 +11089,13 @@ calling the kind `FreeText`. `helvetica-probe`: **8/8**.
 Three findings, and two are about how the work was done rather than about the feature:
 
 - **Two mutations were wrong before the code was.** *"Accept text Helvetica cannot
-  write"* was written as `all(|_| true) && all(original)` --- an `and` with `true`, which
+  write"* was written as `all(|_| true) && all(original)` — an `and` with `true`, which
   is the original predicate. It reported SURVIVED, correctly, about a mutation that had
   changed nothing. And *"put a font in every mark's resources"* survived for the opposite
   reason: it was a real weakening and **nothing tested the claim**, which was written in
   a comment saying only the text style gets a font. The control now exists.
 - **A blind mechanical edit cost six corrections.** Adding `lines` to `MarkView` meant
-  adding it to every fixture, done with a regex on `note: ...,` --- which also hit a
+  adding it to every fixture, done with a regex on `note: ...,` — which also hit a
   function parameter list, a `NewMark` request payload, an `invoke` assertion and the
   `INK_CHECK` table, all of which merely have a field called `note`. Three were caught by
   the type-checker and two by `vitest`.
@@ -11108,20 +11108,20 @@ a background, which `/FreeText` supports and which would make `/C` mean the box 
 than the words; and rich text, which is `/RC` and a different subsystem. Text is also not
 re-wrapped when a box is resized, because a box cannot be resized yet.
 
-#### A panel that lists the reader's own marks --- done 2026-08-20
+#### A panel that lists the reader's own marks — done 2026-08-20
 
 The gap the last four increments left. Nine kinds of mark, and no way to see what you
 had marked: PDFium draws a highlight as a wash and a comment as a 24-point icon, so a
 document a reader had worked through opened as a document with coloured shapes in it.
 The same argument the comments panel makes about somebody else's annotations, made about
-the reader's own --- and it was the open question at the end of the mark increments,
+the reader's own — and it was the open question at the end of the mark increments,
 posed as *a fifth sidebar tab, or rows in the comments panel*.
 
 **A fifth tab.** The comments panel lists what `annots.rs` read out of the *file*, and
 folding both into one list would put two kinds of thing behind two activation paths in
 one place: a document's comment can only be read, and one of the reader's own can be
-edited, recoloured and taken off. They also answer to different owners --- a rescan of
-the file against a live journal --- and that is the difference that decides the states
+edited, recoloured and taken off. They also answer to different owners — a rescan of
+the file against a live journal — and that is the difference that decides the states
 each panel has, below.
 
 ##### It is not the comments panel with a different source
@@ -11129,14 +11129,14 @@ each panel has, below.
 Two differences do almost all the work.
 
 **This one is about live state, not about a file read once.** `document_comments` scans
-and the answer stands until the document is reopened, so that panel has three states ---
-reading, none, unreadable --- and says which. Marks come from the model in this process,
+and the answer stands until the document is reopened, so that panel has three states —
+reading, none, unreadable — and says which. Marks come from the model in this process,
 which answers immediately and cannot fail, so there are two. There is nothing to say
 "still reading" about, and a placeholder that said it would be a lie a reader could sit
 and watch.
 
 **The order already has an owner.** `markWalk` decides which mark the keyboard walk
-meets next, so `markRows` wraps it rather than sorting again --- the panel and ⌥→ are two
+meets next, so `markRows` wraps it rather than sorting again — the panel and ⌥→ are two
 ways to the same marks and a reader uses both in the same minute. What `markRows` adds is
 that nothing is dropped: the walk leaves out a mark it cannot place, which is right for
 stepping and wrong for a list, so those come last with no page against them and marked
@@ -11150,7 +11150,7 @@ reachable input needs.
 `onMark` is `onComment`'s twin: pressing a mark on the page selects its row, so the panel
 and the note box cannot disagree about which mark is being read. It is fired by
 `markpopup.ts` rather than at the viewer's call sites, because the box is closed in four
-places for five reasons --- Escape and the close button share one, and the others are
+places for five reasons — Escape and the close button share one, and the others are
 removing the mark, an undo taking the mark out from under it, the mark scrolling off the
 page, and the viewer being torn down. That is the distinction this
 repository records as *"Recording a jump at the call sites is a rule; recording it inside
@@ -11163,12 +11163,12 @@ Circle in the box that opens when you press it.
 
 ##### Evidence
 
-Thirteen mutations, all caught --- eight in `mutate_frontend.py`, five in
+Thirteen mutations, all caught — eight in `mutate_frontend.py`, five in
 `mutate_viewer.py`, one of which needed a new `viewer-comments` runner.
 
-`viewer_check.py`: 310 check names, seven of them new --- five that drive the panel,
-`view.showMarks` in the command sweep, and the tab check below --- and the sweep over all fourteen
-corpora is what made this increment's evidence worth anything --- it found three defects
+`viewer_check.py`: 310 check names, seven of them new — five that drive the panel,
+`view.showMarks` in the command sweep, and the tab check below — and the sweep over all fourteen
+corpora is what made this increment's evidence worth anything — it found three defects
 that `comments.pdf` alone could not.
 
 **A new check went red on its first run, on the defect it was written to look for.** Five
@@ -11176,7 +11176,7 @@ tab labels want 293 px of content in a 260 px sidebar, so **Marks** was clipped 
 panel's `overflow:hidden`: in the DOM, `role="tab"`, and unreachable by a pointer. The tab
 *count* check beside it passed the whole time, because a clipped button is still a button.
 The row wraps now. It is worth noting that this was predicted from arithmetic before it was
-measured, and measuring it is still what settled it --- the estimate was 316 px against a
+measured, and measuring it is still what settled it — the estimate was 316 px against a
 measured 318.
 
 **Two of the three defects were in the check phase itself**, and neither is visible on the
@@ -11189,21 +11189,21 @@ now, which is what "goes to it" means and is what a viewer that opened the note 
 scrolling fails.
 
 **One mutation survived, and the survivor is the finding.** *"Draw a row for the first
-mark and stop"* was caught by nothing: `rowCount` answered `this.rows.length` --- the rows
-the panel was **given** --- which is the same number whether or not a single element was
+mark and stop"* was caught by nothing: `rowCount` answered `this.rows.length` — the rows
+the panel was **given** — which is the same number whether or not a single element was
 built. The check written to catch exactly that compares `rowCount` against the marks it
 handed over, so it was comparing the input with itself. It reads the DOM now.
 
 The getter had been copied from `commentlist.ts`, which had the same defect and therefore
 the same unfalsifiable check: *"the sidebar lists every comment"* could not see a panel
 that drew one row either. Both are fixed, and the mutation that proves the second one is
-why the harness gained a runner --- the comments checks skip on a document with no
+why the harness gained a runner — the comments checks skip on a document with no
 comments, so a mutation aimed at one anywhere else is aimed at a check that cannot go red.
 
 **The type-checker enumerated the call sites, which is the lesson the last increment
 wrote down.** Making `MarkPopup.onOpen` and `SidebarOptions.marks` required rather than
 optional turned "find everywhere that constructs one" into four compiler errors. The
-previous increment had done the opposite --- a regex over a field name --- and paid six
+previous increment had done the opposite — a regex over a field name — and paid six
 wrong insertions for it.
 
 **An escape sequence written into a mutation table through a shell never arrives as an
@@ -11214,7 +11214,7 @@ landing, because the payload happened to contain a quote as well as a `\n`.
 ##### One failing check, found here and fixed the same day
 
 `a text box draws its words and not its rectangle` was red on four of the fourteen corpora
---- `vector-heavy`, `vector-multi`, `rotated-90` and `links-cropped` --- and on nothing
+— `vector-heavy`, `vector-multi`, `rotated-90` and `links-cropped` — and on nothing
 else. **Attributed by a control** rather than by reading: a `git worktree` at `HEAD`, the
 text-box commit, built and run against `rotated-90` produced the byte-identical reading. So
 it shipped with the text box, and this increment's sweep is what found it: that increment
@@ -11224,20 +11224,20 @@ its `/CropBox` is its `/MediaBox`.
 **The painter was right on all four.** The predicate was `whole > 0.02 && whole < 0.6 &&
 edges === 0 && second > 0.005`, and every one of those readings is a fraction of the mark's
 rectangle, which was `height_pt * 0.04` tall and therefore scaled with the page. A text
-box's content does not scale --- it is 11-point type on A4 and on A0 --- so the check failed
+box's content does not scale — it is 11-point type on A4 and on A0 — so the check failed
 in both directions at once, which is why no bound could have been adjusted to fix it. On A0
 the box was about 1,073 x 135 points and two lines of type rounded to 0% of it. On a
 20-pixel-tall box the `edges` sample, which reads the middle tenth of the height, landed on
 the **second line**; on A4 it cleared it by half a point.
 
 The detail line names which side and prints the measured box now, which is what turned
-three arithmetic theories into one measurement --- `ink on 1 of its 4 sides (left), in a
+three arithmetic theories into one measurement — `ink on 1 of its 4 sides (left), in a
 288x20 px box`, beside a box check reading all four sides of the *identical* rectangle.
 
 **The repair, in two halves.** The readings became absolute point offsets from the box's own
 corner: two type-sized bands where the lines must be, and three border strips that must be
 clear. They are literals, because a band derived from `TEXT_SIZE` and `TEXT_LEADING` moves
-with them and stops being able to fail --- the argument `shoulder` already makes about
+with them and stops being able to fail — the argument `shoulder` already makes about
 `SQUIGGLE_HEIGHT`. The literals are then a claim about the type, so the check refuses to run
 if the inset, size and leading are not the three numbers it was written against. The left
 border is deliberately not sampled: the type starts two points in, and a strip narrow enough
@@ -11245,25 +11245,25 @@ to fit inside that is narrower than a glyph's antialiasing.
 
 The other half is the fixture. The rectangle is a fixed 260 x 90 points rather than a
 fraction of the page, which is what lets the bands be literals and what removes a
-precondition a page-relative box would have needed --- `rotated-90`'s 24-point box cannot
+precondition a page-relative box would have needed — `rotated-90`'s 24-point box cannot
 hold a second line, so *"there are two of them"*, the property a mutation had defeated
 everything else to reach, could not have been asserted there at all.
 
 **The 90 came from the sampler, not from the type.** Two lines end 28.4 points down, so 40
 looked right, and it turned the red check into a **skipped** one on the A0 corpora: `inked`
 refuses a region under two pixels, `core` reads the middle tenth of the height, and A0 fits
-a 900-pixel window at 0.37 pixels per point --- 1.5 pixels, so the whole reading came back
+a 900-pixel window at 0.37 pixels per point — 1.5 pixels, so the whole reading came back
 `null`. A skip is the failure shape that reads as success.
 
 **Measured.** The two type bands read 38%/40% on `vector-heavy`, 27%/27% on `rotated-90`,
-25%/23% on `comments` and 23%/23% on `links-cropped` --- boxes from 70x24 to 320x116 pixels
---- with all three border strips clear on every one. **The whole corpus was re-swept: all
+25%/23% on `comments` and 23%/23% on `links-cropped` — boxes from 70x24 to 320x116 pixels
+— with all three border strips clear on every one. **The whole corpus was re-swept: all
 fourteen green**, the same 310 check names, and every ran/skipped split byte-identical to
 the run that found the failure. That last part is the half worth checking: a check repaired
 by making it skip somewhere would have moved a split, and none moved. Three mutations, all caught: draw
 only the first line (`lineTwo`), fall through to `fillRect` (`whole` and `rim`, and it also
 reddens the distinctness check, since a filled text box then reads as a highlight), and
-start the type one line lower --- which exists because the first two both leave the top band
+start the type one line lower — which exists because the first two both leave the top band
 inked, so nothing else exercises `lineOne`.
 
 **Taking a mark off from the panel, built 2026-08-21.** Each row carries a remove control,
@@ -11271,19 +11271,19 @@ and Delete or Backspace on a focused row does the same. It was listed here as *"
 removal path beside the note box's own"*, and building it showed that description was
 wrong in the way that mattered: for part of this list it is the **only** path. A mark the
 model cannot place has `page: null`, is drawn disabled, and refuses Enter and the pointer
-because there is nowhere to scroll to --- and every removal until now went through the note
+because there is nowhere to scroll to — and every removal until now went through the note
 box, which needs a page to open on. Those marks could be listed for ever and never taken
 off.
 
 That is also why this is the one place in `App.svelte` a mark is named by id rather than by
-whichever note is open, against the rule `removeMark` states --- and the rule is right, so
+whichever note is open, against the rule `removeMark` states — and the rule is right, so
 the exception is written down at both ends rather than left to be discovered.
 
 The keyboard is deliberately not guarded the way Enter is: Enter refuses an unplaced row,
 Delete must not, and a mutation copying that guard across is in the table for exactly that
 reason. Four unit mutations cover the control, and a fifth lives in `mutate_viewer.py`,
 because the one property no unit test can decide is that pressing the control does not also
-fire the row underneath it --- the fake DOM does not bubble, so `stopPropagation` and its
+fire the row underneath it — the fake DOM does not bubble, so `stopPropagation` and its
 absence are indistinguishable there. The window check that catches it is *"a row's remove
 control asks for that mark and does not open it"*, and it takes the harness to 311 names.
 
@@ -11291,7 +11291,7 @@ control asks for that mark and does not open it"*, and it takes the harness to 3
 squiggly or strikeout with no note used to be a row reading *"No note"*, which is what nine
 of them read together; it is now the phrase the mark sits on. The reader's own note still
 wins wherever there is one, and the covered words are drawn in the dimmed italic *"No note"*
-already used --- the one thing on the row separating a sentence they wrote from a sentence
+already used — the one thing on the row separating a sentence they wrote from a sentence
 the document did.
 
 **This entry asked for extraction per mark and that would have been the wrong build.** It
@@ -11299,7 +11299,7 @@ assumed the words have to be recovered from the page, which is true of a comment
 `annots.rs` reads out of a file and false here: `Doc::open` takes a page count and nothing
 else, so the model's marks are only ever the ones made in this session, and a saved file
 reopened puts its annotations in the *comments* panel rather than this one. So there is no
-mark in this list whose creation tpdf did not watch --- and at that moment `markSelection`
+mark in this list whose creation tpdf did not watch — and at that moment `markSelection`
 is holding the selection that produced the quads. The words come out beside the rectangles,
 from the same range, in one line.
 
@@ -11313,49 +11313,49 @@ at different times. None of that exists.
 order a copy of the same selection produces. The words are held in `App.svelte` by mark id,
 not in the model: nothing in a PDF records the text a highlight sits on, so a field for it
 would be one `save.rs` had to remember to ignore. The map is capped at 200 characters a mark
---- the row is one line and the CSS ellipsis cuts it far shorter --- and is **not** pruned
+— the row is one line and the CSS ellipsis cuts it far shorter — and is **not** pruned
 against the live marks, because an undone mark comes back under the same id and a pruned map
 would have redo show *"No note"* for a highlight whose words it had just been displaying.
 
 **One thing the distinction does not survive is being read aloud.** Dimmed italic is
 visual, and `dataset.own` is not in the accessibility tree, so a screen reader announces
 *"the sandbox is the boundary, Highlight"* with nothing saying the first half is the
-document's rather than the reader's. That is a smaller loss than it sounds --- the row used
-to announce *"No note, Highlight"*, so the phrase is new information either way --- but it
+document's rather than the reader's. That is a smaller loss than it sounds — the row used
+to announce *"No note, Highlight"*, so the phrase is new information either way — but it
 is a gap rather than a decision, and closing it means a visually-hidden word in the row, not
 a cleverer style.
 
-Three unit mutations cover the substitution rule --- the two candidates the wrong way round,
-the flag that says whose words they are, and a lookup by page instead of by id --- and two
+Three unit mutations cover the substitution rule — the two candidates the wrong way round,
+the flag that says whose words they are, and a lookup by page instead of by id — and two
 window mutations cover what a unit test cannot: blanking the words at the selection, and
 drawing them in the same face as the reader's own, which the fake DOM cannot see at all
 because it resolves no styles. The two new window checks are *"and the words they cover are
 the words that are selected"*, which compares two routes to one string (per page off
 `peekUnturned`, whole selection off `peek`), and *"a mark nothing was typed on is listed by
-the words it covers"*, which paints a noted row beside a bare one and reads both back ---
+the words it covers"*, which paints a noted row beside a bare one and reads both back —
 the noted row being the control, since a panel calling every line the document's passes one
 half and fails the other. The harness is at 313 names.
 
 **The whole corpus was re-swept: all fourteen green**, the same 313 names on every one, in
-686 s. The way the splits moved is the useful half rather than the greenness --- twelve
+686 s. The way the splits moved is the useful half rather than the greenness — twelve
 corpora are `+3` ran and `+0` skipped against the last table, and `vector-heavy` and
 `vector-multi` are `+2`/`+1`, those two being the documents with no text to select, so the
 selection-words check skips there exactly as its sibling already did. Three names arriving
 and every corpus accounting for all three in the pattern its own contents predict says more
 than fourteen `[OK]` lines. `BUILD.md` carries the table.
 
-~~**Not done, and the first of these is the extraction after all --- in the other panel.**~~
+~~**Not done, and the first of these is the extraction after all — in the other panel.**~~
 **Done 2026-08-21, in the increment below.** Save and reopen, and these marks were gone from
 this list: they are the file's annotations then, so `commentlist.ts` has them, and a highlight
-with no body read there as *"Highlight, no comment"* --- the same empty row this increment
+with no body read there as *"Highlight, no comment"* — the same empty row this increment
 removed from the panel next to it. Closing that one **did** need extraction per comment,
 because nothing watched those marks being made and the file records no words under them; it
 was the program the trap above describes, wanted for a reason and against a cost, rather than
 reached for by reflex.
 
 It also needed more than the page's characters, and the note was right about that too:
-`annots.rs` read `/Rect` and **not** `/QuadPoints` --- checked, because the sentence here
-first said the opposite --- and a `/Rect` is the bounding box of every line a highlight
+`annots.rs` read `/Rect` and **not** `/QuadPoints` — checked, because the sentence here
+first said the opposite — and a `/Rect` is the bounding box of every line a highlight
 covers, so a containment test against it would take in the whole paragraph between the first
 line and the last. That was the backend half, and it started with a field nothing read.
 
@@ -11363,18 +11363,18 @@ The note is struck here rather than only written up below, which is trap 402's w
 a *Not done* ages in place because the commit that closes it has every reason to describe
 where the work landed and none to go looking for a sentence elsewhere claiming its absence.
 
-Also not done: grouping or filtering by kind, page or colour; and a count, deliberately --- a
+Also not done: grouping or filtering by kind, page or colour; and a count, deliberately — a
 status line saying "9 marks" is derivable from the rows, so a check asserting the two agree
 would be the panel agreeing with itself.
 
-#### The comments panel lists a highlight by the words it covers --- done 2026-08-21
+#### The comments panel lists a highlight by the words it covers — done 2026-08-21
 
 The other half of the increment above, and the half the note said would need real work. A
 document somebody reviewed opens with nine rows reading *"Highlight, no comment"*: the file
 records that a rectangle was drawn and not one word of what is under it.
 
 **The backend half was a field nothing read.** `annots.rs` read `/Rect` only, and a `/Rect` is
-the bounding box of every line a markup annotation covers --- so a containment test against it
+the bounding box of every line a markup annotation covers — so a containment test against it
 takes in the whole paragraph between the first line and the last. `/QuadPoints` is one
 rectangle per line, which is the shape the question actually has. It is now read for the four
 kinds `Kind::covers_text` names, through the same `place` the `/Rect` goes through, so a
@@ -11385,20 +11385,20 @@ Two things about that read are worth stating because they are where a reader get
 lower-left, lower-right; Acrobat has written a different order for years and every reader in
 the wild takes the extremes. Our own `save.rs` writes the specification's order exactly, so a
 reader built by reading our writer round-trips perfectly against every fixture here and mangles
-somebody else's file --- the writer-and-its-own-reader trap arriving as geometry rather than as
+somebody else's file — the writer-and-its-own-reader trap arriving as geometry rather than as
 a parse failure. And **a malformed array is declined whole**: a length that is not a multiple
 of eight, a value that is not a number, a non-finite value. Keeping the part that parses would
 place a mark using half a producer's intent.
 
 **The frontend half is one containment rule, not a second one.** `links.ts` already answered
-*which characters does this rectangle cover* --- a character belongs when its **box's centre**
+*which characters does this rectangle cover* — a character belongs when its **box's centre**
 is inside, never when the boxes overlap, because annotation rectangles are drawn generously and
 routinely touch the line above. Writing a second copy for highlights is precisely the drift
 this repository has a trap about, so the predicate moved into `text.ts` as `centreOfCharacter`
 and `coversPoint` and both callers share it.
 
 Sharing it fixed a defect nobody was looking for. PDFium reports a character it could not place
-as four zeroes, whose centre is (0, 0) --- inside **any** rectangle touching the page's
+as four zeroes, whose centre is (0, 0) — inside **any** rectangle touching the page's
 top-left corner, which is what a link on a page's first line is. Every unplaced character on
 such a page was announced as part of that link. `centreOfCharacter` answers `null` for a box
 with no area, so it no longer is.
@@ -11408,7 +11408,7 @@ gutter reads column by column exactly as copying the same drag does.
 
 **The scheduling is the part a reader feels.** Finding the words is one `page_text` extraction
 per page carrying a bare mark, and that pool is the pool drawing tiles. So it is paid for by a
-reader who opens the comments tab and by nobody else --- `Sidebar` reports its showing tab
+reader who opens the comments tab and by nobody else — `Sidebar` reports its showing tab
 through a new required `onTab`, and `App.svelte` walks `pagesNeedingWords` **one page at a
 time, awaited**, so at most one extraction is ever queued in front of the page being read. The
 rows are rewritten in place rather than repainted, because these arrive while somebody is
@@ -11418,7 +11418,7 @@ looking at the panel and a repaint drops their scroll position and the focused e
 
 `App.svelte` holds the words as well as the panel. `applyPageOrder` re-supplies the whole
 comment list whenever a page is deleted or moved, the panel drops its words with every
-`setComments`, and `wordsAsked` has already recorded every page as asked --- so without that
+`setComments`, and `wordsAsked` has already recorded every page as asked — so without that
 map the rows fell back to *"Highlight, no comment"* on the first page deletion and stayed there
 for the session. Found by a mutation that survived: clearing the panel's map changed nothing
 observable, which is what made it worth reading one layer out. The panel now converges every
@@ -11428,7 +11428,7 @@ instead of decorative, and the mutation is caught.
 The corpus could not reach the feature at all. `comments.pdf`'s one bare mark carried no
 `/QuadPoints`, so `needsWords` correctly refused it and every window check would have passed by
 never running. The underline now covers a known line, and the band and the expected words are
-computed from **one row index** in the generator --- because the first hand-written version
+computed from **one row index** in the generator — because the first hand-written version
 named line 06 against a measured line 09, the arithmetic needing the page height and the page
 being A4 rather than letter.
 
@@ -11439,7 +11439,7 @@ because one generator writes several files. The window check now compares the ro
 against a string a different program wrote before the document existed.
 
 **What is not covered, stated rather than left to be discovered.** The scheduling loop lives
-in `App.svelte`, and no harness here constructs that component --- `viewer_check.py` builds its
+in `App.svelte`, and no harness here constructs that component — `viewer_check.py` builds its
 own viewer and sidebar, and drives `wordsForPage` directly. So what is proved is the lookup,
 the panel, and the backend; what rests on the type system alone is that `App.svelte` supplies
 `onTab` at all, which is a compile error to omit because the option is required rather than
@@ -11447,16 +11447,16 @@ optional. That was a deliberate choice after `onDrawn` shipped inert through an 
 callback, and it is weaker than a check.
 
 ~~**Not done:** asking a reader for a password, which the increment beside this one made
-visible --- an encrypted document now says it needs one, and there is still nothing to type it
-into.~~ (Done 2026-08-23 --- *Opening a locked document*, §5.) Also not done: words for a mark over a picture, where the honest answer is that there are
+visible — an encrypted document now says it needs one, and there is still nothing to type it
+into.~~ (Done 2026-08-23 — *Opening a locked document*, §5.) Also not done: words for a mark over a picture, where the honest answer is that there are
 none and the row keeps its fallback; and a leading character PDFium placed nowhere is dropped
 from `readingOrder` altogether, measured while writing a fixture for this, which is a defect in
 the copy path and the accessibility tree rather than in this panel.
 
-#### What a document says about itself --- done 2026-08-21
+#### What a document says about itself — done 2026-08-21
 
 Asked for outright: *"we are completely missing a document info panel where I can see
-certificates etc?"* --- and the answer was yes, entirely. Forty-two commands and none of them
+certificates etc?"* — and the answer was yes, entirely. Forty-two commands and none of them
 read the `/Info` dictionary, the encryption dictionary, or a signature. A reader who wanted to
 know who produced a document, whether it was locked, or whether anybody had signed it, had to
 leave tpdf and open a shell.
@@ -11469,15 +11469,15 @@ a real reason to check, and none of them was reachable.
 
 **A dialog, not a sixth sidebar tab.** The sidebar is for things you navigate alongside the
 page; a properties readout is one you open, read and dismiss, and it never wants to be on
-screen at the same time as the page. There is also a measured cost --- five tab labels already
-want 318 px of 247, which clipped one out of reach once --- so a sixth would spend a second row
+screen at the same time as the page. There is also a measured cost — five tab labels already
+want 318 px of 247, which clipped one out of reach once — so a sixth would spend a second row
 of chrome on every document for a panel most readers open rarely. It has no keyboard shortcut,
 deliberately: a chord is a global key claim rather than a label, and Acrobat's Cmd-D is free
 here and was left free.
 
 **`lopdf`, not PDFium, and this time the alternative was genuinely available.** All eight
-`FPDF*Signature*` symbols are exported by the vendored build --- checked with `nm` rather than
-assumed --- so the signature half could have gone through PDFium. It does not, because
+`FPDF*Signature*` symbols are exported by the vendored build — checked with `nm` rather than
+assumed — so the signature half could have gone through PDFium. It does not, because
 `FPDFSignatureObj_*` has no accessor for the signature *field's* name, none for `/Location`,
 and nothing at all for `/Info` or `/Encrypt`; a PDFium implementation would still have needed
 this parse and would then have been a second resolver to disagree with it. What that API *is*
@@ -11485,7 +11485,7 @@ good for is a differential, which is worth building and is not built here.
 
 **Two things were learned the hard way, and both are traps now.** `lopdf::decrypt` removes the
 trailer's `/Encrypt` entry, so a readout that decrypts before asking reports a plainly locked
-document as unencrypted, permissions and all --- the encryption is read first, and a mutation
+document as unencrypted, permissions and all — the encryption is read first, and a mutation
 keeps that true. And the permission bits do not mean the same thing at every revision: bits 9
 to 12 are reserved under revision 2, and `P = -60` is negative, so all four read as *allowed*
 to anything that does not check. On the real document that is the difference between reporting
@@ -11494,14 +11494,14 @@ accessibility extraction as permitted and reporting it as forbidden, which is wh
 **The honesty rule is held by the type, not by a comment.** Nothing reported about a signature
 can be a verdict: there is no crypto stack here, no certificate parser and no trust store, so
 `Signature` has no field that could carry one and `no_signature_field_may_carry_a_verdict`
-matches it exhaustively --- adding one is a compile error rather than a red test. The frontend
+matches it exhaustively — adding one is a compile error rather than a red test. The frontend
 holds the other half by reading what is actually rendered, including against a document whose
 own `/Reason` says "valid and verified", because a document's words are the input that can
 introduce one.
 
 **The one thing that is checked rather than claimed** is whether the signed byte range reaches
 the file's last byte. That needs no cryptography and catches the failure that actually happens:
-a document signed and then appended to. Proved by doing it --- twenty-two bytes onto a real
+a document signed and then appended to. Proved by doing it — twenty-two bytes onto a real
 signed fixture, and the answer changes while `covered_bytes` does not.
 
 **The strongest evidence here is not a fixture written for it.**
@@ -11513,41 +11513,41 @@ five gives the right level, handler, subfilter, field name and coverage, cross-c
 the ones whose passing says the reading is right rather than self-consistent.
 
 **Not done, and each for its own reason.** ~~There is still no way to type a password, so an
-encrypted document reports that it needs one and stops~~ (done 2026-08-23) --- and the
+encrypted document reports that it needs one and stops~~ (done 2026-08-23) — and the
 measurement beside that line is worth keeping, because it is what made the feature look small:
 of the 40 PDFs in `~/Downloads`, 3 carry `/Encrypt` and qpdf reports an **empty user password**
 on all three, so they are owner-restricted rather than reader-locked and every one of them
 opens without a prompt. A prompt would fire on none of them. That was right about the prompt
 and it is why the *saving* half mattered more than the asking half: those three are exactly the
-documents that were being reserialised in the clear. XMP metadata is not read, only `/Info` ---
+documents that were being reserialised in the clear. XMP metadata is not read, only `/Info` —
 narrowed rather than closed on 2026-08-21: `xmp.rs` reads the packet for a conformance claim
 and nothing else, so the general metadata this line means is still unread. And no `/FileAttachment`
-annotation is counted as an attachment --- those appear in the comments panel, where they
+annotation is counted as an attachment — those appear in the comments panel, where they
 belong.
 
-**The certificate was on that list and came off it on 2026-08-21** --- see *Who signed it*
+**The certificate was on that list and came off it on 2026-08-21** — see *Who signed it*
 below. The line read "the *certificate* is not parsed ... a decision about scope rather than
 an oversight", which was true when written and is the kind of claim nobody re-checks, so it is
 recorded here rather than deleted: a *Not done* note outlives the work that closes it, which
 this document already carries a trap about.
 
-#### Who signed it --- done 2026-08-21
+#### Who signed it — done 2026-08-21
 
 The properties dialog shipped four days earlier answering "who signed this" with the `/Name`
 the signer typed into the signature dictionary. The gap was demonstrable on a fixture already
 in the tree: **`incr-signed.pdf` has no `/Name` at all**, so tpdf showed an empty line for a
-document that names its signer plainly --- inside the PKCS#7 blob in `/Contents`, which was
+document that names its signer plainly — inside the PKCS#7 blob in `/Contents`, which was
 the one place tpdf did not look. That is what pyhanko writes when nobody passes a name, which
 is the default, so it is the common shape rather than a contrived one.
 
 **Nine packages, 563 to 572, all permissive.** `cms` for the CMS `SignedData`, `x509-cert`
 for the certificate, `der` underneath both, swept with `cargo metadata` over the whole tree
-rather than read off a README --- the only copyleft string in all 572 is the known `r-efi`,
+rather than read off a README — the only copyleft string in all 572 is the known `r-efi`,
 whose `MIT OR Apache-2.0` arm applies. `flagset` is `Apache-2.0` alone; every other new
 package is `Apache-2.0 OR MIT`.
 
 **The signer's certificate is not the first one in the set.** A blob normally carries the
-chain, and `certificates` is an ASN.1 SET --- unordered --- so taking element zero names a
+chain, and `certificates` is an ASN.1 SET — unordered — so taking element zero names a
 certificate authority as the signer about as often as it names the signer. `SignerInfo.sid`
 is the identifier, either an issuer-and-serial pair or a subject key identifier, and both are
 matched. A set of **one** that the identifier does not match is still reported, because
@@ -11559,7 +11559,7 @@ certificate is not verifying one. There is no trust store, no chain building, no
 check, and the signature is never tested against the bytes it covers. What a reader gains is
 a *second* claim about who signed, from a different place than the first: `/Name` is free
 text the signer typed, the subject is what somebody put in a certificate. `properties.ts`
-shows both, and says so when they disagree --- which is the one line a reader could not work
+shows both, and says so when they disagree — which is the one line a reader could not work
 out by eye from the rows above it. `NOT_CHECKED` names all four omissions and is shown
 wherever a signature is.
 
@@ -11573,7 +11573,7 @@ signed fixture in `testdata` is a self-signed, single-certificate blob, which ma
 true by construction: issuer and subject are the same name, and matching a signer by issuer
 common name gives the same answer as matching by encoded issuer and serial. So `self_issued:
 true` hardcoded passed the whole suite, and so did dropping the serial from the match. The fix
-is a synthetic CMS built in the test with `der` --- a certificate somebody else issued, and a
+is a synthetic CMS built in the test with `der` — a certificate somebody else issued, and a
 decoy from the right issuer with the wrong serial. With **one** certificate in the set there
 is no ordering to reason about, which is what makes the second case decisive rather than
 lucky.
@@ -11583,10 +11583,10 @@ handed it an oversized piece of garbage, and refusing a blob and parsing one and
 produce the same `None` and the same counted limit. The test could not fail. It offers the
 same **real** blob twice now, once under a bound it clears and once under one it does not.
 
-**The differential is built --- `signature-probe`, 2026-08-21.** `docinfo.rs` walks
+**The differential is built — `signature-probe`, 2026-08-21.** `docinfo.rs` walks
 `/AcroForm /Fields` with `lopdf`; PDFium implements that same walk in C++ and exports the
 result through `FPDF_GetSignatureCount` and friends. Neither knows about the other, which is
-what makes this a second **reader** rather than a second writer --- the gap the five pyhanko
+what makes this a second **reader** rather than a second writer — the gap the five pyhanko
 fixtures do not close, because `AGENTS.md`'s rule is that a writer and its own reader agree
 about a document that is wrong.
 
@@ -11598,7 +11598,7 @@ with the one `docinfo` produced from `lopdf`'s blob, by subject and serial. Reac
 different signature's blob means showing a reader the wrong signer, and every other assertion
 here would still pass on a document whose signatures share a subfilter and a date.
 
-**35 comparisons across the five signed fixtures, all agreeing --- which on its own proves
+**35 comparisons across the five signed fixtures, all agreeing — which on its own proves
 nothing**, so five mutations were run and each reddened exactly the check it belongs to:
 summing the byte-range offsets (11,357 against 3,869), never reporting a DocMDP level (0
 against 2), reading `/Filter` as the subfilter (`Adobe.PPKLite` against
@@ -11617,12 +11617,12 @@ signature carrying one self-issued certificate, which left four things untestabl
 something else in it, a first signature whose range stops short because a second was appended
 after it, and the differential's per-signature *pairing*. The new fixture is two approval
 signatures by different signers, each blob carrying its leaf and the one root above them both
---- so a reader taking the wrong element of the set reports **the same name for both
+— so a reader taking the wrong element of the set reports **the same name for both
 signatures**, which is the mistake that would otherwise look like a working reader.
 
 It pays immediately. `signature-probe --mode agree` runs 13 comparisons on it, and deleting
-the one `queue.reverse()` the walk makes for `fields::Order::Document` --- which makes every
-fact about every signature correct and only which signature it belongs to wrong --- reddens
+the one `queue.reverse()` the walk makes for `fields::Order::Document` — which makes every
+fact about every signature correct and only which signature it belongs to wrong — reddens
 **4 of the 13**. Nothing in the corpus could see that before. It lives in `fields.rs` since the
 two field-tree walks were put on one loop, and `redact::covered_fields` passes `Order::Queue`
 past it, so the reversal is now a thing one caller asks for rather than a line in its own
@@ -11639,27 +11639,27 @@ own the second half, and that mutation is caught there.
 a serial and a validity date read out of a *generated* fixture, and the generator calls
 `x509.random_serial_number()` and `datetime.now()`. They were green locally against weeks-old
 bytes and green on CI because the signed fixtures cannot be built on a runner and the tests
-skipped --- so there was nowhere left for them to be wrong out loud. Value-level assertions
+skipped — so there was nowhere left for them to be wrong out loud. Value-level assertions
 moved onto the synthetic `cms_blob`, where the test chooses the bytes; the fixture tests now
 assert the generator's hardcoded name, the *shape* of a serial, and that the five fixtures
 report five different ones. `docs/TRAPS.md` has it.
 
-~~**Not done.** The certificate's *extensions* are not read --- key usage, extended key usage
+~~**Not done.** The certificate's *extensions* are not read — key usage, extended key usage
 and the basic-constraints CA flag are all there in the DER and none is shown; whether they are
 worth showing without a trust store to interpret them against is a real question rather than
 an oversight. A timestamp token, which is a whole second CMS structure inside an unsigned
 attribute, is not read either, so a document signed with one shows only the signer's claimed
 date.~~
 
-**Both closed the same day, and this note survived them by four sections** --- *Done
+**Both closed the same day, and this note survived them by four sections** — *Done
 2026-08-21* below reads three extensions, and the one after it reads the timestamp token.
 Found while reviewing the threat model before cutting `26.8.7`, which is to say by a person
 reading rather than by anything that could go red. That is the **fourth** recorded instance
-in this file --- the mtime watch, the highlight's `/QuadPoints`, the certificate itself, and now
-this --- and the reason is structural rather than careless:
+in this file — the mtime watch, the highlight's `/QuadPoints`, the certificate itself, and now
+this — and the reason is structural rather than careless:
 the commit that closes one describes what it built, in its own new section, and has no cause
 to go looking for the older paragraph that said it was missing. The rule the file already
-states --- close the note in the commit that closes the work --- is the only guard there is,
+states — close the note in the commit that closes the work — is the only guard there is,
 and this is what it costs when it is skipped. The two halves are struck rather than deleted so
 the count stays honest.
 
@@ -11670,9 +11670,9 @@ reports zero signatures on that document**, because `FPDF_GetSignatureCount` rea
 `/Fields` array's entries and does not walk into `/Kids`.
 
 Established by control rather than inferred, which mattered because the obvious reading is that
-the fixture is malformed: two files differing in exactly one thing --- whether the leaf sits
+the fixture is malformed: two files differing in exactly one thing — whether the leaf sits
 directly in `/Fields` or two `/Kids` nodes down, with the same page and the same signature
-dictionary byte for byte --- give PDFium **1** and **0**. `qpdf --check` passes the nested one.
+dictionary byte for byte — give PDFium **1** and **0**. `qpdf --check` passes the nested one.
 
 So the limitation is written down as an assertion rather than a comment.
 `signature-probe --mode nested` asserts the *disagreement* and prints *"if this is 1, PDFium now
@@ -11682,18 +11682,18 @@ make, so a nested field is one of the few shapes where the reading stands on the
 alone. The mutation that stops us recursing is caught by a unit test and by nothing else,
 because PDFium's own answer under it is the mutated one.
 
-**The depth bound is exercised too, in both directions** --- seven levels walked, nine refused,
+**The depth bound is exercised too, in both directions** — seven levels walked, nine refused,
 and the refusal *counted* through `limits.unreadable`, because a signature dropped without a
 word is indistinguishable from a document that has none. A `/Kids` chain is attacker-shaped and
 nothing had ever reached that bound.
 
 **The name is the qualified one as of 2026-08-21**, which closes the *Not done* that stood
-here. It is the `/T` values joined down the chain with a period --- PDF 32000-1 §12.7.3.2 ---
+here. It is the `/T` values joined down the chain with a period — PDF 32000-1 §12.7.3.2 —
 so the nested fixture reports `top.group.Signature1` where it used to report `Signature1`.
 
 The reason it is worth more than tidiness is that **`/T` is unique among siblings only**. A
 form that groups its fields is free to put a `Signature1` under each group, and the leaf's own
-name is then one string standing for two fields --- which on a document with two signatures is
+name is then one string standing for two fields — which on a document with two signatures is
 the one place a reader most needs them told apart. Every fixture here has unique leaf names, so
 this is a case where the right rule and the wrong rule agree on all of them and a synthetic
 document is the only thing that can discriminate; the trap of that name is the general form.
@@ -11701,15 +11701,15 @@ document is the only thing that can discriminate; the trap of that name is the g
 A node carrying no `/T` is **not** a level of the name, which the specification says and which
 matters twice over: a widget annotation merged into its own field is such a node, and so is a
 group written only to hold kids together. Joining unconditionally would put an empty component
-in the middle --- `top..Signature1` --- and would name a wholly anonymous chain `.`.
+in the middle — `top..Signature1` — and would name a wholly anonymous chain `.`.
 
 PDFium exposes no field name at all, so `--mode agree` cannot corroborate any of this either;
 it stands on the three unit tests, one of which runs against the real nested fixture.
 
 #### What the certificate says it is for
 
-**Done 2026-08-21.** `docinfo::parse_certificate` reads three extensions --- key usage
-(2.5.29.15), extended key usage (2.5.29.37) and basic constraints (2.5.29.19) --- and the
+**Done 2026-08-21.** `docinfo::parse_certificate` reads three extensions — key usage
+(2.5.29.15), extended key usage (2.5.29.37) and basic constraints (2.5.29.19) — and the
 dialog shows what they state. On `incr-signed.pdf` that is *"Digital signature,
 Non-repudiation"*, which is byte for byte what `openssl x509 -text` reads out of the same
 certificate.
@@ -11718,7 +11718,7 @@ certificate.
 A certificate with no key usage extension places *no limit* on its key; one with an empty key
 usage limits it to *nothing*. Both are `Option<Vec<String>>` here, `None` against
 `Some(vec![])`, and the dialog says which. A malformed extension is a third state and is
-**counted** in `Certificate::extensions_unread` rather than reported as absent --- absent is
+**counted** in `Certificate::extensions_unread` rather than reported as absent — absent is
 the reassuring branch, and a producer bug is not the issuer declining to constrain anything.
 
 **An extended key usage nobody here can name is shown as its OID.** Adobe's own signing
@@ -11734,7 +11734,7 @@ is the moment the question got asked.
 
 **A mutation swapping two rows of the bit table survived, and was right to.** A real signing
 certificate sets both `digitalSignature` and `nonRepudiation`, so permuting two selected
-entries produces an identical list --- the fixture is one on which the right table and a wrong
+entries produces an identical list — the fixture is one on which the right table and a wrong
 one agree, which is the trap of that name arriving an hour after it was last invoked. The fix
 is not a stronger assertion over that fixture but a different input:
 `each_key_usage_bit_is_named_by_the_name_rfc_5280_gives_it` sets **one bit at a time**, nine
@@ -11744,14 +11744,14 @@ rows proves that half separately.
 
 #### When a third party says the signature existed
 
-**Done 2026-08-21.** A signature's `/M` is whatever the signing machine's clock read --- free
+**Done 2026-08-21.** A signature's `/M` is whatever the signing machine's clock read — free
 text in the signature dictionary, checked by nothing. An RFC 3161 **timestamp token** is a
 different party's statement, carried as an unsigned attribute on the `SignerInfo` under
 1.2.840.113549.1.9.16.2.14, and it is the only thing in a signature that is not the signer's own
 word about when. The dialog now shows it under the signer's own date, names the authority, and
 says it is unchecked.
 
-The authority is read by **`parse_certificate`, unchanged** --- a timestamp token *is* a CMS
+The authority is read by **`parse_certificate`, unchanged** — a timestamp token *is* a CMS
 `SignedData`, so its signer is the TSA. No second implementation, which is the drift this
 repository has an entry about.
 
@@ -11761,12 +11761,12 @@ string would be a page of types and five places to be wrong; the bound on the sh
 the fifth value must *parse* as a time, so a shifted structure yields no time rather than a
 wrong one. A wrong time attributed to an authority is the worst outcome this module has.
 
-**The measurement that matters, and it is uncomfortable.** Of ten signed documents to hand --- the
-seven fixtures and three real files --- exactly **one** carries a timestamp, and tpdf cannot read
+**The measurement that matters, and it is uncomfortable.** Of ten signed documents to hand — the
+seven fixtures and three real files — exactly **one** carries a timestamp, and tpdf cannot read
 that one at all: its `/Contents` is **BER with indefinite lengths** (`30 80`), which the `der`
 crate refuses by design. So this feature is tested against a fixture built for it and has been
 demonstrated on zero real documents. The trap of that name carries the detail. That is the
-honest state, and the fix --- a bounded normalisation before the parsers see the blob --- would
+honest state, and the fix — a bounded normalisation before the parsers see the blob — would
 also make the existing certificate reader work on that class, which is the class where
 timestamping is routine.
 
@@ -11783,8 +11783,8 @@ so an INTEGER added beside the token sorted *ahead* of it and "take the first" g
 Written up as its own trap, because the question a survivor asks is *does my input reach this
 line*, not *is my assertion strong enough*.
 
-**Not done.** A document timestamp --- a signature field whose `/SubFilter` is `ETSI.RFC3161`,
-where `/Contents` is the token itself --- is **implemented** and reached by no fixture, because
+**Not done.** A document timestamp — a signature field whose `/SubFilter` is `ETSI.RFC3161`,
+where `/Contents` is the token itself — is **implemented** and reached by no fixture, because
 pyhanko's `sign_pdf` writes an ordinary signature and nothing here mints a bare document
 timestamp. The code path is one branch and it is honest about what it is; it is untested, and
 that is stated here rather than implied by silence.
@@ -11801,14 +11801,14 @@ The numbers, over 41 real PDFs in `~/Downloads`:
 | | |
 |---|---|
 | carry an XMP packet | **24** |
-| state a conformance level | **8** --- seven PDF/UA-1, one PDF/A-3B |
+| state a conformance level | **8** — seven PDF/UA-1, one PDF/A-3B |
 | written as child elements / as attributes | **5 / 3** |
 | XMP and `/Info` disagreeing on title, author or producer | **0** |
 | XMP stating a title, author or producer that `/Info` omits | **0** |
 | packets this reader could not read | **0** |
 
 **The last two rows removed a feature.** The module was first written to compare XMP's title,
-author and producer against `/Info`'s --- PDF 2.0 deprecates `/Info` in favour of XMP, so a
+author and producer against `/Info`'s — PDF 2.0 deprecates `/Info` in favour of XMP, so a
 disagreement means two viewers show different things, and it is the same shape as the
 signer-name disagreement the panel already reports. It occurred zero times, and XMP supplying
 a value `/Info` lacks occurred zero times as well. Three fields were parsed and then deleted;
@@ -11817,7 +11817,7 @@ would have been.
 
 **The 5/3 split is why attributes are read at all.** `<pdfaid:part>3</pdfaid:part>` and
 `<rdf:Description pdfuaid:part="1"/>` are the same claim, and an element-only reader is silent
-about three of the eight --- silent being indistinguishable from the great majority of
+about three of the eight — silent being indistinguishable from the great majority of
 documents, which claim nothing. A mutation deleting the attribute path then **survived**, and
 correctly: the fixture used a self-closing element, which is `Event::Empty`, while the deleted
 call was in the `Event::Start` arm. Two paths, one tested. The gap was real and is closed.
@@ -11828,17 +11828,17 @@ an unconventional prefix over the right URI **is** a claim, and the conventional
 some other URI is **not**.
 
 **A claim is a claim.** Nothing validates a document against PDF/A, and the string shown is
-copied out of the packet --- so the row says *the document's own claim, which tpdf does not
+copied out of the packet — so the row says *the document's own claim, which tpdf does not
 check*, and a test asserts that a hostile conformance string cannot put a verdict word into a
 label tpdf wrote.
 
-**Not done, and deliberately.** Sensitivity labels (`pdfx:MSIP_Label_*`, 2 of 24 --- a Microsoft
+**Not done, and deliberately.** Sensitivity labels (`pdfx:MSIP_Label_*`, 2 of 24 — a Microsoft
 Purview label whose GUID means nothing without the tenant), `xmpMM:DocumentID`, and the dates.
 None of them has a reader question it answers.
 
 **Nearly shipped: an attacker-sized leak, with every gate green.** The obvious bound for the
 extension decoder is `T: der::Decode<'static>`, which compiles and is satisfiable from borrowed
-bytes only by `Box::leak` --- one leak per extension per signature, inside the sandboxed
+bytes only by `Box::leak` — one leak per extension per signature, inside the sandboxed
 worker. `for<'a> Decode<'a>` is the bound that was meant. Nothing in the repository could have
 found it: not clippy, not a test, not a diff that reads as *decode three extensions*. It has a
 trap.
@@ -11848,7 +11848,7 @@ trap.
 **Done 2026-08-21.** RFC 5652 requires a CMS blob to be DER. A signer that streams its output
 cannot know a value's length before it has written the value, so it writes BER's **indefinite
 form** instead: `80` where the length belongs, a two-byte end-of-contents marker where the value
-stops. `der` refuses that outright --- *indefinite length disallowed* --- so before this, tpdf
+stops. `der` refuses that outright — *indefinite length disallowed* — so before this, tpdf
 read nothing at all from such a document. One of ten real signed documents to hand is one, and
 the class is CAdES, which is where timestamping is routine.
 
@@ -11875,7 +11875,7 @@ and never once seen a real CAdES signature between them.
 **The larger half was where the blob ends, not what form its lengths take.** A signature is
 written by reserving a span and filling it, so the blob arrives right-padded with zeros, and the
 scan this replaced looked back for the last non-zero byte. An end-of-contents marker *is* two
-zero bytes, so on exactly the blobs this module exists for the scan ate the terminators --- six
+zero bytes, so on exactly the blobs this module exists for the scan ate the terminators — six
 bytes, three nested markers, and 8,298 bytes of padding behind them that no byte-level rule can
 tell from the markers. Both questions are answered by walking the value, which is why one
 function answers both.
@@ -11889,7 +11889,7 @@ or context-tag `[0]`, and no constructed string appears in it or in any fixture.
 
 **The fixture pair is what makes the check discriminate.** `incr-ber.pdf` is `incr-signed.pdf`
 with every constructed value in its signature blob rewritten in indefinite form and **nothing
-else changed** --- the file is the same length and byte-identical outside the `/Contents` span,
+else changed** — the file is the same length and byte-identical outside the `/Contents` span,
 so `/ByteRange` and the xref stay correct. Producing it meant rewriting DER into BER, because
 pyHanko emits DER and has no switch for this; there is no other way to get the pair. Two blobs
 that come out of the walk equal can only have done so by the length form being normalised away.
@@ -11898,7 +11898,7 @@ that come out of the walk equal can only have done so by the length form being n
 
 - A differential's `(None, None)` arm was hard-coded to pass. On the real contract,
   `signature-probe --mode agree` printed **`7 passed, 0 failed`** while neither reader could read
-  the certificate --- and the probe's own module note explains, in almost those words, why
+  the certificate — and the probe's own module note explains, in almost those words, why
   `--mode clean` has to exist.
 - Adding the walk in front of the parser **disarmed a mutation that had been caught**. The
   parser's *"count it, do not report it as absent"* branch was covered by a malformed blob; the
@@ -11910,18 +11910,18 @@ that come out of the walk equal can only have done so by the length form being n
   the input never reaches the line.
 
 **Not done.** Constructed `OCTET STRING` and `BIT STRING` segments are not concatenated, so a
-blob using them is still refused --- by the parser rather than by the walk, and counted. No
+blob using them is still refused — by the parser rather than by the walk, and counted. No
 document to hand uses one, and writing the code for a case with no fixture would be untested
 code in the one module here that reads attacker-chosen bytes with no third party in between.
 
-**CI tested none of this, and now does --- closed the same day.** No signed fixture existed on
+**CI tested none of this, and now does — closed the same day.** No signed fixture existed on
 a hosted runner: they need pyhanko, and `ci_fixtures.py` built only the dependency-free four,
 so every test over a real signature `[SKIP]`ped there. Three of them *asserted* instead of
 skipping, which would have turned CI red the day the signature work was pushed.
 
 **The blocker was not pyhanko, which is one `pip install`. It was qpdf.**
 `make_incremental_pdf.py` called it with `check=True` and nothing else, so a machine without it
-raised `FileNotFoundError` --- before a single signed fixture, none of which needs qpdf. One
+raised `FileNotFoundError` — before a single signed fixture, none of which needs qpdf. One
 fixture depends on it and eleven do not, and one unguarded `subprocess.run` made that eleven
 zero. The generator skips it now.
 
@@ -11931,7 +11931,7 @@ is pinned with `actions/setup-python` for one reason worth stating: an image's o
 be an externally-managed Homebrew build where PEP 668 refuses `pip install` outright, and that
 would have failed on one runner and passed on the other.
 
-Proved both ways before the step was written --- fixtures moved aside, pyhanko absent:
+Proved both ways before the step was written — fixtures moved aside, pyhanko absent:
 `ci_fixtures.py --signed` exits **1** naming the missing artifact; pyhanko present: exits 0 with
 all nine. **What that hard failure buys is the tests' silence.** They `[SKIP]` when the family
 is absent, which is right for a local checkout and would be a hole on a runner if nothing else
@@ -11939,12 +11939,12 @@ checked; the workflow step is what checks, and it runs before the gates.
 
 **One thing the fixtures are not: reproducible.** Two runs *on one machine* give nine files of
 identical size and differing bytes, because pyhanko mints a new key and serial each time; **across
-machines the size moves as well** --- both runners build `incr-signed.pdf` at 8,097 bytes against
+machines the size moves as well** — both runners build `incr-signed.pdf` at 8,097 bytes against
 this laptop's 8,128. So nothing absolute may be pinned out of one. The local pair agreeing on size
 is exactly what made the size look safe, and the first push turned both legs red on it.
 
 **Run on both runners, green.** macOS and Windows each install pyhanko, build the nine signed
-fixtures and run the suite against them --- and it took three pushes, because the fixtures are
+fixtures and run the suite against them — and it took three pushes, because the fixtures are
 generated per machine and three assertions had pinned values out of one. Those are one trap
 between them.
 
@@ -11952,18 +11952,18 @@ between them.
 an excuse.** The habit exists because `release.yml`'s `gates` job is a copy of `ci.yml`'s and
 once lost a whole step. It is no longer a copy anybody maintains: `check_workflow_parity.py`
 compares the two jobs step for step and reports **the same 10 steps in the same order**, the two
-job headers are byte-identical outside those steps --- same name, same matrix, same runner
-images --- and CI has just run exactly those steps green on both platforms. What a tag would
+job headers are byte-identical outside those steps — same name, same matrix, same runner
+images — and CI has just run exactly those steps green on both platforms. What a tag would
 re-run beyond that is the build, signing and notarization, which this change does not touch and
 which four rehearsal tags proved for `26.8.0`.
 
-#### A crop the reader drags --- done 2026-08-23
+#### A crop the reader drags — done 2026-08-23
 
 Until this, a reader could crop a page to its **ink** or put the file's box back,
 and nothing else. That answers a scan and an article whose margins are wider than
 its column, and it answers none of the cases only the reader can decide: a figure
 out of a plate, one column of two, a scan with a hand in the corner. There is
-nothing wrong with what *Crop page to content* measures --- the reader simply
+nothing wrong with what *Crop page to content* measures — the reader simply
 wants less than all of it.
 
 `edit.cropToDrag` arms the tool, the next drag on a page is the crop, and Escape
@@ -11988,8 +11988,8 @@ same road: a `Job`, an `Engine` method, a worker `Request`, both backends. The
 arithmetic is `crop_from_display`, the mirror of the `place_crop` extracted out
 of `geometry_of` so that there is something for it to be the inverse *of*.
 
-**The two directions carry separate rotation tables** --- `text::to_device` and
-`text::from_device` --- which is what makes a round trip through both a real
+**The two directions carry separate rotation tables** — `text::to_device` and
+`text::from_device` — which is what makes a round trip through both a real
 comparison rather than a tautology, and is why `docs/TRAPS.md` records two such
 tables disagreeing at every turn but zero.
 
@@ -12000,22 +12000,22 @@ functions leaves the round trip green; deleting it from *one* reddens both. So
 symmetric case and a clamp test for the third, since a composition also agrees
 with itself about a rectangle that never left the page.
 
-The first draft of that comment claimed the opposite --- that a one-sided deletion
-would leave the round trip green --- which is the plausible reading and is wrong.
+The first draft of that comment claimed the opposite — that a one-sided deletion
+would leave the round trip green — which is the plausible reading and is wrong.
 Three mutations settled it in the time it takes to state it.
 
 **Evidence.** Three unit tests over the pure pair, each proved to go red by a
 mutation aimed at it and green under the other two. Eight over the gesture in
 `viewercrop.test.ts`, one per test, each proved to redden the test named for it;
 they are in `scripts/mutate_frontend.py`. Three new checks in the window sweep
-drive `page_crop_box` against the real backend on every corpus --- the only place
+drive `page_crop_box` against the real backend on every corpus — the only place
 that can say the command is *registered*, and on `rotated.pdf` the only place the
 turn is not zero.
 
 **And two reading the scrim off the overlay**, which nothing else can: a crop's
 preview lives between a press and a release, reaches no model and writes no file,
 so the fake-DOM tests cannot see a pixel of it. They are one assertion in two
-readings rather than one plus thoroughness --- *the outside is covered* is
+readings rather than one plus thoroughness — *the outside is covered* is
 satisfied by a blanket over the whole page, which is the likeliest way to get a
 scrim wrong and would hide the page the reader is aiming with, and what says it is
 a hole is that the inside stays clear. Both proved by mutation through
@@ -12023,8 +12023,8 @@ a hole is that the inside stays clear. Both proved by mutation through
 the second, one red each.
 
 **The anchor gate paid for itself again, five times.** Adding a third
-`PointerDrag` made five existing mutations ambiguous or stale --- two anchors now
-matched twice, three matched nothing --- and every one of them is a mutation that
+`PointerDrag` made five existing mutations ambiguous or stale — two anchors now
+matched twice, three matched nothing — and every one of them is a mutation that
 would have reported `SURVIVED` or been refused twenty minutes into a run. All five
 were re-aimed and re-run.
 
@@ -12032,7 +12032,7 @@ were re-aimed and re-run.
 `ViewerStatus.armed` exists because a one-shot tool armed from the palette leaves
 a reader with a crosshair and no words, which is a complaint this repository has
 already answered once; the crop is exactly that tool, so the field was widened to
-`MarkKind | "crop"` rather than a second boolean beside it --- two elements coming
+`MarkKind | "crop"` rather than a second boolean beside it — two elements coming
 and going next to each other is the toolbar-rearrangement trap, and only one of
 the two can ever be set. The window reads the status and the viewer tests read the
 accessors, so the copy between them is pinned by its own test in
@@ -12051,7 +12051,7 @@ moment, with the gate written for exactly that green.** The *Not built yet* list
 named `edit.cropToRectangle` and `edit.addStamp`; what shipped is
 `edit.cropToDrag` and four `edit.stamp.*` commands. The `readme` gate refuses a
 bullet whose named command **is** registered, and neither name ever was, so there
-was nothing for it to contradict --- a bullet naming a command id is a claim about
+was nothing for it to contradict — a bullet naming a command id is a claim about
 a string chosen later, written at the moment least able to predict it. Both
 bullets are corrected and the README now states what that check reaches.
 `docs/TRAPS.md` has the entry.
@@ -12062,22 +12062,22 @@ prose or in an allowlist with a reason. That is the shape `viewer_sweep.py` uses
 for fixtures and `viewercheck` uses for commands, and a new command cannot escape
 it by being named something unexpected. It was not built here because classifying
 every command is its own increment, and doing it badly inside a crop increment
-would be a second list to drift. **Built 2026-08-24** --- see *Every command
+would be a second list to drift. **Built 2026-08-24** — see *Every command
 classified against the README* at the end of this phase, which also records that
 the check being extended could not see eleven of the seventy-seven commands at
 all, four of them the stamps this paragraph is about.
 
 **Not done:** cropping several pages at once, which is a selection question
 rather than a new mechanism; and adjusting a crop by dragging its edge, which
-needs a hit-test on the crop's handles and a second drag mode --- re-dragging the
+needs a hit-test on the crop's handles and a second drag mode — re-dragging the
 whole rectangle is what a reader does today, and it is one gesture rather than
 two.
 
-#### An eraser that takes any mark --- done 2026-08-23
+#### An eraser that takes any mark — done 2026-08-23
 
 The eraser has existed since ink did, and it took **strokes out of drawings and
-nothing else**. Everything else on the page --- a highlight, a box, an ellipse, a
-text box, a stamp, a comment the reader placed --- could be taken off by exactly
+nothing else**. Everything else on the page — a highlight, a box, an ellipse, a
+text box, a stamp, a comment the reader placed — could be taken off by exactly
 one route: press it, wait for its note box, choose *Remove mark*. That route
 works and is still there, but it asks a reader to open a form in order to delete
 something, and it demands a press accurate enough to land on a 24-point icon.
@@ -12097,7 +12097,7 @@ the nib takes the mark, which is `Unannotate`.
 
 Two callbacks rather than one, and that is the decision worth recording. The
 tempting shape is `onErased(mark, [])`, with an empty stroke list standing for
-*all of it* --- one callback, no new wiring. It is wrong because the two are
+*all of it* — one callback, no new wiring. It is wrong because the two are
 different commands with different undo entries, and a caller that has to know
 what an empty list means is a caller that can get it wrong. `onUnmarked` says
 which command it is in its name.
@@ -12110,7 +12110,7 @@ the nib touched the mark's own ink.
 
 The alternative was tried on paper and refused. A box's ink is its border, an
 ellipse's is a curve inside its quad, a squiggle's is a wave along the bottom of
-its band, and a text box's is the reader's glyphs --- so an ink-accurate eraser
+its band, and a text box's is the reader's glyphs — so an ink-accurate eraser
 needs a second copy of every geometry rule `markband.ts` already states for the
 painter, and a copy of a distinction is what this repository watches for. It
 would also be worse to use: an empty box would only erase along a 1.5-point
@@ -12127,21 +12127,21 @@ of a large box loses the box.
 
 `quadSwept` is built on `strokeSwept`, by treating the rectangle as a closed
 four-segment polyline. That inherits the segment-crossing test the ink eraser
-needed --- a nib that goes right through a mark and out the other side touches no
-corner and no edge endpoint --- for nothing.
+needed — a nib that goes right through a mark and out the other side touches no
+corner and no edge endpoint — for nothing.
 
 Containment is tested on `from` alone. A segment lying wholly inside the
 rectangle has `from` inside it; one that is partly inside crossed an edge, which
 the polyline answers. So a containment test on `to` could never be the only
 thing that fired, which makes it a term no input can reach and no mutation can
-kill. Both directions have a test anyway --- a sweep out of a rectangle and a
-sweep into one --- and a control proved they take different branches: deleting
+kill. Both directions have a test anyway — a sweep out of a rectangle and a
+sweep into one — and a control proved they take different branches: deleting
 the containment test reddens three, deleting the polyline reddens six, and the
 sets do not overlap.
 
 ##### The status line got a second number, and its words moved out of the window
 
-`ViewerStatus.erasing` was `number | null` --- strokes taken, or not armed. A
+`ViewerStatus.erasing` was `number | null` — strokes taken, or not armed. A
 sweep that takes three strokes and a highlight cannot be reported by one number
 without lying about one of them, so it is now
 `{ strokes: number; marks: number } | null`. **One field holding two numbers
@@ -12150,8 +12150,8 @@ pair that must agree is a pair that can disagree.
 
 The sentence itself moved to `markband.ts` as `sweepLabel`, and that is not
 tidying. Every phrase the status line builds lived in `App.svelte`, where no unit
-test imports it and the window harness --- which builds a `Viewer` of its own and
-never renders the application's header --- cannot reach it either. So the words a
+test imports it and the window harness — which builds a `Viewer` of its own and
+never renders the application's header — cannot reach it either. So the words a
 reader actually reads had no check of any kind. That is the shape this repository
 records as *the window reads the status and the tests read the viewer*, and the
 repair is the same one: put the expression where something can call it.
@@ -12162,7 +12162,7 @@ The command was *Erase drawing...*, and `appcommands.ts` carried an argument for
 that name: *a bare "Erase" beside "Remove mark" would read as a second, blunter
 way to delete anything*. Correct while the nib took strokes. It now **is** the
 blunter way to delete anything, so the premise expired and the title is *Erase
-marks...* --- plural, against *Remove mark* singular, which is the difference
+marks...* — plural, against *Remove mark* singular, which is the difference
 between a tool you aim and a command that acts on the one mark you have named.
 The old argument is kept in the comment rather than deleted, because a reader who
 sees the new name should be able to find out why the old one went.
@@ -12173,12 +12173,12 @@ sees the new name should be able to find out why the old one went.
   the kind branch, the containment test, the polyline, its closing point, the
   nib's width, the geometry test itself, the commit, the live count, and both
   halves of the status sentence. One existing mutation was re-aimed and re-run
-  --- the summary-string one, whose anchor the second count moved --- and one was
+  — the summary-string one, whose anchor the second count moved — and one was
   rewritten, since *let the eraser take marks that are not drawings* had become
   the name of the feature rather than of a defect.
 - **Two mutations of the window harness, both caught**: painting a mark the
   sweep took, and painting **no** mark while a sweep is live. The second is what
-  says the wash beside it is a control rather than a formality --- an overlay
+  says the wash beside it is a control rather than a formality — an overlay
   that cleared the page would satisfy the first perfectly.
 - **Twenty-two unit tests**: thirteen over `quadSwept` and `sweepLabel` in
   `markband.test.ts`, and nine gestures in `viewerdraw.test.ts`, including a
@@ -12195,7 +12195,7 @@ and opening the wrong note is not"*. It is not, and the reason is that the two
 constants are in **different units**: `HIT_SLACK_PT` is 3 **points** and
 `ERASER_RADIUS` is 6 **view pixels**, which the sweep divides by the zoom. In
 the page's own points the nib is therefore 12 pt at 50%, 6 pt at 100%, 4 pt at
-150%, and 3 pt --- equal at last --- only at 200%. Measured, not reasoned about.
+150%, and 3 pt — equal at last — only at 200%. Measured, not reasoned about.
 
 So the eraser has always been *more* forgiving than a press at any zoom a reader
 normally uses, which is the direction the sentence said it must not be. That
@@ -12205,8 +12205,8 @@ written and the code has never obeyed it.
 
 **The same file was wrong about the units twice more.** `strokeTouches` and
 `strokeSwept` each said *"the viewer hands both in view pixels"*, and it hands
-them in the slot's **laid-out points** --- `viewRectOn` applies the crop and both
-turns and no zoom at all --- converting only the radius. Three comments in one
+them in the slot's **laid-out points** — `viewRectOn` applies the crop and both
+turns and no zoom at all — converting only the radius. Three comments in one
 file agreeing on a wrong unit is the state in which a sentence comparing 6 with
 3 reads as obviously true. All three are corrected.
 
@@ -12215,25 +12215,25 @@ kinds of thing: the sentence was wrong and a wrong sentence gets fixed, while
 what the nib should be is a question about how the tool feels when a reader is
 zoomed out. Clamping the page-space nib to `HIT_SLACK_PT` would make it obey the
 argument exactly, at the cost of an eraser that gets harder to hit the further
-out you are --- and an eraser you cannot hit is the complaint that actually gets
+out you are — and an eraser you cannot hit is the complaint that actually gets
 reported, against a sweep that is one press of undo away. **Ranked as a question
 rather than taken**, and worth deciding before the nib becomes adjustable, since
 a reader-chosen size would have to pick one of the two units.
 
 **Not done:** ~~a nib whose size the reader can choose, which is the same open
-question the ink eraser left~~ (done 2026-08-30 --- see *A nib the reader picks*
+question the ink eraser left~~ (done 2026-08-30 — see *A nib the reader picks*
 below, and note that the clause after the semicolon was wrong: the two nibs share
 a word and not a quantity, so this was never waiting on the paragraph above it);
 ~~an undo that puts back a whole sweep rather than
 one mark per press, which is the same granularity the ink eraser has always had
-and would need a journal command that groups~~ (done 2026-08-30 --- see *One press
+and would need a journal command that groups~~ (done 2026-08-30 — see *One press
 of undo for one sweep* below; the estimate was wrong about the shape, since a
 command that groups would have to hold a list and `Command` is `Copy`, so what it
 needed was a field on the journal *entry*); and ~~reaching a comment the file
-arrived with, which is deliberate --- the model has no command that names one,
+arrived with, which is deliberate — the model has no command that names one,
 which is the same reason editing one is still on the *Not built yet* list~~
 (overtaken 2026-08-29 and 2026-08-30: `Command::Rewrite` and `Command::Discard`
-both name one, and the eraser still does not reach them --- which is a choice about
+both name one, and the eraser still does not reach them — which is a choice about
 the tool rather than a limit of the model, and is stated as one below).
 
 ⚠ **The paragraph above this one is what made the sweep worth doing, and it is
@@ -12243,11 +12243,11 @@ reported, against a sweep that is one press of undo away". A sweep was not one
 press of undo away. `docs/TRAPS.md` has the entry; the correction here is that the
 question is now ranked on the argument it was always meant to rest on.
 
-#### Merging documents --- done 2026-08-24
+#### Merging documents — done 2026-08-24
 
 The first write path that reads more than one file, and the first that produces a
-page tpdf did not open. Everything before it --- rotate, delete, move, extract,
-crop --- is a subset or a permutation of **one** object graph, so `save.rs`'s whole
+page tpdf did not open. Everything before it — rotate, delete, move, extract,
+crop — is a subset or a permutation of **one** object graph, so `save.rs`'s whole
 vocabulary is positions into a single document and `pagetree.rs`'s is surgery
 within one tree. A merge has two graphs and has to make them one.
 
@@ -12255,7 +12255,7 @@ within one tree. A merge has two graphs and has to make them one.
 
 The working document is untouched: nothing is journalled, `dirty` does not move,
 and undo has nothing to undo. That is `plan_subset`'s argument for extract
-arriving at the other end of the same path --- extract reads part of one file,
+arriving at the other end of the same path — extract reads part of one file,
 merge reads all of several, and neither changes what is on screen.
 
 So the model did not have to learn about foreign pages, and that is the whole
@@ -12267,15 +12267,15 @@ turn them, undo them and save. See below.
 
 ##### The open document goes in edited, the others go in as they are
 
-`write_merged` builds the base through `planned_bytes` --- the same function
-`write_copy` and the print path use --- so the reader's turns, crops, deletions,
+`write_merged` builds the base through `planned_bytes` — the same function
+`write_copy` and the print path use — so the reader's turns, crops, deletions,
 reordering and marks are all in the merged file. The others are not open, so
 there is no working document for them to have and nothing to apply.
 
 That asymmetry is asserted rather than described: `the_open_documents_edits_reach_the_merge`
 uses a plan that keeps two of `rotated.pdf`'s four pages and turns one of them, so
 a merge that read the file instead of the plan comes out two pages longer. The
-mutation aimed at it is the whole shape of the mistake --- `Document::load_mem_with_options(&base.bytes, ..)`
+mutation aimed at it is the whole shape of the mistake — `Document::load_mem_with_options(&base.bytes, ..)`
 becomes `Document::load_with_options(source, ..)`, which compiles, and which every
 other check in the file is blind to because a plan that keeps every page agrees
 with the file about the count.
@@ -12286,7 +12286,7 @@ with the file about the count.
 each fails by producing a plausible document rather than by failing.
 
 - **Object numbers collide.** Both documents number from 1. A reference that is
-  not shifted with its object does not dangle --- it *resolves*, to whatever the
+  not shifted with its object does not dangle — it *resolves*, to whatever the
   destination happens to hold at that number, which is a page's font becoming
   another document's content stream. The shift is read off the objects rather
   than from `max_id`, because `lopdf` takes `max_id` from the cross-reference
@@ -12296,12 +12296,12 @@ each fails by producing a plausible document rather than by failing.
   trees are unrelated and no value the destination's root carries could happen to
   be right. `pagetree::detached_page` is the fix and it materialises
   unconditionally, where `reorder_pages` compares against the new root and leaves
-  the key off when they agree --- that comparison is between two unrelated trees
+  the key off when they agree — that comparison is between two unrelated trees
   here, and agreeing would be a coincidence that stops holding the moment either
   is edited.
 - **`/Parent` points up.** A walk that collects what a page needs by following
   its references reaches the tree above it, then the catalog, then every other
-  page, the outline and the form fields --- the whole file, for any page of it.
+  page, the outline and the form fields — the whole file, for any page of it.
   The walk starts from page dictionaries whose `/Parent` has already been
   removed, and that substitution *is* the bound: the only way out of an orphaned
   page is downward.
@@ -12315,7 +12315,7 @@ destinations name its own page objects and those are untouched.
 **Intra-document links do survive**, which is the part that is not obvious: a
 `/Link` whose `/Dest` names a page object keeps working, because every page of
 the incoming file comes across and the reference is shifted with everything else.
-What breaks is a destination reached *by name* --- and that is the honest edge of
+What breaks is a destination reached *by name* — and that is the honest edge of
 what "merge" can mean without a name-resolution pass. An outline entry, a link
 and a named destination each address a page through one of four shapes
 (`links.rs`'s resolver enumerates them), two files are free to use the same name
@@ -12329,7 +12329,7 @@ to be discovered.
 
 `afterCopy` returns `null` for an ordinary copy: the file appearing where the
 reader put it is the acknowledgement. `afterMerge` always speaks. A copy and an
-extract produce what the reader named --- a file here, these three pages --- and a
+extract produce what the reader named — a file here, these three pages — and a
 merge produces however many pages the documents it was given happened to hold, so
 a reader who picked four files cannot tell from the destination that all four
 were read without opening it and counting.
@@ -12345,13 +12345,13 @@ tells the reader "the same way" a copy does. It did not: `App.svelte` awaited
 `edits.extractPages(...)` and discarded the answer, so an extract built from a
 newer file said nothing at all. One line, and it is `afterCopy`'s whole reason
 for existing. The message's first noun moved from "The copy" to "The file" in the
-same edit --- three commands reach it now, and a sentence naming one caller is how
+same edit — three commands reach it now, and a sentence naming one caller is how
 that stays wrong when somebody fixes it.
 
 ##### Evidence
 
 - 11 unit tests over `merge::append`, all six mutations of the importer caught by
-  the test declared for them --- including the two whose *predicted* red set was
+  the test declared for them — including the two whose *predicted* red set was
   wrong, which is how `an_incoming_page_hangs_off_the_destinations_root` was found
   to pass vacuously: with the graft deleted the tree yields one page, whose parent
   is already the root, so the loop had nothing to look at. It asserts the page
@@ -12364,22 +12364,22 @@ that stays wrong when somebody fixes it.
   caught.
 - The `anchors` gate caught the one real hazard in the diff before any of that
   ran: `write_merged` had copied `write_copy`'s `if same_file(source, out) {`
-  verbatim, which made the existing mutation aimed at that line ambiguous --- and
+  verbatim, which made the existing mutation aimed at that line ambiguous — and
   an ambiguous anchor is refused, so that mutation would have stopped being able
   to fail. The fix is the one the trap prescribes: stop having two near-copies.
   The source and every incoming file are now one loop over one rule.
 
-##### `merge-probe`, and the defect the fixture for it found --- 2026-08-24
+##### `merge-probe`, and the defect the fixture for it found — 2026-08-24
 
 The checks above are `lopdf` reading back what `lopdf` wrote, plus a page count
-from the OS parser. Both say the *tree* is right. Neither says PDFium --- the
-engine tpdf renders with --- draws page seven, or that the page it draws is the
+from the OS parser. Both say the *tree* is right. Neither says PDFium — the
+engine tpdf renders with — draws page seven, or that the page it draws is the
 page that was merged in.
 
 `examples/merge_probe.rs` compares the merged file against its **sources**,
 through PDFium, three ways per page: it renders with ink, it keeps the size it
 had, and it reads back the same code points. The third is the one that needs the
-fonts as well as the stream --- a page whose `/Font` went missing still renders,
+fonts as well as the stream — a page whose `/Font` went missing still renders,
 because PDFium substitutes, and then extracts the wrong code points. 50/50 on
 `rotated.pdf` + `links.pdf`; the mutations that break the shift and the graft
 take it to 7/23 and 16/21.
@@ -12387,16 +12387,16 @@ take it to 7/23 and 16/21.
 **The fixture had to be built, and building it is what found the defect below.**
 Mutating `pagetree::detached_page` to materialise nothing left the probe **green
 on `rotated.pdf` + `links.pdf`** (38/38 as measured that morning, 50/50 when
-re-measured after the geometry repair below --- the verdict is what matters and
+re-measured after the geometry repair below — the verdict is what matters and
 the denominator is recorded in `BUILD.md` rather than explained), because no page
-of any existing fixture inherits anything --- the check that is the entire point
+of any existing fixture inherits anything — the check that is the entire point
 of that function could not fail. `testdata/inherited.pdf` is
 three pages that state nothing and take their box, resources and rotation from
 the node above them. With it, the same mutation reddens six checks, including
 `612.0x792.0 against 600.0x400.0`: the page falls back to US Letter, which is
 what losing an inherited `/MediaBox` looks like from the outside.
 
-##### The viewer lays out a rotated inherited-box page correctly --- done 2026-08-24
+##### The viewer lays out a rotated inherited-box page correctly — done 2026-08-24
 
 Found by `testdata/inherited.pdf`, which was built for the merge checks and had
 nothing to do with the viewer.
@@ -12405,7 +12405,7 @@ nothing to do with the viewer.
 carries a quarter turn.** `docs/TRAPS.md` has the crossed measurements. The
 scroller laid out from that number, so such a document rendered square, at an
 aspect nothing on it matched, with the content clipped to a sheet smaller than
-itself --- 0, 1 and 3 inked pixels on the three pages of the fixture. Not an
+itself — 0, 1 and 3 inked pixels on the three pages of the fixture. Not an
 exotic document: one `/MediaBox` on the page-tree root is what any producer
 emitting uniform pages writes, and `/Rotate 90` is what a scanner writes.
 
@@ -12413,7 +12413,7 @@ emitting uniform pages writes, and `/Rotate 90` is what a scanner writes.
 It said to prefer `pagetree::displayed_page` over `RawPage::width_pt` on the
 render path. That corrects the *number* and leaves the *render*: PDFium draws
 from its own idea of the sheet, so the page would report 600x400 and still come
-out clipped. What works is to give PDFium the box --- `RawDocument::page_cropped`
+out clipped. What works is to give PDFium the box — `RawDocument::page_cropped`
 already records each page's own box on first load and sets it, for the crop
 tool, so the whole change is *which* box it records. The reported size, the
 origin, the render and the character boxes all follow, which is the mechanism
@@ -12424,7 +12424,7 @@ Three things came out of building it that reading could not have given:
 - **`FPDFPage_GetMediaBox` answering `None` is the discriminator.** That API
   does not walk `/Parent` either, so "PDFium has no sheet for this page" *is*
   "this page inherits one". A document that states its own boxes therefore never
-  reaches `lopdf` at all --- the cost is nil on the overwhelming majority of
+  reaches `lopdf` at all — the cost is nil on the overwhelming majority of
   files, rather than a page-tree parse on every open, which is what the ranked
   entry had worried about.
 - **`FPDFPage_GetCropBox` does answer on such a page, in a different
@@ -12435,7 +12435,7 @@ Three things came out of building it that reading could not have given:
   it already agrees with makes every downstream number consistent by
   construction; overriding it could only make the size a page reports disagree
   with the pixels it produces. `box_to_use` is a free function so that rule has
-  somewhere to be tested --- as a branch beside the two FFI calls it would be
+  somewhere to be tested — as a branch beside the two FFI calls it would be
   reachable by nothing.
 
 **The evidence, and three observables moved.** `examples/geometry_probe.rs`
@@ -12444,11 +12444,11 @@ ink, per page, with a fourth check on cost: the page tree must be parsed **iff**
 some page needed it, which is the only thing that can see a repair that parses
 every document. Three mutations against it and four against the unit tests, all
 caught. A window run over the fixture went from **257/260 with 83 not applicable
-to 271/272 with 71** --- twelve checks became applicable because the page finally
+to 271/272 with 71** — twelve checks became applicable because the page finally
 has its own shape. And `merge-probe` went from 27/27 with 3 skipped to **30/30
 with none**: the skip existed because PDFium mis-read the source page.
 
-##### A mark on a turned page is drawn the reader's way --- done 2026-08-24
+##### A mark on a turned page is drawn the reader's way — done 2026-08-24
 
 The ranked entry this replaces asked one question and the measurement answered a
 different, larger one. It read: *a text box too short for its words shows nothing
@@ -12458,7 +12458,7 @@ renderers disagreeing is a defect whichever of them is right.
 **That claim is false, and it was never about the box being short.** Measured
 first, as the entry asked: a text box was written at eighteen heights on
 `text-base14`, `columns` and `rotated`, and the file draws nothing below **13.0
-points** and one line at and above it --- the same rule `viewer.ts` applies, to
+points** and one line at and above it — the same rule `viewer.ts` applies, to
 the point. The two renderers had agreed all along.
 
 What the fixture that produced the red check has, and the three above do not, is
@@ -12467,7 +12467,7 @@ What the fixture that produced the red check has, and the three above do not, is
 ###### What was actually wrong
 
 `save::user_quads` maps a mark out of the reader's frame and into the page's own.
-That is right for the rectangle --- a set of points --- and wrong for everything
+That is right for the rectangle — a set of points — and wrong for everything
 drawn inside it that has a direction. A box the reader dragged 300 wide and 40
 tall arrives 40 wide and 300 tall, and four of the seven kinds read those sides
 as the reader's:
@@ -12484,7 +12484,7 @@ as the reader's:
 
 `/Rotate 90` is what a scanner writes, so this is where a reader meets it: a
 scanned contract, underlined, comes back with a vertical line down the left of
-the words. The text box fails twice over --- `textbox::wrap` was handed 40 points
+the words. The text box fails twice over — `textbox::wrap` was handed 40 points
 where the reader had dragged 300, so the model made **one** line of four words
 and the writer made **eighteen**, two glyphs across, each drawn along the page's
 own axis. Its `/BBox` came out `[80 72 84 528]`.
@@ -12521,7 +12521,7 @@ quarter turn. That is not a coincidence, it is the reason:
 
 So every instrument aimed at these marks was either blind to rotation or excused
 from it. The one check that did fire was the text box's, at 27x, on the corpus's
-only rotated fixture --- and the diagnosis written down at the time named that
+only rotated fixture — and the diagnosis written down at the time named that
 fixture's most conspicuous property, its short pages, which was not the cause.
 
 ###### Evidence
@@ -12530,7 +12530,7 @@ fixture's most conspicuous property, its short pages, which was not the cause.
 `testdata/rotated.pdf`'s four pages, which its own generator says *"carry
 identical content and differ only in /Rotate"*. Page 0's reading is the
 reference and the other three must match it, so nothing is predicted and no
-expected number is written down. **29/29**, with four mutations behind it --- and
+expected number is written down. **29/29**, with four mutations behind it — and
 it is the only check on the squiggle anywhere, that being a stroked path with no
 operand a source-level assertion can read.
 
@@ -12538,7 +12538,7 @@ Five unit tests and seven mutations cover the rest. One of them was written
 wrong and the harness said so: the first assertion for the rule read "long the
 way the words run and thin across them", a proportion measured along the axis the
 defect is on, and a mutation taking the *thickness* from the page's box survived
-it --- a rule 7.5 times too thick is still thinner than the box. What replaced it
+it — a rule 7.5 times too thick is still thinner than the box. What replaced it
 is the differential: the same box on an upright page and a turned one, read back
 through `text::to_device` and compared as fractions of the box, all four edges,
 with a control that the band is thin in the first place.
@@ -12547,7 +12547,7 @@ with a control that the band is thin in the first place.
 
 It had been excluded because its 400-point pages put the agree phase's synthetic
 text box at 8.5 pt against the 13.0 a first baseline needs, and the two renderers
-then disagreed 27x. They agree now --- both draw nothing --- so the phase leaves
+then disagreed 27x. They agree now — both draw nothing — so the phase leaves
 the text box out on a page too short to hold a line, with the measurement in its
 detail line, and the corpus runs **272/272**.
 
@@ -12572,23 +12572,23 @@ leaving it to a rounding.
 
 The other half of the README bullet, and it is not a smaller version of this. A
 merge produces a file; an insert produces a *working document* holding pages tpdf
-did not open --- which means `PageSource` has to name a document as well as a
+did not open — which means `PageSource` has to name a document as well as a
 page, the render path has to ask some other worker for a tile, the model has to
 own the second file's identity across undo, and a save has to import the graph
 this module already knows how to import. The importer is the piece that carries
 over; nothing else does.
 
 ⚠ **The seam that sentence names was widened on 2026-08-30 and the other half of
-the bullet --- a blank page --- is built.** See the section below. What is left
+the bullet — a blank page — is built.** See the section below. What is left
 here is the second document, which is every clause above except the first.
 
-#### Inserting a blank page --- done 2026-08-30
+#### Inserting a blank page — done 2026-08-30
 
 **The seam first, under the feature that does not need a second document.** The
 paragraph above lists five things an insert-from-a-file costs, and four of them
 are about the second file. The fifth is `Page::source`, a bare `u32` naming a
 page of the file, read in twelve places across seven Rust files and two more in
-the frontend --- and a blank page needs exactly that widening and none of the
+the frontend — and a blank page needs exactly that widening and none of the
 rest. Doing it under a feature with no cross-document machinery is what makes a
 surviving mutation mean something: one increment carrying a model change, a
 render-path change, a second worker pool, undo identity and a graph import at
@@ -12605,7 +12605,7 @@ pub enum PageSource {
 `crate::docgraph::Source` says where a *document's bytes* come from. Two types of
 one name in one crate is the collision `docs/TRAPS.md` records as the worse kind,
 because it compiles wherever the wrong one happens to have a method of the right
-shape --- and this one would have been imported into the same files.
+shape — and this one would have been imported into the same files.
 
 **The size is inside the variant, not beside it.** A page has a size here exactly
 when no baseline page supplies one, and a baseline page's size is the file's
@@ -12617,7 +12617,7 @@ answer.
 **The command carries the size, which no other command in the journal does.**
 Every other body lives in a `Doc` table keyed by a version id, because it changes:
 a note is rewritten, a drawing is erased into, a colour is picked again. A page's
-size is not edited, so there is no version for a table to be keyed by --- and a
+size is not edited, so there is no version for a table to be keyed by — and a
 `Size` is two `f64`, so carrying it in `Command::Insert` costs the journal sixteen
 bytes and keeps the enum `Copy`. The id is in the command too, which is what makes
 replay from a snapshot rebuild *the same page* rather than a new one wearing its
@@ -12626,7 +12626,7 @@ number.
 ##### What a reader can and cannot do to a made page
 
 Turn it, move it, delete it, undo and redo all of that. **Not** mark it, redact it
-or crop it --- three refusals through one `Refusal::MadePage`, named for the fact
+or crop it — three refusals through one `Refusal::MadePage`, named for the fact
 rather than for any of the three reasons, because a variant named after why one
 caller happens to use it is renamed by the second. The reasons differ and only one
 of them expires:
@@ -12636,8 +12636,8 @@ of them expires:
   increment after this one. Refused at the moment the reader draws rather than at
   the save that would otherwise be the first thing to say no.
 - **A redaction** removes content, and a blank page has none. That is
-  `Refusal::EmptyRedaction`'s own argument --- a row in the review list certifying
-  the removal of nothing --- arriving by a different route, and it does not expire.
+  `Refusal::EmptyRedaction`'s own argument — a row in the review list certifying
+  the removal of nothing — arriving by a different route, and it does not expire.
 - **A crop** is forced rather than chosen. A crop box is in the page's own
   unrotated space and the reader drags a rectangle in display space; `crop.ts`
   asks PDFium to convert between them, naming a page of the file. There is none
@@ -12646,7 +12646,7 @@ of them expires:
 
 ##### The writer, and where the creation goes
 
-`Checked` used to carry `turns: Vec<(ObjectId, u8)>` --- one entry per page the
+`Checked` used to carry `turns: Vec<(ObjectId, u8)>` — one entry per page the
 reader sees, resolved to the file's objects while nothing had been written yet.
 It now carries `slots: Vec<(Slot, u8)>`, where a `Slot` is either an object of the
 file or a size to be made, and `make_blank_pages` turns that into the old list.
@@ -12663,19 +12663,19 @@ where it goes*; this is the decision.
 The dictionary is `/Type /Page`, `/MediaBox [0 0 w h]` and an empty `/Resources`,
 and each absence is a decision: **no `/Contents`**, which is the specification's
 own spelling of an empty page, and no `/Parent`, which the rebuild writes on every
-page in the order --- writing it here as well would be two places deciding what the
+page in the order — writing it here as well would be two places deciding what the
 tree looks like.
 
 `moved` gained a second way to be true, and it is the one that is easy to miss: an
 inserted page is not in the tree at all, so it can only get there by the tree being
-rebuilt --- while the file's own pages can still be in their own order around it,
+rebuilt — while the file's own pages can still be in their own order around it,
 which is exactly what the existing window walk answers `false` for.
 
 ##### Printing cannot name it, and the type says so
 
 `print::select` turns a plan into a list of one-based file page numbers. A made
 page has no such number, so `Pages` grew an `Unlistable` variant rather than a
-list quietly one entry short --- `docs/TRAPS.md` records a silently missing element
+list quietly one entry short — `docs/TRAPS.md` records a silently missing element
 as the shape that survives review. Nothing prints from it: `route` answers
 `Route::Working` for any plan that produces one, which is the writer that can
 actually make the page, and `build` refuses it in an arm nothing can reach.
@@ -12684,29 +12684,29 @@ actually make the page, and `build` refuses it in an arm nothing can reach.
 
 Twelve compile errors, one per reader, which is the whole argument for widening a
 type rather than adding an `Option` beside it. The two defects it was blind to
-were both fallbacks that already handled `undefined` --- for the *other* reason,
-correctly --- and both are in `docs/TRAPS.md` under *A widened type enumerates its
+were both fallbacks that already handled `undefined` — for the *other* reason,
+correctly — and both are in `docs/TRAPS.md` under *A widened type enumerates its
 readers*. A third, in the thumbnail strip's pump, is the queue-stall entry beside
 it: a row that needs no tile has to record itself done and pump the next one, or
 every row below a blank page stays empty, and the test written for it asserted
 `fetchTile` was not called, which is true of the fix and of the stall.
 
 **Not done:** ~~marking an inserted page, which is the addressing change described
-above and is the obvious next increment~~ (done 2026-08-30 --- see *Marking an
+above and is the obvious next increment~~ (done 2026-08-30 — see *Marking an
 inserted page*, immediately below); a page inserted from another file, which
 is the *Not done* this section sits under; and ~~choosing a size other than the
-page you are looking at~~ (done 2026-08-30 --- see *Choosing an inserted page's
+page you are looking at~~ (done 2026-08-30 — see *Choosing an inserted page's
 size*).
 
-#### Marking an inserted page --- done 2026-08-30
+#### Marking an inserted page — done 2026-08-30
 
 The first of those three, and it is one field. `PlannedMark` addressed a page object
 by its **baseline number**; a page tpdf made has none, so there was nothing to put
 in the plan and the model refused the mark at the moment the reader drew it. It
 addresses a page by its **position in the plan** now, which both kinds have.
 
-The writer needed nothing new. `save::rewrite` already builds `order` --- every
-position resolved to the object that will hold it --- because `pagetree::materialise`
+The writer needed nothing new. `save::rewrite` already builds `order` — every
+position resolved to the object that will hold it — because `pagetree::materialise`
 needs the same list, and `make_blank_pages` runs above both precisely so the made
 pages exist to be named. What changed is which list `mark_sites` resolves against.
 Its shared-page-object refusal moved with it and got simpler: it counts how many
@@ -12718,7 +12718,7 @@ it needs no case.
 baseline pages, which it is.** `Plan::is_appendable` requires `pages_are_the_file`,
 so position *n* is baseline page *n* and the loop is the identity today. Written out
 because an append that ever carried something else would misaddress every mark while
-every existing test passed --- and the arm for a page tpdf made is a second reader of
+every existing test passed — and the arm for a page tpdf made is a second reader of
 the fact that such a plan is not appendable.
 
 `Checked` lost a field. `kept` held one-based baseline numbers for the pages the plan
@@ -12730,14 +12730,14 @@ carried unread.
 **One test in the repository could tell the two addressings apart**, and it existed
 already: `a_marks_reply_names_the_page_by_identity_and_the_plan_by_position` moves the
 third page to the front and marks it, so its position is 0 and its baseline number is
-2. Everywhere else the plan is the file and the two are the same number --- the
+2. Everywhere else the plan is the file and the two are the same number — the
 property that holds by construction, which is why the mutation for this change is
 aimed there. Its assertion message used to say *"the writer was given a position
 rather than the page"*, which was false when it was written and is true now.
 
 **The refusal split, and it is the finding rather than the feature.** `Refusal::MadePage`
 had three callers and therefore one string, and the string was *"tpdf cannot mark a page
-it made yet"* --- shown to a reader who had dragged a **redaction** on a blank page, because
+it made yet"* — shown to a reader who had dragged a **redaction** on a blank page, because
 `onRedacted` has no frontend guard. The crop caller has one and has never been reached. It is
 two variants now, `CropOnMadePage` and `RedactionOnMadePage`, with two sentences that say what
 is true of the page. `docs/TRAPS.md` has the entry.
@@ -12746,13 +12746,13 @@ is true of the page. `docs/TRAPS.md` has the entry.
 sits under; ~~choosing a size other than the page you are looking at~~ (done 2026-08-30);
 and redacting or cropping one, both of which are refused for reasons that do not expire.
 
-#### Choosing an inserted page's size --- done 2026-08-30
+#### Choosing an inserted page's size — done 2026-08-30
 
 The second of the three the blank page's *Not done* lists, and the last of them
 that needs nothing from the second-document work. *Insert blank page* copies the
 page you are looking at, which is right almost always and unhelpful exactly when
 it is not: the page in front of you is a scan at some size nobody chose. Five
-commands beside it now name a size --- A4, A3, A5, US Letter, US Legal.
+commands beside it now name a size — A4, A3, A5, US Letter, US Legal.
 
 **A menu of names, not a prompt for two numbers**, which is the argument
 `edit.stamp.*` and `edit.color.*` both make and this follows their spelling so the
@@ -12779,7 +12779,7 @@ halves along its long edge, so each size's width is the next larger one's height
 every A sheet has the ratio root two; and the US sizes, being defined in inches,
 land on whole points at 72 to the inch while no A size can.
 
-**A tolerance of a thousandth on the ratio was written first and failed on A5 ---
+**A tolerance of a thousandth on the ratio was written first and failed on A5 —
 correctly, and about ISO 216 rather than about the table.** The series is defined
 by the ratio and then every size is *rounded to whole millimetres*, so no real
 sheet has it exactly: A5 is 148 x 210, which is 1.41892 against 1.41421, out by a
@@ -12791,13 +12791,13 @@ transposed pair, which reads 0.705.
 Adding five commands turned two existing checks red, both of them correctly and
 both immediately: `menubar.test.ts` wanted a menu place or a written reason, and
 `readme.test.ts` wanted a README line or an entry in its exclusion table. Neither
-is a check somebody remembered to run --- a command cannot arrive unclassified,
+is a check somebody remembered to run — a command cannot arrive unclassified,
 because there is no third state to arrive in.
 
 **And the README bullet was wrong about something else.** It said *"You cannot yet
 mark one or crop it"*, which had been false since marking an inserted page landed
 earlier the same day. The gate could not see it: it checks that command *names* are
-claimed, and this was a claim of absence in prose naming no command --- the shape
+claimed, and this was a claim of absence in prose naming no command — the shape
 `docs/TRAPS.md` records as the one a registry structurally cannot contradict.
 
 Seven mutations, each aimed at the one assertion that can see it, which is also
@@ -12811,19 +12811,19 @@ would be worth revisiting only if somebody asks for a size the table has not got
 landscape entries, for the reason above; and a page inserted from another file,
 which is now the only one of the blank page's three left.
 
-#### The importer takes a selection --- done 2026-08-30
+#### The importer takes a selection — done 2026-08-30
 
 The first of the four costs *Not done: inserting pages from another file* lists, and
 the only one that needs neither a window nor a second worker pool: *a save has to
 import the graph this module already knows how to import*. It is built here, under
-merge, on the same reasoning that put the blank page before the imported one --- an
+merge, on the same reasoning that put the blank page before the imported one — an
 increment carrying a model change, a render-path change, a second worker pool, undo
 identity and a graph import at once tells you very little about which of the five is
 wrong.
 
 `merge::append` is now `merge::import` plus the graft it always did. `import` takes
 positions in the second document's page order and answers the object id each one has
-in the destination, in the order asked for, and it **places nothing** --- the pages
+in the destination, in the order asked for, and it **places nothing** — the pages
 are objects of the document and are in no `/Kids`. That is the shape the writer needs:
 `save::rewrite` decides an order in `materialise` and would have to undo a graft.
 `append` asks for all of them and hangs the answer off the root, so the whole-document
@@ -12838,7 +12838,7 @@ and true **because every page came across**.
 Seed the walk with a subset and a `/Dest` from a page somebody asked for to a page
 they did not is followed to that page's *real* dictionary, `/Parent` and all, and the
 walk climbs the tree node and comes back down into the whole file. Measured on a
-three-page fixture, seeding one page: **10 objects reached against 5** --- both other
+three-page fixture, seeding one page: **10 objects reached against 5** — both other
 pages and both their content streams, from one link. The output would be a document
 reporting one page and carrying the text of three, which is the leak `docs/TRAPS.md`
 records under a shipped *Extract pages* that reported one page and carried eight.
@@ -12856,7 +12856,7 @@ makes the walk reach more* reads as plausible whichever way it points.
 ##### What is refused, and one clause that cannot be tested
 
 A position the document does not have, an empty selection, and **the same page twice**
---- the last because two positions holding one page *object* is the hazard
+— the last because two positions holding one page *object* is the hazard
 `save::mark_sites` refuses a mark on and `pagetree` refuses a deletion of, and lifting
 it means copying objects rather than importing them, which is a different operation.
 
@@ -12874,29 +12874,29 @@ at `append` were re-run as the regression check on rewriting it: 10 of 10.
 file's identity across undo; the render path has to ask some other worker for a tile;
 and the second document's bytes have to reach the worker that writes, which today is
 handed exactly one descriptor. Nothing in the application can reach `import`'s
-selection yet --- its live caller is `append`, asking for everything.
+selection yet — its live caller is `append`, asking for everything.
 
-#### Deleting a comment the file came with --- done 2026-08-30
+#### Deleting a comment the file came with — done 2026-08-30
 
 The last third of a family whose other two thirds shipped the day before: a reader
 could reply to a foreign comment and rewrite one, and could not take one away.
 `Command::Discard` is the counterpart to `Command::Rewrite` and carries its extra
-field for the same reason --- the page rides along, because this model has never
+field for the same reason — the page rides along, because this model has never
 read the file and has no table to look a page up in.
 
 ##### It is the one edit that cannot be an append
 
 Every write command before it *adds*: a mark, a reply, a body over an existing
-comment. An incremental save is exactly that --- an update section appended to the
-file --- so all of them can be written without touching the previous revision. A
+comment. An incremental save is exactly that — an update section appended to the
+file — so all of them can be written without touching the previous revision. A
 deletion has nothing it can add, so `Plan::is_appendable` gains a clause and every
 save carrying one is a full rewrite.
 
 **The clause is what makes the feature correct, and a fixture holding only a
 deletion cannot see it.** With no marks and no note edits the predicate's *first*
 clause already answers false, so the wrong rule and the right rule agree on that
-input. The case that discriminates is a mixed plan --- highlight one line, delete
-one comment --- which without the clause classifies as an append, writes the
+input. The case that discriminates is a mixed plan — highlight one line, delete
+one comment — which without the clause classifies as an append, writes the
 highlight, drops the deletion and reports success. That is the fixture the test
 uses and the mutation proves.
 
@@ -12908,7 +12908,7 @@ AcroForm's `/Fields` names the annotation too, and an annotation still reachable
 is an annotation still written.
 
 That removes the annotation's own dictionary and leaves its **appearance stream**
---- a drawing of the words the reader deleted --- reachable from nothing. The
+— a drawing of the words the reader deleted — reachable from nothing. The
 sweep collects it, and the sweep runs on a condition that is a list: dropped
 pages, a move, redacted annotations, outline entries, form fields, images. A
 deletion is the seventh, and it had to be added. `docs/TRAPS.md` records the
@@ -12920,7 +12920,7 @@ written bytes for a marker rather than asking what the page draws.
 
 `/IRT` names the comment a reply answers **by object number**, which is the only
 name the file and the model agree on. Take the comment away and the reply points
-at nothing --- a malformed thread in every reader that draws one.
+at nothing — a malformed thread in every reader that draws one.
 
 Refused rather than taking the reply along, and the choice is not close: a reader
 deleting somebody else's comment has not asked to lose what they themselves wrote,
@@ -12936,7 +12936,7 @@ remove something that is already gone.
 A deleted comment is dropped from `commentsIn` rather than crossed out, which is
 what deleting a mark already does and is why neither the popup nor the panel needs
 a third state. The scan is a reading of the file on disk and knows nothing of a
-deletion, so that join is the only place one can show --- and undo puts the comment
+deletion, so that join is the only place one can show — and undo puts the comment
 back by taking it out of the list.
 
 ##### What the gates found, and one thing they could not
@@ -12947,7 +12947,7 @@ line, a menu place, a window-harness classification.
 **The third of those was red before this command existed**, which is the finding.
 `edit.editForeignMark` and `edit.replyToComment` shipped on 2026-08-29 without a
 classification, so the window harness's own *every registered command is
-classified* check had been failing for a day --- and nothing said so, because that
+classified* check had been failing for a day — and nothing said so, because that
 harness needs a screen and runs by hand. It was found by grepping for a sibling's
 id. `scripts/check_classified.py` is the static twin that closes the schedule gap;
 it is deliberately weaker than the harness's version and buys the day rather than
@@ -12955,7 +12955,7 @@ the certainty. `docs/TRAPS.md` has the entry, and the general question it asks i
 worth asking of every harness here: which of its checks are asserted only there?
 
 The anchor gate named four existing mutations orphaned by one predicate gaining a
-clause --- two sharing `MUT_APPENDABLE`, one on the sweep's condition, one whose
+clause — two sharing `MUT_APPENDABLE`, one on the sweep's condition, one whose
 `if object.0 == 0 {` anchor became ambiguous the moment `discard` grew the same
 guard. All four re-aimed.
 
@@ -12968,14 +12968,14 @@ the *second* excuse rather than the first survivor.
 
 **Not done:** changing a comment's author or its subject, which are fields beside
 the body and go through the same `Rewrite`; and deleting a comment from the panel's
-own rows, which are still not actionable --- the editor is in the popup, and a
+own rows, which are still not actionable — the editor is in the popup, and a
 reader working from the list has to open one first.
 
-#### A nib the reader picks --- done 2026-08-30
+#### A nib the reader picks — done 2026-08-30
 
 The last of the three the ink section's *Not done* lists, and it was the one that
-looked hardest. `INK_WIDTH` was a constant in two files --- `docmodel.rs` and its
-near-copy in `markband.ts` --- and every drawing tpdf has ever written came out at
+looked hardest. `INK_WIDTH` was a constant in two files — `docmodel.rs` and its
+near-copy in `markband.ts` — and every drawing tpdf has ever written came out at
 2.5 pt. Four commands beside the colours now name a nib: fine, medium, broad,
 marker.
 
@@ -12984,7 +12984,7 @@ marker.
 Both *Not done* notes that ranked this called it *"the same open question the ink
 eraser left"*, and it is not the same question. The eraser's nib is
 `ERASER_RADIUS`, a hit radius in **view pixels**, and whether to clamp it to
-`HIT_SLACK_PT` in points is genuinely undecided --- `markband.ts` argues both
+`HIT_SLACK_PT` in points is genuinely undecided — `markband.ts` argues both
 sides and neither wins from a document. The drawing nib is a width in a **file**:
 it goes into a `w` operator inside the mark's form XObject, tpdf writes no
 `/Matrix`, so the form's space is the page's and the number is in points. A width
@@ -12994,7 +12994,7 @@ than the same line drawn at 100%. There was no unit to choose.
 `docs/TRAPS.md` has that as an entry, because the cost was the ranking: two
 sessions read those notes as *this waits on that* and went elsewhere.
 
-##### Chosen before, never after --- and the reason is geometry
+##### Chosen before, never after — and the reason is geometry
 
 `markcolors.ts` argues at length that a colour is picked before marking *and*
 after, and `Command::Recolor` is what makes the second half work. A nib is picked
@@ -13007,7 +13007,7 @@ picks up before they draw, and `Mark::width` says from the other side what the
 second half would cost.
 
 So `width` sits on the mark's body, like `stamp` and unlike `color`, and
-`MarkView` reads it from the body rather than through an accessor --- with a
+`MarkView` reads it from the body rather than through an accessor — with a
 comment at that line saying which of the two it is and why, because the line above
 it does the opposite.
 
@@ -13016,13 +13016,13 @@ it does the opposite.
 The obvious place for the choice is `App.svelte`, beside `markColor`. It is the
 wrong one. The preview under the reader's hand is painted by the viewer, and a
 preview drawn at `INK_WIDTH` while the caller held something else answers *how
-thick will my line be* wrongly --- which the reader finds out after committing.
+thick will my line be* wrongly — which the reader finds out after committing.
 
 So `Viewer.nib` is the setting, `setNib` sets it, `paintInkPreview` draws from it,
 and the committed mark carries it back out on `Drawn.width`. `App.svelte` passes
 `shape.width` to `Edits.mark` and holds `markNib` only as the status line's label,
 downstream of the setting rather than beside it. It is `drawStamp`'s own argument
---- *what a drag commits comes from one place* --- applied to a setting instead of
+— *what a drag commits comes from one place* — applied to a setting instead of
 to a tool, and the two sit together in the class behaving differently on purpose:
 a stamp is spent by the drag that used it, a nib outlives the pen.
 
@@ -13032,7 +13032,7 @@ thing: it is part of what the gesture produced, exactly as the strokes are.
 ##### The fourth door
 
 `channel` clamps a colour, `displace` refuses a non-finite offset, and the
-geometry check refuses a non-finite point --- all three because `1e40` is valid
+geometry check refuses a non-finite point — all three because `1e40` is valid
 JSON, is an infinity by the time it is in Rust, and is the three letters `inf`
 where `save.rs` writes it with `format!`. The nib reaches
 `format!("{width} w")` by exactly that route, so `edits.rs` has a fourth guard
@@ -13042,7 +13042,7 @@ Clamped rather than refused, which is `channel`'s choice and not `displace`'s: a
 offset says *where* a mark is and a mark silently moved is not the mark the reader
 drew, while a width says how heavy it is and a line a quarter point off is still
 the line, still where it was drawn. `NIB_MIN` and `NIB_MAX` are a **range** rather
-than a list, so the wire does not carry a second copy of `marknibs.ts`'s table ---
+than a list, so the wire does not carry a second copy of `marknibs.ts`'s table —
 and `marknibs.test.ts` asserts every entry sits inside it, since a nib outside
 would arrive as something else with nothing on either side saying so.
 
@@ -13054,7 +13054,7 @@ a probe. None is a check somebody remembered to run.
 
 The anchor gate found the interesting thing. Three existing mutations aimed at the
 two `Stroke::bounds` call sites and at `save.rs`'s `w`, and all three were orphaned
-by lines that now read the mark instead of the constant --- invisible in
+by lines that now read the mark instead of the constant — invisible in
 `git status`, invisible to every test, and the gate names them in half a second.
 All three were re-aimed rather than deleted: what each was written to catch is
 still a defect.
@@ -13062,21 +13062,21 @@ still a defect.
 Seven Rust mutations and seven frontend ones, each caught by the test named for it.
 The Rust seven include both derivations separately, because at the default nib a
 derivation reading the mark and one reading the constant agree on **every number**
---- so each needs a fixture at a second width, and the first draft of one compared
+— so each needs a fixture at a second width, and the first draft of one compared
 a rectangle with itself. `docs/TRAPS.md` has that coda.
 
 **Not done:** a nib a reader can change on a drawing already made, which is the
 `Rewidth` command described above and is bounded by the rebuild rather than by the
 choice; and a per-mark border width for the box and the ellipse, which
-`OUTLINE_WIDTH` argues against rather than defers --- a frame that competes with
+`OUTLINE_WIDTH` argues against rather than defers — a frame that competes with
 its contents is a worse frame, so that one is a decision and not a gap.
 
-#### One press of undo for one sweep --- done 2026-08-30
+#### One press of undo for one sweep — done 2026-08-30
 
 A sweep of the eraser is one press, one drag and one release, and it can cross
 any number of marks. Until today each mark it touched was its own journal entry,
 so a reader who rubbed out five drawings pressed undo five times to get them
-back --- while four comments in four files said the gesture was one undo.
+back — while four comments in four files said the gesture was one undo.
 
 **Every one of those comments is true of a sweep that stays inside one drawing**,
 which is the sweep the existing test used and the sweep anyone writing one reaches
@@ -13086,8 +13086,8 @@ because "an eraser you cannot hit is the complaint that actually gets reported,
 against a sweep that is one press of undo away". The conclusion rested on the
 premise and the premise was false.
 
-**The journal holds an `Entry`, not a `Command`.** The obvious shape --- a command
-that groups, carrying a list of the commands inside it --- is closed by an existing
+**The journal holds an `Entry`, not a `Command`.** The obvious shape — a command
+that groups, carrying a list of the commands inside it — is closed by an existing
 decision: `Command` is `Copy` and replay is a `for` loop over values, which is
 what keeps a rebuild allocation-free. So the gesture is a second field beside the
 command, and undo walks back over the run of *adjacent* entries carrying the same
@@ -13097,8 +13097,8 @@ is a pair that can disagree.
 **The number is minted by the frontend**, at the release rather than at the press,
 and that is not laziness about where it belongs: the backend sees a sequence of
 commands and cannot see where a gesture ends. Nothing is looked up by the number
-and no table is keyed by it --- the model only ever asks whether two neighbours
-carry the same one --- so a webview sending nonsense could group commands it
+and no table is keyed by it — the model only ever asks whether two neighbours
+carry the same one — so a webview sending nonsense could group commands it
 issued back to back, which it could equally have achieved by not issuing them.
 
 **Zero is the wire's *no gesture*, and `SweepId` is a `NonZeroU64`** behind a door
@@ -13108,20 +13108,20 @@ including another command outside a gesture. That last case is the one an
 `Option` equality gets wrong, and it has a test of its own.
 
 Ten mutations, six in Rust and four in the frontend, each caught by the test named
-for it --- and two of them survived first. One was `None`-never-groups being
+for it — and two of them survived first. One was `None`-never-groups being
 enforced twice, by the `while let` and by a direct read of the field beside the
 accessor, so mutating the accessor left the raw read refusing anyway; the fix was
 one mechanism rather than a cleverer mutation. The other was aimed at `command_in`
 while the test named for it went through `reink_in`, which is a different route to
-the same call --- a sweep that takes two marks *whole* is the only thing in this
+the same call — a sweep that takes two marks *whole* is the only thing in this
 subsystem that reaches the first, and that is the test that was missing.
 
 **Not done:** grouping anything else. A drag that moves a mark is already one
-command, and no other gesture in the viewer sends more than one --- so this is a
+command, and no other gesture in the viewer sends more than one — so this is a
 mechanism with exactly one consumer today, which is stated rather than hidden: the
 day a second one appears, `apply_in` is what it calls.
 
-#### Upgrading from 26.8.8 on Windows --- done 2026-08-24
+#### Upgrading from 26.8.8 on Windows — done 2026-08-24
 
 26.8.9 fixed what the bundle *contains*. It could not fix what a machine already
 has, and that turned out to be the larger half.
@@ -13129,7 +13129,7 @@ has, and that turned out to be the larger half.
 26.8.8 installed the engine as a file named `pdfium` (the trailing-slash trap,
 recorded from both sides in `docs/TRAPS.md`). 26.8.9 needs a directory of that
 name. The generated `installer.nsi` does `CreateDirectory "$INSTDIR\pdfium"`
-and then `File /a "/oname=pdfium\pdfium.dll"` --- `CreateDirectory` against an
+and then `File /a "/oname=pdfium\pdfium.dll"` — `CreateDirectory` against an
 existing file fails and sets an error flag nothing reads, so the `File` reports
 `Error opening file for writing` and offers Abort, Retry, Ignore.
 
@@ -13146,7 +13146,7 @@ got a success and an application that opens nothing.
 
 **The fix and its control.** `src-tauri/installer-hooks.nsh` defines
 `NSIS_HOOK_PREINSTALL`, which Tauri inserts immediately after `SetOutPath
-$INSTDIR` and before the resource copies --- the one place the leftover can be
+$INSTDIR` and before the resource copies — the one place the leftover can be
 removed in time. Four legs, each into a scratch directory with `/S /D=`, the
 first two starting from a byte-identical planted stray:
 
@@ -13161,7 +13161,7 @@ The failing leg is the **released** `tpdf_26.8.9_x64-setup.exe`, not a rebuild
 with the hook taken out: a rebuild would test the hook, and only the released
 binary tests the upgrade. It wrote every other file, registered itself in
 `HKCU\...\Uninstall`, created the shortcut and the file association, and
-returned **0** --- so the answer has to be read off the filesystem, never off the
+returned **0** — so the answer has to be read off the filesystem, never off the
 exit code. The last two legs are the hook's other branches, and they are what
 says the fix costs nothing on a machine that never ran the broken build.
 
@@ -13169,7 +13169,7 @@ says the fix costs nothing on a machine that never ran the broken build.
 temptation was to write "an unwired hook is silent" from `!ifmacrodef` alone,
 and two thirds of that is wrong. A mistyped key is refused by the build script's
 schema. A path naming a file that is not there is refused by the bundler, though
-only when a bundle is built --- a CI leg, not a gate, and `npm run tauri build |
+only when a bundle is built — a CI leg, not a gate, and `npm run tauri build |
 tail` exits 0 there regardless, because a pipeline's status is the last
 command's. Only a file that exists and defines the macro under another name is
 swallowed. `the_windows_installer_clears_the_way_for_the_pdfium_directory`
@@ -13178,7 +13178,7 @@ covers that case in seconds on every machine, with two mutations behind it.
 **What no check here can reach.** The test is a source-level assertion: it says
 the config names the file and the file says what it should, and it cannot say
 NSIS ran it or ran it early enough. The A/B is what says that, and it needs a
-Windows machine, two installers and a scratch directory --- so it lives in
+Windows machine, two installers and a scratch directory — so it lives in
 `BUILD.md`'s release checklist as a step, beside the bundle check it belongs
 with. Installing writes registry keys and a Start Menu shortcut on the machine
 running it, so that step also says which three keys to export first and how to
@@ -13186,11 +13186,11 @@ put the machine back.
 
 **And it is dead code with an expiry condition, stated where it lives.** The
 hook does nothing on a machine that never ran 26.8.8 and nothing on a second
-run. Its own comments say when it can be deleted --- when no supported upgrade
-path starts at 26.8.8 --- and that the file and the `installerHooks` line go
+run. Its own comments say when it can be deleted — when no supported upgrade
+path starts at 26.8.8 — and that the file and the `installerHooks` line go
 together.
 
-#### The append's read-back left the coordinator --- done 2026-08-26
+#### The append's read-back left the coordinator — done 2026-08-26
 
 Found by step 6 of the release checklist while cutting `26.8.8`, by reading
 `docs/THREAT-MODEL.md`'s residual risk 18 against the code it describes.
@@ -13200,7 +13200,7 @@ that entry records. Its **verification** did not: `save::append_in_place`
 re-reads the whole file it has written and parses it with `lopdf` in the app
 process, because the check that the cross-reference chained needs a parser and
 the answer is a page count. The previous revision of that file is the document
-the reader opened --- attacker bytes, verbatim --- so every append parses
+the reader opened — attacker bytes, verbatim — so every append parses
 untrusted input in the coordinator, which is the case risk 17 reads as having
 been closed.
 
@@ -13217,7 +13217,7 @@ Two things to do, and they are separable:
    the rename, not a hash.) `prepared` is consumed
    rather than borrowed, which is what lets it cross into the closure, and the
    two error shapes are kept by having the closure return
-   `Result<(), SaveFailure>` rather than a bare message --- and `SaveFailure` is
+   `Result<(), SaveFailure>` rather than a bare message — and `SaveFailure` is
    `failure::Failure`, which `docmodel::Refusal` converts into, so an edit
    command that wants to answer a model refusal no longer has to flatten it to a
    sentence first.
@@ -13225,28 +13225,28 @@ Two things to do, and they are separable:
    **One behaviour changed with it, deliberately.** The rewrite's first refusal
    used to leave through `?` and skip the "and the document did not close
    cleanly" note; that was an accident of where the early return sat, not a
-   decision, and both arms carry it now. The fields a program branches on ---
-   `reopen` and `changed` --- are untouched.
+   decision, and both arms carry it now. The fields a program branches on —
+   `reopen` and `changed` — are untouched.
 
    **The threading itself is untestable, and that is stated rather than papered
    over.** No unit test can see which thread a call ran on, and a source-level
    assertion that the match sits inside `spawn_blocking` would prove a shape and
-   not an ordering --- which this repository already has a trap about.
+   not an ordering — which this repository already has a trap about.
 
    **The behaviour change that came with it is not, and it was extracted so it
    has a failing case.** `with_close_note` is a free function now rather than a
-   closure inside an async Tauri command that no `cargo test` can call --- the
+   closure inside an async Tauri command that no `cargo test` can call — the
    repository's own rule about a guard written inline in a command, arriving in
    the function whose comments already cite it twice. Three tests and three
    mutations: dropping the note, adding it to a clean close, and rebuilding the
-   failure instead of decorating it --- which loses `changed`, the field that
+   failure instead of decorating it — which loses `changed`, the field that
    decides whether the window offers Reload, while leaving the message anybody
    reads looking perfect.
 2. ~~**Move the read-back into the worker**, which is the version that closes the
    entry rather than narrowing it.~~ **Done 2026-08-26**, and the obstacle this
    entry named was not the real one. It said the worker "holds a mapping of the
-   file as it was"; `save_document` closes the document before the write --- and
-   asks the worker everything it asks before that close --- so there is no such
+   file as it was"; `save_document` closes the document before the write — and
+   asks the worker everything it asks before that close — so there is no such
    mapping by then. There is no worker at all, which is the actual constraint:
    the verification spawns one of its own, at one spawn per in-place append.
 
@@ -13262,7 +13262,7 @@ Two things to do, and they are separable:
    **The blocker was never the threading, it was the observable**, which is what
    the deferral above was really about. Step 1 could not be seen by any test and
    said so. This one can, two ways. Structurally, the coordinator no longer holds
-   the bytes, so there is nothing left to parse --- carried by the type rather
+   the bytes, so there is nothing left to parse — carried by the type rather
    than by a grep, which this repository has a trap about. Behaviourally,
    `the_coordinator_does_not_parse_the_file_it_wrote` writes a file that does not
    parse, hands over a verifier claiming it is fine, and requires the save to
@@ -13270,7 +13270,7 @@ Two things to do, and they are separable:
    it.
 
    **`lopdf`, deliberately not PDFium.** `Request::Open` already answers a page
-   count and reusing it would have made this three lines --- and would have
+   count and reusing it would have made this three lines — and would have
    replaced the check with a parser that repairs the defect it exists to catch.
    Measured rather than inherited: `worker-probe` plants a trailer pointing at
    offset 999999999, PDFium opens it without complaint, and `lopdf` names the
@@ -13278,7 +13278,7 @@ Two things to do, and they are separable:
 
    **Two corrections came out of proving it**, both recorded in `docs/TRAPS.md`.
    The probe's first refusal check passed on PDFium's message from
-   `Worker::spawn_shared`, before `Request::Reread` was ever sent --- a control
+   `Worker::spawn_shared`, before `Request::Reread` was ever sent — a control
    refused by a different guard than the one it was written for, green the whole
    time. And a differential between two readers cannot say a worker was
    involved, since an `InWorker` delegating to `Here` answers identically on
@@ -13286,16 +13286,16 @@ Two things to do, and they are separable:
 
    What did **not** change: the rewriting save, Save a copy, Extract and Merge
    all still parse in the coordinator, for the output-channel reason risk 18
-   gives. And `save::Here` is still reachable --- it is what a platform with no
+   gives. And `save::Here` is still reachable — it is what a platform with no
    sandbox gets, marked rather than refused.
 
-   ⚠ **The rewriting save moved on 2026-08-28** --- see the section directly
+   ⚠ **The rewriting save moved on 2026-08-28** — see the section directly
    below, which built the output channel this paragraph names as the obstacle.
    The sentence is left as it was written because it is the record of what was
    true then, and because it is the paragraph that says what the next increment
    had to do. Save a copy, Extract, Split, Merge and Print are still here.
 
-#### The rewriting save moved too, and the output channel is what it needed --- done 2026-08-28
+#### The rewriting save moved too, and the output channel is what it needed — done 2026-08-28
 
 The paragraph above named the obstacle correctly and left it there: an append's
 answer is kilobytes and fits in a reply, a rewrite's answer is the whole
@@ -13314,16 +13314,16 @@ policy is wrong.** `worker::SANDBOX_PROFILE` contains `(deny file-write*)`, whic
 reads as *a worker cannot write*. Measured with the profile verbatim before any of
 this was designed, with the control that matters: the write through the inherited
 descriptor succeeds and `File::create` on a path is refused with `EPERM`, so the
-policy was demonstrably in force. What that establishes is the pair of outcomes ---
+policy was demonstrably in force. What that establishes is the pair of outcomes —
 the policy stops a worker *opening* a path for writing and does not stop a write
-through a descriptor the parent opened --- which is the same asymmetry `DOC_FD`
+through a descriptor the parent opened — which is the same asymmetry `DOC_FD`
 already rests on in the other direction. The usual account, that the check happens
 at `open`, is not what was measured and is not what the rule rests on.
 `docs/TRAPS.md` has the entry.
 
 **The split is the one the append already had.** `save::rewrite_ready` asks the
-coordinator's questions about a path --- is this still the file the edits were
-made against --- and `save::rewrite_update` asks none: it is a pure function of
+coordinator's questions about a path — is this still the file the edits were
+made against — and `save::rewrite_update` asks none: it is a pure function of
 the document's bytes and the plan. `save::Outside` names the pair
 `Reread + Rewriter`, so the rule *ask `render::Backend`, take a worker where
 there is one, mark the run where there is not* is stated once and read by three
@@ -13332,36 +13332,36 @@ call sites.
 **It costs one spawn, and the number is measured rather than argued.** 2.4 ms in
 the coordinator against 11.4 ms in a worker on `comments.pdf`, +9.0 ms, best of
 five interleaved. That is the process start and PDFium's initialisation, so it is
-fixed rather than proportional --- on a document whose parse is hundreds of
+fixed rather than proportional — on a document whose parse is hundreds of
 milliseconds it is noise, and a 4-page fixture is close to the worst case for it.
 
 **One thing crosses back and one thing is checked.** The reply is a length; the
 coordinator compares it against the staged file's own size. Neither number is
-derived from the other, which is what makes it a check --- and it is the only one
+derived from the other, which is what makes it a check — and it is the only one
 available, because the bytes never arrive here to be looked at.
 
 **A refusal needed a bit as well as a sentence.** `save::Refusal` carries
 `changed`, which decides whether the window offers Reload; the refusals that set
 it now happen in the worker. A `String` across the pipe would have dropped it
 silently, leaving a correct sentence with no action attached, so `Response`
-carries the flag beside `locked` and `abandoned` --- two earlier instances of the
+carries the flag beside `locked` and `abandoned` — two earlier instances of the
 same shape.
 
 **Evidence.** Five checks in `worker-probe`, taking it to 28/28 on macOS: the two
 processes write **byte-identical** documents (222,667 bytes on
-`testdata/comments.pdf` under a plan that turns every page --- a rewrite is
+`testdata/comments.pdf` under a plan that turns every page — a rewrite is
 deterministic, so a page-count comparison would have passed for a worker that
 dropped the turns); both refuse a mismatched baseline and the worker's refusal
 names the page counts, so it really parsed; the worker path fails where the
 coordinator path answers when pointed at a directory with no PDFium; and a worker
 spawned **without** an output file refuses in words. Five unit tests, seven
 mutations. `the_coordinator_does_not_parse_the_document_it_rewrites` hands the
-save a source that is not a PDF and requires it to succeed --- red on the code
+save a source that is not a PDF and requires it to succeed — red on the code
 this replaced.
 
 **Seven existing mutations were orphaned by the refactor**, which is the anchor
-gate doing the job it was written for. Six were re-aimed; one --- *put a save in
-place during the staging* --- was replaced rather than moved, because the shape it
+gate doing the job it was written for. Six were re-aimed; one — *put a save in
+place during the staging* — was replaced rather than moved, because the shape it
 edited no longer exists and the defect it stood for is now expressed as handing
 the source back as the staged file.
 
@@ -13369,27 +13369,27 @@ the source back as the staged file.
 Split, Merge and Print still parse here. The first four could take the same seam;
 a copy's destination is chosen by the reader in a file dialog, so handing a worker
 a descriptor to a file it did not create is a decision that has not been made.
-Printing cannot use it at all --- its answer has to come back into this process to
+Printing cannot use it at all — its answer has to come back into this process to
 reach `NSPrintOperation`.
 
 ⚠ **This paragraph ended with "Windows is wired and unmeasured ... has not been run"
 until 2026-09-02, and it had been false since 2026-09-01.** `worker-probe` became a step
-of both CI legs that day, and on run 33626718480 --- the current `main` --- the
+of both CI legs that day, and on run 33626718480 — the current `main` — the
 `windows-2025` leg reported **45/45 with 0 not applicable to this platform**, the
 handed-over handle exercised end to end and the negative control with it: *a worker with
 nowhere to write refuses to rewrite*. `AGENTS.md` was corrected when the step landed and
 this was not, so for a day the two documents gave different answers to one question, which
 is the failure `AGENTS.md`'s own quality-gates section names. The handle is still
-`DuplicateHandle`d into a suspended child rather than `dup2`'d before `exec` --- that half
+`DuplicateHandle`d into a suspended child rather than `dup2`'d before `exec` — that half
 was never the doubt; what was unmeasured was whether it works, and it is measured now.
 
-#### Back and Forward grey when there is nowhere to go --- done 2026-08-23
+#### Back and Forward grey when there is nowhere to go — done 2026-08-23
 
 The `wiring` gate has carried one exemption since it was written: `onNavigate`,
 declared on `ViewerOptions` so that a Back and Forward affordance could be
-re-enabled after a jump, and consumed by nothing. Its own entry said why ---
+re-enabled after a jump, and consumed by nothing. Its own entry said why —
 *both commands are guarded on `withDocument` alone, so neither greys when there
-is nowhere to go* --- and that wiring the callback was the same piece of work as
+is nowhere to go* — and that wiring the callback was the same piece of work as
 making them grey.
 
 `History` already had `canGoBack` and `canGoForward`, tested. What was missing
@@ -13401,8 +13401,8 @@ window hearing about a change.
 `goToDestination` is where a jump is *recorded*, and its own comment says why the
 push lives there rather than at its four callers: *"remember to record the jump"
 is a rule someone has to keep following, and the fifth caller is the one that
-forgets*. The announcement had been written at a caller anyway --- `followLink`
-called `onNavigate` after calling `goToDestination` --- so a jump from the
+forgets*. The announcement had been written at a caller anyway — `followLink`
+called `onNavigate` after calling `goToDestination` — so a jump from the
 outline, a search result or a comment recorded a place and told nobody.
 
 It is announced from the primitive now, by the argument the file already made
@@ -13412,8 +13412,8 @@ mirror case and the one a reader meets every time they open a second file.
 
 ##### Why the announcement matters at all
 
-A menu item's enablement is a **pushed** map --- `menuEnablement` evaluates every
-guard once and `set_menu_enabled` sends the answers --- so a guard reading state
+A menu item's enablement is a **pushed** map — `menuEnablement` evaluates every
+guard once and `set_menu_enabled` sends the answers — so a guard reading state
 that moves outside the push sites is wrong between them. That is a trap this
 repository has already paid for, with `edit.highlightSelection` greyed at exactly
 the moment there was something to highlight.
@@ -13429,14 +13429,14 @@ redundant announcement costs twenty closures and no message.
 Five mutations, each caught by the test named for it: withholding the
 announcement from a recorded jump and from a cleared history, offering Back on a
 document with nowhere to go, asking Back's question for Forward, and reaching
-through a closed document to a remembered answer. Nine tests --- five over the
+through a closed document to a remembered answer. Nine tests — five over the
 viewer's announcements including a control that says nothing is announced before
 the history moves, four over the guards including the no-document control.
 
 **One test corrected itself.** It asserted that a jump landing where the reader
 already is announces nothing, on the premise that `History.push` records nothing
-for it. `push` skips only when the *top of the stack* is that place --- two
-presses on the same cross-reference --- so a first jump to where you already are
+for it. `push` skips only when the *top of the stack* is that place — two
+presses on the same cross-reference — so a first jump to where you already are
 does record, and the assertion went red. What the test pins now is what was
 measured.
 
@@ -13444,23 +13444,23 @@ The gate's exemption table is empty and stays as an empty `dict`: the next
 genuinely-unwired callback should be written against this reasoning rather than
 from scratch.
 
-#### Thirty-one doc comments that documented nothing --- done 2026-08-23
+#### Thirty-one doc comments that documented nothing — done 2026-08-23
 
 `armErase`'s doc comment ran to twelve lines and bound to nothing: the crop tool
 had been inserted between it and the method, and two `/** */` blocks in a row
-bind only the second. TypeScript accepts that in silence --- no lint, no type
+bind only the second. TypeScript accepts that in silence — no lint, no type
 error, and no test can assert on a comment.
 
 What made it expensive is what the orphan said. *"Only drawings are erasable ...
 making the eraser remove whole marks of any kind would be a second, much more
-destructive command wearing the same cursor"* --- a live design argument against
+destructive command wearing the same cursor"* — a live design argument against
 the feature being built, attached to nothing, in the file where somebody would go
 looking for exactly that reasoning.
 
 A scan found **31** across twelve files, all repaired.
 `scripts/check_doc_comments.py` is the gate. (It was described here as "the
 eighteenth" until 2026-08-24, when the `readme` gate moved into vitest and the
-total went back to eighteen --- an ordinal is a count in prose with nothing
+total went back to eighteen — an ordinal is a count in prose with nothing
 behind it, which is the drift this file has been caught by three times.)
 
 ##### The rule is total because of a spelling, not an allowlist
@@ -13485,7 +13485,7 @@ a block on a declaration that already had one, so the stripped text matched and 
 *new* orphan appeared. Re-running the scan is what found them. The invariant says
 no code moved; only the scan says the comment landed on the right thing.
 
-**Not done:** ~~the same rule for Rust, where it does not apply --- `///` lines
+**Not done:** ~~the same rule for Rust, where it does not apply — `///` lines
 merge into one block, so the failure mode does not exist. And a doc comment on
 the *wrong* declaration, one that binds and describes something else: nothing
 mechanical can see that, and the script says so rather than leaving it to be
@@ -13493,14 +13493,14 @@ discovered.~~
 
 ⚠ **Both halves of that were closed on 2026-08-28, and it is worth saying exactly
 which half was wrong, because the sentence sounds like one claim and is two.**
-`///` lines really do merge, so nothing is *lost* --- that half is right and the
+`///` lines really do merge, so nothing is *lost* — that half is right and the
 gate's own docstring reaches it again in four experiments, three of which are
 compile errors and one of which this repository's `-D warnings` denies. What is
 wrong is the conclusion drawn from it. Take the blank line away and the two runs
 are **one comment**, so everything the first block said is rendered against the
 item below it: nothing is lost and the attribution is wrong, which is the second
 half this note called mechanically invisible. The `docs` gate has a Rust arm for
-exactly that, and its first run found **three live instances** --- one of them
+exactly that, and its first run found **three live instances** — one of them
 introduced while fixing the other two, which is the argument for the arm
 existing.
 
@@ -13508,13 +13508,13 @@ existing.
 this document has**, because it is a recommendation not to try, and the only
 reader positioned to overturn it is somebody who ignored it. This one stood for
 two days after the arm was built and was found on 2026-08-30 by a sweep of every
-`**Not done` note in this file --- the fourth stale note found that day, and the
+`**Not done` note in this file — the fourth stale note found that day, and the
 only one of the thirty-three whose subject had been closed without the note being
 struck. The other stale ones were all in sections written the same week; this one
 was not, which is the argument for sweeping rather than for re-reading whatever
 is nearby.
 
-#### Every command classified against the README --- done 2026-08-24
+#### Every command classified against the README — done 2026-08-24
 
 The ranked next step recorded under the crop increment, built. It said: *every
 registered command must appear in the README's built prose or in an allowlist
@@ -13535,12 +13535,12 @@ Planting `<!-- not-built: edit.stamp.approved -->` in the README produced
        (checked against 66 registered commands)
 ```
 
---- exit 0, on the exact error the check exists for, with the shortfall printed
+— exit 0, on the exact error the check exists for, with the shortfall printed
 beside the verdict as though 66 were the population. The registry holds **77**.
 
 So the fix was not a better regex. `src/lib/readme.test.ts` **imports the
 registry** and reads the README through Vite's `?raw`, which removes the second
-parser rather than improving it --- the reasoning
+parser rather than improving it — the reasoning
 `scripts/check_mutation_test_files.py` already records for taking test names from
 `vitest list --json`, and which did not transfer because the two checks look
 nothing alike. `?raw` matters for a smaller reason worth stating: this project
@@ -13548,7 +13548,7 @@ deliberately has no Node type declarations, and a test reading `README.md` from
 the filesystem would have added `@types/node` to get one string.
 
 `scripts/gates.py` is eighteen gates rather than nineteen. The check did not
-weaken by moving --- it runs under `vitest`, which is a gate, beside
+weaken by moving — it runs under `vitest`, which is a gate, beside
 `appcommands.test.ts`, which is already where registry invariants live.
 
 ##### What the forward direction found on its first run
@@ -13560,7 +13560,7 @@ somebody thought to mention; the forward direction makes the omissions countable
 which is the whole of what it buys. All three are described now.
 
 Sixty-six commands are claimed by `<!-- built: -->` markers in the two prose
-sections. The other eleven are in `UNLISTED` with a reason each --- opening and
+sections. The other eleven are in `UNLISTED` with a reason each — opening and
 reloading a file, three update and about items, five ways of moving about a
 document, and dropping a selection. A reason per command rather than per group,
 because the groups are the part that changes.
@@ -13571,25 +13571,25 @@ Including the three refusals, which read exactly like a clean run if they are
 allowed to pass quietly: an empty registry, a missing section heading, and a scan
 that found no markers of either kind. Six are permanent mutations in
 `mutate_frontend.py` aimed at `README.md` itself, which is a first for that
-harness and is the right target --- the drift the README has actually suffered is
+harness and is the right target — the drift the README has actually suffered is
 a bullet going stale, not a function going wrong.
 
 One assertion **cannot be the only red**, and that was measured rather than
 reasoned: an id claimed built *and* absent is either registered, in which case
 the absence check fires beside it, or not, in which case the stale-marker check
-does. Both were run. It stays because its message names the mistake --- a bullet
-copied from one section to the other --- while the two that fire with it name only
+does. Both were run. It stays because its message names the mistake — a bullet
+copied from one section to the other — while the two that fire with it name only
 the symptom.
 
 **Not done:** anything in the README that is not a command. The status paragraph
 was the sentence most wrong in the original review and still has no mechanical
 test; a keyword list approximating one would be a second inventory to drift. Nor
-does a `built:` marker say the prose beside it is *accurate* --- a bullet
+does a `built:` marker say the prose beside it is *accurate* — a bullet
 describing a command wrongly passes exactly like one describing it well. Both
 limits are stated in the test rather than left to be discovered, and
 `BUILD.md`'s release checklist carries that half.
 
-### Phase 3 --- Redaction
+### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,
 carrier-based verification, flatten-to-image, XFA refusal.
@@ -13607,7 +13607,7 @@ whose default state is OFF and hides a second needle in the group's own `/Name`,
 only through the catalog's `/OCProperties`; `hostile-structure.pdf` repeats the page's words
 in `/ActualText` and `/Alt` on a structure element off `/StructTreeRoot`, which the page tree
 never leads to. All six carriers are reachable and must **survive**, which is the direction
-the corpus was thinnest in --- eleven fixtures and every one of its discriminating needles
+the corpus was thinnest in — eleven fixtures and every one of its discriminating needles
 was something a sweep had to *remove*.
 
 **The instrument could not fail, which mattered more than the missing fixtures.**
@@ -13618,14 +13618,14 @@ with the control manifest that proves each part can fire. On the real corpus: 15
 exit 0, controls leaking 14.
 
 **Not done:** the criterion is stated over *verification*, and `verify::scan` walks every
-object rather than the page tree --- so nesting is invisible to it by construction and these
+object rather than the page tree — so nesting is invisible to it by construction and these
 three fixtures exercise the **sweep**, not the scan. What no fixture yet reaches is the
 redaction path's own handling of them, and the version of that sentence written here on
 2026-09-02 named the wrong gap: it said *every test for that builds its structure tree in
 Rust, so the loader has never been in the loop*, and that is false. `text-marked.pdf` carries
 a real `/StructTreeRoot`, a `/ParentTree` and three `/StructElem`s built by
-`testdata/make_text_pdf.py`, and `redact-apply-probe` asserts all three of its markers ---
-`STRUCT-CARRIER` and `STRUCT-ANCESTOR` gone, `STRUCT-OTHER` kept --- end to end through the
+`testdata/make_text_pdf.py`, and `redact-apply-probe` asserts all three of its markers —
+`STRUCT-CARRIER` and `STRUCT-ANCESTOR` gone, `STRUCT-OTHER` kept — end to end through the
 loader. **A *Not done* note is a claim about the product, and this one was refuted by a
 `grep` for its own markers.** The general form already has an entry: *A "Not done" note
 outlives the work that closes it, and it is the recommendation nobody re-checks.*
@@ -13635,7 +13635,7 @@ What is genuinely uncovered is narrower and was measured rather than reasoned ab
 * **The `/Kids` half of the parent tree.** `number_tree_lookup` walks `/Kids` with `/Limits`
   because, in its own words, a producer with many pages writes a balanced tree and reading
   only `/Nums` "would find nothing on all of them, silently". Both fixtures in the tree that
-  carry a `/ParentTree` --- `tagged.pdf` and `text-marked.pdf` --- hold **zero** occurrences
+  carry a `/ParentTree` — `tagged.pdf` and `text-marked.pdf` — hold **zero** occurrences
   of `/Limits`, so the shape the code says every real document has is exercised by one
   Rust-built dictionary and by nothing a parser produced.
 * **Two of the three shadow-text keys.** `SHADOW_TEXT` is `/ActualText`, `/Alt` and `/E`. No
@@ -13645,14 +13645,14 @@ What is genuinely uncovered is narrower and was measured rather than reasoned ab
 
 That is `redact-probe`'s corpus rather than this one, and it is the next increment here.
 
-**All three are closed --- 2026-09-02.** The first two were one defect wearing two
+**All three are closed — 2026-09-02.** The first two were one defect wearing two
 hats: `text-marked.pdf` is the one fixture a redaction probe opens that has a real
 structure tree, and it was built in the shape that exercised the least code. The
 third was a different thing entirely and is written up below the two.
 
 * **`/Alt` and `/E` now exist on a linked structure element.** The carrier element carries
   `STRUCT-ALT-GONE` and `STRUCT-E-GONE`, the untouched line's element carries
-  `STRUCT-ALT-KEPT` and `STRUCT-E-KEPT`, and `redact-apply-probe` asserts all four --- 48
+  `STRUCT-ALT-KEPT` and `STRUCT-E-KEPT`, and `redact-apply-probe` asserts all four — 48
   checks to 52. **The A/B is what makes this worth the space**: truncating `SHADOW_TEXT` to
   `[b"ActualText"]` leaves the existing `STRUCT-CARRIER` check **green** and turns exactly
   the two new ones red. So the probe had been blind to two thirds of that array, and the
@@ -13660,8 +13660,8 @@ third was a different thing entirely and is written up below the two.
   `verify::scan` matches by substring, and a marker with the old one as a prefix would have
   kept the old assertion green by surviving.
 * **The parent tree is balanced now, so `/Kids` is walked through the loader.** The root
-  holds no `/Nums` at all. Its first kid is a trap --- `/Limits [5 9]` while its `/Nums`
-  claims key 0 and maps it to the *wrong* element --- which is what gives `/Limits` a
+  holds no `/Nums` at all. Its first kid is a trap — `/Limits [5 9]` while its `/Nums`
+  claims key 0 and maps it to the *wrong* element — which is what gives `/Limits` a
   failing case: on a well-formed tree, skipping a subtree whose range excludes the key finds
   the same element as searching it would, so the skip is an optimisation and only a document
   that disagrees with itself can tell the two apart. A new unit test asserts the fixture's
@@ -13669,7 +13669,7 @@ third was a different thing entirely and is written up below the two.
   two mutations are aimed at it: slipping `||` to `&&` in the limits comparison, and never
   descending `/Kids` at all. Both caught.
 
-**And the third is closed too --- 2026-09-02, later the same day.** `hostile-ocg.pdf` is
+**And the third is closed too — 2026-09-02, later the same day.** `hostile-ocg.pdf` is
 a `redact-probe` case now, two cases to three, and it reaches the one branch of the
 marked-content handler nothing else there does: a span written `/OC /MC0 BDC`, whose
 property list is a **name** into the page's `/Properties` rather than an inline dictionary,
@@ -13680,7 +13680,7 @@ distinction the refusal is drawn on.
 ⚠ **The measurement this was waiting on came back the other way, and the paragraph here
 predicted the wrong answer.** It asked whether PDFium's text extraction returns glyphs
 inside an optional content group whose default state is OFF, and said that if it did not,
-the finding would be larger than the fixture --- a redaction flow that finds words through
+the finding would be larger than the fixture — a redaction flow that finds words through
 PDFium could not offer to remove text a reader never sees. **It does return them**: 163
 characters for that page, the needle among them, so the region is built from character
 boxes exactly like every other case. The worry does not arise, and it is recorded here
@@ -13696,7 +13696,7 @@ PDFium's **renderer** honours the group is the mirror question and is not measur
 shared-list refusal turns `hostile-ocg.pdf` red and leaves `text-base14.pdf` and
 `links.pdf` green, because both of those write their spans with an inline dictionary and
 never reach the name arm at all. A case that reddened with everything else would have added
-a document rather than coverage --- and unlike the two fixtures beside it, a hosted runner
+a document rather than coverage — and unlike the two fixtures beside it, a hosted runner
 can build this one, since `make_hostile_pdf.py` is dependency-free.
 
 ### Phase 4 — Forms and visual signatures
@@ -13933,18 +13933,18 @@ that it presented several genuinely unresolved questions as settled architecture
 8. ~~**Where the annotation overlay lives.**~~ **Answered 2026-08-18 for a highlight**, in
    the shape this question predicted: the frontend draws it while the document is open, and
    PDFium draws the appearance stream `save.rs` wrote once the file has been saved and
-   reopened. The overlay cost nothing to add --- the canvas already composites the search
+   reopened. The overlay cost nothing to add — the canvas already composites the search
    hits and the selection with `multiply`, so a mark is a third fill in the same pass.
 
    ~~What the answer does *not* yet have is the visual regression test this question asks
-   for.~~ **Built 2026-08-23** --- `viewer_check.py`'s agreement phase, five checks, and the
+   for.~~ **Built 2026-08-23** — `viewer_check.py`'s agreement phase, five checks, and the
    paragraph below is what it found. The gap as stated was right: both renderers draw the
    rectangles the model holds, so they can only diverge in colour, blend and inset, and no
    check compared any of the three.
 
    It is not a screenshot comparison, which is what this question proposed. The overlay's
-   pixels are already readable in the window and so is a render of the saved file --- one
-   through the canvas, one through the tile protocol --- so the phase makes nine marks, reads
+   pixels are already readable in the window and so is a render of the saved file — one
+   through the canvas, one through the tile protocol — so the phase makes nine marks, reads
    the overlay, saves a copy, opens it, renders the same page and reads that. **The file's ink
    is isolated by diffing that render against one taken before any mark was made**, so page
    content cancels and the classifier knows nothing about colour; classifying by hue and then
@@ -13952,13 +13952,13 @@ that it presented several genuinely unresolved questions as settled architecture
 
    **Eight of the nine kinds agree exactly: 0 degrees of hue between the two renderers**, and
    coverage within 2.7x, which is the text box and is the largest legitimate disagreement in
-   the set --- both sides draw *type*, and by design not the same type.
+   the set — both sides draw *type*, and by design not the same type.
 
    **The ninth is a real gap in the product, and this is what found it.** A comment's icon is
    drawn in the reader's colour on screen and in PDFium's yellow in the file. `save.rs` is not
    at fault and the file is right: it writes `/C` with the colour the reader chose, and
    deliberately writes no appearance stream, because every reader synthesises its own `/Text`
-   icon. PDFium's synthesis ignores `/C` --- **measured, not inferred**: sending blue read 224
+   icon. PDFium's synthesis ignores `/C` — **measured, not inferred**: sending blue read 224
    degrees on screen and 60 in the file, sending red read 0 on screen and 60 again. So a
    reader who colours a comment sees their colour until they save and PDFium's yellow
    afterwards, which is the "the mark changed under the reader" shape the overlay phase was
@@ -13973,33 +13973,33 @@ that it presented several genuinely unresolved questions as settled architecture
    ⚠ **The last clause of that argument was the only part nobody had measured, and it is the
    part the decision turns on. Measured 2026-08-30: it is true, and the framing above is
    therefore wrong about the cost.** `annot-probe --mode iconcolor` writes the same comment
-   twice in two colours and compares the two renders byte for byte --- no hue, no threshold, no
+   twice in two colours and compares the two renders byte for byte — no hue, no threshold, no
    classifier, because a hue read off a 25 px antialiased icon is the kind of number that is
    wrong quietly. **PDFKit moves 439 pixels and PDFium moves 0.** So Preview shows the reader's
    colour correctly and tpdf's own renderer is the only one that does not.
 
    That is not "agreeing with ourselves versus agreeing with everyone else". Writing an
-   appearance stream would make tpdf right **by making Preview wrong** --- replacing a correct
+   appearance stream would make tpdf right **by making Preview wrong** — replacing a correct
    native icon with a hand-drawn bubble in every conforming reader, to fix the one renderer
    that has the defect. The recorded framing presented the two sides as comparable goods and
    one of them is not a good at all.
 
    **A third option exists and the framing hid it**, because it assumed the answer had to be
    in the file: draw the icon in tpdf's own overlay from the `/C` `annots.rs` reads, and let
-   the file stay as it is. That is not cheap --- `annots.rs` does not read `/C` today, and
+   the file stay as it is. That is not cheap — `annots.rs` does not read `/C` today, and
    PDFium's `FPDF_ANNOT` is per-render rather than per-annotation, so suppressing its icon
-   without suppressing every other mark's is its own piece of work --- but it is the option
+   without suppressing every other mark's is its own piece of work — but it is the option
    that fixes the reader who is wrong instead of the file that is right.
 
    **Decided 2026-08-30 on that measurement: tpdf writes no appearance stream for a comment,
-   and this stops being an open question.** Not the same "no" the argument above reached ---
+   and this stops being an open question.** Not the same "no" the argument above reached —
    that one was a choice between two goods and this one is a refusal to trade a correct icon in
    every conforming reader for a fix to the single renderer that is wrong. What changes is that
    the defect is now located: it is in the *view*, not in the file, so it is ranked as a
    rendering gap rather than left as a question about `/AP`.
 
    **Ranked, not built:** drawing the icon in tpdf's own overlay from `/C`. Two things stand in
-   the way and both are real work rather than plumbing --- `annots.rs` does not read `/C` at
+   the way and both are real work rather than plumbing — `annots.rs` does not read `/C` at
    all, and `FPDF_ANNOT` is a per-render flag, so suppressing PDFium's icon without suppressing
    every other mark it draws needs the overlay and the tile render to divide the work
    differently than they do now. Nothing about the file changes, which is what makes it the
@@ -14007,7 +14007,7 @@ that it presented several genuinely unresolved questions as settled architecture
 
    **The lever exists, measured 2026-08-31 by `examples/hidden_probe.rs`: PDFium honours `/F`
    bit 2, Hidden, per annotation.** That is what the whole increment turns on, because
-   `FPDF_ANNOT` is the wrong shape --- it is all the marks or none of them --- and the
+   `FPDF_ANNOT` is the wrong shape — it is all the marks or none of them — and the
    per-annotation flag is the only other lever the API offers. The fixture carries a highlight
    and a comment **a hundred points apart on one page**, which is the discrimination: a page
    with one annotation cannot tell *PDFium honours Hidden* from *PDFium stopped drawing
@@ -14021,7 +14021,7 @@ that it presented several genuinely unresolved questions as settled architecture
    | the comment's rectangle, hidden vs source | **0** | the icon is gone |
 
    Handed the *visible* file twice, the two live checks go red at 0 px moved and 373 px still
-   in the icon's rectangle --- which is the control, and also what shows the rectangle is aimed
+   in the icon's rectangle — which is the control, and also what shows the rectangle is aimed
    at the icon rather than at blank paper. The 373 is the same number in both directions.
 
    **So the remaining cost is known rather than guessed**, and it is a day rather than an
@@ -14035,15 +14035,15 @@ that it presented several genuinely unresolved questions as settled architecture
    **The first of those five is done, 2026-08-31.** `annots.rs` reads `/C` onto
    `Comment::color` as RGB in 0..1, `comments.ts` mirrors it, and seven mutations in
    `scripts/mutate_rust.py` are each caught by the test named for them. The reader follows
-   §12.5.2 and chooses the colour space **by the count** --- one number DeviceGray, three
-   DeviceRGB, four DeviceCMYK --- so an array of two numbers is not a colour with a component
+   §12.5.2 and chooses the colour space **by the count** — one number DeviceGray, three
+   DeviceRGB, four DeviceCMYK — so an array of two numbers is not a colour with a component
    missing, it is not a colour, and it is declined whole exactly as `quads_of` declines a
    malformed `/QuadPoints`. That half touches no render path and is independently useful: the
    panel can show the colour somebody chose whether or not the icon is ever redrawn.
 
    **What the remaining four now have that they did not is a measured blast radius, and it is
    wider than "the overlay".** The pass that sets Hidden belongs on `RawDocument::load_page`,
-   which is the *one* page cache every render in the application comes out of --- `render.rs`
+   which is the *one* page cache every render in the application comes out of — `render.rs`
    loads it for the tile at 1438, for the crop geometry at 1578 and for text extraction at
    1782. Text extraction is unaffected, because `FPDFText_*` reads the page's text objects and
    an annotation is not one; the tile is not, and the tile is what the viewer, the thumbnails
@@ -14052,14 +14052,14 @@ that it presented several genuinely unresolved questions as settled architecture
    on `comments.pdf` specifically.
 
    **And the corpus can barely exercise it.** `testdata/comments.pdf` carries three `/C`
-   arrays in 238 kB --- `1 0.82 0.2`, `1 1 0` and `1 0 0` --- and `comments-rotated.pdf`
+   arrays in 238 kB — `1 0.82 0.2`, `1 1 0` and `1 0 0` — and `comments-rotated.pdf`
    carries none, so a fixture that discriminates the drawn colour from PDFium's yellow has to
    be written for the purpose. That is not an argument against the increment; it is the
    fifth item on the list arriving before the third, and worth knowing before the day is
    spent rather than in the middle of it.
 
    ~~**Still not done, and it is the half that would overturn this:** an Acrobat run.~~
-   **Measured 2026-08-31, and it does not overturn it --- Acrobat honours `/C` too.** The
+   **Measured 2026-08-31, and it does not overturn it — Acrobat honours `/C` too.** The
    decision now rests on two independent readers rather than on Preview plus §12.5.6.4, and
    PDFium is alone.
 
@@ -14080,13 +14080,13 @@ that it presented several genuinely unresolved questions as settled architecture
    and red in the other.
 
    **Scope the comparison to a region.** A whole-window diff reported 2,114 differing pixels
-   spanning x 368..939, and the top-left of that box is the *tab title* --- `Note-blue.pdf`
+   spanning x 368..939, and the top-left of that box is the *tab title* — `Note-blue.pdf`
    against `Note-red.pdf`. A reading taken over the window would have been right by accident,
    and would have been just as large for two files whose icons were identical.
 
    The mode carries its own control, and it is the reason the reading can be believed: it runs
    the same two-colour comparison on a **highlight** first, whose appearance stream carries the
-   colour, so both readers must move --- 3379 and 3546. Without it "PDFium moved 0 pixels" is an
+   colour, so both readers must move — 3379 and 3546. Without it "PDFium moved 0 pixels" is an
    emptiness reading with nothing saying the instrument looked. Sending one colour twice leaves
    that PDFium check **green** while three others go red, which is the demonstration that the
    pair has to be read together.
@@ -14128,7 +14128,7 @@ that it presented several genuinely unresolved questions as settled architecture
    sits on real scanned documents rather than a built one, remain unmeasured.
 10. ~~**Which phase actually defines the OCR interfaces?**~~ **Answered 2026-07-31 by defining
    them.** §9's cross-cutting note was right and §8's enumeration was incomplete: a Phase 1
-   item had gone unlisted. `src-tauri/src/ocr.rs` is that item --- the interfaces, with no
+   item had gone unlisted. `src-tauri/src/ocr.rs` is that item — the interfaces, with no
    engine, which is what "defines them even though implementation lands later" asks for.
 
    Three decisions are recorded there rather than here, because they are properties of the
@@ -14148,7 +14148,7 @@ that it presented several genuinely unresolved questions as settled architecture
      profile most needs to withhold from a process parsing a hostile document. It does not
      need to share it: an engine consumes a fixed-size RGBA buffer we rendered, not
      attacker-authored structure. `OCR_SANDBOX_PROFILE` keeps the two properties that still
-     apply --- no network, no writes --- and it stays a separate process because the first rung
+     apply — no network, no writes — and it stays a separate process because the first rung
      showed the engine can abort its host. Reproduce with `scripts/vision_sandbox_probe.swift`.
 
    §6's first dependency is enforced by a type: `RedactedPixels` can only be constructed from
@@ -14161,12 +14161,12 @@ that it presented several genuinely unresolved questions as settled architecture
    with `cargo metadata` over the whole tree rather than assumed from the rest of the `objc2`
    family, and is `Zlib OR Apache-2.0 OR MIT`. The sentence above kept asking for a check that
    had already been made and passed, which is the shape `docs/TRAPS.md` records as a *Not
-   done* note outliving the work that closes it --- and it is the more expensive direction,
+   done* note outliving the work that closes it — and it is the more expensive direction,
    because a decision recorded as open is one somebody re-opens.
 
    **Windows is the open half, and the argument for the in-box engine is about cost only.**
-   `Windows.Media.Ocr` needs two features on the already-declared `windows` crate ---
-   `Media_Ocr` and `Globalization`, measured 2026-08-29 as **0 new packages** --- against
+   `Windows.Media.Ocr` needs two features on the already-declared `windows` crate —
+   `Media_Ocr` and `Globalization`, measured 2026-08-29 as **0 new packages** — against
    Tesseract's roughly 30 MB of language data on an 8.0 MB installer and a second C++ image
    parser inside the trust boundary. Tesseract is Apache-2.0 and therefore permitted, and the
    one thing that would force it is a language the in-box engines lack, which has not been
@@ -14174,12 +14174,12 @@ that it presented several genuinely unresolved questions as settled architecture
 
    **Cost is not availability, and `examples/win_ocr_probe.rs` measured it on 2026-08-29:
    a stock `windows-2025` runner carries `en-US`, and the engine reads.** That was the
-   question the ranking turned on, and it comes back in the in-box engine's favour --- there
+   question the ranking turned on, and it comes back in the in-box engine's favour — there
    is no *set the machine up first* caveat to attach to it. `RecogniseError::Unavailable`'s
    doc comment has warned about the missing-pack state since the interface was written; it is
    a real state, and it is not the normal one. `MaxImageDimension` reads **10000** px, which
    is a real ceiling on `ocr::Pixels` rather than a curiosity: the gate composites a probe
-   image and hands it over whole. The probe runs on the Windows leg of both workflows ---
+   image and hands it over whole. The probe runs on the Windows leg of both workflows —
    **not as a gate**: it measures, and its exit code says whether it could measure rather than
    whether the answer was convenient.
 
@@ -14192,7 +14192,7 @@ that it presented several genuinely unresolved questions as settled architecture
    correction anywhere the probe looked.
 
    The first run took that reading only at 44 px, about 3x the floor, and recording it as an
-   answer would have been a control easier than the check --- the entry `docs/TRAPS.md` carries
+   answer would have been a control easier than the check — the entry `docs/TRAPS.md` carries
    under that name, arriving in a probe written to measure a gate whose own recent increments
    are all about controls too small to render. The floor row was added the same day.
 
@@ -14201,14 +14201,14 @@ that it presented several genuinely unresolved questions as settled architecture
    where a recogniser is struggling. The gate's real input is harder in a way size does not
    capture: a control composited beside real page ink, at the document's own contrast. So the
    open question is no longer *does the API let a corrector run* but *has this engine been
-   seen reading anything it found difficult* --- and the instrument for that is the corpus
+   seen reading anything it found difficult* — and the instrument for that is the corpus
    sweep the macOS side already has in `redact-reach-probe`, not another synthetic string.
 
    ~~**Not done, and it is the second measurement rather than a detail.** Whether the engine
    survives containment.~~ **Measured 2026-08-29, and it is the answer that clears the way:
    `reads IDENTICALLY to uncontained`.** The probe re-execs itself through
-   `sandbox_win::spawn_contained` at `Containment::default()` --- the containment that ships,
-   job object plus low integrity --- and all four readings come back unchanged. So
+   `sandbox_win::spawn_contained` at `Containment::default()` — the containment that ships,
+   job object plus low integrity — and all four readings come back unchanged. So
    `Windows.Media.Ocr` does *not* repeat what Vision does here: macOS needs OCR in a separate
    process under `OCR_SANDBOX_PROFILE` because Vision is killed by SIGTRAP under
    `SANDBOX_PROFILE` and wants general `file-read`; this engine needs no containment story of
@@ -14225,7 +14225,7 @@ that it presented several genuinely unresolved questions as settled architecture
 
    ~~**So nothing measurable is left in front of a Windows `ocr::Recogniser`.**~~ **Built
    2026-08-29**: `src-tauri/src/ocr_windows.rs` is `WindowsOcr`, and `OcrWorker::spawn` has a
-   Windows arm that contains its child with `sandbox_win::Containment::default()` --- the same
+   Windows arm that contains its child with `sandbox_win::Containment::default()` — the same
    containment the parser worker gets, not a relaxed one. `ocr_gate` therefore runs on both
    platforms, which closes the last sentence of `docs/THREAT-MODEL.md` residual risk 19.
 
@@ -14234,18 +14234,18 @@ that it presented several genuinely unresolved questions as settled architecture
    - **The coordinate conversion is the easy one here, and that is the trap.** Vision reports
      a box normalised 0..1 with the origin bottom-left, so `ocr_vision.rs` flips and carries a
      long warning about it. `OcrWord::BoundingRect` is already pixels, origin top-left, y down
-     --- this codebase's own convention --- so `pixels_to_points` divides by `scale` and does
+     — this codebase's own convention — so `pixels_to_points` divides by `scale` and does
      **not** flip. A reader arriving from `ocr_vision.rs` and adding one for symmetry breaks
      it, which is why the test is named for the flip that must not be there.
    - **`ocr_worker`'s request loop is now shared.** `serve_loop` and `answer` are generic over
      `Recogniser`; only `serve` is per-platform, because what a child must do to *become*
      contained has no cross-platform spelling and pretending otherwise is how one platform
-     quietly does less. The parts that are genuinely the same --- framing, the refusal on a
-     request that does not parse, the flush after every reply --- are properties of `Ask` and
+     quietly does less. The parts that are genuinely the same — framing, the refusal on a
+     request that does not parse, the flush after every reply — are properties of `Ask` and
      `Said`, and a second copy of those is what `docs/TRAPS.md` warns costs a surviving
      mutation.
    - **The pixel conversion has a unit test and the end-to-end path structurally cannot.**
-     `Pixels` is RGBA and `SoftwareBitmap` wants BGRA, so red and blue exchange --- and black
+     `Pixels` is RGBA and `SoftwareBitmap` wants BGRA, so red and blue exchange — and black
      text on white is *unchanged* by exchanging two channels, so no OCR reading can detect a
      missing swap. `rgba_to_bgra_opaque` is tested directly against a colour whose channels
      differ, with a grey-pixel control that passes with the conversion deleted and is named
@@ -14262,13 +14262,13 @@ that it presented several genuinely unresolved questions as settled architecture
 
    ⚠ **That sweep could not have run, and would have reported an answer.** `redact_reach_probe`
    and `redact_gate_probe` each re-exec themselves as their own OCR worker, and both kept the
-   dispatch behind `cfg(target_os = "macos")` when `lib.rs` was widened --- so on Windows the
+   dispatch behind `cfg(target_os = "macos")` when `lib.rs` was widened — so on Windows the
    child fell through into the *parent's* argument parser, and every region came back
    `NotVerifiedCause::EngineCrashed`. A table of those rows reads exactly like a measurement of
    `Windows.Media.Ocr`. Fixed 2026-08-29: one `ocr_worker::child_main_if_asked` with no platform
    gate at all, four call sites, and `redact-gate-probe` on both CI legs so the next such drift
-   is a red run rather than a plausible table. Measured by removing the arm on a Mac --- 8/8 to
-   5/8 --- and `docs/TRAPS.md` has the entry. **The corpus is the reader's own documents, so the
+   is a red run rather than a plausible table. Measured by removing the arm on a Mac — 8/8 to
+   5/8 — and `docs/TRAPS.md` has the entry. **The corpus is the reader's own documents, so the
    sweep itself is still a thing to run on a Windows machine by hand.**
 
 11. **Should tpdf ever open a web link, and how would it have to show one?** Opened
@@ -14299,14 +14299,14 @@ that it presented several genuinely unresolved questions as settled architecture
 
     **Decided 2026-08-31: tpdf opens web links, and the constraint given with the
     decision is that the application stays safe overall.** So the question stops being
-    *whether* and becomes *what the reader is shown and what tpdf will hand to the OS* ---
+    *whether* and becomes *what the reader is shown and what tpdf will hand to the OS* —
     which is where the phishing surface above lives, so the decision does not dissolve it,
     it schedules it. What follows is the direction this takes unless something below is
     overruled; the sub-choices that are still genuinely open are named at the end rather
     than assumed.
 
     **Only `http` and `https` are opened, by allowlist.** Everything else is refused with
-    the refusal it has today --- `file:`, `javascript:`, `data:`, `ms-msdt:`, `search-ms:`
+    the refusal it has today — `file:`, `javascript:`, `data:`, `ms-msdt:`, `search-ms:`
     and every custom scheme a local application may have registered. A denylist here is the
     validation direction this repository already has an entry about: a scheme nobody listed
     is a scheme that gets through, and on Windows the interesting ones are the ones nobody
@@ -14315,7 +14315,7 @@ that it presented several genuinely unresolved questions as settled architecture
     things a stranger can write.
 
     **The confirmation shows the host, and shows it in the form that cannot lie.**
-    Punycode is displayed **as punycode** --- `xn--80ak6aa92e.com`, never the Unicode
+    Punycode is displayed **as punycode** — `xn--80ak6aa92e.com`, never the Unicode
     rendering, which is the homoglyph attack rendered by us on the attacker's behalf. The
     host is the emphasised element and the rest of the URL is secondary and truncated, so
     the reader's eye lands on the part that decides where they are going rather than on a
@@ -14335,8 +14335,8 @@ that it presented several genuinely unresolved questions as settled architecture
     **T8 is the part that needs work rather than agreement.** `docs/THREAT-MODEL.md` T8
     rests on nothing attacker-controlled reaching the frontend where it could become a
     navigation, and this feature deliberately sends the frontend an attacker-written
-    string. The seam is the one the backend already has --- a refusal is a type
-    (`Target::Refused`), not a string --- so the URL must arrive as a value the frontend
+    string. The seam is the one the backend already has — a refusal is a type
+    (`Target::Refused`), not a string — so the URL must arrive as a value the frontend
     can only render as text and can never turn into an `href`, a `window.open` or a
     navigation. That property wants the `sinks` gate extended to cover it, in the same
     commit as the feature and not after it.
@@ -14346,7 +14346,7 @@ that it presented several genuinely unresolved questions as settled architecture
     possibility:
 
     - **No setting, and therefore no settings surface.** The confirmation is what carries
-      the safety, so a switch would only let a reader turn off the part doing the work ---
+      the safety, so a switch would only let a reader turn off the part doing the work —
       and the feature has one code path and no persisted state as a result. This was the
       one that had to be answered first, and it is the one most worth re-opening if a
       reader working through a specification finds the confirmation intolerable.
@@ -14361,7 +14361,7 @@ that it presented several genuinely unresolved questions as settled architecture
 
     **One choice was not on the list and had to be made anyway: Cancel has focus, and
     Enter cancels.** An ordinary dialog does the opposite. This one exists to interrupt a
-    reflex --- a reader who clicked expecting a cross-reference --- and a dialog whose
+    reflex — a reader who clicked expecting a cross-reference — and a dialog whose
     affirmative button answers the Enter that reflex is about to press has interrupted
     nothing. The cost is one extra action per link, and it falls on the reader who wants to
     go rather than on the one who did not. `weblinkdialog.ts` states it and a test pins it,
@@ -14382,12 +14382,12 @@ that it presented several genuinely unresolved questions as settled architecture
     facts that replaced "no document-derived URL crosses the boundary at all", which is the
     sentence this feature retired.
 
-#### The OS's own renderer draws them too --- measured 2026-08-31
+#### The OS's own renderer draws them too — measured 2026-08-31
 
 `annot-probe --mode winreader`, the Windows counterpart of `--mode preview` and a
 strictly smaller question. It renders the source page and the saved page with
-`print_win::render_page` --- `Windows.Data.Pdf`, already in the tree because the
-print path rasterises with it --- and asks where the two differ. A
+`print_win::render_page` — `Windows.Data.Pdf`, already in the tree because the
+print path rasterises with it — and asks where the two differ. A
 before-and-after inside **one** reader, not a differential between two, which is
 what makes it answerable without an object model.
 
@@ -14397,11 +14397,11 @@ It draws all nine kinds. On `text-base14.pdf` at one pixel per point:
 |---|---|---|---|
 | highlight | 2,973 | 100% | 83.6% |
 | ink | 1,536 | 100% | 40.0% |
-| ellipse | 1,205 | 100% | --- |
-| square | 802 | 100% | --- |
+| ellipse | 1,205 | 100% | — |
+| square | 802 | 100% | — |
 | squiggly | 576 | 100% | 16.2% |
 | text box | 448 | 100% | 12.6% |
-| note | 282 | see below | --- |
+| note | 282 | see below | — |
 | underline | 254 | 100% | 7.1% |
 | strikeout | 254 | 100% | 7.1% |
 
@@ -14416,7 +14416,7 @@ box at 178,109**, centred in both axes and overhanging above and below.
 
 So two readers replace the rectangle, and they disagree about where the
 replacement goes. 84.4% of the note's changed pixels land inside our rectangle
-and **that is the correct picture** --- a containment check written against
+and **that is the correct picture** — a containment check written against
 PDFKit's anchor rule condemns a correct render here. What survives both readers
 is that the icon is *small* and *sits on the rectangle*, which is what this mode
 asks for that kind, and it is also what a person checking by eye would ask.
@@ -14435,7 +14435,7 @@ and a check that fails on correct input is worse than none.
 
 And the mark's rectangle must be a **minority of the page**. *The difference is
 inside the rectangle* is satisfied by any rectangle covering the sheet, so
-without this the finding is true by construction --- the shape this document
+without this the finding is true by construction — the shape this document
 keeps recording under other names.
 
 **One observation about the instrument, recorded rather than explained.** The
@@ -14448,16 +14448,16 @@ above is trustworthy: every row was taken in a run where it passed.
 ##### What it cannot say
 
 Nothing about **Acrobat**, which is a different program with a different
-renderer, and which is the other half of the criterion's own wording --- see the
+renderer, and which is the other half of the criterion's own wording — see the
 run below. And nothing about the *correctness* of a mark's kind, colour or note,
-because a pixel difference is agnostic about all three --- `--mode roundtrip`
+because a pixel difference is agnostic about all three — `--mode roundtrip`
 owns those.
 
 ~~**Not done:** the Acrobat run.~~ **Done 2026-08-31, by eye, and it closes the
 criterion.**
 
 
-#### Acrobat --- measured 2026-08-31
+#### Acrobat — measured 2026-08-31
 
 Adobe Acrobat 26.001.21789 on the Windows desktop, in Reader mode: the
 `AcroExch.*` COM classes are absent, so there is no automation interface and the
@@ -14468,7 +14468,7 @@ checklist, which cost about five minutes and needed no code.
 carrying one mark on the first line of text at the identical rectangle
 `60.322 717.074 313.652 730.192`: the ten kinds `save.rs` can write, the
 unmarked source as a control, and a twelfth file that is `square.pdf` with its
-`/AP` stripped --- 1471 bytes against 1456, one difference.
+`/AP` stripped — 1471 bytes against 1456, one difference.
 
 | question | answer |
 |---|---|
@@ -14492,8 +14492,8 @@ probe marks the first 40 characters and the 40th is the space after `lazy`; the
 rectangle's right edge is `313.65198`, and 40 characters of Helvetica at 14 pt
 end at **313.652**. Acrobat placed the edge within a thousandth of a point of
 where the text engine puts that character. The handover document was the thing
-that was wrong --- it described the mark as reaching "about `...jumps ove`",
-from a miscount --- and that has a trap of its own.
+that was wrong — it described the mark as reaching "about `...jumps ove`",
+from a miscount — and that has a trap of its own.
 
 **Every rectangle hugs the glyphs.** The box's top line crosses the bar of the
 `T` and its bottom sits on the tail of the `y`, which is the rectangle being the
@@ -14501,7 +14501,7 @@ text run's own glyph box: top `730.192` against the cap at `730.05`, bottom
 `717.074` against the descender at `717.10`, so **0.14 pt above and 0.03 pt
 below**. It is the probe's fixture rather than the product: a box or an ellipse
 in the application comes from a drag and never inherits a text rectangle. Same
-cause for the text box's words sitting low and overlapping the page's own ---
+cause for the text box's words sitting low and overlapping the page's own —
 `/FreeText` draws at 11 pt with its baseline pinned to the bottom of its
 rectangle, `717.19`, where the document's baseline is `720`.
 
@@ -14520,6 +14520,6 @@ synthesise differently.
 
 The practice stands and the premise does not, which is worth stating precisely
 rather than quietly rewriting: an `/AP` is written so that the reader sees the
-box **tpdf** drew rather than that reader's own guess at its border --- and the
+box **tpdf** drew rather than that reader's own guess at its border — and the
 three numbers above are what makes that a reason rather than a preference. The
 comment is corrected in place, with the false version kept.

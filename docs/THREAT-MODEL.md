@@ -72,13 +72,13 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands --- nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), and reads signature images explicitly selected through its file input (§T6.17) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), and reads signature images explicitly selected through its file input (§T6.17) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
-| **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** --- on Windows, no writes, and reads and sockets are the disclosed ceiling |
+| **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
-since 2026-08-16.** The webview holds no filesystem *plugin* permission --- the granted list is
+since 2026-08-16.** The webview holds no filesystem *plugin* permission — the granted list is
 `core:default`, `dialog:allow-open`, `dialog:allow-save`, `dialog:allow-message` and
 `updater:default`, plus `core:window:allow-destroy`. The last permission closes the
 window after the frontend has checked every open tab for unsaved edits. Tabs retain
@@ -98,17 +98,17 @@ against the document actually open.
 That is the same drift this paragraph was written to record, one writer later: the count is a
 number in prose and the list of commands is the thing that changes, so the count is wrong from
 the moment a command is added until somebody reads this sentence again. The list is now the
-claim and the number follows it --- and the standing rule that a count in prose has nothing
+claim and the number follows it — and the standing rule that a count in prose has nothing
 checking it applies here as much as it does to the trap index. A new file-writing command
 belongs in this list, in §T6.1, and in the coordinator-parsing entry at residual risk 18.
 
 ⚠ **And it happened again, in both halves at once, found by the release checklist on
 2026-08-30.** The row said **six** while the list beneath it named **five**, so the two
-disagreed with each other on adjacent lines --- and the row was not the wrong one for the
+disagreed with each other on adjacent lines — and the row was not the wrong one for the
 reason it looked: the true count is **eight**. `split_document` had never been added to the
 list, and `redact_copy` and `redact_document` were in neither. All three are named elsewhere
-in this document --- the two redaction writers at §T6.11, the split at §T6.9 and at residual
-risk 18 --- so nothing was undisclosed; what was wrong was the one place a reader goes to find
+in this document — the two redaction writers at §T6.11, the split at §T6.9 and at residual
+risk 18 — so nothing was undisclosed; what was wrong was the one place a reader goes to find
 out *how many* ways the webview can cause a write, and it was wrong in the direction that
 under-claims. **"The list is the claim and the number follows it" is a rule that needs
 somebody to apply it**, and three commands landed without anybody doing so. The check that
@@ -119,8 +119,8 @@ reach a writer, and diff that set against this list.
 this window, and it is the *frontend* that spends it: `App.svelte` imports
 `@tauri-apps/plugin-updater` and calls `check()`, which issues the one request this
 application makes. The row has said "no network" since before the updater landed in `26.8.2`
-and nothing moved it. What the webview does not have is network reach of its own --- no
-`fetch` to an arbitrary host, because the CSP is `default-src 'self'` --- which is a real and
+and nothing moved it. What the webview does not have is network reach of its own — no
+`fetch` to an arbitrary host, because the CSP is `default-src 'self'` — which is a real and
 different property, and the one the row now states. §T9 is the worked-out version.
 
 Both corrections are the failure the release checklist's step 6 exists for: a row in a
@@ -130,13 +130,13 @@ over-claims. Neither could go red, and neither was found by a probe.
 **The worker row was wrong the same way, and it is a security claim rather than a summary of
 one.** It read "No filesystem, no network" flatly until 2026-09-01. That is macOS: the profile
 denies reads, writes and socket binds, and §T4 measures it. Windows is a job object plus a
-low-integrity token --- it denies writes and it denies reaching into the app process, and it
+low-integrity token — it denies writes and it denies reaching into the app process, and it
 denies neither reads nor sockets. Residual risk 4 has carried the read half since 2026-08-02;
 nothing carried the socket half until §T4 gained it on 2026-09-01, and that half is still a
 reading of `sandbox_win` rather than a measurement. What holds on both platforms is the rest of
 the row: the worker is never handed a path and cannot create a file, which is why the document
 and the output arrive as descriptors, and is what makes the Windows read ceiling narrower than
-it sounds. Found by an external review reading this row against §6 --- the third row in a
+it sounds. Found by an external review reading this row against §6 — the third row in a
 four-row table to drift from the section under it, which is now the strongest argument this
 document has for the checklist step that re-reads it.
 
@@ -226,12 +226,12 @@ too, through `lopdf`, and each is one menu item away.
   over the open file.
 - `save_copy` → `save::write_copy`, on every Save a copy.
 - `extract_pages` → `save::write_copy` again, on every extraction.
-- `merge_documents` → `save::write_merged`, on every merge --- and this one parses **more**
+- `merge_documents` → `save::write_merged`, on every merge — and this one parses **more**
   than the open document: every file going in is loaded with `lopdf` here, so a merge of four
   documents is four parses of bytes nothing has rendered. Residual risk 18 carries that.
 
-**The first of those moved the same day.** A save that only *adds* marks --- the ordinary
-"keep my highlights" --- is prepared by `save::append_update`, which is a pure function of the
+**The first of those moved the same day.** A save that only *adds* marks — the ordinary
+"keep my highlights" — is prepared by `save::append_update`, which is a pure function of the
 document's bytes and the plan: it opens nothing, names no path, and knows none exists. It runs
 as `Request::Append` in the worker that already holds the document, under the same sandbox,
 deadline, resource limits and restart as every render, in the process that has already parsed
@@ -239,38 +239,38 @@ that document with `lopdf` for its comments, links and properties. What crosses 
 update section and two numbers.
 
 The split is where the authority is, not where the code is convenient. `save::append_ready`
-stays in the coordinator and asks only questions about a *path* --- has this file changed since
-it was opened, how long is it --- which need filesystem authority and no parser.
+stays in the coordinator and asks only questions about a *path* — has this file changed since
+it was opened, how long is it — which need filesystem authority and no parser.
 `save::appended` then refuses an update built against a different number of bytes than the
 caller measured, which is a check that did not exist and could not: the two lengths were one
 number by construction while one function did both halves.
 
-`Plan::opened_as` is `#[serde(skip)]`, so the fingerprint cannot cross in either direction ---
+`Plan::opened_as` is `#[serde(skip)]`, so the fingerprint cannot cross in either direction —
 and the compiler is what enforces that rather than the attribute alone, since `Fingerprint`
 implements neither `Serialize` nor `Deserialize`. `Request`'s standing property holds: it names
 nothing the worker could act on.
 
 ⚠ **Only half of it moved that day, and the other half moved on 2026-08-26.** Preparing the
 update is one parse; *verifying* what was written is another, and `save::append_in_place`
-re-read the whole file and parsed it here. It is `save::Reread` now --- a seam taking the
-written file's handle, its length and the password --- and `save::InWorker` maps that handle
+re-read the whole file and parsed it here. It is `save::Reread` now — a seam taking the
+written file's handle, its length and the password — and `save::InWorker` maps that handle
 read-only into a sandboxed child, asks `Request::Reread` and drops it. So the append is out of
 the coordinator in both directions, and it gained the deadline and the memory bound this
 section says need a process. Residual risk 18 has the full account, including what stayed.
 
 Evidence, external to our own account of it: `worker-probe` builds an update section through a
-real contained worker and appends it to the fixture, then re-parses the result --- **865 bytes
+real contained worker and appends it to the fixture, then re-parses the result — **865 bytes
 on a 775-page document, re-read as 775 pages**, with the length it was built against compared
 against the file's own (macOS, 2026-08-22, 17/17). Four more checks since 2026-08-26 put the
 same worker on the *verification* side: it and the coordinator are asked the identical question
 about identical bytes and have to agree in both directions, the refusal has to be `lopdf`'s
-rather than PDFium's at open --- which the first draft of that check got wrong while reading as
-a pass --- and a fourth asks for something only the worker path needs, since two readers
+rather than PDFium's at open — which the first draft of that check got wrong while reading as
+a pass — and a fourth asks for something only the worker path needs, since two readers
 agreeing says nothing about whether a worker was involved at all (23/23).
 
 **The rewrite moved on 2026-08-28 and the copy paths, Split and the working-document print job
 on 2026-09-01**, all through `save::Rewriter` and an output channel that is a descriptor rather
-than a reply --- residual risk 18 has the mechanism and what it costs. What the memory
+than a reply — residual risk 18 has the mechanism and what it costs. What the memory
 measurement of 2026-08-22 decided was not *whether* a rewrite could move but how large a
 document may be **appended to** inside a worker: a worker holding the 337 MB scan reaches
 1029.8 MB of footprint after answering an append, 667 MB of which the append added, against a
@@ -279,14 +279,14 @@ table, the three designs the measurement re-ranks, and the one open question it 
 
 **That cap applies to the append this section is about**, which is worth saying plainly rather
 than leaving in the plan. On Windows the document's mapping is file-backed and not commit, so
-the number to compare is the 667 rather than the 1029.8, and that leaves a margin --- by
+the number to compare is the 667 rather than the 1029.8, and that leaves a margin — by
 reasoning, not by measurement. Nobody has run `worker-probe` against a large document on
 Windows. If the cap is reached the worker is killed and the save is refused, which is
 containment behaving as designed and a save the reader cannot complete; it is not data loss,
 since nothing has been written at that point.
 
 **The merge followed on 2026-09-01, and with it every writing path is out.** It was the
-widest of them --- the only operation that parses documents tpdf never opened --- and it moved
+widest of them — the only operation that parses documents tpdf never opened — and it moved
 on the same seam through `worker_proto::Request::Merge`, with the incoming files handed over
 as a second read-only mapping (`worker::IN_FD`). What the coordinator does now is *read* those
 files: it copies their bytes into the mapping and never asks what they mean.
@@ -295,7 +295,7 @@ files: it copies their bytes into the mapping and never asks what they mean.
 than a writer: `verify::scan`.** The redaction verification re-reads the file that was just
 written and parsed it here, on the blocking pool. Its bytes derive from the reader's document,
 so it was the same exposure the writers had. **It was missed for exactly the reason
-`print::build` was** --- this section, residual risk 18 and `scripts/check_writers.py` are all
+`print::build` was** — this section, residual risk 18 and `scripts/check_writers.py` are all
 keyed on *writing*, and a verification writes nothing. `docs/TRAPS.md` has that under *A risk
 and a gate both keyed on writing cannot see the path that only reads*.
 
@@ -303,8 +303,8 @@ and a gate both keyed on writing cannot see the path that only reads*.
 member of `save::Outside`, beside `Reread` and `Rewriter` and for the same reason; the
 coordinator opens the file it wrote, hands the **handle** and its length to `save::InWorker`,
 which maps it read-only, spawns a sandboxed child, asks `worker_proto::Request::Verify` and
-drops it. What crosses back is a `verify::Report` --- a set of needles found and two lists of
-reasons --- and never a byte of the document.
+drops it. What crosses back is a `verify::Report` — a set of needles found and two lists of
+reasons — and never a byte of the document.
 
 **So on both shipped platforms no `lopdf` parse of a document happens in the coordinator at
 all.** That is a stronger statement than this section has been able to make before, and it is
@@ -313,18 +313,18 @@ no sandbox gets, and `render::UNSANDBOXED_MARK` is what keeps such a run disting
 
 Two properties of the move are not guessable from the feature. The scan needs the reader's
 **password**, because a redacted copy of an encrypted document is re-encrypted and a worker
-without the key parses no objects and finds nothing --- an absence that reads exactly like a
+without the key parses no objects and finds nothing — an absence that reads exactly like a
 clean file; `verify::scan` refuses to certify that, which makes the failure safe, and
 `Request::Unlock` before the ask is what makes it answerable. And a report is now a **reply**,
 read under `MAX_REPLY_BYTES`, so `verify::MAX_OBJECT_REASONS` bounds its per-object lists at a
-thousand and counts the rest in one further line --- otherwise a file with a few hundred
+thousand and counts the rest in one further line — otherwise a file with a few hundred
 thousand undecodable objects produces a report that will not fit down the pipe, and the reader
 meets a verification that *failed* rather than a file with a great deal wrong with it. The
 verdict is unchanged by the shortening; only the enumeration is.
 
 **The other reply the same bound has to hold is the one whose size the caller chooses.** Since
 26.9.2 a search asks about a run of pages rather than one, so the answer is the sum of several
-pages' hits and the number of pages is picked by the frontend --- which is the quantity that
+pages' hits and the number of pages is picked by the frontend — which is the quantity that
 does not predict the size. `render::run_search_range` therefore stops when its answers reach
 3 MB, a tenth of `MAX_REPLY_BYTES`, and hands back a **prefix** of what was asked for; the
 caller reads how many pages came back rather than assuming the run completed, because a walk
@@ -400,7 +400,7 @@ Two qualifications on that 0.11 ms, added 2026-07-31 without changing the conclu
 an **upper bound**: it comes from `worker-bench --mode latency`, whose estimator leaves its
 own subtraction error in the answer, and that error is as large as the figure (trap: *"A
 baseline that skips the expensive step leaves its noise in the answer"*). And it is the
-*prototype* worker, not the shipped one --- `latency-bench` puts the **production** `Worker`
+*prototype* worker, not the shipped one — `latency-bench` puts the **production** `Worker`
 at **0.071--0.103 ms** per tile on macOS and 0.269--0.309 ms on Windows, measured against a
 control that holds its residual to 0.001 ms. Every one of those is still one to two orders
 of magnitude under the webview hand-off, so "isolation costs a small fraction of the UI"
@@ -525,8 +525,8 @@ Believing it would return the corpse to the pool, where it would fail a differen
 than the one that was actually too slow.
 
 The deadline is not a refinement of the withdrawal mechanism, it is the only bound the
-other request kinds have. Only a tile can be withdrawn --- `Withdraw` names a tile's
-request id and nothing else --- so **every other request kind** holds a service thread until
+other request kinds have. Only a tile can be withdrawn — `Withdraw` names a tile's
+request id and nothing else — so **every other request kind** holds a service thread until
 it answers, and there are `pool + 2` of those *shared across every open document*. That read
 "`Text`, `Search`, `Outline` and `Open`" until 2026-09-06, which was the whole set when it was
 written and is now four of the twenty-one `worker_proto::Request` variants; the property is the
@@ -659,7 +659,7 @@ from plan geometry*, not *the squiggle loop*.
 
 **Residual.** One pathological page still occupies its process's single PDFium thread and
 starves every other render there. Note this is our own threading choice, forced by the
-fact that concurrent PDFium calls crash --- `pdfium-render`'s `thread_safe` feature does
+fact that concurrent PDFium calls crash — `pdfium-render`'s `thread_safe` feature does
 not serialize them, whatever its README says (AGENTS.md). It no longer does so
 indefinitely: one deadline is the bound, since a request killed for exceeding it is the one
 death `Workers::with_worker` does **not** retry — retrying would spend a second deadline of
@@ -676,7 +676,7 @@ an input this section had not counted at all. **The fourth is `save::MAX_MERGE_B
 (1 GiB), and it corrects the sentence that stood here**: the tile bound is no longer the only
 one refused before a worker is asked. A merge's total is checked against the incoming files'
 own handles at `save.rs:1063`, before the mapping is created and before a byte is read, so the
-reader meets a refusal naming the limit rather than an allocation failure --- the tile bound's
+reader meets a refusal naming the limit rather than an allocation failure — the tile bound's
 own shape (`protocol.rs`), arriving on the one input the coordinator holds all of at once.
 
 ### T4 — Filesystem and network reach from a compromised worker
@@ -704,7 +704,7 @@ a sandbox by comparing pixels, never by checking that the render returned `ok`.*
 **Windows answers half of this, and the half it does not answer is in this section's own
 title.** §6's containment is a job object plus a low-integrity token, and neither restricts
 sockets: `sandbox_win` sets `JOB_OBJECT_LIMIT_ACTIVE_PROCESS`, `_PROCESS_MEMORY`,
-`_KILL_ON_JOB_CLOSE` and `_DIE_ON_UNHANDLED_EXCEPTION`, and an integrity level --- read the
+`_KILL_ON_JOB_CLOSE` and `_DIE_ON_UNHANDLED_EXCEPTION`, and an integrity level — read the
 file, there is no network call in it. The Windows mechanism that gates network *capability*
 is AppContainer, which this is not. **Nothing here has measured a socket bind from a
 contained Windows worker**, so this is a ceiling read off the code rather than a result, and
@@ -714,7 +714,7 @@ contained child and compares its work against an uncontained control; a bind of 
 UDP socket in that child is the Windows twin of `worker-bench --mode authority`.
 
 Until 2026-09-01 the evidence above was the whole of this section, so a macOS result read as
-covering both platforms --- the same shape as the README sentence corrected the same day, and
+covering both platforms — the same shape as the README sentence corrected the same day, and
 the same shape as §6's own inverted error, in the other direction.
 
 **Residual.** On **macOS**, a hostile document can still learn which paths exist; it cannot
@@ -796,10 +796,10 @@ it" are different claims, and only the second is what a user sees.
 Both are narrower than they look and one of them is not as narrow as it should be.
 
 **The capability is inert on its own.** `dialog:allow-save` opens a native panel and returns
-a path; it writes nothing. The write is `save_copy`, and its authority is the process's ---
+a path; it writes nothing. The write is `save_copy`, and its authority is the process's —
 which is to say the reader's, since nothing here is sandboxed on the app side. So the honest
 statement is: **a caller able to reach `save_copy` can write a PDF anywhere the reader can
-write**, without a panel and without a prompt --- and the *source* path is the frontend's
+write**, without a panel and without a prompt — and the *source* path is the frontend's
 too, so the same caller can read any PDF the reader can read. Neither end is checked against
 the document the render service actually opened, which it could be. It is not, because
 `print_document` has had exactly the same shape since 2026-07-28 and tightening one of the
@@ -809,11 +809,11 @@ two would leave a consistent surface looking inconsistent; if this is closed, cl
 here rather than given a section because it adds no authority: same write path, same
 caller-supplied source and destination, same absence of a check against the open document.
 The only thing it adds is a `slots` argument, which `plan_subset` refuses when it is empty,
-out of range, repeated or descending --- so the worst a bad selection produces is a refusal,
+out of range, repeated or descending — so the worst a bad selection produces is a refusal,
 not a wider write. **The count of commands that write a file is three now**, not two: the
 boundary table's §3 row says "two", and it is corrected in the same commit; a number in a
 summary row is exactly the thing that stops agreeing with the section beneath it. (It is
-**four** as of 2026-08-19, when `save_document` landed --- see §T6.7. The sentence is left as
+**four** as of 2026-08-19, when `save_document` landed — see §T6.7. The sentence is left as
 it was written rather than silently re-pointed, because what it is about is a count in a
 summary going stale, and re-pointing it every time would erase its own evidence.)
 
@@ -821,8 +821,8 @@ summary going stale, and re-pointing it every time would erase its own evidence.
 **nine** as of 2026-09-07 with `redact_raster_copy`. It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
-subject arriving a third time, which is the argument for the mechanical check §3 now names ---
-enumerate the registered commands reaching a writer and diff the set --- rather than for
+subject arriving a third time, which is the argument for the mechanical check §3 now names —
+enumerate the registered commands reaching a writer and diff the set — rather than for
 another sentence telling the next person to remember.
 
 `redact_raster_copy` keeps the source and creates a fresh image-only PDF in a
@@ -841,7 +841,7 @@ time. Unsupported unsandboxed platforms refuse this operation.
 
 **What bounds that is the same thing that bounds `spike_exit`, and no more.** The CSP is
 `default-src 'self'` with no `'unsafe-inline'`, so the only script that runs is the one that
-shipped --- residual risk 7, and the T8 invariant that keeps document text from becoming
+shipped — residual risk 7, and the T8 invariant that keeps document text from becoming
 script. The marginal authority over what was already reachable is real but small: a caller
 that can reach `save_copy` can already reach `open_document` and the print path. It is
 recorded here rather than left implicit because it is the first *write*, and a write is a
@@ -851,7 +851,7 @@ different kind of verb from the ones this surface had before.
 
 - An **encrypted** source keeps its encryption, and one that nobody unlocked is refused.
   `lopdf` drops `/Encrypt` on save without a word, so a copy of a restricted document would
-  come out unrestricted and look identical --- exactly the T5 shape, a false assurance,
+  come out unrestricted and look identical — exactly the T5 shape, a false assurance,
   pointed at the document's own protection rather than at ours. Until 2026-08-28 the answer
   to that was to refuse every encrypted source; since then `save::rewrite` puts the file's
   own state back with `Document::encrypt` as its last step, so the copy is as restricted as
@@ -862,7 +862,7 @@ different kind of verb from the ones this surface had before.
 - **Writing over the source** is refused, compared by canonical path so that two spellings
   of one file are one file.
 
-**The write is atomic** --- sibling temporary file, rename --- so an interrupted save leaves
+**The write is atomic** — sibling temporary file, rename — so an interrupted save leaves
 either the old file or the new one. The redaction path above needs the same property for a
 different reason and states it separately; this one is not that, and does not claim to be:
 **a saved copy is a serialisation, not a sanitation.** Nothing here removes a prior
@@ -874,7 +874,7 @@ is built on it.
 **One thing is collected, and stating the difference is the point.** Since 2026-08-26 a
 rewrite that **dropped or moved a page** runs `sweep::collect` over what it produced, so the
 content of a page the reader removed does not travel on inside the file. That is a promise
-about *tpdf's own leavings* --- the objects this rewrite made unreachable --- and not about
+about *tpdf's own leavings* — the objects this rewrite made unreachable — and not about
 the document's: an orphan the source arrived with is still carried forward. Extract pages and
 Split go through this same `rewrite`, which is why the distinction matters more than it
 sounds: their names state an exclusion the file has to honour. Residual risks 15 and 16.
@@ -885,45 +885,45 @@ sounds: their names state an exclusion the file has to honour. Residual risks 15
 handle and one or two page identities and mutate a `HashMap` in the app process; they open
 no file, write none, and reach no worker. Their authority is the same as `page_rotate`'s,
 which is to say the ability
-to make the reader's *unsaved* document differ from the file on disk --- reversible with
+to make the reader's *unsaved* document differ from the file on disk — reversible with
 undo, and never written until the reader names a file. The commands that write are still
 `save_copy` and `print_document`, and their authority is unchanged and stated above.
 
 **One thing did change on the write side, and it is worth stating precisely rather than as a
 narrowing.** `print_document` takes the open document's handle now, and the *edits* in a job
---- which pages the reader kept and how each is turned --- are read from the model rather
+— which pages the reader kept and how each is turned — are read from the model rather
 than accepted from the frontend. The explicit page range is unchanged and still comes from
 the caller; it is what a print panel's "pages 2 to 4" will be, and it carries no edits. So a
-caller can still name any readable path and any range of its pages --- the §T6.1 shape,
-unchanged --- and cannot invent an edit the model does not hold.
+caller can still name any readable path and any range of its pages — the §T6.1 shape,
+unchanged — and cannot invent an edit the model does not hold.
 
 **What a deletion does to the parsing surface.** A page dropped from a saved copy is dropped
 by the same page-tree pass the print path has used since 2026-07-28 (`pagetree::drop_pages`),
 which walks the object graph under `sweep::MAX_NESTING` and refuses rather than stopping
-early --- a partial pass would leave a page tree naming an object that is gone, which is a
+early — a partial pass would leave a page tree naming an object that is gone, which is a
 document that opens and prints blank pages. One refusal is a correctness property in the
 §T6.1 sense: a page two page numbers share cannot be half-deleted, because removing it means
 removing one entry from a `/Kids` array rather than one object, and a pass that removed
 neither would hand back a copy with the page the reader deleted still in it.
 
-**What a reorder does to it.** A moved page cannot be written in place --- the four
-inheritable page attributes belong to the tree node a page hangs under, not to the page ---
+**What a reorder does to it.** A moved page cannot be written in place — the four
+inheritable page attributes belong to the tree node a page hangs under, not to the page —
 so `pagetree::reorder_pages` writes those attributes onto each page and rebuilds the tree one
 level deep. It runs **only** when the reader's order differs from the file's, which is a
 correctness property rather than a saving: a rebuild reparents every page of every document,
 and doing that to one nobody rearranged is a rewrite with no request behind it. The
 abandoned tree nodes stay in the file as unreachable objects, exactly as a deleted page's
-content does, and for the same stated reason --- a saved copy is a serialisation, not a
+content does, and for the same stated reason — a saved copy is a serialisation, not a
 sanitation (§T6.1, residual risk 16).
 
 **A pending redaction reaches no writer, and that is carried by the type rather than by a
 filter** (2026-08-26). Marking a region puts a `Redaction` in a table of its own with an id
-space of its own, and `Plan::marks` is built from `EditState::marks` --- a list a redaction
+space of its own, and `Plan::marks` is built from `EditState::marks` — a list a redaction
 cannot be in. So the failure this arrangement exists to prevent, tpdf writing a reader's
 *pending* redactions into a saved file as annotations, is unexpressible rather than guarded
 against: an outline drawn over words that are still there, in a document that has been handed
 on, is a confident lie of exactly the kind §6 of `docs/PLAN.md` opens by refusing. The
-alternative design --- one mark kind with an exclusion in `save.rs` --- would have been a rule
+alternative design — one mark kind with an exclusion in `save.rs` — would have been a rule
 to remember on the day the next kind is added. Two tests pin it: the plan of a document with a
 redaction equals the plan of the same document without one, and the reply carries it while the
 plan does not.
@@ -932,7 +932,7 @@ plan does not.
 2026-08-17. It registers no command, takes no capability and reaches no new sink: the gesture
 ends in `page_move`, which is the command above. What it does add to the webview is pointer
 listeners and a `setPointerCapture` on the strip's own panel, neither of which parses markup
-or builds a URL-bearing element --- the `sinks` gate is what says so mechanically, and §T8 is
+or builds a URL-bearing element — the `sinks` gate is what says so mechanically, and §T8 is
 where that invariant lives.
 
 **The outline is dropped whole from a copy that lost pages**, and that is a *smaller* claim
@@ -945,7 +945,7 @@ hidden as a detail.
 **The first thing tpdf adds to a document rather than rearranging, and it adds no
 authority.** `annot_highlight` and `annot_remove` take a document handle, a page identity and
 a list of numbers, and mutate a `HashMap` in the app process. They open no file, write none
-and reach no worker --- the T6.2 shape exactly, and the commands that write are still
+and reach no worker — the T6.2 shape exactly, and the commands that write are still
 `save_copy`, `extract_pages` and `print_document`.
 
 **Two things the frontend cannot say, and both are deliberate.**
@@ -956,24 +956,24 @@ and reach no worker --- the T6.2 shape exactly, and the commands that write are 
   name to.
 - **The subtype.** `MarkKind` has one variant and `save.rs` maps it with a `match`, so the
   `/Subtype` written is a literal of ours. A document cannot choose it, and neither can the
-  frontend --- the same property `annots.rs` keeps on the way *in*, where `Kind` is an enum of
+  frontend — the same property `annots.rs` keeps on the way *in*, where `Kind` is an enum of
   our own literals rather than the document's `/Subtype` string.
 
   ⚠ **The second half of that stopped being true later the same day** (§T6.5): the frontend
   now names the kind, because a reader chooses between several. What it has *not* stopped
-  being is the property that matters --- read the amendment rather than this bullet, which
+  being is the property that matters — read the amendment rather than this bullet, which
   names the current set rather than counting it.
 
 **A mark's note is attacker-controlled the moment a saved file is reopened**, which is the
 one genuinely new surface. The reader types it, tpdf writes it, and `annots.rs` reads it back
-out of a file that may by then have been edited by anything --- so it is treated exactly as a
+out of a file that may by then have been edited by anything — so it is treated exactly as a
 comment body already is: it reaches the DOM as text, it may carry no URL, and §T8's invariant
 is what makes that checkable. `edits::MarkView` says so at its declaration and the `sinks`
 gate is what enforces it mechanically. Today the note is always empty, because nothing types
 one; the field exists because the write path needs it and the reading path already has it.
 
 **Something types one as of 2026-08-18** (§T6.4), and the paragraph above is what it was
-written against --- so the surface is the one already described rather than a new one. The
+written against — so the surface is the one already described rather than a new one. The
 box a reader types in is a `<textarea>`, whose `value` is text by construction and parses no
 markup. The route by which it becomes *somebody else's* string is unchanged: it goes into
 `/Contents`, and comes back through `annots.rs` into the comment panel and the comment
@@ -982,19 +982,19 @@ popup, which have treated a body that way since they were written.
 **A second display route landed on 2026-08-20 and this said there was none.** The sentence
 here read *"the note is displayed nowhere else while the document is open"*, which the marks
 panel made false: `marklist.ts` puts every mark's note on screen, from `edits::MarkView`
-rather than from `annots.rs`. The **mitigation is unchanged** --- the row's text is assigned
+rather than from `annots.rs`. The **mitigation is unchanged** — the row's text is assigned
 through `textContent` and nothing else, and the `sinks` gate scans the whole frontend, so it
 covered the new file the day it appeared without anyone adding it to a list. What was wrong
 was the scope claim, and the cost of leaving it would have been an auditor asking *"where
 does a mark's note reach the DOM?"*, reading two file names, and missing a third.
 
 **And the model's notes are this session's, which is narrower than the paragraph above
-allows.** `Edits::open` builds `Doc::open(pages)` --- a fresh model with no marks --- so no
+allows.** `Edits::open` builds `Doc::open(pages)` — a fresh model with no marks — so no
 `MarkView` ever carries bytes read back out of a file; a reopened document's annotations
 arrive as *comments*, through `annots.rs`, into the panel that has always treated them as
 attacker-chosen. `MarkView::note`'s own doc comment claims the stronger thing, and it is
 left claiming it: a string that is handled as data either way costs nothing to over-declare,
-and the narrower reading is one feature away from being wrong --- restoring an edit journal
+and the narrower reading is one feature away from being wrong — restoring an edit journal
 across an open would make it so without touching a line of this file.
 
 #### T6.8 — What a document says about itself, added 2026-08-21
@@ -1007,24 +1007,24 @@ across an open would make it so without touching a line of this file.
 > different subsection about marks, and now cites this one.
 
 **A third display route landed on 2026-08-21, and it is the widest one yet.** The properties
-dialog puts a document's `/Info` strings on screen --- `/Title`, `/Author`, `/Producer`, and
-any custom key the document invented --- together with a signature's stated name, reason and
+dialog puts a document's `/Info` strings on screen — `/Title`, `/Author`, `/Producer`, and
+any custom key the document invented — together with a signature's stated name, reason and
 location. Every one of those is a string a stranger wrote, and the custom keys mean the
 *label* is attacker-chosen too, which no previous route had: a comment's fields are named by
 us, and here `properties.fields[n].name` is whatever the document put in its dictionary.
 
 **The mitigation is the same one and needed no new mechanism.** `propertiesdialog.ts` assigns
 every name and every value through `textContent`, creates no URL-bearing element, and sets no
-attribute from a document string --- so the `sinks` gate covered the file the day it appeared,
+attribute from a document string — so the `sinks` gate covered the file the day it appeared,
 exactly as it covered `marklist.ts`. What is new is worth naming rather than leaving implicit:
 `docinfo::Properties` has **no field that could carry a URL or an action**, in the way
 `outline::Target` deliberately has none, so there is nothing for the frontend to be tempted
 by. `no_signature_field_may_carry_a_verdict` matches `Signature` exhaustively for a related
-reason --- adding a field there is a compile error rather than a review question.
+reason — adding a field there is a compile error rather than a review question.
 
 **One honest limit, and it is the same seam residual risk 7 names.** The values are bounded
 in *length* (`MAX_VALUE_CHARS`) and in *count* (`MAX_FIELDS`), and both bounds are reported
-rather than silent --- but nothing constrains what a value *says*. A `/Producer` reading
+rather than silent — but nothing constrains what a value *says*. A `/Producer` reading
 "This document is valid and verified" is shown as written, because it is what the document
 claims and hiding it would be its own lie; what is prevented is tpdf appearing to agree, and
 `properties.test.ts` asserts that against exactly that input.
@@ -1042,7 +1042,7 @@ attacker-controlled, and three things bound it rather than one.
 - **The blob is bounded before the parser sees it.** `MAX_SIG_BLOB` is 1 MiB against a real
   blob of tens of kilobytes, and exceeding it is *reported* through `Limits::certificates_unread`
   rather than passed off as a document with no certificate. The bound has a test that can fail,
-  which took two attempts --- see the trap; the first version could not distinguish refusing a
+  which took two attempts — see the trap; the first version could not distinguish refusing a
   blob from parsing one and failing.
 
   **This sentence was true of two parsers out of three until 2026-08-24.** `ber.rs` walks the
@@ -1050,7 +1050,7 @@ attacker-controlled, and three things bound it rather than one.
   `/Contents` was measured, re-measured once per constructed level and copied into an
   allocation its own size, and only the result was compared against `MAX_SIG_BLOB`. It is a
   parser like the other two and is now bounded like them, on its **input**, at twice the
-  bound --- the factor is what makes the check refuse nothing the output check would have
+  bound — the factor is what makes the check refuse nothing the output check would have
   accepted, since definite-length rewriting can shrink a value by at most half. The guard has
   no outcome a test can see, for exactly that reason; what its test pins is the factor.
 - **Both crates are `no_std`-shaped pure-Rust decoders returning `Result`.** No `unsafe`, no
@@ -1060,21 +1060,21 @@ attacker-controlled, and three things bound it rather than one.
 
 **Reaching a signature is bounded too, and it was not until 2026-08-24.**
 `docinfo::read_signatures` walks the form's field tree through `fields::walk`, and it
-bounded the *depth* of that walk and the number of signatures it would report --- neither of which stops **fan-out**. A
+bounded the *depth* of that walk and the number of signatures it would report — neither of which stops **fan-out**. A
 group node carries no `/FT`, so it emits no signature and `MAX_SIGNATURES` never fires; a node
 whose `/Kids` names itself sixty-four times therefore costs 64^8 pops inside a depth bound of
-eight, on a file of a few kilobytes. `MAX_FIELD_NODES` (4,096) bounds the pops themselves ---
+eight, on a file of a few kilobytes. `MAX_FIELD_NODES` (4,096) bounds the pops themselves —
 it is the `nodes` field of the `fields::Bounds` this caller passes, and `redact::covered_fields`
 passes 20,000 through the same loop, deliberately: a field a redaction does not reach is a value
 left in a redacted document, where one the properties panel does not reach is a line missing from
 a list. That is the shape `links.rs`'s `MAX_TREE_NODES` had already taken for its own tree walk.
-Hitting it is reported through `Limits::signatures_dropped` --- the same counter the signature
+Hitting it is reported through `Limits::signatures_dropped` — the same counter the signature
 bound reports through, because to a reader they are one event: this scan stopped looking, and
 what it says about signatures is incomplete.
 
 **And the honest limit, which is the part a reader would get wrong.** Parsing a certificate is
 not verifying one. tpdf builds no chain, holds no trust store, consults no revocation list, and
-never checks the signature against the bytes it covers --- so a document can name itself
+never checks the signature against the bytes it covers — so a document can name itself
 anything and tpdf will show it. What the certificate buys is a second, differently-sourced
 claim about who signed, next to the `/Name` the signer typed; `properties.ts` shows both and
 says when they disagree. `NOT_CHECKED` states all four omissions and is shown wherever a
@@ -1087,7 +1087,7 @@ deliberately not rendered as a warning: every root in every trust store is self-
 them nearly was.** `decode_extension` reads key usage, extended key usage and basic
 constraints, all inside the already-capped blob, so no new byte reaches a parser. The obvious
 signature for it is `T: der::Decode<'static>`, which compiles, and which on borrowed bytes is
-satisfiable only by leaking them --- an allocation an attacker sizes and chooses the count of,
+satisfiable only by leaking them — an allocation an attacker sizes and chooses the count of,
 one per extension per signature, in the process the sandbox exists to contain. The bound that
 is actually correct is `for<'a> Decode<'a>`, which the three owned types satisfy and which
 borrows for the length of the call. Nothing would have gone red: a leak is not a crash, the
@@ -1097,16 +1097,16 @@ of that name carries it.
 A malformed extension is **counted**, not read as an absent one, because those are opposite
 claims: an absent key usage places no limit on the key, and a malformed one places an unknown
 limit. Absent is the reassuring branch, which is the direction a silent failure would fall.
-And what an extension states is still the issuer's word --- the constraint binds the key, and
+And what an extension states is still the issuer's word — the constraint binds the key, and
 only a chain to a trusted issuer makes it mean anything, so `NOT_CHECKED` now says that too.
 
 **Timestamps, same day, and they add no parser.** An RFC 3161 token is itself a CMS
 `SignedData`, so reading one exercises the crates already described here on bytes already
-bounded by `MAX_SIG_BLOB` --- the token sits *inside* the signature blob. The only new decoding
+bounded by `MAX_SIG_BLOB` — the token sits *inside* the signature blob. The only new decoding
 is `TSTInfo`'s, and it is deliberately positional: four opaque values skipped, the fifth
 required to parse as a `GeneralizedTime`. That last requirement is the bound. A structure
 malformed enough to shift the fields yields **no** time rather than a time read out of the wrong
-field, which matters because the output is attributed to an authority --- a plausible wrong
+field, which matters because the output is attributed to an authority — a plausible wrong
 instant presented as a third party's attestation is worse than silence, and it is what a
 positional walk with no type check would produce.
 
@@ -1116,7 +1116,7 @@ is not read as a timestamp however well-formed its content is.
 
 **That limitation is closed, and closing it added a parser of our own.** A `/Contents` blob
 encoded in **BER with indefinite lengths** was refused outright by `der`, so tpdf read no
-certificate and no timestamp from it --- one of ten real signed documents to hand, and the class
+certificate and no timestamp from it — one of ten real signed documents to hand, and the class
 affected is CAdES, which is where timestamping is routine. `ber::to_definite_length` walks the
 blob and hands the crates a definite-length value.
 
@@ -1125,12 +1125,12 @@ attacker-chosen bytes without a third party between us and them, so its bounds a
 
 - **Nesting is capped at `MAX_DEPTH` (64)** against a real signature's twenty-five, and there is
   exactly **one** copy of that bound. `emit` runs only after `measure` walked the same bytes and
-  returned, so it carries no second guard --- two copies would each refuse the blob alone, and a
+  returned, so it carries no second guard — two copies would each refuse the blob alone, and a
   mutation of either would have survived.
 - **A length field is capped at `MAX_LENGTH_BYTES` (4)** and a tag at `MAX_TAG_BYTES` (5). X.690
   reserves `0xff` as a length-of-length and this refuses it by the same rule.
 - **Every read goes through `get`, never an index.** The two offsets built from a length the
-  document chose --- past a header, past a value --- go through `checked_add`; the rest are a
+  document chose — past a header, past a value — go through `checked_add`; the rest are a
   cursor plus at most five, and a cursor never exceeds the slice's length, so they cannot wrap.
   A value claiming more bytes than it has, a child overrunning the length its parent declared,
   and an indefinite value that never terminates are each refused rather than trusted, each with
@@ -1138,28 +1138,28 @@ attacker-chosen bytes without a third party between us and them, so its bounds a
 - **Output growth is bounded by input.** An indefinite header plus its marker is four bytes and
   a definite one is at most six, so the rewrite can grow a blob by at most half, and
   `MAX_SIG_BLOB` still bounds what reaches the parsers.
-- **It refuses rather than repairs.** DER constrains more than the length form --- `SET OF`
-  ordering, a canonical `BOOLEAN`, primitive strings --- and none of that is touched. A blob
+- **It refuses rather than repairs.** DER constrains more than the length form — `SET OF`
+  ordering, a canonical `BOOLEAN`, primitive strings — and none of that is touched. A blob
   violating one is refused by the parser after it and counted as unread, which is the same
   outcome as before for every case this does not fix.
 
 The walk is also what decides where the blob **ends**, replacing a scan for the last non-zero
 byte. That is a security-relevant change as much as a correctness one: the old rule handed the
 parser however many padding bytes preceded the last non-zero one, and the new one hands it
-exactly one value. A blob that will not walk is counted through `certificates_unread` --- by its
+exactly one value. A blob that will not walk is counted through `certificates_unread` — by its
 own mechanism, with its own test, because it and the parser's counter can produce the same
 number and one input reaches only one of them.
 
 **A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
 `/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.
 That crate was **already in the tree** through Tauri's `plist` dependency, so this compiled no
-new code into the binary --- but it is newly reachable from attacker-chosen bytes, which is the
+new code into the binary — but it is newly reachable from attacker-chosen bytes, which is the
 only question that matters here. Four bounds, and the fourth is the one worth reading:
 
 - **It runs in the worker.** Reached through `Request::Properties` like everything else that
   parses a document, so it is behind the T1 boundary and needed no new mechanism.
 - **The packet is capped** at `xmp::MAX_PACKET` (1 MiB against real packets of 0.4--40 kB),
-  nesting at 64 levels, and each value at 4 KiB --- with the value bound applied **while the
+  nesting at 64 levels, and each value at 4 KiB — with the value bound applied **while the
   value accumulates**, not to the finished string, since clipping at the end means holding
   whatever the document sent first. Every one of those is *reported* through `Xmp::unread`
   rather than answered with a packet that claimed nothing.
@@ -1169,12 +1169,12 @@ only question that matters here. Four bounds, and the fourth is the one worth re
   every `&...;` as its own `GeneralRef` event and expands nothing; `unescape` resolves the five
   predefined names and character references, and refuses everything else. Nothing here calls
   `unescape_with`, which is the only door a custom entity could come through. So a
-  billion-laughs declaration costs a dropped `DocType` event --- asserted by a test that
+  billion-laughs declaration costs a dropped `DocType` event — asserted by a test that
   distinguishes *not expanded* from *expanded quickly*, since a test asserting only that the
   parse terminated would pass on both.
 
 **And the honest limit.** A conformance claim is a claim. tpdf does not validate a document
-against PDF/A, PDF/UA or PDF/X, and the string shown is copied out of the packet --- so a
+against PDF/A, PDF/UA or PDF/X, and the string shown is copied out of the packet — so a
 document may write anything it likes there, including the word *valid*. The row says *the
 document's own claim, which tpdf does not check*, and `properties.test.ts` asserts that a
 hostile conformance string cannot put a verdict word into a label tpdf wrote. Same posture as
@@ -1183,12 +1183,12 @@ the signature rows, same reason.
 #### T6.5 — The frontend names the mark's kind, added 2026-08-18
 
 **A reader can now choose Highlight, Underline or Strike out, so the kind travels on the
-wire** --- `MarkKind` is a field on `edits::NewMark`. T6.3's bullet said the frontend cannot
+wire** — `MarkKind` is a field on `edits::NewMark`. T6.3's bullet said the frontend cannot
 choose the subtype; that is now the wrong sentence for the right property, and the property
 survives intact.
 
 **What the frontend chooses is a variant, not a string.** `MarkKind` is a Rust enum with
-serde names, so an unknown name is a *deserialisation failure at the command boundary* --- the
+serde names, so an unknown name is a *deserialisation failure at the command boundary* — the
 command never runs. The `/Subtype` bytes are still literals in `save.rs`'s `match`, reachable
 only by naming one of them, and that `match` is still what makes a new variant a compile error
 rather than a mark written as something else. So the closed set moved from "one variant,
@@ -1197,7 +1197,7 @@ written into the file.
 
 **Five variants as of 2026-08-19, and the sentence above deliberately no longer counts them.**
 It said "three" until a comment bubble and a box were added, and the number was never the
-property --- a count in prose goes stale the next time the set grows, which is the failure this
+property — a count in prose goes stale the next time the set grows, which is the failure this
 repository already records about its own trap tally. The two new kinds are the ones a reader
 *places* rather than selects, which changes nothing here: both are still variants named on the
 wire, both map to a `/Subtype` literal through the same `match`, and the box additionally
@@ -1206,12 +1206,12 @@ carries an appearance stream built entirely from numbers of ours. Ask `MarkKind`
 
 **The colour is the field a caller does choose freely**, and it did before this too: three
 floats that reach `/C` and the appearance stream's `rg` operator. They are clamped by
-nothing, which is worth stating rather than discovering --- a value outside 0..=1 is a
+nothing, which is worth stating rather than discovering — a value outside 0..=1 is a
 malformed colour in a file tpdf wrote. It is not an escape: `format!` writes a number, PDF
 readers clamp, and the surrounding operators are ours. Bounding it is a correctness question
 rather than a security one, and it is not done.
 
-**No new authority.** The command is the renamed `annot_highlight` --- one path for all three
+**No new authority.** The command is the renamed `annot_highlight` — one path for all three
 kinds rather than three commands, which is a smaller surface and not a larger one. It still
 takes a document handle, a page identity and a list of numbers, still mutates a `HashMap` in
 the app process, and still opens no file, writes none and reaches no worker.
@@ -1221,7 +1221,7 @@ the app process, and still opens no file, writes none and reaches no worker.
 **`annot_note` and `annot_remove` add no authority either**, for the same reason `annot_mark`
 (called `annot_highlight` when this was written) does not: both take a document handle and an identity, both mutate a `HashMap` in the app
 process, and neither opens a file, writes one or reaches a worker. `annot_note` additionally
-takes a string, which is the reader's own and is not interpreted by anything on the way in ---
+takes a string, which is the reader's own and is not interpreted by anything on the way in —
 `save.rs` encodes it as a PDF text string when a copy is written, and that encoding is the
 same one the author field already goes through.
 
@@ -1244,7 +1244,7 @@ oversight:
   §T8's.
 
 **What the write adds to a saved copy** is one annotation object and one form XObject per
-mark, appended to the page's `/Annots` --- and one refusal that is a correctness property in
+mark, appended to the page's `/Annots` — and one refusal that is a correctness property in
 the §T6.1 sense: a mark on a page object that two page numbers share is refused, because an
 annotation hangs off the *object* and would appear on both pages. That is the same shape as
 the half-deletion refusal above, one level on, and it is scoped to the marked page rather
@@ -1259,7 +1259,7 @@ on text anyone typed.
 
 **The model command is the T6.2 shape, and two commands beside it are not.** `page_crop`
 takes a document handle, a page identity and four numbers, and mutates a `HashMap` in the
-app process --- it opens no file, writes none and reaches no worker, exactly as
+app process — it opens no file, writes none and reaches no worker, exactly as
 `page_rotate` and `annot_mark` do. `page_content_box` and `page_geometry` **do reach a
 worker**: the first renders the page to find where its ink is, the second loads it to report
 what size a crop makes it. That is the first pair of commands added since the viewer's own
@@ -1268,7 +1268,7 @@ above.
 
 **A third joined them on 2026-08-23**: `page_crop_box` loads the page to read its `/Rotate`
 and its `/CropBox`, so that a rectangle a reader dragged on screen can be turned into the box
-the model holds. It is the same shape as the two above and adds the same nothing --- a handle
+the model holds. It is the same shape as the two above and adds the same nothing — a handle
 the frontend has, a page it knows, four numbers, and a parse in the worker that renders every
 tile. It exists because the frontend is deliberately never told a page's `/Rotate`, so the
 one place that can undo it is the backend.
@@ -1277,15 +1277,15 @@ What they add is nothing. Both take the document handle the frontend already has
 position in the file it already knows; neither takes a path, and the parse happens in the
 same sandboxed worker that renders every tile a reader has already caused. A caller able to
 reach them can already reach the tile protocol, which renders any page of the same document
-on demand. The marginal authority is a render nobody asked for --- a denial of service on
+on demand. The marginal authority is a render nobody asked for — a denial of service on
 the render thread, which residual risk 7 bounds the same way it bounds `spike_exit`.
 
 **A crop is four numbers off the wire, and they are checked in three places for three
 different reasons.** `docmodel::Rect::is_proper` refuses a rectangle enclosing no area,
 including any corner that is not a number, so a `NaN` cannot reach the model. `protocol.rs`
 refuses a tile URL carrying **three** of the four corners rather than completing the
-rectangle from the page --- three numbers plus a default is a rectangle nobody asked for,
-drawn plausibly and in the wrong place, which is what that parser exists to prevent --- and
+rectangle from the page — three numbers plus a default is a rectangle nobody asked for,
+drawn plausibly and in the wrong place, which is what that parser exists to prevent — and
 refuses a non-finite or degenerate one before a render is allocated for it. `pagetree`
 refuses a crop that shares no area with the sheet, which is a different question and can only
 be asked where the media box is known.
@@ -1295,12 +1295,12 @@ on this surface. `apply_crops` writes `/CropBox` on the **page object** and neve
 ancestor: the box is inheritable, so a write onto a `/Pages` node crops every page hanging
 under it, which for a document whose pages share one node is the whole file from a reader who
 cropped one page. It intersects with `/MediaBox` per §14.11.2 rather than trusting the value,
-and a crop the intersection empties is refused rather than written --- a page that renders as
+and a crop the intersection empties is refused rather than written — a page that renders as
 nothing is not an outcome a reader asked for.
 
 **Residual, and it is a §T5 shape rather than a §T6 one: a crop hides, it does not remove.**
 Everything outside the box is still in the file, still extractable, still searchable in any
-reader --- and tpdf's own search still finds it, because a crop moves character *boxes* and
+reader — and tpdf's own search still finds it, because a crop moves character *boxes* and
 not character *indices*. That is what `/CropBox` means and it is the right behaviour for a
 crop. It is listed because it is the second operation on this surface where a reader could
 plausibly believe otherwise, after deleting a page (risk 15), and because "crop" is a word
@@ -1311,7 +1311,7 @@ mean gone is `docs/PLAN.md` §6, and it is not built.
 
 **No new authority, and one new verb.** `save_document` takes a document handle and a
 source path and writes the working document over that path. Its authority is `save_copy`'s
---- the process's, which is the reader's --- and the path is the frontend's in exactly the
+— the process's, which is the reader's — and the path is the frontend's in exactly the
 same way, unchecked against the document the render service actually opened. So the §T6.1
 statement stands unchanged and now covers four commands rather than three.
 
@@ -1326,7 +1326,7 @@ who can reach this can already reach `open_document` and the print path.
 **Two checks narrow what a wrong path can do, and both are correctness checks rather than
 security ones.** The page count of the file named has to match the plan's baseline, and
 since 2026-08-19 its **length, modification time and SHA-256 have to match what was recorded
-when the document was opened** --- `fingerprint.rs`, and `docs/PLAN.md` §5. Pointing this at
+when the document was opened** — `fingerprint.rs`, and `docs/PLAN.md` §5. Pointing this at
 an unrelated document is now refused unless that document is byte-identical to the one the
 reader opened, which is a considerably narrower gap than "happens to have the same number of
 pages".
@@ -1336,8 +1336,8 @@ being exact about.** It is not a check that the path names the open document; it
 that the file at that path is unchanged since *some* document was opened, and the two
 coincide only because the frontend passes the path it opened. A caller free to choose the
 path could pass a *different* file it had first arranged to be fingerprinted. So the absence
-§T6.1 records is unchanged --- the source path is still the frontend's, unchecked against
-what the render service opened --- and this remains the command where checking it would
+§T6.1 records is unchanged — the source path is still the frontend's, unchecked against
+what the render service opened — and this remains the command where checking it would
 matter most. What the fingerprint removes is the accident, not the adversary.
 
 **Fail closed, which is the part that is a security property rather than a correctness
@@ -1351,7 +1351,7 @@ what this paragraph may claim.** A file whose mtime moved and whose bytes did no
 *accepted*: `cp -p` preserves a timestamp across a rewrite and a `touch` moves one without
 changing a byte, so the timestamp is evidence about neither. The digest is the comparison,
 and the sentence above should be read as length-and-contents rather than as three
-independent locks --- an attacker was never going to be stopped by a timestamp, and a
+independent locks — an attacker was never going to be stopped by a timestamp, and a
 reader whose backup tool ran was being stopped by one. The mtime is still compared in the
 one place nothing better is affordable: the look between staging and the rename, which
 compares against what **staging** read rather than against what was opened, so that window
@@ -1359,7 +1359,7 @@ is milliseconds rather than the whole session.
 
 **The document is closed before the file is replaced, and that is a correctness property
 with a security-shaped tell.** A `rename` over a memory-mapped file succeeds on macOS and
-leaves the worker serving the inode that is no longer at that path --- measured, and in
+leaves the worker serving the inode that is no longer at that path — measured, and in
 `docs/TRAPS.md`. Nothing about that is exploitable; what it is, is a reader looking at a
 document that disagrees with their own file while everything reports success, which is the
 §T5 false-assurance shape pointed at the save rather than at a redaction. Windows refuses
@@ -1368,10 +1368,10 @@ the rename instead, so the order is what makes the two platforms agree.
 **Two refusals, distinguished on the wire, which is unusual enough to state.**
 `SaveFailure` carries `reopen`: false means nothing was touched and the reader still has
 their document, true means it is closed whatever became of the file. It is `failure::Failure`
-since 2026-09-06 and the wire is unchanged --- the two booleans are *derived* from one
+since 2026-09-06 and the wire is unchanged — the two booleans are *derived* from one
 `failure::Action` at serialisation time, so the type and the wire cannot come to disagree about
 a refusal. The reason it is a
-field rather than a wording is the T8 reason one level down --- a frontend that decided by
+field rather than a wording is the T8 reason one level down — a frontend that decided by
 matching on message text would be parsing a string the backend is free to reword.
 
 **The write is atomic and is still a serialisation, not a sanitation.** Everything §T6.1
@@ -1387,7 +1387,7 @@ make hidden content gone. `docs/PLAN.md` §6 is the operation that does, and it 
 carries a password. Three things are worth stating rather than leaving to be noticed.
 
 - **It grants the worker no authority it did not have.** The document's bytes are already
-  mapped into that process --- that is what the handover is --- and a key to bytes you are
+  mapped into that process — that is what the handover is — and a key to bytes you are
   holding is not a new reach. What it changes is that they stop being noise. A worker that
   cannot read them is a worker that renders nothing, so this widens nothing an attacker
   who had already compromised a worker could reach.
@@ -1401,14 +1401,14 @@ carries a password. Three things are worth stating rather than leaving to be not
 
 **It is held in the app process for the document's lifetime, and that is a requirement
 rather than a convenience.** `Held::password` is what `Workers::spawn_into` replays to
-every worker after the first --- the one the pool grows under contention, and every
-replacement for one that crashed --- because each maps the same bytes and meets the same
+every worker after the first — the one the pool grows under contention, and every
+replacement for one that crashed — because each maps the same bytes and meets the same
 encryption. A design that unlocked only the first worker would render the page a reader
 is looking at and refuse the next.
 
 **What that costs, stated plainly: the password is in this process's memory while the
 document is open.** So is every decrypted page of it, which is the more revealing of the
-two, and neither is defended against something that can read this process's memory --- an
+two, and neither is defended against something that can read this process's memory — an
 adversary who has that has already won. It is not written to disk, does not reach the
 session file, and goes when the slot does. What is *not* done, and would be the next rung
 if it were worth one, is zeroing the buffer on drop: `String` does not, the value is
@@ -1419,15 +1419,15 @@ guarantee.
 one.** `Refusal::locked` travels as a field, so nothing downstream matches on a message to
 decide whether to prompt. A frontend deciding *"show a password box"* by looking for the
 word "password" in a backend string is one wording change away from prompting for the
-wrong refusal --- and the strings themselves are chosen in `progressive.rs` and
+wrong refusal — and the strings themselves are chosen in `progressive.rs` and
 `worker_child.rs`, never taken from the document, so no failure path can become a route
 for text a stranger wrote. That is the T8 property, in the one place a new error channel
 was added.
 
 **Two more places hold it as of 2026-08-23, and both are inside a boundary that already had
 it.** `RawDocument::password` is the worker's own copy, kept because every question PDFium
-cannot answer --- comments, links, properties, the character mapping, the update section a
-save appends --- is a second parse of the same bytes with `lopdf`, and `lopdf` needs the same
+cannot answer — comments, links, properties, the character mapping, the update section a
+save appends — is a second parse of the same bytes with `lopdf`, and `lopdf` needs the same
 key. That is the sandboxed process, holding a key to bytes it is already holding. And
 `save_document` asks the service for it through `Job::Password`, once, for the arm that
 appends: the read-back that checks the written cross-reference has to parse the file, and
@@ -1442,7 +1442,7 @@ zeroed.
 
 **What is deliberately *not* done: the frontend does not keep it.** `unlock.ts` holds the
 typed password in a local for the duration of the retry loop and drops it, and nothing in
-`App.svelte` stores it. Every later use --- pool growth, crash replacement, a save --- is
+`App.svelte` stores it. Every later use — pool growth, crash replacement, a save — is
 served from Rust. The webview is the least trusted place in the application (residual risk
 7), so a password parked in component state for a document's lifetime would be the one hop
 worth avoiding, and it is avoided.
@@ -1458,12 +1458,12 @@ that goes when the command returns.
 
 **This adds no hop and no lifetime.** Every one of those is the same read, from the same
 `Held::password`, into the same process that already holds it, for the length of one command
---- and each was already free to make that read. What it does add is copies, which is the
+— and each was already free to make that read. What it does add is copies, which is the
 zeroing paragraph above becoming a little more true: there are more of them, none is zeroed,
 and a partial job would read as a guarantee.
 
 **One deliberate non-extension: printing an edited encrypted document.** `save::print_bytes`
-takes the reader's password since 2026-08-30 --- for a refusal, not for a job. With the key it
+takes the reader's password since 2026-08-30 — for a refusal, not for a job. With the key it
 can tell an encrypted document apart from one it cannot read, so the refusal a reader meets
 names the escape that exists (*print the whole document instead*, which routes the encrypted
 bytes through untouched) instead of claiming the document could not be unlocked while it is
@@ -1488,7 +1488,7 @@ security property about the file it wrote.
 
 **`Request::RedactPlans` is the parse, and it is on the right side.** Deciding what a removal
 takes means reading the page's object list, which is a reading of attacker-chosen bytes, so it
-is a worker request rather than coordinator work --- the same argument `Request::Append`
+is a worker request rather than coordinator work — the same argument `Request::Append`
 records. It names nothing the worker could act on: rectangles in, a count and some sentences
 out, and nothing is removed by answering it. The removal itself happens in the coordinator,
 inside the rewrite that already parses that file with `lopdf`, which is residual risk 18 and
@@ -1496,24 +1496,24 @@ is not widened by this.
 
 **The claim is the exposure, and it is bounded by the type rather than by care.**
 `redact::Applied` cannot carry `verified` without an empty `why`, and every object the removal
-could not take becomes a reason. So the failure mode this section would otherwise have --- a
-reader told a file is clean when it is not --- needs a defect in `verify::scan` rather than an
+could not take becomes a reason. So the failure mode this section would otherwise have — a
+reader told a file is clean when it is not — needs a defect in `verify::scan` rather than an
 omission at a call site.
 
 **Residual, and it is large enough to state plainly.** This reaches five rows of
 `docs/PLAN.md` §6's carrier table and no more, all of it added 2026-08-27. The page's own
 content: the show operators, and the shadow text (`/ActualText`, `/Alt`, `/E`) in **both** of
-that row's homes --- the marked-content property list the glyphs sit inside, and the structure
+that row's homes — the marked-content property list the glyphs sit inside, and the structure
 element that span belongs to, reached by `/MCID` through the parent tree, together with its
 ancestors. An **annotation whose `/Rect` overlaps a region**, with its popup and its replies,
 removed together with every reference to it rather than unlinked from the page. And the
-document's own description of itself --- `/Info` and the catalog's `/Metadata` --- taken whole,
+document's own description of itself — `/Info` and the catalog's `/Metadata` — taken whole,
 because a title that paraphrases a redacted line is reachable by no rule that matches text.
 And the **outline entries whose title names what went**, with the subtree under each: a
 bookmark title *is* the heading it points at, measured at 163 of 165 verbatim page text
 against a 4% cross-document control, which is what licenses a string rule here where one was
 refused for metadata. Entry by entry rather than the whole outline, so one redacted heading
-does not cost a reader their table of contents. And the **form fields whose answer went** ---
+does not cost a reader their table of contents. And the **form fields whose answer went** —
 by either of two rules, that every widget under the field has gone, or that its value or its
 `/DV` default is text that went, which is that row's *widgets outside the redacted rectangle*
 stated as a property rather than as a location.
@@ -1522,12 +1522,12 @@ stated as a property rather than as a location.
 answers a carrier by declining the operation. An XFA packet is a complete XML copy of every
 answer, so taking the field values and leaving it removes nothing a reader could not recover;
 a rule that reached inside it would be a second form implementation. The refusal is in the
-pre-flight, before anything is touched, and is keyed on the redaction --- an ordinary copy of
+pre-flight, before anything is touched, and is keyed on the redaction — an ordinary copy of
 an XFA form still works, because a serialisation makes no claim for the packet to falsify.
 
 Everything else in that table survives: an annotation *away* from every region, an outline
 entry naming something else, and a form field naming an answer that did not go (all three
-deliberate --- a reader's other comments, their other bookmarks and the rest of their form are
+deliberate — a reader's other comments, their other bookmarks and the rest of their form are
 not theirs to lose), page labels, embedded files, and any prior
 incremental revision, since a copy is a serialisation rather than a sanitation (§T6.1). So does any structure element the parent-tree walk could not reach,
 which is reported as unverified rather than passed over.
@@ -1535,11 +1535,11 @@ which is reported as unverified rather than passed over.
 **The metadata strip, the outline removal and the field removal are properties of the
 redaction and of nothing else.** A copy, an extract, a split, a merge and a print job all still
 carry `/Info`, XMP, every bookmark and every answer across untouched, which is §T6.1's position
-and is held by **one** condition guarding all three --- so one mutation of it reddens all three
+and is held by **one** condition guarding all three — so one mutation of it reddens all three
 controls, which is why only one of them names it. An image or a
 vector drawing inside the region is reported and left. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
-a pass. None of that makes the answer *wrong* --- it makes the answer *not verified*, which is
+a pass. None of that makes the answer *wrong* — it makes the answer *not verified*, which is
 what the reader is told.
 
 #### T6.12 — Redacting the reader's own file, added 2026-08-27
@@ -1553,7 +1553,7 @@ write is the one named as the source, and `save_document` has been able to write
 
 **One authority is genuinely new, and it is the reader's rather than an attacker's.** Until
 today a redaction could only produce a file; now it can destroy one. A caller able to reach
-this command can overwrite any PDF the reader can write with a redacted version of itself ---
+this command can overwrite any PDF the reader can write with a redacted version of itself —
 which is what `save_document` can already do with an edited version of itself, so what this
 adds over the existing surface is the removal rather than the write. The CSP is what bounds
 it, as it bounds every command on this surface (residual risk 7).
@@ -1561,7 +1561,7 @@ it, as it bounds every command on this surface (residual risk 7).
 **The order is what keeps a failure from being a loss.** Stage a sibling, fingerprint the
 source, close the document, check the source has not moved, rename. Every refusal `save.rs`
 states arrives while the reader still has their document and their marks, so the only window
-in which content can be lost is between the rename and the read-back --- and a rename is
+in which content can be lost is between the rename and the read-back — and a rename is
 atomic, so what is in that window is a file that is either the old one or the new one.
 
 **A file that could not be proved clean is still written**, which is §T6.11's decision
@@ -1574,7 +1574,7 @@ the same answer the copy gives.
 journal to be truncated at the apply. Truncating leaves every earlier command undoable, so a
 reader could step back to a state whose regions were still pending while the file no longer
 holds the words. The close drops the model entirely and the reader reopens from the path, so
-no undo reaches across the removal. Nothing was built for this --- it is what an in-place
+no undo reaches across the removal. Nothing was built for this — it is what an in-place
 write already does.
 
 **Residual.** Everything §T6.11 lists survives here identically, and one thing more is worth
@@ -1593,12 +1593,12 @@ is covered in §T6.6 rather than here, because what it does is a *crop* question
 
 **Two numbers off the wire, and the two checks on them are in different places for
 different reasons.** `edits::displace` refuses a `dx` or `dy` that is not finite, at the
-wire boundary and before the model sees it --- which is the check that matters, because a
+wire boundary and before the model sees it — which is the check that matters, because a
 `NaN` reaching a `/Rect` is written into a content stream by `format!` as the literal
 `inf`, and this repository has already paid for that once with an unchecked `f32`.
 
-The **page clamp** is deliberately not there. `docmodel` cannot bound the move --- the
-page's size in points is the renderer's answer and not the model's --- so the viewer clamps
+The **page clamp** is deliberately not there. `docmodel` cannot bound the move — the
+page's size in points is the renderer's answer and not the model's — so the viewer clamps
 before it sends, exactly as it clamps the geometry of a mark being placed, and both layers
 say so in their doc comments. A caller bypassing the frontend can therefore move a mark off
 its page. That is a correctness defect in the file it produces rather than a reach: the
@@ -1862,7 +1862,7 @@ path for a bundled dylib (§10 q7) was the open question here, and it bit `scree
 release path before. It is answered: the `.app` notarizes `Accepted`, the DMG notarizes and
 staples, and both the app and `libpdfium.dylib` carry a Developer ID Application signature
 chaining to Apple Root CA with the hardened runtime. Confirmed from **outside** the workflow
-as well as by it --- the DMG was downloaded from the draft and checked on a machine that had
+as well as by it — the DMG was downloaded from the draft and checked on a machine that had
 not built it, where `spctl -a -t open` reports `source=Notarized Developer ID` and the
 stapled ticket validates. That distinction is not pedantry here: on the run before, every
 one of those properties held while the workflow's own verification step failed for a reason
@@ -1976,11 +1976,11 @@ substring the query is highlighted in.
 highlight nobody typed a note on by the phrase it sits on, taken off the page by
 `selectionQuadsByPage`, so a row of that panel can now be document text where before it was
 either the reader's own note or the literal "No note". Nothing about the mitigation changes
---- `marklist.ts` assigns it through `textContent` like everything else, and the invariant
+— `marklist.ts` assigns it through `textContent` like everything else, and the invariant
 below is what makes that sufficient rather than a promise about this one call site.
 
 **A fifth source the same day, and it is the widest: the properties dialog.** A document's
-`/Info` strings, its custom keys --- where the *label* is attacker-chosen too --- and a
+`/Info` strings, its custom keys — where the *label* is attacker-chosen too — and a
 signature's stated name, reason and location all reach the DOM through
 `propertiesdialog.ts`. §T6.8 is the worked-out version and is not repeated here; what
 matters at this level is that it needed no new mechanism, because the invariant below is a
@@ -1990,8 +1990,8 @@ property of the frontend rather than a promise about each call site.
 that will not open now shows.** `progressive::open_failure` returns one of five literals we
 wrote, chosen by PDFium's error code and carrying no byte of the document, and `refuse`
 answers every later request with that same string. It is the same shape as
-`outline::Target::Refused`, and it is worth stating because the obvious next edit --- naming
-the file, or passing PDFium's own message through --- would put attacker-chosen text on a
+`outline::Target::Refused`, and it is worth stating because the obvious next edit — naming
+the file, or passing PDFium's own message through — would put attacker-chosen text on a
 path that has none today.
 
 The mitigation survived the change, and it is a **better** one than the sentence it replaces,
@@ -2022,7 +2022,7 @@ attribute with a string literal.** Every one does, or the gate is red.
 
 **The gate prints its own population, and this section deliberately no longer does.** It said
 "58 files and 22,073 lines" and "all 45" from 2026-08-02 until 2026-08-17, against an actual
-81 files, 36,029 lines and 59 calls --- the frontend had grown by more than half and the
+81 files, 36,029 lines and 59 calls — the frontend had grown by more than half and the
 sentence describing what was covered had not moved, which is a count in prose with nothing
 able to go red about it. Read it from the run instead:
 
@@ -2099,7 +2099,7 @@ a standing capability nobody is asked about again.
 document's annotations are the largest body of attacker-chosen prose tpdf has ever put on
 screen — bodies, authors, subjects, several paragraphs each — and they reach the DOM through
 `commentlist.ts` and `commentpopup.ts`. The reader's *own* marks reach it through
-`marklist.ts` as of 2026-08-20, on the same terms and with a narrower origin --- §T6.4 has
+`marklist.ts` as of 2026-08-20, on the same terms and with a narrower origin — §T6.4 has
 which strings those are, and why a file list is not what makes any of this safe.
 Every one of those assignments is `textContent`, so
 the sufficiency argument above covers them unchanged: with no markup-parsing sink in the
@@ -2303,7 +2303,7 @@ stopped being one.** The refusing arm is `#[cfg(not(any(target_os = "macos", win
 (`ocr_worker.rs`, `OcrWorker::spawn` and `serve`), so both shipped platforms run the gate and
 `NO_ENGINE` is reachable only where neither engine exists. Risk 19 recorded the closure on
 2026-08-29 and struck its own half of it; this paragraph, four lines above the Windows arm it
-contradicts, did not move --- the same summary-drifting-from-the-section-beneath-it failure
+contradicts, did not move — the same summary-drifting-from-the-section-beneath-it failure
 §3 records three times over, arriving inside one section instead of between two.
 
 **The coverage this has, stated as a number rather than implied.** A region whose page yields
@@ -2443,7 +2443,7 @@ which is what makes it evidence rather than a milestone.
    no caller in the app (§T3). What is missing before it can be wired is the budget, which
    needs a measurement of a legitimate worker's peak that nothing has taken. Input limits
    are the second layer, and there are **four** as of 2026-09-06 rather than the one this entry
-   claimed --- see risk 22, which is where the plan's geometry is named, and risk 18 for
+   claimed — see risk 22, which is where the plan's geometry is named, and risk 18 for
    `save::MAX_MERGE_BYTES`, the one bound besides the tile's that is refused before a worker is
    asked at all.
 3. **A document's pool multiplies its memory by up to six, while it is being scrolled.**
@@ -2508,11 +2508,11 @@ which is what makes it evidence rather than a milestone.
    This entry also said "CSP and Tauri capabilities are scaffold defaults" until 2026-08-02,
    which was wrong about the CSP: `default-src 'self'` with no `'unsafe-inline'` is a
    narrowed policy where the scaffold ships `"csp": null`. The **capability set** is the part
-   that is still scaffold --- and it has grown twice since that sentence was written, which the
+   that is still scaffold — and it has grown twice since that sentence was written, which the
    sentence did not record. `src-tauri/capabilities/default.json` grants four permissions as of
    2026-09-06: `core:default`, `dialog:allow-open`, `dialog:allow-save` (2026-08-16) and
    `updater:default` (`26.8.2`), still unpared. §3's boundary table carries the same list, and
-   this entry read `core:default` plus `dialog:allow-open` alone until today --- a residual
+   this entry read `core:default` plus `dialog:allow-open` alone until today — a residual
    describing a narrower grant than the one that ships, which is the over-claiming direction.
 8. **A compromised worker can lie about what it saw** — no verification result may rest on
    a single worker's word.
@@ -2563,7 +2563,7 @@ which is what makes it evidence rather than a milestone.
     nothing, a pre-spawn that failed, a print that did not present — every one of those was
     an `eprintln!`, and a GUI process started by double-clicking a PDF has no stderr at all,
     so the diagnostics this codebase words most carefully were exactly the ones a user could
-    never send back. Nineteen parent-process sites go through `diag::note`, counted 2026-09-06 --- it was
+    never send back. Nineteen parent-process sites go through `diag::note`, counted 2026-09-06 — it was
     nine when this landed on 2026-08-02, and a count in prose is the thing this document
     records as drifting, so the authority is `grep -rn 'diag::note(' src-tauri/src` and not
     this number. It
@@ -2587,25 +2587,25 @@ which is what makes it evidence rather than a milestone.
 
     **One class of them stopped evaporating on 2026-08-24, and by a different mechanism.** A
     worker that cannot load PDFium at all used to return `Err` and exit 1, so the only thing
-    that reached a reader was the coordinator's epitaph --- `worker stopped answering (exited
-    with 1 (0x00000001))` --- for every document, by every route. It now answers requests with
+    that reached a reader was the coordinator's epitaph — `worker stopped answering (exited
+    with 1 (0x00000001))` — for every document, by every route. It now answers requests with
     the reason instead, over the reply pipe the protocol already has, which is not a logging
     channel and needs no writable path. The coordinator's open path also notes the failure
     through `diag::note`, which it did not before: a session in which nothing could be opened
     left an empty log, byte-identical to a session with nothing wrong. What is unchanged is
-    the general case above --- a worker that *crashes*, or dies after the document is open,
+    the general case above — a worker that *crashes*, or dies after the document is open,
     still says nothing a reader can send back.
-14. **`save_copy` writes a PDF anywhere the reader can write** (§T6.1), added 2026-08-16 ---
+14. **`save_copy` writes a PDF anywhere the reader can write** (§T6.1), added 2026-08-16 —
     the first command on this surface that creates a file, and its authority is the app
     process's rather than a panel's. The path comes from the frontend, so a native save panel
     is the *interface* and not the bound. What bounds it is residual risk 7: the CSP admits
-    only the script that shipped. The marginal authority is small --- a caller that can reach
-    this can already reach `open_document` and the print path --- and it is listed because a
+    only the script that shipped. The marginal authority is small — a caller that can reach
+    this can already reach `open_document` and the print path — and it is listed because a
     write is a different verb from the ones this surface had, not because the CSP is believed
     to be weaker than it was yesterday.
 15. **A saved copy is a serialisation and not a sanitation** (§T6.1), **narrowed
     2026-08-26**. Nothing on that path drops a prior incremental revision, and a copy that
-    dropped no page collects nothing --- so whatever the source carried, the copy carries.
+    dropped no page collects nothing — so whatever the source carried, the copy carries.
     That is right for "save a copy" and wrong for a redaction, and the redaction path must
     not be built on it by assuming otherwise. **The narrowing**: a save that dropped or moved
     a page now collects what *that* made unreachable (risk 16), which is a promise about
@@ -2613,7 +2613,7 @@ which is what makes it evidence rather than a milestone.
 16. ~~**A copy that lost a page keeps the deleted page's content in every place that is not
     the page tree**~~ (§T6.2), added 2026-08-17, **closed 2026-08-26**. `pagetree::drop_pages`
     removed the page object and every reference to it, and the mark-and-sweep that collects
-    what those references *held* --- the content stream, the fonts, an embedded image --- ran
+    what those references *held* — the content stream, the fonts, an embedded image — ran
     on the print path and not on the save path. `save::rewrite` runs it now, whenever the plan
     dropped or moved a page, and two checks pin it in opposite directions: the content of a
     page that went is absent from the file, and the content of every page that stayed is
@@ -2623,7 +2623,7 @@ which is what makes it evidence rather than a milestone.
     what kept it from being found.** It named the *deletion*, on the reasoning that deleting
     is the first operation where a reader could plausibly believe otherwise. Extract pages
     was already shipped on the same `planned_bytes` -> `rewrite` path and is a stronger case
-    in every respect --- the command's own name states the exclusion, and the leak is total
+    in every respect — the command's own name states the exclusion, and the leak is total
     rather than partial. Measured on `links.pdf` before the fix: extracting page 1 of 8
     produced a file reporting **one** page and carrying **all eight** content streams, 4,139
     decodable bytes each. Split, added in 26.8.11, joined the same path afterwards and was
@@ -2632,7 +2632,7 @@ which is what makes it evidence rather than a milestone.
     **What is not closed**, and it is the larger half: this collects what *this rewrite*
     orphaned. A document that arrived with orphans in it still comes back with them (that is
     §T6.1's position, and risk 15 above), and nothing here touches the carriers `docs/PLAN.md`
-    §6 lists --- an annotation's appearance stream, a form field's value, a thumbnail, and the
+    §6 lists — an annotation's appearance stream, a form field's value, a thumbnail, and the
     structure tree's own copy of a page's alternate text. "Removed" means removed *from the
     page tree and everything only it held*, not yet from the document. (`/ActualText` inside a
     content stream is cleared by *Redact and save as* since 2026-08-27. That is a different
@@ -2640,7 +2640,7 @@ which is what makes it evidence rather than a milestone.
 
 17. **A cropped page hides content and does not remove it** (§T6.6), added 2026-08-18.
     Everything outside the crop box is still in the saved file, still extractable, and still
-    found by tpdf's own search --- a crop moves character boxes, not character indices. That
+    found by tpdf's own search — a crop moves character boxes, not character indices. That
     is what `/CropBox` means, and it is the right behaviour for a crop. It is listed
     separately from risks 14 and 15 because "crop" is a word that sounds like removal in a
     way "rotate" and "move" do not, and because it is now the *second* operation a reader
@@ -2651,8 +2651,8 @@ which is what makes it evidence rather than a milestone.
     (§3), added 2026-08-22 after an outside review found this document naming printing as the
     only coordinator-side parser while three edit writers had joined it. **Narrowed the same
     day**: a save that only adds marks is *prepared* in the worker now (`Request::Append`).
-    The writers left after that were the rewriting save --- a deletion, a move, a turn, a crop
-    --- and the two copy paths, and `lopdf` read the source bytes in the app process on those,
+    The writers left after that were the rewriting save — a deletion, a move, a turn, a crop
+    — and the two copy paths, and `lopdf` read the source bytes in the app process on those,
     under `spawn_blocking`, which moves the work off the async runtime and not out of the
     process.
 
@@ -2660,7 +2660,7 @@ which is what makes it evidence rather than a milestone.
     for was a *reader* it never listed.** `verify::scan` re-reads the file a redaction
     has just written and parsed it here, on the blocking pool, to decide whether the removal
     was genuine. Its bytes derive from the reader's document, so it is the same exposure the
-    writers had --- and it was invisible to this entry, to §3 and to
+    writers had — and it was invisible to this entry, to §3 and to
     `scripts/check_writers.py` alike, because all three enumerate the operations that
     **write**. A verification writes nothing. That is the second time this month an
     instrument keyed on writing hid a parse: `print::build` was the first, found by an outside
@@ -2672,19 +2672,19 @@ which is what makes it evidence rather than a milestone.
     serialiser first; and the load is bounded like every other.
 
     ⚠ **It closed the same day, and the last paragraph of this entry predicted how
-    correctly** --- `verify::scan` was already a pure function of bytes and needles, and the
+    correctly** — `verify::scan` was already a pure function of bytes and needles, and the
     file it reads is one the coordinator had just created and could hand over as a descriptor.
     That is exactly the move: `save::Verifier` is the third member of `save::Outside`,
     `save::InWorker::scan` maps the handle and asks `worker_proto::Request::Verify`, and
     `Reply::Verified` carries the report back with no bytes in it. **With that, the title of
-    this entry is no longer a coordinator-side parse of any kind** --- what is left is
+    this entry is no longer a coordinator-side parse of any kind** — what is left is
     `save::Here`, the fallback a platform with no sandbox gets, marked by
     `render::UNSANDBOXED_MARK` rather than silent.
 
     Three consequences worth stating, because none of them follows from the feature. The
     coordinator must send the **password** first: a redacted copy of an encrypted document is
     re-encrypted, so a worker without the key parses no objects and finds no needles, and
-    finding nothing is what a clean file looks like --- `verify::scan` is built to refuse
+    finding nothing is what a clean file looks like — `verify::scan` is built to refuse
     certifying that, so the failure is safe rather than silent, and the ask is what makes it
     answerable. A report is now read under `MAX_REPLY_BYTES`, so
     `verify::MAX_OBJECT_REASONS` bounds the per-object lists at a thousand and adds one line
@@ -2692,18 +2692,18 @@ which is what makes it evidence rather than a milestone.
     produces a report that will not fit, and the reader is told the verification *failed*
     rather than that the file is unaccountable. And `commands::redact::scan_written_file` takes
     `&dyn save::Verifier` rather than the `&dyn save::Outside` its callers hold, so the
-    read-back cannot reach a writer --- a trait upcast, which costs nothing and is what lets
+    read-back cannot reach a writer — a trait upcast, which costs nothing and is what lets
     the test double be a verifier and no more.
 
     **Evidence.** `worker-probe` scans one document through both halves of the seam and
     compares the reports field by field, with two controls: the report must name a needle
     that is in every PDF and not name one that is in none, and it must have reached objects
-    --- without which "they agree" is satisfied by two reports that looked at nothing. A third
+    — without which "they agree" is satisfied by two reports that looked at nothing. A third
     check points the worker path at a directory with no PDFium, where it fails while the
     coordinator path still answers, which is what says a child was involved at all. In the
     unit suite `the_redaction_read_back_does_not_parse_the_file_it_wrote` hands the read-back
     a file that is not a PDF and a verifier that says it is fine, and requires the verifier's
-    answer to come back unaltered --- red on the code this replaced --- with
+    answer to come back unaltered — red on the code this replaced — with
     `a_read_back_of_a_file_that_is_not_there_is_an_error` as the control that a missing file
     is an error rather than an empty report, which would certify a file nobody looked at.
     Four mutations, each killed by the test named for it.
@@ -2711,10 +2711,10 @@ which is what makes it evidence rather than a milestone.
     ⚠ **The append is not off this list, and this entry said it was until 2026-08-23.** Its
     *preparation* moved; its **verification** did not. `save::append_in_place` re-reads the
     whole file it has just written and parses it with `lopdf` in the app process, to check
-    the cross-reference chained and the page count survived --- and the previous revision of
+    the cross-reference chained and the page count survived — and the previous revision of
     that file is the attacker's bytes verbatim, so this is a coordinator-side parse of
     untrusted input on every append, which is the commonest save there is. It is bounded by
-    the same `MAX_DECODE`. It was **also not** under `spawn_blocking` --- the `match` that
+    the same `MAX_DECODE`. It was **also not** under `spawn_blocking` — the `match` that
     calls it ran directly on the async runtime, unlike the three writers above, so a
     document engineered to make the read-back spin stalled the runtime rather than a
     blocking pool.
@@ -2725,40 +2725,40 @@ which is what makes it evidence rather than a milestone.
 
     ⚠ **This said `verify_before_commit` "hashes every byte of the file" until 2026-08-31,
     and it never has.** That function has compared **length and modification time only**
-    since 2026-08-19 --- `Fingerprint::agrees_shallowly`, deliberately, and `save.rs` says
+    since 2026-08-19 — `Fingerprint::agrees_shallowly`, deliberately, and `save.rs` says
     so where it is defined. The digest runs earlier: `rewrite_ready` compares length and a
     SHA-256 of every byte against `Plan::opened_as`, before anything is staged. Both are on
     the blocking pool, which is the claim this paragraph is about and the one part of it
     that was true. The distinction is not cosmetic for a reader of this document: the last
     look before the rename cannot see a replacement that preserved both fields, and the
-    reason it is the cheap check --- the window between staging and the rename is measured
-    in milliseconds --- is on `verify_before_commit` itself.
+    reason it is the cheap check — the window between staging and the rename is measured
+    in milliseconds — is on `verify_before_commit` itself.
 
     ⚠ **And the process half closed 2026-08-26, so the append is off this list entirely.**
     The read-back is `save::Reread`, a seam taking the written file's **handle**, a length
     and the password; `save::InWorker` maps that handle read-only, spawns a sandboxed child
     on it, asks `Request::Reread` and drops it. The coordinator no longer holds the bytes,
-    so there is nothing there to parse --- carried by the type rather than by anyone
+    so there is nothing there to parse — carried by the type rather than by anyone
     remembering, which is what makes it checkable: `the_coordinator_does_not_parse_the_file_
     it_wrote` writes a file that does not parse, hands over a verifier that says it is fine,
     and requires the save to succeed. It goes red on the code this replaced.
 
     Three things about that are worth stating rather than implying. **It gains the bounds
-    the coordinator could not offer** --- the deadline and the memory bound this entry says
+    the coordinator could not offer** — the deadline and the memory bound this entry says
     need a separate process, which the append's read-back now has along with `MAX_DECODE`.
     **The obstacle `docs/PLAN.md` recorded was not the real one**: it said the worker "holds
     a mapping of the file as it was", and `save_document` closes the document before the
-    write, so there is no such mapping --- the real constraint was that a child has to be
+    write, so there is no such mapping — the real constraint was that a child has to be
     started, at one spawn per in-place append. **And `lopdf` is deliberately still the
     parser**, where `Request::Open` already answers a page count: what is being tested is
     whether the cross-reference *chained*, and PDFium is lenient about exactly that.
-    Measured on the day, not inherited --- `worker-probe` plants a trailer pointing at
+    Measured on the day, not inherited — `worker-probe` plants a trailer pointing at
     offset 999999999, PDFium opens it without complaint, and `lopdf` names the
     cross-reference table.
 
     ⚠ **And the rewriting save closed 2026-08-28, which is what the last paragraph of this
     entry said it needed.** `save::rewrite_update` is the whole rewrite as a pure function
-    of the document's bytes and the plan --- the split `save::append_update` already had ---
+    of the document's bytes and the plan — the split `save::append_update` already had —
     and `save::Rewriter` is the seam that decides where it runs. `save::stage_in_place`
     creates the staging file, opens the source, and hands both **handles** to
     `save::InWorker`, which maps the source read-only, spawns a sandboxed child with the
@@ -2770,16 +2770,16 @@ which is what makes it evidence rather than a milestone.
     assumed.** The profile the worker applies to itself contains `(deny file-write*)`, so
     the obvious reading is that a worker cannot write anything. Measured on macOS 26 with
     `worker::SANDBOX_PROFILE` verbatim: a write through the inherited descriptor succeeds,
-    and `File::create` on any path is refused with `EPERM` --- which is the control saying
+    and `File::create` on any path is refused with `EPERM` — which is the control saying
     the policy was in force, and without it the run is equally consistent with a sandbox
     that never came on. So the policy stops a worker *opening* a path for writing and does
     not stop a write through a descriptor the parent opened. That is the same asymmetry
-    `DOC_FD` already rests on in the other direction. The usual explanation --- the check is
-    at `open` rather than per write --- is the standard account and is not what was measured;
+    `DOC_FD` already rests on in the other direction. The usual explanation — the check is
+    at `open` rather than per write — is the standard account and is not what was measured;
     the rule to act on is the pair of outcomes.
 
     **What it costs is one spawn, measured.** On `comments.pdf` the rewrite is 2.4 ms in the
-    coordinator and 11.4 ms in a worker --- +9.0 ms, best of five interleaved --- which is the
+    coordinator and 11.4 ms in a worker — +9.0 ms, best of five interleaved — which is the
     process start plus PDFium's initialisation and is therefore fixed rather than
     proportional to the document. On a file where the parse is the cost it disappears; this
     fixture is close to the worst case for it.
@@ -2790,8 +2790,8 @@ which is what makes it evidence rather than a milestone.
     request, or a second rewrite appending to the first all disagree there. Neither number
     is derived from the other, which is what makes it a check rather than a restatement.
 
-    **Evidence.** `worker-probe` writes the same document twice --- once through
-    `save::Here` and once through `save::InWorker` --- and compares them **byte for byte**:
+    **Evidence.** `worker-probe` writes the same document twice — once through
+    `save::Here` and once through `save::InWorker` — and compares them **byte for byte**:
     222,667 bytes each on `testdata/comments.pdf` under a plan that turns every page. A
     rewrite is deterministic given one document and one plan, so the two processes have no
     licence to differ, and a comparison of page counts would have passed for a worker that
@@ -2802,10 +2802,10 @@ which is what makes it evidence rather than a milestone.
     an output file refuses the request in words rather than writing a document into
     whichever descriptor happens to be open at that number. In the unit suite,
     `the_coordinator_does_not_parse_the_document_it_rewrites` hands the save a source that
-    is not a PDF and requires it to succeed --- red on the code this replaced.
+    is not a PDF and requires it to succeed — red on the code this replaced.
 
     **What is not closed.** `save::Here` still parses in the coordinator, and it is what a
-    platform with no sandbox gets --- refusing would make such a platform useless rather
+    platform with no sandbox gets — refusing would make such a platform useless rather
     than uncontained, which is the rule `Backend::default_here` already follows, and
     `render::UNSANDBOXED_MARK` is what keeps the two runs distinguishable. Beyond that,
     **two paths remain and they are named rather than counted**: `save::write_merged`, and
@@ -2815,8 +2815,8 @@ which is what makes it evidence rather than a milestone.
     `save::write_copy`, `save::write_split` and `save::print_bytes` take the same
     `save::Rewriter` the rewrite took, and the shape is the rewrite's: the source's
     **handle** goes in, a staging file's handle goes in, and a length comes back. The
-    question this entry left open --- *handing a worker a descriptor to a file it did not
-    create is a decision this entry has not made yet* --- turned out not to arise: what the
+    question this entry left open — *handing a worker a descriptor to a file it did not
+    create is a decision this entry has not made yet* — turned out not to arise: what the
     worker is handed is the staging file `save::stage` creates beside the reader's chosen
     destination, the same file created the same way as an in-place save's, and the rename
     onto the name the reader picked happens in the coordinator. Printing is the one that
@@ -2831,14 +2831,14 @@ which is what makes it evidence rather than a milestone.
     **The print refusal moved with the parse, and had to.** An encrypted document may be
     saved and may not be printed in part, and that decision used to be made in the
     coordinator between the two phases of a parse the coordinator was doing. It is now
-    `save::Job` --- one value carrying both of the ways a print job differs from a save, the
-    reader's view rotation and this refusal --- travelling on `Request::Rewrite` and decided
+    `save::Job` — one value carrying both of the ways a print job differs from a save, the
+    reader's view rotation and this refusal — travelling on `Request::Rewrite` and decided
     in `save::rewrite_update`. Leaving it behind would have meant shipping a decrypted copy
     of the reader's document out of the sandbox in order to refuse it.
 
     ⚠ **`print::build` was a coordinator-side parse this entry never listed, and it closed
-    on 2026-09-01 --- the day after it was written down.** The page-range route --- a range
-    the reader typed, or any print with no document open --- called it, and it loaded the
+    on 2026-09-01 — the day after it was written down.** The page-range route — a range
+    the reader typed, or any print with no document open — called it, and it loaded the
     file with `lopdf`, walked the page tree and serialised, all here. It was the same
     exposure as the one above by a different function, and it was missed for the same reason
     the 2026-08-30 correction records: this entry has enumerated **commands**, and the
@@ -2847,15 +2847,15 @@ which is what makes it evidence rather than a milestone.
     **The gate has the same blind spot, and that is the part worth keeping.**
     `scripts/check_writers.py` derives its list from the terminal writers in `save.rs`, so a
     path that parses the reader's document and *writes nothing* is invisible to it by
-    construction --- a print job goes to a printer. Every instrument here was keyed on
+    construction — a print job goes to a printer. Every instrument here was keyed on
     writing; the property is parsing. See `docs/TRAPS.md`, *A risk and a gate both keyed on
     writing cannot see the path that only reads*.
 
     It is closed by `crate::print::build_update`, the pure half, run through
     `worker_proto::Request::PrintRange` in the same sandboxed worker as every other rewrite,
     with `save::print_range_bytes` owning the scratch file and doing no parse. It answers
-    with `Reply::Rewrote` deliberately: the fact is the same one --- N bytes down the output
-    channel --- and the coordinator compares it against the staged file's own size through
+    with `Reply::Rewrote` deliberately: the fact is the same one — N bytes down the output
+    channel — and the coordinator compares it against the staged file's own size through
     the same `save::landed_is` a rewrite uses. `worker-probe` was 37 checks when this was written, the three new
     ones being the differential, the needs-a-worker control and the scratch cleanup.
 
@@ -2867,19 +2867,19 @@ which is what makes it evidence rather than a milestone.
     **What it costs is one spawn per operation, measured.** On `testdata/text-base14.pdf`,
     best of five interleaved and three consecutive runs: the copy is 4.0 ms here and 11.9 ms
     in a worker (+8.0), the print job 0.2 -> 7.2 (+7.0), and the rewrite 0.2 -> 7.2 (+7.1).
-    `text-wide.pdf` reads +7.2, +7.0 and +6.9. All three are the same fixed cost --- a
-    process start plus PDFium's initialisation --- rather than anything proportional to the
+    `text-wide.pdf` reads +7.2, +7.0 and +6.9. All three are the same fixed cost — a
+    process start plus PDFium's initialisation — rather than anything proportional to the
     document. `worker-probe` was 40/40 on macOS when these were taken, and prints all three numbers.
 
     **The Windows half was measured on 2026-09-01, and it took no new probe.** The mechanism
     there is a `DuplicateHandle` of the staging file into the child's table, named in argv on
-    `--out-handle` --- the same route the document's section already takes, and the granted
+    `--out-handle` — the same route the document's section already takes, and the granted
     access travels with the handle rather than being re-checked against the low-integrity
     token. That was the expected behaviour, and expected behaviour is what this document had
     instead of a reading for as long as the sentence here said *unmeasured*. `worker-probe`
     is a step of both CI legs now rather than a run somebody remembers to make, and on run
     33501693368 it reported **34/34 checks passed, 0 not applicable to this platform** on
-    `windows-2025` --- so the copy, the split, the print job and the rewrite's output channel
+    `windows-2025` — so the copy, the split, the print job and the rewrite's output channel
     are each watched working there, not described.
 
     **Every check count in this entry is a dated reading, not the current number.** Three of
@@ -2891,29 +2891,29 @@ which is what makes it evidence rather than a milestone.
     residual risk 4. A measured output channel says the descriptor handover works; it says
     nothing about what a compromised worker could still reach.
 
-    The general shape is the one this entry already records --- **a mitigation that moved
+    The general shape is the one this entry already records — **a mitigation that moved
     half a path reads exactly like one that moved the path**, and the half that stayed is
     the one nobody writes down.
 
     ⚠ **Merge documents widens this, on purpose, and by a different axis: it parses files
     the reader chose that tpdf never opened.** Added 2026-08-24. Every other writer on this
-    list reads the *open* document --- one file, already parsed by a worker, already
+    list reads the *open* document — one file, already parsed by a worker, already
     rendered on screen. `save::write_merged` loads each incoming file with `lopdf` in the
     coordinator, before anything about it is known, so a merge of four documents is four
     coordinator-side parses of bytes the application has never seen. Each is bounded by the
     same `MAX_DECODE`, the graph walk in `merge.rs` uses `sweep::MAX_NESTING`, and the whole
-    command is on the blocking pool --- so what it adds is exposure to more attacker-chosen
+    command is on the blocking pool — so what it adds is exposure to more attacker-chosen
     input on the existing path, not a new kind of access.
 
     **Closed 2026-09-01, and the paragraph above was wrong about how.** It said the incoming
     files "could go through a worker on the way in, since what has to come back per file is a
-    page count and an object graph --- which is the whole file, so it has the rewrite's
+    page count and an object graph — which is the whole file, so it has the rewrite's
     problem after all". That reasoning had the direction backwards: nothing has to come back
     *per file*. The merge is one operation with one answer, so the files go **in** and the
     merged document comes out down the output channel the rewrite already had.
 
-    They go in as one read-only mapping --- every incoming file concatenated, with
-    `save::Incoming` naming where each begins, how long it is and what to call it --- on
+    They go in as one read-only mapping — every incoming file concatenated, with
+    `save::Incoming` naming where each begins, how long it is and what to call it — on
     `worker::IN_FD`. One mapping rather than one per file because the descriptor shuffle
     between `fork` and `exec` may not allocate, so a descriptor per file would need a
     compile-time cap, and a cap on how many documents a reader may merge is a product limit
@@ -2923,7 +2923,7 @@ which is what makes it evidence rather than a milestone.
 
     The coordinator's remaining part is to **read** those files, and reading is not parsing:
     `save::concatenated` reads those files straight into the mapping the worker is handed
-    --- one copy rather than the two it used to make --- and never asks what they mean. It is
+    — one copy rather than the two it used to make — and never asks what they mean. It is
     also the one place a merge's *size* is bounded: `MAX_MERGE_BYTES` (1 GiB) is checked against
     the running total from the files' own handles before a byte is read, because the coordinator
     holds every incoming document at once and the worker maps the same segment. A reader who
@@ -2937,7 +2937,7 @@ which is what makes it evidence rather than a milestone.
 
     Decompression is bounded at
     `MAX_DECODE`, graph recursion at `sweep::MAX_NESTING`, and a panic is reported rather
-    than fatal (pinned by a test, so the property cannot be lost to a profile change) --- but
+    than fatal (pinned by a test, so the property cannot be lost to a profile change) — but
     there is no deadline and no memory bound, because enforcing either needs a separate
     process. A document that makes the parser spin therefore wedges the application and takes
     the unsaved journal with it, rather than costing a replaceable worker.
@@ -2952,7 +2952,7 @@ which is what makes it evidence rather than a milestone.
     §5.1's wiring. A region can only be certified when its page leaves a word the removal did
     not take, no larger than the smallest box it did take, of at least `MIN_CONTROL_CHARS`
     characters. Measured across 41 real documents, **45.9%** of realistic regions have no such
-    word, and those are reported *not verified* --- which is the safe answer and is also the
+    word, and those are reported *not verified* — which is the safe answer and is also the
     answer that was given before any of this existed. Lowering the control's standard is one
     lever on coverage and a poor one, since the measured curve has no flat part: 71.9% at two
     characters, 58.3% at four, 35.5% at eight, and a two-character token is a fragment
@@ -2967,17 +2967,17 @@ which is what makes it evidence rather than a milestone.
 
     Two things narrow it further and neither is closed. **The gate reads the region, not the
     page**, so a `/DCTDecode` image outside every region is still `verify::Report::deferred`
-    --- bytes nobody read, reported. And ~~on a platform with no engine there is no gate at
+    — bytes nobody read, reported. And ~~on a platform with no engine there is no gate at
     all: Windows gets one sentence saying so, which is honest and is not a mitigation.~~
     **Closed 2026-08-29**: `ocr_windows.rs` drives `Windows.Media.Ocr` behind
     `ocr::Recogniser` and `OcrWorker::spawn` has a Windows arm, so both platforms run the
     gate. The remaining no-engine sentence is now reachable only on a platform this project
-    does not target --- and the test that covered it is compiled by neither, which
+    does not target — and the test that covered it is compiled by neither, which
     `ocr_worker.rs` says out loud rather than leaving as an apparent coverage.
 
 20. **The Windows engine cannot be told not to correct what it read**, added 2026-08-29 with
     the engine. `ocr::Options::language_correction` is documented as off for verification
-    *always*, because a corrector turns marks it cannot read into plausible words --- which is
+    *always*, because a corrector turns marks it cannot read into plausible words — which is
     the wrong bias when the question is whether anything is readable at all, and it can also
     repair the control token into something else and fail the check for the wrong reason.
     macOS Vision honours it through `setUsesLanguageCorrection`. `Windows.Media.Ocr` has an
@@ -2990,14 +2990,14 @@ which is what makes it evidence rather than a milestone.
     does not establish is the case the option exists for: at both sizes the engine read clean
     synthetic text *exactly*, so it was never near its limit, and a corrector only shows where
     a recogniser is struggling. What the gate hands an engine is harder in a way size does not
-    capture --- a control composited beside real page ink, at the document's own contrast.
+    capture — a control composited beside real page ink, at the document's own contrast.
 
     So a *not verified* from this engine means the same as one from Vision, and a *clean* rests
     on a control the engine may in principle have reconstructed rather than read. The
     instrument that would narrow it is the corpus sweep `redact-reach-probe` already does on
     macOS, run against real documents on Windows; it has not been, as of 2026-09-01. Since
     that date the run is named in `BUILD.md`'s release checklist at **step 8**, with the flags
-    it needs there --- `--no-gate` off, because the gate is the half under test --- rather than
+    it needs there — `--no-gate` off, because the gate is the half under test — rather than
     living only in this sentence, which nothing reads before a tag.
 
 21. **A 358-byte document ends the process that parses it, and no guard we can write will
@@ -3005,7 +3005,7 @@ which is what makes it evidence rather than a milestone.
     fields in `/W`, and `lopdf` multiplies them out and asks for a zeroed buffer of the result
     without checking it: `/W [1 4 3333333333333333332]` gives `memory allocation of
     3333333333333333332 bytes failed`. **That is `handle_alloc_error`, so it is an abort and
-    not a panic** --- `catch_unwind` cannot see it, and there is no point in the tpdf code
+    not a panic** — `catch_unwind` cannot see it, and there is no point in the tpdf code
     where a check could go, because the code that would have to check is `lopdf`'s own
     cross-reference parser. The threshold is sharp: `W[2] = 2^45` completes, `2^46` aborts.
 
@@ -3014,21 +3014,21 @@ which is what makes it evidence rather than a milestone.
     feeding one file to each. What bounds the damage is where those parses run, which since
     2026-08-28 and 2026-09-01 is a worker for all of them: a reader sees a panel that never
     fills and a save that refuses, and the pool restarts a process. That is the entry about a
-    pool replacing a dead worker with the same bytes and faulting again --- correct behaviour
+    pool replacing a dead worker with the same bytes and faulting again — correct behaviour
     with an unhelpful shape, rather than a compromise. Before those moves it would have taken
-    the application down from `commands::print::print_job`. **The last route by which it still could ---
-    `save::write_merged` --- closed later the same day**, so every `lopdf` load of the reader's
-    document now happens where an abort takes a worker rather than the window. **The last one ---
-    `verify::scan`, the redaction read-back --- closed later the same day through
+    the application down from `commands::print::print_job`. **The last route by which it still could —
+    `save::write_merged` — closed later the same day**, so every `lopdf` load of the reader's
+    document now happens where an abort takes a worker rather than the window. **The last one —
+    `verify::scan`, the redaction read-back — closed later the same day through
     `worker_proto::Request::Verify`**, so on both shipped platforms there is no
     coordinator-side `lopdf` parse of a document for this to reach. `save::Here` is the
     exception and is what a platform with no sandbox gets.
 
     **`testdata/abort/xref-bomb.pdf` is the reproducer, generated like every other fixture**
-    (`testdata/make_xref_bomb_pdf.py`) --- in a subdirectory of its own, because every sweep
+    (`testdata/make_xref_bomb_pdf.py`) — in a subdirectory of its own, because every sweep
     over `testdata/*.pdf` would otherwise load it and die, and `worker-probe` hands it to a rewrite through a real
     worker: the worker dies, the coordinator is told so in words, and the probe carries on. The
-    coordinator arm is deliberately not run against it --- it would take the probe with it,
+    coordinator arm is deliberately not run against it — it would take the probe with it,
     which is the finding rather than a test.
 
     **Rechecked with lopdf 0.45 on Windows, 2026-09-10:** the generated xref-bomb
@@ -3044,7 +3044,7 @@ which is what makes it evidence rather than a milestone.
     writing a second cross-reference parser to protect the first. The upstream
     change above removes the observed abort for this reproducer.
     Found 2026-09-01 by coverage-guided fuzzing of `lopdf` through our own entry points,
-    independently by **three** targets --- `lopdf_load`, `encoding_scan` and, on 2026-09-02
+    independently by **three** targets — `lopdf_load`, `encoding_scan` and, on 2026-09-02
     after 8,051,057 executions, `annots_scan`. Five artifacts carry it at five magnitudes,
     from 6.7e15 to 4.6e16 bytes; the numbers differ and the defect does not. That third target
     is why `src-tauri/fuzz/run.py` now forks **every** whole-document reader rather than the
@@ -3054,19 +3054,19 @@ which is what makes it evidence rather than a milestone.
 22. **A worker trusts the geometry in the plan it is given**, added 2026-09-02. Every input
     this document counted was document-shaped; a save hands the worker a second one. A `Plan`
     carries page sizes, crops, quads and stroke points as raw `f32` and `f64`, and it arrives
-    from outside the app process --- across the worker boundary, out of a restored session, or
+    from outside the app process — across the worker boundary, out of a restored session, or
     computed against a revision of the file that has since been replaced. `edits.rs` refuses a
     non-finite page size and the model refuses one enclosing no area; **both of those run in
     the coordinator**, and the same argument that moved every `lopdf` parse into a worker
     (risk 18) says a guard there is not a guard here.
 
     **Measured rather than argued.** `fuzz_targets/save_rewrite_update.rs` reached **6.2 GB of
-    allocation from a 2,937-byte input, in one pass** --- against 54 MB for a size-matched file
+    allocation from a 2,937-byte input, in one pass** — against 54 MB for a size-matched file
     from the same corpus and 52 MB for an empty one. Two mechanisms, and each needed its own
     fix: `rewrite_update` accepted a made page 1.3e190 points wide, and `draw_wave`'s trip
     count is `width / half` where `half` comes from the quad's *height*, so an unremarkable
     width over an unremarkable height gave 200,049 line segments. Bounding the page does not
-    close the second --- for an unturned page `from_device` carries the quad's own dimensions
+    close the second — for an unturned page `from_device` carries the quad's own dimensions
     straight through, so the ratio is reachable on a perfectly legal page. `MAX_PAGE_POINTS`
     and `MAX_WAVE_SEGMENTS` are the two bounds; three mutations cover them and are caught by
     the tests named for them.
@@ -3075,7 +3075,7 @@ which is what makes it evidence rather than a milestone.
     drawing routine in `save/marks.rs` for loops, and found that all the others iterate a
     collection whose length the plan's byte size already bounds. That is the extent of it: the
     rest of the save path has not been swept for a quantity derived from plan geometry, and
-    the plan's other numeric fields --- crops, stroke coordinates, note lengths --- have not been
+    the plan's other numeric fields — crops, stroke coordinates, note lengths — have not been
     put to the same question. On macOS nothing catches the next one if there is one, because
     the memory poll of risk 2 has no caller; on Windows the job object's committed-memory cap
     refuses the allocation before a byte of it exists, which is the asymmetry §T3 describes.
