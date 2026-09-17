@@ -12,6 +12,7 @@ mod clipping;
 mod colors;
 mod filters;
 mod fonts;
+mod forms;
 mod graphics;
 mod grouping;
 mod images;
@@ -31,6 +32,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const MAX_CONTENT: usize = 1024 * 1024;
+// Image samples have their own bounded budget; ordinary photographs are much
+// larger than page operator streams. Charge preserved forms against it too.
+const MAX_IMAGES: usize = 8 * 1024 * 1024;
 // Character-positioned exports use two operators per glyph. Keep a finite
 // work bound without rejecting ordinary dense pages; decoded bytes stay at 1 MiB.
 const MAX_OPERATIONS: usize = 16_384;
@@ -48,6 +52,9 @@ pub struct Run {
     pub advance: f64,
     /// Hit rectangle in the original displayed page, before journal crop and turns.
     pub display_rect: [f32; 4],
+    /// Required single-line box height in page points when deeper than 1.25 em.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_height: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -375,6 +382,7 @@ struct Inspection {
     // Validated non-diagonal text is preserved byte-for-byte. It supplies
     // collision bounds but never an editable operator address.
     preserved: Vec<Run>,
+    form_text_bounds: Vec<[f32; 4]>,
     actual_text: BTreeMap<u32, usize>,
     // The active Tf can precede a restored state, not just the last Tf in the
     // stream. Keep its address privately; display font names can be lossy UTF-8.
@@ -465,6 +473,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut shading_patterns = BTreeSet::new();
     let mut graphics_states = BTreeSet::new();
     let mut image_names = BTreeSet::new();
+    let mut form_bounds = BTreeMap::new();
     let mut image_bytes = 0;
     let mut result = PageRuns {
         page,
@@ -502,6 +511,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut compound_run_clips = BTreeMap::new();
     let mut contexts = BTreeMap::new();
     let mut preserved = Vec::new();
+    let mut form_text_bounds = Vec::new();
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
@@ -631,8 +641,42 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     if image_names.len() >= 32 {
                         return Err("too many images on an editable page".into());
                     }
-                    image_bytes += images::check(doc, resources, name, MAX_CONTENT - image_bytes)?;
+                    if let Some(form) =
+                        forms::check(doc, resources, name, MAX_IMAGES - image_bytes)?
+                    {
+                        image_bytes += form.bytes;
+                        form_bounds.insert(name.clone(), form.text_bounds);
+                    } else {
+                        image_bytes +=
+                            images::check(doc, resources, name, MAX_IMAGES - image_bytes)?;
+                    }
                     image_names.insert(name.clone());
+                }
+                if let Some(Some(bounds)) = form_bounds.get(name) {
+                    let mut bounds = text_bounds(page_transform, *bounds);
+                    if let Some(clip) = clip {
+                        bounds = [
+                            bounds[0].max(clip[0]),
+                            bounds[1].max(clip[1]),
+                            bounds[2].min(clip[2]),
+                            bounds[3].min(clip[3]),
+                        ];
+                    }
+                    if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
+                        let geometry = crate::pagetree::displayed_page(doc, id);
+                        let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
+                        form_text_bounds.push(crate::text::to_device(
+                            geometry.turns,
+                            geometry.width,
+                            geometry.height,
+                            [
+                                bounds[0] - ox,
+                                bounds[1] - oy,
+                                bounds[2] - ox,
+                                bounds[3] - oy,
+                            ],
+                        ));
+                    }
                 }
                 tags.paint();
             }
@@ -809,7 +853,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         } else {
             compose_affine(page_transform, shown_matrix)?
         };
-        let read_only = !diagonal(page_transform)
+        let read_only = tags.read_only()
+            || !diagonal(page_transform)
             || !orthogonal(page_matrix)
             || page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0
             || !matches!(fill_components, patterns::Colour::Solid(_));
@@ -822,9 +867,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             page_matrix,
             [horizontal[0], -size * 0.25, horizontal[1], size],
         );
-        if (read_only || (actual.is_some() && metrics.vertical_bounds.is_some()))
-            && !text.is_empty()
-        {
+        if (read_only || metrics.vertical_bounds.is_some()) && !text.is_empty() {
             let (bottom, top) = metrics
                 .vertical_bounds
                 .map(|[bottom, top]| (bottom, top))
@@ -902,6 +945,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         if read_only {
             preserved.push(Run {
                 display_rect,
+                minimum_height: None,
                 operator: index as u32,
                 text,
                 font: String::from_utf8_lossy(name).into_owned(),
@@ -926,6 +970,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         );
         result.runs.push(Run {
             display_rect,
+            minimum_height: metrics
+                .vertical_bounds
+                .filter(|bounds| bounds[0] < -250.)
+                .map(|bounds| {
+                    size * page_matrix[2].hypot(page_matrix[3]) * (1. - bounds[0] / 1000.)
+                }),
             operator: index as u32,
             text,
             font: String::from_utf8_lossy(name).into_owned(),
@@ -961,6 +1011,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         patched: BTreeSet::new(),
         runs: result,
         preserved,
+        form_text_bounds,
         actual_text: BTreeMap::new(),
         font_operators,
         horizontal_bounds,

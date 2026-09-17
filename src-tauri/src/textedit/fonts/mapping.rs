@@ -153,8 +153,12 @@ fn blocks_with_header(
             && expected.operator == "endcodespacerange"
             && matches!(actual.operands.as_slice(), [Object::String(low, _), Object::String(high, _)]
                 if low == &[0, 0] && high == &[255, 255]);
+        // PostScript's dict operand is an allocation hint, not part of the
+        // character mapping. Producers use several initial capacities.
+        let dictionary_capacity = expected.operator == "dict"
+            && matches!(actual.operands.as_slice(), [Object::Integer(size)] if (1..=256).contains(size));
         if actual.operator != expected.operator
-            || (actual.operands != expected.operands && !padded_range)
+            || (actual.operands != expected.operands && !padded_range && !dictionary_capacity)
         {
             return Err(invalid());
         }

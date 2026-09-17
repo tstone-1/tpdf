@@ -253,6 +253,9 @@ fn textedit_lists_refuse_wrong_roles_owners_cycles_and_semantic_overrides() {
                 doc.get_dictionary_mut(ids[1])
                     .unwrap()
                     .set("RoleMap", dictionary! { "CustomList" => "L" });
+                // A valid unused mapping must not disable unrelated content.
+                assert!(textedit::scan(&doc, 0).is_ok());
+                continue;
             }
             12 => {
                 doc.get_dictionary_mut(owners[1])

@@ -4056,4 +4056,9 @@
     color: #c0392b;
     white-space: pre-wrap;
   }
+  .error, :global([role="alert"]) {
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: text;
+  }
 </style>

@@ -208,6 +208,22 @@ describe("Viewer lifetime", () => {
     dom.restore();
   });
 
+  it("does not steal native copying when focus remains on the PDF surface", () => {
+    const viewer = build(dom);
+    const copy = vi.spyOn(viewer, "copySelection").mockResolvedValue(null);
+    for (const type of ["Range", "Caret", "None"]) {
+      copy.mockClear();
+      const preventDefault = vi.fn();
+      dom.root.dispatch("keydown", {
+        key: "c", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+        target: { ownerDocument: { getSelection: () => ({ type }) } }, preventDefault,
+      });
+      expect(copy).toHaveBeenCalledTimes(type === "Range" ? 0 : 1);
+      expect(preventDefault).toHaveBeenCalledTimes(type === "Range" ? 0 : 1);
+    }
+    viewer.destroy();
+  });
+
   it("does not restart the frame loop when a text load lands after destroy", async () => {
     // The zombie. A load outstanding at destroy is guaranteed --- it never
     // rejects --- and its `.then` calls `wake`, which used to restart the loop

@@ -585,6 +585,12 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
             continue;
         }
         let width = number(&widths[(i64::from(code_byte) - first) as usize])?;
+        // Subset exporters leave zero-width holes even when the original cmap
+        // and glyph remain embedded. Such a code is unavailable for editing;
+        // it must not prevent using the other, independently validated codes.
+        if width == 0. {
+            continue;
+        }
         let advance = f64::from(face.glyph_hor_advance(glyph).ok_or_else(invalid)?) * unit;
         if width <= 0. || width > 2000. || (width - advance).abs() > 1. {
             return Err("embedded font widths disagree with its glyph metrics".into());
@@ -595,7 +601,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
             Some([left, bottom, right, top])
                 if left * unit >= -250.
                     && right * unit <= width + 250.
-                    && bottom * unit >= -250.
+                    && bottom * unit >= -500.
                     && top * unit <= 1000. =>
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);

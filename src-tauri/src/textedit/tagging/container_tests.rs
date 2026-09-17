@@ -191,7 +191,7 @@ fn textedit_container_count_is_bounded_independently_of_depth_and_content() {
         let mut groups = Vec::new();
         let mut owners = Vec::new();
         let mut bytes = String::new();
-        for mcid in 0..128 {
+        for mcid in 0..256 {
             let group = doc.add_object(dictionary! { "S" => "Sect", "P" => ids[2] });
             let block = doc
                 .add_object(dictionary! { "S" => "P", "P" => group, "Pg" => ids[0], "K" => mcid });
@@ -213,7 +213,7 @@ fn textedit_container_count_is_bounded_independently_of_depth_and_content() {
         if extra {
             refused(doc);
         } else {
-            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 128);
+            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 256);
         }
     }
 }
@@ -288,15 +288,15 @@ fn textedit_container_frontier_is_bounded_before_children_are_visited() {
                 .set("K", vec![Object::Reference(ids[3])]);
         }
         assert!(textedit::scan(&doc, 0).is_ok());
-        // One extra pending branch exceeds the two-item document budget.
-        // It must be rejected before visiting this deliberately invalid child.
+        // Empty elements have a node budget independent of the MCID count.
+        // Exceed it before visiting any deliberately invalid children.
         doc.get_dictionary_mut(group)
             .unwrap()
             .get_mut(b"K")
             .unwrap()
             .as_array_mut()
             .unwrap()
-            .push(Object::Null);
+            .extend(vec![Object::Null; super::MAX_NODES]);
         assert!(textedit::scan(&doc, 0)
             .unwrap_err()
             .contains("grouping frontier"));

@@ -269,6 +269,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 matrix: [1.0, 0.0, 0.0, 1.0, 40.0, 180.0],
                 advance: 60.0,
                 display_rect: [40.0, 48.0, 100.0, 63.0],
+                minimum_height: None,
             }],
         },
     );

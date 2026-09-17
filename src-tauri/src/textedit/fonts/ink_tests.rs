@@ -284,3 +284,46 @@ fn textedit_simple_overhang_quarter_em_boundaries() {
         }
     }
 }
+
+#[test]
+fn textedit_truetype_descenders_extend_hit_bounds_and_keep_a_finite_limit() {
+    for bottom in [-300, -500, -501] {
+        let (mut doc, font, _, program) = super::tests::fixture();
+        doc.get_object_mut(program)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .content = component_program([('B', 0, bottom, 16384), ('D', 0, -100, 16384)]);
+        let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+        assert_eq!(metrics.advance("B", 12.).is_ok(), bottom >= -500);
+        if bottom < -500 {
+            continue;
+        }
+        set_content(&mut doc, "", b"B");
+        let before = textedit::scan(&doc, 0).unwrap();
+        // 240pt page, 180pt baseline: a 12pt glyph descends 3.6 or 6 points.
+        let expected_bottom = if bottom == -300 { 63.6 } else { 66. };
+        assert!((before.runs[0].display_rect[3] - expected_bottom).abs() < 0.001);
+        let height = before.runs[0].minimum_height.unwrap();
+        assert!((height - (expected_bottom as f64 - 48.)).abs() < 0.001);
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: Some(textedit::Layout {
+                    width: before.runs[0].advance,
+                    height,
+                    size: 12.,
+                    wrap: false,
+                    font: textedit::EditFont::Original,
+                }),
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "B".into(),
+                replacement: "D".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "D");
+    }
+}

@@ -1,6 +1,7 @@
 //! Local round trip without printing document text. Requests are JSON objects
 //! {"page":0,"contains":"SYNTHETIC","replacement":"EDITED"} in an array.
 //! Each substring must identify exactly one run. Output is a new directory.
+//! With "replace_match":true, replace only that substring within the run.
 use super::*;
 use std::path::Path;
 
@@ -12,6 +13,8 @@ struct Edit {
     #[serde(default)]
     operator: Option<u32>,
     replacement: String,
+    #[serde(default)]
+    replace_match: bool,
     #[serde(default)]
     layout: Option<textedit::Layout>,
 }
@@ -77,13 +80,21 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
             ));
         };
         boxes.push((edit.page, run.display_rect));
+        let replacement = if edit.replace_match {
+            if edit.contains.is_empty() || run.text.matches(&edit.contains).count() != 1 {
+                return Err("substring replacement requires exactly one occurrence".into());
+            }
+            run.text.replacen(&edit.contains, &edit.replacement, 1)
+        } else {
+            edit.replacement
+        };
         changes.push(textedit::Change {
             layout: edit.layout,
             page: edit.page,
             revision: mapped.revision,
             operator: run.operator,
             original: run.text.clone(),
-            replacement: edit.replacement,
+            replacement,
         });
         if changes.last().is_some_and(|change| change.layout.is_some()) {
             let result = worker.call(&Request::TextRuns {

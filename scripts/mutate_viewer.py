@@ -1145,8 +1145,8 @@ MUTATIONS = [
         # a statement about the handler and not about the DOM it lives in.
         "note keys: act on a key that went to the note box",
         "src/lib/viewer.ts",
-        "    if (inTextField(event)) return;",
-        "    if (false) return;",
+        '    if (inTextField(event) || nativeCopy(event)) return;',
+        '    if (false) return;',
         "a key typed into a note does not move the page under it",
         "viewer",
     ),

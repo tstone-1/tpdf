@@ -32,7 +32,7 @@ import { changedTextPages, type TextChange } from "./textedit";
  */
 
 import { AccessibleText } from "./a11y";
-import { inTextField, isMac, matches } from "./keys";
+import { inTextField, isMac, matches, nativeCopy } from "./keys";
 import { drawSignature, fitSignature, rotateSignature, signatureCanvas, validSignature, type SignatureImage } from "./signature";
 import { CommentPopup } from "./commentpopup";
 import {
@@ -2912,7 +2912,7 @@ export class Viewer {
     // what a reader wants. This handler holds the opposite half --- `n`, `p`,
     // Space, Home, End, the arrows --- plus ⌘A and ⌘C, which mean *this field*
     // when a field has the keyboard.
-    if (inTextField(event)) return;
+    if (inTextField(event) || nativeCopy(event)) return;
 
     const screen = this.viewportSize().height * PAGE_OVERLAP;
 

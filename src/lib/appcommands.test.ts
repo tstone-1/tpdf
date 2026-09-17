@@ -1069,7 +1069,7 @@ describe("the window shortcuts for editing", () => {
   function press(
     key: string,
     modifiers: { shift?: boolean; alt?: boolean; handled?: boolean } = {},
-    target: { tagName?: string; isContentEditable?: boolean } | null = null,
+    target: { tagName?: string; isContentEditable?: boolean; ownerDocument?: { getSelection(): { type: string } | null } } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
     dirty = true,
   ) {
@@ -1215,6 +1215,16 @@ describe("the window shortcuts for editing", () => {
     // let the default through would select the page *and* the chrome.
     expect(press("a").prevented).toBe(1);
     expect(press("c").prevented).toBe(1);
+  });
+
+  it("lets the webview copy selected error text, but still copies PDF text without it", () => {
+    for (const type of ["Range", "Caret", "None"]) {
+      const target = { tagName: "PRE", ownerDocument: { getSelection: () => ({ type }) } };
+      const result = press("c", {}, target);
+      expect(result.fired).toEqual(type === "Range" ? [] : ["copySelection"]);
+      expect(result.prevented).toBe(type === "Range" ? 0 : 1);
+      expect(press("s", {}, target).fired).toEqual(["saveDocument"]);
+    }
   });
 
   it("leaves both to the surface when the surface has already taken them", () => {

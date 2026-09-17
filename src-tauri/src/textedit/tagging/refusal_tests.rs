@@ -249,7 +249,7 @@ fn textedit_tagged_refusals_separate_roles_parent_tree_and_ownership() {
                 doc.get_dictionary_mut(ids[2])
                     .unwrap()
                     .set("S", "SYNTHETIC_SECRET");
-                "tagged structure requires one Document root element"
+                "tagged element role is not editable yet"
             }
             2 => {
                 doc.get_dictionary_mut(ids[5])

@@ -1,10 +1,11 @@
 //! Preserve header identity and associations, without reconstructing a table.
-use super::{array, get, integer, keys, name, reference, INVALID, MAX_CONTENT_ITEMS};
+use super::{array, get, integer, keys, name, reference, INVALID};
 use crate::encoding::resolve;
 use lopdf::{Dictionary, Document, Object, ObjectId};
 use std::collections::{BTreeMap, BTreeSet};
 
 const ID_TREE_ERROR: &str = "unsupported IDTree metadata in tagged structure root";
+const MAX_CONTENT_ITEMS: usize = 128;
 
 fn identifier(value: &Object) -> Result<&[u8], String> {
     let bytes = value.as_str().map_err(|_| INVALID)?;

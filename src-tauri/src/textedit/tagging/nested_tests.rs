@@ -316,7 +316,7 @@ fn textedit_nested_mixed_leaf_ownership_keeps_each_authored_tag() {
 
 #[test]
 fn textedit_nested_total_content_limit_covers_all_leaf_groups() {
-    for count in [128, 129] {
+    for count in [256, 257] {
         let (mut doc, ids, _) = nested(false);
         let mut children = Vec::new();
         let mut content = String::new();
@@ -341,11 +341,11 @@ fn textedit_nested_total_content_limit_covers_all_leaf_groups() {
         doc.get_dictionary_mut(ids[0])
             .unwrap()
             .set("Contents", stream);
-        assert_eq!(textedit::scan(&doc, 0).is_ok(), count == 128);
-        if count == 128 {
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), count == 256);
+        if count == 256 {
             let edit = update(&doc, 0);
             textedit::write(&mut doc, &[edit]).unwrap();
-            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 128);
+            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 256);
         }
     }
 }

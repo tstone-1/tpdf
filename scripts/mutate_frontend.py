@@ -79,6 +79,10 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation('error copying: intercept selected interface text', 'src/lib/appcommands.ts', '  if (nativeCopy(event)) return;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
+    Mutation('error copying: viewer intercepts native copy', 'src/lib/viewer.ts', '    if (inTextField(event) || nativeCopy(event)) return;', '    if (inTextField(event)) return;', 'does not steal native copying when focus remains on the PDF surface'),
+    Mutation('error copying: treat every shortcut as copy', 'src/lib/keys.ts', '  if (!matches("edit.copy", event)) return false;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
+    Mutation('descender layout: discard validated height', 'src/lib/textlayout.ts', 'run.minimum_height ?? 0', '0', 'keeps the validated descender height when sizing and rounding the default box'),
     Mutation('text Enter: apply a Cancel button draft', 'src/lib/textedit.ts', ' && event.target === this.input', '', 'Enter on popup buttons leaves their native activation in charge'),
     Mutation('text Enter: ignore input activation', 'src/lib/textedit.ts', 'event.target === this.input', 'event.target === this.apply', 'Enter and Apply commit without a navigable form; composition does not commit'),
     Mutation('text Enter: apply during composition', 'src/lib/textedit.ts', ' && !event.isComposing', '', 'Enter and Apply commit without a navigable form; composition does not commit'),
@@ -3588,8 +3592,8 @@ MUTATIONS += [
         # call.
         "viewer: act on a key that went to the note box",
         "src/lib/viewer.ts",
-        "    if (inTextField(event)) return;",
-        "    if (false) return;",
+        '    if (inTextField(event) || nativeCopy(event)) return;',
+        '    if (false) return;',
         "scroll the page when they came from the page and not when they did not",
     ),
     Mutation(
@@ -3598,8 +3602,8 @@ MUTATIONS += [
         # made the viewer deaf would be indistinguishable from one that works.
         "viewer: refuse every key, whether or not it went to a field",
         "src/lib/viewer.ts",
-        "    if (inTextField(event)) return;",
-        "    return;",
+        '    if (inTextField(event) || nativeCopy(event)) return;',
+        '    return;',
         "scroll the page when they came from the page and not when they did not",
     ),
     Mutation(

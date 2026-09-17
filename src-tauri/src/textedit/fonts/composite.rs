@@ -32,7 +32,7 @@ fn name(dict: &Dictionary, key: &[u8], expected: &[u8]) -> Result<(), String> {
 
 // Parse both W forms completely, including entries that are not offered for
 // editing. Reject duplicate/overlapping or reversed ranges before expansion.
-fn widths(font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>), String> {
+fn widths(doc: &Document, font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>), String> {
     let width = |value: &Object| -> Result<f64, String> {
         let value = number(value)?;
         if !(0.0..=2000.0).contains(&value) {
@@ -48,13 +48,18 @@ fn widths(font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>), String> {
     let Some(values) = font.get(b"W").ok() else {
         return Ok((default, result));
     };
-    let mut values = values.as_array().map_err(|_| INVALID)?.as_slice();
+    let mut values = crate::encoding::resolve(doc, values)
+        .as_array()
+        .map_err(|_| INVALID)?
+        .as_slice();
     while let [first, rest @ ..] = values {
         let first = cid(first)?;
         let Some(next) = rest.first() else {
             return Err(INVALID.into());
         };
-        let (last, widths, remaining) = if let Object::Array(array) = next {
+        let (last, widths, remaining) = if let Object::Array(array) =
+            crate::encoding::resolve(doc, next)
+        {
             if array.is_empty() || array.len() > MAX_WIDTHS {
                 return Err(INVALID.into());
             }
@@ -161,7 +166,10 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         .get(b"Flags")
         .and_then(Object::as_i64)
         .map_err(|_| INVALID)?;
-    if flags & (4 | 32 | 262144) != 4 {
+    // Identity-H and CIDToGIDMap explicitly select glyph indices; unlike a
+    // simple TrueType font, the symbolic flag does not choose a cmap here.
+    // Keep contradictory flags and synthetic bold rendering refused.
+    if !matches!(flags & (4 | 32 | 262144), 4 | 32) {
         return Err(INVALID.into());
     }
     let bytes = super::program(doc, descriptor)?;
@@ -169,7 +177,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| INVALID)?)
         .as_stream()
         .map_err(|_| INVALID)?;
-    let (default, widths) = widths(child)?;
+    let (default, widths) = widths(doc, child)?;
     if let Some(mapping) = &glyph_mapping {
         let (unicode, vertical_bounds) = super::unicode::Metrics::with_glyphs(
             &face,
@@ -225,7 +233,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
                 // Actual run/candidate placement is checked separately.
                 if left * unit >= -250.
                     && right * unit <= width + 250.
-                    && bottom * unit >= -250.
+                    && bottom * unit >= -500.
                     && top * unit <= 1000. =>
             {
                 vertical_bounds[0] = vertical_bounds[0].min(bottom * unit);

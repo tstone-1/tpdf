@@ -472,3 +472,10 @@ export function inTextField(event: KeyboardEvent): boolean {
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
+
+/** Leave copying selected interface text (including errors) to the webview. */
+export function nativeCopy(event: KeyboardEvent): boolean {
+  if (!matches("edit.copy", event)) return false;
+  const target = event.target as Node | null;
+  return target?.ownerDocument?.getSelection()?.type === "Range";
+}

@@ -177,7 +177,9 @@ fn textedit_nested_lists_bound_pending_children_before_visiting_them() {
             .unwrap()
             .as_array_mut()
             .unwrap()
-            .push(Object::Null);
+            // With a sibling, the child list itself is exactly at the limit;
+            // only counting the pending sibling must trigger this refusal.
+            .extend(vec![Object::Null; super::MAX_NODES - 3]);
         assert!(textedit::scan(&doc, 0)
             .unwrap_err()
             .contains("list frontier"));

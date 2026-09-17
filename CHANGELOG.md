@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.11] - 2026-09-17
+
+### Fixed
+
+- Edit more tagged PDFs with custom role maps, empty structure elements and
+  preserved Form XObjects. Indexed images and additional validated embedded
+  font metrics no longer block otherwise supported text edits.
+- Keep text inside preserved forms and tagged artifacts read-only, with collision
+  bounds protecting it when nearby text is resized.
+- Size the default editing box to include deeper font descenders.
+- Preserve invisible signature widgets when saving unrelated edits, with the
+  existing confirmation before saving signed documents.
+- Select and copy error messages with Ctrl+C or Cmd+C, including errors inside
+  the text editor.
+
 ## [26.9.10] - 2026-09-17
 
 ### Added
