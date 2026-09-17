@@ -207,18 +207,48 @@ fn text_byte(byte: u8) -> bool {
     (32..=126).contains(&byte) || byte >= 160
 }
 
-// Metric slots use Latin-1 indices plus three punctuation slots and one minus slot.
-// A slot is not a PDF code in a custom font; its ToUnicode map supplies that.
-// In particular, U+0096 is a control character, never an alias for U+2013.
+// ISO 32000-1 Annex D.2: WinAnsi punctuation and letters in 0x82..0x9F. Each
+// keeps its WinAnsi code as its metric slot. The euro sign (0x80) is omitted
+// because that slot is the internal minus. 0x81, 0x8D, 0x8F, 0x90 and 0x9D
+// are undefined in WinAnsi.
+const WINANSI_EXTRA: [(u8, char); 26] = [
+    (0x82, '\u{201A}'),
+    (0x83, '\u{0192}'),
+    (0x84, '\u{201E}'),
+    (0x85, '\u{2026}'),
+    (0x86, '\u{2020}'),
+    (0x87, '\u{2021}'),
+    (0x88, '\u{02C6}'),
+    (0x89, '\u{2030}'),
+    (0x8A, '\u{0160}'),
+    (0x8B, '\u{2039}'),
+    (0x8C, '\u{0152}'),
+    (0x8E, '\u{017D}'),
+    (0x91, '\u{2018}'),
+    (0x92, '\u{2019}'),
+    (0x93, '\u{201C}'),
+    (0x94, '\u{201D}'),
+    (0x95, '\u{2022}'),
+    (0x96, '\u{2013}'),
+    (0x97, '\u{2014}'),
+    (0x98, '\u{02DC}'),
+    (0x99, '\u{2122}'),
+    (0x9A, '\u{0161}'),
+    (0x9B, '\u{203A}'),
+    (0x9C, '\u{0153}'),
+    (0x9E, '\u{017E}'),
+    (0x9F, '\u{0178}'),
+];
+
+// Metric slots use Latin-1 indices, WinAnsi's extra characters at their own
+// codes, and one minus slot. A slot is not a PDF code in a custom font; its
+// ToUnicode map supplies that. U+0096 is a control character, never an alias.
+// Each font path still decides which of these characters it can prove.
 fn character_slot(ch: char) -> Option<u8> {
     if ch == '\u{2212}' {
         Some(0x80) // Internal metric slot only; never a literal WinAnsi byte.
-    } else if ch == '\u{2018}' {
-        Some(0x91)
-    } else if ch == '\u{2019}' {
-        Some(0x92)
-    } else if ch == '\u{2013}' {
-        Some(0x96)
+    } else if let Some(&(slot, _)) = WINANSI_EXTRA.iter().find(|(_, extra)| *extra == ch) {
+        Some(slot)
     } else {
         u8::try_from(ch as u32).ok().filter(|&byte| text_byte(byte))
     }
@@ -227,12 +257,8 @@ fn character_slot(ch: char) -> Option<u8> {
 fn slot_character(slot: u8) -> char {
     if slot == 0x80 {
         '\u{2212}'
-    } else if slot == 0x91 {
-        '\u{2018}'
-    } else if slot == 0x92 {
-        '\u{2019}'
-    } else if slot == 0x96 {
-        '\u{2013}'
+    } else if let Some(&(_, ch)) = WINANSI_EXTRA.iter().find(|(extra, _)| *extra == slot) {
+        ch
     } else {
         char::from(slot)
     }
@@ -255,7 +281,7 @@ fn encode_text(text: &str) -> Result<Vec<u8>, String> {
         .chars()
         .map(|ch| {
             character_slot(ch)
-                .ok_or("text editing currently supports printable Latin-1, en dash, curly single quotes and minus only")
+                .ok_or("text editing currently supports printable Latin-1, WinAnsi punctuation and minus only")
         })
         .collect::<Result<Vec<_>, _>>()?;
     if bytes.len() > MAX_TEXT {
@@ -527,6 +553,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             // Marked content and text objects are independently balanced (ISO
             // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
             // only the narrow ActualText spacer grammar has a separate path.
+            // Artifacts balance independently of BT/ET too; PDFMaker opens
+            // running headers inside the text object.
+            ("BDC", [tag, properties])
+                if tag.as_name().ok() == Some(b"Artifact")
+                    && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
+            {
+                tags.artifact(properties)?
+            }
             ("BDC", [tag, properties])
                 if !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
             {
@@ -1032,15 +1066,32 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     Ok(inspection)
 }
 
-fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<f32, String> {
-    let adjustment = ((replacement_advance - run.advance) * 1000. / run.size) as f32;
-    number(&Object::Real(adjustment))?;
-    let saved_advance = replacement_advance - f64::from(adjustment) * run.size / 1000.;
-    let drift = (saved_advance - run.advance).abs() * run.matrix[0].abs().max(run.matrix[1].abs());
-    if adjustment > 0. || drift > 0.000_001 {
+// lopdf stores reals as f32, about seven significant digits. A whole line
+// shown at a small Tf (Word writes Tf 1 with a scaled Tm) needs a compensation
+// in the tens or hundreds of thousands, where f32 rounds by hundredths. TJ sums
+// consecutive numbers (ISO 32000-1 9.4.3), so emit the exact integer part and
+// the small remainder separately; both share the sign of the whole value.
+fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<Vec<Object>, String> {
+    let wanted = (replacement_advance - run.advance) * 1000. / run.size;
+    if !wanted.is_finite() || wanted.abs() > 1_000_000.0 {
         return Err("cannot preserve following text at PDF number precision".into());
     }
-    Ok(adjustment)
+    let whole = wanted.trunc();
+    let fraction = (wanted - whole) as f32;
+    let mut parts = Vec::new();
+    if whole != 0. {
+        parts.push(Object::Integer(whole as i64));
+    }
+    if fraction != 0. || parts.is_empty() {
+        parts.push(Object::Real(fraction));
+    }
+    let emitted = whole + f64::from(fraction);
+    let saved_advance = replacement_advance - emitted * run.size / 1000.;
+    let drift = (saved_advance - run.advance).abs() * run.matrix[0].abs().max(run.matrix[1].abs());
+    if emitted > 0. || drift > 0.000_001 {
+        return Err("cannot preserve following text at PDF number precision".into());
+    }
+    Ok(parts)
 }
 
 /// Discover a complete supported page, or explain why it cannot be edited yet.
@@ -1153,9 +1204,10 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         show.operands[0] = if continued.contains(&change.operator) {
             // TJ offsets are subtracted in thousandths of text space. Keep
             // following shows fixed, including after deletion of this string.
-            let adjustment = continuation_adjustment(run, replacement_advance)?;
+            let mut items = vec![replacement];
+            items.extend(continuation_adjustment(run, replacement_advance)?);
             show.operator = "TJ".into();
-            Object::Array(vec![replacement, Object::Real(adjustment)])
+            Object::Array(items)
         } else if show.operator == "TJ" {
             Object::Array(vec![replacement])
         } else {
@@ -1519,7 +1571,10 @@ pub(crate) mod tests {
             };
             let expected = (32..=126).contains(&value)
                 || (160..=255).contains(&value)
-                || matches!(value, 0x2013 | 0x2018 | 0x2019 | 0x2212);
+                || value == 0x2212
+                || WINANSI_EXTRA
+                    .iter()
+                    .any(|(_, extra)| *extra as u32 == value);
             let slot = character_slot(ch);
             assert_eq!(slot.is_some(), expected, "U+{value:04X}");
             if let Some(slot) = slot {
@@ -1527,7 +1582,7 @@ pub(crate) mod tests {
                 assert_eq!(slot_character(slot), ch);
             }
         }
-        assert_eq!(accepted, 195);
+        assert_eq!(accepted, 218);
         assert_eq!(
             encode_text(&"\u{2013}".repeat(MAX_TEXT)).unwrap(),
             vec![0x96; MAX_TEXT]
@@ -2070,7 +2125,7 @@ pub(crate) mod tests {
                     replacement: "\u{03b1}".into(),
                     ..valid.clone()
                 },
-                "Latin-1, en dash, curly single quotes and minus only",
+                "Latin-1, WinAnsi punctuation and minus only",
             ),
             (
                 Change {

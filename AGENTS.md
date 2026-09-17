@@ -434,8 +434,8 @@ NonStruct or literal Span content leaves. Span leaves retain optional language
 tags, accept no layout attributes or semantic overrides, and cannot nest further.
 `textedit-producer-language.rtf` exports an unchanged LibreOffice language-span
 fixture for ordinary worker/native checks and independent structure readback.
-The tree allows at most eight container levels and 256
-containers, with 256 content items per page and 4,096 per document. The independent
+The tree allows at most eight container levels and 1,024
+containers, with 4,096 parent-tree slots per page and 16,384 per document. The independent
 4,096-node bound includes empty blocks/cells and nameless empty placeholders.
 Document elements may have root siblings; all parent ownership remains checked.
 Grouping containers own child
@@ -483,6 +483,33 @@ that graph is rewritten. The browser generator's `--table` and `--table-header`
 export unchanged tables with rules; ordinary worker/native textedit checks,
 parser `--float32` and PDFKit `--table` verify the complete graph, following-cell
 position and pixels outside the edit.
+
+Ordinary Word, Acrobat PDFMaker and LiveCycle output needs the following shapes;
+each was found by surveying unchanged public documents, and BUILD.md *Prototype
+producer sample* has the table, the reasons each is safe and the round trips.
+Parent trees split into `/Kids` are flattened after checking Limits, order,
+depth and node count. `Link`/`Form` elements own annotations through `OBJR`; the
+page's `/Annots`, subtype and `/StructParent` entry must all agree, each entry
+is claimed once, and their text stays read-only so link areas stay accurate.
+Pages without StructParents, `null` slots and slots naming unreachable elements
+are accepted; unowned and orphaned content is read-only, and a reachable
+element that skips its slot is still refused. The owning element, not the
+content tag, supplies semantics, except that `/Artifact` on an owned MCID is
+refused; artifact property lists (Table 330 keys) work inside and outside BT.
+THead/TBody/TFoot, lists directly in lists or cells, figures in cells, missing
+`/K`, figure Width/Height, and the PDF 1.7/2.0 standard namespaces (types common
+to both) are accepted. `/Alt` is limited to Figure/Link/Form; a non-empty `/T`
+to elements without editable text. `tagging/producer_tests.rs`,
+`annotation_tests.rs` and `tree_tests.rs` hold the synthetic fixtures.
+
+WinAnsi TrueType fonts with ToUnicode may map WinAnsi punctuation at its own
+code (0x82-0x9F except 0x80, plus Latin-1 except 0xA0/0xAD); glyphs come from
+the (3,1) cmap by Unicode value, and a Macintosh cmap need only agree for ASCII.
+Metric slots reuse the WinAnsi codes, so the minus keeps 0x80 and the euro sign
+stays unsupported. Two-byte fonts keep their Latin-1 and en dash repertoire.
+A continued run's TJ compensation is an exact integer plus an f32 remainder,
+because lopdf stores reals as f32 and Word shows whole lines at `Tf 1`.
+`fonts/winansi_tests.rs` builds its cmaps in the test.
 
 Positive word spacing accepts values up to one million text-space units, with
 the combined advance bounded separately. Negative spacing retains its quarter-
@@ -541,8 +568,8 @@ through the contained worker, including unchanged font programs and pixels.
 Font refusals distinguish the Type1 resource subtype from its program carrier:
 FontFile declares PostScript Type 1; FontFile3/Type1C declares CFF. This diagnostic
 dispatch does not decode unsupported programs. Parent-tree dictionary entries
-index non-page objects, so their presence is reported separately from a missing
-page entry. Neither diagnostic widens what the editor accepts.
+index annotations; an entry no Link or Form element claims is reported
+separately from a missing page entry.
 
 Untagged pages may retain a bounded integer StructParents index with no
 StructTreeRoot. Preserve that unused index; actual MCIDs without a tree remain

@@ -2,8 +2,11 @@ use super::*;
 
 #[test]
 fn textedit_continued_precision_and_accumulated_bounds_fail_atomically() {
-    let mut doc =
-        tests::with_content(b"BT /F1 12 Tf 0.125 Tc 1000 0 0 1000 0 0 Tm (AAA) Tj (SECOND) Tj ET");
+    // The compensation is exact to f32 rounding of its fractional remainder
+    // (about 6e-8). A 20000x text matrix magnifies that past 1e-6 page points.
+    let mut doc = tests::with_content(
+        b"BT /F1 12 Tf 0.125 Tc 20000 0 0 20000 0 0 Tm (AAA) Tj (SECOND) Tj ET",
+    );
     let runs = scan(&doc, 0).unwrap();
     let original = doc.objects.clone();
     let edit = Change {
@@ -36,14 +39,16 @@ fn textedit_continued_precision_and_accumulated_bounds_fail_atomically() {
 
 #[test]
 fn textedit_continued_discovery_requires_representable_deletion() {
+    let doc = tests::with_content(
+        b"BT /F1 12 Tf 0.1234567 Tc 20000 0 0 20000 0 0 Tm (FIRST) Tj (SECOND) Tj ET",
+    );
+    assert!(scan(&doc, 0).unwrap_err().contains("PDF number precision"));
+    // These needed more than f32 held in one number; the integer and remainder
+    // split keeps their followers fixed. Word shows whole lines this way.
     for body in [
         "BT /F1 12 Tf 0.1234567 Tc 1000 0 0 1000 0 0 Tm (FIRST) Tj (SECOND) Tj ET",
         "q 12.112 Tw BT /F1 12 Tf 30 TL 40 180 Td (ACME SYNTHETIC TEXT) Tj [( SECOND) -125] TJ ( THIRD) Tj T* (NEXT LINE) Tj ET Q",
-    ] {
-        let doc = tests::with_content(body.as_bytes());
-        assert!(scan(&doc, 0).unwrap_err().contains("PDF number precision"));
-    }
-    for body in [
+        "BT /F1 1 Tf 11.04 0 0 11.04 72 700 Tm (ACME SYNTHETIC TEXT ACME SYNTHETIC TEXT ACME SYNTHETIC TEXT) Tj (SECOND) Tj ET",
         "BT /F1 12 Tf 0.125 Tc 1000 0 0 1000 0 0 Tm (AAA) Tj (SECOND) Tj ET",
         "q 12 Tw BT /F1 12 Tf 40 180 Td (ACME SYNTHETIC TEXT) Tj ( SECOND) Tj ET Q",
     ] {

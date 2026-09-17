@@ -167,19 +167,24 @@ fn blocks_with_header(
 }
 
 pub(super) fn parse(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    parse_single(stream, false, false)
+    parse_single(stream, false, false, false)
 }
 
 // CFF glyph-name agreement is checked by the caller. Other font paths keep
 // their independently verified repertoire and do not inherit these additions.
 pub(super) fn parse_cff(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    parse_single(stream, true, true)
+    parse_single(stream, true, true, false)
 }
 
 pub(super) fn parse_named(stream: &Stream) -> Result<Box<[Option<u8>; 256]>, String> {
-    let codes = parse_single(stream, false, true)?;
+    let codes = parse_single(stream, false, true, true)?;
+    // A WinAnsi font's ToUnicode may only restate WinAnsi itself: each code's
+    // slot is its own code. 0xA0 and 0xAD are the space and hyphen aliases,
+    // whose Unicode meaning is ambiguous, and 0x80 is the minus slot.
     if codes.iter().enumerate().any(|(code, slot)| {
-        slot.is_some_and(|slot| !(32..=126).contains(&code) || usize::from(slot) != code)
+        slot.is_some_and(|slot| {
+            usize::from(slot) != code || matches!(code, 0x80 | 0xA0 | 0xAD) || code < 32
+        })
     }) {
         return Err("named TrueType ToUnicode disagrees with its ASCII encoding".into());
     }
@@ -190,6 +195,7 @@ fn parse_single(
     stream: &Stream,
     cff: bool,
     padded: bool,
+    winansi: bool,
 ) -> Result<Box<[Option<u8>; 256]>, String> {
     let ops = blocks_with_header(stream, false, padded)?;
     let invalid = || "unsupported or ambiguous single-byte character map".to_string();
@@ -239,6 +245,11 @@ fn parse_single(
                 (32..=126).contains(&ch)
                     || ch == 0x2013
                     || (cff && matches!(ch, 0x00a0 | 0x00a3 | 0x2018 | 0x2019 | 0x2212))
+                    || (winansi
+                        && ch != 0x2212
+                        && char::from_u32(ch)
+                            .and_then(super::super::character_slot)
+                            .is_some())
             };
             if last < first || !(u32::from(target)..=end_target).all(allowed) {
                 return Err(invalid());
@@ -303,9 +314,10 @@ pub(super) fn parse_cid(stream: &Stream) -> Result<std::collections::BTreeMap<u1
             }
             let target = word(&entry[stride - 1])?;
             let last_target = u32::from(target) + u32::from(last.saturating_sub(first));
+            // Two-byte fonts keep their proven Latin-1 and en dash repertoire.
             let slot = |ch| {
                 let target = char::from_u32(ch).and_then(super::super::character_slot);
-                target.filter(|_| !matches!(ch, 0x2018 | 0x2019 | 0x2212))
+                target.filter(|_| ch <= 0xff || ch == 0x2013)
             };
             if last < first || !(u32::from(target)..=last_target).all(|ch| slot(ch).is_some()) {
                 return Err(invalid());

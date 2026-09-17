@@ -182,23 +182,28 @@ def self_test(probe):
                 assert result == [{'page': 0, 'status': 'refused',
                     'reason': 'tagged RoleMap contains unsupported or conflicting roles'}]
         # Object entries in a valid parent tree do not indicate missing pages.
-        writer = PdfWriter(clone_from=root / 'role-SyntheticParagraph.pdf')
-        page = writer.pages[0]
-        tree = writer.root_object['/StructTreeRoot']
-        document = tree['/K']
-        annotation = writer._add_object(dictionary(Type=NameObject('/Annot'),
-            Subtype=NameObject('/Text'), StructParent=NumberObject(7),
-            Rect=ArrayObject([NumberObject(v) for v in (10, 10, 20, 20)])))
-        element = writer._add_object(dictionary(Type=NameObject('/StructElem'),
-            S=NameObject('/Annot'), P=document.indirect_reference,
-            K=dictionary(Type=NameObject('/OBJR'), Obj=annotation, Pg=page.indirect_reference)))
-        page[NameObject('/Annots')] = ArrayObject([annotation])
-        document[NameObject('/K')] = ArrayObject([document.raw_get('/K'), element])
-        tree['/ParentTree']['/Nums'].extend([NumberObject(7), element])
-        path = root / 'parent-tree-object.pdf'
-        writer.write(path)
-        assert inspect(probe, path)['pages'] == [{'page': 0, 'status': 'refused',
-            'reason': 'non-page parent-tree entries are not editable yet'}]
+        # A Link element that claims its link annotation keeps the page editable;
+        # other annotation owners are still unsupported roles.
+        for role, subtype, expected in [
+                ('Link', 'Link', {'page': 0, 'status': 'editable', 'runs': 1}),
+                ('Annot', 'Text', {'page': 0, 'status': 'refused',
+                                   'reason': 'tagged element role is not editable yet'})]:
+            writer = PdfWriter(clone_from=root / 'role-SyntheticParagraph.pdf')
+            page = writer.pages[0]
+            tree = writer.root_object['/StructTreeRoot']
+            document = tree['/K']
+            annotation = writer._add_object(dictionary(Type=NameObject('/Annot'),
+                Subtype=NameObject('/' + subtype), StructParent=NumberObject(7),
+                Rect=ArrayObject([NumberObject(v) for v in (10, 10, 20, 20)])))
+            element = writer._add_object(dictionary(Type=NameObject('/StructElem'),
+                S=NameObject('/' + role), P=document.indirect_reference,
+                K=dictionary(Type=NameObject('/OBJR'), Obj=annotation, Pg=page.indirect_reference)))
+            page[NameObject('/Annots')] = ArrayObject([annotation])
+            document[NameObject('/K')] = ArrayObject([document.raw_get('/K'), element])
+            tree['/ParentTree']['/Nums'].extend([NumberObject(7), element])
+            path = root / f'parent-tree-object-{role}.pdf'
+            writer.write(path)
+            assert inspect(probe, path)['pages'] == [expected], role
         assert len(inspect(probe, fixture('boundary.pdf', 128))['pages']) == 128
         too_many = fixture('oversized.pdf', 129)
         for args, reason in [([str(too_many), '--all-pages'], '1 to 128 pages'),

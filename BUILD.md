@@ -8673,3 +8673,91 @@ with the pinned fixture tools writes all 11 signed/encrypted fixtures; OpenSSL
 parses both the original CMS and its BER conversion. All 25 final gates pass
 (43.1s summed gate time), including 1,481 Rust tests with 3 ignored and
 1,668 frontend tests. No application signing behavior changed.
+
+### Prototype producer sample
+
+Seventeen unchanged public PDFs were surveyed on Windows x64, 2026-09-17, to rank
+which constructs block ordinary documents. The fifteen new files, with URLs,
+producers and digests, are under `prototype_files` in
+`testdata/textedit-public-corpus.json`; the W3C files are the existing
+`external_test_files`. Use the download recipe above with that key. The sample
+is chosen to cover producers, not to estimate a population rate.
+
+Before this increment 3 of 268 pages were editable (the Google Docs invoice and
+the W3C dummy file). After it, 28 are:
+
+| Producer | Pages | Editable before | Editable after | First refusal now |
+|---|---:|---:|---:|---|
+| Word via PDFMaker 20 (Coatesville minutes) | 21 | 0 | 20 | Image with a Decode array |
+| Word via PDFMaker 26 (Hugo minutes) | 7 | 0 | 5 | Images with a soft mask or Decode array |
+| Word via PDFMaker 22 (Illinois resumes) | 2 | 0 | 0 | External graphics state, image |
+| Word 2016 (Mercer Island minutes) | 4 | 0 | 0 | Non-embedded TrueType fonts |
+| Acrobat 25 (Arcadia agenda) | 127 | 0 | 0 | Table BBox layout attribute |
+| LiveCycle Designer (Canada Post invoice) | 2 | 0 | 0 | Alt text on paragraphs |
+| Designer 6.5 (IRS W-4) | 5 | 0 | 0 | Unrecognized content operator |
+| InDesign (three documents) | 54 | 0 | 0 | ClassMap, image, restricted CFF |
+| Distiller (council schedule) | 2 | 0 | 0 | External graphics state |
+| pdfTeX (two arXiv papers) | 35 | 0 | 0 | Type 1 font programs |
+| LibreOffice (W3C headers) | 5 | 0 | 0 | TextAlign layout attribute |
+| Google Docs, W3C dummy, Sliced invoice | 4 | 3 | 3 | Incomplete painted path |
+
+The survey reports the first refusal per page only; each widening below was
+driven by re-surveying after the previous one. What changed, and why each is
+safe for a text edit:
+
+- Parent trees split into `/Kids` subtrees are flattened after checking every
+  node's `/Limits`, key order, depth (8) and node count (256).
+- `Link` and `Form` elements may own an annotation through `OBJR`. The
+  annotation must be listed on its page, have the matching subtype, and carry a
+  `/StructParent` whose parent-tree entry names that element; every annotation
+  entry must be claimed exactly once. Link and field text stays read-only.
+- Pages without `/StructParents`, `null` parent-tree slots, and slots naming
+  elements no longer reachable from the root are accepted. Content on unowned or
+  orphaned slots is read-only.
+- Artifact property lists (Table 330 keys only) are accepted inside and outside
+  text objects. `/Artifact` on an owned MCID is refused.
+- A content tag no longer has to repeat the owning element's type; the element
+  supplies the semantics. Word writes `Span` and `P`, LiveCycle `Content`.
+- `THead`/`TBody`/`TFoot`, lists nested directly in lists, lists and figures in
+  table cells, elements without `/K`, figure `Width`/`Height`, and the PDF 1.7
+  and 2.0 standard namespaces (for types common to both) are accepted.
+- `/Alt` is accepted only on read-only owners (Figure, Link, Form). A non-empty
+  `/T` is accepted only on elements whose text cannot be edited.
+- WinAnsi TrueType fonts with a ToUnicode map may use WinAnsi punctuation
+  (0x82-0x9F except the euro sign, plus Latin-1). Glyphs are selected through
+  the (3,1) cmap by Unicode value (ISO 32000-1 9.6.6.4); a Macintosh cmap need
+  only agree for ASCII. 0x80, 0xA0 and 0xAD stay refused.
+- A continued run's TJ compensation is written as an exact integer plus an f32
+  remainder, so a whole Word line at `Tf 1` keeps following text within 1e-6
+  page points.
+- Bounds: 4,096 parent-tree slots per page, 16,384 per document, 1,024
+  grouping containers.
+
+Round trips on the unchanged public files, all through the contained worker:
+
+```sh
+printf '%s' '[{"page":18,"contains":"possessions","replacement":"items — §","replace_match":true},{"page":1,"contains":"Accounts","replacement":"Acct","replace_match":true}]' > scratch/prototype/rt/final.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/coatesville-minutes.pdf scratch/prototype/rt/final.json scratch/prototype/rt/final
+printf '%s' '[{"page":2,"contains":"Playground","replacement":"Park","replace_match":true}]' > scratch/prototype/rt/h.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/hugo-minutes.pdf scratch/prototype/rt/h.json scratch/prototype/rt/h
+```
+
+Both report preview/save pixel agreement and unchanged adjacent pixels. The
+saved copies were then checked with tools independent of PDFium and lopdf:
+`qpdf --check` finds no errors; Poppler's `pdftoppm` at 100 dpi changes only
+one text line on each edited page (1,512 and 1,830 pixels on Coatesville pages
+2 and 19, 1,390 on Hugo page 3) and no pixel on neighbouring pages; pypdf
+extracts the replacements, extracts every other page identically, and keeps
+Hugo's namespace dictionary. Replacements that need a glyph the embedded subset
+lacks are refused, as before.
+
+Verification on Windows x64, 2026-09-17: all 25 gates pass, including 1,659 Rust
+tests with 3 ignored and 1,695 frontend tests. `scripts/mutate_rust.py --since HEAD`
+selected 274 mutations in the four changed source files. Every one is now caught
+by the test it names. Getting there removed one guard that could no longer fail
+(a claimed-versus-total comparison the orphan pass had made unreachable), added
+tests where the new fixtures had bypassed a guard (artifact-tagged orphans never
+reach the orphan path; header links across `THead`/`TBody`; a PDF 2.0-namespaced
+`Form`), and repaired three mutations that already failed on the previous
+commit: two did not compile and one named a test that could not catch it. macOS
+was not run for this increment; CI covers it.

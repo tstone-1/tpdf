@@ -191,7 +191,7 @@ fn textedit_container_count_is_bounded_independently_of_depth_and_content() {
         let mut groups = Vec::new();
         let mut owners = Vec::new();
         let mut bytes = String::new();
-        for mcid in 0..256 {
+        for mcid in 0..1024 {
             let group = doc.add_object(dictionary! { "S" => "Sect", "P" => ids[2] });
             let block = doc
                 .add_object(dictionary! { "S" => "P", "P" => group, "Pg" => ids[0], "K" => mcid });
@@ -213,7 +213,7 @@ fn textedit_container_count_is_bounded_independently_of_depth_and_content() {
         if extra {
             refused(doc);
         } else {
-            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 256);
+            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 1024);
         }
     }
 }

@@ -103,7 +103,7 @@ fn textedit_unused_parent_index_does_not_admit_structural_or_semantic_content() 
 }
 
 #[test]
-fn textedit_parent_tree_refusals_identify_non_page_entries() {
+fn textedit_parent_tree_refusals_identify_unclaimed_annotation_entries() {
     for direct in [false, true] {
         for extra in [false, true] {
             let (mut doc, ids) = fixture(CONTENT);
@@ -129,7 +129,13 @@ fn textedit_parent_tree_refusals_identify_non_page_entries() {
             };
             doc.get_dictionary_mut(ids[5]).unwrap().set("Nums", nums);
             let before = doc.objects.clone();
-            let expected = "non-page parent-tree entries are not editable yet";
+            // An annotation entry must be an indirect element, must not take
+            // the page's own key, and must be claimed by an element's OBJR.
+            let expected = match (direct, extra) {
+                (true, _) => "unsupported or inconsistent tagged text structure",
+                (false, false) => "tagged parent tree must contain one entry per page",
+                (false, true) => "tagged parent tree has annotation entries no element claims",
+            };
             assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected);
             let change = textedit::Change {
                 layout: None,
@@ -188,7 +194,11 @@ fn textedit_tagged_refusals_identify_metadata_without_echoing_document_data() {
             "SYNTHETIC_SECRET\n",
             "unsupported unrecognized metadata in tagged element",
         ),
-        (5, "Kids", "unsupported Kids metadata in tagged parent tree"),
+        (
+            5,
+            "Kids",
+            "unsupported or inconsistent tagged text structure",
+        ),
     ] {
         let (mut doc, ids) = fixture(CONTENT);
         let before = textedit::scan(&doc, 0).unwrap();
@@ -301,7 +311,11 @@ fn textedit_tagged_refusals_distinguish_marked_content_context() {
             "unsupported ActualText metadata in tagged marked-content properties",
         ),
         (
-            source.replace("/Standard << /MCID 0", "/SYNTHETIC_SECRET << /MCID 0"),
+            source.replace("/Standard << /MCID 0", "/Artifact << /MCID 0"),
+            "marked content repeats or disagrees with its structure tag",
+        ),
+        (
+            source.replace("/MCID 1", "/MCID 9"),
             "marked content repeats or disagrees with its structure tag",
         ),
         (
@@ -315,6 +329,15 @@ fn textedit_tagged_refusals_distinguish_marked_content_context() {
     ] {
         let (doc, _) = fixture(content.as_bytes());
         assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected);
+    }
+    // The owning element supplies the semantics, whatever the stream calls it.
+    for tag in ["/SYNTHETIC_SECRET", "/Span", "/P", "/Content"] {
+        let (doc, _) = fixture(
+            source
+                .replace("/Standard << /MCID 0", &format!("{tag} << /MCID 0"))
+                .as_bytes(),
+        );
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2, "{tag}");
     }
     let doc = textedit::tests::with_content(b"/SYNTHETIC_SECRET BMC EMC");
     assert_eq!(

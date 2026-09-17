@@ -227,8 +227,10 @@ fn textedit_lists_refuse_wrong_roles_owners_cycles_and_semantic_overrides() {
                     .unwrap()
                     .set("Contents", stream);
             }
+            // A content tag is descriptive, so a role change alone must be
+            // refused by the role rules: Quote is not an editable list child.
             6 => {
-                doc.get_dictionary_mut(owners[1]).unwrap().set("S", "Span");
+                doc.get_dictionary_mut(owners[1]).unwrap().set("S", "Quote");
             }
             7 => {
                 doc.get_dictionary_mut(owners[1]).unwrap().remove(b"Pg");

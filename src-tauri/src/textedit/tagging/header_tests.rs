@@ -276,3 +276,33 @@ fn textedit_headers_validate_name_tree_shape_order_limits_and_depth() {
         refused(doc);
     }
 }
+
+#[test]
+fn textedit_headers_link_across_table_sections_of_one_table() {
+    let (mut doc, ids, _) = header();
+    let head = doc.add_object(dictionary! { "S" => "THead", "P" => ids[6], "K" => ids[7] });
+    let body = doc.add_object(dictionary! { "S" => "TBody", "P" => ids[6], "K" => ids[8] });
+    doc.get_dictionary_mut(ids[7]).unwrap().set("P", head);
+    doc.get_dictionary_mut(ids[8]).unwrap().set("P", body);
+    doc.get_dictionary_mut(ids[6])
+        .unwrap()
+        .set("K", vec![2.into(), head.into(), body.into()]);
+    let before = doc.objects.clone();
+    let scan = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(scan.runs.len(), 2);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: scan.revision,
+            operator: scan.runs[1].operator,
+            original: scan.runs[1].text.clone(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    for id in [ids[3], ids[4], ids[6], head, body] {
+        assert_eq!(doc.objects[&id], before[&id]);
+    }
+}

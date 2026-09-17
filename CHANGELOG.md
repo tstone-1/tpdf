@@ -17,6 +17,28 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.12] - Unreleased
+
+### Added
+
+- Edit text in Word documents saved through Acrobat PDFMaker, including pages
+  that use curly quotes, dashes, bullets, the section sign and other WinAnsi
+  punctuation. Replacements may use those characters when the embedded font
+  contains them.
+- Edit text on tagged pages that contain hyperlinks and form fields. The text of
+  a link or field stays read-only, so its clickable area keeps matching it.
+
+### Fixed
+
+- Tagged documents from Word, Acrobat and LiveCycle no longer refuse editing
+  because of running headers and footers marked as artifacts, table header and
+  body groups, lists nested in lists or table cells, figures in table cells,
+  empty text boxes, figure alternate text and sizes, element titles, the PDF 2.0
+  standard namespace, split parent trees in large documents, or structure left
+  behind by earlier retagging.
+- Keep following text in place after long single-line edits in documents that
+  scale text through the text matrix.
+
 ## [26.9.11] - 2026-09-17
 
 ### Fixed
