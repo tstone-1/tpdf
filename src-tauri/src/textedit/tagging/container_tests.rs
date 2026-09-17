@@ -302,3 +302,54 @@ fn textedit_container_frontier_is_bounded_before_children_are_visited() {
             .contains("grouping frontier"));
     }
 }
+
+// ISO 32000-1 14.8.4.7.3: a footnote or endnote groups ordinary blocks, so it
+// behaves here exactly as Div does. Acrobat maps its own Footnote role onto it.
+#[test]
+fn textedit_notes_group_their_blocks_and_accept_a_producer_role_for_them() {
+    for (role, alias) in [
+        ("Note", None),
+        ("Footnote", Some("Note")),
+        ("Endnote", Some("Note")),
+    ] {
+        let (mut doc, ids) = fixture(CONTENT);
+        let note = doc.add_object(dictionary! { "S" => role, "P" => ids[2], "K" => ids[3] });
+        doc.get_dictionary_mut(ids[3]).unwrap().set("P", note);
+        doc.get_dictionary_mut(ids[2])
+            .unwrap()
+            .set("K", vec![note.into(), ids[4].into()]);
+        if let Some(target) = alias {
+            doc.get_dictionary_mut(ids[1])
+                .unwrap()
+                .set("RoleMap", dictionary! { "Standard" => "P", role => target });
+        }
+        let before = doc.objects.clone();
+        let scan = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(scan.runs.len(), 2, "{role}");
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: scan.revision,
+                operator: scan.runs[0].operator,
+                original: scan.runs[0].text.clone(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(doc.objects[&note], before[&note], "{role}");
+    }
+    // A note owns child elements, never marked content of its own.
+    let (mut doc, ids) = fixture(CONTENT);
+    let note =
+        doc.add_object(dictionary! { "S" => "Note", "P" => ids[2], "Pg" => ids[0], "K" => 0 });
+    doc.get_dictionary_mut(ids[2])
+        .unwrap()
+        .set("K", vec![note.into(), ids[4].into()]);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![0.into(), Object::Array(vec![note.into(), ids[4].into()])],
+    );
+    assert!(textedit::scan(&doc, 0).is_err());
+}

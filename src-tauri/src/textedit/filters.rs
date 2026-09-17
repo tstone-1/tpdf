@@ -8,10 +8,20 @@ use lopdf::{Object, Stream};
 const MAX_ENCODED: usize = 2 * super::MAX_CONTENT;
 
 pub(super) fn decode(stream: &Stream, limit: usize) -> Result<Vec<u8>, String> {
+    if stream.dict.has(b"DecodeParms") {
+        return Err("external or parameterised content streams are not editable yet".into());
+    }
+    decode_unpredicted(stream, limit)
+}
+
+// For a caller that has established that this stream's decode parameters select
+// no prediction, which leaves the filter's own output as the data. Every other
+// caller goes through `decode` and gets no say in the matter.
+pub(super) fn decode_unpredicted(stream: &Stream, limit: usize) -> Result<Vec<u8>, String> {
     if stream.content.len() > MAX_ENCODED {
         return Err("encoded page content exceeds its limit".into());
     }
-    if stream.dict.has(b"F") || stream.dict.has(b"DecodeParms") {
+    if stream.dict.has(b"F") {
         return Err("external or parameterised content streams are not editable yet".into());
     }
     let filters = match stream.dict.get(b"Filter") {

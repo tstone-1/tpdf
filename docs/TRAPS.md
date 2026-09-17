@@ -473,6 +473,7 @@ hop through the index.
 - A gate keyed on where a call is written has to be taught the new place first
 - A control that counts an attribute counts every sentence that mentions it
 - A `Widen` of the mirror is what makes a JSON sample checkable against it
+- Two guards that share a refusal message are one guard to any test that matches on it
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -23006,3 +23007,35 @@ means rather than where a check lives. It does not remove every copy of the pict
 would take drawings nobody marked. And it does not yet notice that a reader who marked
 **all** the copies has asked for something removable — that plan is still refused, which is
 the safe direction, and `drawn_more_than_once` is blind to the plan by construction.
+
+### Two guards that share a refusal message are one guard to any test that matches on it
+
+`tagging.rs` bounds its work list in three places, and until 2026-09-17 two of them said the
+same thing: `tagged list frontier exceeds its limit`, once where a list item queues its
+children and once where a list body's deferred sublists are queued. A test written for the
+second one asserted `error.contains("list frontier")`, went green, and was believed.
+
+It was measuring the first one. Deleting the deferred bound entirely changed nothing the
+test could see, because the fixture tripped the list-item bound a few pops earlier and
+produced the identical string. The mutation survived with a passing test beside it, which is
+the shape this repository's own index calls *a mutation credited to the wrong gate* — arriving
+here through a shared message rather than a shared line.
+
+**What made it visible, and it is cheap enough to reach for whenever a message is not
+unique: rename the guard's message temporarily and re-run the test.** If the test still
+passes, it was never reading that guard. Here the rename changed nothing, which is the whole
+proof; a print of the two counts then showed the frontier at **4,095** where the arithmetic
+had been reasoned at 4,000, so the fixture straddled the wrong bound by one pop.
+
+The fix is permanent and is not the test: the deferred bound now says `tagged sublist
+frontier exceeds its limit`, and the test pins all three outcomes by **exact** message — 95
+sublists gives an ownership refusal, 96 the list-item bound, 97 the deferred bound. Each is
+now separately falsifiable, and a `contains` assertion could not have expressed that.
+
+Two things generalise. **A refusal string reused across guards is an alias, and `contains`
+turns every guard behind it into one.** Where a message must stay shared for the reader's
+sake, a test about one of those guards has to distinguish them some other way — by the
+document it feeds in, not by the string it gets back. And **when a bound is reached by
+arithmetic over a frontier, measure the frontier rather than deriving it**: the pops between
+"the walk starts" and "this guard runs" are easy to count wrongly, and the count is what
+decides which guard fires first.

@@ -278,3 +278,62 @@ fn textedit_pdf2_namespace_only_admits_types_whose_meaning_is_shared() {
         }
     }
 }
+
+// ISO 32000-1 Table 344: a link's own layout attributes. Acrobat writes a bare
+// owner beside a tagged hyperlink, and a figure or field may declare its ink
+// bounds. All three are read-only content, so no edit can make them stale.
+#[test]
+fn textedit_read_only_owners_keep_their_layout_attributes() {
+    for (attributes, accepted) in [
+        (dictionary! { "O" => "Layout" }, true),
+        (
+            dictionary! { "O" => "Layout", "Placement" => "Inline" },
+            true,
+        ),
+        (
+            dictionary! { "O" => "Layout", "Placement" => "Inline",
+            "BBox" => vec![38.into(), 176.into(), 90.into(), 192.into()] },
+            true,
+        ),
+        (
+            dictionary! { "O" => "Layout", "Width" => 52, "Height" => "Auto" },
+            true,
+        ),
+        (dictionary! { "O" => "Link" }, false),
+        (
+            dictionary! { "O" => "Layout", "Placement" => "Middle" },
+            false,
+        ),
+        (
+            dictionary! { "O" => "Layout", "BBox" => vec![90.into(), 176.into(), 38.into(), 192.into()] },
+            false,
+        ),
+        (dictionary! { "O" => "Layout", "SpaceBefore" => 12 }, false),
+        (dictionary! { "O" => "Layout", "Width" => "Wide" }, false),
+    ] {
+        let (mut doc, ids) = linked("Link", "Link");
+        doc.get_dictionary_mut(ids[6]).unwrap().set("A", attributes);
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted);
+    }
+    // The attributes survive an edit to the ordinary paragraph beside the link.
+    let (mut doc, ids) = linked("Link", "Link");
+    doc.get_dictionary_mut(ids[6])
+        .unwrap()
+        .set("A", dictionary! { "O" => "Layout" });
+    let before = doc.objects.clone();
+    let scan = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(scan.runs.len(), 1);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: scan.revision,
+            operator: scan.runs[0].operator,
+            original: scan.runs[0].text.clone(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(doc.objects[&ids[6]], before[&ids[6]]);
+}

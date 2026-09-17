@@ -53,8 +53,11 @@ const ORPHAN: &[u8] = b"\0orphan";
 
 // ISO 32000-1 14.8.4: these grouping elements carry child elements; paragraph-
 // like blocks carry the marked content. Keep the two authorities separate.
+// ISO 32000-1 14.8.4.3: grouping elements, which own child elements rather than
+// content. Note joins them because a footnote or endnote holds ordinary blocks;
+// one that owned marked content directly is still refused.
 fn container(tag: &[u8]) -> bool {
-    matches!(tag, b"Part" | b"Art" | b"Sect" | b"Div")
+    matches!(tag, b"Part" | b"Art" | b"Sect" | b"Div" | b"Note")
 }
 
 fn text_block(tag: &[u8]) -> bool {
@@ -364,19 +367,25 @@ fn element(
         return Err(INVALID.into());
     }
     if let Ok(attributes) = dict.get(b"A") {
-        // Figures stay read-only, so their authored ink bounds cannot become
-        // stale from a text edit elsewhere. Preserve, but validate, those bounds.
-        if name(get(dict, b"S")?)? == b"Figure" {
+        // ISO 32000-1 Table 344: BBox is the element's own ink, not an authored
+        // allocation, so retaining one is only sound while the content it
+        // describes cannot move. A figure, link and field are already read-only;
+        // a table that declares bounds makes its own text read-only too, which
+        // is what `bounds` below and `Tags::bounded` carry out.
+        if matches!(
+            name(get(dict, b"S")?)?,
+            b"Figure" | b"Link" | b"Form" | b"Table"
+        ) {
             let attributes = crate::encoding::resolve(doc, attributes)
                 .as_dict()
                 .map_err(|_| INVALID)?;
             keys(
                 attributes,
                 &[b"O", b"BBox", b"Placement", b"Width", b"Height"],
-                "figure attributes",
+                "bounded attributes",
             )?;
-            // Table 343: the figure's authored size, a number or Auto. The
-            // figure is read-only, so its size cannot become stale either.
+            // Table 343: the element's authored size, a number or Auto. It
+            // describes read-only content, so it cannot become stale either.
             for key in [b"Width".as_slice(), b"Height"] {
                 if attributes.get(key).is_ok_and(|value| {
                     value.as_name().ok() != Some(b"Auto")
@@ -395,16 +404,18 @@ fn element(
             }) {
                 return Err(INVALID.into());
             }
-            let bounds = array(crate::encoding::resolve(doc, get(attributes, b"BBox")?))?;
-            if bounds.len() != 4 {
-                return Err(INVALID.into());
-            }
-            let bounds = bounds
-                .iter()
-                .map(super::number)
-                .collect::<Result<Vec<_>, _>>()?;
-            if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
-                return Err(INVALID.into());
+            if let Ok(bounds) = attributes.get(b"BBox") {
+                let bounds = array(crate::encoding::resolve(doc, bounds))?;
+                if bounds.len() != 4 {
+                    return Err(INVALID.into());
+                }
+                let bounds = bounds
+                    .iter()
+                    .map(super::number)
+                    .collect::<Result<Vec<_>, _>>()?;
+                if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
+                    return Err(INVALID.into());
+                }
             }
             return Ok(page);
         }
@@ -528,6 +539,7 @@ fn groups<'a>(
     paragraph: Group<'a>,
     scope: &Scope,
     ids: &mut BTreeSet<ObjectId>,
+    nested: &mut Vec<(&'a Object, ObjectId)>,
 ) -> Result<Vec<Group<'a>>, String> {
     if paragraph.items.len() > MAX_NODES {
         return Err(INVALID.into());
@@ -539,6 +551,17 @@ fn groups<'a>(
     let mut groups = Vec::new();
     for item in paragraph.items {
         if let Object::Reference(id) = item {
+            // Word and Acrobat nest a sublist inside the list body rather than
+            // beside it. A list is a container, so it goes back to the walk,
+            // which owns the depth and container bounds; claiming its id here
+            // would make the walk refuse it as a second visit.
+            if plain.tag == b"LBody"
+                && node(doc, *id)
+                    .is_ok_and(|child| get(child, b"S").and_then(name).is_ok_and(|tag| tag == b"L"))
+            {
+                nested.push((item, plain.id));
+                continue;
+            }
             if !ids.insert(*id) || ids.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
@@ -581,7 +604,7 @@ fn groups<'a>(
             if (matches!(plain.tag, b"TD" | b"TH") && text_block(tag))
                 || (plain.tag == b"LI" && tag == b"LBody")
             {
-                groups.extend(self::groups(doc, group, scope, ids)?);
+                groups.extend(self::groups(doc, group, scope, ids, nested)?);
             } else {
                 groups.push(group);
             }
@@ -593,6 +616,15 @@ fn groups<'a>(
         groups.push(plain);
     }
     Ok(groups)
+}
+
+// Whether this element declared the ink bounds `element` validated above. A
+// table is the only one of the four whose text would otherwise be editable, so
+// it is the only one for which the answer changes anything.
+fn bounds(doc: &Document, dict: &Dictionary) -> bool {
+    dict.get(b"A")
+        .map(|value| crate::encoding::resolve(doc, value))
+        .is_ok_and(|value| value.as_dict().is_ok_and(|entries| entries.has(b"BBox")))
 }
 
 // ISO 32000-1 14.8.4.3.4: optional row groups between a table and its rows.
@@ -655,6 +687,9 @@ fn annotation(
 pub(super) struct Tags {
     // One authored tag name per MCID. Empty means an ordinary untagged page.
     names: Vec<Vec<u8>>,
+    // MCIDs under an element whose authored ink bounds are kept on save, so
+    // their text must stay where the bounds say it is (ISO 32000-1 Table 344).
+    bounded: BTreeSet<usize>,
     seen: BTreeSet<usize>,
     active: Option<Option<usize>>, // None outside; Some(None) is an artifact.
     has_content: bool,
@@ -859,10 +894,11 @@ impl Tags {
         let mut pending: Vec<_> = paragraphs
             .iter()
             .rev()
-            .map(|child| (child, root_id, 0))
+            .map(|child| (child, root_id, 0, false))
             .collect();
+        let mut bounded_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
         let mut containers = 0;
-        while let Some((child, parent_id, depth)) = pending.pop() {
+        while let Some((child, parent_id, depth, bounded)) = pending.pop() {
             let id = reference(child)?;
             if !ids.insert(id) || ids.len() > MAX_NODES {
                 return Err(INVALID.into());
@@ -882,7 +918,7 @@ impl Tags {
                 {
                     return Err(INVALID.into());
                 }
-                pending.extend(items.iter().rev().map(|item| (item, id, depth)));
+                pending.extend(items.iter().rev().map(|item| (item, id, depth, bounded)));
                 continue;
             }
             // Some producers retain nameless, empty structure placeholders.
@@ -905,7 +941,7 @@ impl Tags {
                 }
                 if depth >= MAX_CONTAINER_DEPTH
                     || containers > MAX_CONTAINERS
-                    || (role != b"L" && child.has(b"A"))
+                    || (!matches!(role, b"L" | b"Table") && child.has(b"A"))
                 {
                     return Err(INVALID.into());
                 }
@@ -952,12 +988,16 @@ impl Tags {
                 }
                 // Container Pg never supplies a descendant's page. Its own
                 // identity is the immediate parent checked on every child.
+                // A table that keeps its own ink bounds makes every descendant
+                // read-only: an edit inside a cell would leave those bounds
+                // describing content that is no longer there.
+                let bounded = bounded || (role == b"Table" && bounds(doc, child));
                 pending.extend(
                     items
                         .iter()
                         .rev()
                         .filter(|item| role != b"Table" || matches!(item, Object::Reference(_)))
-                        .map(|item| (item, id, depth + 1)),
+                        .map(|item| (item, id, depth + 1, bounded)),
                 );
                 if content_items.is_empty() {
                     continue;
@@ -996,7 +1036,7 @@ impl Tags {
                     if matches!(item, Object::Reference(_))
                         && name(get(node(doc, reference(item)?)?, b"S")?)? == b"L"
                     {
-                        pending.push((item, id, depth));
+                        pending.push((item, id, depth, bounded));
                     } else {
                         content_items.push(item);
                     }
@@ -1011,12 +1051,22 @@ impl Tags {
                 tag,
                 items: content_items,
             };
+            let mut deferred = Vec::new();
+            let produced = groups(doc, paragraph, &scope, &mut ids, &mut deferred)?;
+            if deferred.len() + pending.len() > MAX_NODES {
+                return Err("tagged sublist frontier exceeds its limit".into());
+            }
+            pending.extend(
+                deferred
+                    .into_iter()
+                    .map(|(item, parent)| (item, parent, depth, bounded)),
+            );
             for Group {
                 id,
                 page: paragraph_page,
                 tag,
                 items,
-            } in groups(doc, paragraph, &scope, &mut ids)?
+            } in produced
             {
                 for item in items {
                     if let Object::Dictionary(objr) = item {
@@ -1065,6 +1115,9 @@ impl Tags {
                         return Err(INVALID.into());
                     }
                     names[mcid] = tag.to_vec();
+                    if bounded {
+                        bounded_slots.entry(owner).or_default().insert(mcid);
+                    }
                 }
             }
         }
@@ -1097,6 +1150,7 @@ impl Tags {
             .unwrap_or_default();
         Ok(Self {
             names,
+            bounded: bounded_slots.remove(&page).unwrap_or_default(),
             ..Self::default()
         })
     }
@@ -1235,7 +1289,11 @@ impl Tags {
         match self.active {
             // A link's rectangle and a field's widget are placed over this
             // text; changing it would leave them pointing at stale glyphs.
-            Some(Some(mcid)) => annotation_owner(&self.names[mcid]) || self.names[mcid] == ORPHAN,
+            Some(Some(mcid)) => {
+                annotation_owner(&self.names[mcid])
+                    || self.names[mcid] == ORPHAN
+                    || self.bounded.contains(&mcid)
+            }
             _ => !self.names.is_empty(),
         }
     }

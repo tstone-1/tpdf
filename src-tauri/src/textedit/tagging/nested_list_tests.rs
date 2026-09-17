@@ -1,4 +1,5 @@
 use super::list_tests::{change, list, refused};
+use super::tests::{fixture, CONTENT};
 use crate::textedit::{self, Change};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 
@@ -310,5 +311,151 @@ fn textedit_nested_lists_keep_cross_page_content_ownership() {
         if id != page {
             assert_eq!(doc.objects[&id], object);
         }
+    }
+}
+
+// Word and Acrobat put a sublist inside the list body rather than beside it.
+// The body keeps its own content; the sublist is a container and goes back to
+// the walk, which owns the depth and container bounds.
+fn inside_body() -> (Document, [ObjectId; 6], ObjectId, Vec<ObjectId>) {
+    let (mut doc, ids, outer, owners) = list();
+    let inner = doc.add_object(dictionary! { "S" => "L", "P" => owners[1], "K" => ids[4],
+    "A" => dictionary! { "O" => "List", "ListNumbering" => "Decimal" } });
+    doc.get_dictionary_mut(outer).unwrap().set("K", ids[3]);
+    doc.get_dictionary_mut(ids[4]).unwrap().set("P", inner);
+    doc.get_dictionary_mut(owners[1])
+        .unwrap()
+        .set("K", vec![Object::Integer(1), inner.into()]);
+    (doc, ids, inner, owners)
+}
+
+#[test]
+fn textedit_lists_nested_in_a_list_body_keep_every_level_editable() {
+    for edited in [1, 3] {
+        let (mut doc, ids, inner, owners) = inside_body();
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(
+            before
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            ["1.", "FIRST", "2.", "SECOND"]
+        );
+        let objects = doc.objects.clone();
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[edited].operator,
+                original: before.runs[edited].text.clone(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        // The label, both bodies, the sublist and its numbering all survive.
+        for id in owners.iter().copied().chain([inner, ids[3], ids[4]]) {
+            assert_eq!(doc.objects[&id], objects[&id], "{id:?}");
+        }
+    }
+}
+
+#[test]
+fn textedit_list_bodies_refuse_children_that_are_not_a_nested_list() {
+    // Control: the same fixture with a list in that position is accepted.
+    assert!(textedit::scan(&inside_body().0, 0).is_ok());
+    for role in ["P", "Table", "Div", "LI", "Lbl"] {
+        let (mut doc, _, inner, _) = inside_body();
+        doc.get_dictionary_mut(inner).unwrap().set("S", role);
+        refused(doc);
+    }
+    // A sublist still has to say which body owns it.
+    let (mut doc, ids, inner, _) = inside_body();
+    doc.get_dictionary_mut(inner).unwrap().set("P", ids[2]);
+    refused(doc);
+}
+
+// A list body may also hold an ordinary inline leaf, which `groups` validates
+// itself. Only a sublist goes back to the walk, so this is what separates
+// "defer a nested list" from "defer whatever a list body happens to hold".
+#[test]
+fn textedit_list_bodies_still_validate_their_own_inline_leaves() {
+    let (mut doc, ids, _, owners) = list();
+    let span = doc.add_object(
+        dictionary! { "S" => "Span", "P" => owners[1], "Pg" => ids[0], "K" => vec![Object::Integer(1)] },
+    );
+    doc.get_dictionary_mut(owners[1])
+        .unwrap()
+        .set("K", vec![Object::Reference(span)]);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![
+                owners[0].into(),
+                span.into(),
+                owners[2].into(),
+                owners[3].into(),
+            ]),
+        ],
+    );
+    let scan = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(
+        scan.runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<Vec<_>>(),
+        ["1.", "FIRST", "2.", "SECOND"]
+    );
+}
+
+// The same reference in a paragraph is not the nested-list shape. Deferring it
+// would hand the walk a container the paragraph may not own.
+#[test]
+fn textedit_paragraphs_refuse_a_list_among_their_content() {
+    let (mut doc, ids) = fixture(CONTENT);
+    let inner =
+        doc.add_object(dictionary! { "S" => "L", "P" => ids[3], "K" => Vec::<Object>::new() });
+    doc.get_dictionary_mut(ids[3])
+        .unwrap()
+        .set("K", vec![Object::Integer(0), inner.into()]);
+    refused(doc);
+}
+
+// The deferred sublists are counted against the same frontier as every other
+// pending child, before any of them is visited. Reaching that bound needs a
+// frontier that is already loaded, which is why the document carries siblings
+// the walk has not reached yet. The bound has its own message because the list
+// branch below it shares the limit: while both said "list frontier", a test
+// could sit on one of them believing it had covered the other.
+#[test]
+fn textedit_deferred_sublists_are_bounded_before_the_walk_visits_them() {
+    const SIBLINGS: usize = super::MAX_NODES - 96;
+    for (sublists, expected) in [
+        (95, "unsupported or inconsistent tagged text structure"),
+        (96, "tagged list frontier exceeds its limit"),
+        (97, "tagged sublist frontier exceeds its limit"),
+    ] {
+        let (mut doc, ids, inner, owners) = inside_body();
+        // One placeholder named many times. The walk refuses a second visit to
+        // any of them, so none may be popped before the frontier is counted.
+        let placeholder = doc.add_object(dictionary! { "S" => "", "P" => ids[2] });
+        let mut children = vec![Object::Reference(
+            doc.get_dictionary(ids[3])
+                .unwrap()
+                .get(b"P")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+        )];
+        children.extend(vec![Object::Reference(placeholder); SIBLINGS]);
+        doc.get_dictionary_mut(ids[2]).unwrap().set("K", children);
+        // One sublist named many times, for the same reason.
+        let mut body = vec![Object::Integer(1)];
+        body.extend(vec![Object::Reference(inner); sublists]);
+        doc.get_dictionary_mut(owners[1]).unwrap().set("K", body);
+        assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected, "{sublists}");
     }
 }

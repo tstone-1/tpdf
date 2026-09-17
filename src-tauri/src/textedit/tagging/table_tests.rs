@@ -250,13 +250,13 @@ fn textedit_tables_refuse_invalid_hierarchy_and_container_text() {
         doc.get_dictionary_mut(ids[index]).unwrap().set("S", role);
         refused(doc);
     }
-    for index in [6, 7] {
-        let (mut doc, ids) = table();
-        doc.get_dictionary_mut(ids[index])
-            .unwrap()
-            .set("A", dictionary! { "O" => "Layout", "Placement" => "Block" });
-        refused(doc);
-    }
+    // A row's layout attributes are still refused. A table's are not; the two
+    // tests below own that case.
+    let (mut doc, ids) = table();
+    doc.get_dictionary_mut(ids[7])
+        .unwrap()
+        .set("A", dictionary! { "O" => "Layout", "Placement" => "Block" });
+    refused(doc);
     let (mut doc, ids) = table();
     let text = doc.get_page_content(ids[0]);
     let text = String::from_utf8(text)
@@ -326,4 +326,116 @@ fn textedit_tables_require_rows_and_cells_in_their_own_containers() {
         .unwrap()
         .set("Contents", stream);
     refused(doc);
+}
+
+// The border MCID becomes a paragraph of its own beside the table, so the page
+// still holds editable text when the table's cells stop offering theirs.
+fn beside(doc: &mut Document, ids: &[ObjectId; 9]) {
+    let outside = doc.add_object(
+        dictionary! { "S" => "Standard", "P" => ids[2], "Pg" => ids[0], "K" => vec![Object::Integer(2)] },
+    );
+    doc.get_dictionary_mut(ids[6])
+        .unwrap()
+        .set("K", vec![Object::Reference(ids[7]), ids[8].into()]);
+    doc.get_dictionary_mut(ids[2])
+        .unwrap()
+        .set("K", vec![Object::Reference(ids[6]), outside.into()]);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![ids[3].into(), ids[4].into(), outside.into()]),
+        ],
+    );
+    let content = String::from_utf8(doc.get_page_content(ids[0]))
+        .unwrap()
+        .replace(
+            "/Table <</MCID 2>> BDC 40 120 100 1 re f EMC",
+            "/Standard <</MCID 2>> BDC BT /F1 12 Tf 40 100 Td (THIRD) Tj ET EMC",
+        );
+    let stream = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("Contents", stream);
+}
+
+fn bounded(entries: Dictionary) -> (Document, [ObjectId; 9]) {
+    let (mut doc, ids) = table();
+    doc.get_dictionary_mut(ids[6]).unwrap().set("A", entries);
+    beside(&mut doc, &ids);
+    (doc, ids)
+}
+
+fn rectangle() -> Object {
+    vec![0.into(), 0.into(), 200.into(), 200.into()].into()
+}
+
+fn offered(doc: &Document) -> Vec<String> {
+    textedit::scan(doc, 0)
+        .unwrap()
+        .runs
+        .iter()
+        .map(|run| run.text.clone())
+        .collect()
+}
+
+// ISO 32000-1 Table 344. Acrobat writes a table's own ink bounds beside its
+// placement. Keeping those bounds is only sound while the text they describe
+// cannot move, so a table that declares them makes its cells read-only, while
+// text beside the table stays editable. A table that declares only a placement
+// changes nothing.
+#[test]
+fn textedit_bounded_tables_keep_their_ink_bounds_and_stop_offering_cell_text() {
+    // Without bounds all three paragraphs are offered. This is the control that
+    // the cells below go read-only because of the BBox and not because of the
+    // attribute dictionary, the extra paragraph or the rebuilt content stream.
+    let (doc, _) = bounded(dictionary! { "O" => "Layout", "Placement" => "Block" });
+    assert_eq!(offered(&doc), ["THIRD", "FIRST", "SECOND"]);
+    for entries in [
+        dictionary! { "O" => "Layout", "BBox" => rectangle() },
+        dictionary! {
+            "O" => "Layout", "Placement" => "Block", "Width" => 100, "Height" => "Auto",
+            "BBox" => rectangle(),
+        },
+    ] {
+        let (mut doc, _) = bounded(entries);
+        let before = doc.objects.clone();
+        // Read-only rather than refused: the page still opens and offers the
+        // paragraph beside the table, and a change aimed at a cell is rejected
+        // without touching the document.
+        assert_eq!(offered(&doc), ["THIRD"]);
+        let revision = textedit::scan(&doc, 0).unwrap().revision;
+        assert!(textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision,
+                operator: 0,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }]
+        )
+        .is_err());
+        assert_eq!(doc.objects, before);
+    }
+}
+
+#[test]
+fn textedit_bounded_tables_refuse_malformed_bounds_and_placements() {
+    for entries in [
+        dictionary! { "O" => "Table", "BBox" => rectangle() },
+        dictionary! { "O" => "Layout", "BBox" => vec![0.into(), 0.into(), 9.into()] },
+        dictionary! { "O" => "Layout", "BBox" => vec![9.into(), 0.into(), 0.into(), 9.into()] },
+        dictionary! { "O" => "Layout", "BBox" => vec![0.into(), 9.into(), 9.into(), 0.into()] },
+        dictionary! { "O" => "Layout", "BBox" => Object::Name(b"Auto".to_vec()) },
+        dictionary! { "O" => "Layout", "Placement" => "Middle" },
+        dictionary! { "O" => "Layout", "Width" => -1 },
+        dictionary! { "O" => "Layout", "Height" => "Some" },
+        dictionary! { "O" => "Layout", "StartIndent" => 12 },
+        dictionary! { "O" => "Layout", "TextAlign" => "Center" },
+    ] {
+        let (doc, _) = bounded(entries);
+        refused(doc);
+    }
 }
