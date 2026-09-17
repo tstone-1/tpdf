@@ -309,7 +309,7 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
                 .as_dict_mut()
                 .unwrap()
                 .set("ActualText", Object::string_literal("STALE")),
-            3 => items[2].as_dict_mut().unwrap().set("Type", "OBJR"),
+            3 => items[2].as_dict_mut().unwrap().set("Type", "SYNTHETIC"),
             4 => {
                 items[2].as_dict_mut().unwrap().remove(b"Pg");
             }
@@ -323,7 +323,7 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
             9 => {
                 items.pop();
             }
-            10 => items.push(items[2].clone()),
+            10 => items[2].as_dict_mut().unwrap().set("MCID", 2),
             11 => items.clear(),
             12 => items[2] = Object::Reference(ids[3]),
             13 => items[2].as_dict_mut().unwrap().set("MCID", 128),
@@ -340,6 +340,29 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
         assert!(textedit::write(&mut doc, &[edit]).is_err(), "mode {mode}");
         assert_eq!(doc.objects, original);
     }
+    // Acrobat can list one MCR several times in the same element. The parent
+    // tree names that element for the slot, so the repeat is the same claim.
+    let (mut doc, ids) = flowing();
+    let items = doc
+        .get_dictionary_mut(ids[3])
+        .unwrap()
+        .get_mut(b"K")
+        .unwrap()
+        .as_array_mut()
+        .unwrap();
+    items.push(items[2].clone());
+    let before = textedit::scan(&doc, 1).unwrap();
+    assert_eq!(before.runs.len(), 2);
+    let edit = Change {
+        layout: None,
+        page: 1,
+        revision: before.revision,
+        operator: before.runs[0].operator,
+        original: "FIRST".into(),
+        replacement: "IN".into(),
+    };
+    textedit::write(&mut doc, &[edit]).unwrap();
+    assert_eq!(textedit::scan(&doc, 1).unwrap().runs[0].text, "IN");
     // An empty paragraph alongside fully claimed content is preserved.
     let (mut doc, ids) = flowing();
     doc.get_dictionary_mut(ids[4])
@@ -352,36 +375,25 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
 }
 
 #[test]
-fn textedit_tagged_one_paragraph_still_bounds_total_content_items() {
-    for count in [256, 257] {
+fn textedit_tagged_one_paragraph_still_bounds_repeated_content_items() {
+    for count in [4096, 4097] {
         let (mut doc, ids) = fixture(CONTENT);
         doc.get_dictionary_mut(ids[2])
             .unwrap()
             .set("K", vec![Object::Reference(ids[3])]);
-        doc.get_dictionary_mut(ids[3])
-            .unwrap()
-            .set("K", (0..count).map(Object::Integer).collect::<Vec<_>>());
+        let mut items = vec![Object::Integer(0); count - 1];
+        items.push(Object::Integer(1));
+        doc.get_dictionary_mut(ids[3]).unwrap().set("K", items);
         doc.get_dictionary_mut(ids[5]).unwrap().set(
             "Nums",
             vec![
                 Object::Integer(0),
-                Object::Array(vec![ids[3].into(); count as usize]),
+                Object::Array(vec![ids[3].into(), ids[3].into()]),
             ],
         );
-        let content = (0..count)
-            .map(|mcid| {
-                format!(
-                    "/Standard << /MCID {mcid} >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC "
-                )
-            })
-            .collect::<String>();
-        let stream = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
-        doc.get_dictionary_mut(ids[0])
-            .unwrap()
-            .set("Contents", stream);
         let result = textedit::scan(&doc, 0);
-        if count == 256 {
-            assert_eq!(result.unwrap().runs.len(), 256);
+        if count == 4096 {
+            assert_eq!(result.unwrap().runs.len(), 2);
         } else {
             assert!(result.is_err());
         }
@@ -396,27 +408,24 @@ fn textedit_tagged_empty_role_name_cannot_hide_duplicate_items() {
     doc.get_dictionary_mut(ids[1])
         .unwrap()
         .set("RoleMap", roles);
+    // Otherwise valid ownership: each empty-named element claims its own MCID.
+    // An empty name is the unowned-slot sentinel, so only the RoleMap key check
+    // stands between these elements and claims that look unclaimed.
     for id in [ids[3], ids[4]] {
         doc.get_dictionary_mut(id)
             .unwrap()
             .set("S", Object::Name(Vec::new()));
-        doc.get_dictionary_mut(id)
-            .unwrap()
-            .set("K", vec![Object::Integer(0)]);
     }
-    doc.get_dictionary_mut(ids[5]).unwrap().set(
-        "Nums",
-        vec![Object::Integer(0), Object::Array(vec![ids[4].into(); 2])],
+    assert_eq!(
+        super::Tags::read(&doc, ids[0], &[ids[0]]).err().unwrap(),
+        "tagged RoleMap contains unsupported or conflicting roles"
     );
-    // Keep the first reverse pointer valid while combining two content items in
-    // one element. An empty tag must not double as an unclaimed-slot sentinel.
-    doc.get_dictionary_mut(ids[2])
-        .unwrap()
-        .set("K", vec![Object::Reference(ids[4])]);
-    doc.get_dictionary_mut(ids[4])
-        .unwrap()
-        .set("K", vec![Object::Integer(0); 2]);
-    assert!(super::Tags::read(&doc, ids[0], &[ids[0]]).is_err());
+    // Control: the same elements with a named role are accepted.
+    let (mut doc, ids) = fixture(CONTENT);
+    for id in [ids[3], ids[4]] {
+        doc.get_dictionary_mut(id).unwrap().set("S", "Standard");
+    }
+    assert!(super::Tags::read(&doc, ids[0], &[ids[0]]).is_ok());
 }
 
 #[test]
@@ -635,33 +644,21 @@ pub(super) fn fixture(content: &[u8]) -> (Document, [ObjectId; 6]) {
 
 #[test]
 fn textedit_tagged_limits_have_valid_boundary_controls() {
-    for count in [256, 257] {
+    for count in [4096, 4097] {
         let (mut doc, ids) = fixture(CONTENT);
-        let mut children = Vec::new();
-        let mut content = String::new();
-        for mcid in 0..count {
-            let child = doc.add_object(dictionary! { "Type" => "StructElem", "S" => "P", "P" => ids[2], "Pg" => ids[0], "K" => vec![Object::Integer(mcid)] });
-            children.push(Object::Reference(child));
-            content.push_str(&format!(
-                "/P << /MCID {mcid} >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC "
-            ));
-        }
-        doc.get_dictionary_mut(ids[2])
-            .unwrap()
-            .set("K", children.clone());
-        doc.get_dictionary_mut(ids[1]).unwrap().remove(b"RoleMap");
+        let mut slots = vec![Object::Reference(ids[3]), Object::Reference(ids[4])];
+        slots.resize(count, Object::Null);
         doc.get_dictionary_mut(ids[5])
             .unwrap()
-            .set("Nums", vec![Object::Integer(0), Object::Array(children)]);
-        let stream = doc.add_object(Stream::new(Dictionary::new(), content.into_bytes()));
-        doc.get_dictionary_mut(ids[0])
-            .unwrap()
-            .set("Contents", stream);
+            .set("Nums", vec![Object::Integer(0), Object::Array(slots)]);
         let result = textedit::scan(&doc, 0);
-        if count == 256 {
-            assert_eq!(result.unwrap().runs.len(), 256);
+        if count == 4096 {
+            assert_eq!(result.unwrap().runs.len(), 2);
         } else {
-            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err(),
+                "tagged parent content is empty or exceeds its limit"
+            );
         }
     }
     let (mut doc, ids) = fixture(CONTENT);
@@ -738,6 +735,11 @@ fn textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes() {
                 .unwrap()
                 .set(key, Object::string_literal("OLD TEXT"));
             let objects = doc.objects.clone();
+            if index == 2 && key == "T" {
+                // A container title does not repeat editable text.
+                textedit::write(&mut doc, &[edit]).unwrap();
+                continue;
+            }
             assert!(
                 textedit::write(&mut doc, &[edit]).is_err(),
                 "accepted {key} on {index}"
@@ -831,7 +833,7 @@ fn textedit_tagged_requires_balanced_unique_markers_and_paragraph_text() {
         source.replace("/Standard << /MCID 0 >> BDC", "/Artifact BMC"),
         source.replace("/Standard << /MCID 0 >> BDC", ""),
         source.replace("/Artifact BMC q EMC", "/Artifact BMC q"),
-        source.replace("/Standard << /MCID 0 >> BDC", "/Other << /MCID 0 >> BDC"),
+        source.replace("/Standard << /MCID 0 >> BDC", "/Artifact << /MCID 0 >> BDC"),
         source.replace(
             "/Standard << /MCID 0 >> BDC",
             "/Standard /NamedProperties BDC",

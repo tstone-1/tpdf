@@ -78,5 +78,144 @@
       "bytes": 83394,
       "pages": 5
     }
+  ],
+  "prototype_retrieved": "2026-09-17",
+  "prototype_purpose": "Typical output from common producers (Word via PDFMaker and Word 2016, Acrobat, InDesign, LiveCycle and Designer forms, Distiller, Google Docs, pdfTeX), surveyed to rank which blockers to widen next. Downloaded PDFs stay outside the tracked tree; the W3C headers file under external_test_files is the LibreOffice sample.",
+  "prototype_files": [
+    {
+      "filename": "arcadia-agenda.pdf",
+      "title": "Arcadia, CA city council agenda, 7 April 2026",
+      "url": "https://www.arcadiaca.gov/Document%20Center/Government/City%20Clerk/Agenda%20and%20Minutes/2026/2026-04-07_CC_Meeting_Agenda.pdf",
+      "producer": "Adobe Acrobat (64-bit) 25.1.21288 / Adobe Acrobat (64-bit) 25.1.21288",
+      "sha256": "e241eda4816668ea73a7921914cbb225121dc80ae0fe69d4734a5edb6aa5579b",
+      "bytes": 3915976,
+      "pages": 127
+    },
+    {
+      "filename": "arxiv-2003.pdf",
+      "title": "Topological Differential Testing, arXiv 2003.00976",
+      "url": "https://arxiv.org/pdf/2003.00976",
+      "producer": "LaTeX acmart / pdfTeX-1.40.17",
+      "sha256": "81958c3255f964b36386e194ada37dcf0f3986f4a8d4d6ec29d926522a34772c",
+      "bytes": 2153321,
+      "pages": 11
+    },
+    {
+      "filename": "arxiv-recent.pdf",
+      "title": "Benchmarking PDF Accessibility Evaluation, arXiv 2509.18965",
+      "url": "https://arxiv.org/pdf/2509.18965",
+      "producer": "arXiv GenPDF (tex2pdf:) / pikepdf 8.15.1",
+      "sha256": "d1269c884b0f6f27b4f1cbb6a6343a0caac6ac0a42d8621d3177250d64832b16",
+      "bytes": 2450982,
+      "pages": 24
+    },
+    {
+      "filename": "autocad-brochure.pdf",
+      "title": "AutoCAD LT 2026 brochure",
+      "url": "https://www.mum.at/-/media/mum/downloads/produkte/autocad-lt/autocad-lt-2026-brochure-en.pdf",
+      "producer": "Adobe InDesign 20.2 (Windows) / Adobe PDF Library 17.0",
+      "sha256": "1b6cf3ecd3d4f563b9e2b09058157273b72dc53c1f386356caa16caf3f1c4891",
+      "bytes": 401746,
+      "pages": 1
+    },
+    {
+      "filename": "canadapost-invoice.pdf",
+      "title": "Canada Post sample PDF invoice",
+      "url": "https://www.canadapost-postescanada.ca/cpc/doc/en/postal-services/sample-pdf-invoice.pdf",
+      "producer": "Adobe LiveCycle Designer 11.0 / Adobe XML Form Module Library",
+      "sha256": "4dd6fbbe11077589923147e407076b661ec2a97b814db46e74ed92d89d7a0dc0",
+      "bytes": 1175949,
+      "pages": 2
+    },
+    {
+      "filename": "coatesville-minutes.pdf",
+      "title": "Coatesville, PA city council minutes, 12 January 2026",
+      "url": "https://www.coatesville.org/wp-content/uploads/2026/02/01-12-2026-CC-Meeting-Minutes.pdf",
+      "producer": "Acrobat PDFMaker 20 for Word / Adobe PDF Library 20.5.118",
+      "sha256": "48b646cb0328d699b18e4f7792d4a2a5f95b53baeb6332ec8b648ed7e4694ed5",
+      "bytes": 341281,
+      "pages": 21
+    },
+    {
+      "filename": "council-schedule.pdf",
+      "title": "2026 city council meeting schedule",
+      "url": "https://cdn.prod.website-files.com/65799af8ef225180fdf1ba2e/6966b8742006abb23c753242_2026%20City%20Council%20Meetings.pdf",
+      "producer": "PScript5.dll Version 5.2.2 / Acrobat Distiller 24.0 (Windows)",
+      "sha256": "66660381fe8d87f85847678191c9bf768f2ba793306a82de5d2e2f1f50d031e3",
+      "bytes": 213900,
+      "pages": 2
+    },
+    {
+      "filename": "harvest-invoice.pdf",
+      "title": "Harvest invoice template",
+      "url": "https://www.getharvest.com/downloads/Invoice_Template.pdf",
+      "producer": "Adobe InDesign CS5 (7.0) / Adobe PDF Library 9.9",
+      "sha256": "fa3a4fc9a08a0466b861689f14998350cb9c3170ad9750b5fbe5506119e2012d",
+      "bytes": 220409,
+      "pages": 1
+    },
+    {
+      "filename": "highmark-brochure.pdf",
+      "title": "Highmark 2026 ACA product brochure (Delaware)",
+      "url": "https://www.highmark.com/content/dam/digital-marketing/en/highmark/highmarkdotcom/plans/individuals-and-families/2026-ACA-Product-Brochure-DE.pdf",
+      "producer": "Adobe InDesign 20.5 (Macintosh) / Adobe PDF Library 17.0",
+      "sha256": "72d742f36049ab5ab8fc801d3fe891d9dfb6b21f31636f689c0725a14d48f725",
+      "bytes": 1505054,
+      "pages": 52
+    },
+    {
+      "filename": "hugo-minutes.pdf",
+      "title": "Hugo, MN city council minutes, 2 March 2026",
+      "url": "https://www.ci.hugo.mn.us/vertical/sites/%7BBED5C6A0-2687-460F-9C61-6B7CCADA2CBA%7D/uploads/2026.03.02_CC_Minutes.pdf",
+      "producer": "Acrobat PDFMaker 26 for Word / Adobe PDF Library 26.1.119",
+      "sha256": "b28650b97c528148249b742d66c20b324a4dc31b8f49af2daf1c3978118fd24d",
+      "bytes": 188286,
+      "pages": 7
+    },
+    {
+      "filename": "illinois-resumes.pdf",
+      "title": "University of Illinois Career Center sample resumes",
+      "url": "https://www.careercenter.illinois.edu/sites/default/files/2023-03/Sample%20Resumes-Handout.pdf",
+      "producer": "Acrobat PDFMaker 22 for Word / Adobe PDF Library 22.3.58",
+      "sha256": "134a7aa4b36893e62131bcd1ba5b14032e8cc72e056e3b21de0e0769e008bd6f",
+      "bytes": 321159,
+      "pages": 2
+    },
+    {
+      "filename": "irs-w4.pdf",
+      "title": "IRS Form W-4",
+      "url": "https://www.irs.gov/pub/irs-pdf/fw4.pdf",
+      "producer": "Designer 6.5 / Designer 6.5",
+      "sha256": "92444d8856ce55d9e25dca8b6d1420634fc68b11e1ab1f760916ea29ddd312b2",
+      "bytes": 208845,
+      "pages": 5
+    },
+    {
+      "filename": "mercer-minutes.pdf",
+      "title": "Mercer Island, WA city council minutes, 7 July 2026",
+      "url": "https://mccmeetings.blob.core.usgovcloudapi.net/mercerwa-pubu/MEET-Minutes-807e8cc9fccd4e77ad2f5b934ef1902a.pdf",
+      "producer": "Microsoft Word 2016",
+      "sha256": "46b7434889ff912afa5e97677aa20e7337d284a8f3658ed1f45c5be3bd258e57",
+      "bytes": 325289,
+      "pages": 4
+    },
+    {
+      "filename": "sampleforms-invoice.pdf",
+      "title": "SampleForms printable invoice template",
+      "url": "https://images.sampleforms.com/wp-content/uploads/2024/03/Free-Printable-Invoice-Template.pdf",
+      "producer": "Skia/PDF m125 Google Docs Renderer",
+      "sha256": "3f118052f14719409ad47aebc09bde42f6050872d35484d53effc079c754c0c9",
+      "bytes": 41096,
+      "pages": 2
+    },
+    {
+      "filename": "sliced-invoice.pdf",
+      "title": "Sliced Invoices sample PDF invoice",
+      "url": "https://slicedinvoices.com/pdf/wordpress-pdf-invoice-plugin-sample.pdf",
+      "producer": "not recorded in document information",
+      "sha256": "c2de358a0974f9b047aed8e457def7d4b1b39170f44819ec3152b42db787d72e",
+      "bytes": 43627,
+      "pages": 1
+    }
   ]
 }

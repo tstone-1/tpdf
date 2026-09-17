@@ -167,7 +167,7 @@ fn textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically() {
                 .get_dictionary_mut(leaves[0])
                 .unwrap()
                 .set("K", Vec::<Object>::new()),
-            8 => doc.get_dictionary_mut(leaves[0]).unwrap().set("S", "Span"),
+            8 => doc.get_dictionary_mut(leaves[0]).unwrap().set("S", "Code"),
             9 => doc
                 .get_dictionary_mut(leaves[0])
                 .unwrap()
@@ -217,6 +217,11 @@ fn textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text() {
             doc.get_dictionary_mut(id)
                 .unwrap()
                 .set(key, Object::string_literal("OLD"));
+            if index == 0 && key == "T" {
+                // A container title does not repeat editable text.
+                assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
+                continue;
+            }
             refused(doc);
         }
     }
@@ -316,36 +321,19 @@ fn textedit_nested_mixed_leaf_ownership_keeps_each_authored_tag() {
 
 #[test]
 fn textedit_nested_total_content_limit_covers_all_leaf_groups() {
-    for count in [256, 257] {
-        let (mut doc, ids, _) = nested(false);
-        let mut children = Vec::new();
-        let mut content = String::new();
-        for mcid in 0..count {
-            let leaf = doc.add_object(dictionary! { "Type" => "StructElem", "S" => "NonStruct", "P" => ids[3], "Pg" => ids[0], "K" => mcid });
-            children.push(Object::Reference(leaf));
-            content.push_str(&format!(
-                "/NonStruct << /MCID {mcid} >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC "
-            ));
-        }
-        doc.get_dictionary_mut(ids[2]).unwrap().set("K", ids[3]);
-        doc.get_dictionary_mut(ids[3])
-            .unwrap()
-            .set("K", children.clone());
+    for count in [4096, 4097] {
+        let (mut doc, ids, leaves) = nested(false);
+        let mut slots = vec![Object::Reference(leaves[0]), Object::Reference(leaves[1])];
+        slots.resize(count, Object::Null);
+        let array = doc.add_object(Object::Array(slots));
         doc.get_dictionary_mut(ids[5])
             .unwrap()
-            .set("Nums", vec![0.into(), Object::Array(children)]);
-        let stream = doc.add_object(lopdf::Stream::new(
-            lopdf::Dictionary::new(),
-            content.into_bytes(),
-        ));
-        doc.get_dictionary_mut(ids[0])
-            .unwrap()
-            .set("Contents", stream);
-        assert_eq!(textedit::scan(&doc, 0).is_ok(), count == 256);
-        if count == 256 {
+            .set("Nums", vec![0.into(), array.into()]);
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), count == 4096);
+        if count == 4096 {
             let edit = update(&doc, 0);
             textedit::write(&mut doc, &[edit]).unwrap();
-            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 256);
+            assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
         }
     }
 }

@@ -11,6 +11,9 @@ pub(crate) mod tests;
 #[cfg(test)]
 pub(super) mod ink_tests;
 
+#[cfg(test)]
+mod winansi_tests;
+
 mod cff;
 mod composite;
 mod ligatures;
@@ -564,7 +567,14 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         } else {
             continue;
         };
-        let code = u32::from(code_byte);
+        // ISO 32000-1 9.6.6.4: a nonsymbolic WinAnsi font selects glyphs in the
+        // (3,1) cmap by the Unicode value of the code's WinAnsi glyph name. For
+        // ASCII and Latin-1 that value is the code itself.
+        let code = if named_unicode {
+            u32::from(super::slot_character(byte))
+        } else {
+            u32::from(code_byte)
+        };
         let Some(glyph) = primary.glyph_index(code) else {
             continue;
         };
@@ -573,10 +583,13 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         if glyph.0 == 0 {
             continue;
         }
+        // A Macintosh (1,0) map numbers non-ASCII characters differently, so
+        // agreement beyond ASCII is required only of the Unicode maps.
         if glyph.0 >= face.number_of_glyphs()
             || cmap
                 .subtables
                 .into_iter()
+                .filter(|table| code < 128 || table.is_unicode())
                 .any(|table| table.glyph_index(code) != Some(glyph))
         {
             return Err(invalid());
