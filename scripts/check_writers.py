@@ -273,7 +273,7 @@ def main() -> int:
     )
 
     # The count in the boundary row, which is the number that went stale twice.
-    row = re.search(r"\*\*Webview\*\* \(Svelte\).*?--- (\w+) of which write files", model)
+    row = re.search(r"\*\*Webview\*\* \(Svelte\).*?\b(\w+) of which write files", model)
     if not row:
         print("[FAIL]   the §3 boundary row no longer states a count of writing commands")
         return 1
