@@ -62,6 +62,59 @@ fn update(doc: &Document, replacement: &str) -> Change {
 }
 
 #[test]
+fn ideographic_space_requires_a_verified_empty_glyph() {
+    for (mapped, accepted) in [("3000", true), ("4e00", false)] {
+        let (mut doc, [font, _, _, mapping]) = fixture();
+        let stream = doc
+            .get_object_mut(mapping)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap();
+        stream.content = String::from_utf8(stream.content.clone())
+            .unwrap()
+            .replace("> <0020>", &format!("> <{mapped}>"))
+            .into_bytes();
+        let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+        let text = char::from_u32(u32::from_str_radix(mapped, 16).unwrap())
+            .unwrap()
+            .to_string();
+        assert_eq!(metrics.encode(&text).is_ok(), accepted);
+        if accepted {
+            let before = textedit::scan(&doc, 0).unwrap();
+            assert!(before.runs[0].text.contains('\u{3000}'));
+            let change = update(&doc, "IN\u{3000}IN");
+            let fonts = doc.objects[&font].clone();
+            textedit::write(&mut doc, &[change]).unwrap();
+            assert_eq!(
+                textedit::scan(&doc, 0).unwrap().runs[0].text,
+                "IN\u{3000}IN"
+            );
+            assert_eq!(doc.objects[&font], fonts);
+        }
+    }
+}
+
+#[test]
+fn textedit_composite_nonsymbolic_flags_and_indirect_widths_preserve_glyphs() {
+    let (mut doc, ids) = fixture();
+    let expected = textedit::scan(&doc, 0).unwrap();
+    doc.get_dictionary_mut(ids[2]).unwrap().set("Flags", 32);
+    let list = doc.add_object(Object::Array(vec![600.into(); 32]));
+    let widths = doc.add_object(Object::Array(vec![1.into(), list.into()]));
+    doc.get_dictionary_mut(ids[1]).unwrap().set("W", widths);
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs, expected.runs);
+    let change = update(&doc, "IN");
+    let objects = doc.objects.clone();
+    textedit::write(&mut doc, &[change]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    for id in [ids[0], ids[1], ids[2], list, widths] {
+        assert_eq!(doc.objects[&id], objects[&id]);
+    }
+    doc.objects.insert(widths, Object::Reference(widths));
+    assert!(textedit::scan(&doc, 0).is_err());
+}
+
+#[test]
 fn unicode_cid_replacements_preserve_glyph_identity_and_other_runs() {
     let (mut doc, [font, _, _, mapping]) = fixture();
     let stream = doc
@@ -262,7 +315,8 @@ fn textedit_composite_refusals_leave_every_object_unchanged() {
         (1, "DW", 601.01.into()),
         (1, "DW", 0.into()),
         (1, "CIDSystemInfo", dictionary! {"Registry" => Object::string_literal("Other"), "Ordering" => Object::string_literal("Identity"), "Supplement" => 0}.into()),
-        (2, "Flags", 32.into()),
+        (2, "Flags", 36.into()),
+        (2, "Flags", (32 | 262144).into()),
         (2, "FontName", Object::Name(b"Other".to_vec())),
         (2, "FontFile3", Object::Null),
     ] {
@@ -284,9 +338,9 @@ fn textedit_composite_refusals_leave_every_object_unchanged() {
 
 #[test]
 fn textedit_composite_width_table_bounds_and_defaults() {
-    assert_eq!(widths(&dictionary! {}).unwrap().0, 1000.);
+    assert_eq!(widths(&Document::new(), &dictionary! {}).unwrap().0, 1000.);
     let good = dictionary! { "W" => vec![0.into(), vec![0.into(), 600.into()].into(), 2.into(), 4095.into(), 600.into()] };
-    let parsed = widths(&good).unwrap();
+    let parsed = widths(&Document::new(), &good).unwrap();
     assert_eq!(parsed.1.len(), 4096);
     assert_eq!(parsed.1[&0], 0.);
     assert_eq!(parsed.1[&4095], 600.);
@@ -317,7 +371,7 @@ fn textedit_composite_width_table_bounds_and_defaults() {
             vec![600.into()].into(),
         ],
     ] {
-        assert!(widths(&dictionary! { "W" => values }).is_err());
+        assert!(widths(&Document::new(), &dictionary! { "W" => values }).is_err());
     }
 }
 

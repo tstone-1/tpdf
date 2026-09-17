@@ -10,6 +10,7 @@ export interface TextRun {
   matrix: [number, number, number, number, number, number];
   advance: number;
   display_rect: [number, number, number, number];
+  minimum_height?: number;
 }
 export interface TextPreview { png: number[]; font: string; rect: [number, number, number, number]; lines: number }
 export interface TextRuns { page: number; revision: number[]; runs: TextRun[]; preview?: TextPreview }
@@ -98,7 +99,8 @@ export class TextEditor {
     label.append(this.input);
     const help = document.createElement("p"); help.textContent = "Resize the box or change the font size for longer text. Apply updates the page; Save writes the PDF. With wrapping, Ctrl+Enter applies.";
     help.style.cssText = "font-size:12px;margin:6px 0";
-    this.message.setAttribute("role", "alert"); this.message.style.cssText = "font-size:12px;margin:6px 0";
+    this.message.setAttribute("role", "alert"); this.message.tabIndex = 0;
+    this.message.style.cssText = "font-size:12px;margin:6px 0";
     this.apply.type = "button"; this.apply.className = "text-edit-apply"; this.apply.textContent = "Apply";
     this.apply.addEventListener("click", () => this.commit());
     this.previewImage.alt = "PDF preview of the replacement"; this.previewImage.hidden = true;

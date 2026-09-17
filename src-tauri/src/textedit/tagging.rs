@@ -30,8 +30,10 @@ mod tests;
 
 // Every text block owns content. Grouping elements have separate count/depth
 // bounds because a chain can contain many containers and just one text block.
-const MAX_CONTENT_ITEMS: usize = 128;
-const MAX_CONTAINERS: usize = 128;
+const MAX_CONTENT_ITEMS: usize = 256;
+const MAX_DOCUMENT_CONTENT: usize = 4096;
+const MAX_NODES: usize = 4096;
+const MAX_CONTAINERS: usize = 256;
 const MAX_CONTAINER_DEPTH: usize = 8;
 const INVALID: &str = "unsupported or inconsistent tagged text structure";
 
@@ -93,6 +95,14 @@ fn standard_role(tag: &[u8]) -> bool {
                 | b"Formula"
                 | b"Form"
         )
+}
+
+fn role<'a>(roles: Option<&'a Dictionary>, tag: &'a [u8]) -> Result<&'a [u8], String> {
+    roles
+        .and_then(|roles| roles.get(tag).ok())
+        .map(name)
+        .transpose()
+        .map(|mapped| mapped.unwrap_or(tag))
 }
 
 fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), String> {
@@ -194,6 +204,40 @@ fn element(
         return Err(INVALID.into());
     }
     if let Ok(attributes) = dict.get(b"A") {
+        // Figures stay read-only, so their authored ink bounds cannot become
+        // stale from a text edit elsewhere. Preserve, but validate, those bounds.
+        if name(get(dict, b"S")?)? == b"Figure" {
+            let attributes = crate::encoding::resolve(doc, attributes)
+                .as_dict()
+                .map_err(|_| INVALID)?;
+            keys(
+                attributes,
+                &[b"O", b"BBox", b"Placement"],
+                "figure attributes",
+            )?;
+            if name(get(attributes, b"O")?)? != b"Layout" {
+                return Err(INVALID.into());
+            }
+            if attributes.get(b"Placement").is_ok_and(|value| {
+                !value.as_name().is_ok_and(|name| {
+                    matches!(name, b"Block" | b"Inline" | b"Before" | b"Start" | b"End")
+                })
+            }) {
+                return Err(INVALID.into());
+            }
+            let bounds = array(crate::encoding::resolve(doc, get(attributes, b"BBox")?))?;
+            if bounds.len() != 4 {
+                return Err(INVALID.into());
+            }
+            let bounds = bounds
+                .iter()
+                .map(super::number)
+                .collect::<Result<Vec<_>, _>>()?;
+            if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
+                return Err(INVALID.into());
+            }
+            return Ok(page);
+        }
         // Cell attributes and identifiers are checked together with the IDTree
         // after this element's row/table ownership has been established.
         if matches!(name(get(dict, b"S")?)?, b"TD" | b"TH") {
@@ -298,15 +342,15 @@ struct Group<'a> {
 }
 
 // Exactly one optional NonStruct/Span level below a paragraph, never a recursive
-// tree walk. Every group must own content, and total owns the allocation bound.
+// tree walk. Empty exported cells/paragraphs are retained; the node budget is
+// separate from the number of marked-content owners.
 fn groups<'a>(
     doc: &'a Document,
     paragraph: Group<'a>,
     pages: &BTreeSet<ObjectId>,
     ids: &mut BTreeSet<ObjectId>,
-    total: usize,
 ) -> Result<Vec<Group<'a>>, String> {
-    if paragraph.items.len() > total {
+    if paragraph.items.len() > MAX_NODES {
         return Err(INVALID.into());
     }
     let mut plain = Group {
@@ -316,15 +360,16 @@ fn groups<'a>(
     let mut groups = Vec::new();
     for item in paragraph.items {
         if let Object::Reference(id) = item {
-            if !ids.insert(*id) {
+            if !ids.insert(*id) || ids.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
             let child = node(doc, *id)?;
             let page = element(doc, child, plain.id, pages)?;
             let tag = name(get(child, b"S")?)?;
-            if !matches!(tag, b"NonStruct" | b"Span")
-                && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
-                && !(matches!(plain.tag, b"TD" | b"TH") && text_block(tag))
+            if plain.tag == b"Figure"
+                || (!matches!(tag, b"NonStruct" | b"Span")
+                    && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
+                    && !(matches!(plain.tag, b"TD" | b"TH") && text_block(tag)))
             {
                 return Err(INVALID.into());
             }
@@ -332,7 +377,7 @@ fn groups<'a>(
                 return Err(INVALID.into());
             }
             let items = children(doc, get(child, b"K")?)?;
-            if items.len() > total {
+            if items.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
             let group = Group {
@@ -344,7 +389,7 @@ fn groups<'a>(
             // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
             // branch recurses, so this adds one bounded level, not arbitrary trees.
             if matches!(plain.tag, b"TD" | b"TH") && text_block(tag) {
-                groups.extend(self::groups(doc, group, pages, ids, total)?);
+                groups.extend(self::groups(doc, group, pages, ids)?);
             } else {
                 groups.push(group);
             }
@@ -388,7 +433,7 @@ impl Tags {
             return Ok(Self::default());
         };
         // The grouping walk below is iterative, with independent depth/count bounds.
-        if pages.is_empty() || pages.len() > MAX_CONTENT_ITEMS {
+        if pages.is_empty() || pages.len() > 128 {
             return Err(INVALID.into());
         }
         let page_ids: BTreeSet<_> = pages.iter().copied().collect();
@@ -420,29 +465,20 @@ impl Tags {
             .transpose()
             .map_err(|_| INVALID)?;
         if let Some(roles) = roles {
-            if roles.len() > 16
+            if roles.len() > 128
                 || roles.iter().any(|(key, value)| {
                     key.is_empty()
                         || key.len() > 127
                         || standard_role(key)
-                        || !value
-                            .as_name()
-                            .is_ok_and(|tag| text_block(tag) || container(tag))
+                        || !value.as_name().is_ok_and(standard_role)
                 })
             {
                 return Err("tagged RoleMap contains unsupported or conflicting roles".into());
             }
         }
-        let [document] = children(doc, get(root, b"K")?)? else {
-            return Err("tagged structure requires one Document root element".into());
-        };
-        let document_id = reference(document)?;
-        let document = node(doc, document_id)?;
-        element(doc, document, root_id, &page_ids)?;
-        if name(get(document, b"S")?)? != b"Document" {
-            return Err("tagged structure requires one Document root element".into());
-        }
-        let paragraphs = children(doc, get(document, b"K")?)?;
+        // The structure root may own several elements, including material added
+        // alongside the producer's Document element by a later PDF editor.
+        let paragraphs = children(doc, get(root, b"K")?)?;
         if paragraphs.is_empty() {
             return Err(INVALID.into());
         }
@@ -498,7 +534,10 @@ impl Tags {
             };
             let entries = array(entry)?;
             total += entries.len();
-            if entries.is_empty() || total > MAX_CONTENT_ITEMS {
+            if entries.is_empty()
+                || entries.len() > MAX_CONTENT_ITEMS
+                || total > MAX_DOCUMENT_CONTENT
+            {
                 return Err("tagged parent content is empty or exceeds its limit".into());
             }
             by_page.insert(owner, (entries, vec![Vec::new(); entries.len()]));
@@ -509,42 +548,55 @@ impl Tags {
                 return Err(INVALID.into());
             }
         }
-        if paragraphs.len() > total || !page_keys.is_empty() {
+        if paragraphs.len() > MAX_NODES || !page_keys.is_empty() {
             return Err(INVALID.into());
         }
         let mut assigned = 0;
         let mut ids = page_ids.clone();
-        ids.extend([root_id, document_id]);
+        ids.insert(root_id);
         let mut pending: Vec<_> = paragraphs
             .iter()
             .rev()
-            .map(|child| (child, document_id, 0))
+            .map(|child| (child, root_id, 0))
             .collect();
         let mut containers = 0;
         while let Some((child, parent_id, depth)) = pending.pop() {
             let id = reference(child)?;
-            if !ids.insert(id) {
+            if !ids.insert(id) || ids.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
             let child = node(doc, id)?;
             let paragraph_page = element(doc, child, parent_id, &page_ids)?;
             let tag = name(get(child, b"S")?)?;
-            let role = roles
-                .and_then(|r| r.get(tag).ok())
-                .map(name)
-                .transpose()?
-                .unwrap_or(tag);
+            let role = role(roles, tag)?;
             let items = children(doc, get(child, b"K")?)?;
+            if role == b"Document" {
+                if parent_id != root_id
+                    || items.is_empty()
+                    || items.len() + pending.len() > MAX_NODES
+                {
+                    return Err(INVALID.into());
+                }
+                pending.extend(items.iter().rev().map(|item| (item, id, depth)));
+                continue;
+            }
+            // Some producers retain nameless, empty structure placeholders.
+            // They may own no MCID and carry no attributes or semantics.
+            if tag.is_empty() && items.is_empty() && !child.has(b"A") {
+                continue;
+            }
+            if tag != role && !text_block(role) && !container(role) {
+                return Err("tagged element role is not editable yet".into());
+            }
             let mut content_items = Vec::new();
             if container(role) || matches!(role, b"NonStruct" | b"L" | b"Table" | b"TR") {
                 containers += 1;
                 // Bound the work list before copying child references into it.
-                if items.len() + pending.len() > total {
+                if items.len() + pending.len() > MAX_NODES {
                     return Err("tagged grouping frontier exceeds its limit".into());
                 }
                 if depth >= MAX_CONTAINER_DEPTH
                     || containers > MAX_CONTAINERS
-                    || items.is_empty()
                     || (role != b"L" && child.has(b"A"))
                 {
                     return Err(INVALID.into());
@@ -576,7 +628,7 @@ impl Tags {
                             descendants += 1;
                         }
                     }
-                    if descendants == 0 {
+                    if descendants == 0 && !items.is_empty() {
                         return Err(INVALID.into());
                     }
                 }
@@ -593,7 +645,7 @@ impl Tags {
                     continue;
                 }
             }
-            if !text_block(role) && !matches!(role, b"LI" | b"TD" | b"TH" | b"Table") {
+            if !text_block(role) && !matches!(role, b"LI" | b"TD" | b"TH" | b"Table" | b"Figure") {
                 return Err("tagged element role is not editable yet".into());
             }
             if matches!(role, b"TD" | b"TH") {
@@ -615,7 +667,7 @@ impl Tags {
             if role == b"LI" {
                 // Nested lists use the same iterative walk and container bounds.
                 // LI itself owns content; it does not add a container level.
-                if items.len() + pending.len() > total {
+                if items.len() + pending.len() > MAX_NODES {
                     return Err("tagged list frontier exceeds its limit".into());
                 }
                 for item in items.iter().rev() {
@@ -642,10 +694,10 @@ impl Tags {
                 page: paragraph_page,
                 tag,
                 items,
-            } in groups(doc, paragraph, &page_ids, &mut ids, total)?
+            } in groups(doc, paragraph, &page_ids, &mut ids)?
             {
                 assigned += items.len();
-                if items.is_empty() || assigned > total {
+                if assigned > total {
                     return Err(INVALID.into());
                 }
                 for item in items {
@@ -701,7 +753,12 @@ impl Tags {
             let properties = properties.as_dict().map_err(|_| INVALID)?;
             keys(properties, &[b"MCID"], "marked-content properties")?;
             let mcid = usize::try_from(integer(get(properties, b"MCID")?)?).map_err(|_| INVALID)?;
-            if self.names.get(mcid).map(Vec::as_slice) != Some(tag) || !self.seen.insert(mcid) {
+            let owner = self.names.get(mcid).map(Vec::as_slice);
+            // The structure element, not the stream's descriptive tag, owns
+            // the semantics. Some producers label figure sequences P. Admit
+            // that preserved graphics case; text() still refuses Figure text.
+            let matches = owner == Some(tag) || (owner == Some(b"Figure") && tag == b"P");
+            if !matches || !self.seen.insert(mcid) {
                 return Err("marked content repeats or disagrees with its structure tag".into());
             }
             Some(mcid)
@@ -731,18 +788,21 @@ impl Tags {
     }
 
     pub(super) fn text(&mut self) -> Result<(), String> {
-        if !self.names.is_empty() && !matches!(self.active, Some(Some(_))) {
-            return Err("text outside a tagged paragraph is not editable".into());
-        }
         if self
             .active
             .flatten()
-            .is_some_and(|mcid| self.names[mcid] == b"Table")
+            .is_some_and(|mcid| matches!(self.names[mcid].as_slice(), b"Table" | b"Figure"))
         {
             return Err("text outside a tagged table cell is not editable".into());
         }
         self.has_content = true;
         Ok(())
+    }
+
+    // Artifacts and later untagged additions keep their bytes and reserve their
+    // glyph bounds, without blocking edits to properly owned paragraphs.
+    pub(super) fn read_only(&self) -> bool {
+        !self.names.is_empty() && !matches!(self.active, Some(Some(_)))
     }
 
     pub(super) fn finish(&self) -> Result<(), String> {

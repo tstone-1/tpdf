@@ -385,6 +385,33 @@ parameters remain refused. Generate synthetic cases with
 `uv run --with pillow --with fonttools --with pypdf testdata/make_textedit_jpeg.py <directory>`;
 use ordinary `text-edit-probe`/native textedit checks and PDFKit `--image` readback.
 
+Preserved Form XObjects use an eight-level, 32-call traversal with cycle detection,
+a shared 1 MiB decoded form budget and 16,384 operators. Their text stays read-only
+and the transformed BBox reserves space against layout expansion. External forms,
+soft-mask graphics states and pattern colours remain refused. Indexed eight-bit
+images validate palette length and every sample. Page images and preserved forms
+share an 8 MiB byte budget. Figure MCIDs may use P stream markers for preserved
+graphics; direct figure text remains refused. Artifacts and unmarked additions on
+tagged pages keep their bytes and glyph collision bounds without becoming editable.
+Embedded fonts accept zero-width holes only when unused, half-em descenders,
+nonsymbolic Identity-H descriptors, indirect width arrays and verified empty
+ideographic-space glyphs. Runs with deeper descenders carry a minimum physical
+box height, used by the default layout before rounding its font size and height.
+ToUnicode dictionary capacities from 1 through 256 are
+allocation hints; the remaining CMap grammar is unchanged. Synthetic regressions
+live beside `forms`, `images`, `tagging` and `fonts`; private round-trip inputs and
+outputs belong in ignored directories.
+Invisible signature widgets with zero-area rectangles remain read-only and no
+longer block form discovery or unrelated saves. Finite-coordinate, ordering and
+field-ownership checks still apply; signature-save confirmation is unchanged.
+For editing compatibility fixes, verify native Apply and Save as well as the
+worker round trip: desktop Save also scans form widgets, which a text-only probe
+does not exercise. Check the default layout, signature confirmation and saved
+copy through an independent reader; always use disposable private copies.
+Run the document round trip on freshly rebuilt final code before release gates,
+then repeat Apply and Save with the packaged application. A pass taken before
+a later parser restriction does not establish compatibility of the release.
+
 Tagged editing accepts direct or referenced `/RoleMap`, layout `/A` dictionaries
 and parent-tree `/Nums` arrays. Structure-element `/Type` may be absent; supplied
 values must be `/StructElem`. Reference resolution retains the existing bound,
@@ -401,16 +428,20 @@ exports of `textedit-producer-hanging-indent.rtf` and
 the ordinary parser readback also preserves the complete tag graph. The unchanged LibreOffice
 export of `textedit-producer-spacing.rtf` exercises the combined attributes;
 `scripts/text_edit_producers.py` records its export and readback commands.
-Below the single Document root, an iterative walk admits Part/Art/Sect/Div and
+Below the structure root, an iterative walk admits Document, Part/Art/Sect/Div and
 neutral NonStruct containers, then P/H/H1-H6 blocks with the existing optional
 NonStruct or literal Span content leaves. Span leaves retain optional language
 tags, accept no layout attributes or semantic overrides, and cannot nest further.
 `textedit-producer-language.rtf` exports an unchanged LibreOffice language-span
 fixture for ordinary worker/native checks and independent structure readback.
-The tree allows at most eight container levels and 128
-containers, independently of the 128-item content bound. Grouping containers own child
+The tree allows at most eight container levels and 256
+containers, with 256 content items per page and 4,096 per document. The independent
+4,096-node bound includes empty blocks/cells and nameless empty placeholders.
+Document elements may have root siblings; all parent ownership remains checked.
+Grouping containers own child
 elements, never marked content or layout attributes; their Pg is not inherited.
-Role aliases may target supported grouping/heading types but not NonStruct or Span;
+Used role aliases may target Document and supported grouping/heading types.
+Unused mappings to other standard roles are preserved; unsupported used roles still refuse editing.
 standard PDF 1.7 names cannot be remapped, including types the editor does not
 support. The RoleMap guard covers all 49 standard types; valid custom names
 remain case-sensitive. `tagging/role_tests.rs` covers unused definitions and

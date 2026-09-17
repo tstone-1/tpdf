@@ -260,15 +260,20 @@ pub(super) fn prepare(
                 region.contains(ink)?;
             }
             let shown = display(ink);
-            for other in page.runs.runs.iter().chain(&page.preserved) {
-                if other.operator == run.operator || other.text.trim().is_empty() {
-                    continue;
-                }
+            for other in page
+                .runs
+                .runs
+                .iter()
+                .chain(&page.preserved)
+                .filter(|other| other.operator != run.operator && !other.text.trim().is_empty())
+                .map(|other| &other.display_rect)
+                .chain(&page.form_text_bounds)
+            {
                 let intersection = [
-                    shown[0].max(other.display_rect[0]),
-                    shown[1].max(other.display_rect[1]),
-                    shown[2].min(other.display_rect[2]),
-                    shown[3].min(other.display_rect[3]),
+                    shown[0].max(other[0]),
+                    shown[1].max(other[1]),
+                    shown[2].min(other[2]),
+                    shown[3].min(other[3]),
                 ];
                 if intersection[2] > intersection[0] + 0.1
                     && intersection[3] > intersection[1] + 0.1

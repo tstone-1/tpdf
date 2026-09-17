@@ -62,7 +62,7 @@ impl Metrics {
                     vertical[1] = vertical[1].max(top * unit);
                     [(left * unit).min(0.), (right * unit - width).max(0.)]
                 }
-                None if matches!(text.as_str(), " " | "\u{a0}")
+                None if matches!(text.as_str(), " " | "\u{a0}" | "\u{3000}")
                     && super::empty_glyph(face, glyph) == Some(true) =>
                 {
                     [0.; 2]

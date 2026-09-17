@@ -28,6 +28,57 @@ fn fixture(image: Stream, body: &str) -> Document {
 
 const BODY: &str = "q 30 0 0 20 20 20 cm /Im Do Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET q /Im Do Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET";
 
+#[test]
+fn textedit_indexed_images_preserve_palette_and_refuse_invalid_samples() {
+    for bad in 0..4 {
+        let mut indexed = image();
+        indexed.content = vec![0, 1, 0, 1, 0, 1];
+        if bad == 1 {
+            indexed.content[0] = 2;
+        }
+        let palette = if bad == 2 {
+            vec![0; 5]
+        } else {
+            vec![0, 0, 0, 255, 255, 255]
+        };
+        indexed.dict.set(
+            "ColorSpace",
+            vec![
+                Object::Name(b"Indexed".to_vec()),
+                Object::Name(b"DeviceRGB".to_vec()),
+                Object::Integer(if bad == 3 { 256 } else { 1 }),
+                Object::string_literal(palette),
+            ],
+        );
+        let mut doc = fixture(indexed, BODY);
+        let objects = doc.objects.clone();
+        let before = textedit::scan(&doc, 0);
+        if bad != 0 {
+            assert!(before.is_err(), "case {bad}");
+            continue;
+        }
+        let before = before.unwrap();
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        for (id, value) in objects {
+            if id != page {
+                assert_eq!(doc.objects[&id], value);
+            }
+        }
+    }
+}
+
 fn jpeg(data: &[u8], space: &str) -> Stream {
     let mut stream = image();
     stream.content = data.to_vec();
@@ -403,10 +454,10 @@ fn textedit_images_share_decode_budget_and_bound_resource_names() {
         assert_eq!(textedit::scan(&fixture(stream, BODY), 0).is_ok(), accepted);
     }
     let mut stream = image();
-    stream.dict.set("Width", 1024);
-    stream.dict.set("Height", 1024);
+    stream.dict.set("Width", 4096);
+    stream.dict.set("Height", 2048);
     stream.dict.set("ColorSpace", "DeviceGray");
-    stream.content = vec![0; 1024 * 1024];
+    stream.content = vec![0; textedit::MAX_IMAGES];
     stream.compress().unwrap();
     let doc = fixture(stream.clone(), BODY);
     assert!(textedit::scan(&doc, 0).is_ok()); // Repeated name consumes the budget once.

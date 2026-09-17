@@ -1807,7 +1807,8 @@ retains clipping, and refuses page overflow and new collisions with other text.
 Draft previews are PNG crops of at most 1024 by 512 pixels from the same writer.
 Supported
 tag trees are checked in both directions for page and MCID ownership, bounded
-to 128 content items, and preserved. Alternate text and unsupported structure
+to 256 content items per page and 4,096 per document, and preserved. An independent
+4,096-node bound includes empty elements. Alternate text and unsupported structure
 semantics are refused or retained read-only. Matching single-fragment ActualText
 spans are editable and update their logical text together with their visible text.
 Alternate logical text remains read-only. Untouched content operands retain their
@@ -1819,6 +1820,14 @@ widths, Unicode mappings and ink bounds. Glyphs cannot invoke resources, images,
 text or other glyphs. Per-glyph streams are capped at 64 KiB; a font shares a
 1 MiB decoded budget and 16,384 operations. Supported axial gradient patterns
 are validated and preserved without rewriting their resources.
+
+Preserved Form XObjects remain read-only. Traversal is capped at eight levels,
+32 calls, 1 MiB of decoded content and 16,384 operations, with cycle detection.
+External forms, soft-mask graphics states and pattern colours are refused.
+Forms containing text reserve their transformed BBox against layout expansion.
+Page images and preserved forms share an 8 MiB budget. Indexed images validate
+palette length and every sample before preservation. Tagged artifacts and
+unmarked text remain read-only and retain collision bounds.
 
 The editing grammar also validates embedded CFF/Type1C programs and opaque
 image XObjects inside the worker. JPEG preservation uses zune-jpeg after checking

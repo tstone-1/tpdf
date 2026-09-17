@@ -61,13 +61,39 @@ pub(super) fn check(
     let height = dimension(b"Height")?;
     let space =
         crate::encoding::resolve(doc, image.dict.get(b"ColorSpace").map_err(|_| invalid())?);
+    let mut palette_bytes = 0;
+    let mut high_index = None;
     let components = match space {
+        Object::Array(values) if matches!(values.first(), Some(Object::Name(name)) if name == b"Indexed") =>
+        {
+            let [_, base, high, lookup] = values.as_slice() else {
+                return Err(invalid());
+            };
+            let components = colors::space(doc, crate::encoding::resolve(doc, base))?;
+            let high = high.as_i64().map_err(|_| invalid())?;
+            if !(0..=255).contains(&high) {
+                return Err(invalid());
+            }
+            palette_bytes = (high as usize + 1) * components;
+            let lookup = crate::encoding::resolve(doc, lookup);
+            let bytes = match lookup {
+                Object::String(bytes, _) if bytes.len() == palette_bytes => bytes.clone(),
+                Object::Stream(stream) => filters::decode(stream, palette_bytes)?,
+                _ => return Err(invalid()),
+            };
+            if bytes.len() != palette_bytes {
+                return Err(invalid());
+            }
+            high_index = Some(high as u8);
+            1
+        }
         Object::Name(name) => colors::named(doc, resources, name)?,
         value => colors::space(doc, value)?,
     };
     // Dimensions are bounded before multiplication or decompression. The budget
     // is shared across distinct image names on the page, not reset per image.
-    let bytes = width * height * components;
+    let samples = width * height * components;
+    let bytes = samples + palette_bytes;
     if bytes > remaining {
         return Err("decoded images exceed the editable page budget".into());
     }
@@ -79,11 +105,16 @@ pub(super) fn check(
         _ => false,
     };
     if dct {
+        if high_index.is_some() {
+            return Err(invalid());
+        }
         jpeg::check(&image.content, width, height, components)?;
         return Ok(bytes);
     }
-    let decoded = filters::decode(image, bytes)?;
-    if decoded.len() != bytes {
+    let decoded = filters::decode(image, samples)?;
+    if decoded.len() != samples
+        || high_index.is_some_and(|high| decoded.iter().any(|&sample| sample > high))
+    {
         return Err("image samples do not match dimensions and colour components".into());
     }
     Ok(bytes)

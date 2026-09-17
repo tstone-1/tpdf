@@ -340,7 +340,7 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
         assert!(textedit::write(&mut doc, &[edit]).is_err(), "mode {mode}");
         assert_eq!(doc.objects, original);
     }
-    // Empty paragraph alongside fully claimed content is a distinct failure.
+    // An empty paragraph alongside fully claimed content is preserved.
     let (mut doc, ids) = flowing();
     doc.get_dictionary_mut(ids[4])
         .unwrap()
@@ -348,12 +348,12 @@ fn textedit_tagged_flowing_items_refuse_bad_ownership_without_mutation() {
     doc.get_dictionary_mut(ids[2])
         .unwrap()
         .set("K", vec![ids[3].into(), ids[4].into()]);
-    assert!(textedit::scan(&doc, 0).is_err());
+    assert!(textedit::scan(&doc, 0).is_ok());
 }
 
 #[test]
 fn textedit_tagged_one_paragraph_still_bounds_total_content_items() {
-    for count in [128, 129] {
+    for count in [256, 257] {
         let (mut doc, ids) = fixture(CONTENT);
         doc.get_dictionary_mut(ids[2])
             .unwrap()
@@ -380,8 +380,8 @@ fn textedit_tagged_one_paragraph_still_bounds_total_content_items() {
             .unwrap()
             .set("Contents", stream);
         let result = textedit::scan(&doc, 0);
-        if count == 128 {
-            assert_eq!(result.unwrap().runs.len(), 128);
+        if count == 256 {
+            assert_eq!(result.unwrap().runs.len(), 256);
         } else {
             assert!(result.is_err());
         }
@@ -635,7 +635,7 @@ pub(super) fn fixture(content: &[u8]) -> (Document, [ObjectId; 6]) {
 
 #[test]
 fn textedit_tagged_limits_have_valid_boundary_controls() {
-    for count in [128, 129] {
+    for count in [256, 257] {
         let (mut doc, ids) = fixture(CONTENT);
         let mut children = Vec::new();
         let mut content = String::new();
@@ -658,8 +658,8 @@ fn textedit_tagged_limits_have_valid_boundary_controls() {
             .unwrap()
             .set("Contents", stream);
         let result = textedit::scan(&doc, 0);
-        if count == 128 {
-            assert_eq!(result.unwrap().runs.len(), 128);
+        if count == 256 {
+            assert_eq!(result.unwrap().runs.len(), 256);
         } else {
             assert!(result.is_err());
         }
@@ -823,10 +823,6 @@ fn textedit_tagged_requires_both_parent_directions_and_bounded_unique_ids() {
 fn textedit_tagged_requires_balanced_unique_markers_and_paragraph_text() {
     let source = std::str::from_utf8(CONTENT).unwrap();
     for text in [
-        source.replace(
-            "/Artifact BMC q EMC",
-            "/Artifact BMC q BT /F1 12 Tf 10 10 Td (FIRST) Tj ET EMC",
-        ),
         format!("/Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 210 Td (FIRST) Tj ET EMC {source}"),
         source.replace("/MCID 0", "/MCID 1"),
         source.replace("/MCID 0", "/MCID -1"),
@@ -846,6 +842,42 @@ fn textedit_tagged_requires_balanced_unique_markers_and_paragraph_text() {
     ] {
         let (doc, _) = fixture(text.as_bytes());
         assert!(textedit::scan(&doc, 0).is_err(), "accepted {text}");
+    }
+}
+
+#[test]
+fn textedit_tagged_artifact_and_unmarked_text_remain_read_only() {
+    for wrapped in [false, true] {
+        let source = std::str::from_utf8(CONTENT).unwrap();
+        let extra = "BT /F1 12 Tf 10 10 Td (FIRST) Tj ET";
+        let extra = if wrapped {
+            format!("/Artifact BMC {extra} EMC")
+        } else {
+            extra.into()
+        };
+        let (mut doc, ids) = fixture(format!("{source} {extra}").as_bytes());
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), 2);
+        let inspection = textedit::inspect(&doc, 0).unwrap();
+        assert_eq!(inspection.preserved.len(), 1);
+        assert_eq!(inspection.preserved[0].text, "FIRST");
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+        assert!(String::from_utf8(doc.get_page_content(ids[0]))
+            .unwrap()
+            .trim_end()
+            .ends_with(&extra));
     }
 }
 

@@ -5,8 +5,10 @@ export function defaultTextLayout(run: TextRun): TextLayout {
   const x = Math.hypot(run.matrix[0], run.matrix[1]);
   const y = Math.hypot(run.matrix[2], run.matrix[3]);
   const round = (value: number) => Math.ceil(value * 1000) / 1000;
-  return { width: Math.max(0.1, round(run.advance * x)), height: Math.max(0.1, round(run.size * y * 1.25)),
-    size: round(run.size * y), wrap: false, font: "auto" };
+  const sourceSize = run.size * y, size = round(sourceSize);
+  const height = Math.max(sourceSize * 1.25, run.minimum_height ?? 0) * size / sourceSize;
+  return { width: Math.max(0.1, round(run.advance * x)), height: Math.max(0.1, round(height)),
+    size, wrap: false, font: "auto" };
 }
 
 /** Native form controls also provide keyboard access to resizing and wrapping. */

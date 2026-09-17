@@ -381,8 +381,9 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 );
             }
             if !rect.iter().all(|v| v.is_finite())
-                || rect[2] <= rect[0]
-                || rect[3] <= rect[1]
+                || rect[2] < rect[0]
+                || rect[3] < rect[1]
+                || (kind != Some(b"Sig") && (rect[2] == rect[0] || rect[3] == rect[1]))
                 || rect.iter().any(|v| v.abs() > 100000.0)
             {
                 return Err("Invalid form widget bounds".into());
@@ -1386,6 +1387,45 @@ pub(crate) mod tests {
             std::fs::write(path, &bytes).unwrap();
         }
         (Document::load_mem(&bytes).unwrap(), field, check)
+    }
+
+    #[test]
+    fn forms_preserve_invisible_signature_widgets_without_offering_them_for_editing() {
+        for kind in ["Sig", "Tx"] {
+            for bounds in [[0, 0, 0, 0], [0, 0, 0, 20], [20, 0, 0, 20]] {
+                let (mut doc, field, check) = fixture();
+                let widget = doc.get_dictionary_mut(check).unwrap();
+                widget.set("FT", kind);
+                widget.set("Rect", bounds.map(Object::Integer).to_vec());
+                let before = doc.objects[&check].clone();
+                let result = scan(&doc);
+                if kind != "Sig" || bounds[0] > bounds[2] {
+                    assert!(result.unwrap_err().contains("bounds"));
+                    continue;
+                }
+                let form = result.unwrap();
+                let signature = form.widgets.iter().find(|w| w.object == check).unwrap();
+                assert!(matches!(signature.control, Control::Unsupported));
+                assert!(signature.reason.is_some());
+                write(
+                    &mut doc,
+                    &[Change {
+                        object: field,
+                        value: Value::Text("EDITED".into()),
+                    }],
+                )
+                .unwrap();
+                assert_eq!(doc.objects[&check], before);
+                assert!(write(
+                    &mut doc,
+                    &[Change {
+                        object: check,
+                        value: Value::Text("FORGED".into())
+                    }]
+                )
+                .is_err());
+            }
+        }
     }
 
     #[test]

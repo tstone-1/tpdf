@@ -31,7 +31,7 @@
  */
 
 import type { CommandRegistry } from "./commands";
-import { BINDINGS, inTextField, label, matches, type BoundCommand } from "./keys";
+import { BINDINGS, inTextField, label, matches, nativeCopy, type BoundCommand } from "./keys";
 import {
   describeRange,
   describeSplit,
@@ -1755,6 +1755,7 @@ export function handleWindowKey(
   event: KeyboardEvent,
   deps: WindowKeyDeps,
 ): void {
+  if (nativeCopy(event)) return;
   const palette = deps.palette();
   const { actions } = deps;
   const title = deps.hasDocument();

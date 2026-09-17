@@ -8,6 +8,26 @@ fn stream(text: &str) -> Stream {
 }
 
 #[test]
+fn textedit_mapping_dictionary_capacity_is_bounded_but_does_not_change_codes() {
+    let expected = parse(&stream(MAP)).unwrap();
+    for capacity in [1, 18, 256] {
+        assert_eq!(
+            parse(&stream(
+                &MAP.replace("12 dict", &format!("{capacity} dict"))
+            ))
+            .unwrap(),
+            expected
+        );
+    }
+    for capacity in ["0", "-1", "257", "1.5", "(18)"] {
+        assert!(parse(&stream(
+            &MAP.replace("12 dict", &format!("{capacity} dict"))
+        ))
+        .is_err());
+    }
+}
+
+#[test]
 fn textedit_mapping_reads_complete_bijective_ascii_data() {
     for input in [
         MAP.to_string(),

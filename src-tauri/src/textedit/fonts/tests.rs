@@ -273,6 +273,29 @@ fn textedit_embedded_refuses_ambiguous_pdf_mappings_and_custom_metrics() {
     }
 }
 
+#[test]
+fn textedit_embedded_zero_width_holes_do_not_disable_other_glyphs() {
+    let (mut doc, font, _, _) = fixture();
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"Widths")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()[(b'B' - 32) as usize] = 0.into();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert!(metrics.advance("B", 12.).is_err());
+    assert!(metrics.source_layout(b"B", 12., 0., 0.).is_err());
+    let edit = change(&doc, "IN");
+    let before = doc.objects.clone();
+    let mut bad = edit.clone();
+    bad.replacement = "B".into();
+    assert!(textedit::write(&mut doc, &[bad]).is_err());
+    assert_eq!(doc.objects, before);
+    textedit::write(&mut doc, &[edit]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(doc.objects[&font], before[&font]);
+}
+
 fn table_offset(tag: &[u8; 4]) -> usize {
     let count = u16::from_be_bytes(SYNTHETIC[4..6].try_into().unwrap()) as usize;
     for record in SYNTHETIC[12..12 + 16 * count].chunks_exact(16) {

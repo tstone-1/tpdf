@@ -5065,6 +5065,25 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.11 local verification, Windows x64, 2026-09-17:** the final run passed
+all 25 gates in 157.4 seconds: 1,642 Rust tests passed with three expected skips,
+and 1,695 frontend tests passed. Selected mutations caught 28 distinct Rust,
+six frontend and one native keyboard fault; historical tables were not rerun.
+The list-frontier regression was corrected after one mutation exposed that it
+did not isolate pending siblings. Native checks passed 314 text-heavy and 216
+vector-heavy cases, with 51 and 149 not applicable, plus 22 text-edit checks.
+The normal MSI rendered with the development engine hidden and refused with
+both engines hidden. Its PrintWindow capture was unchanged under an overlapping
+control. The released 26.9.10 NSIS installer upgraded to 26.9.11; the original
+installation and registry exports were restored. Packaged error copying,
+preview, Apply and Save passed on a disposable compatibility input, including
+signature confirmation and independent text, resource and structure readback.
+The final rebuilt worker round trip matched preview/save pixels and preserved
+adjacent content. The real-spooler probe passed 10/10. The OCR sweep opened 144
+documents, sampled 12,368 regions and read back 8,155: zero still read as text
+and 3,640 were shown unreadable, in 28.2 seconds without arithmetic warnings.
+The remaining regions were unverified; that is not a clean verdict.
+
 **26.9.10 local verification, Windows x64, 2026-09-17:** all 25 quality gates
 passed in 335.4 seconds after the compatible dependency updates. Rust passed
 1,627 tests with three expected skips; the frontend passed 1,692. Selected

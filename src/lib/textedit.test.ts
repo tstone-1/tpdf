@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changedTextPages, replacementError, TextEditor, type TextChange, type TextRuns } from "./textedit";
 import { NOTHING_OPEN, type EditState } from "./edits";
+import { defaultTextLayout } from "./textlayout";
 import { pageId } from "./pages";
 import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
 
@@ -38,6 +39,15 @@ function mount(write: (change: TextChange) => Promise<EditState> = async (value)
 }
 
 describe("existing text editing", () => {
+  it("keeps the validated descender height when sizing and rounding the default box", () => {
+    for (const matrix of [[1, 0, 0, 1, 0, 0], [0, 1, -1, 0, 0, 0], [-1, 0, 0, -1, 0, 0]] as const) {
+      const run = { ...runs.runs[0]!, size: 12.0001, minimum_height: 18.00015, matrix: [...matrix] as [number, number, number, number, number, number] };
+      const box = defaultTextLayout(run);
+      expect(box.size).toBe(12.001);
+      expect(box.height).toBe(18.002);
+      expect(box.height).toBeGreaterThanOrEqual(box.size * 1.5);
+    }
+  });
   it("offers CJK fonts and sends the selected style to the writer", async () => {
     const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
     const { editor, root, field } = mount(write);
