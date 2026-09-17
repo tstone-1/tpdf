@@ -380,15 +380,39 @@ encoded bytes, marker framing, scan count and decoded dimensions before pixel
 allocation; the shared page image budget still applies. Decoder success does not
 certify every entropy sample: even strict mode recovers some malformed input.
 The explicit framing check rejects empty scans, missing ends and trailing images;
-no image sample is rewritten. Four-component JPEGs, masks and custom decode
-parameters remain refused. Generate synthetic cases with
+no image sample is rewritten. Four-component JPEGs, stencil and colour-key masks,
+and decode parameters selecting a predictor remain refused. Generate synthetic cases with
 `uv run --with pillow --with fonttools --with pypdf testdata/make_textedit_jpeg.py <directory>`;
 use ordinary `text-edit-probe`/native textedit checks and PDFKit `--image` readback.
 
+An image may also carry a `/SMask`, which is validated as its own DeviceGray
+image and charged to the same page budget; alpha for alpha is refused rather
+than followed. `/Decode` is admitted only as the colour space's own default —
+`[0 255]` for an indexed image at eight bits, `[0 1]` per component otherwise —
+so no image the editor keeps needs its samples remapped. `/DecodeParms` is
+admitted only with `Predictor` absent or 1, which leaves the filter's output as
+the sample data; `filters::decode_unpredicted` exists for that single caller and
+every other one still refuses parameters outright. An image's `/Metadata` packet
+is kept unchanged and must declare `/Type /Metadata`. Ordinary Word, LiveCycle
+and Illustrator exports write all four around a logo with a transparent
+background. Generate the fixtures with
+`uv run --with fonttools --with pypdf testdata/make_textedit_alpha.py <directory>`
+and check them with `scripts/text_image_check.py <text-edit-probe> <new-ignored-directory>`,
+which damages one entry per fixture and requires a refusal, so a generator that
+stopped writing an entry cannot pass by doing nothing.
+
 Preserved Form XObjects use an eight-level, 32-call traversal with cycle detection,
 a shared 1 MiB decoded form budget and 16,384 operators. Their text stays read-only
-and the transformed BBox reserves space against layout expansion. External forms,
-soft-mask graphics states and pattern colours remain refused. Indexed eight-bit
+and the transformed BBox reserves space against layout expansion. A form may name
+the layer it belongs to (`/OC`, an OCG or OCMD dictionary), carry an application's
+`/PieceInfo` and its `/LastModified` date; none of the three is painted, and the
+editor never resolves the layer state. It treats a form as painted either way,
+because reserving the box of a form that turns out to be hidden refuses a layout
+that would have fitted, while the reverse would let new text land on visible
+graphics. Text state (`Tc Tw Tz TL Tf Tr Ts`) is accepted outside a text object
+as well as inside, which is where Acrobat's page-number stamps set it (ISO
+32000-1 Table 51); positioning and showing still require the text object.
+External forms, soft-mask graphics states and pattern colours remain refused. Indexed eight-bit
 images validate palette length and every sample. Page images and preserved forms
 share an 8 MiB byte budget. Figure MCIDs may use P stream markers for preserved
 graphics; direct figure text remains refused. Artifacts and unmarked additions on
@@ -501,6 +525,20 @@ THead/TBody/TFoot, lists directly in lists or cells, figures in cells, missing
 to both) are accepted. `/Alt` is limited to Figure/Link/Form; a non-empty `/T`
 to elements without editable text. `tagging/producer_tests.rs`,
 `annotation_tests.rs` and `tree_tests.rs` hold the synthetic fixtures.
+
+Layout attributes are also accepted on Figure, Link, Form and Table, where
+`/BBox` is optional and `/Placement` may be any of the five standard names.
+ISO 32000-1 Table 344 makes `/BBox` the element's own ink rather than an
+authored allocation, so keeping one is only sound while the content it
+describes cannot move: a figure, link and field are read-only already, and a
+table that declares bounds makes its own cells read-only too. `Tags::bounded`
+carries those MCIDs, and text beside such a table stays editable. A table that
+declares only a placement changes nothing. A list may be nested inside an
+`LBody` as well as beside it, which is what Word and Acrobat export; the
+sublist goes back to the walk that owns the depth and container bounds rather
+than recursing in `groups`. `Note` joins the grouping containers, so a footnote
+or endnote holds ordinary blocks and a producer role mapped onto it is accepted;
+one that owns marked content directly is still refused.
 
 WinAnsi TrueType fonts with ToUnicode may map WinAnsi punctuation at its own
 code (0x82-0x9F except 0x80, plus Latin-1 except 0xA0/0xAD); glyphs come from

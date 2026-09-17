@@ -77,6 +77,26 @@ fn visit(
             (b"StampId", Object::String(bytes, _)) if bytes.len() <= 127 => {}
             (b"StampId", Object::Integer(_)) => {}
             (b"StampId", Object::Null) => {}
+            // ISO 32000-1 14.5 and 7.8.4: private application data and the date
+            // it was written. Neither is painted; both are carried unchanged.
+            (b"PieceInfo", _) => {
+                dictionary(doc, value)?;
+            }
+            (b"LastModified", Object::String(bytes, _)) if bytes.len() <= 127 => {}
+            // ISO 32000-1 8.11.3.3: the layer this form belongs to. The editor
+            // never resolves the layer state, and treats the form as painted
+            // either way: reserving the box of a form that turns out to be
+            // hidden refuses a layout that would have fitted, while the reverse
+            // would let new text land on top of visible graphics.
+            (b"OC", _) => {
+                let group = dictionary(doc, value)?;
+                if !matches!(
+                    group.get(b"Type").and_then(Object::as_name).ok(),
+                    Some(b"OCG") | Some(b"OCMD")
+                ) {
+                    return Err(INVALID.into());
+                }
+            }
             (b"BBox" | b"Matrix" | b"Resources" | b"Length" | b"Filter", _) => {}
             _ => return Err(INVALID.into()),
         }
@@ -154,11 +174,12 @@ fn visit(
                 | "G" | "g" | "RG" | "rg" | "K" | "k",
                 _,
             ) => {}
-            (
-                "Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts" | "Td" | "TD" | "Tm" | "T*" | "Tj"
-                | "TJ" | "'" | "\"",
-                _,
-            ) if inside => {}
+            // ISO 32000-1 Table 51: text state belongs to both the page
+            // description and the text object level, and Acrobat's page-number
+            // stamps set it before BT. Positioning and showing need the text
+            // object, whose own state this form restores on return either way.
+            ("Tc" | "Tw" | "Tz" | "TL" | "Tf" | "Tr" | "Ts", _) => {}
+            ("Td" | "TD" | "Tm" | "T*" | "Tj" | "TJ" | "'" | "\"", _) if inside => {}
             _ => return Err(INVALID.into()),
         }
     }

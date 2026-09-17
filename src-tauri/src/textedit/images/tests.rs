@@ -13,9 +13,44 @@ fn image() -> Stream {
     )
 }
 
+fn mask() -> Stream {
+    Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 3,
+            "Height" => 2, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray",
+        },
+        vec![64; 6],
+    )
+}
+
 fn fixture(image: Stream, body: &str) -> Document {
+    masked(image, None, body)
+}
+
+// The image XObject this page paints, for tests that reach past the resources.
+fn painted(doc: &Document) -> lopdf::ObjectId {
+    let page = crate::pagetree::ordered_pages(doc)[0];
+    textedit::resources(doc, page)
+        .unwrap()
+        .get(b"XObject")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"Im")
+        .unwrap()
+        .as_reference()
+        .unwrap()
+}
+
+// A soft mask is a stream, so it is written as its own object and the image
+// names it. Nothing else about the page changes.
+fn masked(mut image: Stream, mask: Option<Stream>, body: &str) -> Document {
     let mut doc = textedit::tests::fixture();
     let id = crate::pagetree::ordered_pages(&doc)[0];
+    if let Some(mask) = mask {
+        let mask = doc.add_object(mask);
+        image.dict.set("SMask", mask);
+    }
     let image = doc.add_object(image);
     let mut resources = textedit::resources(&doc, id).unwrap().clone();
     resources.set("XObject", dictionary! {"Im" => image});
@@ -552,6 +587,348 @@ fn textedit_images_resolve_named_and_indirect_icc_spaces() {
             .as_stream_mut()
             .unwrap()
             .content[36] = b'x';
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+}
+
+const EDIT: &str = "FIRST";
+
+fn change(scan: &textedit::PageRuns) -> Change {
+    Change {
+        layout: None,
+        page: 0,
+        revision: scan.revision.clone(),
+        operator: scan.runs[0].operator,
+        original: EDIT.into(),
+        replacement: "IN".into(),
+    }
+}
+
+fn indexed() -> Stream {
+    let mut stream = image();
+    stream.content = vec![0, 1, 0, 1, 0, 1];
+    stream.dict.set(
+        "ColorSpace",
+        vec![
+            Object::Name(b"Indexed".to_vec()),
+            Object::Name(b"DeviceRGB".to_vec()),
+            Object::Integer(1),
+            Object::string_literal(vec![0, 0, 0, 255, 255, 255]),
+        ],
+    );
+    stream
+}
+
+#[test]
+fn textedit_soft_masked_images_keep_both_streams_and_charge_the_page_budget() {
+    for compressed in [false, true] {
+        let mut alpha = mask();
+        if compressed {
+            alpha.compress().unwrap();
+        }
+        let mut doc = masked(image(), Some(alpha), BODY);
+        let id = crate::pagetree::ordered_pages(&doc)[0];
+        let before = textedit::scan(&doc, 0).unwrap();
+        let objects = doc.objects.clone();
+        let bytes = textedit::page_content(&doc, id).unwrap();
+        textedit::write(&mut doc, &[change(&before)]).unwrap();
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, "IN");
+        assert_eq!(after.runs[1], before.runs[1]);
+        let saved = crate::encoding::resolve(
+            &doc,
+            doc.get_dictionary(id).unwrap().get(b"Contents").unwrap(),
+        )
+        .as_stream()
+        .unwrap();
+        assert_eq!(
+            saved.content,
+            String::from_utf8(bytes)
+                .unwrap()
+                .replace("(FIRST)", "(IN)")
+                .as_bytes()
+        );
+        // The image and its mask keep every byte; only the page content moves.
+        for (key, object) in objects {
+            if key != id {
+                assert_eq!(doc.objects[&key], object);
+            }
+        }
+    }
+    // A palette may carry alpha too, which is what an ordinary export of a logo
+    // with a transparent background looks like.
+    assert!(textedit::scan(&masked(indexed(), Some(mask()), BODY), 0).is_ok());
+    // The mask's own samples are charged: this base fills the budget exactly,
+    // so one more pixel of alpha is one byte too many.
+    let mut full = image();
+    full.dict.set("Width", 4096);
+    full.dict.set("Height", 2048);
+    full.dict.set("ColorSpace", "DeviceGray");
+    full.content = vec![0; textedit::MAX_IMAGES];
+    full.compress().unwrap();
+    let mut pixel = mask();
+    pixel.dict.set("Width", 1);
+    pixel.dict.set("Height", 1);
+    pixel.content = vec![64];
+    assert!(textedit::scan(&masked(full.clone(), None, BODY), 0).is_ok());
+    assert!(textedit::scan(&masked(full, Some(pixel), BODY), 0).is_err());
+}
+
+#[test]
+fn textedit_soft_masks_refuse_colour_palettes_and_masks_of_their_own() {
+    for (key, value) in [
+        ("ColorSpace", Object::Name(b"DeviceRGB".to_vec())),
+        ("ColorSpace", Object::Name(b"DeviceCMYK".to_vec())),
+        (
+            "ColorSpace",
+            indexed().dict.get(b"ColorSpace").unwrap().clone(),
+        ),
+        ("Subtype", Object::Name(b"Form".to_vec())),
+        ("BitsPerComponent", 1.into()),
+        ("Width", 0.into()),
+        ("Decode", vec![1.into(), 0.into()].into()),
+        ("Mask", Object::Null),
+        ("Unknown", Object::Null),
+    ] {
+        let mut alpha = mask();
+        alpha.dict.set(key, value);
+        assert!(
+            textedit::scan(&masked(image(), Some(alpha), BODY), 0).is_err(),
+            "{key}"
+        );
+    }
+    // Control: the same mask without any of those entries is accepted, so each
+    // refusal above is that entry rather than the shape of the fixture.
+    assert!(textedit::scan(&masked(image(), Some(mask()), BODY), 0).is_ok());
+    // Alpha for alpha has no meaning; the chain is refused, never followed.
+    let mut doc = masked(image(), Some(mask()), BODY);
+    let alpha = doc
+        .get_object(painted(&doc))
+        .unwrap()
+        .as_stream()
+        .unwrap()
+        .dict
+        .get(b"SMask")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let inner = doc.add_object(mask());
+    doc.get_object_mut(alpha)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("SMask", inner);
+    assert!(textedit::scan(&doc, 0).is_err());
+    // A mask entry naming something that is not a stream is refused, not ignored.
+    for value in [
+        Object::Integer(3),
+        Object::Name(b"Im".to_vec()),
+        Object::Reference((9999, 0)),
+    ] {
+        let mut doc = fixture(image(), BODY);
+        let id = painted(&doc);
+        doc.get_object_mut(id)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("SMask", value);
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+}
+
+#[test]
+fn textedit_images_accept_only_the_default_sample_mapping() {
+    let identity = |count: usize| {
+        Object::Array(
+            (0..count)
+                .flat_map(|_| [Object::Real(0.), Object::Real(1.)])
+                .collect(),
+        )
+    };
+    for (space, components) in [("DeviceGray", 1), ("DeviceRGB", 3), ("DeviceCMYK", 4)] {
+        let mut stream = image();
+        stream.dict.set("ColorSpace", space);
+        stream.content = vec![127; 3 * 2 * components];
+        for (decode, accepted) in [
+            (identity(components), true),
+            (identity(components + 1), false),
+            (Object::Array(vec![1.into(), 0.into()]), false),
+            (Object::Array(vec![0.into(), 255.into()]), false),
+            (Object::Array(Vec::new()), false),
+            (
+                Object::Array(vec![Object::Name(b"Zero".to_vec()), 1.into()]),
+                false,
+            ),
+            (Object::Null, false),
+        ] {
+            stream.dict.set("Decode", decode);
+            assert_eq!(
+                textedit::scan(&fixture(stream.clone(), BODY), 0).is_ok(),
+                accepted,
+                "{space}"
+            );
+        }
+    }
+    // ISO 32000-1 Table 89: an indexed image maps its whole sample range, which
+    // is the bit depth rather than the palette's highest index.
+    for (decode, accepted) in [
+        (vec![0.into(), 255.into()], true),
+        (vec![Object::Real(0.), Object::Real(255.)], true),
+        (vec![0.into(), 1.into()], false),
+        (vec![0.into(), 254.into()], false),
+        (vec![0.into(), 255.into(), 0.into(), 255.into()], false),
+    ] {
+        let mut stream = indexed();
+        stream.dict.set("Decode", Object::Array(decode));
+        assert_eq!(
+            textedit::scan(&fixture(stream, BODY), 0).is_ok(),
+            accepted,
+            "indexed"
+        );
+    }
+    // The array may be written indirectly, as several ordinary producers do.
+    let mut doc = fixture(image(), BODY);
+    let default = doc.add_object(Object::Array(
+        (0..3)
+            .flat_map(|_| [Object::Real(0.), Object::Real(1.)])
+            .collect(),
+    ));
+    let id = painted(&doc);
+    doc.get_object_mut(id)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("Decode", default);
+    assert!(textedit::scan(&doc, 0).is_ok());
+}
+
+#[test]
+fn textedit_images_accept_decode_parameters_that_select_no_prediction() {
+    let mut compressed = image();
+    compressed.compress().unwrap();
+    compressed.dict.remove(b"DecodeParms");
+    for (parms, accepted) in [
+        (Object::Dictionary(Dictionary::new()), true),
+        (dictionary! {"Predictor" => 1}.into(), true),
+        (
+            dictionary! {
+                "Predictor" => 1, "Colors" => 3, "Columns" => 3, "BitsPerComponent" => 8,
+            }
+            .into(),
+            true,
+        ),
+        (dictionary! {"Colors" => 3, "Columns" => 3}.into(), true),
+        (
+            Object::Array(vec![dictionary! {"Columns" => 3}.into()]),
+            true,
+        ),
+        (dictionary! {"Predictor" => 2}.into(), false),
+        (dictionary! {"Predictor" => 12}.into(), false),
+        (dictionary! {"Predictor" => 15}.into(), false),
+        (dictionary! {"Predictor" => Object::Real(1.)}.into(), false),
+        (dictionary! {"EarlyChange" => 0}.into(), false),
+        (dictionary! {"Unknown" => 0}.into(), false),
+        (
+            dictionary! {"Columns" => Object::Name(b"Three".to_vec())}.into(),
+            false,
+        ),
+        (
+            Object::Array(vec![
+                Object::Dictionary(Dictionary::new()),
+                Object::Dictionary(Dictionary::new()),
+            ]),
+            false,
+        ),
+        (Object::Array(Vec::new()), false),
+        (Object::Null, false),
+        (Object::Integer(1), false),
+    ] {
+        let mut stream = compressed.clone();
+        stream.dict.set("DecodeParms", parms.clone());
+        assert_eq!(
+            textedit::scan(&fixture(stream, BODY), 0).is_ok(),
+            accepted,
+            "image {parms:?}"
+        );
+        // A soft mask carries the same parameters and is held to the same rule.
+        let mut alpha = mask();
+        alpha.compress().unwrap();
+        alpha.dict.set("DecodeParms", parms.clone());
+        assert_eq!(
+            textedit::scan(&masked(image(), Some(alpha), BODY), 0).is_ok(),
+            accepted,
+            "mask {parms:?}"
+        );
+    }
+    // Control: a page content stream still refuses decode parameters outright,
+    // because nothing has established that its filter output is the content.
+    let mut doc = fixture(image(), BODY);
+    assert!(textedit::scan(&doc, 0).is_ok());
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc
+        .get_dictionary(id)
+        .unwrap()
+        .get(b"Contents")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    doc.get_object_mut(content)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("DecodeParms", dictionary! {"Predictor" => 1});
+    assert!(textedit::scan(&doc, 0).is_err());
+}
+
+#[test]
+fn textedit_image_metadata_packets_are_kept_and_must_declare_their_type() {
+    const PACKET: &[u8] = b"<?xpacket begin=\"\"?><x:xmpmeta/><?xpacket end=\"r\"?>";
+    for (declared, accepted) in [
+        (Some("Metadata"), true),
+        (Some("XObject"), false),
+        (None, false),
+    ] {
+        let mut doc = fixture(image(), BODY);
+        let mut packet = Stream::new(dictionary! {"Subtype" => "XML"}, PACKET.to_vec());
+        if let Some(name) = declared {
+            packet.dict.set("Type", name);
+        }
+        let packet = doc.add_object(packet);
+        let id = painted(&doc);
+        doc.get_object_mut(id)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("Metadata", packet);
+        let scan = textedit::scan(&doc, 0);
+        assert_eq!(scan.is_ok(), accepted, "{declared:?}");
+        let Ok(scan) = scan else {
+            continue;
+        };
+        // The packet describes the image and is preserved with it.
+        let before = doc.objects.clone();
+        textedit::write(&mut doc, &[change(&scan)]).unwrap();
+        assert_eq!(doc.objects[&packet], before[&packet]);
+        assert_eq!(doc.objects[&id], before[&id]);
+    }
+    for value in [
+        Object::Null,
+        Object::Integer(3),
+        Object::string_literal(PACKET),
+    ] {
+        let mut doc = fixture(image(), BODY);
+        let id = painted(&doc);
+        doc.get_object_mut(id)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .dict
+            .set("Metadata", value);
         assert!(textedit::scan(&doc, 0).is_err());
     }
 }

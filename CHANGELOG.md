@@ -27,6 +27,13 @@ have the binary.)
   contains them.
 - Edit text on tagged pages that contain hyperlinks and form fields. The text of
   a link or field stays read-only, so its clickable area keeps matching it.
+- Edit text on pages carrying a logo or photograph with a transparent
+  background. The image, its transparency and its own metadata are saved
+  unchanged.
+- Edit text in long Acrobat documents whose pages carry stamped page numbers on
+  a layer, footnotes, sublists inside list items, and tables with recorded
+  bounds. The text inside such a table stays read-only so its recorded bounds
+  keep matching it; text beside the table is editable as usual.
 
 ### Fixed
 

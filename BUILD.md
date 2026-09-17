@@ -8684,18 +8684,18 @@ producers and digests, are under `prototype_files` in
 is chosen to cover producers, not to estimate a population rate.
 
 Before this increment 3 of 268 pages were editable (the Google Docs invoice and
-the W3C dummy file). After it, 28 are:
+the W3C dummy file). After it, 123 are, and one more carries no text to edit:
 
 | Producer | Pages | Editable before | Editable after | First refusal now |
 |---|---:|---:|---:|---|
-| Word via PDFMaker 20 (Coatesville minutes) | 21 | 0 | 20 | Image with a Decode array |
-| Word via PDFMaker 26 (Hugo minutes) | 7 | 0 | 5 | Images with a soft mask or Decode array |
-| Word via PDFMaker 22 (Illinois resumes) | 2 | 0 | 0 | External graphics state, image |
+| Word via PDFMaker 20 (Coatesville minutes) | 21 | 0 | 21 | none |
+| Word via PDFMaker 26 (Hugo minutes) | 7 | 0 | 7 | none |
+| Word via PDFMaker 22 (Illinois resumes) | 2 | 0 | 0 | External graphics state, missing glyph |
 | Word 2016 (Mercer Island minutes) | 4 | 0 | 0 | Non-embedded TrueType fonts |
-| Acrobat 25 (Arcadia agenda) | 127 | 0 | 0 | Table BBox layout attribute |
+| Acrobat 25 (Arcadia agenda) | 127 | 0 | 92 | Content stream filter |
 | LiveCycle Designer (Canada Post invoice) | 2 | 0 | 0 | Alt text on paragraphs |
 | Designer 6.5 (IRS W-4) | 5 | 0 | 0 | Unrecognized content operator |
-| InDesign (three documents) | 54 | 0 | 0 | ClassMap, image, restricted CFF |
+| InDesign (three documents) | 54 | 0 | 0 | ClassMap, CFF glyph name, restricted CFF |
 | Distiller (council schedule) | 2 | 0 | 0 | External graphics state |
 | pdfTeX (two arXiv papers) | 35 | 0 | 0 | Type 1 font programs |
 | LibreOffice (W3C headers) | 5 | 0 | 0 | TextAlign layout attribute |
@@ -8732,6 +8732,57 @@ safe for a text edit:
   page points.
 - Bounds: 4,096 parent-tree slots per page, 16,384 per document, 1,024
   grouping containers.
+- An image may carry a `/SMask`. It is validated as its own DeviceGray image
+  against the same rules and charged to the same 8 MiB page budget, so a mask
+  cannot smuggle in a second budget; a mask naming a mask of its own is refused
+  rather than followed. What the alpha hides is irrelevant to an edit, and the
+  image's placement rectangle already bounds where text may not go.
+- `/Decode` is accepted only when it equals the colour space's own default
+  (ISO 32000-1 Table 89): `[0 255]` for an eight-bit indexed image, `[0 1]` per
+  component otherwise. Word and PDFMaker write that default out in full. A
+  non-default mapping would mean the samples are not what they appear to be, and
+  stays refused.
+- `/DecodeParms` is accepted only with `Predictor` absent or 1, which is the
+  default and leaves the filter's output as the sample data; the remaining
+  entries then describe nothing. `filters::decode_unpredicted` is the entry
+  point for that one caller, and `filters::decode` — every page content stream,
+  every font program, every ICC profile — still refuses parameters outright.
+- An image's `/Metadata` XMP packet is kept unchanged and must declare
+  `/Type /Metadata`. It describes the image; nothing in it maps a sample.
+- Figure, Link, Form and Table may carry layout attributes, with `/BBox`
+  optional and `/Placement` any of the five standard names. Acrobat writes a
+  bare `/O /Layout` on a tagged hyperlink and a full bounding box on a table.
+- `/BBox` is the element's own ink (Table 344), not an authored allocation, so
+  keeping one is only sound while the content it describes cannot move. A
+  figure, link and field are read-only already. A table that declares bounds
+  makes its own cells read-only — `Tags::bounded` carries those MCIDs — while
+  text beside the table stays editable; a table that declares only a placement
+  changes nothing. This is the one widening in this increment that takes
+  something away, and it takes it from pages that refused entirely before.
+- A list may be nested inside an `LBody` as well as beside it. The sublist is a
+  container, so `groups` hands it back to the walk that owns the depth and
+  container bounds rather than recursing; claiming its id in `groups` would make
+  the walk refuse it as a second visit.
+- `Note` joins the grouping containers: a footnote or endnote holds ordinary
+  blocks exactly as `Div` does, and Acrobat's `Footnote` role maps onto it. One
+  that owns marked content directly is still refused.
+- A preserved Form XObject may name the layer it belongs to (`/OC`, an OCG or
+  OCMD dictionary) and carry `/PieceInfo` and `/LastModified`. None of the three
+  is painted. The editor never resolves the layer state and treats the form as
+  painted either way, because reserving the box of a form that turns out to be
+  hidden refuses a layout that would have fitted, while the reverse would let
+  new text land on visible graphics.
+- Text state (`Tc Tw Tz TL Tf Tr Ts`) is accepted outside a text object as well
+  as inside it, which ISO 32000-1 Table 51 permits and which is where Acrobat's
+  page-number stamps set it; positioning and showing still need the text object.
+  This is the one that unlocked the 92 pages: every other change above moved the
+  agenda's first refusal without making a page editable.
+
+The largest remaining refusal is not a gap. The 50 InDesign pages report
+`embedded CFF font does not permit this editable use` because all four Sofia Pro
+subsets carry `/FSType 4`, which is Preview & Print embedding: the OpenType
+specification says such a document may be viewed and printed but not edited.
+Refusing is the correct behaviour and must stay.
 
 Round trips on the unchanged public files, all through the contained worker:
 
@@ -8751,7 +8802,33 @@ extracts the replacements, extracts every other page identically, and keeps
 Hugo's namespace dictionary. Replacements that need a glyph the embedded subset
 lacks are refused, as before.
 
-Verification on Windows x64, 2026-09-17: all 25 gates pass, including 1,659 Rust
+The image increment was round-tripped the same way, on the pages that carry the
+images: Coatesville page 1 (indexed image with an explicit default `/Decode`) and
+Hugo pages 1 and 7 (a soft-masked DeviceRGB image with inert `/DecodeParms`, and
+a second indexed image with a `/Decode`). Both pass, and pypdf then reads back
+all three image streams and the soft mask byte-identical, with `/SMask`,
+`/Decode` and `/DecodeParms` still present, and the replaced text on the edited
+page; `qpdf --check` finds no errors in either saved copy.
+
+The agenda was round-tripped the same way, on two of its 92 editable pages
+(page 3's heading and page 9's body text, both shortened). It reports
+preview/save pixel agreement and unchanged adjacent pixels; `qpdf --check` finds
+no errors; and pypdf then reads back all **127** form XObjects byte-identical
+with all 127 still on a layer, the whole **2,318**-element structure tree
+identical including the five tables that carry attributes, both replacements
+present, and every untouched page extracting exactly as before.
+
+Committed fixtures for the image shapes, so this does not depend on the
+downloaded corpus: `testdata/make_textedit_alpha.py` writes three PDFs (a
+soft-masked RGB image with parameters and a metadata packet, an indexed image
+with an explicit default mapping, and both together), and
+`scripts/text_image_check.py <text-edit-probe> <new-ignored-directory>` edits
+text beside each, checks the streams and entries survive through a second
+parser, and then damages one entry per fixture and requires a refusal — without
+that last step a generator that stopped writing an entry would pass by producing
+an ordinary opaque image.
+
+Verification on Windows x64, 2026-09-17: all 25 gates pass, including 1,675 Rust
 tests with 3 ignored and 1,695 frontend tests. `scripts/mutate_rust.py --since HEAD`
 selected 274 mutations in the four changed source files. Every one is now caught
 by the test it names. Getting there removed one guard that could no longer fail
@@ -8761,3 +8838,25 @@ reach the orphan path; header links across `THead`/`TBody`; a PDF 2.0-namespaced
 `Form`), and repaired three mutations that already failed on the previous
 commit: two did not compile and one named a test that could not catch it. macOS
 was not run for this increment; CI covers it.
+
+The image widening adds 5 tests and 11 mutations. Ten were caught by the test
+named for them at once; the eleventh survived, and it was the mutation that was
+wrong rather than the test. It replaced the first half of
+`decode.len() != default.len() || <values differ>`, and comparing two `Vec<f32>`
+already answers the length, so that conjunct could not change any outcome. The
+redundant half is gone and the mutation now disables the comparison itself.
+
+The tagging and form widenings add 11 tests and 23 mutations, and re-aim 6 that
+pointed at lines this increment changed. Five survived the first run, and each
+was a gap rather than a false alarm. One was caught by the other test of its
+pair and only needed its expected name corrected. Two refusal tests did not
+discriminate — deferring a child that is not a sublist still ended in a refusal,
+just from somewhere else — so a list body holding a `Span` leaf and a list
+inside a paragraph were added, both of which change answer under the mutation.
+One layout test used a box too small to overlap the form it was about, so
+"nothing was reserved" and "something was reserved and missed" looked alike; it
+now asserts both directions with one layout. The fifth is the one worth reading
+the trap entry for: two frontier bounds shared the message `tagged list frontier
+exceeds its limit`, so a `contains` assertion could not tell them apart and the
+deferred bound was never exercised by the test written for it. It has its own
+message now, and the test pins all three outcomes by exact string.
