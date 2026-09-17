@@ -26,9 +26,28 @@ const MAX_MAP: usize = 128 * 1024;
 pub(super) fn unicode_cid(
     stream: &Stream,
 ) -> Result<std::collections::BTreeMap<u16, String>, String> {
+    unicode_codes(stream, true)
+}
+
+pub(super) fn unicode_single(
+    stream: &Stream,
+) -> Result<std::collections::BTreeMap<u16, String>, String> {
+    unicode_codes(stream, false)
+}
+
+fn unicode_codes(
+    stream: &Stream,
+    wide: bool,
+) -> Result<std::collections::BTreeMap<u16, String>, String> {
     let invalid = || "unsupported or ambiguous Unicode character map".to_string();
     let word = |object: &Object| -> Result<u16, String> {
         let bytes = object.as_str().map_err(|_| invalid())?;
+        if !wide {
+            let [byte] = bytes else {
+                return Err(invalid());
+            };
+            return Ok(u16::from(*byte));
+        }
         let [a, b] = bytes else {
             return Err(invalid());
         };
@@ -36,7 +55,7 @@ pub(super) fn unicode_cid(
     };
     let mut result = std::collections::BTreeMap::new();
     let mut targets = std::collections::BTreeSet::new();
-    for block in blocks(stream, true)?.chunks_exact(2) {
+    for block in blocks(stream, wide)?.chunks_exact(2) {
         let [Object::Integer(count)] = block[0].operands.as_slice() else {
             return Err(invalid());
         };

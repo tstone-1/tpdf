@@ -8,10 +8,16 @@ pub(in crate::textedit) struct Font {
     codes: BTreeMap<u16, String>,
     widths: BTreeMap<u16, f64>,
     glyphs: Vec<u8>,
+    subset: Option<Vec<u8>>,
+    program_key: Vec<u8>,
 }
+
+pub(in crate::textedit) type Programs = BTreeMap<(u8, Vec<u8>), ObjectId>;
 
 pub(in crate::textedit) fn data(style: u8) -> &'static [u8] {
     match style {
+        4 => include_bytes!("../../../../vendor/fonts/NotoSansCJKsc-Regular.ttf"),
+        5 => include_bytes!("../../../../vendor/fonts/NotoSansCJKsc-Bold.ttf"),
         1 => include_bytes!("../../../../vendor/fonts/NotoSans-Bold.ttf"),
         2 => include_bytes!("../../../../vendor/fonts/NotoSans-Italic.ttf"),
         3 => include_bytes!("../../../../vendor/fonts/NotoSans-BoldItalic.ttf"),
@@ -21,10 +27,26 @@ pub(in crate::textedit) fn data(style: u8) -> &'static [u8] {
 
 pub(in crate::textedit) fn label(style: u8) -> &'static str {
     match style {
+        4 => "Noto Sans CJK SC",
+        5 => "Noto Sans CJK SC Bold",
         1 => "Noto Sans Bold",
         2 => "Noto Sans Italic",
         3 => "Noto Sans Bold Italic",
         _ => "Noto Sans",
+    }
+}
+
+pub(in crate::textedit) fn automatic(style: u8, text: &str) -> Result<u8, String> {
+    let face = super::face(data(style), false)?;
+    if text
+        .chars()
+        .filter(|ch| *ch != '\n')
+        .all(|ch| face.glyph_index(ch).is_some_and(|g| g.0 != 0))
+    {
+        Ok(style)
+    } else {
+        // CJK has upright regular/bold styles; never claim a synthetic italic.
+        Ok(4 + (style & 1))
     }
 }
 
@@ -33,7 +55,7 @@ impl Font {
         style: u8,
         text: &str,
     ) -> Result<(Self, super::Metrics), String> {
-        let face = super::face(data(style), false)?;
+        let face = super::face(data(style), false).map_err(|e| format!("Bundled font: {e}"))?;
         let characters: std::collections::BTreeSet<_> =
             text.chars().filter(|ch| *ch != '\n').collect();
         if characters.len() > crate::textedit::MAX_TEXT {
@@ -44,10 +66,14 @@ impl Font {
             codes: BTreeMap::new(),
             widths: BTreeMap::new(),
             glyphs: vec![0, 0],
+            subset: None,
+            program_key: Vec::new(),
         };
         for (index, ch) in characters.into_iter().enumerate() {
-            let glyph = face.glyph_index(ch).filter(|id| id.0 != 0)
-                .ok_or("Noto Sans does not contain a required character; choose the original font or another replacement")?;
+            let glyph = face
+                .glyph_index(ch)
+                .filter(|id| id.0 != 0)
+                .ok_or("The selected fallback font does not contain a required character")?;
             let code = (index + 1) as u16;
             let width = f64::from(
                 face.glyph_hor_advance(glyph)
@@ -76,21 +102,52 @@ impl Font {
         for line in text.split('\n') {
             metrics.spaced_layout(line, 12., 0., 0.)?;
         }
+        if style >= 4 {
+            font.program_key = font.glyphs.clone();
+            let (program, glyphs) = super::fallback_subset::build(data(style), &font.glyphs)
+                .map_err(|e| format!("Bundled font subset: {e}"))?;
+            // Revalidate the remapped outlines and advances, not just the text map.
+            let face = super::face(&program, false)?;
+            let (remapped, _) = super::unicode::Metrics::with_glyphs(
+                &face,
+                font.codes.clone(),
+                1000.,
+                &font.widths,
+                Some(&glyphs),
+            )?;
+            for line in text.split('\n') {
+                remapped.replacement(line, 12., 0., 0.)?;
+            }
+            font.subset = Some(program);
+            font.glyphs = glyphs;
+        }
         Ok((font, metrics))
     }
 
     pub(in crate::textedit) fn install(
         &self,
         doc: &mut Document,
-        programs: &mut BTreeMap<u8, ObjectId>,
+        programs: &mut Programs,
     ) -> Result<ObjectId, String> {
-        let program = *programs.entry(self.style).or_insert_with(|| {
-            doc.add_object(Stream::new(
-                dictionary! { "Length1" => data(self.style).len() as i64 },
-                data(self.style).to_vec(),
-            ))
-        });
-        let name = label(self.style).replace(' ', "");
+        let bytes = self.subset.as_deref().unwrap_or_else(|| data(self.style));
+        let program = *programs
+            .entry((self.style, self.program_key.clone()))
+            .or_insert_with(|| {
+                doc.add_object(Stream::new(
+                    dictionary! { "Length1" => bytes.len() as i64 },
+                    bytes.to_vec(),
+                ))
+            });
+        let mut name = label(self.style).replace(' ', "");
+        if self.subset.is_some() {
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(bytes);
+            let tag: String = hash[..6]
+                .iter()
+                .map(|b| char::from(b'A' + b % 26))
+                .collect();
+            name = format!("{tag}+{name}");
+        }
         let face = super::face(data(self.style), false)?;
         let scale = 1000. / f64::from(face.units_per_em());
         let bounds = face.global_bounding_box();
@@ -99,7 +156,7 @@ impl Font {
             "FontBBox" => vec![Object::Real((f64::from(bounds.x_min)*scale) as f32),
                 Object::Real((f64::from(bounds.y_min)*scale) as f32), Object::Real((f64::from(bounds.x_max)*scale) as f32),
                 Object::Real((f64::from(bounds.y_max)*scale) as f32)],
-            "ItalicAngle" => if self.style >= 2 { -12 } else { 0 },
+            "ItalicAngle" => if matches!(self.style, 2 | 3) { -12 } else { 0 },
             "Ascent" => (f64::from(face.ascender())*scale) as i64,
             "Descent" => (f64::from(face.descender())*scale) as i64,
             "CapHeight" => 714, "StemV" => 80, "FontFile2" => program

@@ -148,15 +148,18 @@ pub(super) fn prepare(
         EditFont::Original => None,
         EditFont::Auto => {
             let name = original_label.to_ascii_lowercase();
-            Some(
+            Some(fonts::fallback::automatic(
                 u8::from(name.contains("bold"))
                     + 2 * u8::from(name.contains("italic") || name.contains("oblique")),
-            )
+                &change.replacement,
+            )?)
         }
         EditFont::NotoSans => Some(0),
         EditFont::NotoSansBold => Some(1),
         EditFont::NotoSansItalic => Some(2),
         EditFont::NotoSansBoldItalic => Some(3),
+        EditFont::NotoSansCjkSc => Some(4),
+        EditFont::NotoSansCjkScBold => Some(5),
     };
     let (fallback, metrics, name, label, spacing, word_spacing) = if let Some(style) = chosen {
         let (font, metrics) = fonts::fallback::Font::new(style, &change.replacement)?;
@@ -257,7 +260,7 @@ pub(super) fn prepare(
                 region.contains(ink)?;
             }
             let shown = display(ink);
-            for other in &page.runs.runs {
+            for other in page.runs.runs.iter().chain(&page.preserved) {
                 if other.operator == run.operator || other.text.trim().is_empty() {
                     continue;
                 }

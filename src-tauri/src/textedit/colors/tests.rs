@@ -243,7 +243,7 @@ fn textedit_stroke_colours_restore_independent_state_and_preserve_operators() {
         ("/DeviceRGB CS /DeviceGray cs 0 SC", false),
         ("/DeviceRGB CS /DeviceGray cs 0 sc 1 0 0 SC", true),
         ("/Missing CS", false),
-        ("/Pattern CS", false),
+        ("/Pattern CS", true),
         ("1 CS", false),
         ("/DeviceRGB CS -1 0 0 SCN", false),
         ("/DeviceRGB CS 0 0 1.1 SC", false),

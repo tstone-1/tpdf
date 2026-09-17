@@ -47,6 +47,8 @@ you do not need to have diagnosed it.
 - Document JavaScript or launch actions executing. Both are disabled by default.
 - Memory-safety defects in our Rust or PDFium modifications reachable from
   document content.
+- Bypassing the font-program, text-mapping or resource bounds used when editing
+  embedded text, including Type 3 glyph programs and saved fallback font subsets.
 - Bypassing image-import bounds, protected signature-image storage, or the consent
   required before writes that can invalidate a document's digital signatures.
 

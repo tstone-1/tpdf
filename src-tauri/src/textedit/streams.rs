@@ -160,7 +160,20 @@ pub(super) fn rewrite_expanded(
             return Err("text operator boundaries disagree".into());
         }
         if edits.contains(&index) {
-            if !matches!(next.operator.as_str(), "Tj" | "TJ") || next.operands.len() != 1 {
+            let actual_text = next.operator == "BDC"
+                && next.operands.len() == 2
+                && original.operations[0].operands.len() == 2
+                && !expansions.contains_key(&index)
+                && super::actual::Span::new(
+                    &original.operations[0].operands[0],
+                    &original.operations[0].operands[1],
+                    index,
+                )
+                .is_ok()
+                && super::actual::Span::new(&next.operands[0], &next.operands[1], index).is_ok();
+            if !actual_text
+                && (!matches!(next.operator.as_str(), "Tj" | "TJ") || next.operands.len() != 1)
+            {
                 return Err("invalid text patch".into());
             }
             output.extend_from_slice(&bytes[copied..span.start]);

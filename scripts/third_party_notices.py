@@ -458,6 +458,15 @@ def render(
     add("```")
     add("")
 
+    cjk = font_manifest["cjk"]
+    add(f"Noto Sans CJK SC ({cjk['version']}), Regular and Bold static instances, is distributed under OFL-1.1.")
+    add("Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.")
+    add("")
+    add("```")
+    add("\n".join(line.rstrip() for line in (font_root / cjk["license_file"]).read_text(encoding="utf-8").strip().splitlines()))
+    add("```")
+    add("")
+
     add("## PDFium, and the libraries compiled into it")
     add("")
     add(

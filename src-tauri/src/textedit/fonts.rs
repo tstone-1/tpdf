@@ -16,8 +16,10 @@ mod composite;
 mod ligatures;
 mod mapping;
 mod outlines;
+mod type3;
 mod unicode;
 pub(super) use composite::embedded as composite;
+pub(super) use type3::embedded as type3;
 
 pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let descriptor = dictionary(
@@ -77,6 +79,7 @@ pub(super) struct Metrics {
 }
 
 pub(super) mod fallback;
+mod fallback_subset;
 
 impl Metrics {
     fn text_slots(&self, text: &str) -> Result<Vec<u8>, String> {
@@ -647,8 +650,8 @@ fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
     {
         return Err(invalid());
     }
-    // Match the preview spike's conservative embedding policy. No subsetting
-    // takes place, so the no-subsetting bit is compatible with this writer.
+    // Document fonts are preserved; only the bundled OFL fonts are subsetted.
+    // The no-subsetting bit is therefore compatible with document-font reuse.
     // Apple's TrueType format makes OS/2 optional. Preserve an already embedded
     // legacy program without manufacturing a permissions table. If present, its
     // restrictions still apply; OpenType-style programs still require the table.

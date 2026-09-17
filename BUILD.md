@@ -5063,6 +5063,30 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.10 local verification, Windows x64, 2026-09-17:** all 25 quality gates
+passed in 335.4 seconds after the compatible dependency updates. Rust passed
+1,627 tests with three expected skips; the frontend passed 1,692. Selected
+mutations caught 29/29 Rust and 9/9 frontend faults covering CJK subsets, Type 3
+glyphs, partial-page editing and layouts. The native mutation file selection
+contained no changed targets; the complete historical tables were not rerun.
+Native viewer checks passed 314 text-heavy and 216 vector-heavy cases, with
+51 and 149 not applicable, plus 22 text-edit workflow checks. The normal MSI
+rendered with the development engine hidden and refused with both engines
+hidden. Its PrintWindow capture stayed unchanged under an overlapping control.
+The released 26.9.9 NSIS installer upgraded to 26.9.10; the original installation
+and registry exports were restored. Independent PDFKit readback verified CJK
+Unicode and unchanged neighbouring geometry and pixels.
+The normal app passed automatic CJK preview, apply, undo/redo and save, followed
+by independent Unicode readback. Automation must wait for Save to become enabled
+after Redo: sending Ctrl+S while it is still disabled performs no save. A control
+with the same command sequence and that readiness wait passed. Independent
+round trips passed two CJK, six Type 3 and seven partial-page cases; font outlines,
+resources, logical text and neighbouring pixels were checked as applicable.
+The real-spooler probe passed 10/10. The Windows OCR sweep opened 142 documents
+and sampled 12,128 regions. Of 7,926 regions read back, zero still read as text,
+3,492 were shown unreadable and 4,434 remained unverified, in 38.1 seconds,
+without arithmetic warnings. Unverified is not a clean verdict.
+
 **26.9.9 local verification, Windows x64, 2026-09-16:** all 25 quality gates
 passed after refreshing the fuzz workspace lockfile. The full run took 258.9
 seconds; its corrected fuzz gate took 41.6 seconds. Rust passed 1,603 tests

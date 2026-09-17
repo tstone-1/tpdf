@@ -324,6 +324,7 @@ fn groups<'a>(
             let tag = name(get(child, b"S")?)?;
             if !matches!(tag, b"NonStruct" | b"Span")
                 && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
+                && !(matches!(plain.tag, b"TD" | b"TH") && text_block(tag))
             {
                 return Err(INVALID.into());
             }
@@ -334,12 +335,19 @@ fn groups<'a>(
             if items.len() > total {
                 return Err(INVALID.into());
             }
-            groups.push(Group {
+            let group = Group {
                 id: *id,
                 page,
                 tag,
                 items: items.iter().collect(),
-            });
+            };
+            // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
+            // branch recurses, so this adds one bounded level, not arbitrary trees.
+            if matches!(plain.tag, b"TD" | b"TH") && text_block(tag) {
+                groups.extend(self::groups(doc, group, pages, ids, total)?);
+            } else {
+                groups.push(group);
+            }
         } else {
             plain.items.push(item);
         }
@@ -364,7 +372,17 @@ impl Tags {
         let catalog = doc.catalog().map_err(|_| INVALID)?;
         let page_dict = node(doc, page)?;
         let Ok(root) = catalog.get(b"StructTreeRoot") else {
-            if page_dict.has(b"StructParents") || page_dict.has(b"StructParent") {
+            // Some untagged exports retain the page's former parent-tree index.
+            // Without a structure tree it has no target and changes no text
+            // semantics. Preserve it; begin() still refuses structural marked
+            // content without a tree, and inline ActualText keeps its own checks.
+            if page_dict.has(b"StructParent")
+                || page_dict.get(b"StructParents").is_ok_and(|value| {
+                    !value
+                        .as_i64()
+                        .is_ok_and(|key| (0..=1_000_000).contains(&key))
+                })
+            {
                 return Err(INVALID.into());
             }
             return Ok(Self::default());

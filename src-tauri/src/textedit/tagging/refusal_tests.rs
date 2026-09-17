@@ -2,6 +2,106 @@ use super::tests::{fixture, CONTENT};
 use crate::textedit;
 use lopdf::{dictionary, Object};
 
+const UNTAGGED: &[u8] =
+    b"BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 40 140 Td (SECOND) Tj ET";
+
+fn without_tree(content: &[u8]) -> (lopdf::Document, lopdf::ObjectId) {
+    let (mut doc, ids) = fixture(content);
+    let catalog = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    doc.get_dictionary_mut(catalog)
+        .unwrap()
+        .remove(b"StructTreeRoot");
+    (doc, ids[0])
+}
+
+#[test]
+fn textedit_unused_parent_index_preserves_plain_text_edits_and_metadata() {
+    for key in [0, 7, 1_000_000] {
+        for replacement in ["IN", ""] {
+            let (mut doc, page) = without_tree(UNTAGGED);
+            doc.get_dictionary_mut(page)
+                .unwrap()
+                .set("StructParents", key);
+            let before = textedit::scan(&doc, 0).unwrap();
+            let objects = doc.objects.clone();
+            let change = textedit::Change {
+                layout: None,
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: replacement.into(),
+            };
+            textedit::write(&mut doc, &[change]).unwrap();
+            let after = textedit::scan(&doc, 0).unwrap();
+            assert_eq!(after.runs[0].text, replacement);
+            assert_eq!(after.runs[1], before.runs[1]);
+            let mut page_before = objects[&page].as_dict().unwrap().clone();
+            let mut page_after = doc.get_dictionary(page).unwrap().clone();
+            page_before.remove(b"Contents");
+            page_after.remove(b"Contents");
+            assert_eq!(page_after, page_before);
+            for (id, object) in objects {
+                if id != page {
+                    assert_eq!(doc.objects[&id], object);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn textedit_unused_parent_index_does_not_admit_structural_or_semantic_content() {
+    for content in [
+        b"/P <</MCID 0>> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET EMC".as_slice(),
+        b"BT /F1 12 Tf 40 180 Td /P <</MCID 0>> BDC (FIRST) Tj EMC ET",
+        b"BT /F1 12 Tf 40 180 Td /Span <</ActualText (SYNTHETIC SECRET)>> BDC (FIRST) Tj EMC ET",
+    ] {
+        let (mut doc, _) = without_tree(UNTAGGED);
+        let before = textedit::scan(&doc, 0).unwrap();
+        let change = textedit::Change {
+            layout: None,
+            page: 0,
+            revision: before.revision,
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        };
+        let (changed, _) = without_tree(content);
+        doc = changed;
+        let objects = doc.objects.clone();
+        let error = textedit::scan(&doc, 0).unwrap_err();
+        assert!(!error.contains("SECRET"));
+        assert!(textedit::write(&mut doc, &[change]).is_err());
+        assert_eq!(doc.objects, objects);
+    }
+    for value in [
+        Object::Null,
+        (-1).into(),
+        1_000_001.into(),
+        Object::Real(0.0),
+    ] {
+        let (mut doc, page) = without_tree(UNTAGGED);
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("StructParents", value);
+        assert!(textedit::scan(&doc, 0).is_err());
+    }
+    let (mut doc, page) = without_tree(UNTAGGED);
+    doc.get_dictionary_mut(page).unwrap().set("StructParent", 0);
+    assert!(textedit::scan(&doc, 0).is_err());
+    let (mut doc, _) = fixture(UNTAGGED);
+    assert!(
+        textedit::scan(&doc, 0).is_err(),
+        "a present tree must still be validated"
+    );
+    let catalog = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    doc.get_dictionary_mut(catalog)
+        .unwrap()
+        .set("StructTreeRoot", Object::Null);
+    assert!(textedit::scan(&doc, 0).is_err());
+}
+
 #[test]
 fn textedit_parent_tree_refusals_identify_non_page_entries() {
     for direct in [false, true] {

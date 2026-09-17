@@ -17,6 +17,24 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.10] - 2026-09-17
+
+### Added
+
+- Edit text in supported Type 3 vector fonts while preserving the original glyph
+  programs and the positions of surrounding text.
+- Bundled regular and bold Noto Sans CJK SC provide Chinese, Japanese and Korean
+  fallback characters. Saved PDFs embed only the glyphs used by each CJK edit.
+- Edit more tagged tables, including merged cells and cells containing paragraphs,
+  and matching single-fragment ActualText spans.
+
+### Fixed
+
+- Preserve supported gradients and read-only skewed, mirrored or pattern-filled
+  text while allowing surrounding supported text to be edited.
+- Accept an unused StructParents index on an otherwise untagged page.
+- Update compatible Rust dependencies.
+
 ## [26.9.9] - 2026-09-16
 
 ### Added
