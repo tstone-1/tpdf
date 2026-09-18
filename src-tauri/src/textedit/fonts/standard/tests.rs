@@ -105,6 +105,42 @@ fn textedit_standard_times_roman_measures_and_edits() {
     }
 }
 
+// arXiv's newer stamp turns the CTM inside the text block (`BT 0 1 -1 0 0 0 cm
+// ... Tm`), so its run is read-only. Unembedded Times has no outlines here; its
+// FontBBox is reserved instead: one em (its larger side, 1000) past both ends of
+// the advance, and from -218 to 898 across it, inside the hit box's -250..1000.
+#[test]
+fn textedit_rotated_standard_stamp_stays_read_only_with_its_font_box_reserved() {
+    let content = b"q BT 0 1 -1 0 0 0 cm 1 0 0 1 60 -32 Tm /F1 20 Tf (arXiv:2509) Tj ET Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET";
+    let doc = with_font("Times-Roman", None, content);
+    let inspection = textedit::inspect(&doc, 0).unwrap();
+    assert_eq!(
+        inspection
+            .runs
+            .runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<Vec<_>>(),
+        ["SECOND"]
+    );
+    let [stamp] = inspection.preserved.as_slice() else {
+        panic!("one preserved run");
+    };
+    // a r X i v : 2 5 0 9 in Times-Roman: 444+333+722+278+500+278+500*4.
+    let advance = 20. * 4.555;
+    let [x0, y0, x1, y1] = stamp.display_rect.map(f64::from);
+    assert!(
+        ((y1 - y0).abs() - (advance + 40.)).abs() < 1e-3,
+        "{:?}",
+        stamp.display_rect
+    );
+    assert!(
+        ((x1 - x0).abs() - 25.).abs() < 1e-3,
+        "{:?}",
+        stamp.display_rect
+    );
+}
+
 #[test]
 fn textedit_standard_fonts_refuse_symbolic_and_unknown_names() {
     for base in ["Symbol", "ZapfDingbats", "Times", "times-roman", "Arial"] {

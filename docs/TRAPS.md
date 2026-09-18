@@ -224,6 +224,9 @@ hop through the index.
 - A writer's refusal is total, so a fact the planner could have found belongs in the plan
 - `fax`'s own decoder pads a truncated Group 4 stream with white rows
 - A test asserted a refusal that only a rounding error produced
+- A budget passed down as `remaining.min(LIMIT)` caps everything charged below it
+- lopdf refuses a comment that ends a content stream with no end of line
+- ttf-parser's CFF `glyph_index` falls back to StandardEncoding for a code the font does not encode
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -312,6 +315,7 @@ hop through the index.
 - Interleaving controls for drift between the arms, not for a machine that is slow for both
 - Process RSS is a high-water mark, so two oversized seeds look exactly like a leak
 - Four of the six modules that left the cycle were nowhere near the edit
+- A survey counts editable pages, so a rule that refuses nearly every edit passed it
 
 ## Writing a check that can fail
 - Break the code on purpose, or the test suite is decoration
@@ -479,6 +483,11 @@ hop through the index.
 - A control that counts an attribute counts every sentence that mentions it
 - A `Widen` of the mirror is what makes a JSON sample checkable against it
 - Two guards that share a refusal message are one guard to any test that matches on it
+- A generated file's `--check` compared against its own layout, and `cargo fmt` had rewritten the file
+- A refusal test kept passing after the rule it was written for was relaxed, because a second gap refused the same input
+- The tag walk has one refusal message for sixty checks, so a survey cannot say which one fired
+- An edit under an opaque picture changes no pixel, and the round trip calls that a failure
+- A line breaker and an ink check that measure different strings refuse a line that fits
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -607,6 +616,7 @@ hop through the index.
 - `pkill -f <a path the harness passes as an argument>` matches the harness's own child
 - A re-aim keyed on anchors cannot see a replacement that names a removed field
 - A describe block's name is not part of the test name the harness reads
+- A glyph dropped with `Ok(None)` surfaces later as a different refusal, and instrumenting the errors misses it
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -23153,3 +23163,119 @@ It does not: both strings end at the same edge (14.412 against 14.41199999999999
 assertion had only ever passed because of the defect being fixed. It now asserts "BB",
 which really is one unit wider. When a fix turns an old refusal test red, compute what the
 refused case actually measures before restoring it.
+
+### A budget passed down as `remaining.min(LIMIT)` caps everything charged below it
+
+`forms::check` started a form's traversal with `remaining.min(MAX_CONTENT)`, meaning to bound
+the form's decoded content at 1 MiB. But the images the form draws were charged to the same
+number, so a figure of 29 small rasters (12.3 MB decoded, well inside the 32 MiB page image
+budget) was refused with "decoded images exceed the editable page budget", a message that
+names the budget the page was nowhere near. Two kinds of cost sharing one counter get the
+smaller limit for both. The fix keeps two counters: content against the form bound, and
+content plus images against the page budget.
+
+The first test written for the fix had the same shape of problem. A 10 MiB uncompressed
+test image was refused by `filters::MAX_ENCODED` (2 MiB of encoded input) before the budget
+under test was reached, and the mutation harness's control run caught it. When a test builds
+an input larger than any earlier fixture, check which bound it meets first.
+
+### A generated file's `--check` compared against its own layout, and `cargo fmt` had rewritten the file
+
+`scripts/standard_font_widths.py` wrote `fonts/standard.rs` in its own line layout, and its
+`--check` compared a fresh render against the file byte for byte. The commit that added it
+also ran `cargo fmt`, which reflowed the table, so `--check` printed `is stale; regenerate
+it` from the day it was written. BUILD.md recorded the command as the way to verify the
+table, and nobody ran it until the table next changed. A generator for a formatted language
+has to format its own output (the script now pipes it through `rustfmt`), and a `--check`
+has to be run once against the committed file before the command is written down.
+
+### A refusal test kept passing after the rule it was written for was relaxed, because a second gap refused the same input
+
+A nested-list test asserted that an item with no content of its own is refused. When it
+was written, the tag walk refused unreachable parent-tree slots. Later producer work
+accepted them and made their content read-only, and the test kept passing, because read-only
+text in standard Helvetica was refused for lacking glyph bounds. Once standard fonts gained
+a FontBBox, the test went red, and printing each mode's result showed that only this mode
+had lost its structural refusal. A refusal test that sets up one defect proves that defect
+is refused only if nothing else in the fixture is refused; assert the message, or check the
+refusal still happens with the other gaps removed.
+
+### The tag walk has one refusal message for sixty checks, so a survey cannot say which one fired
+
+`tagging.rs` reports almost every structural refusal as "unsupported or inconsistent tagged
+text structure", which is deliberate: its checks may not echo document values. But for the
+PowerPoint and Chrome exports the survey could only say that some tag check failed, and the
+next step depended on which. The fastest instrument was a throwaway script that rewrote every
+use of the `INVALID` constant into `format!("{} @{line}", INVALID)`, built the probe, inspected
+the file and restored the source byte for byte: it named line 468 (an attribute array) and
+716 (an element below a block) in one build each. Two things made the first version report
+nothing: the constant is also used through `ok_or(INVALID)` and `map_err(|_| INVALID)`, not
+only `INVALID.into()`; and renaming the constant broke the modules that import it. Rewrite
+every use, keep the name, and restore from a copy rather than from git, because the file
+carries uncommitted work.
+
+### An edit under an opaque picture changes no pixel, and the round trip calls that a failure
+
+`text-edit-probe --roundtrip` requires the saved page to differ from the source where the
+edit landed. On one PowerPoint slide the title is drawn first and a full-slide picture after
+it, so the title is editable and invisible: the edit is correct, the probe reports
+`preview changed the wrong pages or no pixels`, and nothing in the message says the text is
+covered. Before debugging such a failure, read the content that follows the run; a `Do` of
+an image spanning the page explains it.
+
+### A survey counts editable pages, so a rule that refuses nearly every edit passed it
+
+`textedit_survey.py` reports whether a page has an editable run; it never writes one. When
+xdvipdfmx's small capitals turned out to share their ToUnicode text with the capitals, the
+first rule written was that a shared text is never written, and the fontspec manual went from
+0 to 70 editable pages under it. The first round trip then failed with "several glyphs for
+this character": the writer rewrites a whole `Tj` run, so an edit anywhere in a run holding a
+capital `P` had to encode that `P`. The fix, writing the glyph the run already shows, came
+from the round trip, not the survey. Run a real edit on a page the change newly admits before
+counting the pages as won, and prefer one whose run has the character the rule is about.
+
+### A glyph dropped with `Ok(None)` surfaces later as a different refusal, and instrumenting the errors misses it
+
+One fontspec page stayed refused with "the font has no validated glyph for this character".
+Temporary `eprintln!` lines on every error path of the new CID reader printed nothing, which
+read as "not this code". It was: `cid::Program::glyph` answered `Ok(None)` for CID 0, which
+leaves a code out of the measured set without an error, and the layout refused it later with
+the generic message. The page shows `.notdef` six times in a row. When a lookup can drop an
+entry quietly, instrument the quiet exit too, or find the shown codes first (a pypdf pass over
+the page's strings found the zeros in one step).
+
+### lopdf refuses a comment that ends a content stream with no end of line
+
+Typst ends every ToUnicode CMap with `%%EndResource` and `%%EOF` and no final newline.
+`Content::decode_strict` refuses that stream, although a comment runs to the end of its line
+and the end of the data ends the line (ISO 32000-1 7.2.3). The same text with a trailing
+newline parses. The refusal reads as "unsupported or ambiguous character map", which sends you
+looking at the CMap's grammar; a test with the producer's bytes verbatim, final byte included,
+is what found it. `mapping::blocks_with_header` appends one newline before parsing.
+
+### ttf-parser's CFF `glyph_index` falls back to StandardEncoding for a code the font does not encode
+
+`ttf_parser::cff::Table::glyph_index(code)` looks the code up in the program's own encoding
+and, when that has no entry, tries StandardEncoding instead. A PDF reader showing a font on its
+built-in encoding draws `.notdef` for such a code, so answering a glyph there would offer text
+the page does not show. `cff/encoding.rs::builtin` reads the encoding table itself (formats 0
+and 1) and names only the codes it lists.
+
+### A line breaker and an ink check that measure different strings refuse a line that fits
+
+Commit `0a8f1a8` changed `layout::line_breaks` to measure a candidate line without its
+trailing space, so a line fits by its words. The ink check a few lines below kept measuring
+the line as written, space included, and a space's advance counts as ink in
+`Metrics::layout`. So a line whose words fit and whose break space did not was accepted by
+one and refused by the other: "Text ink exceeds the box". Every unit test passed, because no
+fixture put a trailing space across the box edge. The boxed-edit round trip in the release
+checks found it, and only because it had passed at 26.9.11, before the commit.
+
+Two diagnoses were wrong first, each plausible and each "fixed" with a rebuild before the
+round trip failed again: the new read-only glyph rule, then the new shared-text rule. The
+second was a real defect (the fallback fonts give every character occurrence its own code,
+so one glyph under two codes read as two glyphs) and is fixed and tested, but it was not this
+failure. What settled it was one `eprintln!` at the refusal printing the line, its ink and
+the box width: `"SYNTHETIC FIRST "`, 87.42 against 85. When two measurements must agree,
+have them call one function or assert the agreement; and print the values at the refusal
+before theorising about which change caused it.

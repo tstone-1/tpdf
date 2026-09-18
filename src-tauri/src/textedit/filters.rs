@@ -69,6 +69,9 @@ fn flate(input: &[u8], limit: usize) -> Result<Vec<u8>, String> {
         return Err("incomplete or oversized Flate content".into());
     }
     output.truncate(decoder.total_out() as usize);
+    // The buffer was sized for the limit, which for a form is 8 MiB at each
+    // of up to eight nested levels, all alive at once.
+    output.shrink_to_fit();
     Ok(output)
 }
 

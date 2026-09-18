@@ -22,14 +22,14 @@ const MAX_DEPTH: usize = 10;
 // use tens to a few hundred; this only stops recursion and loops through Subrs.
 const MAX_OPERATIONS: usize = 65_536;
 
-pub(super) struct Glyph {
+pub(in crate::textedit::fonts) struct Glyph {
     // Advance in glyph space (thousandths of an em for the accepted matrix).
     pub width: f64,
     // Control-point hull of the outline, or None for a glyph that paints nothing.
     pub bounds: Option<[f64; 4]>,
 }
 
-pub(super) struct Program {
+pub(in crate::textedit::fonts) struct Program {
     pub glyphs: BTreeMap<Vec<u8>, Glyph>,
     // FontInfo /FSType, when the program declares one (OpenType OS/2 semantics).
     pub rights: Option<i64>,
@@ -38,7 +38,7 @@ pub(super) struct Program {
 
 // The program's own /Encoding: the implicit base of a PDF encoding for an
 // embedded font (ISO 32000-1 Table 114).
-pub(super) enum Builtin {
+pub(in crate::textedit::fonts) enum Builtin {
     Standard,
     Custom(Box<[Option<Vec<u8>>; 256]>),
 }

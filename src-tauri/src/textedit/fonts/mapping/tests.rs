@@ -207,8 +207,17 @@ fn unicode_cid_preserves_scalars_and_refuses_ambiguous_or_overflowing_maps() {
     .unwrap();
     assert_eq!(letters[&0x101], "ft");
     assert_eq!(letters[&0x102], "The");
-    for invalid in [
+    // Two codes may share a text (a small capital and its capital); both read
+    // as it, and `unicode::Metrics` writes neither unless a run chooses.
+    let shared = unicode_cid(&stream(&map(
         "2 beginbfchar <0101> <4e00> <0102> <4e00> endbfchar",
+    )))
+    .unwrap();
+    assert_eq!(
+        (shared[&0x101].as_str(), shared[&0x102].as_str()),
+        ("\u{4e00}", "\u{4e00}")
+    );
+    for invalid in [
         "2 beginbfchar <0101> <4e00> <0101> <4e01> endbfchar",
         "1 beginbfchar <0101> <d840> endbfchar",
         "1 beginbfchar <0101> <000a> endbfchar",
@@ -219,6 +228,42 @@ fn unicode_cid_preserves_scalars_and_refuses_ambiguous_or_overflowing_maps() {
         "1 beginbfrange <0000> <1000> <4e00> endbfrange",
     ] {
         assert!(unicode_cid(&stream(&map(invalid))).is_err(), "{invalid}");
+    }
+}
+
+// ConTeXt names a composite font's ToUnicode after the font, like pdfTeX:
+// the labels change no entry, so the Unicode path reads the same two codes.
+#[test]
+fn unicode_cid_accepts_the_cmap_labels_context_writes() {
+    let labelled = |info: &str, name: &str| {
+        wide_map()
+            .replace(
+                "<< /Registry (Adobe) /Ordering (UCS) /Supplement 0 >>",
+                info,
+            )
+            .replace("/CMapName/Adobe-Identity-UCS def", name)
+    };
+    let map = unicode_cid(&stream(&labelled(
+        "<< /Registry (TeX) /Ordering (ARAAYN-DejaVuSerif-Bold) /Supplement 0 >>",
+        "/CMapName /TeX-Identity-ARAAYN-DejaVuSerif-Bold def",
+    )))
+    .unwrap();
+    assert_eq!((map[&0x101].as_str(), map[&0x102].as_str()), ("A", "B"));
+    for (info, name) in [
+        (
+            "<< /Registry (TeX) /Ordering (X) /Supplement 0 /Extra 1 >>",
+            "/CMapName /X def",
+        ),
+        (
+            "<< /Registry (TeX) /Ordering (X) /Supplement 0 >>",
+            "/CMapName (X) def",
+        ),
+        ("<< /Registry (TeX) /Ordering (X) >>", "/CMapName /X def"),
+    ] {
+        assert!(
+            unicode_cid(&stream(&labelled(info, name))).is_err(),
+            "{info} {name}"
+        );
     }
 }
 
@@ -292,7 +337,7 @@ fn textedit_cid_mapping_rejects_ambiguity_expansion_and_wrong_width() {
         ("2 beginbfchar", "1 beginbfchar"),
         ("2 beginbfchar", "101 beginbfchar"),
         ("<FFFF>", "<FFFE>"),
-        ("/CMapType 2", "/CMapType 1"),
+        ("/CMapType 2", "/CMapType 3"),
         ("endbfchar", "endbfchar /Other usecmap"),
     ] {
         assert!(
@@ -523,7 +568,7 @@ fn textedit_type1_maps_narrow_to_the_repertoire_and_keep_every_code() {
         ),
         TEX.replace("/Supplement 0\n", ""),
         // A different operation in the wrapper.
-        TEX.replace("/CMapType 2 def", "/CMapType 1 def"),
+        TEX.replace("/CMapType 2 def", "/CMapType 3 def"),
         TEX.replace("<00> <FF>", "<00> <7F>"),
     ] {
         let result = parse_names(&stream(&broken));
@@ -534,5 +579,90 @@ fn textedit_type1_maps_narrow_to_the_repertoire_and_keep_every_code() {
             continue;
         }
         assert!(result.is_err(), "{broken}");
+    }
+}
+
+// Typst's ToUnicode, verbatim but for its entries: DSC comments, a system info
+// built as a PostScript dictionary, and a version and writing mode.
+const TYPST: &str = "%!PS-Adobe-3.0 Resource-CMap
+%%DocumentNeededResources: procset CIDInit
+%%IncludeResource: procset CIDInit
+%%BeginResource: CMap Custom
+%%Title: (Custom Adobe Identity 0)
+%%Version: 1
+%%EndComments
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo 3 dict dup begin
+    /Registry (Adobe) def
+    /Ordering (Identity) def
+    /Supplement 0 def
+end def
+/CMapName /Custom def
+/CMapVersion 1 def
+/CMapType 0 def
+/WMode 0 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+2 beginbfchar
+<0008> <0020>
+<0001> <0045>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+%%EndResource
+%%EOF";
+
+#[test]
+fn unicode_cid_accepts_the_cmap_typst_writes() {
+    let map = unicode_cid(&stream(TYPST)).unwrap();
+    assert_eq!((map[&8].as_str(), map[&1].as_str()), (" ", "E"));
+}
+
+// The labels between begincmap and the code space: any order, each once, and
+// the system info either literal or built as a dictionary. Nothing else.
+#[test]
+fn unicode_cid_labels_are_a_closed_grammar() {
+    let start = TYPST.find("/CIDSystemInfo 3").unwrap();
+    let end = TYPST.find("1 begincodespacerange").unwrap();
+    let header = |labels: &str| TYPST.replace(&TYPST[start..end], &format!("{labels}\n"));
+    let info = "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def";
+    let dict = "/CIDSystemInfo 3 dict dup begin /Registry (A) def /Ordering (B) def \
+                /Supplement 0 def end def";
+    for labels in [
+        String::new(),
+        format!("/CMapName /X def /CMapType 2 def {info}"),
+        format!("{info} /CMapName /X def /CMapType 2 def"),
+        format!("{dict} /CMapName /X def /CMapVersion 1.5 def /WMode 0 def"),
+        dict.replace(
+            "/Registry (A) def /Ordering (B) def",
+            "/Ordering (B) def /Registry (A) def",
+        ),
+    ] {
+        assert!(unicode_cid(&stream(&header(&labels))).is_ok(), "{labels}");
+    }
+    for labels in [
+        "/WMode 1 def".to_string(),
+        "/CMapType 3 def".into(),
+        "/CMapName (X) def".into(),
+        "/CMapName /X def /CMapName /Y def".into(),
+        format!("{info} {dict}"),
+        "/Other 1 def".into(),
+        "/CMapName /X".into(),
+        "/CMapName /X def pop".into(),
+        dict.replace(" dup", ""),
+        dict.replace("dup begin", "begin dup"),
+        dict.replace(" /Supplement 0 def", ""),
+        dict.replace("/Supplement 0 def", "/Supplement 0 def /Extra 1 def"),
+        dict.replace("/Ordering (B)", "/Registry (B)"),
+        dict.replace("end def", "end"),
+        dict.replace("3 dict", "9 dict"),
+        format!("{info} /CMapName /X def usecmap"),
+    ] {
+        assert!(unicode_cid(&stream(&header(&labels))).is_err(), "{labels}");
     }
 }

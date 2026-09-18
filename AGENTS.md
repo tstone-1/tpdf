@@ -415,7 +415,11 @@ which damages one entry per fixture and requires a refusal, so a generator that
 stopped writing an entry cannot pass by doing nothing.
 
 Preserved Form XObjects use an eight-level, 32-call traversal with cycle detection,
-a shared 1 MiB decoded form budget and 16,384 operators. Their text stays read-only
+and each top-level form's tree shares 8 MiB of decoded content and 524,288
+operators (`forms::MAX_FORM_CONTENT`, `MAX_FORM_OPERATIONS`). A form is only read,
+so it may exceed the 1 MiB a patched page stream gets: pdfTeX includes a plotted
+figure as one form, and an arXiv figure of 4.7 MB and 288,594 operators took the
+worker's peak from 41 MB to 181 MB on Windows. Their text stays read-only
 and the transformed BBox reserves space against layout expansion. A form may name
 the layer it belongs to (`/OC`, an OCG or OCMD dictionary), carry an application's
 `/PieceInfo` and its `/LastModified` date; none of the three is painted, and the
@@ -426,9 +430,11 @@ graphics. Text state (`Tc Tw Tz TL Tf Tr Ts`) is accepted outside a text object
 as well as inside, which is where Acrobat's page-number stamps set it (ISO
 32000-1 Table 51); positioning and showing still require the text object.
 External forms, soft-mask graphics states and pattern colours remain refused. Indexed eight-bit
-images validate palette length and every sample. Page images and preserved forms
-share a 32 MiB byte budget (`MAX_IMAGES`, checked before decoding; a screenshot
-with its soft mask is ~13 MB). Figure MCIDs may use P stream markers for preserved
+images validate palette length and every sample. Page images, preserved forms and
+the images those forms draw share a 32 MiB byte budget (`MAX_IMAGES`, checked
+before decoding; a screenshot with its soft mask is ~13 MB). An image inside a
+form was charged to the form's content bound until 2026-09-18, which refused a
+figure of 29 small rasters (12.3 MB decoded) that the page budget holds. Figure MCIDs may use P stream markers for preserved
 graphics; direct figure text remains refused. Artifacts and unmarked additions on
 tagged pages keep their bytes and glyph collision bounds without becoming editable.
 Embedded fonts accept zero-width holes only when unused, half-em descenders,
@@ -483,7 +489,9 @@ containers, with 4,096 parent-tree slots per page and 16,384 per document. The i
 Document elements may have root siblings; all parent ownership remains checked.
 Grouping containers own child
 elements, never marked content or layout attributes; their Pg is not inherited.
-Used role aliases may target Document and supported grouping/heading types.
+Used role aliases may target Document and supported grouping/heading types, and
+Figure (PowerPoint's Diagram and Chart); a figure alias's group carries the mapped
+role, so its attributes are a figure's and text under it is refused as figure text.
 Unused mappings to other standard roles are preserved; unsupported used roles still refuse editing.
 standard PDF 1.7 names cannot be remapped, including types the editor does not
 support. The RoleMap guard covers all 49 standard types; valid custom names
@@ -504,8 +512,10 @@ parent and `textedit-list-child` edits the child. Independent readers use
 `--nested-list` / `--nested-list-child` respectively.
 List containers share the grouping bounds and may carry one List attribute
 object with a standard ListNumbering name, directly or in a singleton array;
-references are resolved without changing the saved graph. List-role aliases,
-leaf attributes and semantic overrides remain refused. The browser generator's
+references are resolved without changing the saved graph. A label or body may
+carry layout attributes, checked like a paragraph's (PowerPoint writes them on
+every item); an item itself may not. List-role aliases and semantic overrides
+remain refused. The browser generator's
 `--list` fixture runs through the ordinary native textedit phase; independent
 parser/PDFKit readback both use `--list` (parser also `--float32`).
 
@@ -553,9 +563,9 @@ metadata describing that content as it stands: `/Alt` on any element (it
 covers every descendant), a non-empty `/T` on an element owning text, a
 non-Start `TextAlign`, or a table `/BBox`. `element()` returns the pin with the
 page; the walk ORs it into `bounded` and `Group::pinned` carries it through
-`groups` and deferred sublists. Pinned text still needs validated glyph outlines
-(`read-only text requires validated glyph outlines`), so a standard-14 font
-cannot be pinned. `/ClassMap` classes named by `/C` (name or array of at most 8,
+`groups` and deferred sublists. Pinned text still needs bounded glyphs
+(`read-only text requires validated glyph outlines`): outlines, a descriptor's
+FontBBox, or for a Latin standard font the Adobe FontBBox in `fonts/standard.rs`. `/ClassMap` classes named by `/C` (name or array of at most 8,
 each optionally followed by a non-negative revision) are validated by the same
 `attributes()` as `/A`; at most 256 classes; TD/TH may not use `/C`. Layout
 attributes may omit `Placement` and carry `LineHeight` (number >= 0, Normal,
@@ -620,7 +630,11 @@ That slot path (`mapping::parse_cid`) still refuses any other sequence. The
 Unicode path (`mapping::unicode_codes`, composite and Type3 fonts) admits any
 unique run of two or three letters (Calibri's `ft`, `st`, `Th`), since its
 encoder matches the longest mapped sequence; a digit, space or control in a
-sequence, duplicate targets and sequence ranges remain refused. A CFF font's
+sequence and sequence ranges remain refused. Several codes may share a text (a
+small capital and its capital, a delimiter's sizes): each reads as that text, and
+a replacement writes it only with the one glyph its own run already shows for it
+(`unicode::Metrics::prefer`, fed by `textedit::shown`); otherwise the edit is
+refused with "several glyphs for this character". A CFF font's
 `Differences` may also name ligatures by Adobe's original `fi`/`fl`/`ffi`
 (`fixtures/legacy-ligatures.cff`, from `testdata/make_cff_legacy_ligatures.py`).
 The Unicode path also admits individual compatibility
@@ -712,7 +726,74 @@ the built-in StandardEncoding, measured by Adobe's metrics from
 from ReportLab's and pdfminer.six's transcriptions, which must agree on all
 12 x 191 widths; its Helvetica row is also checked against `textbox.rs`, which
 `annot-probe` checks against PDFium. Every arXiv paper's side stamp is set in
-unembedded Times-Roman. Symbol and ZapfDingbats stay refused.
+unembedded Times-Roman. Symbol and ZapfDingbats stay refused. The same table
+holds each font's FontBBox, the union of pdfminer.six's and the AFM files
+matplotlib ships (they differ for oblique Helvetica and every Courier). It is used
+only for read-only text, which reserves the box, widened by its larger side at
+both ends of the advance; editable text keeps the width-only checks, because a
+box edge past every narrow glyph would refuse ordinary edits.
+
+Shapes from the second producer sample (Chrome, PowerPoint, XeLaTeX, ConTeXt,
+Typst, ReportLab, afp2pdf, Microsoft Print to PDF; `BUILD.md` *Producer sample,
+second batch*):
+- `/A` may be an array of up to 8 attribute objects, each checked alone; revision
+  numbers stay refused. `WritingMode` is accepted only as the default `LrTb`.
+  A list label may be `Placement /Inline`, and a `BBox` on one pins its text
+  (`tagging::bounding_box`). Figures, links, fields and tables accept the block
+  indents and spacing.
+- A figure may hold figures (`goes_back_to_the_walk`), like a list body a list.
+- `/OC /name BDC ... EMC` in page content (a layer; PowerPoint puts each slide's
+  background in one) is accepted when the name resolves to an OCG or OCMD in
+  the page's `/Properties`. Text inside is read-only, since the layer may be
+  off, and no marked content may open inside it.
+- `Tf` and `TL` are text state (ISO 32000-1 Table 51) and are accepted before
+  `BT`, as Typst writes them; `q`/`Q` save both.
+- The Unicode ToUnicode path accepts a CMap's own name and `CIDSystemInfo`
+  labels, as the Type 1 path does for pdfTeX; ConTeXt writes `/Registry (TeX)`.
+- A `TJ` whose string ends before an earlier one did, or whose trailing number
+  pulls the cursor back behind the last string, backtracks: that run is kept
+  read-only instead of refusing the page (ConTeXt sets footers this way). The
+  cursor may pass behind the origin within the same 1,000,000-unit bound.
+- A composite font's `CIDSystemInfo` strings may be indirect (Microsoft Print to
+  PDF).
+
+CID-keyed CFF (`CIDFontType0` with `FontFile3 /CIDFontType0C`, what xdvipdfmx,
+LuaTeX and Typst embed) is read by `fonts/cff/cid.rs` under Identity-H and
+Adobe-Identity-0 only. The PDF code is the CID; the program's charset maps it to
+a glyph (xdvipdfmx and LuaTeX subsets keep the original CIDs, so CID is not the
+glyph index), and a CIDToGIDMap is refused. ttf-parser reads the charset and
+outlines of such a font but returns no widths, so `cid::width` reads the operand
+before a charstring's first stack-clearing operator against FDSelect's Private
+dict (`nominalWidthX`, `defaultWidthX`); a subroutine call before it leaves the
+glyph unoffered. Top, font and Private dicts are closed key lists; the top
+FontMatrix must be absent or 0.001 and a font dict's absent or identity. ForceBold
+is accepted here, a hint for the whole glyph set. xdvipdfmx maps CID 0 to U+FFFF
+and fontspec's manual shows it: `.notdef` is measured for read-only text only.
+In the whole Unicode path (TrueType Identity-H, Type3 and CID CFF), a glyph whose
+program width disagrees with its PDF width, or whose ink reaches past the editable
+box, is kept read-only at its PDF width with its ink reserved (up to
+`type1::OPAQUE_REACH`), where it used to refuse the font; LuaTeX writes TeX's
+italic correction into math widths. A PDF width of zero (Typst's combining macron
+under `DW 0`) is such a read-only mark too, the only glyph whose layout step may be zero.
+The ToUnicode label grammar
+(`mapping::labels`) takes `CMapName`, `CMapType` 0-2, `CMapVersion`, `WMode 0`
+and `CIDSystemInfo` in any order, each once, the last also as Typst's
+`3 dict dup begin ... end def`; lopdf refuses a comment at the very end of a
+stream, so `blocks_with_header` appends a newline (Typst ends with `%%EOF`).
+xdvipdfmx's simple Type1C fonts that are symbolic or have no PDF `/Encoding` (TeX
+math) go through the Type 1 rules (`type1::compact`, `cff::named`), reading the
+program's built-in encoding in format 0 or 1 (`cff/encoding.rs::builtin`;
+Expert and supplements refused); a nonsymbolic one with an `/Encoding` keeps
+the WinAnsi CFF path. Typst's TrueType subsets carry no OS/2 table; `fonts::face`
+accepts a program without one as unrestricted, like a Type 1 or CFF program with no
+`FSType`, and a present table's restrictions still refuse (`docs/THREAT-MODEL.md`
+residual risk 23).
+
+A `cm` inside a text block is accepted before the block's first show. ISO
+32000-1 Figure 9 does not list it there, but arXiv's newer stamp is
+`BT 0 1 -1 0 0 0 cm ... Tm ... TJ ET`, which every reader applies; geometry is
+taken from the CTM at each show, so nothing measured moves. After a show it is
+refused. Such a stamp is read-only (its CTM is not diagonal).
 
 A replacement's right ink edge may exceed the source's by 1e-6, the same
 allowance as the advance: the scan and the layout sum a run's widths in

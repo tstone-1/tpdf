@@ -1,6 +1,7 @@
 //! Bounded existing-glyph Identity-H editing. PDF code == CID == TrueType glyph
-//! index only when CIDToGIDMap explicitly says Identity; ToUnicode supplies text
-//! semantics, not glyph selection. No cmap inference, new glyphs or font writes.
+//! index only when CIDToGIDMap explicitly says Identity; a CID-keyed CFF maps
+//! CIDs through its own charset (`cff::cid`). ToUnicode supplies text semantics,
+//! not glyph selection. No cmap inference, new glyphs or font writes.
 
 use super::{dictionary, mapping, number, Codes, Metrics};
 use lopdf::{Dictionary, Document, Object};
@@ -10,7 +11,7 @@ use ttf_parser::GlyphId;
 #[cfg(test)]
 mod tests;
 
-const INVALID: &str = "unsupported composite TrueType font or character mapping";
+const INVALID: &str = "unsupported composite font or character mapping";
 const MAX_WIDTHS: usize = 4096;
 
 fn keys(dict: &Dictionary, allowed: &[&[u8]]) -> Result<(), String> {
@@ -96,6 +97,21 @@ fn widths(doc: &Document, font: &Dictionary) -> Result<(f64, BTreeMap<u16, f64>)
     Ok((default, result))
 }
 
+// The bare CFF a CIDFontType0 carries (ISO 32000-1 Table 126), under the
+// same decoded bound as page content.
+fn cid_program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
+    if descriptor.has(b"FontFile") || descriptor.has(b"FontFile2") {
+        return Err(INVALID.into());
+    }
+    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| INVALID)?)
+        .as_stream()
+        .map_err(|_| INVALID)?;
+    if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"CIDFontType0C") {
+        return Err(INVALID.into());
+    }
+    super::filters::decode(stream, crate::textedit::MAX_CONTENT)
+}
+
 pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     keys(
         font,
@@ -139,17 +155,25 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         ],
     )?;
     name(child, b"Type", b"Font")?;
-    name(child, b"Subtype", b"CIDFontType2")?;
+    // A CFF program keyed by CID (Typst, XeLaTeX, LuaTeX). Its own charset
+    // maps CIDs to glyphs, so a CIDToGIDMap is refused (ISO 32000-1 Table 117).
+    let cff = child.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"CIDFontType0");
+    if !cff {
+        name(child, b"Subtype", b"CIDFontType2")?;
+    }
     let base = child
         .get(b"BaseFont")
         .and_then(Object::as_name)
         .map_err(|_| INVALID)?;
-    let glyph_mapping =
-        match crate::encoding::resolve(doc, child.get(b"CIDToGIDMap").map_err(|_| INVALID)?) {
+    let glyph_mapping = match child.get(b"CIDToGIDMap") {
+        Err(_) if cff => None,
+        Ok(value) if !cff => match crate::encoding::resolve(doc, value) {
             Object::Name(name) if name == b"Identity" => None,
             Object::Stream(stream) => Some(super::filters::decode(stream, 131072)?),
             _ => return Err(INVALID.into()),
-        };
+        },
+        _ => return Err(INVALID.into()),
+    };
     if glyph_mapping
         .as_ref()
         .is_some_and(|bytes| bytes.is_empty() || bytes.len() % 2 != 0)
@@ -158,9 +182,14 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     }
     let info = dictionary(doc, child.get(b"CIDSystemInfo").map_err(|_| INVALID)?)?;
     keys(info, &[b"Registry", b"Ordering", b"Supplement"])?;
-    if info.get(b"Registry").and_then(Object::as_str).ok() != Some(b"Adobe")
-        || info.get(b"Ordering").and_then(Object::as_str).ok() != Some(b"Identity")
-        || info.get(b"Supplement").and_then(Object::as_i64).ok() != Some(0)
+    // Microsoft Print to PDF writes the two strings as indirect objects.
+    let entry = |key: &[u8]| {
+        info.get(key)
+            .map(|value| crate::encoding::resolve(doc, value))
+    };
+    if entry(b"Registry").and_then(Object::as_str).ok() != Some(b"Adobe")
+        || entry(b"Ordering").and_then(Object::as_str).ok() != Some(b"Identity")
+        || entry(b"Supplement").and_then(Object::as_i64).ok() != Some(0)
     {
         return Err(INVALID.into());
     }
@@ -173,16 +202,37 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         .map_err(|_| INVALID)?;
     // Identity-H and CIDToGIDMap explicitly select glyph indices; unlike a
     // simple TrueType font, the symbolic flag does not choose a cmap here.
-    // Keep contradictory flags and synthetic bold rendering refused.
-    if !matches!(flags & (4 | 32 | 262144), 4 | 32) {
+    // Keep contradictory flags and synthetic bold rendering refused. A CFF
+    // program's ForceBold is a hinting request for its whole glyph set, the
+    // replacement's glyphs included; xdvipdfmx sets it on every bold face.
+    let force_bold = if cff { 0 } else { 262144 };
+    if !matches!(flags & (4 | 32 | force_bold), 4 | 32) {
         return Err(INVALID.into());
     }
-    let bytes = super::program(doc, descriptor)?;
-    let face = super::face(&bytes, false)?;
     let stream = crate::encoding::resolve(doc, font.get(b"ToUnicode").map_err(|_| INVALID)?)
         .as_stream()
         .map_err(|_| INVALID)?;
     let (default, widths) = widths(doc, child)?;
+    if cff {
+        let bytes = cid_program(doc, descriptor)?;
+        let program = super::cff::cid::parse(&bytes)?;
+        let (unicode, vertical_bounds) = super::unicode::Metrics::from_glyphs(
+            mapping::unicode_cid(stream)?,
+            default,
+            &widths,
+            |cid| program.glyph(cid),
+        )?;
+        return Ok(Metrics {
+            opaque: None,
+            unicode: Some(unicode),
+            vertical_bounds: Some(vertical_bounds),
+            widths: Box::new([None; 256]),
+            horizontal_overhangs: None,
+            codes: None,
+        });
+    }
+    let bytes = super::program(doc, descriptor)?;
+    let face = super::face(&bytes, false)?;
     if let Some(mapping) = &glyph_mapping {
         let (unicode, vertical_bounds) = super::unicode::Metrics::with_glyphs(
             &face,

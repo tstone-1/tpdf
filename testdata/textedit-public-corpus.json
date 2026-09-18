@@ -217,5 +217,84 @@
       "bytes": 43627,
       "pages": 1
     }
+  ],
+  "expansion_retrieved": "2026-09-18",
+  "expansion_purpose": "Producers the prototype sample lacked: Chrome (Skia), PowerPoint via PDFMaker, XeLaTeX (xdvipdfmx), LuaTeX/ConTeXt, Typst, ReportLab, IBM afp2pdf and Microsoft Print to PDF. The survey inspects at most 128 pages, so longer files are surveyed through a qpdf extract that keeps every stream byte for byte.",
+  "expansion_files": [
+    {
+      "filename": "wiki-pdf.pdf",
+      "title": "Wikipedia article \"Portable Document Format\", PDF export",
+      "url": "https://en.wikipedia.org/api/rest_v1/page/pdf/Portable_Document_Format",
+      "producer": "Skia/PDF m152 / Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+      "sha256": "ca7c8a7f6e7376809af9130975b7990606f9f5017450d154f8ce452b610edac5",
+      "bytes": 1098693,
+      "pages": 25
+    },
+    {
+      "filename": "healdsburg-slides.pdf",
+      "title": "Healdsburg, CA city council presentation, 17 March 2025",
+      "url": "https://healdsburg.gov/DocumentCenter/View/19434/03-17-2025-PowerPoint-Presentation",
+      "producer": "Adobe PDF Library 24.3.86 / Acrobat PDFMaker 24 for PowerPoint",
+      "sha256": "0e90613ffd091ea847207466633805053ecbda9a181f52fbbe6f72182e0cd68b",
+      "bytes": 1840976,
+      "pages": 29
+    },
+    {
+      "filename": "fontspec.pdf",
+      "title": "fontspec package documentation (CTAN)",
+      "url": "https://mirrors.ctan.org/macros/unicodetex/latex/fontspec/fontspec.pdf",
+      "producer": "xdvipdfmx (20260317) / LaTeX with hyperref",
+      "sha256": "34fcfe0ab29e6774370189284a1babc0c6516fcfe32ad24a3681a8867a84fc7e",
+      "bytes": 528597,
+      "pages": 71
+    },
+    {
+      "filename": "luatex-manual.pdf",
+      "title": "LuaTeX reference manual (CTAN)",
+      "url": "https://mirrors.ctan.org/systems/doc/luatex/luatex.pdf",
+      "producer": "LuaTeX-1.24 / LuaTeX 1.24 7707 + ConTeXt MkIV 2025.12.05 17:46",
+      "sha256": "79457a8ed7fb8052bd103bdc6867f789bca5ace88c44d1a2b14f4fd72f4c0e4d",
+      "bytes": 1697207,
+      "pages": 328,
+      "surveyed": "pages 1-128, extracted with qpdf --stream-data=preserve --empty --pages <file> 1-128 --"
+    },
+    {
+      "filename": "typst-example.pdf",
+      "title": "Example Typst document (course site)",
+      "url": "https://datavizf25.classes.andrewheiss.com/news/files/typst.pdf",
+      "producer": "Typst 0.13.0",
+      "sha256": "5fc11c84f34fd3445831b096677748fb076523f0d709a1306d25901566d05483",
+      "bytes": 42724,
+      "pages": 1
+    },
+    {
+      "filename": "reportlab-guide.pdf",
+      "title": "ReportLab user guide",
+      "url": "https://www.reportlab.com/docs/reportlab-userguide.pdf",
+      "producer": "ReportLab PDF Library - (opensource) / (unspecified)",
+      "sha256": "d7fff9ab4017cdc8abd2790b7a5a00855e26681cdc6f03622d76f0d71c958892",
+      "bytes": 565444,
+      "pages": 135,
+      "surveyed": "pages 1-128, extracted with qpdf --stream-data=preserve --empty --pages <file> 1-128 --"
+    },
+    {
+      "filename": "unioncounty-budget.pdf",
+      "title": "Union County, OR proposed budget 2026-27",
+      "url": "https://unioncountyor.gov/wp-content/uploads/2026/05/Proposed-Budget-for-Website.pdf",
+      "producer": "[ClibPDF Library 2.02-r1-2] 1.6.0 AIX / IBM afp2pdf Transform Version: 1.6.0",
+      "sha256": "d941c27e5da8f5f188c2764f93c860cf09ffcbf1edd97de6b39ab63ff3dcae5d",
+      "bytes": 186343,
+      "pages": 145,
+      "surveyed": "pages 1-128, extracted with qpdf --stream-data=preserve --empty --pages <file> 1-128 --"
+    },
+    {
+      "filename": "pott-budget.pdf",
+      "title": "Pottawattamie County, IA budget form",
+      "url": "https://www.pottcounty.org/ArchiveCenter/ViewFile/Item/2688",
+      "producer": "Microsoft: Print To PDF / RICOH IM C3510",
+      "sha256": "62c5e9bcf3c2ef142542b80a6a452d13dca9d065d326429664c36d9e46e5fb48",
+      "bytes": 922056,
+      "pages": 2
+    }
   ]
 }

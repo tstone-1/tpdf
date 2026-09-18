@@ -409,3 +409,26 @@ fn replacement_fonts_keep_discovery_limits_and_share_programs() {
         .contains("32-font"));
     assert_eq!(rejected.objects, doc.objects);
 }
+
+// A wrapped line keeps the space it broke at. `line_breaks` fits the line by its
+// words, so the ink check must not count that space either: here the box is half
+// a point wider than "ACME FIRST", less than a space.
+#[test]
+fn wrapping_fits_a_line_by_its_words_not_the_space_it_broke_at() {
+    let mut doc =
+        tests::with_content(b"BT /F1 12 Tf 40 180 Td (TITLE) Tj 0 -100 Td (SECOND) Tj ET");
+    let words = fonts::Metrics::helvetica()
+        .advance("ACME FIRST", 12.)
+        .unwrap();
+    let change = edit(&doc, "ACME FIRST SECOND", words + 0.5, 65., true);
+    assert_eq!(preview_layout(&doc, &change).unwrap().lines, 2);
+    write(&mut doc, &[change]).unwrap();
+    let texts: String = scan(&doc, 0)
+        .unwrap()
+        .runs
+        .iter()
+        .filter(|r| r.matrix[5] > 80.)
+        .map(|r| r.text.as_str())
+        .collect();
+    assert_eq!(texts, "ACME FIRST SECOND");
+}

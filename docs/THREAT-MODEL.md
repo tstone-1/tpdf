@@ -1825,12 +1825,18 @@ Preserved Form XObjects remain read-only. Traversal is capped at eight levels,
 32 calls, 1 MiB of decoded content and 16,384 operations, with cycle detection.
 External forms, soft-mask graphics states and pattern colours are refused.
 Forms containing text reserve their transformed BBox against layout expansion.
-Page images and preserved forms share an 8 MiB budget. Indexed images validate
+Page images, preserved forms and the images those forms draw share a 32 MiB
+byte budget (`MAX_IMAGES`); each top-level form's tree is also bounded to 8 MiB
+of decoded content and 524,288 operators. Indexed images validate
 palette length and every sample before preservation. Tagged artifacts and
 unmarked text remain read-only and retain collision bounds.
 
-The editing grammar also validates embedded CFF/Type1C programs and opaque
-image XObjects inside the worker. JPEG preservation uses zune-jpeg after checking
+The editing grammar also validates embedded CFF/Type1C programs, CID-keyed CFF
+programs and opaque image XObjects inside the worker. The CID-keyed reader
+(`fonts/cff/cid.rs`) parses only closed DICT key lists, at most 256 font dicts,
+4,096 glyphs and 48 charstring operands, and executes no charstring beyond the
+operands before its first stack-clearing operator; outlines go through
+ttf-parser as for every other CFF program. JPEG preservation uses zune-jpeg after checking
 marker framing, at most 2 MiB of encoded data, at most 64 scans, and dimensions
 no greater than 8192 per axis; decoded samples share the page image budget.
 Decoder success does not prove every entropy sample is valid, and no image
@@ -3092,6 +3098,18 @@ which is what makes it evidence rather than a milestone.
     Availability only. Nothing here is a memory-safety defect and no allocation succeeds that
     should not have; the reachable harm is a worker dying, or on macOS the machine paging while
     it tries.
+23. **A font program that declares no embedding rights is edited as unrestricted**, added
+    2026-09-18. Text editing reuses glyphs already embedded in the document and never
+    extracts, installs or copies a font program elsewhere; where a program states its rights
+    (a TrueType or OpenType OS/2 `fsType`, a Type 1 `FSType`, a CFF PostScript `/FSType`),
+    anything but installable or editable embedding refuses the edit. A program with no such
+    declaration was accepted for Type 1, CFF and Apple TrueType, and since this date for
+    OpenType-style TrueType too, because Typst drops OS/2 from every TrueType subset and ISO
+    32000-1 does not require the table in an embedded program. The residue is a licence
+    question, not a security one: a subsetter that dropped a restrictive table (a "preview
+    and print" font) leaves nothing in the file to say so, and the edit goes ahead. Nothing
+    inside the document can close that; inferring rights from a font's name would be a guess
+    presented as a check.
 
 ## 8. How to re-verify any of this
 

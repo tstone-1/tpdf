@@ -164,10 +164,12 @@ fn textedit_preserved_forms_refuse_cycles_external_carriers_and_unbalanced_state
                     .set("XObject", dictionary! { "Loop" => form });
             }
             5 => {
-                stream.content = vec![b' '; MAX_CONTENT + 1];
+                stream.dict.set("Filter", "FlateDecode");
+                stream.content = deflate(&vec![b' '; MAX_FORM_CONTENT + 1]);
             }
             6 => {
-                stream.content = b"0 g ".repeat(MAX_OPERATIONS + 1);
+                stream.dict.set("Filter", "FlateDecode");
+                stream.content = deflate(&b"0 g ".repeat(MAX_FORM_OPERATIONS + 1));
             }
             7 => stream.content = b"/HiddenText gs 0 0 10 10 re f".to_vec(),
             _ => stream.content = b"/Pattern cs /HiddenText scn 0 0 10 10 re f".to_vec(),
@@ -245,6 +247,20 @@ fn textedit_preserved_forms_keep_layer_membership_and_private_data() {
         ),
         ("PTEX.InfoDict", Object::Null, false),
         ("PTEX.PageBox", Object::Null, false),
+        // Inkscape's transparency group around a pdfTeX-included badge.
+        (
+            "Group",
+            dictionary! { "Type" => "Group", "S" => "Transparency", "CS" => "DeviceRGB", "I" => true }.into(),
+            true,
+        ),
+        ("Group", dictionary! { "S" => "Transparency", "K" => false }.into(), true),
+        ("Group", dictionary! { "Type" => "Group" }.into(), false),
+        ("Group", dictionary! { "S" => "Knockout" }.into(), false),
+        ("Group", dictionary! { "S" => "Transparency", "CS" => "Pattern" }.into(), false),
+        ("Group", dictionary! { "S" => "Transparency", "I" => 1 }.into(), false),
+        ("Group", dictionary! { "S" => "Transparency", "Type" => "OCG" }.into(), false),
+        ("Group", dictionary! { "S" => "Transparency", "SMask" => "None" }.into(), false),
+        ("Group", Object::Null, false),
     ] {
         let (mut doc, _, form) = fixture(true);
         entry(&mut doc, form, key, value);
@@ -374,5 +390,75 @@ fn textedit_preserved_forms_refuse_stencil_masks() {
             .unwrap()
             .set("XObject", dictionary! { "Im" => image });
         assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "{stencil}");
+    }
+}
+
+fn deflate(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
+// pdfTeX includes a plotted figure as one form, larger than any page content
+// the editor patches. The form bounds are inclusive; one more is refused.
+#[test]
+fn textedit_preserved_forms_accept_large_figures_up_to_their_own_bounds() {
+    let spaces = |extra: usize| {
+        let mut content = b"0 g ".repeat(MAX_FORM_OPERATIONS - extra);
+        content.resize(MAX_FORM_CONTENT, b' ');
+        content
+    };
+    for (content, accepted) in [
+        (spaces(0), true),
+        (b"0 g ".repeat(MAX_FORM_OPERATIONS), true),
+        (b"0 g ".repeat(MAX_FORM_OPERATIONS + 1), false),
+        (
+            {
+                let mut content = spaces(0);
+                content.push(b' ');
+                content
+            },
+            false,
+        ),
+    ] {
+        let (mut doc, _, form) = fixture(false);
+        let stream = doc.get_object_mut(form).unwrap().as_stream_mut().unwrap();
+        stream.dict.set("Filter", "FlateDecode");
+        stream.content = deflate(&content);
+        assert_eq!(
+            textedit::scan(&doc, 0).is_ok(),
+            accepted,
+            "{} bytes",
+            content.len()
+        );
+    }
+}
+
+// An image a form draws is charged to the page's image budget, as one the page
+// draws itself is, not to the form's content bound (10 MiB exceeds that one);
+// the form's own content is charged to that budget as well.
+#[test]
+fn textedit_preserved_form_images_share_the_page_image_budget() {
+    for (height, accepted) in [(1280, true), (textedit::MAX_IMAGES / 8192, false)] {
+        let (mut doc, _, form) = fixture(false);
+        let image = doc.add_object(Stream::new(
+            dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 8192, "Height" => height as i64, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray", "Filter" => "FlateDecode" },
+            deflate(&vec![0; 8192 * height]),
+        ));
+        let stream = doc.get_object_mut(form).unwrap().as_stream_mut().unwrap();
+        stream.set_content(b"q 40 0 0 30 0 0 cm /Im Do Q".to_vec());
+        stream
+            .dict
+            .get_mut(b"Resources")
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("XObject", dictionary! { "Im" => image });
+        let scanned = textedit::scan(&doc, 0);
+        assert_eq!(scanned.is_ok(), accepted, "{height}");
+        if !accepted {
+            assert!(scanned.unwrap_err().contains("budget"));
+        }
     }
 }

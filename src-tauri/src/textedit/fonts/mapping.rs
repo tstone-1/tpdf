@@ -54,7 +54,6 @@ fn unicode_codes(
         Ok(u16::from_be_bytes([*a, *b]))
     };
     let mut result = std::collections::BTreeMap::new();
-    let mut targets = std::collections::BTreeSet::new();
     for block in blocks(stream, wide)?.chunks_exact(2) {
         let [Object::Integer(count)] = block[0].operands.as_slice() else {
             return Err(invalid());
@@ -96,10 +95,11 @@ fn unicode_codes(
                 };
                 // A glyph may stand for up to three letters: a ligature (ff,
                 // fi, and Calibri's ft, st, Th). The encoder matches the
-                // longest mapped sequence, so any unique one is unambiguous.
+                // longest mapped sequence. Several glyphs may share a text (a
+                // small capital and its capital, a delimiter's sizes); each
+                // reads as that text and none is written for it.
                 if (text.chars().count() != 1 && !text.chars().all(char::is_alphabetic))
                     || text.chars().any(char::is_control)
-                    || !targets.insert(text.clone())
                     || result.insert(code, text).is_some()
                 {
                     return Err(invalid());
@@ -110,31 +110,74 @@ fn unicode_codes(
     Ok(result)
 }
 
+// The CMap's own name and CIDSystemInfo label the map and change no entry;
+// ConTeXt names them after the font (`/Registry (TeX)`), like pdfTeX.
 fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
-    blocks_with_header(stream, wide, false, false)
+    blocks_with_header(stream, wide, false, true)
 }
 
-// The CMap's own name and its CIDSystemInfo label it; they map no code. pdfTeX
-// and dvipdfm name both after the TeX encoding. Admit any such label, with the
-// shape the CMap specification (Adobe TN 5099) gives it.
-fn label(actual: &Operation, expected: &Operation) -> bool {
+// The CMap's own name, type, version, writing mode and CIDSystemInfo label
+// it; they map no code. pdfTeX and dvipdfm name the map after the TeX
+// encoding, xdvipdfmx writes the three standard ones in its own order, and
+// Typst builds the system info as a PostScript dictionary (`3 dict dup begin
+// ... end def`). Each may appear once, with the shape the CMap specification
+// (Adobe TN 5099) gives it. Horizontal writing only.
+fn labels(mut ops: &[Operation]) -> bool {
     let short = |object: &Object| object.as_str().is_ok_and(|text| text.len() <= 127);
-    expected.operator == "def"
-        && actual.operands.len() == 2
-        && actual.operands[0] == expected.operands[0]
-        && match (&expected.operands[0], &actual.operands[1]) {
-            (Object::Name(key), Object::Name(name)) => key == b"CMapName" && name.len() <= 127,
-            (Object::Name(key), Object::Dictionary(info)) => {
-                key == b"CIDSystemInfo"
-                    && info.len() == 3
-                    && info.get(b"Registry").is_ok_and(short)
-                    && info.get(b"Ordering").is_ok_and(short)
-                    && info
-                        .get(b"Supplement")
-                        .is_ok_and(|value| value.as_i64().is_ok_and(|n| (0..=1000).contains(&n)))
+    let info = |info: &lopdf::Dictionary| {
+        info.len() == 3
+            && info.get(b"Registry").is_ok_and(short)
+            && info.get(b"Ordering").is_ok_and(short)
+            && info
+                .get(b"Supplement")
+                .is_ok_and(|value| value.as_i64().is_ok_and(|n| (0..=1000).contains(&n)))
+    };
+    let mut seen: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
+    while let [op, tail @ ..] = ops {
+        let (key, valid) = match (op.operator.as_str(), op.operands.as_slice()) {
+            ("def", [Object::Name(key), value]) => {
+                ops = tail;
+                let valid = match (key.as_slice(), value) {
+                    (b"CMapName", Object::Name(name)) => name.len() <= 127,
+                    (b"CMapType", Object::Integer(kind)) => (0..=2).contains(kind),
+                    (b"CMapVersion", Object::Integer(_) | Object::Real(_)) => true,
+                    (b"WMode", Object::Integer(0)) => true,
+                    (b"CIDSystemInfo", Object::Dictionary(dict)) => info(dict),
+                    _ => false,
+                };
+                (key, valid)
             }
-            _ => false,
+            ("dict", [Object::Name(key), Object::Integer(1..=8)]) if key == b"CIDSystemInfo" => {
+                let [dup, begin, entries @ .., end, def] = tail.get(..7).unwrap_or_default() else {
+                    return false;
+                };
+                ops = &tail[7..];
+                let mut dict = lopdf::Dictionary::new();
+                for entry in entries {
+                    match (entry.operator.as_str(), entry.operands.as_slice()) {
+                        // A repeated key leaves fewer than the three `info` needs.
+                        ("def", [Object::Name(name), value]) => {
+                            dict.set(name.clone(), value.clone())
+                        }
+                        _ => return false,
+                    }
+                }
+                let bare =
+                    |op: &Operation, name: &str| op.operator == name && op.operands.is_empty();
+                let valid = bare(dup, "dup")
+                    && bare(begin, "begin")
+                    && bare(end, "end")
+                    && bare(def, "def")
+                    && info(&dict);
+                (key, valid)
+            }
+            _ => return false,
+        };
+        if !valid || !seen.insert(key.clone()) {
+            return false;
         }
+    }
+    true
 }
 
 fn blocks_with_header(
@@ -147,7 +190,10 @@ fn blocks_with_header(
         return Err("inherited character maps are not editable yet".into());
     }
     let invalid = || "unsupported or ambiguous character map".to_string();
-    let bytes = super::filters::decode(stream, MAX_MAP)?;
+    let mut bytes = super::filters::decode(stream, MAX_MAP)?;
+    // Typst ends its map with a `%%EOF` comment and no end of line, which
+    // lopdf's content parser refuses; the end of the data ends a comment too.
+    bytes.push(b'\n');
     let content = Content::decode_strict(&bytes).map_err(|_| invalid())?;
     let prefix_bytes = if wide {
         String::from_utf8_lossy(PREFIX)
@@ -158,8 +204,24 @@ fn blocks_with_header(
     };
     let prefix = Content::decode_strict(&prefix_bytes).map_err(|_| invalid())?;
     let suffix = Content::decode_strict(SUFFIX).map_err(|_| invalid())?;
-    let ops = &content.operations;
-    let start = prefix.operations.len();
+    let mut ops = content.operations;
+    let mut prefix = prefix.operations;
+    if labelled {
+        // Compare the fixed operators around the labels, not the labels.
+        let begin = ops.iter().position(|op| op.operator == "begincmap");
+        let end = ops
+            .iter()
+            .position(|op| op.operator == "begincodespacerange");
+        let (Some(begin), Some(end)) = (begin, end) else {
+            return Err(invalid());
+        };
+        if end <= begin || !labels(&ops[begin + 1..end]) {
+            return Err(invalid());
+        }
+        ops.drain(begin + 1..end);
+        prefix.retain(|op| op.operator != "def");
+    }
+    let start = prefix.len();
     let end = ops
         .len()
         .checked_sub(suffix.operations.len())
@@ -169,7 +231,7 @@ fn blocks_with_header(
     }
     for (actual, expected) in ops[..start]
         .iter()
-        .zip(&prefix.operations)
+        .zip(&prefix)
         .chain(ops[end..].iter().zip(&suffix.operations))
     {
         // Some simple-font exports declare a two-byte code space while every
@@ -184,10 +246,7 @@ fn blocks_with_header(
         let dictionary_capacity = expected.operator == "dict"
             && matches!(actual.operands.as_slice(), [Object::Integer(size)] if (1..=256).contains(size));
         if actual.operator != expected.operator
-            || (actual.operands != expected.operands
-                && !padded_range
-                && !dictionary_capacity
-                && !(labelled && label(actual, expected)))
+            || (actual.operands != expected.operands && !padded_range && !dictionary_capacity)
         {
             return Err(invalid());
         }

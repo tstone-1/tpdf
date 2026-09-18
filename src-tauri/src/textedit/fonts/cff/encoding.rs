@@ -1,7 +1,54 @@
 //! Bounded simple-font encoding. Glyph names determine rendering; ToUnicode
 //! may narrow the offered repertoire, but may never contradict those names.
 use super::{dictionary, Document, Object, ASCII_NAMES};
+use crate::textedit::fonts::type1::program::Builtin;
 use lopdf::Dictionary;
+use ttf_parser::{cff::Table, GlyphId};
+
+// The program's own encoding (Adobe TN 5176, section 12): Standard, or a custom
+// table of format 0 (a code per glyph) or 1 (ranges of codes) giving codes to
+// glyphs 1, 2, ... in charset order. Expert and supplementary codes are refused.
+pub(super) fn builtin(bytes: &[u8], face: &Table<'_>) -> Result<Builtin, String> {
+    let invalid = || "unsupported CFF built-in encoding".to_string();
+    let top = super::profile::top(bytes).ok_or_else(invalid)?;
+    let offset = match top.get(&16).map(|values| values[0]) {
+        None | Some(0.) => return Ok(Builtin::Standard),
+        Some(value) if value >= 2. => value as usize,
+        _ => return Err(invalid()),
+    };
+    let byte = |at: usize| bytes.get(at).copied().map(usize::from).ok_or_else(invalid);
+    let mut codes = Vec::new();
+    match byte(offset)? {
+        0 => {
+            for at in 0..byte(offset + 1)? {
+                codes.push(byte(offset + 2 + at)?);
+            }
+        }
+        1 => {
+            for range in 0..byte(offset + 1)? {
+                let first = byte(offset + 2 + range * 2)?;
+                let last = first + byte(offset + 3 + range * 2)?;
+                if last > 255 {
+                    return Err(invalid());
+                }
+                codes.extend(first..=last);
+            }
+        }
+        _ => return Err(invalid()),
+    }
+    let mut names: Box<[Option<Vec<u8>>; 256]> = Box::new(std::array::from_fn(|_| None));
+    for (index, code) in codes.into_iter().enumerate() {
+        let glyph = GlyphId(u16::try_from(index + 1).map_err(|_| invalid())?);
+        if glyph.0 >= face.number_of_glyphs() {
+            return Err(invalid());
+        }
+        let name = face.glyph_name(glyph).ok_or_else(invalid)?;
+        if names[code].replace(name.as_bytes().to_vec()).is_some() {
+            return Err(invalid());
+        }
+    }
+    Ok(Builtin::Custom(names))
+}
 
 pub(super) struct Encoding {
     pub slots: Box<[Option<u8>; 256]>,

@@ -1,5 +1,6 @@
-//! Worker-only validation of embedded TrueType and simple CFF fonts. No font bytes are
-//! exported, substituted, repaired or extended. PDF widths control positioning.
+//! Worker-only validation of embedded TrueType, CFF (simple and CID-keyed), Type 1
+//! and Type3 fonts. No font bytes are exported, substituted, repaired or extended.
+//! PDF widths control positioning.
 
 use super::{dictionary, filters, number};
 use lopdf::{Dictionary, Document, Object};
@@ -60,7 +61,15 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
         b"FontFile2" => return Err("FontFile2 is not supported in Type1 fonts".into()),
         _ => {}
     }
+    // A nonsymbolic font with a PDF encoding keeps the WinAnsi CFF path; a
+    // symbolic one, or one on its program's built-in encoding (xdvipdfmx's TeX
+    // math fonts), is read by glyph name like an embedded Type 1 program.
+    let symbolic = descriptor
+        .get(b"Flags")
+        .and_then(Object::as_i64)
+        .is_ok_and(|flags| flags & 4 != 0);
     match program.dict.get(b"Subtype").and_then(Object::as_name).ok() {
+        Some(b"Type1C") if symbolic || !font.has(b"Encoding") => type1::compact(doc, font),
         Some(b"Type1C") => cff::embedded(doc, font),
         Some(b"OpenType") => Err("OpenType programs in Type1 fonts are not editable yet".into()),
         _ => Err("unsupported embedded program subtype in Type1 font".into()),
@@ -162,8 +171,8 @@ impl Metrics {
 
     /// One of the twelve Latin standard fonts (ISO 32000-1 9.6.2.2), measured
     /// by Adobe's metrics over the same printable WinAnsi codes as Helvetica.
-    /// Like Helvetica it has no outlines here, so its text cannot be kept
-    /// read-only; every reader is required to have the font.
+    /// Every reader is required to have the font. It has no outlines here, so
+    /// read-only text in it reserves the font's FontBBox (`standard_box`).
     pub(super) fn standard(base: &[u8]) -> Option<Self> {
         let (_, table) = standard::FONTS.iter().find(|(name, _)| *name == base)?;
         let mut metrics = Self::helvetica();
@@ -171,6 +180,14 @@ impl Metrics {
             metrics.widths[slot] = Some(f64::from(*width));
         }
         Some(metrics)
+    }
+
+    /// The FontBBox of a Latin standard font, in 1/1000 em. It bounds every
+    /// glyph a reader draws for the font, so it stands in for the outlines
+    /// this font has none of when its text has to be kept read-only.
+    pub(super) fn standard_box(base: &[u8]) -> Option<[f64; 4]> {
+        let (_, bounds) = standard::BOXES.iter().find(|(name, _)| *name == base)?;
+        Some(bounds.map(f64::from))
     }
 
     // The same default encoding for every Latin standard font: its built-in
@@ -280,6 +297,15 @@ impl Metrics {
             }
         }
         Ok(text)
+    }
+
+    /// The same metrics, writing each text that several glyphs share with the
+    /// one glyph `shown`, a run's own codes, uses for it.
+    pub(super) fn preferring(mut self, shown: &[u8]) -> Self {
+        if let Some(unicode) = &mut self.unicode {
+            unicode.prefer(shown);
+        }
+        self
     }
 
     /// Bytes per character code in a shown string.
@@ -594,8 +620,8 @@ fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
 /// glyphs by the PDF `Widths` and draws them with a substitute, so the widths
 /// are the metrics, exactly as the built-in ones are for standard Helvetica.
 /// Only nonsymbolic WinAnsi fonts are read, over the printable Latin-1 range;
-/// a code with no width is not offered. There are no outlines, so like
-/// Helvetica its text cannot be kept read-only beside an edit.
+/// a code with no width is not offered. There are no outlines; the
+/// descriptor's FontBBox stands in for every glyph's ink.
 pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     let invalid = || "unsupported unembedded font".to_string();
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
@@ -936,9 +962,11 @@ fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
     }
     // Document fonts are preserved; only the bundled OFL fonts are subsetted.
     // The no-subsetting bit is therefore compatible with document-font reuse.
-    // Apple's TrueType format makes OS/2 optional. Preserve an already embedded
-    // legacy program without manufacturing a permissions table. If present, its
-    // restrictions still apply; OpenType-style programs still require the table.
+    // OS/2 is optional in Apple's TrueType format and in an embedded program
+    // (ISO 32000-1 9.9 lists the tables a reader needs; Typst drops OS/2 from
+    // every subset). A program that declares no rights is edited as one that
+    // declares no restriction, as Type 1 and CFF programs without an FSType
+    // are; present restrictions still refuse (THREAT-MODEL residual risk 23).
     // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
     if let Some(os2) = face.raw_face().table(Tag::from_bytes(b"OS/2")) {
         let rights = os2.get(8..10).ok_or_else(invalid)?;
@@ -946,8 +974,6 @@ fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
         if rights & !0x108 != 0 {
             return Err("embedded font does not permit this editable use".into());
         }
-    } else if !apple_true {
-        return Err(invalid());
     }
     Ok(face)
 }

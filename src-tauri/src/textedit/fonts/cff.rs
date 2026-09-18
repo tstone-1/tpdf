@@ -1,11 +1,15 @@
 //! Existing named glyphs in single-font Type1C programs with bounded WinAnsi encodings.
-//! PDF glyph names select outlines; the CFF's own byte encoding is irrelevant.
+//! PDF glyph names select outlines; the CFF's own byte encoding is irrelevant there.
+//! `named` reads a symbolic or unencoded program for the Type 1 rules, built-in
+//! encoding included, and `cid` reads CID-keyed programs.
 
+use super::type1::program::{Glyph, Program};
 use super::{dictionary, filters, number, Codes, Metrics};
 use lopdf::{Dictionary, Document, Object};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use ttf_parser::{cff::Table, GlyphId};
 
+pub(super) mod cid;
 mod encoding;
 mod profile;
 #[cfg(test)]
@@ -110,6 +114,52 @@ pub(super) const ASCII_NAMES: [&str; 95] = [
     "braceright",
     "asciitilde",
 ];
+
+// A Type1C program as the Type 1 path reads one (`type1::compact`): each
+// named glyph with its advance and outline hull, and the built-in encoding.
+// A glyph whose outline does not validate is left out, as the Type 1 reader
+// leaves out a charstring it cannot interpret.
+pub(super) fn named(bytes: &[u8]) -> Result<Program, String> {
+    profile::validate(bytes)?;
+    let face = Table::parse(bytes).ok_or(INVALID)?;
+    let matrix = face.matrix();
+    if [
+        matrix.sx, matrix.ky, matrix.kx, matrix.sy, matrix.tx, matrix.ty,
+    ] != [0.001, 0., 0., 0.001, 0., 0.]
+        || face.number_of_glyphs() > 4096
+        || face.glyph_name(GlyphId(0)) != Some(".notdef")
+    {
+        return Err(INVALID.into());
+    }
+    let mut seen = BTreeSet::new();
+    let mut glyphs = BTreeMap::new();
+    for index in 1..face.number_of_glyphs() {
+        let glyph = GlyphId(index);
+        let name = face.glyph_name(glyph).ok_or(INVALID)?;
+        if name.is_empty() || name.len() > 127 || !seen.insert(name) {
+            return Err(INVALID.into());
+        }
+        let (Some(width), Ok(bounds)) = (
+            face.glyph_width(glyph),
+            super::outlines::cff_bounds(&face, glyph),
+        ) else {
+            continue;
+        };
+        glyphs.insert(
+            name.as_bytes().to_vec(),
+            Glyph {
+                width: f64::from(width),
+                bounds,
+            },
+        );
+    }
+    Ok(Program {
+        glyphs,
+        // `validate` has already refused a program that restricts editing.
+        rights: None,
+        encoding: encoding::builtin(bytes, &face)?,
+    })
+}
 
 pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")

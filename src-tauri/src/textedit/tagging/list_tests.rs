@@ -171,12 +171,60 @@ fn textedit_lists_refuse_ambiguous_numbering_and_stale_attributes() {
         doc.get_dictionary_mut(list).unwrap().set("A", value);
         refused(doc);
     }
-    for index in 0..3 {
-        let (mut doc, ids, _, owners) = list();
-        doc.get_dictionary_mut([ids[3], owners[0], owners[1]][index])
+    // An item itself carries no attributes; its label and body are laid out
+    // like paragraphs (PowerPoint writes both), held to the same rules.
+    let (mut doc, ids, _, _) = list();
+    doc.get_dictionary_mut(ids[3])
+        .unwrap()
+        .set("A", dictionary! { "O" => "Layout", "Placement" => "Block" });
+    refused(doc);
+    let bbox = || vec![Object::from(38), 176.into(), 50.into(), 192.into()];
+    for (index, attributes, editable) in [
+        (
+            1,
+            dictionary! { "O" => "Layout", "Placement" => "Block", "WritingMode" => "LrTb", "SpaceAfter" => 12 },
+            Some(["1.", "FIRST", "2.", "SECOND"].as_slice()),
+        ),
+        (
+            0,
+            dictionary! { "O" => "Layout", "Placement" => "Inline" },
+            Some(["1.", "FIRST", "2.", "SECOND"].as_slice()),
+        ),
+        // A label's recorded ink keeps its text where it is.
+        (
+            0,
+            dictionary! { "O" => "Layout", "Placement" => "Inline", "BBox" => bbox() },
+            Some(["FIRST", "2.", "SECOND"].as_slice()),
+        ),
+        (
+            1,
+            dictionary! { "O" => "Layout", "Placement" => "Inline" },
+            None,
+        ),
+        (1, dictionary! { "O" => "Layout", "BBox" => bbox() }, None),
+        (
+            0,
+            dictionary! { "O" => "Layout", "WritingMode" => "RlTb" },
+            None,
+        ),
+    ] {
+        let (mut doc, _, _, owners) = list();
+        doc.get_dictionary_mut(owners[index])
             .unwrap()
-            .set("A", dictionary! { "O" => "Layout", "Placement" => "Block" });
-        refused(doc);
+            .set("A", attributes);
+        match editable {
+            Some(texts) => {
+                let runs = textedit::scan(&doc, 0).unwrap();
+                assert_eq!(
+                    runs.runs
+                        .iter()
+                        .map(|run| run.text.as_str())
+                        .collect::<Vec<_>>(),
+                    texts
+                );
+            }
+            None => refused(doc),
+        }
     }
 }
 

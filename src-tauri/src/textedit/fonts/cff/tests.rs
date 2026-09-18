@@ -925,3 +925,73 @@ fn textedit_ligatures_count_word_spacing_by_original_pdf_code() {
     assert_eq!(metrics.source_layout(b" ", 1000., 1., 2.).unwrap().1, 603.);
     assert_eq!(metrics.source_layout(&[31], 1000., 1., 2.).unwrap().1, 601.);
 }
+
+// xdvipdfmx's TeX fonts: symbolic, and often with no PDF Encoding, so the
+// program's own encoding names each code's glyph (read through `type1`). This
+// fixture swaps A and B in that encoding.
+#[test]
+fn textedit_cff_builtin_encodings_name_glyphs_through_the_type1_rules() {
+    let content = |doc: &mut Document| {
+        let page = crate::pagetree::ordered_pages(doc)[0];
+        let stream = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"BT /F1 12 Tf 40 180 Td (SYNTHETIC AB) Tj ET BT /F1 12 Tf 40 140 Td (SYNTHETIC SECOND) Tj ET".to_vec(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+    };
+    let first = |doc: &Document| textedit::scan(doc, 0).unwrap().runs[0].text.clone();
+    let builtin = include_bytes!("fixtures/builtin-encoding.cff");
+    for (flags, encoding, expected) in [
+        (32, true, "SYNTHETIC AB"),
+        (4, true, "SYNTHETIC AB"),
+        (4, false, "SYNTHETIC BA"),
+        (32, false, "SYNTHETIC BA"),
+    ] {
+        let (mut doc, font, descriptor, _) = fixture(builtin);
+        content(&mut doc);
+        doc.get_dictionary_mut(descriptor)
+            .unwrap()
+            .set("Flags", flags);
+        if !encoding {
+            doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+        }
+        assert_eq!(first(&doc), expected, "{flags} {encoding}");
+    }
+    let (mut doc, font, _, _) = fixture(builtin);
+    content(&mut doc);
+    doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+    let runs = textedit::scan(&doc, 0).unwrap();
+    let edit = Change {
+        layout: None,
+        page: 0,
+        revision: runs.revision,
+        operator: runs.runs[0].operator,
+        original: runs.runs[0].text.clone(),
+        replacement: "SYNTHETIC B".into(),
+    };
+    textedit::write(&mut doc, &[edit]).unwrap();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let saved = lopdf::content::Content::decode(&doc.get_page_content(page)).unwrap();
+    assert!(saved
+        .operations
+        .iter()
+        .any(|op| op.operands.first().and_then(|o| o.as_str().ok()) == Some(b"SYNTHETIC A")));
+    // StandardEncoding as the built-in encoding reads the ordinary letters.
+    let (mut doc, font, _, _) = fixture(NORMAL);
+    doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+    assert_eq!(first(&doc), "SYNTHETIC FIRST");
+    // The Expert encoding has no Latin letters to offer.
+    let (mut doc, font, _, _) = fixture(include_bytes!("fixtures/expert-encoding.cff"));
+    doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap_err(),
+        "unsupported CFF built-in encoding"
+    );
+    // A space whose outline does not validate is left out, so text using it
+    // cannot be measured.
+    let (mut doc, font, _, _) = fixture(include_bytes!("fixtures/broken-space.cff"));
+    doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
+    assert!(textedit::scan(&doc, 0).is_err());
+}
