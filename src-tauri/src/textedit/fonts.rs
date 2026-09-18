@@ -22,6 +22,7 @@ mod composite;
 mod ligatures;
 mod mapping;
 mod outlines;
+mod standard;
 mod type1;
 mod type3;
 mod unicode;
@@ -154,7 +155,27 @@ impl Metrics {
     // not WinAnsi: ISO 32000-1, 9.6.6 and Annex D.1. A name literally called
     // StandardEncoding is not a predefined PDF encoding and stays refused.
     // Only characters in our existing printable Latin-1 domain are offered.
+    #[cfg(test)]
     pub(super) fn helvetica_default() -> Self {
+        Self::helvetica().standard_encoding()
+    }
+
+    /// One of the twelve Latin standard fonts (ISO 32000-1 9.6.2.2), measured
+    /// by Adobe's metrics over the same printable WinAnsi codes as Helvetica.
+    /// Like Helvetica it has no outlines here, so its text cannot be kept
+    /// read-only; every reader is required to have the font.
+    pub(super) fn standard(base: &[u8]) -> Option<Self> {
+        let (_, table) = standard::FONTS.iter().find(|(name, _)| *name == base)?;
+        let mut metrics = Self::helvetica();
+        for (slot, width) in (32..=126).chain(160..=255).zip(table) {
+            metrics.widths[slot] = Some(f64::from(*width));
+        }
+        Some(metrics)
+    }
+
+    // The same default encoding for every Latin standard font: its built-in
+    // encoding is StandardEncoding.
+    pub(super) fn standard_encoding(self) -> Self {
         let mut codes = Box::new([None; 256]);
         for code in 32..=126 {
             // These codes mean curly quotes, outside the supported domain.
@@ -190,7 +211,7 @@ impl Metrics {
         ] {
             codes[code] = Some(ch);
         }
-        let mut metrics = Self::helvetica();
+        let mut metrics = self;
         for (ch, width) in metrics.widths.iter_mut().enumerate() {
             if !codes.contains(&Some(ch as u8)) {
                 *width = None;

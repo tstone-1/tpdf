@@ -223,6 +223,7 @@ hop through the index.
 - A wire shape and a model type are the same distinction twice, unless one derives the other
 - A writer's refusal is total, so a fact the planner could have found belongs in the plan
 - `fax`'s own decoder pads a truncated Group 4 stream with white rows
+- A test asserted a refusal that only a rounding error produced
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -23138,3 +23139,17 @@ layer, and render mode 3 had been added the same day. But it was chosen on a cou
 had already explained, not on that reason. Before picking the largest refusal, read the
 previous survey section's notes on it: a refusal count says how many pages stop at a check,
 not how many would become editable past it.
+
+### A test asserted a refusal that only a rounding error produced
+
+The text editor compared a replacement's right ink edge to the source's with a plain `>`,
+while the advance check beside it allowed 1e-6. The scan sums a run's widths glyph by
+glyph and the layout in its own order, so an equal-width edit (one digit for another on
+the arXiv stamp) came to 337.74 against 337.73999999999995 and was refused as too wide.
+
+Adding the allowance reddened one existing Type 1 test: it swapped "AB" to "BA" with B one
+unit wider and asserted a refusal, with a comment saying the swap "would overrun the ink".
+It does not: both strings end at the same edge (14.412 against 14.411999999999999). The
+assertion had only ever passed because of the defect being fixed. It now asserts "BB",
+which really is one unit wider. When a fix turns an old refusal test red, compute what the
+refused case actually measures before restoring it.

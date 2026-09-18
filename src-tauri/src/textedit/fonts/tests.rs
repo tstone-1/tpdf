@@ -867,7 +867,7 @@ fn textedit_default_helvetica_refuses_explicit_or_custom_encodings() {
     assert!(textedit::scan(&doc, 0).is_ok());
     doc.get_dictionary_mut(font)
         .unwrap()
-        .set("BaseFont", "Courier");
+        .set("BaseFont", "Symbol");
     assert!(textedit::scan(&doc, 0).is_err());
 }
 

@@ -8971,3 +8971,33 @@ a text object and the untagged-page tree guard are refused by later checks too, 
 tests now assert the message the survey reports; and a moveto that starts a new subpath
 before `h` needed its own refusal case. `stencils` got an explicit type, because a
 mutation that never inserts into it otherwise failed to compile rather than run.
+
+### Producer sample, continued: the standard fonts
+
+The twelve Latin standard fonts take the arXiv 2020 paper's first page from refused to
+editable (171 of 268; nothing else moves). It was refused only for its side stamp,
+`arXiv:2003.00976v2 [cs.SE] 5 Mar 2020`, set in unembedded Times-Roman at 20 pt and
+turned a quarter, which every arXiv paper carries. Regenerate or check the width table
+with:
+
+```sh
+uv run --with reportlab --with pdfminer.six python scripts/standard_font_widths.py --check
+```
+
+The round trip edits the stamp's date and a line of the title block:
+
+```sh
+printf '%s' '[{"page":0,"contains":"5 Mar 2020","replacement":"6 Mar 2020","replace_match":true},{"page":0,"contains":"Kristopher Ambrose","replacement":"Kristopher Ambros","replace_match":true}]' > scratch/prototype/rt/stamp.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/arxiv-2003.pdf scratch/prototype/rt/stamp.json scratch/prototype/rt/stamp
+```
+
+It passes with preview/save pixel agreement and unchanged adjacent pixels. It first
+failed on the stamp: a same-width digit summed to 337.74 against the scan's
+337.73999999999995, and the ink check had no rounding allowance (`docs/TRAPS.md`). The
+kerning benchmark from the previous section still gives 69 of 80 after the fix; its 11
+refusals are real overruns of the advance.
+
+Mutations: 3 new for the standard fonts and 1 for the rounding allowance, with 2
+re-aimed; all caught by the test named for them. A second allowance, on the
+kept-kerning path, survived its mutation because that path sums in the scan's own
+order, so it was removed rather than tested.

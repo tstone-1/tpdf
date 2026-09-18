@@ -796,8 +796,10 @@ fn textedit_type1_fonts_edit_through_their_glyph_names() {
         .unwrap()
         .set("Widths", widths);
     assert_eq!(texts(&doc), ["AB"]);
-    // B is one unit wider than A, so swapping them would overrun the ink.
-    assert!(replace(&mut doc, "AB", "BA").is_err());
+    // B is one unit wider than A, so two of them overrun the source by one
+    // unit. Swapping them does not: the ink ends where it did, and this
+    // assertion used to pass only through a rounding error in the ink check.
+    assert!(replace(&mut doc, "AB", "BB").is_err());
     replace(&mut doc, "AB", "B").unwrap();
     assert_eq!(texts(&doc), ["B"]);
 }
