@@ -14,11 +14,15 @@ pub(super) mod ink_tests;
 #[cfg(test)]
 mod winansi_tests;
 
+#[cfg(test)]
+mod unembedded_tests;
+
 mod cff;
 mod composite;
 mod ligatures;
 mod mapping;
 mod outlines;
+mod type1;
 mod type3;
 mod unicode;
 pub(super) use composite::embedded as composite;
@@ -36,9 +40,9 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
     let mut carriers = [b"FontFile".as_slice(), b"FontFile2", b"FontFile3"]
         .into_iter()
         .filter(|key| descriptor.has(key));
-    let carrier = carriers
-        .next()
-        .ok_or("Type1 font has no embedded font program")?;
+    let Some(carrier) = carriers.next() else {
+        return unembedded(doc, font);
+    };
     if carriers.next().is_some() {
         return Err("Type1 font has conflicting embedded font programs".into());
     }
@@ -51,7 +55,7 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
     .as_stream()
     .map_err(|_| "invalid embedded program in Type1 font")?;
     match carrier {
-        b"FontFile" => return Err("PostScript Type 1 fonts (FontFile) are not editable yet".into()),
+        b"FontFile" => return type1::embedded(doc, font),
         b"FontFile2" => return Err("FontFile2 is not supported in Type1 fonts".into()),
         _ => {}
     }
@@ -67,6 +71,20 @@ enum Codes {
     Double(std::collections::BTreeMap<u16, u8>),
 }
 
+pub(super) const GAP_SPACES: &str =
+    "This font shows spaces as gaps between words; use single spaces between words";
+
+// Read-only text marks each opaque glyph with this character. The writable
+// repertoire never contains it, so it cannot collide with offered text.
+pub(super) const OPAQUE: char = '\u{FFFD}';
+
+#[derive(Clone, Copy)]
+pub(super) struct Opaque {
+    // Advance and excursions beyond it, in thousandths of an em.
+    pub width: f64,
+    pub overhang: [f64; 2],
+}
+
 pub(super) struct Metrics {
     unicode: Option<unicode::Metrics>,
     // Union of all offered glyphs, in thousandths of an em, including baseline.
@@ -76,6 +94,11 @@ pub(super) struct Metrics {
     // Measured excursions beyond each advance, in thousandths of an em.
     // Embedded fonts admit them; standard Helvetica retains zero slack.
     horizontal_overhangs: Option<Box<[[f64; 2]; 256]>>,
+    // Single-byte codes whose glyph is validated (advance and ink) but whose
+    // text the editor cannot write: math symbols, letters outside Latin-1.
+    // They measure source text so that a run using them stays read-only with
+    // its ink reserved, instead of refusing the page. Never used to encode.
+    opaque: Option<Box<[Option<Opaque>; 256]>>,
     // PDF codes to metric slots. Each font path validates its offered repertoire.
     // None retains the WinAnsi/Latin-1 path.
     codes: Option<Codes>,
@@ -118,6 +141,7 @@ impl Metrics {
             ));
         }
         Self {
+            opaque: None,
             unicode: None,
             vertical_bounds: None,
             widths,
@@ -215,7 +239,14 @@ impl Metrics {
         let mut text = String::new();
         let mut characters = 0;
         for &code in bytes {
-            let slot = codes[code as usize].ok_or("text contains an unmapped font code")?;
+            let Some(slot) = codes[code as usize] else {
+                if self.opaque(code).is_none() {
+                    return Err("text contains an unmapped font code".into());
+                }
+                text.push(OPAQUE);
+                characters += 1;
+                continue;
+            };
             if let Some(sequence) = ligatures::text(slot) {
                 text.push_str(sequence);
                 characters += sequence.len();
@@ -228,6 +259,75 @@ impl Metrics {
             }
         }
         Ok(text)
+    }
+
+    /// Bytes per character code in a shown string.
+    pub(super) fn code_len(&self) -> usize {
+        match (&self.unicode, &self.codes) {
+            (Some(metrics), _) => metrics.code_len(),
+            (None, Some(Codes::Double(_))) => 2,
+            _ => 1,
+        }
+    }
+
+    /// Whether a space can be written as a glyph. TeX fonts and some subsets
+    /// have none; their producers show word gaps as TJ displacements instead.
+    pub(super) fn writes_space(&self) -> bool {
+        self.encode(" ").is_ok()
+    }
+
+    /// The TJ items that show `text`: one string, or, in a font that cannot
+    /// write a space, its words separated by displacements of `gap` thousandths
+    /// of an em. A leading, trailing or repeated space has no word to separate
+    /// and is refused rather than written as an invisible shift.
+    pub(super) fn items(&self, text: &str, gap: f64) -> Result<Vec<lopdf::Object>, String> {
+        if !text.contains(' ') || self.writes_space() {
+            return Ok(vec![lopdf::Object::string_literal(self.encode(text)?)]);
+        }
+        let mut items = Vec::new();
+        for (index, word) in text.split(' ').enumerate() {
+            if word.is_empty() {
+                return Err(GAP_SPACES.into());
+            }
+            if index > 0 {
+                items.push(lopdf::Object::Real(-gap as f32));
+            }
+            items.push(lopdf::Object::string_literal(self.encode(word)?));
+        }
+        Ok(items)
+    }
+
+    /// Advance and ink of `text` as `items` shows it, in text space units.
+    pub(super) fn gapped_layout(
+        &self,
+        text: &str,
+        size: f64,
+        spacing: f64,
+        word_spacing: f64,
+        gap: f64,
+    ) -> Result<(f64, [f64; 2]), String> {
+        if !text.contains(' ') || self.writes_space() {
+            return self.spaced_layout(text, size, spacing, word_spacing);
+        }
+        let shift = gap * size / 1000.;
+        let mut cursor = 0.;
+        let mut bounds = [0_f64; 2];
+        for (index, word) in text.split(' ').enumerate() {
+            if word.is_empty() {
+                return Err(GAP_SPACES.into());
+            }
+            if index > 0 {
+                cursor += shift;
+            }
+            let (advance, [left, right]) = self.spaced_layout(word, size, spacing, word_spacing)?;
+            if index == 0 {
+                bounds = [left, right];
+            } else {
+                bounds = [bounds[0].min(cursor + left), bounds[1].max(cursor + right)];
+            }
+            cursor += advance;
+        }
+        Ok((cursor, bounds))
     }
 
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
@@ -345,14 +445,18 @@ impl Metrics {
         }
         let text = self.decode(bytes)?;
         let (advance, bounds) = if let Some(Codes::Single(codes)) = &self.codes {
-            let slots = bytes
+            let word_slot = codes[32];
+            let glyphs = bytes
                 .iter()
-                .map(|code| {
-                    codes[*code as usize]
-                        .ok_or_else(|| "text contains an unmapped font code".to_string())
+                .map(|&code| match codes[code as usize] {
+                    Some(slot) => self.glyph(slot, word_slot == Some(slot)),
+                    None => self
+                        .opaque(code)
+                        .map(|glyph| (glyph.width, glyph.overhang, code == 32))
+                        .ok_or_else(|| "text contains an unmapped font code".to_string()),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            self.spaced_slots(&slots, size, spacing, word_spacing)?
+            self.spaced_glyphs(&glyphs, size, spacing, word_spacing)?
         } else if let Some(Codes::Double(codes)) = &self.codes {
             // Keep original glyph boundaries even when their Unicode text could
             // be re-encoded as a different combination of letters and ligatures.
@@ -367,9 +471,46 @@ impl Metrics {
         Ok((text, advance, bounds))
     }
 
+    fn opaque(&self, code: u8) -> Option<Opaque> {
+        self.opaque
+            .as_ref()
+            .and_then(|opaque| opaque[code as usize])
+    }
+
+    // One offered glyph: advance and excursions in thousandths of an em, and
+    // whether word spacing applies to it.
+    fn glyph(&self, slot: u8, word: bool) -> Result<(f64, [f64; 2], bool), String> {
+        let overhang = self
+            .horizontal_overhangs
+            .as_ref()
+            .map_or([0.; 2], |values| values[slot as usize]);
+        Ok((self.width(slot)?, overhang, word))
+    }
+
     fn spaced_slots(
         &self,
         slots: &[u8],
+        size: f64,
+        spacing: f64,
+        word_spacing: f64,
+    ) -> Result<(f64, [f64; 2]), String> {
+        // ISO 32000-1, 9.3.3: Tw applies to single-byte PDF code 32,
+        // regardless of its Unicode mapping. Identity-H has no such code.
+        let word_slot = match &self.codes {
+            None => Some(32),
+            Some(Codes::Single(codes)) => codes[32],
+            Some(Codes::Double(_)) => None,
+        };
+        let glyphs = slots
+            .iter()
+            .map(|&slot| self.glyph(slot, word_slot == Some(slot)))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.spaced_glyphs(&glyphs, size, spacing, word_spacing)
+    }
+
+    fn spaced_glyphs(
+        &self,
+        glyphs: &[(f64, [f64; 2], bool)],
         size: f64,
         spacing: f64,
         word_spacing: f64,
@@ -383,28 +524,11 @@ impl Metrics {
         if !word_spacing.is_finite() || word_spacing < -size * 0.25 || word_spacing > 1_000_000. {
             return Err("word spacing exceeds editable limits".into());
         }
-        // ISO 32000-1, 9.3.3: Tw applies to single-byte PDF code 32,
-        // regardless of its Unicode mapping. Identity-H has no such code.
-        let word_slot = match &self.codes {
-            None => Some(32),
-            Some(Codes::Single(codes)) => codes[32],
-            Some(Codes::Double(_)) => None,
-        };
         let mut cursor = 0.;
         let mut bounds = [0_f64; 2];
-        for &byte in slots {
-            let width = self.width(byte)? * size / 1000.;
-            let [left, right] = self
-                .horizontal_overhangs
-                .as_ref()
-                .map_or([0.; 2], |values| values[byte as usize]);
-            let step = width
-                + spacing
-                + if word_slot == Some(byte) {
-                    word_spacing
-                } else {
-                    0.
-                };
+        for &(width, [left, right], word) in glyphs {
+            let width = width * size / 1000.;
+            let step = width + spacing + if word { word_spacing } else { 0. };
             if step <= 0. {
                 return Err("backtracking character spacing is not editable yet".into());
             }
@@ -421,6 +545,9 @@ impl Metrics {
 
 // outline_glyph returns None for both empty and malformed glyphs. Only equal,
 // in-bounds loca offsets prove the no-data case; an outline failure does not.
+// A simple glyph of one contour with one point paints nothing either, and is
+// how YuGothic subsets carry their space: read from the glyf header itself
+// (numberOfContours, then after the bounding box endPtsOfContours[0]).
 fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
     let raw = face.raw_face();
     let loca = ttf_parser::loca::Table::parse(
@@ -436,7 +563,124 @@ fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
         ),
         ttf_parser::loca::Table::Long(offsets) => (offsets.get(glyph.0)?, offsets.get(next)?),
     };
-    Some(start == end && usize::try_from(end).ok()? <= raw.table(Tag::from_bytes(b"glyf"))?.len())
+    let glyf = raw.table(Tag::from_bytes(b"glyf"))?;
+    let data = glyf.get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?;
+    Some(data.is_empty() || (data.get(0..2)? == [0, 1] && data.get(10..12)? == [0, 0]))
+}
+
+/// A simple TrueType or Type 1 font the document names but does not embed,
+/// as Word does for Arial and Times New Roman. Every reader positions its
+/// glyphs by the PDF `Widths` and draws them with a substitute, so the widths
+/// are the metrics, exactly as the built-in ones are for standard Helvetica.
+/// Only nonsymbolic WinAnsi fonts are read, over the printable Latin-1 range;
+/// a code with no width is not offered. There are no outlines, so like
+/// Helvetica its text cannot be kept read-only beside an edit.
+pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
+    let invalid = || "unsupported unembedded font".to_string();
+    if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
+        || !matches!(
+            font.get(b"Subtype").and_then(Object::as_name).ok(),
+            Some(b"TrueType" | b"Type1")
+        )
+        || font.get(b"BaseFont").and_then(Object::as_name).is_err()
+        || font.get(b"Encoding").and_then(Object::as_name).ok() != Some(b"WinAnsiEncoding")
+        || font.iter().any(|(key, _)| {
+            !matches!(
+                key.as_slice(),
+                b"Type"
+                    | b"Subtype"
+                    | b"BaseFont"
+                    | b"Encoding"
+                    | b"Name"
+                    | b"FirstChar"
+                    | b"LastChar"
+                    | b"Widths"
+                    | b"FontDescriptor"
+            )
+        })
+    {
+        return Err(invalid());
+    }
+    let descriptor = dictionary(doc, font.get(b"FontDescriptor").map_err(|_| invalid())?)?;
+    if descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
+        || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
+        || descriptor
+            .get(b"Flags")
+            .and_then(Object::as_i64)
+            .map_err(|_| invalid())?
+            & (4 | 32)
+            != 32
+    {
+        // Both callers reach this only for a descriptor without a program.
+        return Err(invalid());
+    }
+    let first = font
+        .get(b"FirstChar")
+        .and_then(Object::as_i64)
+        .map_err(|_| invalid())?;
+    let last = font
+        .get(b"LastChar")
+        .and_then(Object::as_i64)
+        .map_err(|_| invalid())?;
+    if first < 0 || last > 255 || first > last {
+        return Err(invalid());
+    }
+    let widths = crate::encoding::resolve(doc, font.get(b"Widths").map_err(|_| invalid())?)
+        .as_array()
+        .map_err(|_| invalid())?;
+    if widths.len() != (last - first + 1) as usize {
+        return Err(invalid());
+    }
+    // FontBBox bounds every glyph the font has, so it stands in for the
+    // outlines this font does not carry: text in it can then be kept read-only
+    // with that box reserved, and nothing drawn is ever outside it.
+    let bbox = crate::encoding::resolve(doc, descriptor.get(b"FontBBox").map_err(|_| invalid())?)
+        .as_array()
+        .map_err(|_| invalid())?
+        .iter()
+        .map(number)
+        .collect::<Result<Vec<_>, _>>()?;
+    let [left, bottom, right, top] = bbox[..] else {
+        return Err(invalid());
+    };
+    if left > right || bottom > top || [left, bottom, right, top].iter().any(|v| v.abs() > 4000.) {
+        return Err(invalid());
+    }
+    let mut result = Box::new([None; 256]);
+    let mut overhangs = Box::new([[0_f64; 2]; 256]);
+    for code in (32..=126).chain(160..=255) {
+        if code < first || code > last {
+            continue;
+        }
+        let width = number(&widths[(code - first) as usize])?;
+        if !(0. ..=2000.).contains(&width) {
+            return Err(invalid());
+        }
+        if width > 0. {
+            result[code as usize] = Some(width);
+            overhangs[code as usize] = [left.min(0.), (right - width).max(0.)];
+        }
+    }
+    Ok(Metrics {
+        opaque: None,
+        unicode: None,
+        vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
+        widths: result,
+        horizontal_overhangs: Some(overhangs),
+        codes: None,
+    })
+}
+
+/// Whether a simple font's descriptor names no embedded program.
+pub(super) fn is_unembedded(doc: &Document, font: &Dictionary) -> bool {
+    font.get(b"FontDescriptor")
+        .ok()
+        .and_then(|value| dictionary(doc, value).ok())
+        .is_some_and(|descriptor| {
+            ![b"FontFile".as_slice(), b"FontFile2", b"FontFile3"]
+                .iter()
+                .any(|key| descriptor.has(key))
+        })
 }
 
 pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
@@ -475,8 +719,9 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         .map_err(|_| invalid())?;
     // ISO 32000-1, 9.6.6.4: standard mappings require nonsymbolic flags.
     // The custom path requires symbolic byte lookup through one Macintosh cmap.
-    // WinAnsi with ToUnicode may retain a Mac cmap only when every offered
-    // ASCII glyph agrees with the Windows cmap. No name fallback is used.
+    // WinAnsi may retain a Mac cmap only when every offered ASCII glyph agrees
+    // with the Windows cmap, which Word and Office write together. No name
+    // fallback is used.
     if flags & (4 | 32 | 262144) != if custom { 4 } else { 32 }
         || descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
@@ -508,9 +753,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     // them. All accepted maps must agree on each offered ASCII glyph.
     if cmap.subtables.into_iter().any(|table| {
         !table.is_unicode()
-            && !((mac_roman || custom || named_unicode)
-                && table.platform_id == PlatformId::Macintosh
-                && table.encoding_id == 0)
+            && !(table.platform_id == PlatformId::Macintosh && table.encoding_id == 0)
     }) {
         return Err(invalid());
     }
@@ -628,6 +871,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         result[byte as usize] = Some(width);
     }
     Ok(Metrics {
+        opaque: None,
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,

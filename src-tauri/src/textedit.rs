@@ -16,6 +16,7 @@ mod forms;
 mod graphics;
 mod grouping;
 mod images;
+mod kerning;
 mod layout;
 mod patterns;
 #[cfg(test)]
@@ -34,7 +35,10 @@ use sha2::{Digest, Sha256};
 const MAX_CONTENT: usize = 1024 * 1024;
 // Image samples have their own bounded budget; ordinary photographs are much
 // larger than page operator streams. Charge preserved forms against it too.
-const MAX_IMAGES: usize = 8 * 1024 * 1024;
+// 32 MiB holds a full-page screenshot with its soft mask (a 2264 x 1440 RGB
+// figure is 13 MB) and is checked before any decoding, inside a worker whose
+// commit is capped at 1 GiB (sandbox_win::WORKER_MEMORY_CAP).
+const MAX_IMAGES: usize = 32 * 1024 * 1024;
 // Character-positioned exports use two operators per glyph. Keep a finite
 // work bound without rejecting ordinary dense pages; decoded bytes stay at 1 MiB.
 const MAX_OPERATIONS: usize = 16_384;
@@ -154,6 +158,11 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     }
     if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Type0") {
         return fonts::composite(doc, font);
+    }
+    if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"TrueType")
+        && fonts::is_unembedded(doc, font)
+    {
+        return fonts::unembedded(doc, font);
     }
     if font.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"TrueType") {
         return fonts::embedded(doc, font);
@@ -417,6 +426,12 @@ struct Inspection {
     // A replacement must stay within these as well as the original advance.
     horizontal_bounds: BTreeMap<u32, [f64; 2]>,
     text_spacing: BTreeMap<u32, (f64, f64)>,
+    // A TJ's leading adjustment, kept verbatim in front of whatever replaces
+    // the show so the run and everything after it keep their positions.
+    leads: BTreeMap<u32, Object>,
+    // The mean word-gap displacement of a run whose font cannot write a space,
+    // in thousandths of an em; a replacement's spaces reuse it.
+    gaps: BTreeMap<u32, f64>,
     continued: BTreeSet<u32>,
     groups: BTreeMap<u32, Vec<u32>>,
     compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
@@ -425,17 +440,30 @@ struct Inspection {
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
-// matrices. Keep a single left-to-right envelope: no negative cursor, retreating
-// fragment ends or leading adjustments. Trailing forward padding is allowed.
-// A replacement drops kerning
-// within this run and must fit the resulting original advance.
-fn array_text(
-    values: &[Object],
+// matrices. Keep a single left-to-right envelope: no negative cursor or
+// retreating fragment ends. Trailing forward padding is allowed.
+// A replacement drops kerning within this run and must fit the resulting
+// original advance.
+//
+// One leading adjustment is not kerning but where the run starts: pdfTeX opens
+// indented and justified lines with one. It is returned separately, moves the
+// run's origin, and is written back unchanged in front of any replacement.
+//
+// In a font that cannot write a space, a displacement of at least GAP_EM
+// between two strings is the space itself (pdfTeX sets every interword space
+// this way). It becomes ' ' in the text; the total of those displacements is
+// returned so a replacement can reuse their mean width.
+fn array_text<'a>(
+    values: &'a [Object],
     metrics: &fonts::Metrics,
     size: f64,
     spacing: f64,
     word_spacing: f64,
-) -> Result<(String, f64, [f64; 2]), String> {
+) -> Result<ArrayText<'a>, String> {
+    let (lead, values) = match values {
+        [lead @ (Object::Integer(_) | Object::Real(_)), rest @ ..] => (Some(lead), rest),
+        values => (None, values),
+    };
     if values.is_empty()
         || values.len() > MAX_TEXT
         || !matches!(values.first(), Some(Object::String(..)))
@@ -447,10 +475,23 @@ fn array_text(
     let mut advance = 0.0;
     let mut furthest = 0.0;
     let mut bounds = [0_f64; 2];
+    let gap_spaces = !metrics.writes_space();
+    let mut gaps = Gaps::default();
+    // The displacement since the last string, in thousandths of an em.
+    let mut pending = 0.0;
     for value in values {
         if let Object::String(bytes, _) = value {
             let (fragment, width, [left, right]) =
                 metrics.source_layout(bytes, size, spacing, word_spacing)?;
+            // The run's leading adjustment is split off above, so a gap here
+            // always follows a string.
+            if gap_spaces && pending >= GAP_EM {
+                text.push(' ');
+                characters += 1;
+                gaps.total += pending;
+                gaps.count += 1;
+            }
+            pending = 0.0;
             characters += fragment.chars().count();
             if characters > MAX_TEXT {
                 return Err("kerning array text exceeds its limit".into());
@@ -464,7 +505,9 @@ fn array_text(
             furthest = advance;
             text.push_str(&fragment);
         } else {
-            advance -= number(value)? * size / 1000.0;
+            let value = number(value)?;
+            pending -= value;
+            advance -= value * size / 1000.0;
         }
         if !advance.is_finite() || !(0.0..=1_000_000.0).contains(&advance) {
             return Err("kerning position exceeds its limit".into());
@@ -473,7 +516,23 @@ fn array_text(
     if advance < furthest {
         return Err("backtracking trailing kerning is not editable yet".into());
     }
-    Ok((text, advance, bounds))
+    Ok((text, advance, bounds, lead, gaps))
+}
+
+// The smallest TJ displacement read as a word space, in thousandths of an em:
+// the same 0.18 em grouping.rs uses between separately positioned fragments.
+// Kerns stay well below it; TeX's shrunk interword spaces stay above it.
+const GAP_EM: f64 = 180.0;
+// The space a replacement writes where its run had none to measure.
+const DEFAULT_GAP: f64 = 250.0;
+
+// A TJ array's text, advance, ink, leading adjustment and word gaps.
+type ArrayText<'a> = (String, f64, [f64; 2], Option<&'a Object>, Gaps);
+
+#[derive(Default)]
+struct Gaps {
+    total: f64,
+    count: u32,
 }
 
 fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
@@ -497,8 +556,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         patterns::Colour::Solid(colors::named(doc, resources, b"DeviceGray")?);
     let mut colour_spaces = BTreeMap::new();
     let mut shading_patterns = BTreeSet::new();
-    let mut graphics_states = BTreeSet::new();
+    // Each validated state and the line width it sets, if any.
+    let mut graphics_states = BTreeMap::new();
     let mut image_names = BTreeSet::new();
+    let mut stencils: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut form_bounds = BTreeMap::new();
     let mut image_bytes = 0;
     let mut result = PageRuns {
@@ -525,6 +586,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut leading = 0.0;
     let mut spacing = 0.0;
     let mut word_spacing = 0.0;
+    // ISO 32000-1 9.3.6 and 8.4.3.2: the text render mode and the line width
+    // are graphics state, saved and restored with it. Modes 1 and 2 stroke the
+    // glyphs, so their ink reaches half the line width beyond the outlines.
+    let mut render = 0_i64;
+    let mut line_width = 1.0_f64;
     let mut stroke_components = patterns::Colour::Solid(1);
     let mut states = Vec::new();
     let mut clip = None;
@@ -534,6 +600,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut font_operators = BTreeMap::new();
     let mut horizontal_bounds = BTreeMap::new();
     let mut text_spacing = BTreeMap::new();
+    let mut leads = BTreeMap::new();
+    let mut gaps = BTreeMap::new();
     let mut compound_run_clips = BTreeMap::new();
     let mut contexts = BTreeMap::new();
     let mut preserved = Vec::new();
@@ -582,7 +650,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("EMC", []) if inside && spacer.is_some() => {
                 spacer = None;
             }
-            ("BMC", [tag]) if !inside => tags.begin(tag, None)?,
+            // An artifact needs no properties, inside a text object or out:
+            // LibreOffice marks table-of-contents dot leaders `/Artifact BMC`.
+            ("BMC", [tag]) if !inside || tag.as_name().ok() == Some(b"Artifact") => {
+                tags.begin(tag, None)?
+            }
             ("BDC", [tag, properties]) => tags.begin(tag, Some(properties))?,
             ("EMC", []) => tags.end()?,
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
@@ -602,6 +674,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     word_spacing,
                     stroke_components,
                     compound_clips.clone(),
+                    (render, line_width),
                 ));
             }
             ("Q", []) if !inside => {
@@ -615,12 +688,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     word_spacing,
                     stroke_components,
                     compound_clips,
+                    (render, line_width),
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
-                if !diagonal(page_transform) {
-                    return Err("non-diagonal paths are not editable yet".into());
-                }
                 if let Some(rectangles_consumed) =
                     clipping::painted(&content.operations[index..], page_transform)?
                 {
@@ -633,6 +704,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                         tags.paint();
                     }
                     path_until = index + rectangles_consumed;
+                } else if !diagonal(page_transform) {
+                    return Err("non-diagonal clips are not editable yet".into());
                 } else {
                     clip = Some(clipping::apply(
                         clip,
@@ -643,11 +716,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 }
             }
             ("m", _) if !inside => {
-                if !diagonal(page_transform) {
-                    return Err("non-diagonal paths are not editable yet".into());
-                }
-                if let Some((consumed, region)) =
-                    clipping::compound(&content.operations[index..], page_transform)?
+                // A rotated or skewed path may be painted; clipping with one
+                // stays refused, because the clip model is axis-aligned.
+                if let Some((consumed, region)) = diagonal(page_transform)
+                    .then(|| clipping::compound(&content.operations[index..], page_transform))
+                    .transpose()?
+                    .flatten()
                 {
                     if compound_clips.len() >= 32 {
                         return Err("too many compound clipping intersections".into());
@@ -681,10 +755,17 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                         image_bytes += form.bytes;
                         form_bounds.insert(name.clone(), form.text_bounds);
                     } else {
-                        image_bytes +=
-                            images::check(doc, resources, name, MAX_IMAGES - image_bytes)?;
+                        let image = images::check(doc, resources, name, MAX_IMAGES - image_bytes)?;
+                        image_bytes += image.bytes;
+                        if image.stencil {
+                            stencils.insert(name.clone());
+                        }
                     }
                     image_names.insert(name.clone());
+                }
+                // A stencil mask paints the fill colour current at each use.
+                if stencils.contains(name) {
+                    patterns::paint("f", fill_components, stroke_components)?;
                 }
                 if let Some(Some(bounds)) = form_bounds.get(name) {
                     let mut bounds = text_bounds(page_transform, *bounds);
@@ -714,8 +795,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 }
                 tags.paint();
             }
-            ("w", [value]) => clipping::line_width(value)?,
+            ("w", [value]) => {
+                clipping::line_width(value)?;
+                line_width = number(value)?;
+            }
             ("J" | "j" | "M" | "d", values) => graphics::stroke(&op.operator, values)?,
+            ("i", [value]) => graphics::tolerance(b"FL", value)?,
             ("cm", values) if !inside && values.len() == 6 => {
                 let mut next = [0.0; 6];
                 for (dest, value) in next.iter_mut().zip(values) {
@@ -739,15 +824,20 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("Tw", [value]) => word_spacing = number(value)?,
             ("Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
-            ("Tr", [Object::Integer(0)]) => {}
+            // Fill, stroke, both, or neither. Modes 4 to 7 add the glyphs to
+            // the clipping path and change what later content shows.
+            ("Tr", [Object::Integer(mode @ 0..=3)]) => render = *mode,
             ("ri", [Object::Name(name)]) => colors::intent(name)?,
             ("gs", [Object::Name(name)]) => {
-                if !graphics_states.contains(name) {
+                if !graphics_states.contains_key(name) {
                     if graphics_states.len() >= 32 {
                         return Err("too many external text graphics states".into());
                     }
-                    graphics::normal(doc, resources, name)?;
-                    graphics_states.insert(name.clone());
+                    let width = graphics::normal(doc, resources, name)?;
+                    graphics_states.insert(name.clone(), width);
+                }
+                if let Some(width) = graphics_states[name] {
+                    line_width = width;
                 }
             }
             ("cs" | "CS", [Object::Name(name)]) => {
@@ -865,13 +955,24 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         let geometry = crate::pagetree::displayed_page(doc, id);
         let metrics = font_metrics.get(name).ok_or("missing text font")?;
         let (text, advance, horizontal) = if op.operator == "TJ" {
-            array_text(
+            let (text, advance, horizontal, lead, found) = array_text(
                 op.operands[0].as_array().map_err(|e| e.to_string())?,
                 metrics,
                 size,
                 spacing,
                 word_spacing,
-            )?
+            )?;
+            if found.count > 0 {
+                gaps.insert(index as u32, found.total / f64::from(found.count));
+            }
+            if let Some(lead) = lead {
+                cursor -= number(lead)? * size / 1000.0;
+                if !cursor.is_finite() || cursor.abs() > 1_000_000.0 {
+                    return Err("kerning position exceeds its limit".into());
+                }
+                leads.insert(index as u32, lead.clone());
+            }
+            (text, advance, horizontal)
         } else {
             metrics.source_layout(
                 op.operands[0].as_str().map_err(|e| e.to_string())?,
@@ -887,12 +988,27 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         } else {
             compose_affine(page_transform, shown_matrix)?
         };
+        // A glyph whose text the editor cannot write keeps its whole run.
         let read_only = tags.read_only()
+            || text.contains(fonts::OPAQUE)
             || !diagonal(page_transform)
             || !orthogonal(page_matrix)
             || page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0
-            || !matches!(fill_components, patterns::Colour::Solid(_));
-        patterns::paint("f", fill_components, stroke_components)?;
+            || !matches!(fill_components, patterns::Colour::Solid(_))
+            || (matches!(render, 1 | 2)
+                && !matches!(stroke_components, patterns::Colour::Solid(_)));
+        // The colours the mode paints with; an invisible run paints nothing.
+        if let Some(paint) = [Some("f"), Some("S"), Some("B"), None][render as usize] {
+            patterns::paint(paint, fill_components, stroke_components)?;
+        }
+        // Half the line width, in page units, around stroked glyphs.
+        let stroke = if matches!(render, 1 | 2) {
+            line_width / 2.
+                * (page_transform[0].abs() + page_transform[2].abs())
+                    .max(page_transform[1].abs() + page_transform[3].abs())
+        } else {
+            0.
+        };
         cursor += advance;
         if !cursor.is_finite() || cursor > 1_000_000.0 {
             return Err("continued text advance exceeds its limit".into());
@@ -905,7 +1021,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             let (bottom, top) = metrics
                 .vertical_bounds
                 .map(|[bottom, top]| (bottom, top))
-                .ok_or("preserved transformed text requires validated glyph outlines")?;
+                .ok_or("read-only text requires validated glyph outlines")?;
             let ink = text_bounds(
                 page_matrix,
                 [
@@ -922,6 +1038,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 bounds[3].max(ink[3]),
             ];
         }
+        bounds = [
+            bounds[0] - stroke,
+            bounds[1] - stroke,
+            bounds[2] + stroke,
+            bounds[3] + stroke,
+        ];
         // Include actual horizontal overhang in hit boxes and clipping. The
         // vertical union covers every offered glyph. Writing additionally keeps
         // replacement ink inside these unrounded original horizontal bounds.
@@ -939,6 +1061,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     top * size / 1000.,
                 ],
             );
+            let ink_bounds = [
+                ink_bounds[0] - stroke,
+                ink_bounds[1] - stroke,
+                ink_bounds[2] + stroke,
+                ink_bounds[3] + stroke,
+            ];
             // A rectangular clip remains in the saved stream and in the worker
             // preview. Partly clipped source text is still editable; rejecting
             // it here would disable every other text object on the page.
@@ -1000,6 +1128,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 cursor_after: cursor,
                 clip,
                 regions: compound_clips.clone(),
+                stroke,
             },
         );
         result.runs.push(Run {
@@ -1029,7 +1158,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     }
     tags.finish()?;
     if result.runs.is_empty() && !preserved.is_empty() {
-        return Err("page contains only unsupported transformed text".into());
+        // Transformed, pattern-filled and tagged read-only text all land here.
+        return Err("page contains only read-only text".into());
     }
     // Discovery promises that every offered run can be deleted. Check the
     // actual f32 TJ compensation before offering implicit-advance text.
@@ -1050,6 +1180,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         font_operators,
         horizontal_bounds,
         text_spacing,
+        leads,
+        gaps,
         continued,
         groups: BTreeMap::new(),
         compound_run_clips,
@@ -1071,6 +1203,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
 // in the tens or hundreds of thousands, where f32 rounds by hundredths. TJ sums
 // consecutive numbers (ISO 32000-1 9.4.3), so emit the exact integer part and
 // the small remainder separately; both share the sign of the whole value.
+// A TJ operand with the show's original leading adjustment, if it had one.
+fn led(lead: Option<&Object>, items: Vec<Object>) -> Object {
+    Object::Array(lead.cloned().into_iter().chain(items).collect())
+}
+
 fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<Vec<Object>, String> {
     let wanted = (replacement_advance - run.advance) * 1000. / run.size;
     if !wanted.is_finite() || wanted.abs() > 1_000_000.0 {
@@ -1161,6 +1298,8 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             font_operators,
             horizontal_bounds,
             text_spacing,
+            leads,
+            gaps,
             continued,
             patched,
             groups,
@@ -1186,37 +1325,75 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         let (spacing, word_spacing) = *text_spacing
             .get(&change.operator)
             .ok_or("missing text spacing")?;
-        let (replacement_advance, replacement_bounds) =
-            metrics.spaced_layout(&change.replacement, run.size, spacing, word_spacing)?;
+        let gap = gaps.get(&change.operator).copied().unwrap_or(DEFAULT_GAP);
+        // Keep the source's own kerning and gaps where the replacement leaves
+        // the text unchanged (see kerning.rs); otherwise rewrite the run.
+        let source = &content.operations[change.operator as usize];
+        let kept = if source.operator == "TJ" && !groups.contains_key(&change.operator) {
+            let values = source.operands[0].as_array().map_err(|e| e.to_string())?;
+            let values = &values[usize::from(leads.contains_key(&change.operator))..];
+            kerning::kept(
+                values,
+                &change.replacement,
+                &metrics,
+                gap,
+                (run.size, spacing, word_spacing),
+            )
+        } else {
+            None
+        };
+        let original = *horizontal_bounds
+            .get(&change.operator)
+            .ok_or("missing text ink bounds")?;
+        // Kept kerns can widen as well as narrow: a kept version that does not
+        // fit gives way to the rewrite, which may.
+        let kept = kept.filter(|(_, advance, bounds)| {
+            *advance <= run.advance + 0.000_001
+                && bounds[0] >= original[0]
+                && bounds[1] <= original[1]
+        });
+        let (replacement_advance, replacement_bounds, mut items) = match kept {
+            Some((items, advance, bounds)) => (advance, bounds, items),
+            None => {
+                let (replacement_advance, replacement_bounds) = metrics.gapped_layout(
+                    &change.replacement,
+                    run.size,
+                    spacing,
+                    word_spacing,
+                    gap,
+                )?;
+                let items = metrics.items(&change.replacement, gap)?;
+                (replacement_advance, replacement_bounds, items)
+            }
+        };
         if replacement_advance > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
-        let original = horizontal_bounds
-            .get(&change.operator)
-            .ok_or("missing text ink bounds")?;
         if replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1] {
             return Err("replacement ink would exceed the original text bounds".into());
         }
-        let replacement = metrics.encode(&change.replacement)?;
         patched.insert(change.operator as usize);
         let show = &mut content.operations[change.operator as usize];
-        let replacement = Object::string_literal(replacement);
+        let lead = leads.get(&change.operator);
         show.operands[0] = if continued.contains(&change.operator) {
             // TJ offsets are subtracted in thousandths of text space. Keep
             // following shows fixed, including after deletion of this string.
-            let mut items = vec![replacement];
             items.extend(continuation_adjustment(run, replacement_advance)?);
             show.operator = "TJ".into();
-            Object::Array(items)
-        } else if show.operator == "TJ" {
-            Object::Array(vec![replacement])
+            led(lead, items)
+        } else if show.operator == "TJ" || items.len() > 1 {
+            // Word gaps need an array even where the source was a Tj.
+            show.operator = "TJ".into();
+            led(lead, items)
         } else {
-            replacement
+            items.remove(0)
         };
         if let Some(members) = groups.get(&change.operator) {
             for &member in members {
                 let show = &mut content.operations[member as usize];
                 show.operands[0] = if show.operator == "TJ" {
+                    // A member's own leading adjustment moves nothing: grouping
+                    // requires a Td before every member.
                     Object::Array(vec![Object::string_literal(Vec::new())])
                 } else {
                     Object::string_literal(Vec::new())
@@ -1467,9 +1644,13 @@ pub(crate) mod tests {
                 "{adjustments}"
             );
         }
+        // One leading number is where the run starts (see array_text); two,
+        // or one with nothing after it, is still refused.
         for array in [
             "[]",
-            "[1 (TEXT)]",
+            "[1]",
+            "[1 2 (TEXT)]",
+            "[1000001 (TEXT)]",
             "[(TEXT) 1]",
             "[(A) [0] (B)]",
             "[(A) /Name (B)]",
@@ -1487,6 +1668,16 @@ pub(crate) mod tests {
                 "accepted {array}"
             );
         }
+        // After a continued show, an opening shift can carry the cursor past
+        // its bound; that is refused before the run is laid out.
+        assert_eq!(
+            scan(
+                &with_content(b"BT /F1 1000 Tf 40 180 Td (A) Tj [-1000000 (B)] TJ ET"),
+                0
+            )
+            .unwrap_err(),
+            "kerning position exceeds its limit"
+        );
         for content in [
             "BT /F1 12 Tf 40 180 Td [(TEXT)] Tj ET",
             "BT /F1 12 Tf 40 180 Td (TEXT) TJ ET",
@@ -1863,6 +2054,9 @@ pub(crate) mod tests {
                 "", "0 0", "(0)", "/Zero", "[0]", "true", "null", "1", "-1", "0.01", "99.99",
                 "100.01", "1000001",
             ] {
+                if operator == "Tr" && operand == "1" {
+                    continue; // Stroked text is a supported mode.
+                }
                 // A later default setter must not hide an earlier unsupported one.
                 let bytes = format!(
                     "{operand} {operator} {default} {operator} BT /F1 12 Tf 40 180 Td (TEXT) Tj ET"
@@ -1873,12 +2067,24 @@ pub(crate) mod tests {
                 );
             }
         }
-        // Rendering mode is an integer; modes 1..7 include stroke, hidden and clip.
-        for mode in ["0.0", "1", "2", "3", "4", "5", "6", "7"] {
+        // Rendering mode is an integer. Fill, stroke, both and invisible are
+        // editable; modes 4..7 add the glyphs to the clipping path.
+        for (mode, accepted) in [
+            ("0.0", false),
+            ("1", true),
+            ("2", true),
+            ("3", true),
+            ("4", false),
+            ("5", false),
+            ("6", false),
+            ("7", false),
+            ("8", false),
+        ] {
             let bytes = format!("BT /F1 12 Tf 40 180 Td {mode} Tr (TEXT) Tj ET");
-            assert!(
-                scan(&with_content(bytes.as_bytes()), 0).is_err(),
-                "accepted {mode} Tr"
+            assert_eq!(
+                scan(&with_content(bytes.as_bytes()), 0).is_ok(),
+                accepted,
+                "{mode} Tr"
             );
         }
     }
@@ -2159,7 +2365,7 @@ pub(crate) mod tests {
     #[test]
     fn textedit_refuses_unsupported_state_and_font_semantics() {
         for bytes in [
-            "3 Tr BT /F1 12 Tf 40 180 Td (HIDDEN) Tj ET",
+            "7 Tr BT /F1 12 Tf 40 180 Td (HIDDEN) Tj ET",
             "-2 0 0 2 0 0 cm BT /F1 12 Tf 40 180 Td (REFLECTED) Tj ET",
             "/Span << /ActualText (OTHER) >> BDC BT /F1 12 Tf 40 180 Td (TEXT) Tj ET EMC",
             "BT /F1 12 Tf 40 180 Td (TEXT) Tj",

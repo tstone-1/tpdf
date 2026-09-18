@@ -83,6 +83,13 @@ fn visit(
                 dictionary(doc, value)?;
             }
             (b"LastModified", Object::String(bytes, _)) if bytes.len() <= 127 => {}
+            // pdfTeX's record of an included figure: the file, its page and
+            // that file's Info dictionary. None is painted.
+            (b"PTEX.FileName", Object::String(bytes, _)) if bytes.len() <= 4096 => {}
+            (b"PTEX.PageNumber", Object::Integer(page)) if *page >= 0 => {}
+            (b"PTEX.InfoDict", _) => {
+                dictionary(doc, value)?;
+            }
             // ISO 32000-1 8.11.3.3: the layer this form belongs to. The editor
             // never resolves the layer state, and treats the form as painted
             // either way: reserving the box of a form that turns out to be
@@ -151,7 +158,9 @@ fn visit(
             ("ET", []) if inside => inside = false,
             ("q", []) if !inside && stack < 64 => stack += 1,
             ("Q", []) if !inside && stack > 0 => stack -= 1,
-            ("gs", [Object::Name(name)]) => super::graphics::normal(doc, resources, name)?,
+            ("gs", [Object::Name(name)]) => {
+                super::graphics::normal(doc, resources, name)?;
+            }
             ("Do", [Object::Name(name)]) if !inside => {
                 let objects = dictionary(doc, resources.get(b"XObject").map_err(|_| INVALID)?)?;
                 let child = objects.get(name).map_err(|_| INVALID)?;
@@ -161,7 +170,12 @@ fn visit(
                 if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Form") {
                     has_text |= visit(doc, resources, child, depth + 1, budget)?.is_some();
                 } else {
-                    budget.remaining -= images::check(doc, resources, name, budget.remaining)?;
+                    let image = images::check(doc, resources, name, budget.remaining)?;
+                    // A form's fill colour is not tracked, and a stencil paints it.
+                    if image.stencil {
+                        return Err(INVALID.into());
+                    }
+                    budget.remaining -= image.bytes;
                 }
             }
             // These operations are confined to the form's automatic graphics

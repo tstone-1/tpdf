@@ -8860,3 +8860,114 @@ the trap entry for: two frontier bounds shared the message `tagged list frontier
 exceeds its limit`, so a `contains` assertion could not tell them apart and the
 deferred bound was never exercised by the test written for it. It has its own
 message now, and the test pins all three outcomes by exact string.
+
+### Producer sample: tagged metadata, Type 1 fonts and word gaps
+
+The same seventeen files, re-surveyed on Windows x64, 2026-09-18, after each change below.
+Editable pages go from 123 to 154 of 268, and no page that was editable before is lost:
+
+| Producer | Pages | Before | After | First refusal now |
+|---|---:|---:|---:|---|
+| pdfTeX, 2025 arXiv paper | 24 | 0 | 22 | Figure form content, image budget |
+| pdfTeX, 2020 arXiv paper | 11 | 0 | 3 | Oversized figure streams, math codes, a non-embedded font |
+| LibreOffice (W3C headers) | 5 | 0 | 3 | Read-only title page, inline `BMC` |
+| Acrobat 25 (Arcadia agenda) | 127 | 92 | 94 | Content stream filter (scanned pages) |
+| Word via PDFMaker 22 (Illinois resumes) | 2 | 0 | 1 | Missing glyph |
+| All other producers | 99 | 31 | 31 | unchanged |
+
+Measured before choosing, and worth knowing because each looked like the obvious next step:
+the 19 Arcadia pages refused on `CCITTFaxDecode` are scans whose only text is a read-only
+page-number form, so a CCITT decoder would move them to "no text" and make none editable;
+Canada Post's table cells name a header ID (`...Cell1[0]`) that is absent from the IDTree,
+a dangling reference that stays refused; the W-4's CFF fonts carry `/FSType` 4 and are
+correctly refused like the InDesign ones.
+
+What changed, and why each is safe for a text edit:
+
+- **Metadata that describes content pins it.** `/Alt` on any element (it stands in for every
+  descendant), a non-empty `/T` on an element that owns text, and a non-`Start` `TextAlign`
+  keep that element's text read-only instead of refusing the page. They join the table
+  `/BBox` rule through the same `Tags::bounded` set. An edit could otherwise leave them
+  describing wording or alignment that is gone.
+- **`/ClassMap` classes** named by `/C` (at most 8, each optionally followed by a revision
+  number) are validated by the same function as the element's own `/A`. Layout attributes
+  may omit `Placement` and carry `LineHeight`; inline leaves accept only `LineHeight`.
+- **`TOC`/`TOCI`** group ordinary blocks (LibreOffice and Word export one per index), and a
+  `Form` may carry `PrintField` attributes (LiveCycle, on every check box).
+- **Flatness and smoothness** (`i`, `/FL`, `/SM`) are device tolerances and are preserved.
+  Constant alpha (`ca`/`CA` in 0-1) is accepted: an edit keeps the state, so a replacement
+  is painted with the alpha of the text it replaces. Blend modes and soft masks stay refused.
+- **A Mac Roman `(1,0)` cmap beside `(3,1)`** is accepted without a ToUnicode map under the
+  same ASCII agreement check that already applied with one.
+- **Embedded Type 1 programs** are parsed and interpreted without executing PostScript (see
+  `AGENTS.md`). Codes are offered only where glyph, width and ToUnicode agree with the name.
+- **Word gaps and leading offsets.** In a font that cannot write a space, a `TJ`
+  displacement of at least 0.18 em reads as a space and is written back as the run's mean
+  gap; one leading `TJ` number moves the run's origin and is kept. `docs/TRAPS.md` has why.
+- **Opaque glyphs.** A validated glyph the editor cannot write keeps its run read-only with
+  its ink reserved, instead of refusing the page.
+- **pdfTeX figures.** Forms carrying `PTEX.FileName`, `PTEX.PageNumber` and `PTEX.InfoDict`
+  are preserved like any other form.
+
+Round trips on the unchanged public files, through the contained worker. Build the probe
+first; `--roundtrip` needs a new output directory each time:
+
+```sh
+printf '%s' '[{"page":2,"contains":"reasoning.","replacement":"thinking.","replace_match":true},{"page":2,"contains":"These complementary strengths","replacement":"These strengths","replace_match":true},{"page":4,"contains":"Criterion","replacement":"Criteria","replace_match":true}]' > scratch/prototype/rt/tex2.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/arxiv-recent.pdf scratch/prototype/rt/tex2.json scratch/prototype/rt/tex2
+printf '%s' '[{"page":2,"contains":"Header Two","replacement":"Head Two","replace_match":true},{"page":2,"contains":"Header Three","replacement":"Head Three","replace_match":true}]' > scratch/prototype/rt/w3c.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/w3c-headers.pdf scratch/prototype/rt/w3c.json scratch/prototype/rt/w3c
+```
+
+Both report preview/save pixel agreement and unchanged adjacent pixels. The saved copies were
+then checked with tools independent of PDFium and lopdf: `qpdf --check` finds no errors;
+Poppler's `pdftoppm` at 100 dpi changes only the edited lines (arXiv page 3 rows 197-208 and
+227-238, page 5 rows 122-130; W3C page 3 two heading bands) and no pixel on neighbouring
+pages; Poppler's `pdftotext` reads the rewritten TeX line as "These strengths suggest
+potential for hybrid", so the written gaps are spaces to another reader too; pypdf extracts
+changed text only on the edited pages and keeps the W3C structure tree at 66 elements.
+Replacements that need a glyph the subset lacks (digits in the W3C heading font) are refused.
+
+### Producer sample, continued: kerning, paths, render modes and scans
+
+The same seventeen files, re-surveyed on Windows x64, 2026-09-18. Editable pages go from
+154 to 170 of 268, and again no editable page is lost:
+
+| Producer | Pages | Before | After |
+|---|---:|---:|---:|
+| Acrobat 25 (Arcadia agenda) | 127 | 94 | 99 |
+| pdfTeX, 2020 arXiv paper | 11 | 3 | 7 |
+| Word (Mercer minutes) | 4 | 0 | 4 |
+| pdfTeX, 2025 arXiv paper | 24 | 22 | 23 |
+| LibreOffice (W3C headers) | 5 | 3 | 4 |
+| Word via PDFMaker 22 (Illinois resumes) | 2 | 1 | 2 |
+| All other producers | 95 | 31 | 31 |
+
+What changed, each described in `AGENTS.md`: a `TJ` replacement keeps the source's kerning
+and gaps around its changed middle; painted paths under any CTM and movetos that draw
+nothing; a 32 MiB image budget; non-embedded WinAnsi TrueType and Type 1 fonts measured by
+their widths; text render modes 0-3 with the stroke counted as ink; `/Artifact BMC` inside
+a text object; single-point glyphs as empty; and a Type0 name that differs from its
+descendant's.
+
+The scanned Arcadia pages were then taken past their image refusals, as the previous
+section predicted they would behave: `[/FlateDecode /DCTDecode]` backgrounds, NUL padding
+after EOI, CCITT Group 4 stencil masks and an untagged page-number artifact are all
+accepted, and the 18 pages move from refused to "no text" (19 in all, with one before).
+None becomes editable, because the only text on them is the read-only page stamp. The
+support is for OCR'd scans, which pair exactly those images with a mode-3 text layer; this
+sample has none, so it is covered by synthetic tests only.
+
+Refused now, 79 pages: 55 are CFF fonts with `/FSType` 4 (Preview & Print), which the
+OpenType specification restricts to read-only use, and 24 are spread over seventeen reasons
+with no more than four pages each.
+
+Mutations, on Windows x64: the render-mode, artifact, glyph and Type0 changes add 14 and
+re-aim 8 (22 run); the image, stencil and untagged-artifact changes add 30 and re-aim 3
+(43 run, including their neighbours). Every one is caught by the test named for it. Five
+needed a fix first: a compound clip is the only place the stroke margin on ink shows, so
+`textedit_compound_clips_contain_the_stroke_around_text` was added; `/Artifact BMC` inside
+a text object and the untagged-page tree guard are refused by later checks too, so their
+tests now assert the message the survey reports; and a moveto that starts a new subpath
+before `h` needed its own refusal case. `stencils` got an explicit type, because a
+mutation that never inserts into it otherwise failed to compile rather than run.

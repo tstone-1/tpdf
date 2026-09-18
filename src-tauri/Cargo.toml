@@ -41,6 +41,9 @@ flate2 = "1"
 # already in the image/PDFium dependency graph. MIT OR Apache-2.0 OR Zlib.
 zune-core = "0.5"
 zune-jpeg = "0.5"
+# Bounded CCITT Group 4 decoding for preserved stencil masks (scanned pages).
+# From the pdf-rs project; no required dependencies. MIT.
+fax = "0.3"
 
 # PDF rendering and text extraction. Settled 2026-07-27 by spikes 0.1, 0.3 and 0.5:
 # it renders, extracts and sandboxes correctly, and is not usable for redaction

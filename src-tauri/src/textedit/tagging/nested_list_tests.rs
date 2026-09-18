@@ -459,3 +459,52 @@ fn textedit_deferred_sublists_are_bounded_before_the_walk_visits_them() {
         assert_eq!(textedit::scan(&doc, 0).unwrap_err(), expected, "{sublists}");
     }
 }
+
+// Alternate text on a list body stands in for everything in it, the sublist
+// included, even though the sublist goes back to the walk on its own.
+#[test]
+fn textedit_pinned_list_bodies_keep_their_sublists() {
+    let (mut doc, ids, _, owners) = inside_body();
+    // Read-only text reserves its validated ink, so the page goes back to the
+    // embedded synthetic font the list fixture replaced with Helvetica.
+    let font = *doc
+        .objects
+        .iter()
+        .find(|(_, object)| {
+            object.as_dict().is_ok_and(|font| {
+                font.get(b"BaseFont").and_then(Object::as_name).ok() == Some(b"TPDFSynthetic")
+                    && font.has(b"Widths")
+            })
+        })
+        .unwrap()
+        .0;
+    doc.get_dictionary_mut(ids[0]).unwrap().set(
+        "Resources",
+        dictionary! { "Font" => dictionary! { "F1" => font } },
+    );
+    let content = String::from_utf8(doc.get_page_content(ids[0]))
+        .unwrap()
+        .replace("(1.)", "(A)")
+        .replace("(2.)", "(B)");
+    let stream = doc.add_object(Stream::new(lopdf::Dictionary::new(), content.into_bytes()));
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("Contents", stream);
+    assert_eq!(
+        textedit::scan(&doc, 0)
+            .unwrap()
+            .runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<Vec<_>>(),
+        ["A", "FIRST", "B", "SECOND"]
+    );
+    doc.get_dictionary_mut(owners[1])
+        .unwrap()
+        .set("Alt", Object::string_literal("SYNTHETIC"));
+    let runs = textedit::scan(&doc, 0).unwrap().runs;
+    assert_eq!(
+        runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>(),
+        ["A"]
+    );
+}

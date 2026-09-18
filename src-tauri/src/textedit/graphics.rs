@@ -1,6 +1,8 @@
-//! Accept only graphics-state entries that retain opaque, normally blended text.
-//! Print overprint and stroke adjustment are preserved, not simulated here.
-//! No fonts, active masks, transfer functions or other rendering effects are admitted.
+//! Accept only graphics-state entries that keep text normally blended. Constant
+//! alpha is admitted: an edit keeps the state, so a replacement is painted with
+//! exactly the alpha of the text it replaces. Print overprint and stroke
+//! adjustment are preserved, not simulated here. No fonts, blend modes, active
+//! masks, transfer functions or other rendering effects are admitted.
 
 use super::{dictionary, number};
 use lopdf::{Dictionary, Document, Object};
@@ -39,15 +41,35 @@ pub(super) fn stroke(operator: &str, values: &[Object]) -> Result<(), String> {
     }
 }
 
-pub(super) fn normal(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
+/// ISO 32000-1 Table 58 and 10.6.2-10.6.3: flatness (`i`, `FL`) and smoothness
+/// (`SM`) are device tolerances for approximating curves and shadings. They
+/// choose no colour, coverage or geometry, and the same renderer draws the
+/// preview and the saved copy, so they are preserved rather than simulated.
+pub(super) fn tolerance(key: &[u8], value: &Object) -> Result<(), String> {
+    let value = number(value)?;
+    let limit = if key == b"SM" { 1. } else { 100. };
+    if !(0. ..=limit).contains(&value) {
+        return Err("unsupported rendering tolerance".into());
+    }
+    Ok(())
+}
+
+/// Returns the line width the state sets, if it sets one: stroked text (Tr 1
+/// and 2) reaches half of it beyond its outlines.
+pub(super) fn normal(
+    doc: &Document,
+    resources: &Dictionary,
+    name: &[u8],
+) -> Result<Option<f64>, String> {
     let invalid = || "unsupported external text graphics state".to_string();
     let states = dictionary(doc, resources.get(b"ExtGState").map_err(|_| invalid())?)?;
     let state = dictionary(doc, states.get(name).map_err(|_| invalid())?)?;
+    let mut width = None;
     for (key, value) in state {
         match (key.as_slice(), value) {
             (b"Type", Object::Name(name)) if name == b"ExtGState" => {}
             (b"BM", Object::Name(name)) if name == b"Normal" => {}
-            (b"ca" | b"CA", value) if number(value)? == 1. => {}
+            (b"ca" | b"CA", value) if (0. ..=1.).contains(&number(value)?) => {}
             // ISO 32000-1, Table 58. Keep the dictionary verbatim: OP also
             // sets nonstroking overprint when op is absent. Do not materialize
             // defaults or split these entries into independently applied state.
@@ -56,12 +78,16 @@ pub(super) fn normal(doc: &Document, resources: &Dictionary, name: &[u8]) -> Res
             (b"SMask", Object::Name(name)) if name == b"None" => {}
             (b"AIS", Object::Boolean(false)) => {}
             (b"RI", Object::Name(name)) => super::colors::intent(name)?,
-            (b"LW", value) => super::clipping::line_width(value)?,
+            (b"LW", value) => {
+                super::clipping::line_width(value)?;
+                width = Some(number(value)?);
+            }
             (b"LC", value) => stroke("J", std::slice::from_ref(value))?,
             (b"LJ", value) => stroke("j", std::slice::from_ref(value))?,
             (b"ML", value) => stroke("M", std::slice::from_ref(value))?,
+            (b"FL" | b"SM", value) => tolerance(key, value)?,
             _ => return Err(invalid()),
         }
     }
-    Ok(())
+    Ok(width)
 }

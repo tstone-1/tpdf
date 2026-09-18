@@ -111,8 +111,10 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     name(font, b"Type", b"Font")?;
     name(font, b"Subtype", b"Type0")?;
     name(font, b"Encoding", b"Identity-H")?;
-    let base = font
-        .get(b"BaseFont")
+    // ISO 32000-1 9.7.6: the Type0 name conventionally repeats the
+    // descendant's, but it selects nothing; merged documents carry a different
+    // subset tag there. The descendant and its descriptor are what must agree.
+    font.get(b"BaseFont")
         .and_then(Object::as_name)
         .map_err(|_| INVALID)?;
     let children =
@@ -138,7 +140,10 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
     )?;
     name(child, b"Type", b"Font")?;
     name(child, b"Subtype", b"CIDFontType2")?;
-    name(child, b"BaseFont", base)?;
+    let base = child
+        .get(b"BaseFont")
+        .and_then(Object::as_name)
+        .map_err(|_| INVALID)?;
     let glyph_mapping =
         match crate::encoding::resolve(doc, child.get(b"CIDToGIDMap").map_err(|_| INVALID)?) {
             Object::Name(name) if name == b"Identity" => None,
@@ -187,6 +192,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             Some(mapping),
         )?;
         return Ok(Metrics {
+            opaque: None,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical_bounds),
             widths: Box::new([None; 256]),
@@ -204,6 +210,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
                 &widths,
             )?;
             return Ok(Metrics {
+                opaque: None,
                 unicode: Some(unicode),
                 vertical_bounds: Some(vertical_bounds),
                 widths: Box::new([None; 256]),
@@ -249,6 +256,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         result[ch as usize] = Some(width);
     }
     Ok(Metrics {
+        opaque: None,
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,

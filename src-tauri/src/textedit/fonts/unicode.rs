@@ -139,6 +139,14 @@ impl Metrics {
             .collect())
     }
 
+    pub(super) fn code_len(&self) -> usize {
+        if self.single_byte {
+            1
+        } else {
+            2
+        }
+    }
+
     pub(super) fn source(
         &self,
         bytes: &[u8],

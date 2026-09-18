@@ -149,3 +149,93 @@ fn textedit_inline_tags_refuse_invalid_semantics_and_balance_atomically() {
     let untagged = textedit::tests::with_content(source.as_bytes());
     assert!(textedit::scan(&untagged, 0).is_err());
 }
+
+// LibreOffice marks a table of contents' dot leaders `/Artifact BMC` inside the
+// text object. They stay read-only; the entries around them stay editable.
+#[test]
+fn textedit_artifact_bmc_inside_a_text_object_is_read_only() {
+    let content = b"BT /F1 12 Tf /Standard <</MCID 0>> BDC 40 180 Td (FIRST) Tj EMC /Standard <</MCID 1>> BDC 0 -40 Td (SECOND) Tj EMC /Artifact BMC 0 -40 Td (DOTS) Tj EMC ET";
+    let (mut doc, _) = super::tests::fixture(content);
+    let scan = crate::textedit::scan(&doc, 0).unwrap();
+    assert_eq!(
+        scan.runs
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect::<Vec<_>>(),
+        ["FIRST", "SECOND"]
+    );
+    crate::textedit::write(
+        &mut doc,
+        &[crate::textedit::Change {
+            layout: None,
+            page: 0,
+            revision: scan.revision,
+            operator: scan.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    // Any other tag without properties still has nothing to own it.
+    let span = String::from_utf8_lossy(content).replace("/Artifact BMC", "/Span BMC");
+    let (doc, _) = super::tests::fixture(span.as_bytes());
+    assert!(crate::textedit::scan(&doc, 0).is_err());
+}
+
+// Acrobat stamps page numbers on untagged scans as an artifact. It names no
+// structure element, so no tree is needed; its text stays read-only and the
+// page's other text stays editable. Any other marked content still needs one.
+#[test]
+fn textedit_artifacts_on_untagged_pages_are_read_only() {
+    let untagged = |content: &str| {
+        let (mut doc, _, _, _) = crate::textedit::fonts::tests::fixture();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let stream = doc.add_object(Stream::new(Dictionary::new(), content.as_bytes().to_vec()));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        doc
+    };
+    let stamp = "/Artifact <</Type /Pagination /Subtype /Footer /Contents (2)>> BDC BT /F1 12 Tf 40 100 Td (SECOND) Tj ET EMC";
+    for artifact in [
+        stamp,
+        "/Artifact BMC BT /F1 12 Tf 40 100 Td (SECOND) Tj ET EMC",
+    ] {
+        let mut doc = untagged(&format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {artifact}"));
+        let scan = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(
+            scan.runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            ["FIRST"],
+            "{artifact}"
+        );
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: scan.revision,
+                operator: scan.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+    }
+    for refused in [
+        "/Span BMC BT /F1 12 Tf 40 100 Td (SECOND) Tj ET EMC",
+        "/Artifact <</MCID 0>> BDC BT /F1 12 Tf 40 100 Td (SECOND) Tj ET EMC",
+        "/P <</MCID 0>> BDC BT /F1 12 Tf 40 100 Td (SECOND) Tj ET EMC",
+    ] {
+        let doc = untagged(&format!("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {refused}"));
+        // Later checks would refuse these too; the survey reports this reason.
+        assert!(
+            textedit::scan(&doc, 0)
+                .unwrap_err()
+                .contains("no supported structure tree"),
+            "{refused}"
+        );
+    }
+}

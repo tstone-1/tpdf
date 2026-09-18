@@ -1086,7 +1086,31 @@ fn textedit_named_unicode_requires_identity_and_agreeing_legacy_glyphs() {
         .as_stream_mut()
         .unwrap()
         .content = bytes;
-    assert!(textedit::scan(&doc, 0).is_err()); // No verified extraction map yet.
+    // Word and Office write a Mac (1,0) map beside (3,1) with no ToUnicode. It
+    // is kept when every offered ASCII glyph agrees, and refused when one
+    // does not, exactly as on the ToUnicode path below.
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap().runs[0].text,
+        "SYNTHETIC FIRST"
+    );
+    let mut disagreeing = doc.clone();
+    disagreeing
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content[offset + mac_offset + 6 + 70] = 0;
+    assert!(textedit::scan(&disagreeing, 0).is_err());
+    let mut other = doc.clone();
+    // A Mac map in any other script is still refused rather than guessed at.
+    other
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .content[offset + 4 + 16 + 2..offset + 4 + 16 + 4]
+        .copy_from_slice(&[0, 1]);
+    assert!(textedit::scan(&other, 0).is_err());
     let source = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <0000> <FFFF> endcodespacerange 1 beginbfrange <20> <59> <0020> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end";
     let map = doc.add_object(Stream::new(Dictionary::new(), source.as_bytes().to_vec()));
     doc.get_dictionary_mut(font).unwrap().set("ToUnicode", map);
@@ -1175,5 +1199,38 @@ fn textedit_named_unicode_requires_identity_and_agreeing_legacy_glyphs() {
         let objects = broken.objects.clone();
         assert!(textedit::write(&mut broken, &[change(&doc, "IN")]).is_err());
         assert_eq!(broken.objects, objects);
+    }
+}
+
+// YuGothic subsets carry their space as one contour of a single point: it
+// paints nothing, like a glyph with no data at all.
+#[test]
+fn textedit_a_single_point_glyph_paints_nothing() {
+    let face = Face::parse(SYNTHETIC, 0).unwrap();
+    let glyph = face.glyph_index('A').unwrap();
+    let raw = face.raw_face();
+    let loca = ttf_parser::loca::Table::parse(
+        face.tables().maxp.number_of_glyphs,
+        face.tables().head.index_to_location_format,
+        raw.table(Tag::from_bytes(b"loca")).unwrap(),
+    )
+    .unwrap();
+    let start = match loca {
+        ttf_parser::loca::Table::Short(offsets) => u32::from(offsets.get(glyph.0).unwrap()) * 2,
+        ttf_parser::loca::Table::Long(offsets) => offsets.get(glyph.0).unwrap(),
+    } as usize;
+    let glyf = raw.table(Tag::from_bytes(b"glyf")).unwrap();
+    let at = glyf.as_ptr() as usize - SYNTHETIC.as_ptr() as usize + start;
+    assert_eq!(empty_glyph(&face, glyph), Some(false));
+    for (contours, last_point, expected) in [(1_u16, 0_u16, true), (2, 0, false), (1, 1, false)] {
+        let mut bytes = SYNTHETIC.to_vec();
+        bytes[at..at + 2].copy_from_slice(&contours.to_be_bytes());
+        bytes[at + 10..at + 12].copy_from_slice(&last_point.to_be_bytes());
+        let face = Face::parse(&bytes, 0).unwrap();
+        assert_eq!(
+            empty_glyph(&face, glyph),
+            Some(expected),
+            "{contours} {last_point}"
+        );
     }
 }

@@ -390,7 +390,7 @@ fn textedit_cff_unicode_mapping_stays_bounded_and_font_specific() {
         "1 beginbfchar <1a> <0080> endbfchar",
         "1 beginbfchar <1a> <0091> endbfchar",
         "1 beginbfchar <1a> <0092> endbfchar",
-        "1 beginbfchar <1a> <00660066006c> endbfchar",
+        "1 beginbfchar <1a> <00730074> endbfchar",
         "1 beginbfchar <1a> <fb01> endbfchar",
         "1 beginbfchar <001a> <2212> endbfchar",
     ] {
@@ -456,17 +456,74 @@ fn textedit_cid_ligature_mapping_accepts_only_unique_exact_sequences() {
         }
     }
     for target in [
-        "",
-        "006600",
-        "00660066006c",
-        "00410042",
-        "fb01",
-        "fb03",
-        "0001",
-        "009f",
-        "d800dc00",
+        "", "006600", "00730074", "00410042", "fb01", "fb03", "0001", "009f", "d800dc00",
     ] {
         let map = body(&format!("1 beginbfchar <0101> <{target}> endbfchar"));
         assert!(parse_cid(&stream(&map)).is_err(), "{target}");
+    }
+}
+
+// pdfTeX names the CMap and its character collection after the TeX encoding,
+// maps the whole encoding and sends two codes to one hyphen.
+const TEX: &str = "%!PS-Adobe-3.0 Resource-CMap\n%%DocumentNeededResources: ProcSet (CIDInit)\n%%EndComments\n/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo\n<< /Registry (TeX)\n/Ordering (LinLibertineT-tlf-t1)\n/Supplement 0\n>> def\n/CMapName /TeX-LinLibertineT-tlf-t1-0 def\n/CMapType 2 def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n2 beginbfrange\n<41> <43> <0041>\n<C0> <C1> <00C0>\nendbfrange\n8 beginbfchar\n<1C> <00660066006C>\n<1B> <00660069>\n<20> <2423>\n<2D> <002D>\n<7F> <002D>\n<80> <0102>\n<81> <2212>\n<82> <00AD>\nendbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n%%EndResource\n%%EOF\n";
+
+#[test]
+fn textedit_type1_maps_narrow_to_the_repertoire_and_keep_every_code() {
+    let codes = parse_names(&stream(TEX)).unwrap();
+    assert_eq!(
+        &codes[0x41..=0x43],
+        &[Some(Some(b'A')), Some(Some(b'B')), Some(Some(b'C'))]
+    );
+    assert_eq!(&codes[0xC0..=0xC1], &[Some(Some(0xC0)), Some(Some(0xC1))]);
+    // Ligatures by their sequence, both hyphens, and the minus slot.
+    let ffl = super::super::ligatures::GLYPHS
+        .iter()
+        .find(|g| g.1 == "ffl")
+        .unwrap()
+        .2;
+    let fi = super::super::ligatures::GLYPHS
+        .iter()
+        .find(|g| g.1 == "fi")
+        .unwrap()
+        .2;
+    assert_eq!(codes[0x1C], Some(Some(ffl)));
+    assert_eq!(codes[0x1B], Some(Some(fi)));
+    assert_eq!(
+        (codes[0x2D], codes[0x7F]),
+        (Some(Some(b'-')), Some(Some(b'-')))
+    );
+    assert_eq!(codes[0x81], Some(Some(0x80)));
+    // Mapped but outside the repertoire: the visible space and A-breve.
+    assert_eq!((codes[0x20], codes[0x80]), (Some(None), Some(None)));
+    // The soft hyphen's meaning is ambiguous, so it is never offered.
+    assert_eq!(codes[0x82], Some(None));
+    assert_eq!(codes[0x44], None);
+    // The strict single-byte parser refuses the same map outright.
+    assert!(parse(&stream(TEX)).is_err());
+    for broken in [
+        // A second mapping for one code, a range past U+FFFF, a control target.
+        TEX.replace("<7F> <002D>", "<41> <002D>"),
+        TEX.replace("<C0> <C1> <00C0>", "<C0> <C1> <FFFF>"),
+        TEX.replace("<80> <0102>", "<80> <0009>")
+            .replace("<81> <2212>", "<81> <0008>"),
+        // Labels of another shape: an extra key, a string name, no Supplement.
+        TEX.replace("/Supplement 0", "/Supplement 0 /Extra 1"),
+        TEX.replace(
+            "/CMapName /TeX-LinLibertineT-tlf-t1-0 def",
+            "/CMapName (TeX) def",
+        ),
+        TEX.replace("/Supplement 0\n", ""),
+        // A different operation in the wrapper.
+        TEX.replace("/CMapType 2 def", "/CMapType 1 def"),
+        TEX.replace("<00> <FF>", "<00> <7F>"),
+    ] {
+        let result = parse_names(&stream(&broken));
+        // A control target maps to a code that is simply not offered.
+        if broken.contains("<0009>") {
+            let codes = result.unwrap();
+            assert_eq!((codes[0x80], codes[0x81]), (Some(None), Some(None)));
+            continue;
+        }
+        assert!(result.is_err(), "{broken}");
     }
 }

@@ -719,8 +719,10 @@ fn textedit_tagged_round_trip_preserves_structure_and_marked_content() {
 
 #[test]
 fn textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes() {
+    // Alt and a title are kept and pin their element instead; see
+    // pinned_tests. C needs a ClassMap, which this fixture does not have.
     for index in [2, 3, 4] {
-        for key in ["ActualText", "Alt", "E", "T", "C"] {
+        for key in ["ActualText", "E", "C"] {
             let (mut doc, ids) = fixture(CONTENT);
             let before = textedit::scan(&doc, 0).unwrap();
             let edit = Change {
@@ -735,11 +737,6 @@ fn textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes() {
                 .unwrap()
                 .set(key, Object::string_literal("OLD TEXT"));
             let objects = doc.objects.clone();
-            if index == 2 && key == "T" {
-                // A container title does not repeat editable text.
-                textedit::write(&mut doc, &[edit]).unwrap();
-                continue;
-            }
             assert!(
                 textedit::write(&mut doc, &[edit]).is_err(),
                 "accepted {key} on {index}"

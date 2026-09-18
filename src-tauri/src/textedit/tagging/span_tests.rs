@@ -72,8 +72,10 @@ fn textedit_spans_refuse_overrides_layout_nesting_and_wrong_owners_atomically() 
             replacement: "IN".into(),
         };
         match mode {
+            // Alt and T pin the leaf instead of refusing it (pinned_tests);
+            // C needs a ClassMap and an unknown key is refused either way.
             0..=3 => doc.get_dictionary_mut(leaves[0]).unwrap().set(
-                ["ActualText", "Alt", "E", "T"][mode],
+                ["ActualText", "C", "E", "Unknown"][mode],
                 Object::string_literal("STALE SYNTHETIC TEXT"),
             ),
             4 => doc

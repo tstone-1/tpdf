@@ -178,6 +178,9 @@ hop through the index.
 - `lopdf` silently drops encryption on save
 - An incremental save is cheap on disk, not in memory — and its cost is the parse
 - An object a prior revision overwrote is reachable by no parser
+- A TeX font has no space glyph, so every line arrives as one word
+- Rewriting a kerned run drops every kern, so a same-length edit stops fitting
+- pdfTeX's Widths and ToUnicode describe the TeX encoding, not the font's built-in one
 - A signature blob is trimmed by trailing zero, and BER ends in zeros
 - Asking for fewer pages made the walk reach more, because the bound was a property of taking all of them
 - A decompression bomb costs QPDF CPU, not memory — and `lopdf` neither
@@ -219,6 +222,7 @@ hop through the index.
 - Two walks of one tree, and every bound they shared was a different number
 - A wire shape and a model type are the same distinction twice, unless one derives the other
 - A writer's refusal is total, so a fact the planner could have found belongs in the plan
+- `fax`'s own decoder pads a truncated Group 4 stream with white rows
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -482,6 +486,7 @@ hop through the index.
 - Piping the gate runner through `tail` ate the exit code and the evidence, about fifteen times
 - A harness that prints only at the end cannot say where it stopped
 - A harness that prints as it goes writes nothing until it exits, under a redirect
+- Copying a tree while a mutation harness runs copies the mutation in flight
 - A `pgrep -f` wait loop is defeated by the command that checks on it
 - A wait built on `pgrep -f` outlives the job, and every later check agrees with it
 - A mutation harness that dies leaves the mutation in the tree
@@ -734,6 +739,7 @@ hop through the index.
 - Three structural rules, three over-refusals on correct files, and the third would have been unreachable anyway
 - A comment's stated reason was checkable and false, and the next feature copied it
 - 486 lines of the viewer never run under vitest, and the fix is a seam rather than a harness
+- A survey note predicted what a widening would change, and the widening was built anyway
 - A tripwire that promised to go red could not, because three carriers answer one needle
 - A fixed point is invisible when the fixture is written in dependency order
 - A refusal promised in the plan and never built emits nothing to grep for
@@ -23039,3 +23045,96 @@ document it feeds in, not by the string it gets back. And **when a bound is reac
 arithmetic over a frontier, measure the frontier rather than deriving it**: the pops between
 "the walk starts" and "this guard runs" are easy to count wrongly, and the count is what
 decides which guard fires first.
+
+### A TeX font has no space glyph, so every line arrives as one word
+
+pdfTeX sets every interword space as a `TJ` displacement: `[(Benchmarking) -333 (PDF)] TJ`.
+Code 32 in the T1 encoding is the visible-space sign ␣, not a space, and the subset carries
+no space glyph at all. Measured 2026-09-18 on the unchanged arXiv sample: once the fonts
+parsed, every run read `"BenchmarkingPDFAccessibilityEvaluation"`, and a replacement with a
+space in it could not be encoded — which, in the layout editor, silently fell back to Noto
+Sans because Auto takes the bundled font whenever the original cannot show a line.
+
+So a font that cannot write a space reads a displacement of at least 0.18 em between two
+strings as `' '` (the threshold `grouping.rs` already used between positioned fragments;
+TeX's kerns stay below it and its shrunk spaces above it), and writes each space back as a
+displacement of the run's own mean gap. The rule is keyed on the font, not the producer: a
+font with a space glyph keeps a large displacement as a gap, because there the space would be
+counted twice. `Metrics::items` and `Metrics::gapped_layout` are the one place both the plain
+writer and the layout editor get this from; a second copy in either would drift.
+
+The same lines open with a leading displacement — an indent, or justification slack — which
+the editor refused as a "kerning array shape". It is where the run starts, not kerning: it
+moves the run's origin and is written back unchanged in front of any replacement.
+
+### pdfTeX's Widths and ToUnicode describe the TeX encoding, not the font's built-in one
+
+A pdfTeX Type 1 font's `/Encoding` is `Differences` over the program's built-in encoding
+(ISO 32000-1 Table 114), but its `Widths` and `ToUnicode` cover the whole TeX encoding,
+including codes the `Differences` never mention. For such a code the built-in name and the
+TeX meaning disagree — 0xBA is `quotedblright` in StandardEncoding and `ž` in T1 — and the
+width is the TeX character's. Refusing the font on the first disagreement refused every
+Libertine font in the sample.
+
+None of those codes is ever shown with the wrong meaning, so the rule is per code: a code is
+offered only where its glyph exists, its width is non-zero, the width agrees with the glyph,
+and a present `ToUnicode` agrees with the name. A disagreeing code is simply not offered,
+and text that uses one is kept read-only. Only an **offered** glyph whose width disagrees
+still refuses the font, because that one would be measured wrongly.
+
+### Copying a tree while a mutation harness runs copies the mutation in flight
+
+`mutate_rust.py` edits a source file in place, builds, runs one test and restores it. A
+`cp` of the tree taken during that window carries the edit, and nothing in the copy says so:
+it compiles and its tests pass, because the mutation is one its own test was about to catch.
+It happened twice on 2026-09-18, seeding a worktree from the main checkout during a run —
+once a nested-list push with depth 0, once a form's graphics-state check replaced by a no-op.
+
+`scripts/check_mutation_anchors.py` in the copy finds it immediately: the edited anchor is
+missing exactly once, and the mutation's own definition says what the line should read. Run
+it on any copy taken while a harness might be running, before building on it; the alternative
+is waiting for the run to end, which editing the original tree already requires.
+
+### Rewriting a kerned run drops every kern, so a same-length edit stops fitting
+
+The writer used to replace a run's whole `TJ` array with the new string, so every kern in the
+line went with it. pdfTeX kerns most lines and justifies them with gaps, so dropping the kerns
+widens the text: measured 2026-09-18 on the arXiv sample, transposing two letters of a word
+(same glyphs, same count) fit on 24 of 80 lines. "These" to "Those" was refused as too wide
+on a line where the eye sees plenty of room.
+
+`kerning.rs` keeps the source's items for the unchanged start and end of the run and encodes
+only the middle; a kern that joined a kept glyph to a changed one is dropped with the pair.
+That takes the same 80 edits to 69. Two findings are worth keeping. **Kept kerns can widen as
+well as narrow**: the first version refused two edits the rewrite had accepted, because the
+kept start carried a loosening kern, so a kept candidate that does not fit now gives way to
+the rewrite instead of refusing. And **the candidate is read back through the same
+`array_text` the scan uses** and only used when it reads as exactly the replacement, which
+makes the reader, not the new code, the authority on what the saved run says.
+
+### `fax`'s own decoder pads a truncated Group 4 stream with white rows
+
+`fax::decoder::decode_g4(input, width, Some(height), ...)` is the convenience entry, and it
+is the wrong one for validation: when the stream ends before `height` rows it calls the
+line callback with empty transitions for the rest, which is an all-white row. A stencil mask
+cut in half therefore "decodes" completely, and a check built on it accepts a truncated image.
+
+`images/stencil.rs` drives `Group4Decoder` itself, one `advance()` per row, and requires
+`DecodeStatus::Incomplete` (a row was decoded) exactly `Height` times; an early end of block
+or a read past the data is a refusal. The stencil test cuts a synthetic stream in half and
+encodes one row too few, and both are refused only because of that loop. Encoders that omit
+trailing white rows exist, which is why the crate pads; a PDF that relies on it is refused.
+
+### A survey note predicted what a widening would change, and the widening was built anyway
+
+BUILD.md's *Producer sample* section recorded, under "Measured before choosing", that the 19
+Arcadia pages refused on `CCITTFaxDecode` are scans whose only text is a read-only page stamp,
+so a CCITT decoder "would move them to no text and make none editable". On 2026-09-18 the
+decoder was built anyway, from the survey's refusal count, and the re-survey showed exactly
+that: 18 pages from refused to no-text, none editable, and one new dependency.
+
+The work is still defensible, because OCR'd scans pair those same images with a mode-3 text
+layer, and render mode 3 had been added the same day. But it was chosen on a count the notes
+had already explained, not on that reason. Before picking the largest refusal, read the
+previous survey section's notes on it: a refusal count says how many pages stop at a check,
+not how many would become editable past it.

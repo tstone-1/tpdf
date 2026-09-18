@@ -281,7 +281,7 @@ fn textedit_jpeg_consumes_shared_image_budget_before_decoding() {
     let doc = fixture(stream, BODY);
     let id = crate::pagetree::ordered_pages(&doc)[0];
     let resources = textedit::resources(&doc, id).unwrap();
-    assert_eq!(check(&doc, resources, b"Im", 192).unwrap(), 192);
+    assert_eq!(check(&doc, resources, b"Im", 192).unwrap().bytes, 192);
     assert!(check(&doc, resources, b"Im", 191)
         .unwrap_err()
         .contains("budget"));
@@ -337,6 +337,18 @@ fn textedit_jpeg_framing_bounds_scans_and_requires_complete_marker_segments() {
         RGB[sos..RGB.len() - 2].iter().copied(),
     );
     assert!(framing(&many).unwrap_err().contains("too many"));
+    // NUL padding after EOI is accepted; any other trailing byte is not.
+    for (tail, accepted) in [
+        (&[0][..], true),
+        (&[0, 0, 0], true),
+        (&[0, 1], false),
+        (&[0xff], false),
+        (&[0xff, 0xd8], false),
+    ] {
+        let mut data = RGB.to_vec();
+        data.extend_from_slice(tail);
+        assert_eq!(framing(&data).is_ok(), accepted, "{tail:?}");
+    }
     for tail in [
         &[0xff, 0xd9][..],
         &[0xff, 0xef, 0, 1],
@@ -489,8 +501,11 @@ fn textedit_images_share_decode_budget_and_bound_resource_names() {
         assert_eq!(textedit::scan(&fixture(stream, BODY), 0).is_ok(), accepted);
     }
     let mut stream = image();
-    stream.dict.set("Width", 4096);
-    stream.dict.set("Height", 2048);
+    // A gray image that fills the page budget exactly.
+    stream.dict.set("Width", 8192);
+    stream
+        .dict
+        .set("Height", (textedit::MAX_IMAGES / 8192) as i64);
     stream.dict.set("ColorSpace", "DeviceGray");
     stream.content = vec![0; textedit::MAX_IMAGES];
     stream.compress().unwrap();
@@ -661,8 +676,10 @@ fn textedit_soft_masked_images_keep_both_streams_and_charge_the_page_budget() {
     // The mask's own samples are charged: this base fills the budget exactly,
     // so one more pixel of alpha is one byte too many.
     let mut full = image();
-    full.dict.set("Width", 4096);
-    full.dict.set("Height", 2048);
+    // A gray image that fills the page budget exactly.
+    full.dict.set("Width", 8192);
+    full.dict
+        .set("Height", (textedit::MAX_IMAGES / 8192) as i64);
     full.dict.set("ColorSpace", "DeviceGray");
     full.content = vec![0; textedit::MAX_IMAGES];
     full.compress().unwrap();
@@ -931,4 +948,255 @@ fn textedit_image_metadata_packets_are_kept_and_must_declare_their_type() {
             .set("Metadata", value);
         assert!(textedit::scan(&doc, 0).is_err());
     }
+}
+
+// A screenshot pasted into a paper: 2264 x 1440 RGB with a soft mask, 13 MB of
+// samples, the size that refused the arXiv sample's second page.
+#[test]
+fn textedit_a_screenshot_with_its_mask_fits_the_page_budget() {
+    let mut picture = image();
+    picture.dict.set("Width", 2264);
+    picture.dict.set("Height", 1440);
+    picture.content = vec![127; 2264 * 1440 * 3];
+    picture.compress().unwrap();
+    let mut alpha = mask();
+    alpha.dict.set("Width", 2264);
+    alpha.dict.set("Height", 1440);
+    alpha.content = vec![255; 2264 * 1440];
+    alpha.compress().unwrap();
+    assert_eq!(
+        textedit::scan(&masked(picture, Some(alpha), BODY), 0)
+            .unwrap()
+            .runs[0]
+            .text,
+        "FIRST"
+    );
+}
+
+fn deflate(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
+// Acrobat recompresses scanned JPEGs as `[/FlateDecode /DCTDecode]`. The
+// inflated JPEG meets the same checks as a plain one; the stream is kept.
+#[test]
+fn textedit_flate_wrapped_jpeg_is_checked_as_a_jpeg_and_kept() {
+    let chain = |first: &str, second: &str| {
+        Object::Array(vec![
+            Object::Name(first.as_bytes().to_vec()),
+            Object::Name(second.as_bytes().to_vec()),
+        ])
+    };
+    let mut stream = jpeg(&deflate(RGB), "DeviceRGB");
+    stream.dict.set("Filter", chain("FlateDecode", "DCTDecode"));
+    let mut doc = fixture(stream.clone(), BODY);
+    let before = textedit::scan(&doc, 0).unwrap();
+    let image = painted(&doc);
+    textedit::write(&mut doc, &[change(&before)]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(doc.objects[&image], Object::Stream(stream.clone()));
+    let mut truncated = stream.clone();
+    truncated.content.truncate(truncated.content.len() - 1);
+    let mut reversed = stream.clone();
+    reversed
+        .dict
+        .set("Filter", chain("DCTDecode", "FlateDecode"));
+    let mut broken = jpeg(&deflate(&RGB[..RGB.len() - 2]), "DeviceRGB");
+    broken.dict.set("Filter", chain("FlateDecode", "DCTDecode"));
+    let mut sized = stream.clone();
+    sized.dict.set("Width", 9);
+    for invalid in [truncated, reversed, broken, sized] {
+        assert!(textedit::scan(&fixture(invalid, BODY), 0).is_err());
+    }
+    // The decoder also stops at EOI, so padded JPEGs pass the whole check.
+    let mut padded = [RGB, &[0, 0, 0]].concat();
+    let mut stream = jpeg(&deflate(&padded), "DeviceRGB");
+    stream.dict.set("Filter", chain("FlateDecode", "DCTDecode"));
+    assert!(textedit::scan(&fixture(stream, BODY), 0).is_ok());
+    padded.push(1);
+    assert!(textedit::scan(&fixture(jpeg(&padded, "DeviceRGB"), BODY), 0).is_err());
+}
+
+// Group 4 rows of a 16-pixel stencil: a diagonal band, so every row differs
+// from the one above it and the decoder cannot coast on vertical modes alone.
+fn group4(rows: usize) -> Vec<u8> {
+    let mut encoder = fax::encoder::Encoder::new(fax::VecWriter::new());
+    for row in 0..rows {
+        let pels = (0..16).map(|x| {
+            if (x + row) % 5 < 2 {
+                fax::Color::Black
+            } else {
+                fax::Color::White
+            }
+        });
+        encoder.encode_line(pels, 16).unwrap();
+    }
+    encoder.finish().unwrap().finish()
+}
+
+fn stencil(content: Vec<u8>) -> Stream {
+    Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 16, "Height" => 4,
+            "ImageMask" => true, "BitsPerComponent" => 1, "Filter" => "CCITTFaxDecode",
+            "DecodeParms" => dictionary! { "K" => -1, "Columns" => 16, "Rows" => 4, "BlackIs1" => true },
+        },
+        content,
+    )
+}
+
+// Scanned pages and Acrobat's OCR output keep text as CCITT stencil masks.
+// They paint the current fill colour, are kept byte for byte, and must
+// decode to exactly Height complete rows.
+#[test]
+fn textedit_ccitt_stencil_masks_are_decoded_whole_and_kept() {
+    let mask = stencil(group4(4));
+    let mut doc = fixture(mask.clone(), BODY);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let resources = textedit::resources(&doc, page).unwrap();
+    assert_eq!(
+        check(&doc, resources, b"Im", 1000).unwrap(),
+        Image {
+            bytes: 8,
+            stencil: true
+        }
+    );
+    assert!(check(&doc, resources, b"Im", 7)
+        .unwrap_err()
+        .contains("budget"));
+    let before = textedit::scan(&doc, 0).unwrap();
+    let image = painted(&doc);
+    textedit::write(&mut doc, &[change(&before)]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(doc.objects[&image], Object::Stream(mask.clone()));
+
+    let accepted: Vec<fn(&mut Stream)> = vec![
+        |s| s.dict.set("Decode", vec![1.into(), 0.into()]),
+        |s| s.dict.remove(b"BitsPerComponent").map(drop).unwrap(),
+        |s| {
+            s.dict
+                .set("Filter", vec![Object::Name(b"CCITTFaxDecode".to_vec())])
+        },
+        |s| {
+            s.dict
+                .set("DecodeParms", dictionary! { "K" => -1, "Columns" => 16 })
+        },
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                vec![
+                    dictionary! { "K" => -1, "Columns" => 16, "Rows" => 0, "EndOfBlock" => false }
+                        .into(),
+                ],
+            )
+        },
+        |s| {
+            // Unfiltered, two bytes per row.
+            s.dict.remove(b"Filter");
+            s.dict.remove(b"DecodeParms");
+            s.content = vec![0; 8];
+        },
+        |s| {
+            // A 12-pixel row still takes two bytes; rows are byte-aligned.
+            s.dict.set("Width", 12);
+            s.dict.remove(b"Filter");
+            s.dict.remove(b"DecodeParms");
+            s.content = vec![0; 8];
+        },
+    ];
+    for (index, edit) in accepted.into_iter().enumerate() {
+        let mut mask = stencil(group4(4));
+        edit(&mut mask);
+        assert!(
+            textedit::scan(&fixture(mask, BODY), 0).is_ok(),
+            "accepted {index}"
+        );
+    }
+    let refused: Vec<fn(&mut Stream)> = vec![
+        |s| s.content = group4(3),
+        |s| s.content.truncate(s.content.len() / 2),
+        |s| s.content.clear(),
+        |s| s.dict.set("Height", 5),
+        |s| s.dict.set("Width", 15),
+        |s| s.dict.set("Width", 0),
+        |s| s.dict.set("BitsPerComponent", 8),
+        |s| s.dict.set("ColorSpace", "DeviceGray"),
+        |s| s.dict.set("SMask", Object::Null),
+        |s| s.dict.set("Mask", Object::Null),
+        |s| s.dict.set("Decode", vec![0.into(), 0.5.into()]),
+        |s| s.dict.set("Filter", "DCTDecode"),
+        |s| {
+            s.dict
+                .set("DecodeParms", dictionary! { "K" => 0, "Columns" => 16 })
+        },
+        |s| s.dict.set("DecodeParms", dictionary! { "Columns" => 16 }),
+        |s| s.dict.set("DecodeParms", dictionary! { "K" => -1 }),
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                dictionary! { "K" => -1, "Columns" => 16, "Rows" => 3 },
+            )
+        },
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                dictionary! { "K" => -1, "Columns" => 16, "EncodedByteAlign" => true },
+            )
+        },
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                dictionary! { "K" => -1, "Columns" => 16, "EndOfLine" => true },
+            )
+        },
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                dictionary! { "K" => -1, "Columns" => 16, "DamagedRowsBeforeError" => 1 },
+            )
+        },
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                dictionary! { "K" => -1, "Columns" => 16, "Unknown" => 1 },
+            )
+        },
+        |s| {
+            s.dict.set(
+                "DecodeParms",
+                dictionary! { "K" => -1, "Columns" => Object::Real(16.5) },
+            )
+        },
+        |s| {
+            s.dict.remove(b"Filter");
+            s.dict.remove(b"DecodeParms");
+            s.content = vec![0; 7];
+        },
+    ];
+    for (index, edit) in refused.into_iter().enumerate() {
+        let mut mask = stencil(group4(4));
+        edit(&mut mask);
+        assert!(
+            textedit::scan(&fixture(mask, BODY), 0).is_err(),
+            "refused {index}"
+        );
+    }
+}
+
+// A stencil paints the fill colour current at each Do; an ordinary image
+// paints its own samples, whatever that colour is.
+#[test]
+fn textedit_stencil_masks_paint_only_a_ready_fill_colour() {
+    let body = BODY.replacen("q 30", "q /Pattern cs 30", 1);
+    assert!(textedit::scan(&fixture(image(), &body), 0).is_ok());
+    assert!(textedit::scan(&fixture(stencil(group4(4)), &body), 0)
+        .unwrap_err()
+        .contains("unselected"));
+    // Checked at each use, not only the first: the second Do is refused.
+    let later = BODY.replacen("ET q /Im Do Q", "ET q /Pattern cs /Im Do Q", 1);
+    assert!(textedit::scan(&fixture(stencil(group4(4)), &later), 0).is_err());
+    assert!(textedit::scan(&fixture(image(), &later), 0).is_ok());
 }

@@ -8,9 +8,11 @@ const NORMAL: &[u8] = include_bytes!("fixtures/normal.cff");
 fn textedit_font_refusals_identify_program_carriers_without_echoing_values() {
     for (carrier, subtype, expected) in [
         (
+            // A FontFile is read as a Type 1 program now; this one has no
+            // Length1/Length2, and the refusal still names no value.
             "FontFile",
             "SYNTHETIC_SECRET",
-            "PostScript Type 1 fonts (FontFile) are not editable yet",
+            "unsupported embedded Type 1 font",
         ),
         (
             "FontFile2",
@@ -56,15 +58,19 @@ fn textedit_font_refusals_identify_program_carriers_without_echoing_values() {
 
 #[test]
 fn textedit_font_refusals_separate_missing_conflicting_and_invalid_programs() {
-    for case in 0..5 {
+    // Without a program the font is read by its PDF widths, as an unembedded
+    // font (see fonts::unembedded).
+    let (mut doc, _, descriptor, _) = fixture(NORMAL);
+    doc.get_dictionary_mut(descriptor)
+        .unwrap()
+        .remove(b"FontFile3");
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap().runs[0].text,
+        "SYNTHETIC FIRST"
+    );
+    for case in 1..5 {
         let (mut doc, _, descriptor, program) = fixture(NORMAL);
         let expected = match case {
-            0 => {
-                doc.get_dictionary_mut(descriptor)
-                    .unwrap()
-                    .remove(b"FontFile3");
-                "Type1 font has no embedded font program"
-            }
             1 => {
                 doc.get_dictionary_mut(descriptor)
                     .unwrap()

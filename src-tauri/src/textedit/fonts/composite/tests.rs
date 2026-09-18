@@ -307,6 +307,7 @@ fn textedit_composite_refusals_leave_every_object_unchanged() {
         (0, "Encoding", Object::Name(b"Identity-V".to_vec())),
         (0, "ToUnicode", Object::Null),
         (0, "Extra", true.into()),
+        (0, "BaseFont", 1.into()),
         (0, "DescendantFonts", Vec::<Object>::new().into()),
         (1, "Subtype", Object::Name(b"CIDFontType0".to_vec())),
         (1, "BaseFont", Object::Name(b"Other".to_vec())),
@@ -334,6 +335,25 @@ fn textedit_composite_refusals_leave_every_object_unchanged() {
         assert!(textedit::write(&mut doc, &[change]).is_err());
         assert_eq!(doc.objects, before);
     }
+}
+
+// Merged documents keep one descendant under a Type0 font whose subset tag
+// differs (UYTNFZ+SymbolMT over MQUKPZ+SymbolMT); the name selects nothing.
+#[test]
+fn textedit_composite_type0_name_may_differ_from_its_descendant() {
+    let (mut doc, ids) = fixture();
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("BaseFont", Object::Name(b"ABCDEF+Other".to_vec()));
+    let change = update(&doc, "EDITED FIRST");
+    textedit::write(&mut doc, &[change]).unwrap();
+    assert_eq!(
+        doc.get_dictionary(ids[0])
+            .unwrap()
+            .get(b"BaseFont")
+            .unwrap(),
+        &Object::Name(b"ABCDEF+Other".to_vec())
+    );
 }
 
 #[test]

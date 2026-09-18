@@ -1,27 +1,43 @@
-//! Preserve bounded, opaque image XObjects while editing surrounding text.
-//! Images never change text state. Forms, stencil masks, external data and
-//! custom sample mappings are excluded; the original stream and dictionary stay
-//! intact. A soft mask supplies its owner's alpha and is bounded as its own
-//! image; it is never painted alone.
+//! Preserve bounded image XObjects while editing surrounding text.
+//! Images never change text state. Forms, external data and custom sample
+//! mappings are excluded; the original stream and dictionary stay intact. A
+//! soft mask supplies its owner's alpha and is bounded as its own image; it is
+//! never painted alone. A stencil mask paints the current fill colour through
+//! its 1-bit samples, so the caller checks that colour at each use.
 
 use super::{colors, dictionary, filters};
 use lopdf::{Dictionary, Document, Object, Stream};
 
 mod jpeg;
+mod stencil;
 #[cfg(test)]
 mod tests;
+
+#[derive(Debug, PartialEq)]
+pub(super) struct Image {
+    // Decoded bytes charged to the page budget.
+    pub bytes: usize,
+    // Painted with the current fill colour (ISO 32000-1 8.9.6.2).
+    pub stencil: bool,
+}
 
 pub(super) fn check(
     doc: &Document,
     resources: &Dictionary,
     name: &[u8],
     remaining: usize,
-) -> Result<usize, String> {
+) -> Result<Image, String> {
     let invalid = || "unsupported image on an editable page".to_string();
     let entries = dictionary(doc, resources.get(b"XObject").map_err(|_| invalid())?)?;
     let image = crate::encoding::resolve(doc, entries.get(name).map_err(|_| invalid())?)
         .as_stream()
         .map_err(|_| invalid())?;
+    if image.dict.get(b"ImageMask").and_then(Object::as_bool).ok() == Some(true) {
+        return Ok(Image {
+            bytes: stencil::check(doc, image, remaining)?,
+            stencil: true,
+        });
+    }
     let bytes = samples(doc, Some(resources), image, remaining)?;
     match image.dict.get(b"SMask") {
         // ISO 32000-1 11.6.5.3: the soft mask carries this image's alpha. It is
@@ -34,9 +50,15 @@ pub(super) fn check(
             if mask.dict.has(b"SMask") {
                 return Err(invalid());
             }
-            Ok(bytes + samples(doc, None, mask, remaining - bytes)?)
+            Ok(Image {
+                bytes: bytes + samples(doc, None, mask, remaining - bytes)?,
+                stencil: false,
+            })
         }
-        Err(_) => Ok(bytes),
+        Err(_) => Ok(Image {
+            bytes,
+            stencil: false,
+        }),
     }
 }
 
@@ -165,18 +187,24 @@ fn samples(
     if bytes > remaining {
         return Err("decoded images exceed the editable page budget".into());
     }
-    let dct = match image.dict.get(b"Filter") {
-        Ok(Object::Name(name)) => name == b"DCTDecode",
-        Ok(Object::Array(names)) => {
-            matches!(names.as_slice(), [Object::Name(name)] if name == b"DCTDecode")
-        }
-        _ => false,
+    let jpeg = match image.dict.get(b"Filter") {
+        Ok(Object::Name(name)) if name == b"DCTDecode" => Some(image.content.clone()),
+        Ok(Object::Array(names)) => match names.as_slice() {
+            [Object::Name(name)] if name == b"DCTDecode" => Some(image.content.clone()),
+            [Object::Name(first), Object::Name(second)]
+                if first == b"FlateDecode" && second == b"DCTDecode" =>
+            {
+                Some(filters::inflate(image)?)
+            }
+            _ => None,
+        },
+        _ => None,
     };
-    if dct {
+    if let Some(jpeg) = jpeg {
         if high_index.is_some() {
             return Err(invalid());
         }
-        jpeg::check(&image.content, width, height, components)?;
+        jpeg::check(&jpeg, width, height, components)?;
         return Ok(bytes);
     }
     let decoded = filters::decode_unpredicted(image, samples)?;

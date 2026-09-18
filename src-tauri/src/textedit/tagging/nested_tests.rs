@@ -211,17 +211,13 @@ fn textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically() {
 #[test]
 fn textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text() {
     for index in 0..3 {
-        for key in ["ActualText", "Alt", "E", "T", "C", "Unknown"] {
+        // Alt and a non-empty title pin rather than refuse (pinned_tests).
+        for key in ["ActualText", "E", "C", "Unknown"] {
             let (mut doc, ids, leaves) = nested(false);
             let id = [ids[2], ids[3], leaves[0]][index];
             doc.get_dictionary_mut(id)
                 .unwrap()
                 .set(key, Object::string_literal("OLD"));
-            if index == 0 && key == "T" {
-                // A container title does not repeat editable text.
-                assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
-                continue;
-            }
             refused(doc);
         }
     }

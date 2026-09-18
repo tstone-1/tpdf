@@ -16,7 +16,9 @@ pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positione
         }
         "Ts" if operands.len() == 1 => "text rise must be zero for editing",
         "Tz" if operands.len() == 1 => "text horizontal scaling must be 100 percent for editing",
-        "Tr" if matches!(operands, [Object::Integer(_)]) => "only filled text is editable",
+        "Tr" if matches!(operands, [Object::Integer(_)]) => {
+            "text that adds to the clipping path is not editable"
+        }
         "q" | "Q" | "cm" | "re" | "m" | "n" | "Do" if inside => {
             return format!("graphics operation {name} inside a text block is not editable yet");
         }
@@ -26,8 +28,8 @@ pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positione
         // Only fixed PDF keywords may be echoed. An unknown keyword could be
         // arbitrarily long, contain control characters or carry document text.
         "BMC" | "BDC" | "EMC" | "BT" | "ET" | "q" | "Q" | "cm" | "n" | "Do" | "w" | "Tc" | "Tw"
-        | "Ts" | "Tz" | "Tr" | "ri" | "gs" | "cs" | "CS" | "Tf" | "TL" | "Tm" | "Td" | "TD"
-        | "T*" => {
+        | "Ts" | "Tz" | "Tr" | "ri" | "i" | "gs" | "cs" | "CS" | "Tf" | "TL" | "Tm" | "Td"
+        | "TD" | "T*" => {
             return format!(
                 "unsupported operands for {name} (count: {})",
                 operands.len()
@@ -97,7 +99,10 @@ mod tests {
                 "90 Tz",
                 "text horizontal scaling must be 100 percent for editing",
             ),
-            ("3 Tr", "only filled text is editable"),
+            (
+                "5 Tr",
+                "text that adds to the clipping path is not editable",
+            ),
             ("0.0 Tr", "unsupported operands for Tr (count: 1)"),
             (
                 "BT q ET",

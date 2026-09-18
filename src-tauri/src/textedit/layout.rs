@@ -8,6 +8,9 @@ pub(super) struct Context {
     pub cursor_after: f64,
     pub clip: Option<[f64; 4]>,
     pub regions: Vec<clipping::Region>,
+    // Half the stroke width around text drawn in render mode 1 or 2, in page
+    // units; a replacement inherits the mode and reaches as far.
+    pub stroke: f64,
 }
 
 pub(super) struct Prepared {
@@ -138,10 +141,16 @@ pub(super) fn prepare(
         .ok()
         .map(|name| String::from_utf8_lossy(name).into_owned())
         .unwrap_or_else(|| "Original font".into());
+    // The run's own word gap, for a font that shows spaces as displacements.
+    let gap = page
+        .gaps
+        .get(&run.operator)
+        .copied()
+        .unwrap_or(super::DEFAULT_GAP);
     let encodable = change
         .replacement
         .split('\n')
-        .all(|line| original_metrics.encode(line).is_ok());
+        .all(|line| original_metrics.items(line, gap).is_ok());
     let chosen = match settings.font {
         _ if change.replacement.is_empty() => None,
         EditFont::Auto if encodable => None,
@@ -191,7 +200,7 @@ pub(super) fn prepare(
     };
     let lines = line_breaks(&change.replacement, width, settings.wrap, |text| {
         metrics
-            .spaced_layout(text, size, spacing, word_spacing)
+            .gapped_layout(text.trim_end_matches(' '), size, spacing, word_spacing, gap)
             .map(|(width, _)| width)
     })?;
     let [bottom, top] = metrics.vertical_bounds.unwrap_or([-250., 1000.]);
@@ -236,9 +245,17 @@ pub(super) fn prepare(
         numeric("Tc", &[spacing]),
         numeric("Tw", &[word_spacing]),
     ];
+    let gap_spaces = !metrics.writes_space();
     for (index, text) in lines.iter().enumerate() {
+        // A wrapped line keeps the space it broke at. A font that writes
+        // spaces shows it as before; a gap font has nothing to show.
+        let text = if gap_spaces {
+            text.trim_end_matches(' ')
+        } else {
+            text.as_str()
+        };
         let dy = first_baseline - index as f64 * line_height;
-        let (_, ink) = metrics.spaced_layout(text, size, spacing, word_spacing)?;
+        let (_, ink) = metrics.gapped_layout(text, size, spacing, word_spacing, gap)?;
         let inset = (-ink[0]).max(0.);
         if ink[1] + inset > width + 0.001 {
             return Err(
@@ -254,6 +271,12 @@ pub(super) fn prepare(
                 dy + top * size / 1000.,
             ],
         );
+        let ink = [
+            ink[0] - context.stroke,
+            ink[1] - context.stroke,
+            ink[2] + context.stroke,
+            ink[3] + context.stroke,
+        ];
         if !text.is_empty() {
             clipping::contains(context.clip, ink).map_err(|_| "The document clips this area. Reduce the box or font size to keep the text visible.")?;
             for region in &context.regions {
@@ -293,10 +316,12 @@ pub(super) fn prepare(
         );
         shift_position(&mut matrix, dx, dy)?;
         operations.push(numeric("Tm", &matrix));
-        operations.push(Operation::new(
-            "Tj",
-            vec![Object::string_literal(metrics.encode(text)?)],
-        ));
+        let items = metrics.items(text, gap)?;
+        operations.push(if items.len() > 1 {
+            Operation::new("TJ", vec![Object::Array(items)])
+        } else {
+            Operation::new("Tj", items)
+        });
     }
     // q/Q cannot restore the text matrices. Restore both explicitly, including
     // the pre-existing line origin that a later Td/T* will use.

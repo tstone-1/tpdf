@@ -13,7 +13,7 @@ mod tests;
 
 const INVALID: &str = "unsupported embedded CFF font";
 // Adobe glyph names for WinAnsi's printable ASCII range, ISO 32000-1 Annex D.
-const ASCII_NAMES: [&str; 95] = [
+pub(super) const ASCII_NAMES: [&str; 95] = [
     "space",
     "exclam",
     "quotedbl",
@@ -233,6 +233,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         codes[code] = Some(slot as u8);
     }
     Ok(Metrics {
+        opaque: None,
         unicode: None,
         widths: result,
         codes: Some(Codes::Single(codes)),

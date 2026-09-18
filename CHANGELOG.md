@@ -34,6 +34,42 @@ have the binary.)
   a layer, footnotes, sublists inside list items, and tables with recorded
   bounds. The text inside such a table stays read-only so its recorded bounds
   keep matching it; text beside the table is editable as usual.
+- Edit text in LibreOffice and Word documents with a table of contents, and in
+  InDesign documents that describe paragraph styles through attribute classes.
+- Edit text on pages from Distiller, PDFMaker and Adobe Designer that set a
+  curve flatness or shading smoothness tolerance.
+- Edit text in Word documents whose embedded TrueType fonts carry both Windows
+  and Macintosh character maps without a ToUnicode map.
+- Edit text in LaTeX papers and other documents with embedded PostScript Type 1
+  fonts. Words separated by pdfTeX's spacing read with their spaces, a
+  replacement's spaces are written the same way, and indented or justified lines
+  keep their starting position.
+- Edit text on pages that also carry mathematics or letters outside the editable
+  character set. Those lines stay read-only and the rest of the page is editable.
+- Edit text beside translucent drawings, such as TikZ figures and charts from
+  Apache FOP, and beside PDF figures included by pdfTeX.
+- Keep a line's own kerning and word spacing around an edit, so replacing a word
+  in a kerned or justified line no longer fails for lack of room.
+- Edit text beside rotated drawings and beside larger images and screenshots.
+- Edit text in Word documents whose Arial or Times New Roman is not embedded.
+- Edit outlined and invisible text, such as the searchable text layer Acrobat
+  puts under a scanned page. The replacement keeps the source's style, and an
+  outline's line width counts toward the room it needs.
+- Edit text on scanned pages whose images Acrobat recompressed or stored as
+  black-and-white fax masks, and on untagged scans with a stamped page number.
+- Edit text in documents whose table of contents marks its dot leaders
+  separately, whose Japanese fonts carry a blank space glyph, or whose fonts
+  were renamed when pages from several files were merged.
+
+### Changed
+
+- A centred, right-aligned or justified paragraph in a tagged document, and a
+  paragraph or section with alternate text or a title that could repeat its
+  wording, now stays read-only instead of blocking the whole page. The rest of
+  the page is editable, and the recorded alignment, alternate text and title
+  keep matching the text they describe.
+- A page with no editable text now says that its text is read-only, instead of
+  attributing every case to transformed text.
 
 ### Fixed
 

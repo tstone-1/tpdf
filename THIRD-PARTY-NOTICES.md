@@ -2531,7 +2531,7 @@ SOFTWARE.
 
 ## Rust crates
 
-403 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+404 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2628,6 +2628,7 @@ SOFTWARE.
 | erased-serde | 0.4.10 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
+| fax | 0.3.0 | MIT |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
 | filetime | 0.2.29 | MIT/Apache-2.0 |
 | flagset | 0.4.7 | Apache-2.0 |
@@ -3162,6 +3163,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright © 2015, Simonas Kazlauskas
 - Copyright © 2017-2018 Arm Limited
 - Copyright © 2020-2024 Unicode, Inc.
+- Copyright © 2021 The pdf-rs contributers.
 - Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
 - copyright license to reproduce, prepare Derivative Works of,
 - copyright notice and this permission notice appear in all copies.
