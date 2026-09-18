@@ -423,14 +423,14 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Edit more tagged PDFs with custom role maps,
-          empty structure elements, preserved Form XObjects and indexed images.
-          Additional validated embedded font metrics are supported, and the
-          default editing box includes deeper descenders. Text inside preserved
-          forms and tagged artifacts stays read-only. Invisible signature widgets
-          no longer block unrelated saves; signed documents still require
-          confirmation. Error messages can be selected and copied with Ctrl+C
-          or Cmd+C, including errors inside the text editor.
+          **New in this release.** Edit existing text in many more documents:
+          ordinary Word, Acrobat, LiveCycle and PowerPoint exports, LaTeX papers
+          (including the first page of arXiv papers), and documents made with
+          XeLaTeX, LuaTeX and Typst, whose fonts are embedded as CID-keyed CFF.
+          Text set in Times, Courier and the other standard fonts, in fonts a
+          document names without embedding, and in Calibri's letter ligatures can
+          now be edited. A small capital keeps its glyph when the word around it
+          changes. Math symbols, slide backgrounds and page stamps stay read-only.
 
           Edits must fit their chosen box, clips and surrounding content.
           Unsupported pages and glyphs are refused; automatic table resizing,
