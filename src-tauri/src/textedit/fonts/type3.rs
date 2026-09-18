@@ -327,6 +327,7 @@ pub fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
         glyphs.insert(code, (width, [left.min(0.), (right - width).max(0.)]));
     }
     Ok(Metrics {
+        opaque: None,
         unicode: Some(unicode::Metrics::single(codes, glyphs)),
         vertical_bounds: Some(vertical),
         widths: Box::new([None; 256]),

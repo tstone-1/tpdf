@@ -111,7 +111,7 @@ def self_test(probe):
                 else report['pages'][0])
         # Exercise the real worker reply, including the privacy boundary on
         # unknown metadata names. Unknown keys and all values must stay private.
-        for key, feature in [('IDTree', 'IDTree'), ('ClassMap', 'ClassMap'),
+        for key, feature in [('IDTree', 'IDTree'), ('Kids', 'Kids'),
                              ('SYNTHETIC_SECRET', 'unrecognized')]:
             writer = PdfWriter()
             writer.add_blank_page(width=300, height=240)
@@ -131,10 +131,11 @@ def self_test(probe):
             return DictionaryObject({NameObject('/' + key): value for key, value in items.items()})
 
         # Type1 resource dictionaries can carry PostScript, CFF or OpenType.
-        # These declarations are refused without interpreting the program bytes.
+        # A FontFile is read as a Type 1 program; this one has no Length1/Length2.
+        # The other declarations are refused without interpreting the bytes.
         program_base = fixture('program-base.pdf', 1)
         for carrier, subtype, reason in [
-            ('FontFile', 'SYNTHETIC_SECRET', 'PostScript Type 1 fonts (FontFile) are not editable yet'),
+            ('FontFile', 'SYNTHETIC_SECRET', 'unsupported embedded Type 1 font'),
             ('FontFile2', 'SYNTHETIC_SECRET', 'FontFile2 is not supported in Type1 fonts'),
             ('FontFile3', 'OpenType', 'OpenType programs in Type1 fonts are not editable yet'),
             ('FontFile3', 'SYNTHETIC_SECRET', 'unsupported embedded program subtype in Type1 font'),

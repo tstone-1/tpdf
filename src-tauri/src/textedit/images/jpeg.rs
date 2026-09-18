@@ -25,8 +25,10 @@ pub(super) fn framing(input: &[u8]) -> Result<(), String> {
         }
         let marker = *input.get(position).ok_or_else(invalid)?;
         position += 1;
+        // NUL padding after EOI (Acrobat's scan recompression writes a few
+        // bytes of it) is ignored by every decoder and cannot hold an image.
         if marker == 0xd9 {
-            return if scans > 0 && position == input.len() {
+            return if scans > 0 && input[position..].iter().all(|&byte| byte == 0) {
                 Ok(())
             } else {
                 Err(invalid())
@@ -87,6 +89,12 @@ pub(super) fn check(
 ) -> Result<(), String> {
     let invalid = || "incomplete or unsupported JPEG image".to_string();
     framing(input)?;
+    // Framing proved everything after EOI is NUL padding; EOI ends in 0xd9,
+    // so this is exactly the JPEG the decoder must consume in full.
+    let input = &input[..input
+        .iter()
+        .rposition(|&byte| byte != 0)
+        .map_or(0, |at| at + 1)];
     let space = match components {
         1 => ColorSpace::Luma,
         3 => ColorSpace::RGB,

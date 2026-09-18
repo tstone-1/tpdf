@@ -106,9 +106,14 @@ fn textedit_preserved_forms_validate_normal_graphics_states_without_hidden_carri
         dictionary! { "Type" => "ExtGState", "BM" => "Normal", "CA" => 1 },
         dictionary! { "SMask" => dictionary! {} },
         dictionary! { "Font" => vec![Object::Null, 12.into()] },
-        dictionary! { "CA" => 0.5 },
+        // Constant alpha is kept with the figure it applies to (Apache FOP).
+        dictionary! { "CA" => 0.5, "ca" => 0.25 },
+        dictionary! { "ca" => 1.5 },
     ] {
-        let accepted = state.has(b"BM");
+        let accepted = state.has(b"BM")
+            || state
+                .get(b"ca")
+                .is_ok_and(|a| a.as_float().is_ok_and(|a| a <= 1.));
         let (mut doc, _, form) = fixture(true);
         let stream = doc.get_object_mut(form).unwrap().as_stream_mut().unwrap();
         stream.content.splice(..0, b"/GS1 gs ".iter().copied());
@@ -218,6 +223,28 @@ fn textedit_preserved_forms_keep_layer_membership_and_private_data() {
             false,
         ),
         ("LastModified", Object::Name(b"Now".to_vec()), false),
+        // pdfTeX's record of an included PDF figure.
+        (
+            "PTEX.FileName",
+            Object::string_literal("./figure.pdf"),
+            true,
+        ),
+        (
+            "PTEX.FileName",
+            Object::string_literal(vec![b'f'; 4097]),
+            false,
+        ),
+        ("PTEX.FileName", Object::Name(b"figure".to_vec()), false),
+        ("PTEX.PageNumber", Object::Integer(1), true),
+        ("PTEX.PageNumber", Object::Integer(-1), false),
+        ("PTEX.PageNumber", Object::Real(1.), false),
+        (
+            "PTEX.InfoDict",
+            dictionary! { "Producer" => Object::string_literal("Apache FOP") }.into(),
+            true,
+        ),
+        ("PTEX.InfoDict", Object::Null, false),
+        ("PTEX.PageBox", Object::Null, false),
     ] {
         let (mut doc, _, form) = fixture(true);
         entry(&mut doc, form, key, value);
@@ -316,5 +343,36 @@ fn textedit_preserved_forms_accept_text_state_outside_a_text_object() {
             }],
         );
         assert_eq!(result.is_err(), reserved, "{body}");
+    }
+}
+
+// A stencil mask paints the fill colour, which a preserved form's content does
+// not track, so a form that paints one is refused; an ordinary image is not.
+#[test]
+fn textedit_preserved_forms_refuse_stencil_masks() {
+    for (stencil, accepted) in [(false, true), (true, false)] {
+        let (mut doc, _, form) = fixture(false);
+        let image = if stencil {
+            Stream::new(
+                dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 8, "Height" => 2, "ImageMask" => true },
+                vec![0; 2],
+            )
+        } else {
+            Stream::new(
+                dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => 8, "Height" => 2, "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray" },
+                vec![0; 16],
+            )
+        };
+        let image = doc.add_object(image);
+        let stream = doc.get_object_mut(form).unwrap().as_stream_mut().unwrap();
+        stream.set_content(b"q 40 0 0 30 0 0 cm /Im Do Q".to_vec());
+        stream
+            .dict
+            .get_mut(b"Resources")
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("XObject", dictionary! { "Im" => image });
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "{stencil}");
     }
 }

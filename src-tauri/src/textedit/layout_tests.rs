@@ -329,6 +329,37 @@ fn fallback_deletion_and_clipped_growth_remain_editable_or_refuse_atomically() {
         .all(|run| run.text.is_empty()));
 }
 
+// A replacement keeps the source's render mode, so stroked text reaches half
+// the line width beyond its outlines; a clip at the text origin cuts that off.
+#[test]
+fn stroked_layouts_reserve_half_the_line_width() {
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 40 180 Td (TITLE) Tj ET");
+    let mut first = edit(&doc, "ACME", 80., 20., false);
+    first.layout.as_mut().unwrap().font = EditFont::NotoSans;
+    write(&mut doc, &[first]).unwrap();
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    let content = page_content(&doc, id).unwrap();
+    for (state, accepted) in [("0 Tr", true), ("4 w 2 Tr", false), ("4 w 3 Tr", true)] {
+        let mut copy = doc.clone();
+        let clipped = [
+            format!("q 40 100 200 130 re W n {state}\n").as_bytes(),
+            &content,
+            b"\nQ",
+        ]
+        .concat();
+        let stream = copy.add_object(Stream::new(Dictionary::new(), clipped));
+        copy.get_dictionary_mut(id).unwrap().set("Contents", stream);
+        let change = edit(&copy, "ACME", 80., 20., false);
+        let before = copy.objects.clone();
+        let result = write(&mut copy, &[change]);
+        assert_eq!(result.is_ok(), accepted, "{state}: {result:?}");
+        if !accepted {
+            assert!(result.unwrap_err().contains("clips"));
+            assert_eq!(copy.objects, before);
+        }
+    }
+}
+
 #[test]
 fn replacement_fonts_keep_discovery_limits_and_share_programs() {
     let bytes = (0..32)

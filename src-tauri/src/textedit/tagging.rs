@@ -19,6 +19,8 @@ mod nested_list_tests;
 #[cfg(test)]
 mod nested_tests;
 #[cfg(test)]
+mod pinned_tests;
+#[cfg(test)]
 mod producer_tests;
 #[cfg(test)]
 mod refusal_tests;
@@ -278,6 +280,8 @@ struct Scope<'a> {
     pages: &'a BTreeSet<ObjectId>,
     // The root's validated standard namespaces (ISO 32000-2 14.7.4).
     namespaces: &'a BTreeSet<ObjectId>,
+    // The root's ClassMap, when it has one (ISO 32000-1 14.7.5.2).
+    classes: Option<&'a Dictionary>,
 }
 
 // ISO 32000-2 Annex L: standard types whose meaning the PDF 2.0 namespace keeps
@@ -302,27 +306,35 @@ fn common_to_both_namespaces(tag: &[u8]) -> bool {
                 | b"Link"
                 | b"Span"
                 | b"NonStruct"
+                | b"TOC"
+                | b"TOCI"
         )
 }
 
+// Returns the element's page and whether it pins its own content: whether it
+// keeps metadata that describes the content as it now stands, so that content
+// has to stay read-only for the metadata to remain true.
 fn element(
     doc: &Document,
     dict: &Dictionary,
     parent: ObjectId,
     scope: &Scope,
     owns_text: bool,
-) -> Result<Option<ObjectId>, String> {
-    // In particular: no ActualText, E, class, or attribute revision. Alt text
-    // replaces an element's content for assistive technology, so it is only
-    // admitted on elements whose text stays read-only (figures, links, fields);
-    // on a paragraph a text edit would leave it describing the old wording.
+) -> Result<(Option<ObjectId>, bool), String> {
+    // In particular: no ActualText, E or attribute revision. ActualText and E
+    // replace the text an edit would produce, so they are refused outright.
+    // Alt text replaces an element's content for assistive technology and a
+    // non-empty title often repeats it; both are kept, and an element with
+    // editable text that carries either is pinned rather than refused, so an
+    // edit can never leave them describing the old wording.
     let tag = name(get(dict, b"S")?)?;
     let mut allowed: Vec<&[u8]> = vec![b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang", b"T"];
     if tag == b"TH" {
         allowed.push(b"ID");
     }
-    if matches!(tag, b"Figure" | b"Link" | b"Form") {
-        allowed.push(b"Alt");
+    allowed.push(b"Alt");
+    if scope.classes.is_some() && !matches!(tag, b"TD" | b"TH") {
+        allowed.push(b"C");
     }
     allowed.push(b"NS");
     keys(dict, &allowed, "element")?;
@@ -331,12 +343,9 @@ fn element(
             return Err("unsupported NS metadata in tagged element".into());
         }
     }
-    // ISO 32000-1 Table 323: T is a human-readable title. On a heading or
-    // paragraph it often repeats the text, which an edit would make stale, so
-    // an element with editable text may only carry the empty title Word writes.
-    // Both values are text strings; bound what is retained.
-    let title_limit = if owns_text { 0 } else { 4096 };
-    for (key, limit) in [(b"T".as_slice(), title_limit), (b"Alt", 65536)] {
+    // ISO 32000-1 Table 323: T is a human-readable title and Alt an alternate
+    // description. Both are text strings; bound what is retained.
+    for (key, limit) in [(b"T".as_slice(), 4096), (b"Alt", 65536)] {
         if dict
             .get(key)
             .is_ok_and(|value| !value.as_str().is_ok_and(|text| text.len() <= limit))
@@ -344,6 +353,14 @@ fn element(
             return Err(INVALID.into());
         }
     }
+    // Alt stands in for everything the element contains, so it pins a
+    // grouping element's descendants too. A container's title names the
+    // section rather than repeating its text.
+    let mut pins = dict.has(b"Alt")
+        || (owns_text
+            && dict
+                .get(b"T")
+                .is_ok_and(|value| value.as_str().is_ok_and(|text| !text.is_empty())));
     let page = dict.get(b"Pg").ok().map(reference).transpose()?;
     if let Ok(language) = dict.get(b"Lang") {
         let bytes = language.as_str().map_err(|_| INVALID)?;
@@ -366,139 +383,222 @@ fn element(
     {
         return Err(INVALID.into());
     }
-    if let Ok(attributes) = dict.get(b"A") {
-        // ISO 32000-1 Table 344: BBox is the element's own ink, not an authored
-        // allocation, so retaining one is only sound while the content it
-        // describes cannot move. A figure, link and field are already read-only;
-        // a table that declares bounds makes its own text read-only too, which
-        // is what `bounds` below and `Tags::bounded` carry out.
-        if matches!(
-            name(get(dict, b"S")?)?,
-            b"Figure" | b"Link" | b"Form" | b"Table"
-        ) {
-            let attributes = crate::encoding::resolve(doc, attributes)
-                .as_dict()
-                .map_err(|_| INVALID)?;
-            keys(
-                attributes,
-                &[b"O", b"BBox", b"Placement", b"Width", b"Height"],
-                "bounded attributes",
-            )?;
-            // Table 343: the element's authored size, a number or Auto. It
-            // describes read-only content, so it cannot become stale either.
-            for key in [b"Width".as_slice(), b"Height"] {
-                if attributes.get(key).is_ok_and(|value| {
-                    value.as_name().ok() != Some(b"Auto")
-                        && !super::number(value).is_ok_and(|size| size.is_finite() && size >= 0.0)
-                }) {
-                    return Err(INVALID.into());
-                }
-            }
-            if name(get(attributes, b"O")?)? != b"Layout" {
-                return Err(INVALID.into());
-            }
-            if attributes.get(b"Placement").is_ok_and(|value| {
-                !value.as_name().is_ok_and(|name| {
-                    matches!(name, b"Block" | b"Inline" | b"Before" | b"Start" | b"End")
-                })
-            }) {
-                return Err(INVALID.into());
-            }
-            if let Ok(bounds) = attributes.get(b"BBox") {
-                let bounds = array(crate::encoding::resolve(doc, bounds))?;
-                if bounds.len() != 4 {
-                    return Err(INVALID.into());
-                }
-                let bounds = bounds
-                    .iter()
-                    .map(super::number)
-                    .collect::<Result<Vec<_>, _>>()?;
-                if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
-                    return Err(INVALID.into());
-                }
-            }
-            return Ok(page);
-        }
+    if let Ok(value) = dict.get(b"A") {
         // Cell attributes and identifiers are checked together with the IDTree
         // after this element's row/table ownership has been established.
-        if matches!(name(get(dict, b"S")?)?, b"TD" | b"TH") {
-            return Ok(page);
+        if matches!(tag, b"TD" | b"TH") {
+            return Ok((page, pins));
         }
-        if name(get(dict, b"S")?)? == b"L" {
-            // A single List attribute dictionary, optionally wrapped as emitted
-            // by Chromium. Numbering describes labels; it is not an ink bound.
-            let attributes = crate::encoding::resolve(doc, attributes);
-            let attributes = match attributes {
-                Object::Array(items) if items.len() == 1 => {
-                    crate::encoding::resolve(doc, &items[0])
+        pins |= attributes(doc, tag, crate::encoding::resolve(doc, value))?;
+    }
+    // ISO 32000-1 14.7.5.2: a class names attribute objects kept in the
+    // root's ClassMap. They apply exactly as the element's own A would, so
+    // each is held to the same rules. A revision number may follow a name.
+    if let Ok(value) = dict.get(b"C") {
+        let classes = scope.classes.ok_or(INVALID)?;
+        let names = match crate::encoding::resolve(doc, value) {
+            value @ Object::Name(_) => std::slice::from_ref(value),
+            Object::Array(values) if !values.is_empty() && values.len() <= 8 => values.as_slice(),
+            _ => return Err(INVALID.into()),
+        };
+        let mut named = false;
+        for entry in names {
+            match entry {
+                Object::Name(class) => {
+                    let value =
+                        crate::encoding::resolve(doc, classes.get(class).map_err(|_| INVALID)?);
+                    let objects = match value {
+                        Object::Array(values) if !values.is_empty() && values.len() <= 8 => {
+                            values.as_slice()
+                        }
+                        value => std::slice::from_ref(value),
+                    };
+                    for object in objects {
+                        pins |= attributes(doc, tag, crate::encoding::resolve(doc, object))?;
+                    }
+                    named = true;
                 }
-                value => value,
-            };
-            let attributes = attributes.as_dict().map_err(|_| INVALID)?;
-            keys(attributes, &[b"O", b"ListNumbering"], "list attributes")?;
-            if name(get(attributes, b"O")?)? != b"List"
-                || !matches!(
-                    name(get(attributes, b"ListNumbering")?)?,
-                    b"None"
-                        | b"Disc"
-                        | b"Circle"
-                        | b"Square"
-                        | b"Decimal"
-                        | b"UpperRoman"
-                        | b"LowerRoman"
-                        | b"UpperAlpha"
-                        | b"LowerAlpha"
-                )
-            {
-                return Err(INVALID.into());
+                Object::Integer(revision) if named && *revision >= 0 => named = false,
+                _ => return Err(INVALID.into()),
             }
-            return Ok(page);
         }
-        if matches!(name(get(dict, b"S")?)?, b"NonStruct" | b"Span") {
-            return Err(INVALID.into());
-        }
-        let attributes = crate::encoding::resolve(doc, attributes)
-            .as_dict()
-            .map_err(|_| INVALID)?;
+    }
+    Ok((page, pins))
+}
+
+// One attribute object belonging to an element with this standard tag. Returns
+// whether the object pins the element's content (see `element`).
+fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String> {
+    // ISO 32000-1 14.8.5.6, Table 348: a form field's role and state for
+    // assistive technology. A field's text is read-only, so none of it can go
+    // stale; LiveCycle writes one on every check box.
+    if tag == b"Form"
+        && value.as_dict().is_ok_and(|entries| {
+            entries.get(b"O").and_then(Object::as_name).ok() == Some(b"PrintField")
+        })
+    {
+        let attributes = value.as_dict().map_err(|_| INVALID)?;
         keys(
             attributes,
-            &[
-                b"O",
-                b"Placement",
-                b"StartIndent",
-                b"EndIndent",
-                b"SpaceBefore",
-                b"SpaceAfter",
-                b"TextIndent",
-            ],
-            "layout attributes",
+            &[b"O", b"Role", b"checked", b"Checked", b"Desc"],
+            "field attributes",
         )?;
-        if name(get(attributes, b"O")?)? != b"Layout"
-            || name(get(attributes, b"Placement")?)? != b"Block"
+        if attributes
+            .get(b"Role")
+            .is_ok_and(|role| !matches!(role.as_name(), Ok(b"rb" | b"cb" | b"pb" | b"tv" | b"lb")))
+            || [b"checked".as_slice(), b"Checked"].iter().any(|key| {
+                attributes
+                    .get(key)
+                    .is_ok_and(|state| !matches!(state.as_name(), Ok(b"on" | b"off" | b"neutral")))
+            })
+            || attributes
+                .get(b"Desc")
+                .is_ok_and(|text| !text.as_str().is_ok_and(|text| text.len() <= 65536))
         {
             return Err(INVALID.into());
         }
-        for key in [
-            b"StartIndent".as_slice(),
+        return Ok(false);
+    }
+    // ISO 32000-1 Table 344: BBox is the element's own ink, not an authored
+    // allocation, so retaining one is only sound while the content it
+    // describes cannot move. A figure, link and field are already read-only;
+    // a table that declares bounds makes its own text read-only too, which
+    // is what the returned pin and `Tags::bounded` carry out.
+    if matches!(tag, b"Figure" | b"Link" | b"Form" | b"Table") {
+        let attributes = value.as_dict().map_err(|_| INVALID)?;
+        keys(
+            attributes,
+            &[b"O", b"BBox", b"Placement", b"Width", b"Height"],
+            "bounded attributes",
+        )?;
+        // Table 343: the element's authored size, a number or Auto. It
+        // describes read-only content, so it cannot become stale either.
+        for key in [b"Width".as_slice(), b"Height"] {
+            if attributes.get(key).is_ok_and(|value| {
+                value.as_name().ok() != Some(b"Auto")
+                    && !super::number(value).is_ok_and(|size| size.is_finite() && size >= 0.0)
+            }) {
+                return Err(INVALID.into());
+            }
+        }
+        if name(get(attributes, b"O")?)? != b"Layout" {
+            return Err(INVALID.into());
+        }
+        if attributes.get(b"Placement").is_ok_and(|value| {
+            !value.as_name().is_ok_and(|name| {
+                matches!(name, b"Block" | b"Inline" | b"Before" | b"Start" | b"End")
+            })
+        }) {
+            return Err(INVALID.into());
+        }
+        if let Ok(bounds) = attributes.get(b"BBox") {
+            let bounds = array(crate::encoding::resolve(doc, bounds))?;
+            if bounds.len() != 4 {
+                return Err(INVALID.into());
+            }
+            let bounds = bounds
+                .iter()
+                .map(super::number)
+                .collect::<Result<Vec<_>, _>>()?;
+            if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
+                return Err(INVALID.into());
+            }
+            return Ok(tag == b"Table");
+        }
+        return Ok(false);
+    }
+    if tag == b"L" {
+        // A single List attribute dictionary, optionally wrapped as emitted
+        // by Chromium. Numbering describes labels; it is not an ink bound.
+        let attributes = match value {
+            Object::Array(items) if items.len() == 1 => crate::encoding::resolve(doc, &items[0]),
+            value => value,
+        };
+        let attributes = attributes.as_dict().map_err(|_| INVALID)?;
+        keys(attributes, &[b"O", b"ListNumbering"], "list attributes")?;
+        if name(get(attributes, b"O")?)? != b"List"
+            || !matches!(
+                name(get(attributes, b"ListNumbering")?)?,
+                b"None"
+                    | b"Disc"
+                    | b"Circle"
+                    | b"Square"
+                    | b"Decimal"
+                    | b"UpperRoman"
+                    | b"LowerRoman"
+                    | b"UpperAlpha"
+                    | b"LowerAlpha"
+            )
+        {
+            return Err(INVALID.into());
+        }
+        return Ok(false);
+    }
+    let attributes = value.as_dict().map_err(|_| INVALID)?;
+    let leaf = matches!(tag, b"NonStruct" | b"Span");
+    // ISO 32000-1 Table 343: LineHeight is the distance between adjacent
+    // baselines. A fixed-position edit moves no line, so it stays true, and it
+    // is the one layout attribute an inline leaf may carry (InDesign's classes).
+    let allowed: &[&[u8]] = if leaf {
+        &[b"O", b"LineHeight"]
+    } else {
+        &[
+            b"O",
+            b"Placement",
+            b"StartIndent",
             b"EndIndent",
             b"SpaceBefore",
             b"SpaceAfter",
             b"TextIndent",
-        ] {
-            if let Ok(indent) = attributes.get(key) {
-                // ISO 32000-1 14.8.5.4: authored block allocation constraints,
-                // not ink bounds. A fitting fixed-position edit retains these
-                // indents and inter-paragraph spacing without reflowing text.
-                // TextIndent offsets only the first line from StartIndent;
-                // its origin stays fixed even when that line gets shorter.
-                if name(get(dict, b"S")?)? == b"Document" {
-                    return Err(INVALID.into());
-                }
-                super::number(indent)?;
-            }
+            b"TextAlign",
+            b"LineHeight",
+        ]
+    };
+    keys(attributes, allowed, "layout attributes")?;
+    if name(get(attributes, b"O")?)? != b"Layout"
+        || attributes
+            .get(b"Placement")
+            .is_ok_and(|value| value.as_name().ok() != Some(b"Block"))
+        || (leaf && !attributes.has(b"LineHeight"))
+    {
+        return Err(INVALID.into());
+    }
+    if let Ok(height) = attributes.get(b"LineHeight") {
+        if !matches!(height.as_name(), Ok(b"Normal" | b"Auto")) && super::number(height)? < 0.0 {
+            return Err(INVALID.into());
         }
     }
-    Ok(page)
+    for key in [
+        b"StartIndent".as_slice(),
+        b"EndIndent",
+        b"SpaceBefore",
+        b"SpaceAfter",
+        b"TextIndent",
+    ] {
+        if let Ok(indent) = attributes.get(key) {
+            // ISO 32000-1 14.8.5.4: authored block allocation constraints,
+            // not ink bounds. A fitting fixed-position edit retains these
+            // indents and inter-paragraph spacing without reflowing text.
+            // TextIndent offsets only the first line from StartIndent;
+            // its origin stays fixed even when that line gets shorter.
+            if tag == b"Document" {
+                return Err(INVALID.into());
+            }
+            super::number(indent)?;
+        }
+    }
+    // Table 343: alignment within the block. Start is the default and holds
+    // wherever the line ends. Centre, end and justified alignment describe
+    // where the existing line sits relative to its width, which an edit that
+    // changes the width would falsify, so those blocks keep their text.
+    match attributes.get(b"TextAlign") {
+        Err(_) => Ok(false),
+        Ok(value) => match name(value)? {
+            b"Start" => Ok(false),
+            b"Center" | b"End" | b"Justify" => Ok(true),
+            _ => Err(INVALID.into()),
+        },
+    }
 }
 
 // K may be a single child/item or an array. An indirect array is a container,
@@ -529,6 +629,8 @@ struct Group<'a> {
     page: Option<ObjectId>,
     tag: &'a [u8],
     items: Vec<&'a Object>,
+    // Whether this group or an ancestor pins its content (see `element`).
+    pinned: bool,
 }
 
 // Exactly one optional NonStruct/Span level below a paragraph, never a recursive
@@ -539,7 +641,7 @@ fn groups<'a>(
     paragraph: Group<'a>,
     scope: &Scope,
     ids: &mut BTreeSet<ObjectId>,
-    nested: &mut Vec<(&'a Object, ObjectId)>,
+    nested: &mut Vec<(&'a Object, ObjectId, bool)>,
 ) -> Result<Vec<Group<'a>>, String> {
     if paragraph.items.len() > MAX_NODES {
         return Err(INVALID.into());
@@ -559,14 +661,14 @@ fn groups<'a>(
                 && node(doc, *id)
                     .is_ok_and(|child| get(child, b"S").and_then(name).is_ok_and(|tag| tag == b"L"))
             {
-                nested.push((item, plain.id));
+                nested.push((item, plain.id, plain.pinned));
                 continue;
             }
             if !ids.insert(*id) || ids.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
             let child = node(doc, *id)?;
-            let page = element(
+            let (page, pins) = element(
                 doc,
                 child,
                 plain.id,
@@ -596,6 +698,7 @@ fn groups<'a>(
                 page,
                 tag,
                 items: items.iter().collect(),
+                pinned: plain.pinned || pins,
             };
             // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
             // branch recurses, so this adds one bounded level, not arbitrary trees.
@@ -618,13 +721,9 @@ fn groups<'a>(
     Ok(groups)
 }
 
-// Whether this element declared the ink bounds `element` validated above. A
-// table is the only one of the four whose text would otherwise be editable, so
-// it is the only one for which the answer changes anything.
-fn bounds(doc: &Document, dict: &Dictionary) -> bool {
-    dict.get(b"A")
-        .map(|value| crate::encoding::resolve(doc, value))
-        .is_ok_and(|value| value.as_dict().is_ok_and(|entries| entries.has(b"BBox")))
+// ISO 32000-1 14.8.4.2: a table of contents and its entries group elements.
+fn toc(tag: &[u8]) -> bool {
+    matches!(tag, b"TOC" | b"TOCI")
 }
 
 // ISO 32000-1 14.8.4.3.4: optional row groups between a table and its rows.
@@ -735,6 +834,7 @@ impl Tags {
                 b"ParentTreeNextKey",
                 b"IDTree",
                 b"Namespaces",
+                b"ClassMap",
             ],
             "structure root",
         )?;
@@ -884,9 +984,21 @@ impl Tags {
         if paragraphs.len() > MAX_NODES {
             return Err(INVALID.into());
         }
+        // Classes are checked where an element names them, against the rules
+        // for that element's own attributes; one nobody names changes nothing.
+        let classes = root
+            .get(b"ClassMap")
+            .ok()
+            .map(|value| crate::encoding::resolve(doc, value).as_dict())
+            .transpose()
+            .map_err(|_| INVALID)?;
+        if classes.is_some_and(|classes| classes.len() > 256) {
+            return Err(INVALID.into());
+        }
         let scope = Scope {
             pages: &page_ids,
             namespaces: &namespaces,
+            classes,
         };
         let mut assigned = 0;
         let mut ids = page_ids.clone();
@@ -909,7 +1021,11 @@ impl Tags {
             let owns_text = !(container(role)
                 || annotation_owner(role)
                 || matches!(role, b"Document" | b"Figure" | b"L" | b"Table" | b"TR"));
-            let paragraph_page = element(doc, child, parent_id, &scope, owns_text)?;
+            let (paragraph_page, pins) = element(doc, child, parent_id, &scope, owns_text)?;
+            // Metadata that describes this element's content as it stands
+            // (a table's ink bounds, alternate text, a title, a centred line)
+            // makes that content and everything below it read-only.
+            let bounded = bounded || pins;
             let items = kids(doc, child)?;
             if role == b"Document" {
                 if parent_id != root_id
@@ -933,6 +1049,7 @@ impl Tags {
             if container(role)
                 || matches!(role, b"NonStruct" | b"L" | b"Table" | b"TR")
                 || table_section(role)
+                || toc(role)
             {
                 containers += 1;
                 // Bound the work list before copying child references into it.
@@ -955,6 +1072,19 @@ impl Tags {
                             return Err(INVALID.into());
                         }
                     }
+                }
+                // ISO 32000-1 14.8.4.2: a table of contents holds entries and
+                // nested tables of contents; an entry holds the blocks, which
+                // own the content. LibreOffice and Word export one per index.
+                if role == b"TOC" {
+                    for item in items {
+                        if !toc(name(get(node(doc, reference(item)?)?, b"S")?)?) {
+                            return Err(INVALID.into());
+                        }
+                    }
+                }
+                if role == b"TOCI" && name(get(node(doc, parent_id)?, b"S")?)? != b"TOC" {
+                    return Err(INVALID.into());
                 }
                 if role == b"TR" || table_section(role) {
                     // The structure root has no S; rows and sections never sit there.
@@ -991,7 +1121,6 @@ impl Tags {
                 // A table that keeps its own ink bounds makes every descendant
                 // read-only: an edit inside a cell would leave those bounds
                 // describing content that is no longer there.
-                let bounded = bounded || (role == b"Table" && bounds(doc, child));
                 pending.extend(
                     items
                         .iter()
@@ -1050,6 +1179,7 @@ impl Tags {
                 page: paragraph_page,
                 tag,
                 items: content_items,
+                pinned: bounded,
             };
             let mut deferred = Vec::new();
             let produced = groups(doc, paragraph, &scope, &mut ids, &mut deferred)?;
@@ -1059,13 +1189,14 @@ impl Tags {
             pending.extend(
                 deferred
                     .into_iter()
-                    .map(|(item, parent)| (item, parent, depth, bounded)),
+                    .map(|(item, parent, pinned)| (item, parent, depth, pinned)),
             );
             for Group {
                 id,
                 page: paragraph_page,
                 tag,
                 items,
+                pinned,
             } in produced
             {
                 for item in items {
@@ -1115,7 +1246,7 @@ impl Tags {
                         return Err(INVALID.into());
                     }
                     names[mcid] = tag.to_vec();
-                    if bounded {
+                    if pinned {
                         bounded_slots.entry(owner).or_default().insert(mcid);
                     }
                 }
@@ -1212,7 +1343,9 @@ impl Tags {
         tag: &Object,
         properties: Option<&Object>,
     ) -> Result<(), String> {
-        if self.names.is_empty() {
+        // An artifact names no structure element, so an untagged page may
+        // carry one (Acrobat stamps page numbers on scans this way).
+        if self.names.is_empty() && (properties.is_some() || name(tag)? != b"Artifact") {
             return Err("marked content has no supported structure tree".into());
         }
         if self.active.is_some() {
@@ -1294,7 +1427,9 @@ impl Tags {
                     || self.names[mcid] == ORPHAN
                     || self.bounded.contains(&mcid)
             }
-            _ => !self.names.is_empty(),
+            // An artifact is never the document's content, tagged or not.
+            Some(None) => true,
+            None => !self.names.is_empty(),
         }
     }
 

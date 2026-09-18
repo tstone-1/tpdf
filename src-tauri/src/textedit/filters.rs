@@ -46,6 +46,16 @@ pub(super) fn decode_unpredicted(stream: &Stream, limit: usize) -> Result<Vec<u8
     }
 }
 
+// The Flate stage in front of a DCT image (`[/FlateDecode /DCTDecode]`, which
+// Acrobat writes when it recompresses a scan). Its output is a JPEG, bounded
+// like encoded content; the JPEG checks then apply to it unchanged.
+pub(super) fn inflate(stream: &Stream) -> Result<Vec<u8>, String> {
+    if stream.content.len() > MAX_ENCODED || stream.dict.has(b"F") {
+        return Err("encoded page content exceeds its limit".into());
+    }
+    flate(&stream.content, MAX_ENCODED)
+}
+
 fn flate(input: &[u8], limit: usize) -> Result<Vec<u8>, String> {
     let mut decoder = flate2::Decompress::new(true);
     let mut output = vec![0; limit + 1];

@@ -204,28 +204,77 @@ pub(super) fn painted(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>,
         return Err("invalid rectangle paint operands".into());
     }
     for rect in &ops[..count] {
-        rectangle(rect, ctm)?;
+        if super::diagonal(ctm) {
+            rectangle(rect, ctm)?;
+        } else {
+            // Painting only: under a rotated or skewed CTM the rectangle is a
+            // parallelogram, and all that is needed is its corners in range.
+            if rect.operands.len() != 4 {
+                return Err("invalid rectangle operands".into());
+            }
+            let [x, y, width, height] = [0, 1, 2, 3].map(|i| super::number(&rect.operands[i]));
+            let (x, y, width, height) = (x?, y?, width?, height?);
+            if width == 0. || height == 0. {
+                return Err("empty rectangle is not editable".into());
+            }
+            for (px, py) in [
+                (x, y),
+                (x + width, y),
+                (x, y + height),
+                (x + width, y + height),
+            ] {
+                bounded(
+                    point(ctm, px, py),
+                    "rectangle coordinates exceed their limit",
+                )?;
+            }
+        }
     }
     Ok(Some(count + 1))
+}
+
+// A point in page space under any affine CTM.
+fn point(ctm: [f64; 6], x: f64, y: f64) -> [f64; 2] {
+    [
+        x * ctm[0] + y * ctm[2] + ctm[4],
+        x * ctm[1] + y * ctm[3] + ctm[5],
+    ]
+}
+
+fn bounded(point: [f64; 2], message: &str) -> Result<(), String> {
+    if point
+        .iter()
+        .any(|value| !value.is_finite() || value.abs() > 1_000_000.)
+    {
+        return Err(message.into());
+    }
+    Ok(())
 }
 
 // Complete line/Bezier subpaths, finished before any state or text operator.
 // Painting without W/W* cannot alter a later text clip. Keep every operand;
 // transformed control points bound each cubic's convex hull without flattening.
 // MAX_OPERATIONS bounds the entire stream, and the caller skips consumed ops.
+//
+// A moveto may start a subpath that draws nothing: TikZ opens paths with two
+// and ends them with one after `h`. Such a point paints nothing (ISO 32000-1
+// 8.5.3.2 paints a lone point only when it is a closed subpath) and is kept
+// byte for byte; the path as a whole still has to draw a segment.
 pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
     let invalid = || "only complete bounded painted paths are editable".to_string();
     let mut segments = 0;
+    let mut drawn = false;
     let mut closed = false;
     for (index, op) in ops.iter().enumerate() {
         let coordinates = match op.operator.as_str() {
-            "m" if index == 0 || segments > 0 => {
+            "m" => {
                 segments = 0;
                 closed = false;
                 2
             }
             "l" | "c" | "v" | "y" if index > 0 && !closed => {
                 segments += 1;
+                drawn = true;
                 match op.operator.as_str() {
                     "l" => 2,
                     "c" => 6,
@@ -237,7 +286,7 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
                 continue;
             }
             "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n"
-                if segments > 0 && op.operands.is_empty() =>
+                if drawn && op.operands.is_empty() =>
             {
                 return Ok(index + 1);
             }
@@ -246,16 +295,12 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
         if op.operands.len() != coordinates {
             return Err(invalid());
         }
+        // Painted paths are preserved, never clipped against, so any affine
+        // CTM will do; only the points' range is checked.
         for pair in op.operands.chunks_exact(2) {
             let x = super::number(&pair[0])?;
             let y = super::number(&pair[1])?;
-            let point = [x * ctm[0] + ctm[4], y * ctm[3] + ctm[5]];
-            if point
-                .iter()
-                .any(|value| !value.is_finite() || value.abs() > 1_000_000.)
-            {
-                return Err("path coordinates exceed their limit".into());
-            }
+            bounded(point(ctm, x, y), "path coordinates exceed their limit")?;
         }
     }
     Err(invalid())
@@ -305,8 +350,8 @@ pub(super) fn contains(clip: Option<Rect>, text: Rect) -> Result<(), String> {
 }
 
 pub(super) fn line_width(value: &Object) -> Result<(), String> {
-    // Tr is fixed at 0, so line width cannot affect the edited glyphs.
-    // Supported strokes retain this authored setting unchanged.
+    // Stroked text (Tr 1 and 2) reaches half the width beyond its outlines;
+    // the scanner widens its ink by that. The authored setting is kept.
     if super::number(value)? < 0. {
         return Err("negative line width is not editable".into());
     }

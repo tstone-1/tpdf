@@ -180,9 +180,9 @@ fn textedit_tagged_refusals_identify_metadata_without_echoing_document_data() {
         ),
         (3, "IDTree", "unsupported IDTree metadata in tagged element"),
         (
-            1,
+            3,
             "ClassMap",
-            "unsupported ClassMap metadata in tagged structure root",
+            "unsupported ClassMap metadata in tagged element",
         ),
         (
             3,

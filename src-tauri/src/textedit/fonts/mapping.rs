@@ -109,13 +109,37 @@ fn unicode_codes(
 }
 
 fn blocks(stream: &Stream, wide: bool) -> Result<Vec<Operation>, String> {
-    blocks_with_header(stream, wide, false)
+    blocks_with_header(stream, wide, false, false)
+}
+
+// The CMap's own name and its CIDSystemInfo label it; they map no code. pdfTeX
+// and dvipdfm name both after the TeX encoding. Admit any such label, with the
+// shape the CMap specification (Adobe TN 5099) gives it.
+fn label(actual: &Operation, expected: &Operation) -> bool {
+    let short = |object: &Object| object.as_str().is_ok_and(|text| text.len() <= 127);
+    expected.operator == "def"
+        && actual.operands.len() == 2
+        && actual.operands[0] == expected.operands[0]
+        && match (&expected.operands[0], &actual.operands[1]) {
+            (Object::Name(key), Object::Name(name)) => key == b"CMapName" && name.len() <= 127,
+            (Object::Name(key), Object::Dictionary(info)) => {
+                key == b"CIDSystemInfo"
+                    && info.len() == 3
+                    && info.get(b"Registry").is_ok_and(short)
+                    && info.get(b"Ordering").is_ok_and(short)
+                    && info
+                        .get(b"Supplement")
+                        .is_ok_and(|value| value.as_i64().is_ok_and(|n| (0..=1000).contains(&n)))
+            }
+            _ => false,
+        }
 }
 
 fn blocks_with_header(
     stream: &Stream,
     wide: bool,
     padded_single: bool,
+    labelled: bool,
 ) -> Result<Vec<Operation>, String> {
     if stream.dict.has(b"UseCMap") {
         return Err("inherited character maps are not editable yet".into());
@@ -158,7 +182,10 @@ fn blocks_with_header(
         let dictionary_capacity = expected.operator == "dict"
             && matches!(actual.operands.as_slice(), [Object::Integer(size)] if (1..=256).contains(size));
         if actual.operator != expected.operator
-            || (actual.operands != expected.operands && !padded_range && !dictionary_capacity)
+            || (actual.operands != expected.operands
+                && !padded_range
+                && !dictionary_capacity
+                && !(labelled && label(actual, expected)))
         {
             return Err(invalid());
         }
@@ -197,7 +224,7 @@ fn parse_single(
     padded: bool,
     winansi: bool,
 ) -> Result<Box<[Option<u8>; 256]>, String> {
-    let ops = blocks_with_header(stream, false, padded)?;
+    let ops = blocks_with_header(stream, false, padded, false)?;
     let invalid = || "unsupported or ambiguous single-byte character map".to_string();
     let mut result = Box::new([None; 256]);
     let mut unicode = [false; 256];
@@ -265,6 +292,78 @@ fn parse_single(
                 }
                 result[code as usize] = Some(ch);
                 unicode[ch as usize] = true;
+            }
+        }
+    }
+    Ok(result)
+}
+
+// Single-byte Type 1 maps as pdfTeX writes them: the whole TeX encoding, much
+// of it outside the editor's repertoire. Each code is None when unmapped,
+// Some(None) when its text cannot be offered, and Some(Some(slot)) otherwise.
+// The caller requires agreement with the glyph names; nothing here is trusted
+// to choose a glyph.
+pub(super) fn parse_names(stream: &Stream) -> Result<Box<[Option<Option<u8>>; 256]>, String> {
+    let invalid = || "unsupported or ambiguous single-byte character map".to_string();
+    let mut result = Box::new([None; 256]);
+    for block in blocks_with_header(stream, false, true, true)?.chunks_exact(2) {
+        let [Object::Integer(count)] = block[0].operands.as_slice() else {
+            return Err(invalid());
+        };
+        let stride = match (block[0].operator.as_str(), block[1].operator.as_str()) {
+            ("beginbfchar", "endbfchar") => 2,
+            ("beginbfrange", "endbfrange") => 3,
+            _ => return Err(invalid()),
+        };
+        if !(1..=100).contains(count) || *count as usize * stride != block[1].operands.len() {
+            return Err(invalid());
+        }
+        let byte = |object: &Object| -> Result<u8, String> {
+            match object {
+                Object::String(bytes, _) if bytes.len() == 1 => Ok(bytes[0]),
+                _ => Err(invalid()),
+            }
+        };
+        for entry in block[1].operands.chunks_exact(stride) {
+            let first = byte(&entry[0])?;
+            let last = if stride == 3 { byte(&entry[1])? } else { first };
+            let Object::String(bytes, _) = &entry[stride - 1] else {
+                return Err(invalid());
+            };
+            if last < first || bytes.is_empty() || bytes.len() % 2 != 0 || bytes.len() > 16 {
+                return Err(invalid());
+            }
+            let units = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>();
+            for code in first..=last {
+                let offset = u16::from(code - first);
+                let text = if stride == 3 {
+                    // A range increments its target's last unit (TN 5099 1.4).
+                    let [start] = units.as_slice() else {
+                        return Err(invalid());
+                    };
+                    let unit = start.checked_add(offset).ok_or_else(invalid)?;
+                    String::from_utf16(&[unit]).map_err(|_| invalid())?
+                } else {
+                    String::from_utf16(&units).map_err(|_| invalid())?
+                };
+                let mut chars = text.chars();
+                let slot = match (chars.next(), chars.next()) {
+                    // U+2212 takes the internal minus slot; the caller's glyph
+                    // name must say `minus` for it to be offered. Control
+                    // characters have no slot.
+                    (Some(ch), None) => super::super::character_slot(ch)
+                        .filter(|&slot| !matches!(slot, 0xA0 | 0xAD)),
+                    _ => super::ligatures::GLYPHS
+                        .iter()
+                        .find(|(_, sequence, _)| *sequence == text)
+                        .map(|(_, _, slot)| *slot),
+                };
+                if result[code as usize].replace(slot).is_some() {
+                    return Err(invalid());
+                }
             }
         }
     }

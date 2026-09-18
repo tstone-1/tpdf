@@ -379,9 +379,22 @@ including progressive and ICCBased images. `textedit/images/jpeg.rs` bounds
 encoded bytes, marker framing, scan count and decoded dimensions before pixel
 allocation; the shared page image budget still applies. Decoder success does not
 certify every entropy sample: even strict mode recovers some malformed input.
-The explicit framing check rejects empty scans, missing ends and trailing images;
-no image sample is rewritten. Four-component JPEGs, stencil and colour-key masks,
-and decode parameters selecting a predictor remain refused. Generate synthetic cases with
+The explicit framing check rejects empty scans, missing ends and trailing images,
+but admits NUL padding after EOI (Acrobat writes a few bytes of it); the decoder
+is then given the bytes up to EOI. `[/FlateDecode /DCTDecode]` (Acrobat's
+recompressed scans) is inflated by `filters::inflate`, bounded like encoded
+content, and the result checked as a JPEG. No image sample is rewritten.
+Four-component JPEGs, colour-key masks and decode parameters selecting a
+predictor remain refused.
+
+Stencil masks (`/ImageMask true`, 1 bit) are `images/stencil.rs`: unfiltered,
+Flate, or pure CCITT Group 4 (`K < 0`, `Columns` = `Width`, `Rows` absent, 0 or
+`Height`, no byte-aligned rows or EOL codes). The G4 stream must decode to
+exactly `Height` rows through `fax::decoder::Group4Decoder`, driven row by row
+because `decode_g4` pads missing rows with white. A stencil paints the fill
+colour, so `Do` checks that colour at every use; a preserved form, whose colour
+is not tracked, refuses one. Tests build their G4 data with the crate's encoder.
+Generate synthetic JPEG cases with
 `uv run --with pillow --with fonttools --with pypdf testdata/make_textedit_jpeg.py <directory>`;
 use ordinary `text-edit-probe`/native textedit checks and PDFKit `--image` readback.
 
@@ -414,12 +427,17 @@ as well as inside, which is where Acrobat's page-number stamps set it (ISO
 32000-1 Table 51); positioning and showing still require the text object.
 External forms, soft-mask graphics states and pattern colours remain refused. Indexed eight-bit
 images validate palette length and every sample. Page images and preserved forms
-share an 8 MiB byte budget. Figure MCIDs may use P stream markers for preserved
+share a 32 MiB byte budget (`MAX_IMAGES`, checked before decoding; a screenshot
+with its soft mask is ~13 MB). Figure MCIDs may use P stream markers for preserved
 graphics; direct figure text remains refused. Artifacts and unmarked additions on
 tagged pages keep their bytes and glyph collision bounds without becoming editable.
 Embedded fonts accept zero-width holes only when unused, half-em descenders,
 nonsymbolic Identity-H descriptors, indirect width arrays and verified empty
-ideographic-space glyphs. Runs with deeper descenders carry a minimum physical
+ideographic-space glyphs. `empty_glyph` also counts a simple glyph of one
+contour with one point as empty, read from the glyf header (YuGothic subsets
+carry their space that way). A Type0 font's `/BaseFont` need not repeat its
+descendant's: merged documents give it another subset tag, and the name selects
+nothing. The descendant and its descriptor must still agree. Runs with deeper descenders carry a minimum physical
 box height, used by the default layout before rounding its font size and height.
 ToUnicode dictionary capacities from 1 through 256 are
 allocation hints; the remaining CMap grammar is unchanged. Synthetic regressions
@@ -445,7 +463,8 @@ ordinary worker/native textedit checks and independent structure-graph readback.
 Block layout attributes admit bounded numeric StartIndent/EndIndent and
 SpaceBefore/SpaceAfter. These authored allocation constraints are retained. Bounded numeric TextIndent
 also works on paragraph-like blocks, preserving the first-line origin through
-shorter edits; TextAlign and ink bounds remain refused. The unchanged LibreOffice
+shorter edits. TextAlign Start is accepted; Center/End/Justify pin the block
+read-only (see below), and ink bounds remain refused. The unchanged LibreOffice
 exports of `textedit-producer-hanging-indent.rtf` and
 `textedit-producer-first-indent.rtf` exercise both signs. PDFKit readback uses
 `--hanging-indent` / `--first-indent` and checks the authored 12pt line offsets;
@@ -519,12 +538,40 @@ Pages without StructParents, `null` slots and slots naming unreachable elements
 are accepted; unowned and orphaned content is read-only, and a reachable
 element that skips its slot is still refused. The owning element, not the
 content tag, supplies semantics, except that `/Artifact` on an owned MCID is
-refused; artifact property lists (Table 330 keys) work inside and outside BT.
+refused; artifact property lists (Table 330 keys) work inside and outside BT,
+as does `/Artifact BMC` (LibreOffice's TOC dot leaders). An artifact without an
+MCID needs no structure tree, so an untagged page may carry one (Acrobat's page
+stamps on scans); its text is read-only there too (`Tags::read_only` answers
+`Some(None)` with true on every page, not only tagged ones).
 THead/TBody/TFoot, lists directly in lists or cells, figures in cells, missing
 `/K`, figure Width/Height, and the PDF 1.7/2.0 standard namespaces (types common
-to both) are accepted. `/Alt` is limited to Figure/Link/Form; a non-empty `/T`
-to elements without editable text. `tagging/producer_tests.rs`,
+to both) are accepted. `tagging/producer_tests.rs`,
 `annotation_tests.rs` and `tree_tests.rs` hold the synthetic fixtures.
+
+An element *pins* its content (read-only, through `Tags::bounded`) when it keeps
+metadata describing that content as it stands: `/Alt` on any element (it
+covers every descendant), a non-empty `/T` on an element owning text, a
+non-Start `TextAlign`, or a table `/BBox`. `element()` returns the pin with the
+page; the walk ORs it into `bounded` and `Group::pinned` carries it through
+`groups` and deferred sublists. Pinned text still needs validated glyph outlines
+(`read-only text requires validated glyph outlines`), so a standard-14 font
+cannot be pinned. `/ClassMap` classes named by `/C` (name or array of at most 8,
+each optionally followed by a non-negative revision) are validated by the same
+`attributes()` as `/A`; at most 256 classes; TD/TH may not use `/C`. Layout
+attributes may omit `Placement` and carry `LineHeight` (number >= 0, Normal,
+Auto); inline Span/NonStruct leaves accept only `O` + `LineHeight`. `TOC`/`TOCI`
+group blocks (TOC holds TOCI or TOC; TOCI sits in a TOC). `Form` may carry
+`O /PrintField` with standard Role/checked/Desc. `tagging/pinned_tests.rs` covers
+these. Flatness (`i`, ExtGState `/FL`, 0-100) and smoothness (`/SM`, 0-1) are
+preserved rendering tolerances (`graphics::tolerance`).
+
+Text render modes 0-3 are accepted (fill, stroke, both, invisible; OCR text
+layers are mode 3). Mode and line width are graphics state, saved by `q` and
+restored by `Q`; `w` and an ExtGState `/LW` set the width. A stroked run (1, 2)
+needs a solid stroke colour, and its hit box and ink grow by half the width
+times the CTM scale, which clips, compound clips and the layout editor
+(`layout::Context.stroke`) all see. Modes 4-7 add to the clipping path and are
+refused.
 
 Layout attributes are also accepted on Figure, Link, Form and Table, where
 `/BBox` is optional and `/Placement` may be any of the five standard names.
@@ -543,6 +590,7 @@ one that owns marked content directly is still refused.
 WinAnsi TrueType fonts with ToUnicode may map WinAnsi punctuation at its own
 code (0x82-0x9F except 0x80, plus Latin-1 except 0xA0/0xAD); glyphs come from
 the (3,1) cmap by Unicode value, and a Macintosh cmap need only agree for ASCII.
+The same (1,0) agreement rule admits a Mac cmap beside (3,1) without ToUnicode.
 Metric slots reuse the WinAnsi codes, so the minus keeps 0x80 and the euro sign
 stays unsupported. Two-byte fonts keep their Latin-1 and en dash repertoire.
 A continued run's TJ compensation is an exact integer plus an f32 remainder,
@@ -604,10 +652,52 @@ positive/negative font matrices, word spacing, replacements, deletion and layout
 through the contained worker, including unchanged font programs and pixels.
 
 Font refusals distinguish the Type1 resource subtype from its program carrier:
-FontFile declares PostScript Type 1; FontFile3/Type1C declares CFF. This diagnostic
-dispatch does not decode unsupported programs. Parent-tree dictionary entries
-index annotations; an entry no Link or Form element claims is reported
-separately from a missing page entry.
+FontFile declares PostScript Type 1; FontFile3/Type1C declares CFF. Parent-tree
+dictionary entries index annotations; an entry no Link or Form element claims is
+reported separately from a missing page entry.
+
+Embedded Adobe Type 1 programs (`FontFile`, what pdfTeX, dvipdfm and older
+Distiller write) are read by `fonts/type1/program.rs` without executing
+PostScript: the cleartext for `FontMatrix` (must be 0.001), `FontType` 1,
+`PaintType` 0, `FSType` and a `StandardEncoding` or literal `dup n /name put`
+built-in encoding; the eexec part (binary only, `lenIV` -1 to 4) for `Subrs` and
+`CharStrings`, RD/ND/NP spelled either way. Each charstring runs in a bounded
+interpreter (24-deep stack, 10-deep subroutines, 65,536 operations, flex and hint
+replacement through OtherSubrs 0-3) for its `hsbw`/`sbw` advance and control-point
+hull; `seac`, other OtherSubrs and anything unknown leave that glyph unoffered.
+`fonts/type1.rs` maps codes to names through `Differences` over the built-in,
+WinAnsi or Standard base and to slots by AGL name (ASCII, WinAnsi 0x82-0xFF,
+minus, `fi`/`f_i`-style ligatures including `ffl`). A code is offered only where
+its glyph exists, its width is non-zero and agrees, and a present ToUnicode agrees
+with the name (`mapping::parse_names` accepts pdfTeX's own CMap and collection
+names and narrows rather than refuses). Any other validated glyph (math symbols,
+letters outside Latin-1, a TeX math-italic width that includes its italic
+correction) is *opaque*: it measures source text at its PDF width, marks it
+with U+FFFD, and its run stays read-only with its ink reserved, up to 4 em from
+the origin (`OPAQUE_REACH`; TeX's largest delimiters hang 2.4 em down). `type1/tests.rs` builds
+its fonts in the test, charstrings and eexec encryption included.
+
+In a font that cannot write a space, a `TJ` displacement of at least 0.18 em
+between two strings reads as a space and a replacement writes each space as a
+displacement of the run's mean gap (`Metrics::items`/`gapped_layout`, shared with
+the layout editor; spaces with no word on one side are refused). One leading `TJ`
+number is where the run starts: it moves the origin and is written back unchanged.
+`docs/TRAPS.md` has why for both. Constant alpha (`ca`/`CA` in 0-1) is accepted in
+ExtGStates, since an edit keeps the state; blend modes and soft masks stay refused.
+Preserved forms accept pdfTeX's `PTEX.FileName`/`PageNumber`/`InfoDict`.
+
+A replacement in a `TJ` run keeps the source's own items for its unchanged start
+and end (`kerning.rs`): glyph bytes, kerns and word gaps are copied, only the
+changed middle is encoded, and a kern between a kept and a changed glyph is
+dropped. The candidate is read back through `array_text` and used only if it
+reads as the replacement and fits; otherwise the run is rewritten whole. On the
+arXiv sample this takes transposition edits from 24 to 69 of 80 lines.
+
+A non-embedded simple TrueType or Type 1 font (Word leaves Arial and Times New
+Roman out) is read by `fonts::unembedded`: nonsymbolic WinAnsi only, measured by
+its PDF `Widths` over printable Latin-1, with the descriptor's `FontBBox` as the
+ink of every glyph so its text can be kept read-only. Readers substitute the
+shapes and position by those widths, as they do for standard Helvetica.
 
 Untagged pages may retain a bounded integer StructParents index with no
 StructTreeRoot. Preserve that unused index; actual MCIDs without a tree remain
@@ -617,7 +707,10 @@ skewed or mirrored text matrices and text under a non-diagonal page CTM stay
 read-only, with validated embedded-font
 bounds retained for layout collision checks. Its text, positioning and resource
 bytes remain unchanged when ordinary text elsewhere on the page is edited.
-Non-diagonal paths and clips remain refused. See `textedit/patterns.rs` and
+Painted paths and rectangles are accepted under any affine CTM (only their
+points' range is checked, TikZ rotates drawings with `cm`), and a moveto may
+start a subpath that draws nothing (TikZ's `m m ... h m S`) as long as the path
+draws a segment. Clips under a non-diagonal CTM remain refused. See `textedit/patterns.rs` and
 `textedit/preserved_tests.rs`; private-document checks stay in ignored directories.
 
 
@@ -904,6 +997,13 @@ through Tauri's `plist`. Both matter to the threat model as much as to the licen
 as it arrives: `src-tauri/src/ber.rs` — about 150 lines, no dependency at all — walks it
 first and hands the parsers a definite-length value, because RFC 5652 requires DER and real
 signers emit the indefinite form that `der` refuses outright.
+
+**`fax` (MIT, pdf-rs project) was added 2026-09-18 and brings exactly one package** — its
+derive crate is behind a feature that is not enabled. It decodes the CCITT Group 4 stencil
+masks of scanned pages inside the worker, as one more parser of attacker-chosen bytes;
+every mode it reads consumes input bits, so its work is bounded by the encoded length,
+which `images/stencil.rs` caps like any encoded stream. Both lockfiles carry it: the fuzz
+package resolves the application by path.
 
 Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) — the

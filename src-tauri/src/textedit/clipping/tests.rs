@@ -159,10 +159,21 @@ fn textedit_clips_refuse_partial_compound_painted_and_unbounded_paths() {
     .is_err());
     // A line-width setter does not enable arbitrary paths or stroke text.
     for body in [
-        "0 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
+        "0 w BT /F1 12 Tf 5 Tr 40 180 Td (FIRST) Tj ET",
         "1 w 0 0 m 100 100 l W S",
     ] {
         assert!(textedit::scan(&page(body.as_bytes()), 0).is_err());
+    }
+}
+
+// FIRST's ink starts at x=40. A compound clip from x=39 holds the fill but not
+// a 2-point stroke (4 w, Tr 2), and the stroke is what it would cut.
+#[test]
+fn textedit_compound_clips_contain_the_stroke_around_text() {
+    let clip = "39 100 m 300 100 l 300 230 l 39 230 l h W n";
+    for (mode, accepted) in [("0 Tr", true), ("4 w 2 Tr", false), ("4 w 3 Tr", true)] {
+        let doc = page(format!("{clip} {mode} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "{mode}");
     }
 }
 
@@ -482,8 +493,11 @@ fn textedit_curves_preserve_complete_subpaths_and_following_text() {
 #[test]
 fn textedit_curves_refuse_bad_control_points_and_partial_subpaths_atomically() {
     let mut paths = vec![
-        "0 0 m 0 0 m 10 10 l f".to_string(),
-        "0 0 m 10 10 l 20 20 m f".to_string(),
+        // A path has to draw a segment; movetos alone draw nothing.
+        "0 0 m 20 20 m f".to_string(),
+        // A moveto starts a new subpath; closing it before a segment is refused.
+        "0 0 m 10 10 l 20 20 m h S".to_string(),
+        "0 0 m f".to_string(),
         "0 0 m 1 2 3 4 5 6 c h h f".to_string(),
         "0 0 m 1 2 3 4 5 6 c W n".to_string(),
         "0 0 m 1 2 3 4 5 6 c W* f".to_string(),
@@ -651,5 +665,99 @@ fn textedit_reversed_clip_bounds_normalize_every_corner_after_transform() {
                 assert_eq!(super::apply(None, &ops.operations, ctm).unwrap(), expected);
             }
         }
+    }
+}
+
+// TikZ opens paths with two movetos and closes them with `h m`. A moveto that
+// starts no segment draws nothing, so these paint exactly what their segments
+// do; the edit beside them keeps every path operator.
+#[test]
+fn textedit_paths_accept_movetos_that_start_nothing() {
+    for path in [
+        "0 0 m 0 0 m 10 10 l f",
+        "0 0 m 10 10 l 20 20 m f",
+        "0 0 m 10 0 l 10 10 l h 0 0 m S",
+        "5 5 m 5 5 m 1 2 3 4 5 6 c 7 8 9 10 11 12 c h 5 5 m f",
+    ] {
+        let mut doc = page(format!("{path} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+        let scan = textedit::scan(&doc, 0).unwrap();
+        let before = lopdf::content::Content::decode_strict(
+            &doc.get_page_content(crate::pagetree::ordered_pages(&doc)[0]),
+        )
+        .unwrap();
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: scan.revision,
+                operator: scan.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        let after = lopdf::content::Content::decode_strict(
+            &doc.get_page_content(crate::pagetree::ordered_pages(&doc)[0]),
+        )
+        .unwrap();
+        let count = path
+            .split(' ')
+            .filter(|t| t.chars().all(|c| c.is_ascii_alphabetic()))
+            .count();
+        for (a, b) in before.operations[..count]
+            .iter()
+            .zip(&after.operations[..count])
+        {
+            assert_eq!(
+                (&a.operator, &a.operands),
+                (&b.operator, &b.operands),
+                "{path}"
+            );
+        }
+    }
+}
+
+// TikZ rotates drawings with cm. A painted path or rectangle under any affine
+// CTM is preserved and only range-checked; a clip under one stays refused,
+// because the clip model is axis-aligned.
+#[test]
+fn textedit_rotated_paint_is_preserved_and_rotated_clips_are_refused() {
+    for path in [
+        "q 0 1 -1 0 200 0 cm 0 0 m 10 0 l 10 10 l h f Q",
+        "q 0.7 0.7 -0.7 0.7 100 20 cm 0 0 10 10 re S Q",
+        "q 1 0.2 0 1 0 0 cm 5 5 m 1 2 3 4 5 6 c S Q",
+    ] {
+        let doc = page(format!("{path} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+        assert_eq!(
+            textedit::scan(&doc, 0).unwrap().runs[0].text,
+            "FIRST",
+            "{path}"
+        );
+    }
+    for (path, message) in [
+        (
+            "q 0 1 -1 0 200 0 cm 0 0 10 10 re W n Q",
+            "non-diagonal clips are not editable yet",
+        ),
+        (
+            "q 0 1 -1 0 200 0 cm 0 0 m 10 0 l 10 10 l h W n Q",
+            "only complete bounded painted paths are editable",
+        ),
+        (
+            "q 0 1000 -1000 0 0 0 cm 0 0 m 1001 0 l S Q",
+            "path coordinates exceed their limit",
+        ),
+        (
+            "q 0 1000 -1000 0 0 0 cm 0 0 1001 1 re f Q",
+            "rectangle coordinates exceed their limit",
+        ),
+        (
+            "q 0 1 -1 0 0 0 cm 0 0 0 5 re f Q",
+            "empty rectangle is not editable",
+        ),
+    ] {
+        let doc = page(format!("{path} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET").as_bytes());
+        assert_eq!(textedit::scan(&doc, 0).unwrap_err(), message, "{path}");
     }
 }

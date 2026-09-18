@@ -29,6 +29,9 @@ fn textedit_normal_graphics_state_preserves_fill_geometry_and_saved_operators() 
         dictionary! { "ca" => 1, "BM" => "Normal" },
         dictionary! { "ca" => 1, "BM" => "Normal", "LW" => 0.5, "LC" => 0, "LJ" => 2, "ML" => 4, "SA" => true },
         dictionary! { "Type" => "ExtGState", "ca" => 1.0, "CA" => 1, "BM" => "Normal" },
+        // Constant alpha is kept with the text it applies to (TikZ, Apache FOP).
+        dictionary! { "ca" => 0.25, "CA" => 0 },
+        dictionary! { "Type" => "ExtGState", "ca" => 0, "CA" => 0.99 },
     ] {
         let mut doc = fixture(state.into(), "/DeviceGray cs 0 0 0 RG 0.3 sc /G3 gs q /DeviceRGB cs 0.8 G 0 0 0 1 K 1 0 0 sc BT /F1 12 Tf /G3 gs 40 180 Td (FIRST) Tj ET Q 0.2 sc BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
         let before = textedit::scan(&doc, 0).unwrap();
@@ -76,8 +79,6 @@ fn textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically
         (
             "ca",
             vec![
-                0.into(),
-                0.5.into(),
                 1.01.into(),
                 (-1).into(),
                 "One".into(),
@@ -86,12 +87,7 @@ fn textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically
         ),
         (
             "CA",
-            vec![
-                0.into(),
-                0.99.into(),
-                2.into(),
-                Object::Reference((9999, 0)),
-            ],
+            vec![(-0.01).into(), 2.into(), Object::Reference((9999, 0))],
         ),
         (
             "BM",
@@ -221,7 +217,7 @@ fn textedit_stroke_setters_validate_values_without_enabling_stroke_text() {
         }
     }
     for body in [
-        "0 G BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
+        "0 G BT /F1 12 Tf 5 Tr 40 180 Td (FIRST) Tj ET",
         "0 0 0 RG 0 0 m 100 100 l W S",
         "0 0 0 1 K /DeviceRGB CS 0 SC",
         "0 G BT /F1 12 Tf 0 G (SECOND) Tj ET",
@@ -539,9 +535,9 @@ fn textedit_stroke_styles_refuse_invalid_state_even_before_resets_atomically() {
         "[1] d",
         "[] 0 1 d",
         &format!("[{}] 0 d", "1 ".repeat(33)),
-        // Admitting stroke state must never admit stroked or clipping text.
-        "1 J 1 j [0 3] 0 d 1 Tr",
-        "2 Tr",
+        // Admitting stroke state must never admit clipping text.
+        "1 J 1 j [0 3] 0 d 5 Tr",
+        "6 Tr",
         "4 Tr",
         "7 Tr",
     ] {
@@ -577,4 +573,160 @@ fn textedit_stroke_styles_refuse_nonfinite_values() {
         assert!(stroke("d", &[vec![Object::Real(value)].into(), 0.into()]).is_err());
         assert!(stroke("d", &[vec![Object::Integer(1)].into(), Object::Real(value)]).is_err());
     }
+}
+
+// ISO 32000-1 Table 58, 10.6.2 and 10.6.3: flatness and smoothness are device
+// tolerances. Distiller, PDFMaker and Designer write them into every page; the
+// operators and the state are kept byte for byte beside an edit.
+#[test]
+fn textedit_rendering_tolerances_are_preserved_within_their_ranges() {
+    for (state, body) in [
+        (dictionary! { "SM" => 0.02 }, "/G3 gs 1 i"),
+        (dictionary! { "SM" => 0, "FL" => 100 }, "/G3 gs 0 i"),
+        (dictionary! { "SM" => 1.0, "FL" => 0.5 }, "/G3 gs 100 i"),
+    ] {
+        let mut doc = fixture(
+            state.into(),
+            &format!(
+                "{body} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 40 140 Td (SECOND) Tj ET"
+            ),
+        );
+        let before = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(before.runs.len(), 2, "{body}");
+        let id = crate::pagetree::ordered_pages(&doc)[0];
+        let old = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+        let objects = doc.objects.clone();
+        textedit::write(
+            &mut doc,
+            &[Change {
+                layout: None,
+                page: 0,
+                revision: before.revision,
+                operator: before.runs[0].operator,
+                original: "FIRST".into(),
+                replacement: "IN".into(),
+            }],
+        )
+        .unwrap();
+        let new = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+        for (i, (a, b)) in old.operations.iter().zip(&new.operations).enumerate() {
+            if i != before.runs[0].operator as usize {
+                assert_eq!((&a.operator, &a.operands), (&b.operator, &b.operands));
+            }
+        }
+        for (key, value) in objects {
+            if key != id {
+                assert_eq!(doc.objects[&key], value);
+            }
+        }
+    }
+    for (state, body) in [
+        (dictionary! { "SM" => 1.01 }, "/G3 gs"),
+        (dictionary! { "SM" => -0.1 }, "/G3 gs"),
+        (dictionary! { "SM" => "Low" }, "/G3 gs"),
+        (dictionary! { "FL" => 101 }, "/G3 gs"),
+        (dictionary! { "FL" => -1 }, "/G3 gs"),
+        (dictionary! {}, "101 i"),
+        (dictionary! {}, "-1 i"),
+        (dictionary! {}, "/Low i"),
+        (dictionary! {}, "1 2 i"),
+        (dictionary! {}, "i"),
+    ] {
+        let doc = fixture(
+            state.into(),
+            &format!("{body} BT /F1 12 Tf 40 180 Td (FIRST) Tj ET"),
+        );
+        assert!(textedit::scan(&doc, 0).is_err(), "{body}");
+    }
+}
+
+// Word draws simulated bold as fill-then-stroke (Tr 2), and scanned documents
+// carry their OCR text invisibly (Tr 3). Both are edited in place: the mode is
+// kept, so the replacement paints the same way, and stroked text's hit area
+// reaches half the line width beyond the glyphs.
+#[test]
+fn textedit_stroked_and_invisible_text_is_edited_with_its_mode_and_ink() {
+    let rect = |body: &str, state: Dictionary| {
+        let doc = fixture(state.into(), body);
+        textedit::scan(&doc, 0).unwrap().runs[0].display_rect
+    };
+    let plain = rect("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET", dictionary! {});
+    for (body, state, half) in [
+        (
+            "4 w BT /F1 12 Tf 2 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            2.,
+        ),
+        (
+            "4 w BT /F1 12 Tf 1 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            2.,
+        ),
+        (
+            "/G3 gs BT /F1 12 Tf 2 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! { "LW" => 6 },
+            3.,
+        ),
+        (
+            "2 0 0 2 0 0 cm 4 w BT /F1 6 Tf 2 Tr 20 90 Td (FIRST) Tj ET",
+            dictionary! {},
+            4.,
+        ),
+        // Invisible text paints nothing and needs no margin.
+        (
+            "4 w BT /F1 12 Tf 3 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            0.,
+        ),
+        // Q restores both the mode and the width.
+        (
+            "q 9 w 2 Tr Q BT /F1 12 Tf 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            0.,
+        ),
+        (
+            "9 w q 1 w Q BT /F1 12 Tf 2 Tr 40 180 Td (FIRST) Tj ET",
+            dictionary! {},
+            4.5,
+        ),
+    ] {
+        let stroked = rect(body, state);
+        assert_eq!(
+            stroked,
+            [
+                plain[0] - half,
+                plain[1] - half,
+                plain[2] + half,
+                plain[3] + half,
+            ],
+            "{body}"
+        );
+    }
+    // The edit keeps the mode and the width, byte for byte.
+    let mut doc = fixture(
+        dictionary! {}.into(),
+        "4 w BT /F1 12 Tf 3 Tr 40 180 Td (FIRST) Tj ET",
+    );
+    let scan = textedit::scan(&doc, 0).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: scan.revision,
+            operator: scan.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    let content = Content::decode_strict(&doc.get_page_content(id)).unwrap();
+    let operators = content
+        .operations
+        .iter()
+        .map(|op| op.operator.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(operators, ["w", "BT", "Tf", "Tr", "Td", "Tj", "ET"]);
+    assert_eq!(content.operations[3].operands, [Object::Integer(3)]);
 }

@@ -3,8 +3,9 @@
 
 // Longest sequence first gives replacement encoding a deterministic choice.
 // Source measurement never uses this choice: it reads the original PDF codes.
-pub(super) const GLYPHS: [(&str, &str, u8); 4] = [
+pub(super) const GLYPHS: [(&str, &str, u8); 5] = [
     ("f_f_i", "ffi", 1),
+    ("f_f_l", "ffl", 5),
     ("f_f", "ff", 2),
     ("f_i", "fi", 3),
     ("f_l", "fl", 4),

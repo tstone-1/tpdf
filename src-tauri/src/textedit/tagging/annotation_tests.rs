@@ -115,22 +115,24 @@ fn textedit_link_titles_and_alternate_text_are_preserved_on_read_only_owners() {
         textedit::write(&mut doc, &changes)
     }
     .unwrap();
-    // A paragraph whose text can change may carry Word's empty title only.
-    for (title, accepted) in [("", true), ("SYNTHETIC TITLE", false)] {
+    // A paragraph keeps Word's empty title and stays editable; a title or
+    // alternate text that could repeat its wording keeps it read-only.
+    for (key, value, offered) in [
+        ("T", "", vec!["FIRST", "SECOND"]),
+        ("T", "SYNTHETIC TITLE", vec!["SECOND"]),
+        ("Alt", "SYNTHETIC", vec!["SECOND"]),
+    ] {
         let (mut doc, ids) = fixture(CONTENT);
         doc.get_dictionary_mut(ids[3])
             .unwrap()
-            .set("T", Object::string_literal(title));
-        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "{title}");
+            .set(key, Object::string_literal(value));
+        let runs = textedit::scan(&doc, 0).unwrap().runs;
+        assert_eq!(
+            runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>(),
+            offered,
+            "{key} {value}"
+        );
     }
-    let (mut doc, ids) = fixture(CONTENT);
-    doc.get_dictionary_mut(ids[3])
-        .unwrap()
-        .set("Alt", Object::string_literal("SYNTHETIC"));
-    assert_eq!(
-        textedit::scan(&doc, 0).unwrap_err(),
-        "unsupported Alt metadata in tagged element"
-    );
 }
 
 #[test]
@@ -314,6 +316,57 @@ fn textedit_read_only_owners_keep_their_layout_attributes() {
         let (mut doc, ids) = linked("Link", "Link");
         doc.get_dictionary_mut(ids[6]).unwrap().set("A", attributes);
         assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted);
+    }
+    // ISO 32000-1 Table 348: LiveCycle describes every check box's role and
+    // state. Only a field may carry one, and only with the standard values.
+    for (tag, attributes, accepted) in [
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "Role" => "cb", "checked" => "off" },
+            true,
+        ),
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "Role" => "tv", "Checked" => "on",
+            "Desc" => Object::string_literal("SYNTHETIC FIELD") },
+            true,
+        ),
+        ("Form", dictionary! { "O" => "PrintField" }, true),
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "Role" => "xx" },
+            false,
+        ),
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "checked" => "maybe" },
+            false,
+        ),
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "Checked" => Object::Boolean(true) },
+            false,
+        ),
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "Desc" => 1 },
+            false,
+        ),
+        (
+            "Form",
+            dictionary! { "O" => "PrintField", "Placement" => "Block" },
+            false,
+        ),
+        (
+            "Link",
+            dictionary! { "O" => "PrintField", "Role" => "cb" },
+            false,
+        ),
+    ] {
+        let subtype = if tag == "Form" { "Widget" } else { "Link" };
+        let (mut doc, ids) = linked(subtype, tag);
+        doc.get_dictionary_mut(ids[6]).unwrap().set("A", attributes);
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted, "{tag}");
     }
     // The attributes survive an edit to the ordinary paragraph beside the link.
     let (mut doc, ids) = linked("Link", "Link");
