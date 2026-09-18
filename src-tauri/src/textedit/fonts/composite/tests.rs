@@ -877,3 +877,37 @@ fn textedit_cid_ligatures_preserve_fragments_followers_and_resources() {
     assert!(textedit::write(&mut doc, &[edit]).is_err());
     assert_eq!(doc.objects, snapshot);
 }
+
+// Calibri maps one glyph to "ft" (and others to "st", "Th"). The slot path
+// knows only ff/fi/fl/ffi; the Unicode path reads any unique run of up to
+// three letters, and the encoder picks the longest mapped match.
+#[test]
+fn textedit_cid_letter_ligatures_decode_and_encode_by_longest_match() {
+    let (mut doc, [font, _, _, mapping]) = fixture();
+    let before = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let Some(Codes::Double(codes)) = &before.codes else {
+        panic!("expected CID codes")
+    };
+    let code = |ch: u8| *codes.iter().find(|(_, &c)| c == ch).unwrap().0;
+    let (y, r, i) = (code(b'Y'), code(b'R'), code(b'I'));
+    let stream = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    stream.content = String::from_utf8(stream.content.clone())
+        .unwrap()
+        .replace("> <0059>", "> <00460054>")
+        .into_bytes();
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let bytes = |codes: &[u16]| {
+        codes
+            .iter()
+            .flat_map(|c| c.to_be_bytes())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(metrics.decode(&bytes(&[r, i, y])).unwrap(), "RIFT");
+    assert_eq!(metrics.encode("RIFT").unwrap(), bytes(&[r, i, y]));
+    // Y is no longer a character this font can write.
+    assert!(metrics.encode("Y").is_err());
+}

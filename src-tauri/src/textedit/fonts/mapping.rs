@@ -94,8 +94,10 @@ fn unicode_codes(
                 } else {
                     String::from_utf16(&units).map_err(|_| invalid())?
                 };
-                if (text.chars().count() != 1
-                    && !matches!(text.as_str(), "ff" | "fi" | "fl" | "ffi"))
+                // A glyph may stand for up to three letters: a ligature (ff,
+                // fi, and Calibri's ft, st, Th). The encoder matches the
+                // longest mapped sequence, so any unique one is unambiguous.
+                if (text.chars().count() != 1 && !text.chars().all(char::is_alphabetic))
                     || text.chars().any(char::is_control)
                     || !targets.insert(text.clone())
                     || result.insert(code, text).is_some()

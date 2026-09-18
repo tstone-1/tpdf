@@ -9001,3 +9001,24 @@ Mutations: 3 new for the standard fonts and 1 for the rounding allowance, with 2
 re-aimed; all caught by the test named for them. A second allowance, on the
 kept-kerning path, survived its mutation because that path sums in the scan's own
 order, so it was removed rather than tested.
+
+### Producer sample, continued: letter ligatures
+
+Arcadia pages 39 and 40 (indices 38, 39; about 300 words each) are Word exports whose
+Calibri composite font maps one glyph to `ft`. The Unicode path now admits any unique run
+of two or three letters, which takes the survey to 173 of 268. The AutoCAD brochure page
+was also measured: its CFF fonts name ligatures `fi`/`fl`, now accepted, but its TrueType
+font carries `/FSType` 4, so it stays refused like the other Preview & Print pages.
+
+```sh
+printf '%s' '[{"page":39,"contains":"Ignition software required.","replacement":"Ignition software needed.","replace_match":true},{"page":38,"contains":"SCADA Software Integration","replacement":"SCADA Software","replace_match":true}]' > scratch/prototype/rt/ft.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/arcadia-agenda.pdf scratch/prototype/rt/ft.json scratch/prototype/rt/ft
+```
+
+It passes with pixel agreement; `qpdf --check` finds no errors, pypdf extracts changed
+text on those two pages only, and both pypdf and Poppler's `pdftotext` read "software"
+through the `ft` glyph. Transposition edits on these lines were refused as wider than the
+source. They use the same glyphs, so the difference is in the kerning around the swapped
+pair; that was inferred, not traced.
+
+Mutations: 3 new (both directions of the letter rule, and the CFF alias), all caught.

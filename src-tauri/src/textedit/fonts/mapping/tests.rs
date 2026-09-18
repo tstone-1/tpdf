@@ -200,12 +200,21 @@ fn unicode_cid_preserves_scalars_and_refuses_ambiguous_or_overflowing_maps() {
     .unwrap();
     assert_eq!(valid[&0x101], "\u{4e00}");
     assert_eq!(valid[&0x102], "\u{20000}");
+    // A glyph may stand for up to three letters (Calibri's ft and Th).
+    let letters = unicode_cid(&stream(&map(
+        "2 beginbfchar <0101> <00660074> <0102> <005400680065> endbfchar",
+    )))
+    .unwrap();
+    assert_eq!(letters[&0x101], "ft");
+    assert_eq!(letters[&0x102], "The");
     for invalid in [
         "2 beginbfchar <0101> <4e00> <0102> <4e00> endbfchar",
         "2 beginbfchar <0101> <4e00> <0101> <4e01> endbfchar",
         "1 beginbfchar <0101> <d840> endbfchar",
         "1 beginbfchar <0101> <000a> endbfchar",
-        "1 beginbfchar <0101> <00410042> endbfchar",
+        "1 beginbfchar <0101> <00410031> endbfchar",
+        "1 beginbfchar <0101> <00410020> endbfchar",
+        "1 beginbfchar <0101> <0041004200430044> endbfchar",
         "1 beginbfrange <0101> <0102> <ffff> endbfrange",
         "1 beginbfrange <0000> <1000> <4e00> endbfrange",
     ] {

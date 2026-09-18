@@ -144,6 +144,14 @@ fn run() -> Result<(), String> {
         }
         return inspect(std::path::Path::new(&args[1]), args.len() == 3);
     }
+    // An unrecognised option is not a directory: `--help` used to be created
+    // as one, with synthetic fixtures written into it.
+    if args.first().is_some_and(|arg| arg.starts_with('-')) {
+        return Err(
+            "usage: text-edit-probe <scratch-directory> | --roundtrip | --inspect | --w3c-dummy"
+                .into(),
+        );
+    }
     let dir = std::env::args()
         .nth(1)
         .map(PathBuf::from)
