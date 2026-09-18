@@ -57,6 +57,9 @@ have the binary.)
   outline's line width counts toward the room it needs.
 - Edit text on scanned pages whose images Acrobat recompressed or stored as
   black-and-white fax masks, and on untagged scans with a stamped page number.
+- Edit text in Word documents set in Calibri, whose ligatures for letter pairs
+  such as "ft" and "st" are now read and written, and in fonts that name the
+  fi and fl ligatures the older way.
 - Edit text set in Times, Courier and the bold and oblique Helvetica styles
   without embedded fonts, including the first page of every arXiv paper.
 - Edit text in documents whose table of contents marks its dot leaders

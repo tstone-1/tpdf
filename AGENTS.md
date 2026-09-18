@@ -616,8 +616,14 @@ text and cyclic or non-array references.
 Identity-H TrueType fonts also admit the exact `ff`, `fi`, `fl` and `ffi`
 ToUnicode sequences already supported by CFF. Source measurements retain original
 CID boundaries; replacement encoding chooses the longest available ligature.
-Controls, arbitrary multi-character sequences, duplicate targets and sequence
-ranges remain refused. The Unicode path also admits individual compatibility
+That slot path (`mapping::parse_cid`) still refuses any other sequence. The
+Unicode path (`mapping::unicode_codes`, composite and Type3 fonts) admits any
+unique run of two or three letters (Calibri's `ft`, `st`, `Th`), since its
+encoder matches the longest mapped sequence; a digit, space or control in a
+sequence, duplicate targets and sequence ranges remain refused. A CFF font's
+`Differences` may also name ligatures by Adobe's original `fi`/`fl`/`ffi`
+(`fixtures/legacy-ligatures.cff`, from `testdata/make_cff_legacy_ligatures.py`).
+The Unicode path also admits individual compatibility
 characters when their embedded glyphs validate. Expanded text retains the normal character bound.
 Generate with `testdata/make_textedit_composite.py <path> --ligatures`;
 `text-edit-probe`, `make_textedit_embedded.py --check` and

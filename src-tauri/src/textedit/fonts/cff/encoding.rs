@@ -82,6 +82,13 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
                                     super::super::ligatures::GLYPHS
                                         .map(|(name, _, slot)| (name, slot)),
                                 )
+                                // Adobe's original names (`fi`, `fl`, `ffi`),
+                                // which spell the ligature's own text and
+                                // which older CFF fonts still use.
+                                .chain(
+                                    super::super::ligatures::GLYPHS
+                                        .map(|(_, text, slot)| (text, slot)),
+                                )
                                 .find(|(candidate, _)| candidate.as_bytes() == name)
                                 .ok_or("unsupported CFF glyph name")?;
                             names[code] = glyph_name;
