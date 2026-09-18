@@ -172,17 +172,22 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
     {
         return fonts::type1(doc, font);
     }
+    let unsupported = || "text editing requires a standard font or a supported embedded font";
     for (key, expected) in [
         (b"Type".as_slice(), b"Font".as_slice()),
         (b"Subtype", b"Type1"),
-        (b"BaseFont", b"Helvetica"),
     ] {
         if font.get(key).and_then(Object::as_name).ok() != Some(expected) {
-            return Err(
-                "text editing requires standard Helvetica or a supported embedded font".into(),
-            );
+            return Err(unsupported().into());
         }
     }
+    // Any of the twelve Latin standard fonts: every arXiv paper's side stamp
+    // is set in unembedded Times-Roman. Symbol and ZapfDingbats are not Latin.
+    let base = font
+        .get(b"BaseFont")
+        .and_then(Object::as_name)
+        .map_err(|_| unsupported())?;
+    let metrics = fonts::Metrics::standard(base).ok_or_else(unsupported)?;
     if font.iter().any(|(key, _)| {
         !matches!(
             key.as_slice(),
@@ -192,9 +197,9 @@ fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Me
         return Err("custom font metrics or character mappings are not editable yet".into());
     }
     match font.get(b"Encoding").ok() {
-        None => Ok(fonts::Metrics::helvetica_default()),
-        Some(Object::Name(name)) if name == b"WinAnsiEncoding" => Ok(fonts::Metrics::helvetica()),
-        _ => Err("unsupported standard Helvetica encoding".into()),
+        None => Ok(metrics.standard_encoding()),
+        Some(Object::Name(name)) if name == b"WinAnsiEncoding" => Ok(metrics),
+        _ => Err("unsupported standard font encoding".into()),
     }
 }
 
@@ -1369,7 +1374,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         if replacement_advance > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }
-        if replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1] {
+        // The right edge gets the advance's rounding allowance: the scan sums a
+        // run's widths glyph by glyph, the layout in its own order, so an
+        // equal-width replacement can land a few ulps past the source (337.74
+        // against 337.73999999999995 on the arXiv stamp). The left edge is one
+        // glyph's overhang, summed from nothing, and needs none.
+        if replacement_bounds[0] < original[0] || replacement_bounds[1] > original[1] + 0.000_001 {
             return Err("replacement ink would exceed the original text bounds".into());
         }
         patched.insert(change.operator as usize);

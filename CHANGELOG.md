@@ -57,6 +57,8 @@ have the binary.)
   outline's line width counts toward the room it needs.
 - Edit text on scanned pages whose images Acrobat recompressed or stored as
   black-and-white fax masks, and on untagged scans with a stamped page number.
+- Edit text set in Times, Courier and the bold and oblique Helvetica styles
+  without embedded fonts, including the first page of every arXiv paper.
 - Edit text in documents whose table of contents marks its dot leaders
   separately, whose Japanese fonts carry a blank space glyph, or whose fonts
   were renamed when pages from several files were merged.
@@ -81,6 +83,8 @@ have the binary.)
   behind by earlier retagging.
 - Keep following text in place after long single-line edits in documents that
   scale text through the text matrix.
+- A replacement exactly as wide as the text it replaces is no longer refused
+  as too wide on long lines.
 
 ## [26.9.11] - 2026-09-17
 
