@@ -5086,7 +5086,11 @@ precision (a full save writes `353.51562` back as `353.51563`, as lopdf stores
 reals as `f32`). The real-spooler probe passed 10/10. The OCR sweep opened 146
 documents and read back 8,310 regions: zero still read as text, 3,640 were shown
 unreadable and 4,670 were not, in 31.8 seconds without arithmetic warnings;
-unverified is not a clean verdict.
+unverified is not a clean verdict. After publishing, the installed 26.9.11
+offered *Update to 26.9.12*, installed it, and the relaunched application
+reported *tpdf 26.9.12 is the latest version*; the installed executable matched
+the published MSI's after installer-marker normalization, and the normal
+session file was restored byte for byte.
 
 **26.9.11 local verification, Windows x64, 2026-09-17:** the final run passed
 all 25 gates in 157.4 seconds: 1,642 Rust tests passed with three expected skips,
