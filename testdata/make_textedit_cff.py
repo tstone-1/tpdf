@@ -65,6 +65,15 @@ def program(mode="normal"):
     builder.setupCFF("TPDFSyntheticCFF", info, chars, {})
     if mode == "expert-encoding":
         builder.font["CFF "].cff.topDictIndex[0].Encoding = "ExpertEncoding"
+    if mode == "builtin-encoding":
+        # The program's own encoding, as xdvipdfmx's TeX fonts carry one: the
+        # printable ASCII names, with A and B swapped so that a reader using
+        # StandardEncoding instead shows the wrong letters.
+        encoding = [".notdef"] * 256
+        for code in range(32, 127):
+            encoding[code] = UV2AGL[code]
+        encoding[0x41], encoding[0x42] = "B", "A"
+        builder.font["CFF "].cff.topDictIndex[0].Encoding = encoding
     data = builder.font.getTableData("CFF ")
     if mode == "broken-space":
         # Corrupt after serialization: fontTools otherwise normalizes an invalid
@@ -215,6 +224,7 @@ def main():
         "editable-rights",
         "unknown-postscript",
         "expert-encoding",
+        "builtin-encoding",
         "overhang",
         "unicode",
         "ligatures",

@@ -129,7 +129,11 @@ pub(super) fn prepare(
         .as_name()
         .map_err(|e| e.to_string())?;
     let resources = resources(doc, page.id)?;
-    let original_metrics = font(doc, resources, original_name)?;
+    let original_metrics = font(doc, resources, original_name)?.preferring(&super::shown(
+        &page.content,
+        &page.groups,
+        run.operator,
+    ));
     let font_table = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
     let font_dict = dictionary(
         doc,
@@ -255,7 +259,11 @@ pub(super) fn prepare(
             text.as_str()
         };
         let dy = first_baseline - index as f64 * line_height;
-        let (_, ink) = metrics.gapped_layout(text, size, spacing, word_spacing, gap)?;
+        // Ink is measured without that trailing space, as `line_breaks`
+        // measured the line: a space draws nothing, and counting its advance
+        // refused lines whose words fit the box exactly.
+        let (_, ink) =
+            metrics.gapped_layout(text.trim_end_matches(' '), size, spacing, word_spacing, gap)?;
         let inset = (-ink[0]).max(0.);
         if ink[1] + inset > width + 0.001 {
             return Err(

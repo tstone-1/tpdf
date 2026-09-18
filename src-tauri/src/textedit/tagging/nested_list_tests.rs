@@ -189,7 +189,8 @@ fn textedit_nested_lists_bound_pending_children_before_visiting_them() {
 
 #[test]
 fn textedit_nested_lists_refuse_cycles_duplicate_owners_and_empty_items() {
-    for mode in 0..9 {
+    // Mode 4 moved to the test below: it is accepted, with its text read-only.
+    for mode in [0, 1, 2, 3, 5, 6, 7, 8] {
         let (mut doc, ids, inner, owners) = nested();
         change(&doc);
         match mode {
@@ -217,11 +218,6 @@ fn textedit_nested_lists_refuse_cycles_duplicate_owners_and_empty_items() {
                     .unwrap()
                     .push(inner.into());
             }
-            4 => {
-                doc.get_dictionary_mut(ids[3])
-                    .unwrap()
-                    .set("K", vec![Object::Reference(inner)]);
-            }
             5 => {
                 doc.get_dictionary_mut(inner)
                     .unwrap()
@@ -242,6 +238,35 @@ fn textedit_nested_lists_refuse_cycles_duplicate_owners_and_empty_items() {
             _ => unreachable!(),
         }
         refused(doc);
+    }
+}
+
+// An item whose only child is the nested list, or a nested list with no items,
+// leaves list content unreachable. That content is orphaned, so it stays
+// read-only and the rest of the list is editable. The first was asserted as a
+// refusal until 2026-09-18, which only held because read-only Helvetica had no
+// glyph bounds to reserve.
+#[test]
+fn textedit_nested_lists_keep_unreachable_item_content_read_only() {
+    for (empty_item, editable) in [(true, ["2.", "SECOND"]), (false, ["1.", "FIRST"])] {
+        let (mut doc, ids, inner, _) = nested();
+        if empty_item {
+            doc.get_dictionary_mut(ids[3])
+                .unwrap()
+                .set("K", vec![Object::Reference(inner)]);
+        } else {
+            doc.get_dictionary_mut(inner)
+                .unwrap()
+                .set("K", Object::Array(vec![]));
+        }
+        let runs = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(
+            runs.runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            editable
+        );
     }
 }
 

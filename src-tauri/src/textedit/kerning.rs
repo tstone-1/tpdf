@@ -166,7 +166,9 @@ pub(super) fn kept(
     if !matches!(items.first(), Some(Object::String(..))) {
         return None;
     }
-    let (text, advance, bounds, lead, _) =
+    // A candidate cannot backtrack: it keeps only kerns inside kept runs of a
+    // source that did not (a source that backtracks is read-only).
+    let (text, advance, bounds, lead, _, _) =
         array_text(&items, metrics, size, spacing, word_spacing).ok()?;
     (lead.is_none() && text == replacement).then_some((items, advance, bounds))
 }

@@ -328,6 +328,17 @@ fn textedit_composite_refusals_leave_every_object_unchanged() {
         assert!(textedit::write(&mut doc, &[change]).is_err(), "{scope}/{key}");
         assert_eq!(doc.objects, before);
     }
+    // A CFF child is read by `cff::cid`: a CIDToGIDMap selects nothing in
+    // it, and a TrueType program is not its carrier.
+    let (mut doc, ids) = fixture();
+    doc.get_dictionary_mut(ids[1])
+        .unwrap()
+        .set("Subtype", Object::Name(b"CIDFontType0".to_vec()));
+    assert_eq!(textedit::scan(&doc, 0).unwrap_err(), INVALID);
+    doc.get_dictionary_mut(ids[1])
+        .unwrap()
+        .remove(b"CIDToGIDMap");
+    assert_eq!(textedit::scan(&doc, 0).unwrap_err(), INVALID);
     let (mut doc, _) = fixture();
     for replacement in ["Z", "ä", "SYNTHETIC FIRST FIRST"] {
         let change = update(&doc, replacement);
@@ -354,6 +365,22 @@ fn textedit_composite_type0_name_may_differ_from_its_descendant() {
             .unwrap(),
         &Object::Name(b"ABCDEF+Other".to_vec())
     );
+}
+
+// Microsoft Print to PDF writes the collection's Registry and Ordering as
+// indirect strings. They are read through the reference, with the same values.
+#[test]
+fn textedit_composite_collection_strings_may_be_indirect() {
+    for (ordering, accepted) in [("Identity", true), ("Japan1", false)] {
+        let (mut doc, ids) = fixture();
+        let registry = doc.add_object(Object::string_literal("Adobe"));
+        let ordering = doc.add_object(Object::string_literal(ordering));
+        doc.get_dictionary_mut(ids[1]).unwrap().set(
+            "CIDSystemInfo",
+            dictionary! { "Registry" => registry, "Ordering" => ordering, "Supplement" => 0 },
+        );
+        assert_eq!(textedit::scan(&doc, 0).is_ok(), accepted);
+    }
 }
 
 #[test]
@@ -488,7 +515,11 @@ fn textedit_composite_checks_embedding_rights_and_program_format() {
         } else {
             bytes[..4].copy_from_slice(b"true");
         }
-        assert!(embedded(&doc, doc.get_dictionary(font).unwrap()).is_err());
+        // No OS/2 declares no restriction; an Apple program is not composite.
+        assert_eq!(
+            embedded(&doc, doc.get_dictionary(font).unwrap()).is_ok(),
+            remove_os2
+        );
     }
 }
 

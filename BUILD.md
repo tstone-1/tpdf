@@ -5065,6 +5065,29 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.12 local verification, Windows x64, 2026-09-18:** all 25 gates passed on
+the final code: 1,747 Rust tests with three expected skips and 1,695 frontend
+tests. Mutations were selected as those added or re-aimed since the last commit,
+96 of them, and all were caught on the final tree; the six README mutations
+`--since v26.9.11` selected were caught too. A `--since` Rust run was stopped: it
+selected 676 at about 50 s each here. The boxed-edit round trip then failed, a
+regression from `0a8f1a8` (after the 26.9.11 checks) where the line breaker and
+the ink check measured different strings; fixed with a test and a mutation, and
+the round trip and every other check below were rerun on the fixed code.
+Native checks passed 314 text-heavy and 216 vector-heavy cases, with 51 and 149
+not applicable, plus 22 text-edit checks. The normal MSI rendered with the
+development engine hidden and refused with both engines hidden, and its
+PrintWindow capture was unchanged under an overlapping control. The released
+26.9.11 NSIS installer upgraded to 26.9.12; the installation and registry were
+restored. The packaged app applied and saved two edits in the Typst example, one
+in its CID-keyed CFF title font and one in its TrueType body font without OS/2;
+pypdf read both substitutions exactly and every font resource unchanged at `f32`
+precision (a full save writes `353.51562` back as `353.51563`, as lopdf stores
+reals as `f32`). The real-spooler probe passed 10/10. The OCR sweep opened 146
+documents and read back 8,310 regions: zero still read as text, 3,640 were shown
+unreadable and 4,670 were not, in 31.8 seconds without arithmetic warnings;
+unverified is not a clean verdict.
+
 **26.9.11 local verification, Windows x64, 2026-09-17:** the final run passed
 all 25 gates in 157.4 seconds: 1,642 Rust tests passed with three expected skips,
 and 1,695 frontend tests passed. Selected mutations caught 28 distinct Rust,
@@ -8981,8 +9004,12 @@ turned a quarter, which every arXiv paper carries. Regenerate or check the width
 with:
 
 ```sh
-uv run --with reportlab --with pdfminer.six python scripts/standard_font_widths.py --check
+uv run --with reportlab --with pdfminer.six --with matplotlib python scripts/standard_font_widths.py --check
 ```
+
+(`--with matplotlib` since the table gained each font's FontBBox; see *the newer arXiv
+stamp* below. That section also records that this check failed from the day it was
+written until then.)
 
 The round trip edits the stamp's date and a line of the title block:
 
@@ -9022,3 +9049,214 @@ source. They use the same glyphs, so the difference is in the kerning around the
 pair; that was inferred, not traced.
 
 Mutations: 3 new (both directions of the letter rule, and the CFF alias), all caught.
+
+### Producer sample, continued: plotted figures
+
+arXiv 2003.00976 pages 2, 4 and 5 (indices 1, 3, 4) hold pdfTeX-included figures, and
+were the last refused pages of that paper. Measured with pypdf before changing anything:
+
+| Page | Figure forms (decoded content, operators) | Images drawn by a form | First refusal before |
+|---:|---|---|---|
+| 1 | 669 KB / 14,768 and 1.5 MB / 38,298 | none | Flate content over the 1 MiB form bound |
+| 3 | 390 KB / 11,261 across three | 29 rasters, 12.3 MB decoded | images charged to the form's 1 MiB bound |
+| 4 | 4.7 MB / 288,594, plus two smaller | none | Flate content over the 1 MiB form bound |
+
+Page 3 was an accounting defect: images a form draws were charged to the form's content
+bound instead of the 32 MiB page image budget (`docs/TRAPS.md`). Pages 1 and 4 needed a
+larger form bound. A form is never rewritten, so it now gets its own: 8 MiB of content and
+524,288 operators per top-level form tree. Cost, measured on Windows x64 with release
+probes run alternately three times: `--inspect --all-pages` on the paper went from about
+195 ms to 352 ms, and the worker's peak working set from 41 MB to 181 MB, against the
+1 GiB commit cap. Top-level forms are parsed one at a time, so the peak follows the
+operator bound, about 330 MB at the limit by the same ratio.
+
+```sh
+printf '%s' '[{"page":1,"contains":"Ambrose, Huntsman, Robinson, and Yutin","replacement":"Ambrose, Huntsman, and Yutin","replace_match":true},{"page":3,"contains":"Ambrose, Huntsman, Robinson, and Yutin","replacement":"Ambrose, Robinson, and Yutin","replace_match":true},{"page":4,"contains":"Topological Differential Testing","replacement":"Topological Testing","replace_match":true}]' > scratch/prototype/rt/figures.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/arxiv-2003.pdf scratch/prototype/rt/figures.json scratch/prototype/rt/figures
+```
+
+It passes with pixel agreement. `qpdf --check` finds no errors, pypdf reads changed text on
+those three pages only, xpdf's `pdftotext` reads the new header, and all 52 XObjects on the
+three pages hash the same before and after. The survey goes from 173 to 176 of 268.
+
+Mutations: 5 new (image charging, content charging, both sides of the content bound and
+the operator bound) and 1 re-aimed; all caught.
+
+### Producer sample, continued: the newer arXiv stamp
+
+The 2025 arXiv paper's first page (index 0) was the last refused page of that file. Its
+figure, the Creative Commons badge pdfTeX includes, is a form with an isolated
+transparency group (`/Group << /S /Transparency /CS /DeviceRGB /I true >>`, Inkscape's);
+a validated group is now accepted on a preserved form, which is never composited by the
+editor. Behind it the stamp itself is `q BT 0 1 -1 0 0 0 cm 1 0 0 1 x y Tm /Times-Roman
+20 Tf ... TJ ET Q`: arXiv now turns the CTM inside the text block instead of using a
+rotated `Tm` as in 2020. A `cm` before the block's first show is accepted, and the stamp
+is read-only because its CTM is not diagonal. Read-only text needs bounded glyphs, and
+unembedded Times has no outlines, so each standard font's FontBBox is now in the table.
+
+Two things surfaced on the way. `standard_font_widths.py --check` had failed ever since it
+was written, because it compared its own layout against the file after `cargo fmt`; it
+now formats its output through `rustfmt` first. And the two FontBBox sources disagree
+for the oblique Helvetica styles by one unit and for all four Courier styles by up to
+120 units (two revisions of Adobe's Courier), so the table holds their union, which is
+sound for a bound.
+
+```sh
+uv run --with reportlab --with pdfminer.six --with matplotlib python scripts/standard_font_widths.py --check
+printf '%s' '[{"page":0,"contains":"Benchmarking PDF Accessibility Evaluation","replacement":"Benchmarking PDF Accessibility","replace_match":true},{"page":0,"contains":"there is no standardized methodology to evaluate how different","replacement":"there is no standard methodology to evaluate how different","replace_match":true}]' > scratch/prototype/rt/stamp2.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype/arxiv-recent.pdf scratch/prototype/rt/stamp2.json scratch/prototype/rt/stamp2
+```
+
+It passes with pixel agreement. `qpdf --check` finds no errors, pypdf reads changed text
+on page 0 only, pypdf and xpdf's `pdftotext` read both edits and the stamp, the stamp's
+operators are unchanged, and the badge form is byte-identical. The survey goes from 176 to
+177 of 268, and a page-by-page diff against the previous report changes no other page.
+
+Mutations: 9 new (the group's four checks, the cm rule both ways, the box lookup, its
+reach and the per-font row), all caught.
+
+Letting standard-font text be read-only exposed one existing test that had been passing
+for an unrelated reason: a nested-list case asserted as a refusal was accepted by the tag
+walk (its content is orphaned, so read-only) and refused only because read-only
+Helvetica had no bounds. It now asserts the acceptance.
+
+### Producer sample, second batch
+
+Eight unchanged public PDFs from producers the first sample lacked, surveyed on Windows x64,
+2026-09-18. URLs, producers and digests are under `expansion_files` in
+`testdata/textedit-public-corpus.json`; they live in `scratch/prototype2/`. The survey
+inspects at most 128 pages, so the three longer files are surveyed through an extract that
+keeps every stream byte for byte:
+
+```sh
+qpdf --stream-data=preserve --empty --pages full/luatex-manual.pdf 1-128 -- luatex-manual-p1-128.pdf
+python scripts/textedit_survey.py src-tauri/target/debug/examples/text-edit-probe scratch/prototype2/*.pdf --output <new report>
+```
+
+| File (producer) | Pages | Editable before | Editable after | First refusal now |
+|---|---:|---:|---:|---|
+| Wikipedia export (Chrome, Skia) | 25 | 0 | 0 | Tag nesting (see below) |
+| Healdsburg slides (PowerPoint via PDFMaker) | 29 | 0 | 13 | Single-byte character map, read-only-only slides |
+| fontspec manual (XeLaTeX, xdvipdfmx) | 71 | 0 | 0 | CID-keyed CFF font |
+| LuaTeX manual (LuaTeX/ConTeXt), pages 1-128 | 128 | 0 | 91 | CID-keyed CFF font |
+| Typst example | 1 | 0 | 0 | CID-keyed CFF font |
+| ReportLab user guide, pages 1-128 | 128 | 88 | 88 | Non-standard fonts, Latin-1, empty rectangles |
+| Union County budget (IBM afp2pdf), pages 1-128 | 128 | 128 | 128 | none |
+| Pottawattamie County form (Microsoft Print to PDF) | 2 | 0 | 0 | Partly clipped text |
+
+216 of 512 pages were editable; 320 are. The first sample is unchanged by every change
+below (same verdicts and run counts on all 268 pages). What changed, each safe because the
+editor keeps the bytes and only reads the value:
+
+- PowerPoint: attribute arrays, default `WritingMode`, inline list labels, a label's
+  `BBox` (which pins it read-only), indents and spacing on figures, figures under a
+  `Diagram`/`Chart` role, figures inside figures, layout attributes on list labels and
+  bodies, and each slide's background layer (`/OC` marked content; text inside a layer is
+  read-only).
+- Typst: `Tf` and `TL` before `BT`. Its font is CID-keyed CFF, the next blocker.
+- ConTeXt: ToUnicode CMaps named after the font, and footers whose `TJ` draws the title
+  left of the page number (a backtracking run, now read-only rather than refusing the
+  page).
+- Microsoft Print to PDF: indirect `CIDSystemInfo` strings.
+
+Round trips, each passing with pixel agreement and read back independently (`qpdf --check`
+without errors; pypdf and xpdf's `pdftotext` read the edits; only the edited pages change):
+
+```sh
+printf '%s' '[{"page":0,"contains":"Healdsburg City Council","replacement":"Healdsburg Council","replace_match":true},{"page":3,"contains":"Dry Creek Commons","replacement":"Dry Creek","replace_match":true},{"page":16,"contains":"Preposed Sequencing:","replacement":"Proposed Sequencing:","replace_match":true}]' > scratch/prototype2/slides.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/healdsburg-slides.pdf scratch/prototype2/slides.json scratch/prototype2/rt-slides
+printf '%s' '[{"page":19,"contains":"We currently use Lua","replacement":"We now use Lua","replace_match":true},{"page":41,"contains":"The subtypes 2 and 3","replacement":"Subtypes 2 and 3","replace_match":true}]' > scratch/prototype2/luatex.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/luatex-manual-p1-128.pdf scratch/prototype2/luatex.json scratch/prototype2/rt-luatex
+```
+
+Slide 16's title ("Redistricting Partners") is editable but drawn under a full-slide
+picture, so an edit to it changes no pixel and the round trip reports `preview changed the
+wrong pages or no pixels`. That is the probe's check, which needs a visible change, not a
+fault in the edit.
+
+What is left, largest first:
+
+- **CID-keyed CFF composite fonts** (`CIDFontType0` / `CIDFontType0C`): all of fontspec,
+  32 LuaTeX pages and Typst. Read since the same day; see *CID-keyed CFF fonts* below.
+- **Chrome's tag tree**: containers nest up to 13 deep (the bound is 8), inline elements up
+  to 7 deep below a block (`P > NonStruct > Link > NonStruct > NonStruct`), links own
+  `NonStruct` children, and some containers own content directly. Supporting it means a
+  bounded recursive inline walk rather than the single leaf level.
+
+Mutations: 22 new and 12 re-aimed across tagging, layers, text state, backtracking and
+fonts, all caught. Two were removed because the rule they tested was deliberately
+relaxed: attributes on list labels refused, and retreating kerning refused.
+
+### CID-keyed CFF fonts
+
+The blocker the second batch left largest: xdvipdfmx (XeLaTeX), LuaTeX and Typst embed
+their OpenType CFF fonts as `CIDFontType0` with a bare `FontFile3 /CIDFontType0C`, all
+three under Identity-H and Adobe-Identity-0 with a single font dict. Surveyed on Windows
+x64, 2026-09-18, against the unchanged files of the second batch:
+
+| File | Pages | Editable before | Editable after | First refusal now |
+|---|---:|---:|---:|---|
+| fontspec manual (xdvipdfmx) | 71 | 0 | 71 | none |
+| LuaTeX manual, pages 1-128 | 128 | 91 | 123 | read-only-only pages (3) |
+| Typst example | 1 | 0 | 1 | none |
+
+The whole second batch went from 320 to 424 of 512 pages; the 104 pages that changed are
+all refused-to-editable, and every other page of both samples has the same verdict and run
+count as before (the first sample stays at 177 of 268). What it took, beyond the CFF
+reader itself (`fonts/cff/cid.rs`, described in `AGENTS.md`):
+
+- **ToUnicode headers.** xdvipdfmx writes `CMapName`, `CMapType` and `CIDSystemInfo` in its
+  own order; Typst adds DSC comments, `CMapVersion`, `WMode` and a system info built as
+  `3 dict dup begin ... end def`, and ends the stream with `%%EOF` and no end of line, which
+  lopdf's content parser refuses. The labels are now a small closed grammar.
+- **Shared ToUnicode targets.** Pagella's small capitals read as capitals, and a math font
+  has several sizes of each parenthesis. Refusing the font for that refused every page; each
+  now reads as its text, and a replacement writes it with the glyph its run shows. The
+  first rule written, "never write a shared text", passed the survey and failed the first
+  round trip: the writer rewrites a whole `Tj` run, so any edit in a run with a capital
+  failed.
+- **Math widths.** LuaTeX writes TeX's italic correction into the PDF widths of math glyphs
+  (879 in the program, 877.9 in `/W`). Such a glyph is read-only at its PDF width, as the
+  Type 1 path already kept one.
+- **A shown `.notdef`.** fontspec's manual demonstrates a missing glyph six times in a row.
+- **Typst's TrueType subsets carry no OS/2 table**, which held the embedding rights. A
+  program that declares no rights is now edited as declaring no restriction, as Type 1 and
+  CFF programs without an FSType already were (`docs/THREAT-MODEL.md` residual risk 23); a
+  present table's restrictions still refuse.
+- **A zero-width mark.** Typst writes `DW 0` and leaves its combining macron out of `/W`;
+  a zero width is now a read-only mark rather than a refusal of the font.
+- **TeX math in simple Type1C.** xdvipdfmx writes CMSY, CMMI and CMR as symbolic Type1C
+  fonts with no PDF `/Encoding`; they are read through the Type 1 rules with the program's
+  own encoding (format 1 in every font here).
+
+fontTools' `T2WidthExtractor` was the independent check on the width reader: it agrees with
+every `/W` mismatch the reader found, on the same glyphs. Round trips, each passing with
+pixel agreement and read back independently (`qpdf --check` without errors, `pdftotext`
+reads the edits, pypdf reads them apart from LuaTeX's gap spaces, only the edited page's
+content changes):
+
+```sh
+printf '%s' '[{"page":5,"contains":"behaviour is now obsolete","replacement":"behaviour is obsolete","replace_match":true},{"page":5,"contains":"are required","replacement":"are needed","replace_match":true}]' > scratch/prototype2/fontspec-req.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/fontspec.pdf scratch/prototype2/fontspec-req.json scratch/prototype2/rt-fontspec
+printf '%s' '[{"page":6,"contains":"to get activate","replacement":"to activate","replace_match":true}]' > scratch/prototype2/fontspec-math-req.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/fontspec.pdf scratch/prototype2/fontspec-math-req.json scratch/prototype2/rt-fontspec-math
+printf '%s' '[{"page":22,"contains":"linked lists","replacement":"linked list","replace_match":true}]' > scratch/prototype2/luatex-cid-req.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/luatex-manual-p1-128.pdf scratch/prototype2/luatex-cid-req.json scratch/prototype2/rt-luatex-cid
+printf '%s' '[{"page":113,"contains":"advantages","replacement":"benefits","replace_match":true}]' > scratch/prototype2/luatex-math-req.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/luatex-manual-p1-128.pdf scratch/prototype2/luatex-math-req.json scratch/prototype2/rt-luatex-math
+printf '%s' '[{"page":0,"contains":"document","replacement":"text","replace_match":true},{"page":0,"contains":"adipisicing","replacement":"adipiscing","replace_match":true}]' > scratch/prototype2/typst-req.json
+src-tauri/target/debug/examples/text-edit-probe --roundtrip scratch/prototype2/typst-example.pdf scratch/prototype2/typst-req.json scratch/prototype2/rt-typst
+```
+
+Two of them fix real typos ("to get activate", "a linked lists"). Page 6 is set beside
+CMSY10, page 113 beside the italic-correction math font. The Typst edits land in its CID
+CFF title font and in Georgia, a TrueType subset without OS/2. "setup" to "set up" on page 5 is
+refused as wider than the run, which is the ordinary no-layout rule.
+
+Mutations: 46 new, 4 re-aimed, all caught. Two guards were deleted rather than covered,
+because nothing could reach them: a CID-0 check the charset format already guarantees and
+the duplicate check makes redundant, and a repeated-key check in the CMap dictionary form
+that the three-entry count already refuses. One pre-existing mutation was removed with the
+rule it tested (OpenType TrueType without OS/2 refused). A first run also showed one test
+case that could not fail (49 operands with no operator after them ends the charstring
+before the stack bound is reached), and one mutation that did not compile.

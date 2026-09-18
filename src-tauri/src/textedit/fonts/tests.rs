@@ -143,7 +143,9 @@ fn textedit_macroman_requires_matching_encoding_and_honours_present_rights() {
         .unwrap()
         .content[..4]
         .copy_from_slice(&[0, 1, 0, 0]);
-    assert!(textedit::scan(&doc, 0).is_err());
+    // An OpenType-style program without OS/2 is read as declaring no
+    // restriction, like an Apple one (Typst's subsets carry none).
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2);
 }
 
 #[test]
@@ -632,7 +634,9 @@ fn textedit_symbolic_codes_round_trip_without_changing_font_resources() {
 
 #[test]
 fn textedit_symbolic_codes_require_unambiguous_glyph_selection_and_widths() {
-    for kind in 0..6 {
+    // Kind 4, an OpenType-style program without OS/2, was refused here until
+    // 2026-09-18; such a program is now read as declaring no restriction.
+    for kind in [0, 1, 2, 3, 5] {
         let (mut doc, font, program) = custom_fixture();
         match kind {
             0 => {
@@ -687,14 +691,7 @@ fn textedit_symbolic_codes_require_unambiguous_glyph_selection_and_widths() {
                 }
                 bytes.extend(duplicate);
             }
-            _ => {
-                doc.get_object_mut(program)
-                    .unwrap()
-                    .as_stream_mut()
-                    .unwrap()
-                    .content[..4]
-                    .copy_from_slice(&[0, 1, 0, 0]);
-            }
+            _ => unreachable!(),
         }
         assert!(textedit::scan(&doc, 0).is_err(), "accepted case {kind}");
     }

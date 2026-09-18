@@ -192,8 +192,18 @@ fn type3_rejects_program_side_effects_bad_metrics_maps_and_limits_atomically() {
         doc.get_dictionary_mut(font).unwrap().set(key, Object::Null);
         cases.push(doc);
     }
+    // Two codes may read as one text; the page still scans.
+    let mut doc = original.clone();
+    doc.objects.insert(
+        cmap,
+        Stream::new(
+            Dictionary::new(),
+            MAP.replace("<0042>", "<0041>").into_bytes(),
+        )
+        .into(),
+    );
+    assert!(textedit::scan(&doc, 0).is_ok());
     for text in [
-        MAP.replace("<0042>", "<0041>"),
         MAP.replace("<20>", "<21>"),
         MAP.replace("<01>", "<0001>"),
         MAP.replace("<0042>", "<D800>"),

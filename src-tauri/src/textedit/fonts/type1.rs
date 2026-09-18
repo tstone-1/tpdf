@@ -1,18 +1,20 @@
 //! Existing named glyphs in embedded Adobe Type 1 programs (FontFile), as pdfTeX,
-//! dvipdfm and older Distiller and Ghostscript exports write them. PDF glyph
-//! names select charstrings; a ToUnicode map may narrow the offered repertoire
-//! but never contradict those names. No font bytes are changed.
+//! dvipdfm and older Distiller and Ghostscript exports write them, and in the
+//! symbolic or built-in-encoded Type1C programs (FontFile3) xdvipdfmx writes for
+//! the same TeX fonts. PDF glyph names select charstrings; a ToUnicode map may
+//! narrow the offered repertoire but never contradict those names. No font
+//! bytes are changed.
 
 use super::{dictionary, filters, number, Codes, Metrics};
 use lopdf::{Dictionary, Document, Object};
 
-mod program;
+pub(super) mod program;
 #[cfg(test)]
 mod tests;
 
 const INVALID: &str = "unsupported embedded Type 1 font";
 // How far a read-only glyph's ink may reach from its origin, in thousandths.
-const OPAQUE_REACH: f64 = 4000.;
+pub(super) const OPAQUE_REACH: f64 = 4000.;
 
 // ISO 32000-1 Annex D.2 glyph names for WinAnsi's codes above ASCII, with the
 // metric slot each one occupies. 0x80 is the internal minus slot; 0xA0 and 0xAD
@@ -329,7 +331,8 @@ fn names(
     Ok(names)
 }
 
-pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
+// The font and descriptor checks both program carriers share.
+fn descriptor<'a>(doc: &'a Document, font: &'a Dictionary) -> Result<&'a Dictionary, String> {
     if font.get(b"Type").and_then(Object::as_name).ok() != Some(b"Font")
         || font.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1")
         || font.get(b"BaseFont").and_then(Object::as_name).is_err()
@@ -364,8 +367,15 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     if descriptor.get(b"Type").and_then(Object::as_name).ok() != Some(b"FontDescriptor")
         || descriptor.get(b"FontName").ok() != font.get(b"BaseFont").ok()
         || descriptor.has(b"FontFile2")
-        || descriptor.has(b"FontFile3")
     {
+        return Err(INVALID.into());
+    }
+    Ok(descriptor)
+}
+
+pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
+    let descriptor = descriptor(doc, font)?;
+    if descriptor.has(b"FontFile3") {
         return Err(INVALID.into());
     }
     let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile").map_err(|_| INVALID)?)
@@ -394,6 +404,31 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     if program.rights.is_some_and(|rights| rights & !0x108 != 0) {
         return Err("embedded font does not permit this editable use".into());
     }
+    measured(doc, font, &program)
+}
+
+// A Type1C program read as a Type 1 one (`cff::named`): glyph names, their
+// advances and outlines, and the built-in encoding a PDF encoding starts from.
+pub(super) fn compact(doc: &Document, font: &Dictionary) -> Result<Metrics, String> {
+    let descriptor = descriptor(doc, font)?;
+    if descriptor.has(b"FontFile") {
+        return Err(INVALID.into());
+    }
+    let stream = crate::encoding::resolve(doc, descriptor.get(b"FontFile3").map_err(|_| INVALID)?)
+        .as_stream()
+        .map_err(|_| INVALID)?;
+    if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Type1C") {
+        return Err(INVALID.into());
+    }
+    let bytes = filters::decode(stream, super::super::MAX_CONTENT)?;
+    measured(doc, font, &super::cff::named(&bytes)?)
+}
+
+fn measured(
+    doc: &Document,
+    font: &Dictionary,
+    program: &program::Program,
+) -> Result<Metrics, String> {
     let names = names(doc, font, &program.encoding)?;
     let first = font
         .get(b"FirstChar")

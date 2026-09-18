@@ -150,6 +150,52 @@ fn resources(doc: &Document, page: ObjectId) -> Result<&Dictionary, String> {
     Err("text resource inheritance exceeds its limit".into())
 }
 
+// A layer named in the page's Properties resource: an optional content group
+// or membership dictionary, as a form's /OC must be.
+fn optional_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
+    let invalid = || "unsupported optional content".to_string();
+    let properties = dictionary(doc, resources.get(b"Properties").map_err(|_| invalid())?)?;
+    let group = dictionary(doc, properties.get(name).map_err(|_| invalid())?)?;
+    match group.get(b"Type").and_then(Object::as_name).ok() {
+        Some(b"OCG" | b"OCMD") => Ok(()),
+        _ => Err(invalid()),
+    }
+}
+
+// The FontBBox named by a font's BaseFont, if it is a Latin standard font's.
+// It is read only where the metrics carry no vertical bounds, which only the
+// standard-font dispatch at the end of `font` produces.
+fn standard_box(doc: &Document, resources: &Dictionary, name: &[u8]) -> Option<[f64; 4]> {
+    let fonts = dictionary(doc, resources.get(b"Font").ok()?).ok()?;
+    let font = dictionary(doc, fonts.get(name).ok()?).ok()?;
+    fonts::Metrics::standard_box(font.get(b"BaseFont").and_then(Object::as_name).ok()?)
+}
+
+// The codes a run shows: its own show and the shows grouped into it.
+fn shown(content: &Content, groups: &BTreeMap<u32, Vec<u32>>, operator: u32) -> Vec<u8> {
+    let members = groups.get(&operator).map_or(&[][..], Vec::as_slice);
+    let mut bytes = Vec::new();
+    for &index in std::iter::once(&operator).chain(members) {
+        let Some(show) = content.operations.get(index as usize) else {
+            continue;
+        };
+        for operand in &show.operands {
+            match operand {
+                Object::String(string, _) => bytes.extend_from_slice(string),
+                Object::Array(items) => {
+                    for item in items {
+                        if let Object::String(string, _) = item {
+                            bytes.extend_from_slice(string);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    bytes
+}
+
 fn font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<fonts::Metrics, String> {
     let fonts = dictionary(doc, resources.get(b"Font").map_err(|e| e.to_string())?)?;
     let font = dictionary(doc, fonts.get(name).map_err(|e| e.to_string())?)?;
@@ -478,7 +524,8 @@ fn array_text<'a>(
     let mut text = String::new();
     let mut characters = 0;
     let mut advance = 0.0;
-    let mut furthest = 0.0;
+    let mut furthest = 0.0_f64;
+    let mut backtracks = false;
     let mut bounds = [0_f64; 2];
     let gap_spaces = !metrics.writes_space();
     let mut gaps = Gaps::default();
@@ -504,24 +551,26 @@ fn array_text<'a>(
             bounds[0] = bounds[0].min(advance + left);
             bounds[1] = bounds[1].max(advance + right);
             advance += width;
-            if advance < furthest {
-                return Err("backtracking kerning text is not editable yet".into());
-            }
-            furthest = advance;
+            // A string that ends before an earlier one did draws back over it
+            // (ConTeXt's footers put the title left of the page number). The
+            // run's text is then not in reading order, so it is kept
+            // read-only; the bounds above already cover every string.
+            backtracks |= advance < furthest;
+            furthest = furthest.max(advance);
             text.push_str(&fragment);
         } else {
             let value = number(value)?;
             pending -= value;
             advance -= value * size / 1000.0;
         }
-        if !advance.is_finite() || !(0.0..=1_000_000.0).contains(&advance) {
+        if !advance.is_finite() || advance.abs() > 1_000_000.0 {
             return Err("kerning position exceeds its limit".into());
         }
     }
-    if advance < furthest {
-        return Err("backtracking trailing kerning is not editable yet".into());
-    }
-    Ok((text, advance, bounds, lead, gaps))
+    // A trailing number that pulls the cursor back behind the last string's
+    // end moves whatever follows over it, so that run stays read-only too.
+    backtracks |= advance < furthest;
+    Ok((text, advance, bounds, lead, gaps, backtracks))
 }
 
 // The smallest TJ displacement read as a word space, in thousandths of an em:
@@ -531,8 +580,9 @@ const GAP_EM: f64 = 180.0;
 // The space a replacement writes where its run had none to measure.
 const DEFAULT_GAP: f64 = 250.0;
 
-// A TJ array's text, advance, ink, leading adjustment and word gaps.
-type ArrayText<'a> = (String, f64, [f64; 2], Option<&'a Object>, Gaps);
+// A TJ array's text, advance, ink, leading adjustment, word gaps and whether
+// any string starts before the end of an earlier one.
+type ArrayText<'a> = (String, f64, [f64; 2], Option<&'a Object>, Gaps, bool);
 
 #[derive(Default)]
 struct Gaps {
@@ -584,10 +634,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut previous_show = None;
     let mut spacer: Option<spacers::Spacer> = None;
     let mut actual: Option<actual::Span> = None;
+    // Inside an optional-content (layer) sequence: its text may be hidden.
+    let mut layer = false;
     let mut actual_spans = Vec::new();
     let mut continued = BTreeSet::new();
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
+    let mut font_boxes = BTreeMap::new();
     let mut leading = 0.0;
     let mut spacing = 0.0;
     let mut word_spacing = 0.0;
@@ -622,12 +675,24 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         if actual.is_some() && matches!(op.operator.as_str(), "BDC" | "BMC") {
             return Err("nested ActualText marked content is not editable yet".into());
         }
+        if layer && matches!(op.operator.as_str(), "BDC" | "BMC") {
+            return Err("marked content inside optional content is not editable yet".into());
+        }
         match (op.operator.as_str(), op.operands.as_slice()) {
             // Marked content and text objects are independently balanced (ISO
             // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
             // only the narrow ActualText spacer grammar has a separate path.
             // Artifacts balance independently of BT/ET too; PDFMaker opens
             // running headers inside the text object.
+            // ISO 32000-1 8.11.3.2: content that belongs to a layer. PowerPoint
+            // puts each slide's background in one. The editor never resolves
+            // the layer state, so text inside is kept read-only, and nothing
+            // may open inside it, which lets the next EMC close it.
+            ("BDC", [tag, Object::Name(resource)]) if tag.as_name().ok() == Some(b"OC") => {
+                optional_content(doc, resources, resource)?;
+                layer = true;
+            }
+            ("EMC", []) if layer => layer = false,
             ("BDC", [tag, properties])
                 if tag.as_name().ok() == Some(b"Artifact")
                     && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
@@ -806,7 +871,12 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             }
             ("J" | "j" | "M" | "d", values) => graphics::stroke(&op.operator, values)?,
             ("i", [value]) => graphics::tolerance(b"FL", value)?,
-            ("cm", values) if !inside && values.len() == 6 => {
+            // ISO 32000-1 Figure 9 does not list cm inside a text object, but
+            // arXiv's stamp (`BT 0 1 -1 0 0 0 cm ... Tm ... TJ ET`) puts it
+            // first in the block and every reader applies it. Geometry is
+            // taken from the CTM at each show, so a cm before the block's first
+            // show changes nothing already measured; one between shows would.
+            ("cm", values) if (!inside || previous_show.is_none()) && values.len() == 6 => {
                 let mut next = [0.0; 6];
                 for (dest, value) in next.iter_mut().zip(values) {
                     *dest = number(value)?;
@@ -895,13 +965,18 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 stroke_components = patterns::Colour::Solid(components);
                 colors::values(values, components)?;
             }
-            ("Tf", [name, size]) if inside => {
+            // ISO 32000-1 Table 51: font and leading are text state, which the
+            // page may set before BT (Typst does); q/Q save both.
+            ("Tf", [name, size]) => {
                 let name = name.as_name().map_err(|e| e.to_string())?;
                 if !font_metrics.contains_key(name) {
                     if font_metrics.len() >= 32 {
                         return Err("too many fonts on an editable page".into());
                     }
                     font_metrics.insert(name.to_vec(), font(doc, resources, name)?);
+                    if let Some(bounds) = standard_box(doc, resources, name) {
+                        font_boxes.insert(name.to_vec(), bounds);
+                    }
                 }
                 let size = number(size)?;
                 if !(0.0..=1000.0).contains(&size) || size == 0.0 {
@@ -909,7 +984,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 }
                 selected_font = Some((name, size, index));
             }
-            ("TL", [value]) if inside => leading = number(value)?,
+            ("TL", [value]) => leading = number(value)?,
             ("Tm", values) if inside && values.len() == 6 => {
                 for (dest, value) in matrix.iter_mut().zip(values) {
                     *dest = number(value)?;
@@ -959,14 +1034,16 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         previous_show = Some(index as u32);
         let geometry = crate::pagetree::displayed_page(doc, id);
         let metrics = font_metrics.get(name).ok_or("missing text font")?;
+        let mut backtracks = false;
         let (text, advance, horizontal) = if op.operator == "TJ" {
-            let (text, advance, horizontal, lead, found) = array_text(
+            let (text, advance, horizontal, lead, found, back) = array_text(
                 op.operands[0].as_array().map_err(|e| e.to_string())?,
                 metrics,
                 size,
                 spacing,
                 word_spacing,
             )?;
+            backtracks = back;
             if found.count > 0 {
                 gaps.insert(index as u32, found.total / f64::from(found.count));
             }
@@ -995,6 +1072,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         };
         // A glyph whose text the editor cannot write keeps its whole run.
         let read_only = tags.read_only()
+            || layer
+            || backtracks
             || text.contains(fonts::OPAQUE)
             || !diagonal(page_transform)
             || !orthogonal(page_matrix)
@@ -1023,16 +1102,25 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             [horizontal[0], -size * 0.25, horizontal[1], size],
         );
         if (read_only || metrics.vertical_bounds.is_some()) && !text.is_empty() {
-            let (bottom, top) = metrics
-                .vertical_bounds
-                .map(|[bottom, top]| (bottom, top))
-                .ok_or("read-only text requires validated glyph outlines")?;
+            let (reach, bottom, top) = match (metrics.vertical_bounds, font_boxes.get(name)) {
+                (Some([bottom, top]), _) => (0., bottom, top),
+                // A standard font has no outlines here, but its FontBBox holds
+                // every glyph: read-only text in it (arXiv's rotated stamp)
+                // reserves that box, widened by its larger side at both ends.
+                (None, Some(&[left, bottom, right, top])) => {
+                    (left.abs().max(right.abs()), bottom, top)
+                }
+                (None, None) => {
+                    return Err("read-only text requires validated glyph outlines".into())
+                }
+            };
+            let reach = reach * size / 1000.;
             let ink = text_bounds(
                 page_matrix,
                 [
-                    horizontal[0],
+                    horizontal[0].min(horizontal[1]) - reach,
                     bottom * size / 1000.,
-                    horizontal[1],
+                    horizontal[0].max(horizontal[1]) + reach,
                     top * size / 1000.,
                 ],
             );
@@ -1326,7 +1414,11 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         let name = content.operations[*font_operator].operands[0]
             .as_name()
             .map_err(|e| e.to_string())?;
-        let metrics = font(doc, resources(doc, *id)?, name)?;
+        let metrics = font(doc, resources(doc, *id)?, name)?.preferring(&shown(
+            content,
+            groups,
+            change.operator,
+        ));
         let (spacing, word_spacing) = *text_spacing
             .get(&change.operator)
             .ok_or("missing text spacing")?;
@@ -1644,7 +1736,8 @@ pub(crate) mod tests {
         for (adjustments, accepted) in [
             ("-500000 -400000 500000 400000", true),
             ("-600000 -600000 600000 600000", false),
-            ("9999 -9999", false),
+            // Behind the origin and back, drawing nothing on the way.
+            ("9999 -9999", true),
         ] {
             let content =
                 format!("BT /F1 1000 Tf 0.001 0 0 0.001 40 180 Tm [(A) {adjustments}] TJ ET");
@@ -1661,21 +1754,38 @@ pub(crate) mod tests {
             "[1]",
             "[1 2 (TEXT)]",
             "[1000001 (TEXT)]",
-            "[(TEXT) 1]",
             "[(A) [0] (B)]",
             "[(A) /Name (B)]",
             "[(A) null (B)]",
             "[(A) true (B)]",
             "[(A) 1000001 (B)]",
             "[(A) -1000001 (B)]",
-            "[(A) 9999 (B)]",
-            "[(WWW) 2000 (i)]",
             "[(A) -600000 -600000 (B)]",
         ] {
             let content = format!("BT /F1 1000 Tf 40 180 Td {array} TJ ET");
             assert!(
                 scan(&with_content(content.as_bytes()), 0).is_err(),
                 "accepted {array}"
+            );
+        }
+        // A string that ends before an earlier one draws back over it: its run
+        // is not in reading order and stays read-only, and the page stays
+        // editable. ConTeXt sets its footers this way.
+        for array in [
+            "[(A) 9999 (B)]",
+            "[(WWW) 2000 (i)]",
+            "[(19) 9239 (TEXT)]",
+            "[(19) 9239 (TEXT) -20000 (X)]",
+            "[(TEXT) 1]",
+        ] {
+            let content = format!(
+                "BT /F1 12 Tf 40 180 Td {array} TJ ET BT /F1 12 Tf 40 140 Td (FIRST) Tj ET"
+            );
+            let runs = scan(&with_content(content.as_bytes()), 0).unwrap().runs;
+            assert_eq!(
+                runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>(),
+                ["FIRST"],
+                "{array}"
             );
         }
         // After a continued show, an opening shift can carry the cursor past
@@ -2222,8 +2332,86 @@ pub(crate) mod tests {
                 "accepted {prefix}"
             );
         }
+        // ISO 32000-1 does not list cm inside a text object, but arXiv's stamp
+        // puts one before the block's first show, where it moves what follows;
+        // after a show it would move text already measured, and is refused.
         let doc = with_content(b"BT /F1 12 Tf 1 0 0 1 20 30 cm 40 180 Td (TEXT) Tj ET");
-        assert!(scan(&doc, 0).is_err());
+        assert_eq!(
+            scan(&doc, 0).unwrap().runs[0].matrix,
+            [1., 0., 0., 1., 60., 210.]
+        );
+        let doc = with_content(b"BT /F1 12 Tf 40 180 Td (TEXT) Tj 1 0 0 1 20 30 cm (MORE) Tj ET");
+        assert!(scan(&doc, 0)
+            .unwrap_err()
+            .contains("graphics operation cm inside a text block"));
+    }
+
+    // Typst sets the font before BT. Font and leading are text state (ISO
+    // 32000-1 Table 51) and q/Q restore them, so the run uses the saved font.
+    #[test]
+    fn textedit_font_and_leading_may_be_set_before_the_text_block() {
+        let doc = with_content(b"/F1 12 Tf 14 TL BT 40 180 Td (FIRST) Tj T* (SECOND) Tj ET");
+        let runs = scan(&doc, 0).unwrap().runs;
+        assert_eq!(
+            runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>(),
+            ["FIRST", "SECOND"]
+        );
+        assert_eq!(runs[1].matrix[5], 166.);
+        let doc = with_content(b"q /F1 12 Tf Q BT 40 180 Td (FIRST) Tj ET");
+        assert_eq!(scan(&doc, 0).unwrap_err(), "text has no explicit font");
+    }
+
+    // ISO 32000-1 8.11.3.2: PowerPoint puts each slide's background in a
+    // layer. The layer state is never resolved, so text inside one is kept
+    // read-only; nothing may open inside it, and its resource must be a layer.
+    #[test]
+    fn textedit_optional_content_keeps_its_text_read_only() {
+        let layered = |content: &[u8], group: Dictionary| {
+            let mut doc = with_content(content);
+            let page = crate::pagetree::ordered_pages(&doc)[0];
+            let group = doc.add_object(group);
+            let mut own = resources(&doc, page).unwrap().clone();
+            own.set("Properties", dictionary! { "L1" => group });
+            doc.get_dictionary_mut(page).unwrap().set("Resources", own);
+            doc
+        };
+        let ocg =
+            || dictionary! { "Type" => "OCG", "Name" => Object::string_literal("Background") };
+        let text = |doc: &Document| {
+            scan(doc, 0)
+                .unwrap()
+                .runs
+                .into_iter()
+                .map(|run| run.text)
+                .collect::<Vec<_>>()
+        };
+        let body = "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET";
+        let doc = layered(
+            format!("/OC /L1 BDC 0 0 10 10 re f EMC {body}").as_bytes(),
+            ocg(),
+        );
+        assert_eq!(text(&doc), ["FIRST"]);
+        let doc = layered(
+            format!("/OC /L1 BDC BT /F1 12 Tf 40 140 Td (HIDDEN) Tj ET EMC {body}").as_bytes(),
+            ocg(),
+        );
+        assert_eq!(text(&doc), ["FIRST"]);
+        let doc = layered(
+            b"/OC /L1 BDC 0 0 10 10 re f EMC",
+            dictionary! { "Type" => "OCMD" },
+        );
+        assert!(scan(&doc, 0).is_ok());
+        for (content, group) in [
+            ("/OC /L1 BDC /Artifact BMC 0 0 10 10 re f EMC EMC", ocg()),
+            ("/OC /L2 BDC 0 0 10 10 re f EMC", ocg()),
+            (
+                "/OC /L1 BDC 0 0 10 10 re f EMC",
+                dictionary! { "Type" => "Pattern" },
+            ),
+        ] {
+            let doc = layered(format!("{content} {body}").as_bytes(), group);
+            assert!(scan(&doc, 0).is_err(), "{content}");
+        }
     }
 
     #[test]

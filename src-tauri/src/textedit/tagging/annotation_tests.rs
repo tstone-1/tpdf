@@ -310,7 +310,24 @@ fn textedit_read_only_owners_keep_their_layout_attributes() {
             dictionary! { "O" => "Layout", "BBox" => vec![90.into(), 176.into(), 38.into(), 192.into()] },
             false,
         ),
-        (dictionary! { "O" => "Layout", "SpaceBefore" => 12 }, false),
+        // PowerPoint writes block spacing and the default writing mode on
+        // figures; they place read-only content and cannot go stale.
+        (
+            dictionary! { "O" => "Layout", "SpaceBefore" => 12, "StartIndent" => 138.4, "WritingMode" => "LrTb" },
+            true,
+        ),
+        (
+            dictionary! { "O" => "Layout", "SpaceBefore" => "Wide" },
+            false,
+        ),
+        (
+            dictionary! { "O" => "Layout", "WritingMode" => "TbRl" },
+            false,
+        ),
+        (
+            dictionary! { "O" => "Layout", "TextAlign" => "Center" },
+            false,
+        ),
         (dictionary! { "O" => "Layout", "Width" => "Wide" }, false),
     ] {
         let (mut doc, ids) = linked("Link", "Link");

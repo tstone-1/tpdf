@@ -21,6 +21,8 @@ mod nested_tests;
 #[cfg(test)]
 mod pinned_tests;
 #[cfg(test)]
+mod powerpoint_tests;
+#[cfg(test)]
 mod producer_tests;
 #[cfg(test)]
 mod refusal_tests;
@@ -320,6 +322,9 @@ fn element(
     parent: ObjectId,
     scope: &Scope,
     owns_text: bool,
+    // The standard type the RoleMap gives this element; its attributes are
+    // those of that type (PowerPoint maps Diagram and Chart to Figure).
+    role: &[u8],
 ) -> Result<(Option<ObjectId>, bool), String> {
     // In particular: no ActualText, E or attribute revision. ActualText and E
     // replace the text an edit would produce, so they are refused outright.
@@ -389,7 +394,20 @@ fn element(
         if matches!(tag, b"TD" | b"TH") {
             return Ok((page, pins));
         }
-        pins |= attributes(doc, tag, crate::encoding::resolve(doc, value))?;
+        // ISO 32000-1 14.7.5: an array holds several attribute objects, each
+        // held to the same rules (PowerPoint writes two on a figure). Lists
+        // keep their own singleton form. Revision numbers stay refused.
+        match crate::encoding::resolve(doc, value) {
+            Object::Array(objects) if role != b"L" => {
+                if objects.is_empty() || objects.len() > 8 {
+                    return Err(INVALID.into());
+                }
+                for object in objects {
+                    pins |= attributes(doc, role, crate::encoding::resolve(doc, object))?;
+                }
+            }
+            value => pins |= attributes(doc, role, value)?,
+        }
     }
     // ISO 32000-1 14.7.5.2: a class names attribute objects kept in the
     // root's ClassMap. They apply exactly as the element's own A would, so
@@ -414,7 +432,7 @@ fn element(
                         value => std::slice::from_ref(value),
                     };
                     for object in objects {
-                        pins |= attributes(doc, tag, crate::encoding::resolve(doc, object))?;
+                        pins |= attributes(doc, role, crate::encoding::resolve(doc, object))?;
                     }
                     named = true;
                 }
@@ -466,11 +484,35 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
     // is what the returned pin and `Tags::bounded` carry out.
     if matches!(tag, b"Figure" | b"Link" | b"Form" | b"Table") {
         let attributes = value.as_dict().map_err(|_| INVALID)?;
+        // PowerPoint also writes the block indents and spacing on figures.
+        // They are the element's authored allocation and move nothing.
         keys(
             attributes,
-            &[b"O", b"BBox", b"Placement", b"Width", b"Height"],
+            &[
+                b"O",
+                b"BBox",
+                b"Placement",
+                b"Width",
+                b"Height",
+                b"StartIndent",
+                b"EndIndent",
+                b"SpaceBefore",
+                b"SpaceAfter",
+                b"WritingMode",
+            ],
             "bounded attributes",
         )?;
+        for key in [
+            b"StartIndent".as_slice(),
+            b"EndIndent",
+            b"SpaceBefore",
+            b"SpaceAfter",
+        ] {
+            if let Ok(value) = attributes.get(key) {
+                super::number(value)?;
+            }
+        }
+        default_writing_mode(attributes)?;
         // Table 343: the element's authored size, a number or Auto. It
         // describes read-only content, so it cannot become stale either.
         for key in [b"Width".as_slice(), b"Height"] {
@@ -491,18 +533,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
         }) {
             return Err(INVALID.into());
         }
-        if let Ok(bounds) = attributes.get(b"BBox") {
-            let bounds = array(crate::encoding::resolve(doc, bounds))?;
-            if bounds.len() != 4 {
-                return Err(INVALID.into());
-            }
-            let bounds = bounds
-                .iter()
-                .map(super::number)
-                .collect::<Result<Vec<_>, _>>()?;
-            if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
-                return Err(INVALID.into());
-            }
+        if bounding_box(doc, attributes)? {
             return Ok(tag == b"Table");
         }
         return Ok(false);
@@ -552,17 +583,29 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
             b"TextIndent",
             b"TextAlign",
             b"LineHeight",
+            b"WritingMode",
+            b"BBox",
         ]
     };
     keys(attributes, allowed, "layout attributes")?;
+    // PowerPoint records each list label's ink as a BBox. Like a table's, it
+    // stays true only while the label's text does not change, so it pins it.
+    if tag != b"Lbl" && attributes.has(b"BBox") {
+        return Err("unsupported BBox metadata in tagged layout attributes".into());
+    }
+    let bounded = bounding_box(doc, attributes)?;
+    // Table 343: a list label sits inline beside its body (PowerPoint says
+    // so explicitly); every other block is placed as a block.
+    let placement: &[u8] = if tag == b"Lbl" { b"Inline" } else { b"Block" };
     if name(get(attributes, b"O")?)? != b"Layout"
-        || attributes
-            .get(b"Placement")
-            .is_ok_and(|value| value.as_name().ok() != Some(b"Block"))
+        || attributes.get(b"Placement").is_ok_and(
+            |value| !matches!(value.as_name(), Ok(name) if name == b"Block" || name == placement),
+        )
         || (leaf && !attributes.has(b"LineHeight"))
     {
         return Err(INVALID.into());
     }
+    default_writing_mode(attributes)?;
     if let Ok(height) = attributes.get(b"LineHeight") {
         if !matches!(height.as_name(), Ok(b"Normal" | b"Auto")) && super::number(height)? < 0.0 {
             return Err(INVALID.into());
@@ -592,9 +635,9 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
     // where the existing line sits relative to its width, which an edit that
     // changes the width would falsify, so those blocks keep their text.
     match attributes.get(b"TextAlign") {
-        Err(_) => Ok(false),
+        Err(_) => Ok(bounded),
         Ok(value) => match name(value)? {
-            b"Start" => Ok(false),
+            b"Start" => Ok(bounded),
             b"Center" | b"End" | b"Justify" => Ok(true),
             _ => Err(INVALID.into()),
         },
@@ -657,10 +700,13 @@ fn groups<'a>(
             // beside it. A list is a container, so it goes back to the walk,
             // which owns the depth and container bounds; claiming its id here
             // would make the walk refuse it as a second visit.
-            if plain.tag == b"LBody"
-                && node(doc, *id)
-                    .is_ok_and(|child| get(child, b"S").and_then(name).is_ok_and(|tag| tag == b"L"))
-            {
+            // PowerPoint nests the pictures of a grouped drawing as figures in
+            // a figure; each goes back to the walk the same way, read-only.
+            if node(doc, *id).is_ok_and(|child| {
+                get(child, b"S")
+                    .and_then(name)
+                    .is_ok_and(|tag| goes_back_to_the_walk(plain.tag, tag))
+            }) {
                 nested.push((item, plain.id, plain.pinned));
                 continue;
             }
@@ -674,6 +720,7 @@ fn groups<'a>(
                 plain.id,
                 scope,
                 !annotation_owner(name(get(child, b"S")?)?),
+                name(get(child, b"S")?)?,
             )?;
             let tag = name(get(child, b"S")?)?;
             if plain.tag == b"Figure"
@@ -686,9 +733,8 @@ fn groups<'a>(
             {
                 return Err(INVALID.into());
             }
-            if plain.tag == b"LI" && child.has(b"A") {
-                return Err(INVALID.into());
-            }
+            // A label's or body's layout attributes were checked by `element`
+            // like a paragraph's, and any pin they carry joins the group's.
             let items = kids(doc, child)?;
             if items.len() > MAX_NODES {
                 return Err(INVALID.into());
@@ -719,6 +765,43 @@ fn groups<'a>(
         groups.push(plain);
     }
     Ok(groups)
+}
+
+// Table 344: an element's ink bounds, four ordered numbers. Whether it is
+// present decides whether the element's content has to stay where it is.
+fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<bool, String> {
+    let Ok(bounds) = attributes.get(b"BBox") else {
+        return Ok(false);
+    };
+    let bounds = array(crate::encoding::resolve(doc, bounds))?;
+    if bounds.len() != 4 {
+        return Err(INVALID.into());
+    }
+    let bounds = bounds
+        .iter()
+        .map(super::number)
+        .collect::<Result<Vec<_>, _>>()?;
+    if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
+        return Err(INVALID.into());
+    }
+    Ok(true)
+}
+
+// Table 343: LrTb (left to right, lines top to bottom) is the default writing
+// mode, which PowerPoint writes out on every paragraph. Other modes describe
+// text the editor would write in the wrong direction, and stay refused.
+fn default_writing_mode(attributes: &Dictionary) -> Result<(), String> {
+    match attributes.get(b"WritingMode") {
+        Ok(value) if value.as_name().ok() != Some(b"LrTb") => Err(INVALID.into()),
+        _ => Ok(()),
+    }
+}
+
+// A child element the content walk returns to the tree walk, which owns the
+// depth and container bounds: a sublist in a list body (Word, Acrobat) and a
+// figure in a figure (PowerPoint's grouped drawings).
+fn goes_back_to_the_walk(parent: &[u8], child: &[u8]) -> bool {
+    matches!((parent, child), (b"LBody", b"L") | (b"Figure", b"Figure"))
 }
 
 // ISO 32000-1 14.8.4.2: a table of contents and its entries group elements.
@@ -1021,7 +1104,7 @@ impl Tags {
             let owns_text = !(container(role)
                 || annotation_owner(role)
                 || matches!(role, b"Document" | b"Figure" | b"L" | b"Table" | b"TR"));
-            let (paragraph_page, pins) = element(doc, child, parent_id, &scope, owns_text)?;
+            let (paragraph_page, pins) = element(doc, child, parent_id, &scope, owns_text, role)?;
             // Metadata that describes this element's content as it stands
             // (a table's ink bounds, alternate text, a title, a centred line)
             // makes that content and everything below it read-only.
@@ -1042,7 +1125,9 @@ impl Tags {
             if tag.is_empty() && items.is_empty() && !child.has(b"A") {
                 continue;
             }
-            if tag != role && !text_block(role) && !container(role) {
+            // A figure alias (PowerPoint's Diagram and Chart) is read-only like
+            // any figure; its group carries the mapped role below.
+            if tag != role && !text_block(role) && !container(role) && role != b"Figure" {
                 return Err("tagged element role is not editable yet".into());
             }
             let mut content_items = Vec::new();
@@ -1174,10 +1259,12 @@ impl Tags {
             } else if role != b"Table" {
                 content_items.extend(items);
             }
+            // The mapped role, so that text under a figure alias is refused
+            // as figure text wherever a group's tag is read.
             let paragraph = Group {
                 id,
                 page: paragraph_page,
-                tag,
+                tag: if role == b"Figure" { role } else { tag },
                 items: content_items,
                 pinned: bounded,
             };

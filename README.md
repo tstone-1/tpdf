@@ -373,15 +373,19 @@ measured the Windows render constants come out 1.5–1.8x worse.
 Use **Edit text** or **Edit existing text** in the command palette to choose an
 outlined text run on the current page. Adjust the box width and height, font size,
 font and wrapping while a live preview shows the actual PDF rendering. Apply keeps
-the edit in the document; save writes it. The editor supports Helvetica and validated embedded TrueType and
-CFF/Type1C and uncolored Type 3 vector fonts, including supported ligatures, bounded spacing, quarter-turn text,
+the edit in the document; save writes it. The editor supports the Latin standard fonts
+(Helvetica, Times, Courier), fonts a document names without embedding them, and validated
+embedded TrueType, Type 1, CFF (including the CID-keyed CFF that XeLaTeX, LuaTeX and Typst
+embed) and uncolored Type 3 vector fonts, including supported ligatures, bounded spacing, quarter-turn text,
 colours, page transforms and rectangular clips. Supported tagged paragraphs,
 headings, lists and tables, including merged cells and paragraph cells, retain
 their structure and page ownership. Matching single-fragment ActualText spans
 update their logical text with the visible edit. Unsupported skewed, mirrored
 or pattern-filled text can remain read-only beside editable text.
-Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice and Edge exports are included in the verified
-examples; this does not mean every export from those applications is editable.
+Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice, Edge,
+Acrobat, PowerPoint, pdfTeX, XeLaTeX, LuaTeX and Typst exports are included in the verified
+examples; this does not mean every export from those applications is editable. Text in
+math symbols, in slide background layers and in page stamps stays read-only.
 Auto font selection uses the original font when possible and bundled Noto Sans
 when new characters need it. Regular and bold Noto Sans CJK SC also cover Chinese,
 Japanese and Korean characters, using Simplified Chinese glyph forms. CJK edits

@@ -432,10 +432,14 @@ fn textedit_bounded_tables_refuse_malformed_bounds_and_placements() {
         dictionary! { "O" => "Layout", "Placement" => "Middle" },
         dictionary! { "O" => "Layout", "Width" => -1 },
         dictionary! { "O" => "Layout", "Height" => "Some" },
-        dictionary! { "O" => "Layout", "StartIndent" => 12 },
+        dictionary! { "O" => "Layout", "StartIndent" => "Wide" },
+        dictionary! { "O" => "Layout", "WritingMode" => "TbRl" },
         dictionary! { "O" => "Layout", "TextAlign" => "Center" },
     ] {
         let (doc, _) = bounded(entries);
         refused(doc);
     }
+    // Block indents and spacing are allocation, accepted here as on a paragraph.
+    let (doc, _) = bounded(dictionary! { "O" => "Layout", "StartIndent" => 12, "SpaceAfter" => 6 });
+    assert!(textedit::scan(&doc, 0).is_ok());
 }

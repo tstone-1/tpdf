@@ -1,10 +1,10 @@
 //! Validate the CFF metadata that ttf-parser intentionally skips. No PostScript
 //! is executed; only literal font-embedding declarations are recognized.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 const INVALID: &str = "unsupported CFF program metadata";
 
-fn index<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<Vec<&'a [u8]>> {
+pub(super) fn index<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<Vec<&'a [u8]>> {
     let count = u16::from_be_bytes(bytes.get(*pos..*pos + 2)?.try_into().ok()?) as usize;
     *pos += 2;
     if count == 0 {
@@ -39,7 +39,7 @@ fn index<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<Vec<&'a [u8]>> {
         .collect()
 }
 
-fn number(data: &[u8], pos: &mut usize) -> Option<f64> {
+pub(super) fn number(data: &[u8], pos: &mut usize) -> Option<f64> {
     let first = *data.get(*pos)?;
     *pos += 1;
     let value = match first {
@@ -93,6 +93,42 @@ fn number(data: &[u8], pos: &mut usize) -> Option<f64> {
         _ => return None,
     };
     value.is_finite().then_some(value)
+}
+
+pub(super) type Dict = BTreeMap<u16, Vec<f64>>;
+
+// A DICT's operators and operands, each operator at most once.
+pub(super) fn dict(data: &[u8]) -> Option<Dict> {
+    let mut result = BTreeMap::new();
+    let mut operands = Vec::new();
+    let mut pos = 0;
+    while pos < data.len() {
+        if data[pos] >= 28 && data[pos] != 31 && data[pos] != 255 {
+            operands.push(number(data, &mut pos)?);
+            if operands.len() > 48 {
+                return None;
+            }
+            continue;
+        }
+        let mut op = u16::from(data[pos]);
+        pos += 1;
+        if op == 12 {
+            op = 1200 + u16::from(*data.get(pos)?);
+            pos += 1;
+        }
+        if result.insert(op, std::mem::take(&mut operands)).is_some() {
+            return None;
+        }
+    }
+    operands.is_empty().then_some(result)
+}
+
+// The Top DICT of a one-font program; `validate` or `cid::parse` checks it.
+pub(super) fn top(bytes: &[u8]) -> Option<Dict> {
+    let mut pos = usize::from(*bytes.get(2)?);
+    index(bytes, &mut pos)?;
+    let tops = index(bytes, &mut pos)?;
+    dict(tops.first()?)
 }
 
 pub(super) fn validate(bytes: &[u8]) -> Result<(), String> {
@@ -167,7 +203,7 @@ pub(super) fn validate(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn permissions(bytes: &[u8]) -> Result<(), String> {
+pub(super) fn permissions(bytes: &[u8]) -> Result<(), String> {
     let text = std::str::from_utf8(bytes).map_err(|_| INVALID)?;
     let tokens: Vec<_> = text.split_ascii_whitespace().collect();
     if !(tokens.len() == 3

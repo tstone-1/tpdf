@@ -22,7 +22,7 @@ pub(super) fn operation(name: &str, operands: &[Object], inside: bool, positione
         "q" | "Q" | "cm" | "re" | "m" | "n" | "Do" if inside => {
             return format!("graphics operation {name} inside a text block is not editable yet");
         }
-        "Tf" | "TL" | "Tm" | "Td" | "TD" | "T*" if !inside => {
+        "Tm" | "Td" | "TD" | "T*" if !inside => {
             return format!("text setup operation {name} outside a text block is not editable yet");
         }
         // Only fixed PDF keywords may be echoed. An unknown keyword could be
@@ -109,8 +109,8 @@ mod tests {
                 "graphics operation q inside a text block is not editable yet",
             ),
             (
-                "12 TL",
-                "text setup operation TL outside a text block is not editable yet",
+                "0 12 Td",
+                "text setup operation Td outside a text block is not editable yet",
             ),
             ("BT /F1 Tf ET", "unsupported operands for Tf (count: 1)"),
             (

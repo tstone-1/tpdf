@@ -62,9 +62,20 @@ have the binary.)
   fi and fl ligatures the older way.
 - Edit text set in Times, Courier and the bold and oblique Helvetica styles
   without embedded fonts, including the first page of every arXiv paper.
+- Edit text in PowerPoint slides saved through Acrobat and in LuaTeX and
+  ConTeXt documents. Slide backgrounds, pictures and page footers drawn right
+  to left stay read-only.
+- Edit text on the first page of recent arXiv papers, whose side stamp turns
+  the page inside its text block and which carry a Creative Commons badge with
+  transparency. The stamp and the badge stay read-only and are saved unchanged.
 - Edit text in documents whose table of contents marks its dot leaders
   separately, whose Japanese fonts carry a blank space glyph, or whose fonts
   were renamed when pages from several files were merged.
+- Edit text in documents made with XeLaTeX, LuaTeX and Typst, whose OpenType
+  fonts are embedded as CID-keyed CFF, including pages beside TeX math, and in
+  TrueType fonts that carry no embedding-rights table, as Typst writes them. A small
+  capital keeps its small-capital glyph when the word around it is edited.
+  Math symbols stay read-only.
 
 ### Changed
 
@@ -88,6 +99,9 @@ have the binary.)
   scale text through the text matrix.
 - A replacement exactly as wide as the text it replaces is no longer refused
   as too wide on long lines.
+- Pages with a large plotted figure, such as the charts in LaTeX papers, are
+  no longer refused as too large to edit; the text around the figure is
+  editable and the figure is saved unchanged.
 
 ## [26.9.11] - 2026-09-17
 

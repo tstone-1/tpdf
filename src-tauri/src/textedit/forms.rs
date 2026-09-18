@@ -2,7 +2,7 @@
 //! state on return and clips painting to its transformed BBox. If it contains
 //! text, reserve that entire box against new text layouts; never expose its shows
 //! as page operator addresses or rewrite its resources.
-use super::{dictionary, filters, images, number, MAX_CONTENT, MAX_OPERATIONS};
+use super::{colors, dictionary, filters, images, number, MAX_CONTENT, MAX_OPERATIONS};
 use lopdf::{content::Content, Dictionary, Document, Object, ObjectId};
 use std::collections::BTreeSet;
 
@@ -10,6 +10,15 @@ use std::collections::BTreeSet;
 mod tests;
 
 const INVALID: &str = "unsupported preserved Form XObject";
+
+// A form is only read, never rewritten, so it may be larger than the page
+// content the editor patches: pdfTeX includes a plotted figure as one form,
+// and one arXiv figure holds 4.7 MB and 288,594 operators. Each top-level form
+// is parsed and dropped before the next, so the operator bound is what sets
+// the worker's peak: that figure took it from 41 MB to 181 MB on Windows
+// against the 1 GiB commit cap (sandbox_win::WORKER_MEMORY_CAP).
+const MAX_FORM_CONTENT: usize = 8 * MAX_CONTENT;
+const MAX_FORM_OPERATIONS: usize = 32 * MAX_OPERATIONS;
 
 #[derive(Clone)]
 pub(super) struct Form {
@@ -32,20 +41,26 @@ pub(super) fn check(
         return Ok(None);
     }
     let mut budget = Budget {
-        remaining: remaining.min(MAX_CONTENT),
+        remaining,
+        content: MAX_FORM_CONTENT,
         operations: 0,
         calls: 0,
         active: BTreeSet::new(),
     };
     let text_bounds = visit(doc, resources, value, 0, &mut budget)?;
     Ok(Some(Form {
-        bytes: remaining.min(MAX_CONTENT) - budget.remaining,
+        bytes: remaining - budget.remaining,
         text_bounds,
     }))
 }
 
+// Content streams and the images they draw are charged separately: content
+// against MAX_FORM_CONTENT for the whole form tree, and
+// both against the page's image budget passed in as `remaining`, as an image
+// drawn by the page itself is.
 struct Budget {
     remaining: usize,
+    content: usize,
     operations: usize,
     calls: usize,
     active: BTreeSet<ObjectId>,
@@ -104,6 +119,7 @@ fn visit(
                     return Err(INVALID.into());
                 }
             }
+            (b"Group", _) => group(doc, value)?,
             (b"BBox" | b"Matrix" | b"Resources" | b"Length" | b"Filter", _) => {}
             _ => return Err(INVALID.into()),
         }
@@ -139,11 +155,12 @@ fn visit(
         Ok(value) => dictionary(doc, value)?,
         Err(_) => inherited,
     };
-    let bytes = filters::decode(form, budget.remaining)?;
+    let bytes = filters::decode(form, budget.content.min(budget.remaining))?;
+    budget.content -= bytes.len();
     budget.remaining -= bytes.len();
     let content = Content::decode_strict(&bytes).map_err(|_| INVALID)?;
     budget.operations += content.operations.len();
-    if budget.operations > MAX_OPERATIONS {
+    if budget.operations > MAX_FORM_OPERATIONS {
         return Err(INVALID.into());
     }
     let mut has_text = false;
@@ -202,4 +219,28 @@ fn visit(
     }
     budget.active.remove(&id);
     Ok(has_text.then(|| super::text_bounds(matrix, [bounds[0], bounds[1], bounds[2], bounds[3]])))
+}
+
+// ISO 32000-1 11.6.6, Table 147: a transparency group composites the form's
+// content as one unit before it meets the page (Inkscape writes one around the
+// Creative Commons badge LaTeX papers include). The form is kept unchanged and
+// nothing the editor writes lies inside it, so the group describes painting the
+// editor never redoes; only its grammar and colour space are checked.
+fn group(doc: &Document, value: &Object) -> Result<(), String> {
+    let group = dictionary(doc, value)?;
+    if group.get(b"S").and_then(Object::as_name).ok() != Some(b"Transparency") {
+        return Err(INVALID.into());
+    }
+    for (key, value) in group {
+        match (key.as_slice(), value) {
+            (b"Type", Object::Name(name)) if name == b"Group" => {}
+            (b"S", _) => {}
+            (b"CS", _) => {
+                colors::space(doc, value)?;
+            }
+            (b"I" | b"K", Object::Boolean(_)) => {}
+            _ => return Err(INVALID.into()),
+        }
+    }
+    Ok(())
 }
