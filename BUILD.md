@@ -5074,6 +5074,28 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.13 verification, macOS arm64 and Windows x64, 2026-09-19:** all 25 gates
+passed on the release commit on macOS, and `check_windows.py` type-checked the
+Windows tree. All 308 frontend mutations selected `--since v26.9.12` were caught.
+The Rust selection was 303 at about 50 s each and was not run in full; the 51
+Rust mutations added or re-aimed this cycle were caught when they were written.
+The import window phase passed 18/18 on both platforms (dismissing the page
+question, a range, every page, search, undo, redo and save). The first macOS run
+of the earlier version of that phase found search filing an inserted page's hit
+under slot 0, which also mis-filed hits after a page deletion or move in 26.9.12;
+fixed before the release. The first Windows sweep found one missing entry in the
+viewer harness's withheld-command list, a harness omission rather than a
+product fault. Native checks passed 332 links and 315 text-heavy cases on macOS,
+and 315 text-heavy and 217 vector-heavy cases on Windows. The Windows real-spooler
+probe passed 10/10, and the OCR sweep opened 146 documents and asked about 12,608
+regions: zero still read as text, 3,640 were shown unreadable and 4,670 could not
+be; unverified is not a clean verdict. The Windows MSI and NSIS installers built
+locally; the installer upgrade and hidden-engine checks were not run this time.
+The published draft carried 8 assets, and the public `latest.json` offered 26.9.13
+for both platforms. After publishing, the installed Windows app applied the update
+by hand, and its uninstall entry then read 26.9.13. The macOS updater was not
+exercised; the installed Mac app was 26.9.11.
+
 **26.9.12 local verification, Windows x64, 2026-09-18:** all 25 gates passed on
 the final code: 1,747 Rust tests with three expected skips and 1,695 frontend
 tests. Mutations were selected as those added or re-aimed since the last commit,
