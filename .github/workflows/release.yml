@@ -423,15 +423,19 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Edit existing text in many more documents:
-          ordinary Word, Acrobat, LiveCycle and PowerPoint exports, LaTeX papers
-          (including the first page of arXiv papers), and documents made with
-          XeLaTeX, LuaTeX and Typst, whose fonts are embedded as CID-keyed CFF.
-          Text set in Times, Courier and the other standard fonts, in fonts a
-          document names without embedding, and in Calibri's letter ligatures can
-          now be edited. A small capital keeps its glyph when the word around it
-          changes. Math symbols, slide backgrounds and page stamps stay read-only.
+          **New in this release.** Insert the pages of another PDF after the
+          page you are on: all of them, or a range you type. The other file is
+          opened in a sandboxed process of its own, so its pages are drawn,
+          searched, marked, turned, moved and cropped like the document's own,
+          and saving writes them into the file. Their text cannot be edited, and
+          a document holding them cannot be redacted, until it has been saved
+          and opened again. Search no longer jumps to the wrong page after a page
+          was deleted or moved.
 
+          **Editing existing text.** Text can be edited in place in ordinary
+          Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
+          papers, and documents made with XeLaTeX, LuaTeX and Typst. Math
+          symbols, slide backgrounds and page stamps stay read-only.
           Edits must fit their chosen box, clips and surrounding content.
           Unsupported pages and glyphs are refused; automatic table resizing,
           flow across pages and complex-script shaping remain unbuilt.
