@@ -1922,6 +1922,24 @@ MUTATIONS = [
         "is true only when both options agree",
     ),
     Mutation(
+        # File a reply's hits under the page numbers the backend gave them. Those
+        # are pages of the file, so a hit on page 0 of an inserted file lands on
+        # slot 0; the window check's import phase found it after the unit test,
+        # whose mock numbered hits by slot, had passed.
+        "search: file hits under the backend's file page",
+        "src/lib/search.ts",
+        "const inScope = inSlots(result.matches, page).filter",
+        "const inScope = result.matches.filter",
+        "asks the file each page is drawn from, and finds a match on the imported one",
+    ),
+    Mutation(
+        "search: relabel a carried hit as starting on the slot asked about",
+        "src/lib/search.ts",
+        "      : { ...m, page: slot - 1, endPage: slot },",
+        "      : { ...m, page: slot, endPage: slot },",
+        "files a hit that began in the carry under the slot before",
+    ),
+    Mutation(
         "search: let the plain search match case",
         "src/lib/search.ts",
         "export const PLAIN_SEARCH: SearchOptions = {\n  matchCase: false,",

@@ -101,9 +101,13 @@ describe("Search across pages of another file", () => {
         if (command !== "search_page") return Promise.resolve([]);
         for (const page of args.pages ?? [args.page ?? 0]) asked.push([args.doc, page]);
         const hit = args.doc === 40;
+        // Numbered as `search.rs` numbers it: by the page of the file asked
+        // about, which is 0 here. This mock said 1, the slot, until the window
+        // check found the application filing the hit under slot 0 --- the
+        // fixture carried the answer the code under test should have computed.
         return Promise.resolve({
           page: args.page ?? 0,
-          matches: hit ? [{ page: 1, start: 0, end: 3, rects: [] }] : [],
+          matches: hit ? [{ page: args.page ?? 0, start: 0, end: 3, rects: [] }] : [],
           chars: 10,
         });
       },

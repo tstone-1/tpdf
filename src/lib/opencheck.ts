@@ -186,6 +186,10 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const expectedText = await theirs(source.doc, 0);
       report.check("the fixtures differ, so the next check can fail",
         expectedText !== await theirs(model.doc, 0), "import");
+      // Text is extracted for visible pages only (`prefetchText`), and the
+      // reading page can fill the window, so the inserted page is brought on
+      // screen first; waiting while parked on page 1 waits for nothing.
+      host.viewer()!.goToPage(1); await quiet();
       if (!await settle(() => host.viewer()?.textOn(1) != null, SETTLE_MS)) throw new Error("the imported page's text did not arrive");
       const shown = String.fromCodePoint(...host.viewer()!.textOn(1)!.codes);
       report.check("the imported page's text is the other file's", shown === expectedText,

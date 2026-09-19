@@ -249,6 +249,27 @@ export function runFrom(
 }
 
 /**
+ * A page's matches, renumbered from the file's pages to the slots they sit in.
+ *
+ * `search.rs` numbers a hit by the page **of the file** it was asked about, and
+ * everything in this module works in slots. The two agree only while the
+ * working document is the file unchanged: after a deletion or a move, or for a
+ * page inserted from another file (page 0 of *that* file, shown in slot 1), a
+ * hit filed under its file page lands on whatever slot has that number, or on
+ * none. So the reply is relabelled from the request rather than from its own
+ * numbers: a hit with no `endPage` is on the slot asked about, and one with an
+ * `endPage` began in the carry, which is only ever handed over from the slot
+ * before it.
+ */
+export function inSlots(matches: readonly Match[], slot: number): Match[] {
+  return matches.map((m) =>
+    m.endPage === undefined
+      ? { ...m, page: slot }
+      : { ...m, page: slot - 1, endPage: slot },
+  );
+}
+
+/**
  * Pairs a run's reply with the slots it was asked about.
  *
  * **A prefix, and never more pairs than there are answers.** The backend may
@@ -719,7 +740,7 @@ export class Search {
         // on. Reading both against this page would compare an index on one page
         // with a limit belonging to another, which is the kind of arithmetic
         // that produces a plausible answer and a wrong one.
-        const inScope = result.matches.filter((m) => {
+        const inScope = inSlots(result.matches, page).filter((m) => {
           if (joinsOnly && m.endPage === undefined) return false;
           const startsIn = limitOn.get(m.page);
           const endsIn = limitOn.get(m.endPage ?? m.page);

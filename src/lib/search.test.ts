@@ -14,6 +14,7 @@ import {
   MAX_MATCHES_TO_MARK,
   PLAIN_SEARCH,
   RUN_PAGES,
+  inSlots,
   runAnswers,
   runFrom,
   sameOptions,
@@ -271,3 +272,17 @@ describe("runAnswers", () => {
     expect(runAnswers([], answer(10))).toEqual([]);
   });
 });
+
+describe("inSlots", () => {
+  it("files a hit under the slot asked about, not the file page it names", () => {
+    // Page 0 of another file, shown in slot 1: the backend says 0.
+    const hit = { page: 0, start: 2, end: 5, before: "", hit: "cat", after: "" };
+    expect(inSlots([hit], 1)).toEqual([{ ...hit, page: 1 }]);
+  });
+
+  it("files a hit that began in the carry under the slot before", () => {
+    const hit = { page: 6, endPage: 7, start: 30, end: 2, before: "", hit: "cat", after: "" };
+    expect(inSlots([hit], 3)).toEqual([{ ...hit, page: 2, endPage: 3 }]);
+  });
+});
+

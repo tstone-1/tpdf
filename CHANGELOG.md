@@ -29,6 +29,12 @@ have the binary.)
   the text of an inserted page, following a web link on one, and redacting a
   document that holds them wait until the document is saved and opened again.
 
+### Fixed
+
+- After a page was deleted or moved, a search jumped to and highlighted the
+  wrong page, because each hit was filed under its page number in the file
+  rather than the page's current position.
+
 ## [26.9.12] - 2026-09-18
 
 ### Added
