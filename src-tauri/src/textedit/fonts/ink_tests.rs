@@ -327,3 +327,166 @@ fn textedit_truetype_descenders_extend_hit_bounds_and_keep_a_finite_limit() {
         assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "D");
     }
 }
+
+// A run whose glyphs reach past its own advance (D's ink ends 50 units right of
+// it) or before its origin (B starts 10 units left) is already drawn there, so
+// the editor's box, which is the advance, takes it unchanged and does not move
+// it; laid out again, the right overhang was refused and a left one shifted the
+// text right by its overhang.
+#[test]
+fn textedit_overhanging_source_ink_fits_its_own_default_box_unmoved() {
+    let (source, font) = simple_overhang_fixture(0, -10, 250);
+    let metrics = embedded(&source, source.get_dictionary(font).unwrap()).unwrap();
+    for text in ["AD", "BA"] {
+        let mut doc = source.clone();
+        set_content(&mut doc, "", &metrics.encode(text).unwrap());
+        let before = textedit::scan(&doc, 0).unwrap();
+        let run = &before.runs[0];
+        let round = |value: f64| (value * 1000.).ceil() / 1000.;
+        textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision.clone(),
+                operator: run.operator,
+                original: text.into(),
+                replacement: text.into(),
+                layout: Some(textedit::Layout {
+                    width: round(run.advance),
+                    height: round(run.size * 1.25),
+                    size: run.size,
+                    wrap: false,
+                    font: textedit::EditFont::Auto,
+                }),
+            }],
+        )
+        .unwrap_or_else(|e| panic!("{text}: {e}"));
+        let after = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].text, text);
+        assert_eq!(after.runs[0].matrix, run.matrix, "{text}");
+        assert_eq!(after.runs[0].display_rect, run.display_rect, "{text}");
+    }
+    // Ink the source did not have is still held to the box: D reaches past the
+    // advance of AAA, and B starts before its origin.
+    for (replacement, refusal) in [
+        ("AAD", "ink exceeds the box"),
+        ("BAA", "ink exceeds the box"),
+    ] {
+        let mut doc = source.clone();
+        set_content(&mut doc, "", &metrics.encode("AAA").unwrap());
+        let before = textedit::scan(&doc, 0).unwrap();
+        let run = &before.runs[0];
+        let result = textedit::write(
+            &mut doc,
+            &[Change {
+                page: 0,
+                revision: before.revision.clone(),
+                operator: run.operator,
+                original: "AAA".into(),
+                replacement: replacement.into(),
+                layout: Some(textedit::Layout {
+                    width: (run.advance * 1000.).ceil() / 1000.,
+                    height: (run.size * 1.25 * 1000.).ceil() / 1000.,
+                    size: run.size,
+                    wrap: false,
+                    font: textedit::EditFont::Auto,
+                }),
+            }],
+        );
+        assert!(
+            result.as_ref().unwrap_err().contains(refusal),
+            "{replacement}: {result:?}"
+        );
+    }
+}
+
+// A clip that already cuts a run (Word draws one around many lines) hides the
+// same part of it after an edit whose ink stays within the source's, as the
+// byte-patch writer has always allowed; ink the edit adds beyond the source's
+// is still held to the clip.
+#[test]
+fn textedit_a_partly_clipped_run_takes_its_own_text_in_the_default_box() {
+    let (source, font) = simple_overhang_fixture(0, -10, 250);
+    let metrics = embedded(&source, source.get_dictionary(font).unwrap()).unwrap();
+    let mut doc = source.clone();
+    set_content(
+        &mut doc,
+        "40 178 15 20 re W n",
+        &metrics.encode("AAA").unwrap(),
+    );
+    let before = textedit::scan(&doc, 0).unwrap();
+    let run = before.runs[0].clone();
+    let change = |doc: &Document, replacement: &str, width: f64| Change {
+        page: 0,
+        revision: textedit::scan(doc, 0).unwrap().revision,
+        operator: run.operator,
+        original: "AAA".into(),
+        replacement: replacement.into(),
+        layout: Some(textedit::Layout {
+            width,
+            height: (run.size * 1.25 * 1000.).ceil() / 1000.,
+            size: run.size,
+            wrap: false,
+            font: textedit::EditFont::Auto,
+        }),
+    };
+    let width = (run.advance * 1000.).ceil() / 1000.;
+    let mut edited = doc.clone();
+    textedit::write(&mut edited, &[change(&doc, "AAA", width)]).unwrap();
+    let after = textedit::scan(&edited, 0).unwrap();
+    assert_eq!(after.runs[0].text, "AAA");
+    assert_eq!(after.runs[0].display_rect, run.display_rect);
+    // A bundled font has its own ink, above and below the source's, so it is
+    // held to the clip even where it is narrower than the source.
+    let mut noto = change(&doc, "g", width);
+    noto.layout.as_mut().unwrap().font = textedit::EditFont::NotoSans;
+    assert!(textedit::write(&mut doc.clone(), &[noto])
+        .unwrap_err()
+        .contains("clips this area"));
+    // Past the source's ink, the clip decides as before.
+    let objects = doc.objects.clone();
+    let longer = change(&doc, "AAAA", width * 2.);
+    assert!(textedit::write(&mut doc, &[longer])
+        .unwrap_err()
+        .contains("clips this area"));
+    assert_eq!(doc.objects, objects);
+}
+
+// Kept at the source's origin, a longer edit of a run whose B overhangs its
+// origin reaches past a clip that starts exactly there; laid out afresh, the
+// text is inset by that overhang and fits. The source's positioning is only a
+// first try, so it never refuses an edit the ordinary layout accepts.
+#[test]
+fn textedit_an_edit_the_source_positioning_cannot_place_is_laid_out_afresh() {
+    let (source, font) = simple_overhang_fixture(0, -10, 250);
+    let metrics = embedded(&source, source.get_dictionary(font).unwrap()).unwrap();
+    let mut doc = source.clone();
+    set_content(
+        &mut doc,
+        "40 170 100 30 re W n",
+        &metrics.encode("BAA").unwrap(),
+    );
+    let before = textedit::scan(&doc, 0).unwrap();
+    let run = &before.runs[0];
+    textedit::write(
+        &mut doc,
+        &[Change {
+            page: 0,
+            revision: before.revision.clone(),
+            operator: run.operator,
+            original: "BAA".into(),
+            replacement: "BAAA".into(),
+            layout: Some(textedit::Layout {
+                width: 60.,
+                height: (run.size * 1.25 * 1000.).ceil() / 1000.,
+                size: run.size,
+                wrap: false,
+                font: textedit::EditFont::Auto,
+            }),
+        }],
+    )
+    .unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    let edited = after.runs.iter().find(|r| r.text == "BAAA").unwrap();
+    assert!(edited.matrix[4] > run.matrix[4], "{:?}", edited.matrix);
+}

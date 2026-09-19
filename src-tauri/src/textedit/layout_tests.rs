@@ -349,7 +349,9 @@ fn stroked_layouts_reserve_half_the_line_width() {
         .concat();
         let stream = copy.add_object(Stream::new(Dictionary::new(), clipped));
         copy.get_dictionary_mut(id).unwrap().set("Contents", stream);
-        let change = edit(&copy, "ACME", 80., 20., false);
+        // Longer than the source: its own text stays within the source's ink,
+        // which is clipped exactly as before, and is not held to the clip.
+        let change = edit(&copy, "ACMEE", 80., 20., false);
         let before = copy.objects.clone();
         let result = write(&mut copy, &[change]);
         assert_eq!(result.is_ok(), accepted, "{state}: {result:?}");
@@ -431,4 +433,215 @@ fn wrapping_fits_a_line_by_its_words_not_the_space_it_broke_at() {
         .map(|r| r.text.as_str())
         .collect();
     assert_eq!(texts, "ACME FIRST SECOND");
+}
+
+// The layout `defaultTextLayout` (src/lib/textlayout.ts) sends when a reader
+// starts typing, in the same arithmetic: the run's own advance, its size
+// rounded up to the next thousandth of a point.
+fn default_layout(run: &Run) -> Layout {
+    let x = run.matrix[0].hypot(run.matrix[1]);
+    let y = run.matrix[2].hypot(run.matrix[3]);
+    let round = |value: f64| (value * 1000.).ceil() / 1000.;
+    let source = run.size * y;
+    let size = round(source);
+    let height = (source * 1.25).max(run.minimum_height.unwrap_or(0.)) * size / source;
+    Layout {
+        width: round(run.advance * x).max(0.1),
+        height: round(height).max(0.1),
+        size,
+        wrap: false,
+        font: EditFont::Auto,
+    }
+}
+
+fn in_default_box(doc: &Document, index: usize, replacement: &str) -> Change {
+    let page = scan(doc, 0).unwrap();
+    let run = &page.runs[index];
+    Change {
+        page: 0,
+        revision: page.revision.clone(),
+        operator: run.operator,
+        original: run.text.clone(),
+        replacement: replacement.into(),
+        layout: Some(default_layout(run)),
+    }
+}
+
+// Every show the saved page makes, in order, with its operand.
+fn shows(doc: &Document) -> Vec<Object> {
+    let page = crate::pagetree::ordered_pages(doc)[0];
+    Content::decode_strict(&doc.get_page_content(page))
+        .unwrap()
+        .operations
+        .into_iter()
+        .filter(|op| op.operator == "TJ" || op.operator == "Tj")
+        .map(|op| op.operands[0].clone())
+        .collect()
+}
+
+fn kerned(items: &[(&str, i64)]) -> Object {
+    let mut array = Vec::new();
+    for (text, kern) in items {
+        array.push(Object::string_literal(*text));
+        if *kern != 0 {
+            array.push(Object::Integer(*kern));
+        }
+    }
+    Object::Array(array)
+}
+
+// A producer that tightened a run with kerning (pdfTeX, Word, Acrobat) gives it
+// an advance shorter than its glyph widths. The editor's box is that advance, so
+// laying the text out again from plain widths refused the run's own text.
+#[test]
+fn a_kerned_run_fits_its_own_default_box_unchanged_and_keeps_its_kerns() {
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 20 40 Td [(KER) 80 (NED) 80 (RUN)] TJ ET");
+    let change = in_default_box(&doc, 0, "KERNEDRUN");
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(
+        shows(&doc)[0],
+        kerned(&[("KER", 80), ("NED", 80), ("RUN", 0)])
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "KERNEDRUN");
+}
+
+// Two letters swapped inside a kern-free stretch: the replacement is exactly as
+// wide as the source only if both kerns survive, and nothing after it moves.
+#[test]
+fn a_same_length_edit_in_the_default_box_keeps_kerns_and_leaves_neighbours() {
+    let mut doc = tests::with_content(
+        b"BT /F1 12 Tf 20 100 Td [(ABCDEF) 80 (GH) 80 (IJ)] TJ (NEXT) Tj 0 -40 Td (BELOW) Tj ET",
+    );
+    let before = scan(&doc, 0).unwrap();
+    let change = in_default_box(&doc, 0, "ABDCEFGHIJ");
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(
+        shows(&doc)[0],
+        kerned(&[("ABDCEF", 80), ("GH", 80), ("IJ", 0)])
+    );
+    let after = scan(&doc, 0).unwrap();
+    let edited = after.runs.iter().find(|r| r.text == "ABDCEFGHIJ").unwrap();
+    assert_eq!(edited.matrix, before.runs[0].matrix);
+    assert!((edited.advance - before.runs[0].advance).abs() < 1e-9);
+    for text in ["NEXT", "BELOW"] {
+        let old = before.runs.iter().find(|r| r.text == text).unwrap();
+        let new = after.runs.iter().find(|r| r.text == text).unwrap();
+        assert_eq!(new.matrix, old.matrix, "{text}");
+        assert_eq!(new.display_rect, old.display_rect, "{text}");
+    }
+}
+
+// The box's size control shows a thousandth of a point, rounded up, so a TeX
+// 9.96264 pt run arrives as 9.963 and a Word run at Tf 1 under an 11.0417 scale as
+// 11.042. Laid out at that size the run's own text is wider than its own
+// advance, kerned or not.
+#[test]
+fn a_run_keeps_its_own_font_size_through_the_rounded_default_box() {
+    for (content, size) in [
+        (
+            &b"BT /F1 9.96264 Tf 20 100 Td (PLAIN UNKERNED LINE OF TEXT) Tj ET"[..],
+            9.96264_f32,
+        ),
+        (
+            &b"BT /F1 1 Tf 11.0417 0 0 11.0417 20 100 Tm (PLAIN UNKERNED LINE OF TEXT) Tj ET"[..],
+            1.,
+        ),
+    ] {
+        let mut doc = tests::with_content(content);
+        let before = scan(&doc, 0).unwrap();
+        let change = in_default_box(&doc, 0, "PLAIN UNKERNED LINE OF TEXT");
+        write(&mut doc, &[change]).unwrap();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let written = Content::decode_strict(&doc.get_page_content(page)).unwrap();
+        // The source's own Tf comes first; the edit's is the second.
+        let font = written
+            .operations
+            .iter()
+            .filter(|op| op.operator == "Tf")
+            .nth(1)
+            .unwrap();
+        assert_eq!(font.operands[1].as_float().unwrap(), size);
+        let after = scan(&doc, 0).unwrap();
+        assert_eq!(after.runs[0].matrix, before.runs[0].matrix);
+        assert_eq!(after.runs[0].size, before.runs[0].size);
+    }
+}
+
+// A size the reader chose is not the source's, so the run is laid out again
+// from glyph widths; the kerns belonged to the old size.
+#[test]
+fn a_kerned_run_at_another_size_is_laid_out_again_without_its_kerns() {
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 20 100 Td [(KER) 80 (NED) 80 (RUN)] TJ ET");
+    let mut change = in_default_box(&doc, 0, "KERNEDRUN");
+    let layout = change.layout.as_mut().unwrap();
+    layout.size = 14.;
+    layout.width = 200.;
+    layout.height = 20.;
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(shows(&doc)[0], Object::string_literal("KERNEDRUN"));
+}
+
+// A bundled font cannot show the source's character codes, so choosing one
+// always lays the run out again in that font.
+#[test]
+fn a_kerned_run_in_a_chosen_bundled_font_does_not_keep_source_codes() {
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 20 100 Td [(KER) 80 (NED) 80 (RUN)] TJ ET");
+    let mut change = in_default_box(&doc, 0, "KERNEDRUN");
+    let layout = change.layout.as_mut().unwrap();
+    layout.font = EditFont::NotoSans;
+    layout.width = 200.;
+    assert_eq!(preview_layout(&doc, &change).unwrap().font, "Noto Sans");
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "KERNEDRUN");
+    assert_ne!(
+        shows(&doc)[0],
+        kerned(&[("KER", 80), ("NED", 80), ("RUN", 0)])
+    );
+}
+
+// A kept kern can widen: the 1000-unit gap after A leaves no room in the box
+// for W, while the rewrite without it fits, so the rewrite is written.
+#[test]
+fn kept_kerns_that_do_not_fit_the_box_give_way_to_the_rewrite() {
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 20 100 Td [(A) -1000 (BC)] TJ ET");
+    let source = doc.clone();
+    let change = in_default_box(&doc, 0, "ABW");
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(shows(&doc)[0], Object::string_literal("ABW"));
+    // A box narrowed below the source's advance, though still wider than its
+    // ink, cannot hold the source's own gap: the run is set without it.
+    let mut doc = source;
+    let mut change = in_default_box(&doc, 0, "ABC");
+    change.layout.as_mut().unwrap().width -= 1.;
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(shows(&doc)[0], Object::string_literal("ABC"));
+}
+
+// The size control's step is a thousandth of a point, either way; beyond it the
+// reader asked for another size.
+#[test]
+fn a_requested_size_within_one_step_of_the_source_is_the_source_size() {
+    for (requested, written) in [
+        (12.001_000_000_000_5, 12.),
+        (11.999_5, 12.),
+        (12.001_1, 12.001_1_f32),
+        (11.998_9, 11.998_9),
+    ] {
+        let mut doc = tests::with_content(b"BT /F1 12 Tf 20 100 Td (SIZE) Tj ET");
+        let mut change = in_default_box(&doc, 0, "SIZE");
+        let layout = change.layout.as_mut().unwrap();
+        layout.size = requested;
+        layout.width = 100.;
+        layout.height = 20.;
+        write(&mut doc, &[change]).unwrap();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let content = Content::decode_strict(&doc.get_page_content(page)).unwrap();
+        let font = content
+            .operations
+            .iter()
+            .filter(|op| op.operator == "Tf")
+            .nth(1)
+            .unwrap();
+        assert_eq!(font.operands[1].as_float().unwrap(), written, "{requested}");
+    }
 }

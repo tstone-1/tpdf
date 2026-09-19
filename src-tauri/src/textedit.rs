@@ -1324,6 +1324,48 @@ fn continuation_adjustment(run: &Run, replacement_advance: f64) -> Result<Vec<Ob
     Ok(parts)
 }
 
+/// A replacement in its run's own font and size, positioned as its source is:
+/// the source's kerns and word gaps kept around an unchanged start and end
+/// (kerning.rs) when that version `fits`, and otherwise the run written afresh
+/// from glyph widths, which the caller still has to check. Kept kerns can widen
+/// as well as narrow, which is why a kept version that does not fit gives way.
+/// Both writers use it: the byte patch with the source's own advance and ink as
+/// the limit, the layout (layout.rs) with the reader's box.
+///
+/// Returns the TJ items (without the source's leading adjustment), their
+/// advance and their horizontal ink, in text space.
+#[allow(clippy::too_many_arguments)]
+fn own_items(
+    source: &lopdf::content::Operation,
+    grouped: bool,
+    led: bool,
+    replacement: &str,
+    metrics: &fonts::Metrics,
+    gap: f64,
+    (size, spacing, word_spacing): (f64, f64, f64),
+    fits: impl Fn(f64, [f64; 2]) -> bool,
+) -> Result<(Vec<Object>, f64, [f64; 2]), String> {
+    let kept = if source.operator == "TJ" && !grouped {
+        let values = source.operands[0].as_array().map_err(|e| e.to_string())?;
+        kerning::kept(
+            &values[usize::from(led)..],
+            replacement,
+            metrics,
+            gap,
+            (size, spacing, word_spacing),
+        )
+    } else {
+        None
+    };
+    if let Some((items, advance, bounds)) =
+        kept.filter(|(_, advance, bounds)| fits(*advance, *bounds))
+    {
+        return Ok((items, advance, bounds));
+    }
+    let (advance, bounds) = metrics.gapped_layout(replacement, size, spacing, word_spacing, gap)?;
+    Ok((metrics.items(replacement, gap)?, advance, bounds))
+}
+
 /// Discover a complete supported page, or explain why it cannot be edited yet.
 ///
 /// # Errors
@@ -1423,46 +1465,23 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             .get(&change.operator)
             .ok_or("missing text spacing")?;
         let gap = gaps.get(&change.operator).copied().unwrap_or(DEFAULT_GAP);
-        // Keep the source's own kerning and gaps where the replacement leaves
-        // the text unchanged (see kerning.rs); otherwise rewrite the run.
-        let source = &content.operations[change.operator as usize];
-        let kept = if source.operator == "TJ" && !groups.contains_key(&change.operator) {
-            let values = source.operands[0].as_array().map_err(|e| e.to_string())?;
-            let values = &values[usize::from(leads.contains_key(&change.operator))..];
-            kerning::kept(
-                values,
-                &change.replacement,
-                &metrics,
-                gap,
-                (run.size, spacing, word_spacing),
-            )
-        } else {
-            None
-        };
         let original = *horizontal_bounds
             .get(&change.operator)
             .ok_or("missing text ink bounds")?;
-        // Kept kerns can widen as well as narrow: a kept version that does not
-        // fit gives way to the rewrite, which may.
-        let kept = kept.filter(|(_, advance, bounds)| {
-            *advance <= run.advance + 0.000_001
-                && bounds[0] >= original[0]
-                && bounds[1] <= original[1]
-        });
-        let (replacement_advance, replacement_bounds, mut items) = match kept {
-            Some((items, advance, bounds)) => (advance, bounds, items),
-            None => {
-                let (replacement_advance, replacement_bounds) = metrics.gapped_layout(
-                    &change.replacement,
-                    run.size,
-                    spacing,
-                    word_spacing,
-                    gap,
-                )?;
-                let items = metrics.items(&change.replacement, gap)?;
-                (replacement_advance, replacement_bounds, items)
-            }
-        };
+        let (mut items, replacement_advance, replacement_bounds) = own_items(
+            &content.operations[change.operator as usize],
+            groups.contains_key(&change.operator),
+            leads.contains_key(&change.operator),
+            &change.replacement,
+            &metrics,
+            gap,
+            (run.size, spacing, word_spacing),
+            |advance, bounds| {
+                advance <= run.advance + 0.000_001
+                    && bounds[0] >= original[0]
+                    && bounds[1] <= original[1]
+            },
+        )?;
         if replacement_advance > run.advance + 0.000_001 {
             return Err("replacement would exceed the original text advance".into());
         }

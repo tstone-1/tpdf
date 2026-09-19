@@ -712,6 +712,13 @@ changed middle is encoded, and a kern between a kept and a changed glyph is
 dropped. The candidate is read back through `array_text` and used only if it
 reads as the replacement and fits; otherwise the run is rewritten whole. On the
 arXiv sample this takes transposition edits from 24 to 69 of 80 lines.
+Both writers get their items from `textedit::own_items`, and the editor's layout
+(which every edit in the application sends) uses them for a one-line replacement
+at the run's own font and size, placed at its own origin and held to the box and
+the source's own ink (`layout::source_items`); ink within the source's is not
+held to a clip the source already had. A requested size within 0.001 pt of the
+source's is the source's (`layout::own_size`), since `defaultTextLayout` rounds
+it up. Anything else is laid out from glyph widths as before.
 
 A non-embedded simple TrueType or Type 1 font (Word leaves Arial and Times New
 Roman out) is read by `fonts::unembedded`: nonsymbolic WinAnsi only, measured by

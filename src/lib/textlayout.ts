@@ -1,6 +1,16 @@
 import type { TextLayout, TextRun } from "./textedit";
 
-/** Physical dimensions along the text axes, independent of zoom and font matrices. */
+/**
+ * Physical dimensions along the text axes, independent of zoom and font matrices.
+ *
+ * The width is the run's own advance, kerning and word gaps included, not the
+ * width of its glyphs set again: that is the space the run occupies on the page,
+ * and the writer keeps the source's own positioning for text left unchanged
+ * (`layout::source_items`), so the unchanged run fits it exactly. For a kerned
+ * run the glyph widths are wider, and a box that wide would claim room the line
+ * never had, up to its neighbour. The size is rounded up to the thousandth the
+ * control shows; the writer reads a size within that step as the source's own.
+ */
 export function defaultTextLayout(run: TextRun): TextLayout {
   const x = Math.hypot(run.matrix[0], run.matrix[1]);
   const y = Math.hypot(run.matrix[2], run.matrix[3]);
