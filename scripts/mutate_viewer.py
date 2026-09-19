@@ -806,7 +806,7 @@ MUTATIONS = [
         # would pass.
         "page turn: rotate the whole view instead of the one page",
         "src/lib/viewer.ts",
-        "    if (source !== undefined) this.text.setPageTurns(source, turns);\n    this.scroller.setPageTurns(page, turns);",
+        "    if (at) at.cache.setPageTurns(at.page, turns);\n    this.scroller.setPageTurns(page, turns);",
         "    this.rotateBy(turns);",
         "a page nobody turned keeps its shape",
     ),
@@ -816,7 +816,7 @@ MUTATIONS = [
         # missing feature.
         "page turn: leave the text layer upright when a page turns",
         "src/lib/viewer.ts",
-        "    if (source !== undefined) this.text.setPageTurns(source, turns);",
+        "    if (at) at.cache.setPageTurns(at.page, turns);",
         "",
         "the text layer turns with the page",
     ),

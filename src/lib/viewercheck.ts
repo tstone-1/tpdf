@@ -3176,6 +3176,10 @@ async function appCommandChecks(
     deletePage: () => fired.push("deletePage"),
     insertBlankPage: () => fired.push("insertBlankPage"),
     insertSizedPage: (name) => fired.push(`insertSizedPage:${name}`),
+    // A recorder like its neighbours, which is also what keeps the sweep from
+    // opening a file dialog: the dialog and the backend are `App.svelte`'s, and
+    // `tabs_check.py --phase import` drives those against a real file.
+    importPages: () => fired.push("importPages"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
@@ -3808,6 +3812,14 @@ async function appCommandChecks(
       ...shell(`insertSizedPage:${name}`),
       read: () => fired.join(","),
     })),
+    {
+      // Palette-only, for `edit.insertBlankPage`'s reason. What this reaches is
+      // the action; the dialog, the backend's open of a second file and the
+      // pages that arrive are `tabs_check.py --phase import`'s.
+      id: "edit.insertPages",
+      ...shell("importPages"),
+      read: () => fired.join(","),
+    },
     {
       // Needs a selection, like `find.inSelection` above, and for a sharper
       // reason: its `enabled` guard is the only one in the application that

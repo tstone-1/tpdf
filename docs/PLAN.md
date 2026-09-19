@@ -12582,6 +12582,10 @@ over; nothing else does.
 the bullet — a blank page — is built.** See the section below. What is left
 here is the second document, which is every clause above except the first.
 
+⚠ **Built on 2026-09-19**, in three increments: the importer took a selection, then the model
+and the save, then the render path and the command. See *Imported pages are drawn, and the
+command exists* below for what works on one and what is still refused.
+
 #### Inserting a blank page — done 2026-08-30
 
 **The seam first, under the feature that does not need a second document.** The
@@ -12992,11 +12996,118 @@ their anchors moved (`pages_are_the_file`, the `rewriter.write` and `checked` ca
 pre-check, and `Insert`'s placement, which the import arm now repeats under another name) ---
 **30 of 30 caught by the test named for each**.
 
-**Not done:** the render path --- an imported page has no tile, because no worker holds its
+**Not done:** ~~the render path --- an imported page has no tile, because no worker holds its
 file; the frontend, where `pages.ts` knows the variant exists and answers `undefined` for both
 its baseline number and its made size; and the command, with its file dialog, its page-count
-read through a worker and its README line. The merge and the image-only redaction of such a
-document, both refused above, are the smaller two.
+read through a worker and its README line~~ (done 2026-09-19 --- see *Imported pages are
+drawn, and the command exists*, immediately below). The merge and the image-only redaction of
+such a document, both refused above, are the smaller two.
+
+#### Imported pages are drawn, and the command exists — done 2026-09-19
+
+The last of the four costs, and the command that reaches all of them. `edit.insertPages` opens
+a file in the open panel and places every page of it after the page being read, as one undo
+step; the render path draws, reads and searches those pages by asking the other file's own
+worker pool.
+
+##### The other file is a document of the render service
+
+`page_import` (`commands/document.rs`) opens the file through the same `open_handed` the
+reader's documents take, so it is parsed in a sandboxed pool of its own and nowhere else, and
+the handle that comes back is what every request for one of its pages names. The command then
+asks that pool for the file's properties and refuses an encrypted one --- the save would refuse
+it anyway (§T6.19), and hearing so after arranging the pages costs the reader the arranging ---
+fingerprints it through the handle the service mapped, and hands `Edits::import` the record and
+the handle together.
+
+**The handle belongs to the importing document's model, not to the webview.**
+`edits::Open::sources` maps the model's `SourceId` to the render handle, `Edits::close` hands
+every one back, and `close_document`, the in-place save and the redaction's close release them
+with the document; `release_documents` sweeps them with everything else. Undo releases
+nothing, because the redo tail names the file and redo has to draw the same pages. A second
+import of the same bytes into the same document reuses the model's id, so `Edits::import`
+answers the new handle as `spare` and the command releases it --- the first is in use. Two tabs
+importing one file hold two pools: sharing needs a holder count that outlives any one
+document, and buys one fewer pool in a case nobody has asked about.
+
+Every refusal after the open --- properties, encryption, the fingerprint, the page count, the
+model --- has to release the pool it opened, and a release written at each `?` is five places
+for the sixth to forget. `imports::Held` releases on drop unless `keep` is called, and `keep`
+is called only once the model has recorded the handle.
+
+##### The wire carries the handle beside the pages, and the frontend joins them once
+
+`EditState.sources` lists `{source, doc}` --- beside `pages`, not on each `PageView`, because a
+`PageView` is also what a save plan carries across the worker boundary and a render handle
+means nothing to a worker. `edits.ts`'s `adopt` joins the two on arrival with `withSources`,
+writing `from` onto each imported page, so everything downstream holds pages that say where
+they are drawn from. The committed `EditState.json` sample carries an imported page and the
+list, so `replyshapes.test.ts` holds the mirror to both.
+
+**`addressOf` is the new question and `sourceOf` keeps its old one.** A tile, a page's text, a
+search and a page's size can be answered by any file, so they ask `addressOf` for a document
+handle and a page of *that* document; a crop's content box and its conversion are asked of the
+file the page is drawn from too, since the box is in that page's own space. Everything that
+can only be answered by the opened file --- text edits, redaction plans, the character-mapping
+verdicts, the reading place a session remembers --- keeps asking `sourceOf`, which answers
+`undefined` for an imported page exactly as for a blank one. An imported page that arrived
+without its handle has no address, and draws nothing rather than the opened file's page of the
+same number.
+
+The viewer holds one `TextCache` per document rather than more keys in one, because a cache's
+keys are page numbers of *its* file. Size learning needed no change: it reads the page size out
+of the page's text, and the text now comes from the right file.
+
+##### What works on an imported page, and what is refused
+
+Drawn, thumbnailed, selected, copied, searched, highlighted and otherwise marked, turned,
+moved, cropped by drag or to content, deleted, and saved. Links: a destination inside the
+other file lands on the slot showing that page if it was imported too and is otherwise
+`broken`; a web address is shown and refused (`refused`/`uri`), because its token indexes the
+other file's list in the webopen registry and nothing here should open an address through a
+list it did not build. The other file's links are scanned once, through its handle, by
+`importedlinks.ts`; their ids are renumbered above the opened file's, since both scans number
+from zero and the viewer follows a link by id.
+
+Refused, each with a sentence: editing an imported page's text (`document_text_runs` says the
+page came from another file), redaction anywhere in a document holding one and inserting
+beside pending redactions (increment 1's refusals), and an encrypted or locked file at insert.
+Form fields on an imported page are not listed --- the field scan is the opened document's ---
+so there is nothing to fill rather than a refusal.
+
+**Search covers imported pages**, and the one clause it needed was in `runFrom`: a run of pages
+asked in one request names one handle, so a run ends where the document changes. Without it a
+run over the join would search the other file's page numbers in the opened file. What search
+does not do for them is the character-mapping warning: `document_mapping` is asked of the opened
+file only, so a search that finds nothing on an imported page whose fonts state no mapping says
+*No matches* without the caveat it would give on one of the opened file's pages.
+
+##### What was measured
+
+Rust: six tests in `edits` (the handle in every reply, undo keeping it, close handing back
+every file, a second import answering the spare, a refused import recording nothing, no handle
+in a plan), seven in `imports` and two in `commands::read`. TypeScript: address, join, link and
+routing tests in `pages`, `edits`, `scroller`, `thumbnails`, `search`, `searchmapping`,
+`viewertext`, `viewercrop` and `importedlinks`. Mutations: eight Rust and seventeen frontend,
+one per guard this adds, each caught by the test named for it; fourteen existing mutations
+re-aimed because the lines they name moved --- two of them the release notes' not-built
+marker, which lost `edit.insertPages` --- and the twelve of them the non-window harnesses run
+were re-run and caught. The two re-aimed in `mutate_viewer.py` need a screen and have not been
+run.
+
+**Not measured, and the window check that would measure it is written and has not been run:**
+`tabs_check.py --phase import --other <pdf>` opens a document, inserts the other file's pages
+past the dialog, and checks that they are drawn from a handle that is not the opened one, that
+the imported page's text is the other file's, that a search finds a word on it, that one undo
+and one redo move all of them, and that a save writes them into the file.
+
+**Not done:** choosing which pages of the other file to insert (a range prompt; every page is
+inserted today); following a web link or reading the outline of the other file; editing an
+imported page's text before a save; the character-mapping warning for an imported page;
+and a truncated other file stops the viewer asking for tiles for the whole document rather
+than for that file's pages, because `DocumentGone` is one flag per scroller. The merge and the
+image-only redaction of a document holding imported pages stay refused, as increment 1 left
+them.
 
 #### Deleting a comment the file came with — done 2026-08-30
 

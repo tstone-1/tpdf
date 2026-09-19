@@ -221,6 +221,44 @@ describe("Edits", () => {
     expect(core.invoke).not.toHaveBeenCalled();
   });
 
+  it("imports behind the page in a slot, and joins the handle the reply names", async () => {
+    core.invoke.mockResolvedValueOnce(state(2));
+    const edits = new Edits(9);
+    await edits.refresh();
+    const reply = state(2);
+    reply.pages.splice(1, 0, {
+      id: pageId(3),
+      source: { imported: { source: 1, page: 0 } },
+      turns: 0,
+    });
+    reply.sources = [{ source: 1, doc: 40 }];
+    core.invoke.mockResolvedValueOnce(reply);
+
+    const after = await edits.importPages(0, "/tmp/other.pdf");
+
+    expect(core.invoke).toHaveBeenLastCalledWith("page_import", {
+      doc: 9,
+      after: 1,
+      path: "/tmp/other.pdf",
+    });
+    // What the viewer is handed, and what the map is built from: both have to
+    // carry the handle, or the imported page is drawn from nowhere.
+    expect(after.pages[1]?.from).toBe(40);
+    expect(edits.map.addressOf(1, 9)).toEqual({ doc: 40, page: 0 });
+    expect(edits.state.pages[1]?.from).toBe(40);
+  });
+
+  it("does not send an import for a slot the model has never mentioned", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockClear();
+
+    await edits.importPages(7, "/tmp/other.pdf");
+
+    expect(core.invoke).not.toHaveBeenCalled();
+  });
+
   it("sends no anchor for a move to the front", async () => {
     core.invoke.mockResolvedValueOnce(state(3));
     const edits = new Edits(9);

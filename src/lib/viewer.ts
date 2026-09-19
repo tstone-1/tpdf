@@ -119,7 +119,7 @@ import {
   type MarkView,
   type StampName,
   type PageId,
-  baselineOf,
+  type FilePage,
   type PageView,
   type RedactionView,
 } from "./pages";
@@ -1010,6 +1010,17 @@ export class Viewer {
   private readonly track: HTMLDivElement;
   private readonly thumb: HTMLDivElement;
   private readonly text: TextCache;
+  /**
+   * The text of the pages inserted from other files, one cache per file.
+   *
+   * Keyed by the other file's render handle, and a cache of its own rather than
+   * more keys in {@link text}, because a `TextCache` is a cache of *one*
+   * document's pages: its keys are page numbers of that file, its requests name
+   * that handle, and page 3 of two files is two different pages. Created on the
+   * first page that needs one and kept for the life of the viewer, which is the
+   * life of the handle --- the backend releases it with this document.
+   */
+  private readonly otherText = new Map<number, TextCache>();
   private readonly a11y: AccessibleText;
 
   private readonly searcher: Search;
@@ -1399,7 +1410,7 @@ export class Viewer {
       opts.doc,
       opts.pageCount,
       () => this.onSearchProgress(),
-      (slot) => this.pages.sourceOf(slot),
+      (slot) => this.pages.addressOf(slot, opts.doc),
     );
 
     this.surfaceHost = document.createElement("div");
@@ -2522,6 +2533,7 @@ export class Viewer {
   private applyTurns(next: number): void {
     this.turns = next;
     this.text.setTurns(next);
+    for (const other of this.otherText.values()) other.setTurns(next);
     this.scroller.setTurns(next);
   }
 
@@ -2559,8 +2571,8 @@ export class Viewer {
     // The text cache is keyed by the page of the file; the scroller by the slot.
     // Both are told the same number of turns, which is what stops the tiles and
     // the caret disagreeing about which way a page is facing.
-    const source = this.pages.sourceOf(page);
-    if (source !== undefined) this.text.setPageTurns(source, turns);
+    const at = this.textAt(page);
+    if (at) at.cache.setPageTurns(at.page, turns);
     this.scroller.setPageTurns(page, turns);
     // Earlier sheets can have changed height underneath the old scroll offset.
     this.applyFit(false, anchor);
@@ -4907,10 +4919,41 @@ export class Viewer {
     this.markNote.place(at);
   }
 
+  /**
+   * The cache that holds a slot's text, and the page of that cache's document.
+   *
+   * The opened document's own cache for one of its pages, the other file's for
+   * a page inserted from it, and `undefined` for a page tpdf made --- which no
+   * worker can extract text from, because there is no page of any file to ask
+   * about. Every text question in this class goes through here, so the three
+   * cannot disagree about which document a slot's words belong to.
+   */
+  private textAt(
+    slot: number,
+    pages: PageMap = this.pages,
+  ): { cache: TextCache; doc: number; page: FilePage } | undefined {
+    const at = pages.addressOf(slot, this.opts.doc);
+    return at ? { cache: this.textOf(at.doc), doc: at.doc, page: at.page } : undefined;
+  }
+
+  /** The text cache of the document open under `doc`, made on first use. */
+  private textOf(doc: number): TextCache {
+    if (doc === this.opts.doc) return this.text;
+    let cache = this.otherText.get(doc);
+    if (!cache) {
+      cache = new TextCache(doc);
+      // Into the view the other caches are in, or its first answer would be
+      // turned differently from the page beside it.
+      cache.setTurns(this.turns);
+      this.otherText.set(doc, cache);
+    }
+    return cache;
+  }
+
   /** A page's text as the view shows it, or `null` if it has not arrived. */
   textOn(slot: number): PageText | null {
-    const source = this.pages.sourceOf(slot);
-    return source === undefined ? null : this.text.peek(source);
+    const at = this.textAt(slot);
+    return at ? at.cache.peek(at.page) : null;
   }
 
   /**
@@ -4920,8 +4963,8 @@ export class Viewer {
    * unturned buys and why a mark's quads have to come from here.
    */
   private unturnedOn(slot: number): PageText | null {
-    const source = this.pages.sourceOf(slot);
-    return source === undefined ? null : this.text.peekUnturned(source);
+    const at = this.textAt(slot);
+    return at ? at.cache.peekUnturned(at.page) : null;
   }
 
   /**
@@ -4931,18 +4974,14 @@ export class Viewer {
    * extract text from because there is no page of the file to ask about.
    */
   private loadOn(slot: number): Promise<PageText | null> {
-    const source = this.pages.sourceOf(slot);
-    return source === undefined
-      ? Promise.resolve(null)
-      : this.text.load(source);
+    const at = this.textAt(slot);
+    return at ? at.cache.load(at.page) : Promise.resolve(null);
   }
 
   /** {@link loadOn}, in the document's own space. */
   private loadUnturnedOn(slot: number): Promise<PageText | null> {
-    const source = this.pages.sourceOf(slot);
-    return source === undefined
-      ? Promise.resolve(null)
-      : this.text.loadUnturned(source);
+    const at = this.textAt(slot);
+    return at ? at.cache.loadUnturned(at.page) : Promise.resolve(null);
   }
 
   /** Where a pointer event falls, in one page's own point space. */
@@ -5322,7 +5361,7 @@ export class Viewer {
           // the branch below, where the difference decides whether the reader
           // gets their text or an error about pages that were perfectly
           // readable.
-          made: this.pages.sourceOf(page) === undefined,
+          made: this.pages.addressOf(page, this.opts.doc) === undefined,
           text: await this.loadOn(page),
         })),
       );
@@ -5528,7 +5567,11 @@ export class Viewer {
       // call would need a number. The check stays because the type carries the
       // constraint and this is the one place that would ask a worker about a
       // page no file supplies.
-      const source = baselineOf(view.source);
+      //
+      // A page inserted from another file is asked of *that* file: its crop box
+      // is in its own page space and its `/Rotate` is that file's, and the
+      // opened document's worker has neither.
+      const source = this.textAt(slot, pages);
       const want = view.crop;
       const held = this.crops.get(view.id);
       if (want === undefined) {
@@ -5536,14 +5579,14 @@ export class Viewer {
         // so a cleared crop needs the entry gone rather than a round trip.
         if (held) {
           this.crops.delete(view.id);
-          if (source !== undefined) this.text.setPageCrop(source, undefined);
+          source?.cache.setPageCrop(source.page, undefined);
           this.scroller.invalidatePage(slot);
         }
         continue;
       }
       if (source === undefined) continue;
-      this.text.setPageCrop(source, want);
-      const at = await pageGeometry(this.opts.doc, source, want).catch(
+      source.cache.setPageCrop(source.page, want);
+      const at = await pageGeometry(source.doc, source.page, want).catch(
         () => null,
       );
       // The reply is for the document as it was when the question went out, and
@@ -5691,10 +5734,10 @@ export class Viewer {
    * one at a time --- `App.svelte`'s comment-words loop is the worked example.
    */
   async unturnedText(slot: number): Promise<PageText | null> {
-    const source = this.pages.sourceOf(slot);
-    if (source === undefined) return null;
-    await this.text.load(source);
-    return this.text.peekUnturned(source);
+    const at = this.textAt(slot);
+    if (!at) return null;
+    await at.cache.load(at.page);
+    return at.cache.peekUnturned(at.page);
   }
 
   /** Draws the marks, the search highlights and the selection. */
@@ -6599,8 +6642,8 @@ export class Viewer {
    * deletion above it must not make it be fetched again.
    */
   private requestText(slot: number): void {
-    const source = this.pages.sourceOf(slot);
-    if (source === undefined) return;
+    const at = this.textAt(slot);
+    if (!at) return;
     // The cache is asked rather than a set kept here. `TextCache` dedupes the
     // request but not the `.then` attached to it, and the frame loop would
     // attach a fresh one every frame of a scroll over a page still being
@@ -6608,8 +6651,8 @@ export class Viewer {
     // because the cache is what *forgets*: a set here went stale the moment a
     // crop dropped a page's extraction, and that page was then never fetched
     // again and could not be selected on for the rest of the session.
-    if (!this.text.worthAsking(source)) return;
-    void this.text.load(source).then(() => this.wake());
+    if (!at.cache.worthAsking(at.page)) return;
+    void at.cache.load(at.page).then(() => this.wake());
   }
 
   /**

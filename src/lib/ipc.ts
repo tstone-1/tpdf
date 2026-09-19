@@ -232,6 +232,10 @@ export interface Commands {
     };
     reply: EditState;
   };
+  page_import: {
+    args: { doc: number; after: PageId | null; path: string };
+    reply: EditState;
+  };
   annot_mark: { args: { doc: number; mark: NewMark }; reply: EditState };
   annot_remove: {
     args: { doc: number; mark: number; sweep: number };

@@ -280,11 +280,12 @@ describe("Thumbnails lifetime", () => {
     // the life of the document, and a mutation removing the walk-on survived
     // the first version of this test.
     //
-    // The `sourceOf` also stands in for the fallback this replaced ---
+    // The `addressOf` also stands in for the fallback this replaced ---
     // `sourceOf?.(page) ?? page` --- which for a made page asked for whatever
     // page of the file happens to sit at that slot number.
     const pages = makeStrip(dom, {
-      sourceOf: (slot) => (slot === 1 ? undefined : filePage(slot)),
+      addressOf: (slot) =>
+        slot === 1 ? undefined : { doc: 1, page: filePage(slot) },
     });
     pages.setActive(true);
     expect(tiles.fetchTile).toHaveBeenCalledTimes(1);
@@ -297,6 +298,26 @@ describe("Thumbnails lifetime", () => {
     // both halves: the made page is skipped, and the queue did not stop at it.
     expect(tiles.fetchTile).toHaveBeenCalledTimes(2);
     expect(tiles.fetchTile.mock.calls[1]?.[0]).toMatchObject({ page: 2 });
+  });
+
+  it("asks the other file's handle for a row inserted from it", async () => {
+    // A row drawn from another file is an ordinary render of an ordinary
+    // document, asked of that document --- so the request names *its* handle
+    // and *its* page. The opened document's handle with that page number would
+    // be a correct-looking thumbnail of the wrong file, which is the one thing
+    // no assertion on the page number alone can see.
+    const pages = makeStrip(dom, {
+      addressOf: (slot) =>
+        slot === 0
+          ? { doc: 40, page: filePage(6) }
+          : { doc: 1, page: filePage(slot - 1) },
+    });
+    pages.setActive(true);
+    expect(tiles.fetchTile.mock.calls[0]?.[0]).toMatchObject({ doc: 40, page: 6 });
+
+    deliver(render(() => {}));
+    await settle();
+    expect(tiles.fetchTile.mock.calls[1]?.[0]).toMatchObject({ doc: 1, page: 0 });
   });
 
   it("still asks for every page when nobody translates slots at all", async () => {

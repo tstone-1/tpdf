@@ -238,6 +238,12 @@ uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-signatures/signature-sourc
 # On Windows, set TPDF_SIGNATURE_PROBE with $env:TPDF_SIGNATURE_PROBE and use a local scratch path.
 # Use an isolated TAURI_CONFIG identifier if another instance of tpdf is running.
 
+# Pages inserted from another file (`edit.insertPages`, past its dialog): drawn from
+# the other file's own handle, its text read and searched there, one undo and one
+# redo, then saved into the disposable copy. The two first pages must differ in
+# their text, or the checks on *which* file answered cannot fail; these two do.
+uv run scripts/tabs_check.py <built-binary> testdata/links.pdf --phase import --other testdata/text-base14.pdf
+
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.

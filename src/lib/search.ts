@@ -36,7 +36,7 @@
  */
 
 import { call } from "./ipc";
-import { filePage, type FilePage } from "./pages";
+import { filePage, type FilePage, type PageAddress } from "./pages";
 
 /**
  * A hit, as half-open character indices into the page's own text, plus the
@@ -226,20 +226,24 @@ export const RUN_PAGES = 16;
 export function runFrom(
   plan: ScopeRange[],
   at: number,
-  sourceOf: (slot: number) => FilePage | undefined,
+  addressOf: (slot: number) => PageAddress | undefined,
 ): number[] {
   const run: number[] = [];
-  let previousSource: number | undefined;
+  let previous: PageAddress | undefined;
   for (let step = at; step < plan.length && run.length < RUN_PAGES; step++) {
     const entry = plan[step];
     if (entry === undefined) break;
-    const source = sourceOf(entry.page);
+    const source = addressOf(entry.page);
     if (source === undefined) break;
     const last = run[run.length - 1];
     if (last !== undefined && entry.page !== last + 1) break;
-    if (previousSource !== undefined && source !== previousSource + 1) break;
+    // One request names one document, so a run ends where the pages start
+    // coming from another file --- a page inserted from one sits between two
+    // of the opened file's, and they are adjacent only on screen.
+    if (previous !== undefined && source.doc !== previous.doc) break;
+    if (previous !== undefined && source.page !== previous.page + 1) break;
     run.push(entry.page);
-    previousSource = source;
+    previous = source;
   }
   return run;
 }
@@ -291,14 +295,15 @@ export class Search {
   private pageCount: number;
   private readonly onChange: () => void;
   /**
-   * Which page of the file a slot draws.
+   * Which document and page a slot draws.
    *
    * Everything in this class works in *slots* --- the scan order, the scope, the
    * page a match reports --- because that is what the reader points at and what
    * the viewer scrolls to. This is the one place the other vocabulary is needed:
-   * `search_page` asks the backend about a page of the file. See `pages.ts`.
+   * `search_page` asks a document about one of its pages, and a page inserted
+   * from another file is asked of that file's handle. See `pages.ts`.
    */
-  private readonly sourceOf: (slot: number) => FilePage | undefined;
+  private readonly addressOf: (slot: number) => PageAddress | undefined;
   /** Bumped by every `run` and `cancel`; replies from an older one are dropped. */
   private generation = 0;
 
@@ -392,13 +397,15 @@ export class Search {
     // real one. It is a default here and refused in `pages.ts` for the reason
     // that file gives: there the fallback would hide a wrong answer, and here
     // there is no order for it to disagree with.
-    sourceOf: (slot: number) => FilePage | undefined = (slot) =>
-      filePage(slot),
+    addressOf: (slot: number) => PageAddress | undefined = (slot) => ({
+      doc,
+      page: filePage(slot),
+    }),
   ) {
     this.doc = doc;
     this.pageCount = pageCount;
     this.onChange = onChange;
-    this.sourceOf = sourceOf;
+    this.addressOf = addressOf;
   }
 
   /**
@@ -602,12 +609,12 @@ export class Search {
       // A slot with no page behind it, which a scan planned before an edit can
       // still reach. Skipped rather than asked about: the alternative is asking
       // the backend about a page number that means something else now.
-      const source = this.sourceOf(page);
+      const source = this.addressOf(page);
       if (source === undefined) return true;
       try {
         result = await call("search_page", {
-          doc: this.doc,
-          page: source,
+          doc: source.doc,
+          page: source.page,
           query,
           options,
           carry,
@@ -640,18 +647,23 @@ export class Search {
      */
     const visitRun = async (slots: number[]): Promise<number> => {
       const sources: FilePage[] = [];
+      // The first page's handle names the request. `runFrom` is what makes that
+      // the handle of every page in it: a run ends where the document changes,
+      // and `search.test.ts` holds it to that.
+      let doc: number | undefined;
       for (const slot of slots) {
-        const source = this.sourceOf(slot);
+        const source = this.addressOf(slot);
         if (source === undefined) return 0;
-        sources.push(source);
+        doc ??= source.doc;
+        sources.push(source.page);
       }
       const first = slots[0];
-      if (first === undefined) return 0;
+      if (first === undefined || doc === undefined) return 0;
       const carry = carried?.page === first - 1 ? carried.carry : undefined;
       let reply: PageMatches | null = null;
       try {
         reply = await call("search_page", {
-          doc: this.doc,
+          doc,
           page: sources[0] as FilePage,
           pages: sources,
           query,
@@ -737,7 +749,7 @@ export class Search {
     // repeated query far cheaper than that again.
     let at = 0;
     while (at < plan.length) {
-      const run = runFrom(plan, at, this.sourceOf);
+      const run = runFrom(plan, at, this.addressOf);
       if (run.length > 1) {
         const answered = await visitRun(run);
         if (answered < 0) return;

@@ -71,6 +71,11 @@ export interface OpenCheckHost {
   activate: (id: number) => Promise<void>;
   close: (id: number) => Promise<void>;
   run: (id: string) => void;
+  /**
+   * `edit.insertPages` past its dialog: the same edit, after the page the
+   * reader is on, with the file named rather than picked.
+   */
+  importPages: (path: string) => Promise<void>;
   idle: () => Promise<void>;
 }
 
@@ -149,6 +154,67 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
           viewer.pageOrder[slot]?.id === retained && Math.abs(viewer.currentZoom - fitted) < 0.001,
           JSON.stringify({ fitted, moved: viewer.currentZoom }));
       }
+      break;
+    }
+    case "import": {
+      // `edit.insertPages`, end to end but the dialog: `first` is the opened
+      // document and `second` a different file, whose pages must differ in
+      // their text from the first's or the checks on *which* file answered
+      // cannot fail. `tabs_check.py --phase import --other <pdf>` supplies it.
+      const [first, other] = expected.split("|");
+      if (!first || !other) throw new Error("the opened fixture and another file are required");
+      await host.open(first); await host.idle();
+      const quiet = async () => {
+        if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("the viewer did not settle");
+        await pause(100);
+      };
+      const model = host.edits()!;
+      const before = model.state.pages.length;
+      const theirs = async (doc: number, page: number) =>
+        String.fromCodePoint(...(await call("page_text", { doc, page: filePage(page), crop: null })).codes);
+      host.viewer()!.goToPage(0); await quiet();
+      await host.importPages(other); await host.idle(); await quiet();
+      const after = host.edits()!.state;
+      const source = after.sources?.[0];
+      report.check("the other file's pages follow the page being read",
+        after.pages.length > before && "imported" in (after.pages[1]?.source ?? {}),
+        JSON.stringify({ before, after: after.pages.length }));
+      report.check("they are drawn from a handle that is not the opened document's",
+        source !== undefined && source.doc !== model.doc && after.pages[1]?.from === source.doc,
+        JSON.stringify(after.sources));
+      if (!source) break;
+      const expectedText = await theirs(source.doc, 0);
+      report.check("the fixtures differ, so the next check can fail",
+        expectedText !== await theirs(model.doc, 0), "import");
+      if (!await settle(() => host.viewer()?.textOn(1) != null, SETTLE_MS)) throw new Error("the imported page's text did not arrive");
+      const shown = String.fromCodePoint(...host.viewer()!.textOn(1)!.codes);
+      report.check("the imported page's text is the other file's", shown === expectedText,
+        JSON.stringify({ shown: shown.slice(0, 40), expected: expectedText.slice(0, 40) }));
+      const word = expectedText.split(/\s+/).find((w) => w.length > 3);
+      report.check("the other file's first page has a word to search for", word !== undefined, expectedText.slice(0, 40));
+      if (word) {
+        host.viewer()!.search(word);
+        if (!await settle(() => !host.viewer()!.searching, SETTLE_MS)) throw new Error("the search did not finish");
+        const imported = new Set(after.pages.flatMap((page, slot) => ("imported" in page.source ? [slot] : [])));
+        report.check("a search finds a word on an imported page",
+          host.viewer()!.searchMatches.some((match) => imported.has(match.page)), word);
+      }
+      host.run("edit.undo"); await host.idle(); await quiet();
+      report.check("one undo takes every imported page back out",
+        host.edits()!.state.pages.length === before && host.edits()!.state.sources?.[0]?.doc === source.doc,
+        JSON.stringify(host.edits()!.state.sources));
+      host.run("edit.redo"); await host.idle(); await quiet();
+      report.check("redo draws them through the same handle",
+        host.edits()!.state.pages.length === after.pages.length && host.edits()!.state.pages[1]?.from === source.doc,
+        String(host.edits()!.state.pages.length));
+      host.run("file.save"); await host.idle(); await quiet();
+      const saved = host.edits()!.state;
+      report.check("the saved file holds the pages as its own",
+        saved.pages.length === after.pages.length && !saved.dirty && !saved.sources?.length &&
+        saved.pages.every((page) => "baseline" in page.source),
+        JSON.stringify({ pages: saved.pages.length, dirty: saved.dirty }));
+      report.check("and page 2 of it reads as the other file's first page",
+        (await theirs(host.edits()!.doc, 1)) === expectedText, "import");
       break;
     }
     case "tabs-position": {

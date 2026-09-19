@@ -1415,8 +1415,8 @@ MUTATIONS = [
         # document, and asks for the wrong page in exactly the case it is for.
         "pages: fall back to the slot when it draws no page",
         "src/lib/pages.ts",
-        "    return view === undefined ? undefined : baselineOf(view.source);\n  }\n\n  /**\n   * The size of the page in a slot",
-        "    return view === undefined ? slot : (baselineOf(view.source) ?? slot);\n  }\n\n  /**\n   * The size of the page in a slot",
+        "    return view === undefined ? undefined : baselineOf(view.source);\n  }\n\n  /**\n   * Where the page in a slot is drawn from",
+        "    return view === undefined ? slot : (baselineOf(view.source) ?? slot);\n  }\n\n  /**\n   * Where the page in a slot is drawn from",
         "says a slot past the end is nowhere rather than falling back to itself",
     ),
     Mutation(
@@ -1476,8 +1476,8 @@ MUTATIONS = [
         # `goToDestination` then scrolls to whatever is in that slot.
         "pages: leave a destination pointing at a page that has gone",
         "src/lib/pages.ts",
-        "  if (slot === undefined) return { kind: \"broken\" };",
-        "  if (slot === undefined) return target;",
+        "  const slot = pages.slotOf(target.page);\n  if (slot === undefined) return { kind: \"broken\" };",
+        "  const slot = pages.slotOf(target.page);\n  if (slot === undefined) return target;",
         "keeps a link whose destination is gone, and calls it broken",
     ),
     Mutation(
@@ -1944,7 +1944,7 @@ MUTATIONS = [
         # the backend chains the carry between pages *it* sees as neighbours.
         "search: run across a gap in the file pages",
         "src/lib/search.ts",
-        "    if (previousSource !== undefined && source !== previousSource + 1) break;",
+        "    if (previous !== undefined && source.page !== previous.page + 1) break;",
         "    if (false) break;",
         "stops where the file pages are not consecutive either",
     ),
@@ -3261,8 +3261,8 @@ MUTATIONS = [
         # undone is the failure undo exists to prevent.
         "edits: merge the marks a reply carries into the ones already held",
         "src/lib/edits.ts",
-        "  private adopt(state: EditState): EditState {\n    this.current = state;",
-        "  private adopt(state: EditState): EditState {\n    this.current = {\n      ...state,\n      marks: [...this.current.marks, ...state.marks],\n    };",
+        "    this.current = joined;",
+        "    this.current = {\n      ...joined,\n      marks: [...this.current.marks, ...joined.marks],\n    };",
         "carries the marks a reply brought, and drops the ones it did not",
     ),
     Mutation(
@@ -3533,8 +3533,8 @@ MUTATIONS = [
         # page of the file happens to sit at the made page's slot number.
         "thumbnails: fall back to the slot for a page with no file page behind it",
         "src/lib/thumbnails.ts",
-        "    const source = this.opts.sourceOf ? this.opts.sourceOf(page) : page;",
-        "    const source = this.opts.sourceOf?.(page) ?? page;",
+        "    const source = this.opts.addressOf\n      ? this.opts.addressOf(page)\n      : { doc: this.opts.doc, page: filePage(page) };",
+        "    const source = this.opts.addressOf?.(page) ?? { doc: this.opts.doc, page: filePage(page) };",
         "asks for no tile for a page tpdf made, and carries on past it",
     ),
     Mutation(
@@ -3572,8 +3572,8 @@ MUTATIONS = [
         # which is the distinction `insertPage` is written around.
         "edits: turn a stale slot into an insert at the front",
         "src/lib/edits.ts",
-        "    const anchor =\n      after === null ? null : (this.current.pages[after]?.id ?? undefined);",
-        "    const anchor = after === null ? null : (this.current.pages[after]?.id ?? null);",
+        "    size: readonly [number, number],\n  ): Promise<EditState> {\n    const anchor =\n      after === null ? null : (this.current.pages[after]?.id ?? undefined);",
+        "    size: readonly [number, number],\n  ): Promise<EditState> {\n    const anchor = after === null ? null : (this.current.pages[after]?.id ?? null);",
         "does not send an insert for a slot the model has never mentioned",
     ),
 ]
@@ -4360,8 +4360,8 @@ MUTATIONS += [
         # anything can go red about it.
         "release-notes: call a shipped command unbuilt",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.insertPages edit.signDocument -->",
-        "          <!-- not-built: edit.insertPages edit.fillForm file.redactCopy -->",
+        "          <!-- not-built: edit.signDocument -->",
+        "          <!-- not-built: edit.signDocument edit.insertPages -->",
         "calls nothing unbuilt that the application registers",
     ),
     Mutation(
@@ -4380,8 +4380,8 @@ MUTATIONS += [
         # nothing, which is also the only shape this can fail as.
         "release-notes: claim something the README does not",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.insertPages edit.signDocument -->",
-        "          <!-- not-built: edit.insertPages edit.signDocument edit.editTextBox -->",
+        "          <!-- not-built: edit.signDocument -->",
+        "          <!-- not-built: edit.signDocument edit.editTextBox -->",
         "agrees with the README about what is not built",
     ),
     Mutation(
@@ -5363,6 +5363,7 @@ TEST_FILES = [
     # what the note above says stops the pattern, rather than after a run has
     # already refused.
     "src/lib/pagesizes.test.ts",
+    "src/lib/importedlinks.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
@@ -6478,10 +6479,10 @@ MUTATIONS += [
         # visited -- the comment-words loop in `App.svelte` is the live one.
         "viewer: ask for the unturned text of the slot's number",
         "src/lib/viewer.ts",
-        "    await this.text.load(source);\n"
-        "    return this.text.peekUnturned(source);",
-        "    await this.text.load(slot);\n"
-        "    return this.text.peekUnturned(slot);",
+        "    await at.cache.load(at.page);\n"
+        "    return at.cache.peekUnturned(at.page);",
+        "    await at.cache.load(filePage(slot));\n"
+        "    return at.cache.peekUnturned(filePage(slot));",
         "answers a page's unturned text, after the page above went",
     ),
     Mutation(
@@ -6498,8 +6499,8 @@ MUTATIONS += [
         # stays in the cache and goes on placing carets in the wrong space.
         "viewer: drop the cropped extraction under the slot's number",
         "src/lib/viewer.ts",
-        "      this.text.setPageCrop(source, want);",
-        "      this.text.setPageCrop(slot, want);",
+        "      source.cache.setPageCrop(source.page, want);",
+        "      source.cache.setPageCrop(filePage(slot), want);",
         "drops the cropped page's extraction, not the extraction at its slot",
     ),
     Mutation(
@@ -6575,6 +6576,157 @@ MUTATIONS += [
     ),
 ]
 
+
+
+# Pages of another file: where each one is drawn, read, searched and linked
+# from. Every one of these fails the same way to the eye --- a correct-looking
+# picture, text or match taken from the wrong document --- so each is aimed at
+# the test that can tell two files apart rather than two page numbers.
+MUTATIONS += [
+    Mutation(
+        # Draw an imported page nobody joined to its handle from the opened
+        # document instead. Page n of the wrong file, looking entirely right.
+        "pages: draw an unjoined imported page from the opened document",
+        "src/lib/pages.ts",
+        "    return view.from === undefined\n      ? undefined\n      : { doc: view.from, page: filePage(source.imported.page) };",
+        "    return view.from === undefined\n      ? { doc, page: filePage(source.imported.page) }\n      : { doc: view.from, page: filePage(source.imported.page) };",
+        "answers no address for an imported page nobody joined to its handle",
+    ),
+    Mutation(
+        # Ask the opened document for every imported page's pixels.
+        "pages: address an imported page by the opened document's handle",
+        "src/lib/pages.ts",
+        "      : { doc: view.from, page: filePage(source.imported.page) };",
+        "      : { doc, page: filePage(source.imported.page) };",
+        "names the opened document for its own pages and the other file's handle for one of its",
+    ),
+    Mutation(
+        # Never write the handle on. Every imported page then has no address,
+        # which is a document with holes in it rather than a wrong picture.
+        "pages: leave the imported pages without their handle",
+        "src/lib/pages.ts",
+        "    return from === undefined ? view : { ...view, from };",
+        "    return view;",
+        "names the opened document for its own pages and the other file's handle for one of its",
+    ),
+    Mutation(
+        # Resolve a destination in another file to whichever slot shows that
+        # page number of *any* file.
+        "pages: find an imported page by its number alone",
+        "src/lib/pages.ts",
+        "        view?.from === doc &&\n        \"imported\" in view.source &&",
+        "        \"imported\" in view.source &&",
+        "finds the slot showing a page of the other file, and only of that file",
+    ),
+    Mutation(
+        # Leave a destination the other file names as its own page number,
+        # which the viewer reads as a slot of this document.
+        "pages: keep another file's destination to a page that was not imported",
+        "src/lib/pages.ts",
+        "  const slot = pages.slotOfImported(doc, target.page);\n  if (slot === undefined) return { kind: \"broken\" };",
+        "  const slot = pages.slotOfImported(doc, target.page);\n  if (slot === undefined) return target;",
+        "puts a link on the slot showing its page, and a destination on the slot showing its target",
+    ),
+    Mutation(
+        # Follow a web link found in the other file through this document's
+        # token list, which opens somebody else's address.
+        "pages: follow a web link found in another file",
+        "src/lib/pages.ts",
+        "  if (target.kind === \"web\") return { kind: \"refused\", action: \"uri\" };\n",
+        "",
+        "does not follow a web address found in the other file",
+    ),
+    Mutation(
+        # Keep the other file's link ids, which the opened file's scan also
+        # numbered from zero --- two links, one id, and a click follows the other.
+        "pages: keep the other file's link ids",
+        "src/lib/pages.ts",
+        "        id: next++,",
+        "        id: link.id,",
+        "numbers the other file's links on from the opened file's",
+    ),
+    Mutation(
+        # Adopt a reply without writing the handles on. The map and the viewer
+        # then hold imported pages with nowhere to draw them from.
+        "edits: adopt a reply without joining its handles",
+        "src/lib/edits.ts",
+        "      pages: withSources(state.pages, state.sources),",
+        "      pages: state.pages,",
+        "imports behind the page in a slot, and joins the handle the reply names",
+    ),
+    Mutation(
+        # A stale press becomes an import at the front, `insertPage`'s trap in
+        # the new command.
+        "edits: turn a stale slot into an import at the front",
+        "src/lib/edits.ts",
+        "  async importPages(after: number | null, path: string): Promise<EditState> {\n    const anchor =\n      after === null ? null : (this.current.pages[after]?.id ?? undefined);",
+        "  async importPages(after: number | null, path: string): Promise<EditState> {\n    const anchor = after === null ? null : (this.current.pages[after]?.id ?? null);",
+        "does not send an import for a slot the model has never mentioned",
+    ),
+    Mutation(
+        # Ask the opened document for the imported page's tiles.
+        "scroller: ask the opened document for an imported page's tile",
+        "src/lib/scroller.ts",
+        "    void fetchTile({\n      rid,\n      doc: source.doc,\n      page: source.page,\n      scale: this.opts.zoom * this.opts.dpr,",
+        "    void fetchTile({\n      rid,\n      doc: this.opts.doc,\n      page: source.page,\n      scale: this.opts.zoom * this.opts.dpr,",
+        "asks the other file's handle for a page inserted from it",
+    ),
+    Mutation(
+        # The second request path, which the test above cannot see through the
+        # first one's correct requests unless the page number is unique.
+        "scroller: ask the opened document for an imported page's placeholder",
+        "src/lib/scroller.ts",
+        "    void fetchTile({\n      rid,\n      doc: source.doc,\n      page: source.page,\n      scale,",
+        "    void fetchTile({\n      rid,\n      doc: this.opts.doc,\n      page: source.page,\n      scale,",
+        "asks the other file's handle for a page inserted from it",
+    ),
+    Mutation(
+        "thumbnails: ask the opened document for an imported row",
+        "src/lib/thumbnails.ts",
+        "      doc: source.doc,\n      page: source.page,",
+        "      doc: this.opts.doc,\n      page: source.page,",
+        "asks the other file's handle for a row inserted from it",
+    ),
+    Mutation(
+        # One run across the join between two files, asked of the first file's
+        # handle for pages of both.
+        "search: run across a change of document",
+        "src/lib/search.ts",
+        "    if (previous !== undefined && source.doc !== previous.doc) break;",
+        "    if (false) break;",
+        "stops where the pages start coming from another file",
+    ),
+    Mutation(
+        "search: ask the opened document about an imported page",
+        "src/lib/search.ts",
+        "        result = await call(\"search_page\", {\n          doc: source.doc,",
+        "        result = await call(\"search_page\", {\n          doc: this.doc,",
+        "asks the file each page is drawn from, and finds a match on the imported one",
+    ),
+    Mutation(
+        # Read every page's text out of the opened document's cache.
+        "viewer: read an imported page's text from the opened document",
+        "src/lib/viewer.ts",
+        "    if (doc === this.opts.doc) return this.text;",
+        "    return this.text;",
+        "selects the text of a page inserted from another file, asked of that file",
+    ),
+    Mutation(
+        "viewer: measure an imported page's crop against the opened document",
+        "src/lib/viewer.ts",
+        "      const at = await pageGeometry(source.doc, source.page, want).catch(",
+        "      const at = await pageGeometry(this.opts.doc, source.page, want).catch(",
+        "measures a cropped page inserted from another file against that file",
+    ),
+    Mutation(
+        # Forget which files were asked about, so every edit scans them again.
+        "importedlinks: ask about the same file again",
+        "src/lib/importedlinks.ts",
+        "    for (const doc of fresh) this.asked.add(doc);",
+        "",
+        "asks about each other file once, in the order its pages appear",
+    ),
+]
 
 
 def main() -> int:

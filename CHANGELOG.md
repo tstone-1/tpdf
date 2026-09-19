@@ -17,6 +17,18 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.13] - Unreleased
+
+### Added
+
+- Insert every page of another PDF after the page you are reading, from the Page
+  menu, the Pages toolbar menu or the palette. One undo takes them all back out.
+  The other file is opened in a sandboxed process of its own, so its pages are
+  drawn, searched, selected, marked, turned and cropped like the document's own,
+  and saving writes them into the file. An encrypted file is refused. Editing
+  the text of an inserted page, following a web link on one, and redacting a
+  document that holds them wait until the document is saved and opened again.
+
 ## [26.9.12] - 2026-09-18
 
 ### Added

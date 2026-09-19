@@ -28,6 +28,7 @@ const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
 
 const { Search } = await import("./search");
+const { filePage } = await import("./pages");
 
 /** One page's mapping verdict, as `encoding::PageMapping` serialises. */
 function mapping(guessing: number, truncated = false) {
@@ -85,6 +86,41 @@ describe("Search and a change of order", () => {
 
     searcher.setPages(2);
     expect(searcher.matches).toEqual([]);
+  });
+});
+
+describe("Search across pages of another file", () => {
+  it("asks the file each page is drawn from, and finds a match on the imported one", async () => {
+    // Slot 1 is page 0 of the file open under handle 40. Its request has to
+    // name *that* handle: page 0 of the opened document is slot 0, asked about
+    // as well, so a request naming the opened handle for slot 1 would search
+    // the right page number of the wrong file and still find something.
+    const asked: [number, number][] = [];
+    core.invoke.mockImplementation(
+      (command: string, args: { doc: number; page?: number; pages?: number[] }) => {
+        if (command !== "search_page") return Promise.resolve([]);
+        for (const page of args.pages ?? [args.page ?? 0]) asked.push([args.doc, page]);
+        const hit = args.doc === 40;
+        return Promise.resolve({
+          page: args.page ?? 0,
+          matches: hit ? [{ page: 1, start: 0, end: 3, rects: [] }] : [],
+          chars: 10,
+        });
+      },
+    );
+    const addresses = [
+      { doc: 1, page: filePage(0) },
+      { doc: 40, page: filePage(0) },
+      { doc: 1, page: filePage(1) },
+    ];
+    const searcher = new Search(1, 3, () => {}, (slot) => addresses[slot]);
+    await searcher.run("cat", 0);
+    expect(asked).toEqual([
+      [1, 0],
+      [40, 0],
+      [1, 1],
+    ]);
+    expect(searcher.matches.map((match) => match.page)).toEqual([1]);
   });
 });
 

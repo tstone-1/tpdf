@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), and reads signature images explicitly selected through its file input (§T6.17) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -93,6 +93,11 @@ with a path the caller chose.
 filesystem *itself* and can ask for nine specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
+
+**`page_import` is not a tenth, and the list is right to leave it out.** It opens a file the
+reader chose, in the render service like any other document, and writes nothing; what it adds
+is read authority over one more path — §T6.20. Its pages reach the disk only through the
+writers above, which is where §T6.19 checks them.
 
 **It said "four" until 2026-08-24, and `merge_documents` had been the fifth since 2026-08-24.**
 That is the same drift this paragraph was written to record, one writer later: the count is a
@@ -804,6 +809,9 @@ too, so the same caller can read any PDF the reader can read. Neither end is che
 the document the render service actually opened, which it could be. It is not, because
 `print_document` has had exactly the same shape since 2026-07-28 and tightening one of the
 two would leave a consistent surface looking inconsistent; if this is closed, close both.
+
+**`page_import` is not a write, added 2026-09-19.** It reaches the render service's open, not
+a writer, and is recorded at §T6.20 rather than here; §3 says why it is not in the list.
 
 **`extract_pages` is the same verb with a selection, added 2026-08-17**, and it is recorded
 here rather than given a section because it adds no authority: same write path, same
@@ -1856,10 +1864,10 @@ examples establish compatibility for those inputs, not all output of a producer.
 #### T6.19 — Pages from another file, at save, added 2026-09-19
 
 **What changed.** A plan may place pages of a second document (`PageSource::Imported`), and
-every rewriting save of such a plan now parses that document too. No command reaches it yet:
-the model and the writer landed first, and nothing in the webview can create an imported page.
-So §3's list of writers is unchanged, and the new exposure is a **second input to a writer
-that already existed**, not a new writer.
+every rewriting save of such a plan now parses that document too. The model and the writer
+landed first, when nothing in the webview could create an imported page; `page_import` has
+reached it since later the same day (§T6.20). §3's list of writers is unchanged either way:
+the new exposure is a **second input to a writer that already existed**, not a new writer.
 
 **Where the parse happens.** In the same sandboxed worker as the rewrite, on the merge's input
 channel: `save::staged_rewrite` reads each file the plan names into one read-only mapping and
@@ -1885,6 +1893,46 @@ file's page. Text replacement on an imported page, and a merge of a document tha
 **Residual.** The imported pages' own annotations, fonts and images come across as objects
 and are written as they were --- this is an import, not a sanitation, exactly as a merge is
 not. A `/Dest` from an imported page to one left behind dangles rather than importing it.
+
+#### T6.20 — Opening a second file to insert its pages, added 2026-09-19
+
+**What changed.** `page_import(doc, after, path)` opens a PDF the reader picked in the open
+panel and places every page of it in the working document. It is the command §T6.19's writer
+was waiting for, and it is a **read**: nothing is written until one of §3's writers is asked
+to, and that writer checks the file again by digest.
+
+**Where the parse happens.** In the render service, through the same `open_handed` the
+reader's own documents take — a worker pool of its own, sandboxed exactly as §5 and §6
+describe, with the file handed over as a mapping and never as a path. The coordinator opens
+the file, hashes it through the same handle it hands the service (`Fingerprint::of_open`, for
+`open_document`'s reason), and asks the pool one more question before the model sees
+anything: `document_properties`, whose parse is the worker's too. An encrypted file is
+refused there, because the save refuses one (§T6.19) and a reader should hear so before
+arranging the pages rather than after.
+
+**The authority it adds.** The same as `open_document`'s: a caller able to reach it can have
+any PDF the reader can read parsed in a sandboxed worker, and see its pages' pixels and text
+through the tile and text commands. `dialog:allow-open` already granted the panel and
+`open_document` already granted the read, so this is not new reach; it is a second route to
+the same one, and it is recorded because it is a second *document* per tab.
+
+**Who owns the handle.** The importing document's model (`edits::Open::sources`), never the
+webview, which is told the handle so it can draw and never closes it —
+`docs/TRAPS.md`'s *A resource whose only owner is on the other side of a boundary* is what
+that rules out. `close_document`, the in-place save and the redaction's close hand every
+handle back to be released with the document; `release_documents` sweeps them with
+everything else. Undo does not release one, because redo draws the same pages. A second
+import of the same bytes into the same document reuses the first handle and releases the new
+one; two tabs importing one file hold two pools, deliberately (see `page_import`).
+
+**Residual.** Every file imported is one more worker pool for the life of the document that
+imported it — the per-worker limits hold, and there is still no aggregate limit across the
+pools of one tab, which is the tabs' own residual (§3) arriving a second way. A file that is
+truncated under its mapping reports the document gone, and the viewer then stops asking for
+tiles for the whole document rather than for that file's pages. Links found on an imported
+page are followed only to pages that were imported with it; a web address on one is shown and
+refused, because its token indexes the other file's list, and nothing reads the other file's
+outline.
 
 ### T7 — Distribution and update
 

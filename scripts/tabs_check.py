@@ -8,6 +8,9 @@ restoration and the final page in all zoom modes. A mixed-size regression input
 can be generated with pypdf: add_blank_page for (600, 800), (1200, 1600), (600, 400).
 For --phase tabs-rotation, use (600, 800), (1200, 400), (600, 800) to expose a
 preceding sheet expanding under the old scroll offset.
+For --phase import, pass --other with a second PDF whose first page's text differs
+from the first PDF's: its pages are inserted after page 1 without the file dialog,
+read, searched, undone, redone and saved into the disposable copy.
 """
 
 import argparse
@@ -26,7 +29,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "import"), default="tabs")
+    parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
     args = parser.parse_args()
@@ -36,7 +40,14 @@ def main() -> int:
         room = Path(directory)
         first, second = room / "first.pdf", room / "second.pdf"
         shutil.copyfile(args.pdf, first)
-        shutil.copyfile(args.pdf, second)
+        if args.phase == "import":
+            if not args.other:
+                parser.error("--phase import needs --other, a second PDF with different text")
+            # A copy as well, so a save that went wrong could not touch the input.
+            second = room / "other.pdf"
+            shutil.copyfile(args.other, second)
+        else:
+            shutil.copyfile(args.pdf, second)
         env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{first}|{second}",
                    TPDF_SESSION_FILE=str(room / "session.json"))
         if os.name == "nt":

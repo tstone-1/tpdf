@@ -88,6 +88,8 @@ function said(page: number): string {
 
 /** Which pages `page_text` was asked for, in order. */
 let asked: number[] = [];
+/** The same requests with the document each one named, as `[doc, page]`. */
+let askedOf: [number, number][] = [];
 /** The last status the viewer reported. */
 let status: ViewerStatus | null = null;
 /** Everything the viewer reported to the reader as an error. */
@@ -103,6 +105,7 @@ describe("Reading a page's text, and asking for it again", () => {
   beforeEach(() => {
     dom = installFakeDom();
     asked = [];
+    askedOf = [];
     status = null;
     errors = [];
     written = [];
@@ -121,9 +124,10 @@ describe("Reading a page's text, and asking for it again", () => {
     });
     core.invoke.mockReset();
     core.invoke.mockImplementation(
-      (command: string, args: { page: number }) => {
+      (command: string, args: { doc: number; page: number }) => {
         if (command === "page_text") {
           asked.push(args.page);
+          askedOf.push([args.doc, args.page]);
           return Promise.resolve(pageText(args.page));
         }
         if (command === "page_geometry") {
@@ -236,6 +240,26 @@ describe("Reading a page's text, and asking for it again", () => {
     // for the slot and got a self-consistent wrong page.
     expect(asked).toEqual([1]);
     expect(viewer.selectedText).toBe(said(1));
+  });
+
+  it("selects the text of a page inserted from another file, asked of that file", async () => {
+    // Page 2 of the file open under handle 40, in front of the opened file's
+    // pages. The document is the half the page number cannot show: page 2 of
+    // the opened file spells the same two letters in this fixture, so the text
+    // alone would pass a viewer that asked the wrong handle.
+    const viewer = build();
+    viewer.setPages([
+      {
+        id: pageId(9),
+        source: { imported: { source: 1, page: 2 } },
+        turns: 0,
+        from: 40,
+      },
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+    ]);
+    await dragAcross(viewer, 0);
+    expect(askedOf).toEqual([[40, 2]]);
+    expect(viewer.selectedText).toBe(said(2));
   });
 
   it("selects a whole page, after the page above went", async () => {

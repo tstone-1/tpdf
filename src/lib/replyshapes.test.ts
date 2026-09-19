@@ -184,6 +184,7 @@ const SCHEMA = {
     notes: ["array"],
     discards: ["array"],
     dirty: ["boolean"],
+    sources: ["array"],
   } satisfies Shape<EditState>,
   Links: {
     items: ["array"],

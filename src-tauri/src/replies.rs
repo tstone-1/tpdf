@@ -348,6 +348,15 @@ fn samples() -> BTreeMap<&'static str, String> {
                     turns: 0,
                     crop: None,
                 },
+                edits::PageView {
+                    id: 3,
+                    source: docmodel::PageSource::Imported {
+                        source: docmodel::SourceId::from_raw(1),
+                        page: 4,
+                    },
+                    turns: 0,
+                    crop: None,
+                },
             ],
             can_undo: true,
             can_redo: false,
@@ -413,6 +422,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 page: 2,
             }],
             dirty: true,
+            sources: vec![edits::SourceView { source: 1, doc: 12 }],
         },
     );
 

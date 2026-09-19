@@ -54,7 +54,7 @@
  */
 
 import { Lifetime } from "./lifetime";
-import { quarterTurns, type FilePage } from "./pages";
+import { filePage, quarterTurns, type PageAddress } from "./pages";
 import { displayedSize, TIER1_WIDTH, type PageSize } from "./scroller";
 import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 
@@ -127,19 +127,21 @@ export interface ThumbnailOptions {
   doc: number;
   pageCount: number;
   /**
-   * Which page of the file a row draws, or `undefined` when no page of the file
-   * does: a row that is not in the document, or a page tpdf made.
+   * Which document and page a row draws, or `undefined` when nothing does: a
+   * row that is not in the document, or a page tpdf made.
    *
-   * A row is a slot, and a tile request names a page of the file --- the two
-   * stopped being the same number when a page could be deleted. Optional, and
-   * defaulting to the identity, because the strip is also driven by harnesses
-   * that never edit; see `pages.ts`.
+   * A row is a slot, and a tile request names a page of a document --- the two
+   * stopped being the same number when a page could be deleted, and stopped
+   * naming the same *document* when a page could come from another file, whose
+   * row is drawn by asking that file's own handle. Optional, and defaulting to
+   * the identity on {@link ThumbnailOptions.doc}, because the strip is also
+   * driven by harnesses that never edit; see `pages.ts`.
    *
    * **Absent and answering `undefined` are different**, and the row that asks
    * treats them differently: absent means nobody translates here and the slot is
    * the page, while `undefined` means there is nothing to ask a worker for.
    */
-  sourceOf?: (slot: number) => FilePage | undefined;
+  addressOf?: (slot: number) => PageAddress | undefined;
   /** Geometry of page 1, taken as representative --- as `scroller.ts` does. */
   page: PageSize;
   tier1: Tier1Access;
@@ -801,7 +803,7 @@ export class Thumbnails {
     if (page === null) return;
 
     // **Two `undefined`s that mean different things**, which is why this is not
-    // `sourceOf?.(page) ?? page`. An absent callback means nobody translates
+    // `addressOf?.(page) ?? page`. An absent callback means nobody translates
     // slots here, and the slot *is* the page --- that is the fallback, and it is
     // right. A callback that answers `undefined` means there is no page of the
     // file behind this slot, and falling back to the slot number then renders
@@ -809,7 +811,9 @@ export class Thumbnails {
     //
     // Answered before the borrow below rather than after it, because a made page
     // has nothing to borrow either: the viewer never rendered it.
-    const source = this.opts.sourceOf ? this.opts.sourceOf(page) : page;
+    const source = this.opts.addressOf
+      ? this.opts.addressOf(page)
+      : { doc: this.opts.doc, page: filePage(page) };
     if (source === undefined) {
       // A page tpdf made. Painted rather than left alone: an empty row is what
       // a page that has not loaded yet also looks like, so a reader could not
@@ -866,8 +870,8 @@ export class Thumbnails {
 
     void fetchTile({
       rid,
-      doc: this.opts.doc,
-      page: source,
+      doc: source.doc,
+      page: source.page,
       scale: TIER1_WIDTH / this.displayed().width_pt,
       turns: this.turns,
       invert: this.invert,

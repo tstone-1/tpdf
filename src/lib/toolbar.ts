@@ -62,6 +62,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "edit.cropToContent", label: "Crop to content" },
       { id: "edit.resetCrop", label: "Reset crop" },
       { id: "edit.insertBlankPage", label: "Insert blank page" },
+      { id: "edit.insertPages", label: "Insert pages from file..." },
       { id: "edit.movePageUp", label: "Move page earlier" },
       { id: "edit.movePageDown", label: "Move page later" },
       { id: "file.extractPages", label: "Extract pages..." },

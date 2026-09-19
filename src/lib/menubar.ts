@@ -253,6 +253,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // puts it in the menu and in the palette together rather than in one of
       // them.
       ...PAGE_SIZE_NAMES.map((name) => `edit.insertPage.${name}`),
+      // The same claim as the blank page's: it adds pages and leaves every
+      // existing one alone.
+      "edit.insertPages",
       "edit.movePageUp",
       "edit.movePageDown",
       SEPARATOR,

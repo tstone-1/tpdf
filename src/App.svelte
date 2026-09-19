@@ -84,11 +84,12 @@
   import { touchedText } from "./lib/reading";
   import { nextUnreadRegion } from "./lib/redactlist";
   import { noticeFor as linkNotice, type Link } from "./lib/links";
+  import { ImportedLinks } from "./lib/importedlinks";
   import type { Outline, WebTarget } from "./lib/outline";
   import {
+    addressOf,
+    allLinksIn,
     commentsIn,
-    linksIn,
-    baselineOf,
     markRows,
     NO_PAGES,
     outlineIn,
@@ -457,6 +458,11 @@
    * an already-translated list would move every page twice.
    */
   let rawLinks: readonly Link[] = [];
+  /**
+   * The links of the other files the document's pages were inserted from, one
+   * scan per file, asked for when its first page arrives. See `importedlinks.ts`.
+   */
+  const importedLinks = new ImportedLinks();
   let rawComments: Comments | null = null;
   /**
    * Comments whose covered words have been asked for, so none is asked twice.
@@ -613,6 +619,7 @@
     deletePage: () => void deletePage(),
     insertBlankPage: () => void insertBlankPage(),
     insertSizedPage: (name) => void insertSizedPage(name),
+    importPages: () => void importPages(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
     redactSelection: () => void redactSelection(),
@@ -1004,6 +1011,43 @@
   }
 
   /**
+   * Puts every page of a file the reader picks after the one they are on.
+   *
+   * The dialog first and the edit second, and not inside `applyEdit`: the edit
+   * queue is what every later command waits behind, and a reader looking at a
+   * file dialog would hold it for as long as they looked. The page is read
+   * again after the dialog for the same reason --- they may have scrolled.
+   *
+   * One undo takes the whole file back out. The file is opened by the backend
+   * in a worker pool of its own and kept open until this document closes; a
+   * locked or encrypted file is refused there, in a sentence that says so.
+   */
+  async function importPages(): Promise<void> {
+    if (opening || !edits) return;
+    const model = edits;
+    const picked = await openDialog({
+      multiple: false,
+      directory: false,
+      title: "Choose a document to insert pages from",
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    const path = typeof picked === "string" ? picked : null;
+    if (!path || edits !== model) return;
+    await importPagesFrom(path);
+  }
+
+  /**
+   * {@link importPages} once the file is chosen: the edit itself, after the
+   * page the reader is on now. Its own function so the window check can reach
+   * the whole path but the dialog, which no harness can answer.
+   */
+  async function importPagesFrom(path: string): Promise<void> {
+    const at = viewer?.position.page;
+    if (at === undefined) return;
+    await applyEdit((e) => e.importPages(at, path));
+  }
+
+  /**
    * Inserts a blank page of a named size after the one the reader is on.
    *
    * The pair comes from `dimensionsOf` rather than being read off the table
@@ -1055,7 +1099,9 @@
       return;
     }
     const view = edits.state.pages[at];
-    const source = view === undefined ? undefined : baselineOf(view.source);
+    // Where the page is drawn from, which for a page inserted from another file
+    // is that file: its ink is measured by the worker that renders it.
+    const source = view === undefined ? undefined : addressOf(view, edits.doc);
     if (view === undefined || source === undefined) {
       // Two ways to get here and only one of them is worth a message: a slot
       // that is not in the document is a stale press, and a page tpdf made is a
@@ -1069,7 +1115,7 @@
     // crops whichever page has moved into it. `cropTo` next door does the same
     // for the same reason; a `source` is safe to read early and a slot is not.
     const page = view.id;
-    const box = await contentBox(edits.doc, source).catch(() => null);
+    const box = await contentBox(source.doc, source.page).catch(() => null);
     if (!box) {
       say("There is nothing on this page to crop to.");
       return;
@@ -1118,7 +1164,10 @@
     // slot lookup below cannot be handed the wrong kind of page number.
     const page = pageId(id);
     const view = edits.state.pages.find((p) => p.id === page);
-    const source = view === undefined ? undefined : baselineOf(view.source);
+    // For a page inserted from another file, the box is in *that* file's page
+    // space and turned by its `/Rotate`, so it is that file's worker that is
+    // asked --- the model writes the box onto the page object it imports.
+    const source = view === undefined ? undefined : addressOf(view, edits.doc);
     if (source === undefined) {
       // `cropToContent`'s reasoning, and here the refusal is the model's as
       // well: a crop box is measured against a page of the file, and there is
@@ -1130,7 +1179,7 @@
       if (view !== undefined) say("A blank page cannot be cropped.");
       return;
     }
-    const box = await cropBox(edits.doc, source, rect).catch(() => null);
+    const box = await cropBox(source.doc, source.page, rect).catch(() => null);
     if (!box) {
       say("That rectangle could not be turned into a crop.");
       return;
@@ -1241,6 +1290,8 @@
         // business throwing away a strip somebody is looking at.
         sidebar?.thumbnails?.setPages(after.pages.length);
       }
+      // Any other file whose first pages just arrived has links nobody has read.
+      void fetchImportedLinks(model);
       viewer?.setMarks(after.marks);
       formLayer?.update(after);
       if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
@@ -1275,6 +1326,28 @@
   }
 
   /**
+   * Reads the links of each other file the document's pages come from, once.
+   *
+   * Through the other file's own handle, because its pages are its own: the
+   * opened document's scan has nothing to say about them. Quiet on failure for
+   * the reason the opened document's scan is --- a file with no readable links
+   * is the common case --- and `ImportedLinks` records the handle as asked
+   * either way, so a failing scan is not retried on every edit.
+   */
+  async function fetchImportedLinks(model: Edits): Promise<void> {
+    for (const doc of importedLinks.wanted(model.map)) {
+      try {
+        const result = await call("document_links", { doc });
+        if (edits !== model) return;
+        importedLinks.record(doc, result.items);
+        applyPageOrder();
+      } catch {
+        // Deliberately quiet; see above.
+      }
+    }
+  }
+
+  /**
    * Re-reads the document's links, comments and outline against the page order.
    *
    * Every page number the backend sent is a page of the *file*, and after a
@@ -1290,7 +1363,7 @@
    */
   function applyPageOrder(): void {
     const pages = edits?.map ?? NO_PAGES;
-    viewer?.setLinks(linksIn(rawLinks, pages));
+    viewer?.setLinks(allLinksIn(rawLinks, importedLinks.all, pages));
     // An answer that has not arrived is left alone rather than pushed as
     // `null`: to these panels `null` means "this document's comments could not
     // be read", which is a different thing to tell a reader than "not yet". The
@@ -2810,6 +2883,7 @@
           activate: activateTab,
           close: closeTab,
           run: (id) => { commands.run(id); },
+          importPages: (path) => importPagesFrom(path),
           idle: async () => { await pendingEdit; await formLayer?.settle(); await textEditor?.settle(); await documentTasks.idle(); await tick(); },
         })
       )
@@ -3047,6 +3121,7 @@
       // that was open a moment ago --- these are answers about a file, and the
       // file has changed.
       rawLinks = [];
+      importedLinks.clear();
       rawComments = null;
       // A page number is a slot in the document that is closing, so an entry
       // kept would tell the next file's page 3 that its words are already known.
@@ -3132,9 +3207,9 @@
           // The viewer is created below, so the strip reaches it lazily rather
           // than being handed a reference that does not exist yet.
           tier1: { placeholderFor: (at) => viewer?.placeholderFor(at) ?? null },
-          // A row is a slot and a tile request names a page of the file. The two
-          // are the same number until a page is deleted; see `pages.ts`.
-          sourceOf: (slot) => edits?.map.sourceOf(slot),
+          // A row is a slot and a tile request names a page of a document --- this
+          // one's, or another file's for a page inserted from it; see `pages.ts`.
+          addressOf: (slot) => edits?.map.addressOf(slot, doc.id),
           onNavigate: (at) => {
             viewer?.goToPage(at);
             viewer?.focus();
@@ -3393,6 +3468,9 @@
       // one and then a jump --- and before `focus`, which does not move the view
       // but would make the jump look like something they did.
       viewer.setPages(opening.state.pages);
+      // A kept tab can hold pages of other files, whose links were cleared with
+      // the rest a few lines up.
+      void fetchImportedLinks(opening);
       viewer.setTextEdits(opening.state.text_edits ?? []);
       viewer.setMarks(opening.state.marks);
       viewer.setRedactions(opening.state.redactions);

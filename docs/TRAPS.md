@@ -489,6 +489,7 @@ hop through the index.
 - The tag walk has one refusal message for sixty checks, so a survey cannot say which one fired
 - An edit under an opaque picture changes no pixel, and the round trip calls that a failure
 - A line breaker and an ink check that measure different strings refuse a line that fits
+- A request that names a page without its document asks the right page of the wrong file, and a shared page number hides it
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -23299,3 +23300,24 @@ claim to check by adding a variant, not to believe. And where the point really i
 write the `match` with an arm per variant, which is what the predicate is now --- with the
 imported arm carrying a mutation of its own, because a correct answer arriving through a
 catch-all is an answer nothing tests.
+
+### A request that names a page without its document asks the right page of the wrong file, and a shared page number hides it
+
+Every tile, text, search and geometry request here named a page by number and took the
+document from the one handle the caller held. Once a page can come from another file, that
+number is a page of *the other file*, and sent with the opened document's handle it asks for
+page `n` of the wrong document --- and gets it. The answer is a correct-looking picture, a
+plausible line of text, a real match. Nothing about it reads as an error, so the fix is a type
+rather than a rule: `pages.ts`'s `PageAddress` is a handle and a page together, and the
+request sites take one.
+
+**The test that checks the fix is easy to write so that it cannot fail.** The scroller has two
+request paths --- the tier-1 placeholder and the tiles --- and the first version of its test put
+the imported page at page 0 of the other file, with the opened file's page 0 in the slot
+before it. Mutating either path to send the opened handle then produced a request for
+`{doc: 1, page: 0}`, which the neighbouring slot was producing already, while the other path's
+correct `{doc: 40, page: 0}` satisfied `toContainEqual`. Give the imported page a number no
+other slot shows, and assert that **every** request naming it names the other handle; then a
+wrong handle on either path is a request that should not exist. The same care went into the
+search test and the viewer's text test, whose fixtures spell the same letters on page 2 of
+both files so that only the document can tell the answers apart.

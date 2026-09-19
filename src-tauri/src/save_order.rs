@@ -357,6 +357,7 @@ mod tests {
             discards: Vec::new(),
             forms: Vec::new(),
             dirty,
+            sources: Vec::new(),
         }
     }
 
