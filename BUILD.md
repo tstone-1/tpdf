@@ -5074,6 +5074,27 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.14 verification, macOS arm64 and Windows x64, 2026-09-19:** all 25 gates
+passed on the release commit on macOS, and `check_windows.py` type-checked the
+Windows tree. Every mutation selected `--since v26.9.13` was run: 4 frontend and
+183 Rust, the Rust set in 537 s. 181 Rust mutations were caught at once; the
+other two (`browser state: skip external state validation`, `image: skip image
+validation`) did not compile, because both calls had gained a return value their
+replacement text did not supply. They predate this release, and the `anchors`
+gate cannot see it, since it checks that a search string exists rather than that
+the mutated file compiles. Both were re-aimed and caught. On macOS, 13 textedit
+window phases passed, including `textedit-overhang` at 24/24 after its stale
+expectation was corrected (see *Keeping the source's own positioning in the
+editor's box*). On Windows, the `textedit` phase passed 22/22 on
+`testdata/textedit-embedded.pdf` (generated, not tracked; run
+`testdata/make_textedit_embedded.py` first), the import phase 18/18, and the
+viewer sweeps 315 text-heavy and 217 vector-heavy cases. The real-spooler probe
+passed 10/10, and the OCR sweep opened 146 documents: zero regions still read as
+text, 3,640 were shown unreadable and 4,670 could not be. The MSI and NSIS
+installers built. The installer upgrade and hidden-engine checks were not run.
+The published release carried 8 assets and the public `latest.json` offered
+26.9.14 for both platforms.
+
 **26.9.13 verification, macOS arm64 and Windows x64, 2026-09-19:** all 25 gates
 passed on the release commit on macOS, and `check_windows.py` type-checked the
 Windows tree. All 308 frontend mutations selected `--since v26.9.12` were caught.
