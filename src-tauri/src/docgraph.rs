@@ -365,11 +365,12 @@ impl DocumentGraph {
         &self,
         plan: &crate::edits::Plan,
         job: crate::save::Job,
+        inputs: Option<crate::save::Inputs<'_>>,
     ) -> Result<Vec<u8>, crate::save::Refusal> {
         let bytes = self
             .bytes()
             .ok_or_else(|| crate::save::Refusal::from("the document's bytes could not be read"))?;
-        crate::save::rewrite_update(&bytes, plan, job, self.password())
+        crate::save::rewrite_update_with(&bytes, plan, job, self.password(), inputs)
     }
 
     /// Merges these bytes, under `plan`, with the documents in `inputs`.

@@ -368,6 +368,9 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
                 object: discard.object,
             })
             .collect(),
+        // No imported pages: `rewrite_update` is handed no other document, so a
+        // plan naming one is refused before anything below it runs.
+        sources: Vec::new(),
     };
     (plan, job)
 }

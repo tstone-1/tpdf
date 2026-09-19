@@ -241,6 +241,13 @@ pub enum Request {
         plan: crate::edits::Plan,
         /// What the answer is for. Never a path, never a destination.
         job: crate::save::Job,
+        /// Where each file `plan.sources` names begins in the mapping on
+        /// [`crate::worker::IN_FD`], for a plan carrying pages from another
+        /// document --- [`Request::Merge`]'s `incoming`, for the same reason and
+        /// checked the same way. Empty otherwise, and `#[serde(default)]` so a
+        /// request written before imports existed parses as the one it meant.
+        #[serde(default)]
+        incoming: Vec<crate::save::Incoming>,
     },
     /// Build a print job for a page range, into the handed-over file.
     ///

@@ -160,6 +160,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: Vec::new(),
@@ -186,6 +187,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: Vec::new(),
@@ -3477,6 +3479,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: vec![PlannedMark {
@@ -3573,6 +3576,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
             made: "D:20260829120000Z".into(),
         }],
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
     };
@@ -5167,7 +5171,7 @@ fn the_coordinator_does_not_parse_the_file_it_wrote() {
 /// reason: without it, the only way to ask whether the coordinator delegated
 /// the *parse* is to read the source, and a source-level assertion proves a
 /// shape rather than an ordering.
-struct FakeWriter {
+pub(super) struct FakeWriter {
     answer: Result<Vec<u8>, Refusal>,
     /// Simulates a worker that writes a partial result before refusing.
     partial_before_refusal: Vec<u8>,
@@ -5201,6 +5205,17 @@ struct FakeWriter {
     merges: std::cell::RefCell<Vec<(Vec<u8>, Vec<Incoming>)>>,
 }
 
+/// A [`FakeWriter`] answering `answer`, for `save::import_tests`, which is
+/// this module's sibling and cannot name its private constructor.
+pub(super) fn fake_writer(answer: Result<Vec<u8>, Refusal>) -> FakeWriter {
+    FakeWriter::writing(answer)
+}
+
+/// Every set of documents `writer` was handed, by a merge or by a rewrite.
+pub(super) fn merges_of(writer: &FakeWriter) -> Vec<(Vec<u8>, Vec<Incoming>)> {
+    writer.merges.borrow().clone()
+}
+
 impl FakeWriter {
     fn writing(answer: Result<Vec<u8>, Refusal>) -> Self {
         Self {
@@ -5224,9 +5239,17 @@ impl Rewriter for FakeWriter {
         _plan: &Plan,
         job: Job,
         password: Option<&str>,
+        inputs: Option<Inputs<'_>>,
     ) -> Result<usize, Refusal> {
         use std::io::Write as _;
 
+        // Recorded where a merge's are: the files a rewrite was handed are the
+        // question an import test asks of the coordinator, and they cross here.
+        if let Some(inputs) = inputs {
+            self.merges
+                .borrow_mut()
+                .push((inputs.whole.as_slice().to_vec(), inputs.each.to_vec()));
+        }
         self.asked
             .borrow_mut()
             .push((len, password.map(str::to_string)));
@@ -6817,6 +6840,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: vec![PlannedMark {
@@ -6873,6 +6897,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: vec![PlannedMark {
@@ -6934,6 +6959,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: Vec::new(),
@@ -6971,6 +6997,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: Vec::new(),

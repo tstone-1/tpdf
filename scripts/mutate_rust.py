@@ -1902,8 +1902,8 @@ MUTATIONS = [
         # over byte for byte and the reader's rearrangement never reaches paper.
         "edits: read a plan's length and turns as meaning it is the file on disk",
         "src/edits.rs",
-        "                matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    && turns % 4 == 0",
-        "                let _ = at;\n                turns % 4 == 0",
+        "                let theirs = match source {\n                    PageSource::Baseline(n) => *n as usize == at,\n                    PageSource::Blank(_) => false,\n                    PageSource::Imported { .. } => false,\n                };",
+        "                let theirs = {\n                    let _ = (source, at);\n                    true\n                };",
         "a_plan_after_a_move_is_out_of_document_order",
     ),
     Mutation(
@@ -2706,8 +2706,8 @@ MUTATIONS = [
         # original bytes, and the reader's deletions and turns are not on paper.
         "edits: report an edited document as the file on disk",
         "src/edits.rs",
-        "                matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    && turns % 4 == 0\n                    && crop.is_none()",
-        "                (matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    || turns % 4 == 0)\n                    && crop.is_none()",
+        "                theirs && turns % 4 == 0 && crop.is_none()",
+        "                (theirs || turns % 4 == 0) && crop.is_none()",
         "only_an_unedited_document_is_the_file_on_disk",
     ),
     Mutation(
@@ -4868,8 +4868,8 @@ MUTATIONS = [
         # three tests can catch it and the one named below is the oldest.
         "save: rewrite in the coordinator instead of the worker",
         "src/save.rs",
-        "    let wrote = rewriter.write(source, len, out, plan, job, password)?;",
-        "    let wrote = Here.write(source, len, out, plan, job, password)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password, inputs)?;",
+        "    let wrote = Here.write(source, len, out, plan, job, password, inputs)?;",
         "the_coordinator_does_not_parse_the_document_it_rewrites",
     ),
     Mutation(
@@ -5022,8 +5022,8 @@ MUTATIONS = [
         # maps exactly this many bytes of the document it is rewriting.
         "save: ask the rewrite about the wrong file's length",
         "src/save.rs",
-        "    let wrote = rewriter.write(source, len, out, plan, job, password)?;",
-        "    let wrote = rewriter.write(source, 0, out, plan, job, password)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password, inputs)?;",
+        "    let wrote = rewriter.write(source, 0, out, plan, job, password, inputs)?;",
         "the_rewrite_is_asked_for_the_length_and_the_password",
     ),
     Mutation(
@@ -5032,8 +5032,8 @@ MUTATIONS = [
         # would rewrite to an empty document rather than refusing.
         "save: rewrite without the reader's password",
         "src/save.rs",
-        "    let wrote = rewriter.write(source, len, out, plan, job, password)?;",
-        "    let wrote = rewriter.write(source, len, out, plan, job, None)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password, inputs)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, None, inputs)?;",
         "the_rewrite_is_asked_for_the_length_and_the_password",
     ),
     Mutation(
@@ -6724,8 +6724,8 @@ MUTATIONS += [
         # printer is handed the uncropped original.
         "identity: read a cropped document as the file on disk",
         "src/edits.rs",
-        "                    && crop.is_none()",
-        "                    && (crop.is_none() || crop.is_some())",
+        "                theirs && turns % 4 == 0 && crop.is_none()",
+        "                theirs && turns % 4 == 0 && (crop.is_none() || crop.is_some())",
         "a_cropped_document_is_not_the_file_on_disk",
     ),
     Mutation(
@@ -7270,7 +7270,7 @@ MUTATIONS += [
         # has been issued into a table nothing can ever reach again.
         "rewrite: issue the body before the page is checked",
         "src/docmodel.rs",
-        "        self.now.live(page)?;\n        let edit = self.issue_rewrite(NoteEdit { body, made });",
+        "        self.now.live(page)?;\n        // Before the body is issued, for the liveness check's reason above.\n        self.now.opened_files_page(page)?;\n        let edit = self.issue_rewrite(NoteEdit { body, made });",
         "        let edit = self.issue_rewrite(NoteEdit { body, made });",
         "a_rewrite_on_a_page_that_is_gone_says_which_of_the_two_it_is",
     ),
@@ -8165,8 +8165,8 @@ MUTATIONS += [
         # with the password it is already open with.
         "save: check a print job without the password that opened the document",
         "src/save.rs",
-        "    let checked = checked(original, plan, job.view(), password)?;",
-        "    let checked = checked(original, plan, job.view(), None)?;",
+        "    let checked = checked(original, plan, job.view(), password, inputs)?;",
+        "    let checked = checked(original, plan, job.view(), None, inputs)?;",
         "a_print_job_from_a_locked_document_names_the_escape_that_exists",
     ),
     Mutation(
@@ -8468,8 +8468,8 @@ MUTATIONS += [
         # from a file the reader was told was written.
         "edits: read a page tpdf made as the file's own page at that slot",
         "src/edits.rs",
-        "                matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    && turns % 4 == 0\n                    && crop.is_none()",
-        "                (matches!(source, PageSource::Baseline(n) if *n as usize == at)\n                    || matches!(source, PageSource::Blank(_)))\n                    && turns % 4 == 0\n                    && crop.is_none()",
+        "                    PageSource::Blank(_) => false,\n                    PageSource::Imported { .. } => false,",
+        "                    PageSource::Blank(_) => true,\n                    PageSource::Imported { .. } => false,",
         "a_deletion_and_an_insert_together_are_still_not_the_file_on_disk",
     ),
     Mutation(
@@ -9468,6 +9468,172 @@ MUTATIONS += [
         "EditFont::Auto if encodable || true => None,",
         "fallback_embeds_new_characters_and_reopens_for_another_edit"),
 ]
+
+# Pages of another file, 2026-09-19: the model's import command and the rewrite
+# that places the pages. Each is aimed at the one test whose job it is, and the
+# three `pages_are_the_file` mutations above were re-aimed the same day, when
+# that predicate became an exhaustive `match`.
+MUTATIONS += [
+    Mutation(
+        # Accept an empty selection at the entry point. The apply takes it, so
+        # a source record and a selection id are spent on a command that places
+        # nothing --- the refusal this replaces is what keeps the tables empty.
+        "docmodel: import: accept an empty selection",
+        "src/docmodel.rs",
+        "        if pages.is_empty() {\n            return Err(Refusal::EmptyImport);\n        }",
+        "",
+        "a_refused_import_spends_no_id_and_holds_no_body",
+    ),
+    Mutation(
+        # Place a page the other file does not have. The model has no other way
+        # to know the count, and the writer would refuse the whole save later.
+        "docmodel: import: accept a page past the end of the file",
+        "src/docmodel.rs",
+        "        if let Some(&past) = pages.iter().find(|&&page| page >= source.pages) {",
+        "        if let Some(&past) = pages.iter().find(|&&page| page > source.pages) {",
+        "a_refused_import_spends_no_id_and_holds_no_body",
+    ),
+    Mutation(
+        # Accept a page named twice in one selection. The writer imports a
+        # selection in one walk and refuses the repeat, so the save fails for a
+        # command the model took.
+        "docmodel: import: accept the same page twice in one selection",
+        "src/docmodel.rs",
+        "        if let Some(&twice) = pages.iter().find(|&&page| !seen.insert(page)) {",
+        "        if let Some(&twice) = pages.iter().find(|_| false) {",
+        "a_refused_import_spends_no_id_and_holds_no_body",
+    ),
+    Mutation(
+        # Put the imported pages at the front whatever they were anchored to.
+        "docmodel: import: ignore the anchor",
+        "src/docmodel.rs",
+        "                let start = match after {\n                    None => 0,\n                    Some(anchor) => self.position(anchor) + 1,\n                };",
+        "                let start = 0;",
+        "an_import_places_its_pages_behind_the_anchor_in_the_order_asked",
+    ),
+    Mutation(
+        # Keep a discarded import's selection. Nothing reads it, so no working
+        # document differs; the accounting observable is what can say so.
+        "docmodel: import: keep a discarded selection body",
+        "src/docmodel.rs",
+        "                Command::Import { selection, .. } => {\n                    self.selections.remove(&selection);\n                }",
+        "                Command::Import { .. } => {}",
+        "a_discarded_import_takes_its_selection_and_its_file_record_with_it",
+    ),
+    Mutation(
+        # Keep a file record no selection names.
+        "docmodel: import: keep a file record nothing names",
+        "src/docmodel.rs",
+        "        self.sources.retain(|id, _| named.contains(id));",
+        "        let _ = named;",
+        "a_discarded_import_takes_its_selection_and_its_file_record_with_it",
+    ),
+    Mutation(
+        # Let a region be marked while a page of another file is in the
+        # document. No step that proves a redaction clean can see that page.
+        "docmodel: import: redact beside a page of another file",
+        "src/docmodel.rs",
+        "        if self.now.holds_imported_pages() {\n            return Err(Refusal::RedactionBesideImportedPages);\n        }",
+        "",
+        "a_redaction_is_refused_while_any_page_came_from_another_file",
+    ),
+    Mutation(
+        # Import while regions are marked: the other direction of the same rule.
+        "docmodel: import: import beside marked regions",
+        "src/docmodel.rs",
+        "        if !self.now.redactions.is_empty() {\n            return Err(Refusal::ImportBesideRedactions);\n        }",
+        "",
+        "an_import_is_refused_while_regions_are_marked_for_removal",
+    ),
+    Mutation(
+        # Take a text replacement on a page of another file to the check that
+        # compares baseline numbers, which answers with a sentence about text
+        # having moved rather than about where the page came from.
+        "docmodel: import: send text on an imported page to the baseline check",
+        "src/docmodel.rs",
+        "        if let PageSource::Imported { .. } = self.now.pages[&page].source {\n            return Err(Refusal::TextOnImportedPage(page));\n        }",
+        "",
+        "text_on_an_imported_page_is_refused",
+    ),
+    Mutation(
+        # Let a comment of the opened file be deleted off a page of another. The
+        # writer would delete whatever the opened file has at that number, on
+        # some other page.
+        "docmodel: import: accept a foreign comment on an imported page",
+        "src/docmodel.rs",
+        "            Some(PageSource::Imported { .. }) => Err(Refusal::ForeignCommentOnImportedPage(id)),",
+        "            Some(PageSource::Imported { .. }) => Ok(()),",
+        "a_foreign_comment_cannot_be_said_to_be_on_an_imported_page",
+    ),
+    Mutation(
+        # Call a plan with a page of another file the file on disk. With a mark
+        # beside it the save takes the append, which cannot write the page.
+        "edits: read a page of another file as the file's own page",
+        "src/edits.rs",
+        "                    PageSource::Imported { .. } => false,\n                };",
+        "                    PageSource::Imported { .. } => true,\n                };",
+        "a_plan_with_a_page_of_another_file_is_never_appendable",
+    ),
+    Mutation(
+        # Hand the rewriter nothing. The pages cannot be imported and every save
+        # of such a document is refused.
+        "save: import: rewrite without the other files",
+        "src/save.rs",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password, inputs)?;",
+        "    let wrote = rewriter.write(source, len, out, plan, job, password, None)?;",
+        "a_rewrite_places_pages_of_another_file_where_the_plan_puts_them",
+    ),
+    Mutation(
+        # Import from a file that changed since the reader chose its pages.
+        "save: import: skip the digest check",
+        "src/save.rs",
+        "        if digest != expected.digest {",
+        "        if false {",
+        "a_source_changed_since_its_pages_were_inserted_is_refused",
+    ),
+    Mutation(
+        # Ask one walk for a page placed twice, which `merge::import` refuses.
+        "save: import: put a repeated page in the same round",
+        "src/save.rs",
+        "                .find(|round| round.iter().all(|&(_, taken)| taken != page))",
+        "                .find(|_| true)",
+        "the_same_page_placed_twice_is_two_pages",
+    ),
+    Mutation(
+        # Drop an imported page's crop: `agreed_crops` keys by baseline page.
+        "save: import: forget an imported page's crop",
+        "src/save.rs",
+        "    crops.extend(",
+        "    let _ = (",
+        "a_mark_a_turn_and_a_crop_on_an_imported_page_land_on_it",
+    ),
+    Mutation(
+        # Ask only the trailer whether the other file is encrypted, which
+        # `lopdf` empties the moment the empty password opens it.
+        "save: import: miss encryption the empty password opened",
+        "src/save.rs",
+        "        if document.was_encrypted() || document.is_encrypted() {\n            return Err(format!(\n                \"{label} is encrypted, and inserting",
+        "        if document.is_encrypted() {\n            return Err(format!(\n                \"{label} is encrypted, and inserting",
+        "a_source_an_empty_password_opens_is_refused_rather_than_decrypted",
+    ),
+    Mutation(
+        # Leave the page count to `merge::import`, in the half that writes.
+        "save: import: skip the other file's page count",
+        "src/save.rs",
+        "                    if number as usize >= has {",
+        "                    if false {",
+        "a_page_the_other_file_does_not_have_is_refused",
+    ),
+    Mutation(
+        # Let a merge reach the rewrite's refusal about a file it was not given.
+        "save: import: merge a document holding imported pages",
+        "src/save.rs",
+        "    if !plan.sources.is_empty() {\n        return Err(\n            \"save this document before merging it",
+        "    if false {\n        return Err(\n            \"save this document before merging it",
+        "a_merge_of_a_document_holding_imported_pages_says_why_it_is_refused",
+    ),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())

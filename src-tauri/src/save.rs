@@ -1342,8 +1342,72 @@ fn staged_rewrite(
     job: Job,
     password: Option<&str>,
 ) -> Result<usize, Refusal> {
-    let wrote = rewriter.write(source, len, out, plan, job, password)?;
+    // Every rewriting path passes through here --- a save in place, a copy, an
+    // extract, a split part, a print job --- so this is the one place the other
+    // files are read, and the one place they are checked against what the
+    // reader chose. `docs/TRAPS.md` records a field of a shared plan being read
+    // by one writer and not another; there is one reader here by construction.
+    let held = held_sources(plan)?;
+    let inputs = held.as_ref().map(|(whole, each)| Inputs { whole, each });
+    let wrote = rewriter.write(source, len, out, plan, job, password, inputs)?;
     landed_is(out, wrote)
+}
+
+/// Reads every file a plan's imported pages come from, and checks each one is
+/// still the file its pages were inserted from.
+///
+/// **The coordinator's half of an import at save**, and it is
+/// [`concatenated`]'s half of a merge plus a comparison: the files are read into
+/// one mapping and not parsed, and each span's digest is compared with the one
+/// [`crate::docmodel::SourceFile`] recorded when the reader chose the file.
+///
+/// **The digest is of the bytes being handed over**, not of a second read of
+/// the path. Hashing the file and then reading it would be two lookups of one
+/// name, and a file replaced between them would be checked in one version and
+/// imported in another --- the race `fingerprint.rs` closes for the opened
+/// document with `of_open`, closed here by hashing what was read.
+///
+/// **Fail closed**: a source with no fingerprint is refused rather than
+/// imported unchecked, which is `fingerprint.rs`'s rule. Neither refusal sets
+/// [`Refusal::changed`]: that flag offers Reload, which reopens the *opened*
+/// document and throws the journal away, and the document that changed here is
+/// a different one.
+///
+/// # Errors
+///
+/// A file that cannot be read, is past the merge ceiling, has no recorded
+/// fingerprint, or no longer matches it.
+fn held_sources(plan: &Plan) -> Result<Option<(Shm, Vec<Incoming>)>, Refusal> {
+    use sha2::{Digest as _, Sha256};
+
+    if plan.sources.is_empty() {
+        return Ok(None);
+    }
+    let paths: Vec<PathBuf> = plan.sources.iter().map(|one| one.path.clone()).collect();
+    let (whole, each) = concatenated(&paths)?;
+    for (source, one) in plan.sources.iter().zip(&each) {
+        let label = &one.label;
+        let expected = source.opened_as.as_ref().ok_or_else(|| {
+            Refusal::from(format!(
+                "tpdf did not record what {label} was when its pages were inserted, so it \
+                 cannot tell whether they are still those pages --- undo the insert and insert \
+                 them again"
+            ))
+        })?;
+        let bytes = &whole.as_slice()[one.at..one.at + one.len];
+        let digest: [u8; 32] = Sha256::digest(bytes).into();
+        // The digest alone, and the length is not forgotten: bytes of another
+        // length have another digest, so a length clause here would be a
+        // second answer to the same question that no input could separate
+        // from the first --- a mutation of either would survive.
+        if digest != expected.digest {
+            return Err(Refusal::from(format!(
+                "{label} has changed since its pages were inserted, so they may no longer be \
+                 the pages you placed --- undo the insert and insert them again"
+            )));
+        }
+    }
+    Ok(Some((whole, each)))
 }
 
 /// Checks a writer's reported length against the file's own size.
@@ -1857,6 +1921,11 @@ pub fn append_update(
             }),
             PageSource::Blank(_) => Err(Refusal::from(
                 "a save that only adds marks cannot carry a page tpdf made".to_string(),
+            )),
+            // The same answer for the same reason: `is_appendable` says no to
+            // a page that is not the file's, and this is its second reader.
+            PageSource::Imported { .. } => Err(Refusal::from(
+                "a save that only adds marks cannot carry a page from another document".to_string(),
             )),
         })
         .collect::<Result<_, Refusal>>()?;
@@ -2462,9 +2531,17 @@ pub trait Rewriter: Send {
     /// **`&mut` on `source` because reading through a handle moves it**, and on
     /// `out` because writing does --- [`Here`] does both in this process.
     ///
+    /// `inputs` is the files `plan.sources` names, read and checked by
+    /// [`staged_rewrite`], for a plan carrying pages from another file; `None`
+    /// for every other plan. They reach a worker the way a merge's incoming
+    /// files do, on [`crate::worker::IN_FD`] --- see
+    /// [`Rewriter::merge`] for why the coordinator reads them and does not
+    /// parse them.
+    ///
     /// # Errors
     ///
-    /// Everything [`rewrite_update`] refuses, and the write failing.
+    /// Everything [`rewrite_update_with`] refuses, and the write failing.
+    #[allow(clippy::too_many_arguments)]
     fn write(
         &self,
         source: &mut std::fs::File,
@@ -2473,6 +2550,7 @@ pub trait Rewriter: Send {
         plan: &Plan,
         job: Job,
         password: Option<&str>,
+        inputs: Option<Inputs<'_>>,
     ) -> Result<usize, Refusal>;
 
     /// Writes the pages `job` names, each turned by the reader's view, into
@@ -2563,11 +2641,12 @@ impl Rewriter for Here {
         plan: &Plan,
         job: Job,
         password: Option<&str>,
+        inputs: Option<Inputs<'_>>,
     ) -> Result<usize, Refusal> {
         use std::io::Write as _;
 
         let original = read_whole(source, len).map_err(|e| e.to_string())?;
-        let bytes = rewrite_update(&original, plan, job, password)?;
+        let bytes = rewrite_update_with(&original, plan, job, password, inputs)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
             .map_err(|e| format!("the rewritten document could not be written: {e}"))?;
@@ -2744,6 +2823,10 @@ enum Slot {
     /// A page tpdf makes, at this size. It has no object yet ---
     /// [`make_blank_pages`] gives it one.
     Made(Size),
+    /// Page `page` (zero-based) of the incoming document at `from` in
+    /// [`Checked::incoming`]. It has no object in this document yet ---
+    /// [`import_pages`] gives it one.
+    Imported { from: usize, page: u32 },
 }
 
 struct Checked {
@@ -2779,6 +2862,14 @@ struct Checked {
     /// `None` for a document that never had any --- and also for one still
     /// locked, which never reaches [`rewrite`] because `checked` refuses it.
     encryption: Option<lopdf::EncryptionState>,
+    /// The other documents imported pages come from, parsed, in the plan's
+    /// `sources` order. Empty for a plan that names none.
+    ///
+    /// **Parsed here, in the half that writes nothing**, so that a file
+    /// `lopdf` will not read, an encrypted one and a page past its end are
+    /// refusals before the graph has been touched --- the split this struct
+    /// exists for.
+    incoming: Vec<Document>,
 }
 
 /// Proof that everything expressed in the document's *opened* geometry has been
@@ -2898,10 +2989,32 @@ pub fn rewrite_update(
     job: Job,
     password: Option<&str>,
 ) -> Result<Vec<u8>, Refusal> {
+    rewrite_update_with(original, plan, job, password, None)
+}
+
+/// [`rewrite_update`] with the files a plan's imported pages come from.
+///
+/// `inputs` is `None` for a plan that names no other file, and a plan that
+/// does is refused without them --- there is nothing to import from. The files
+/// are parsed here, in whichever process this runs in, which on both shipped
+/// platforms is a sandboxed worker: `docs/THREAT-MODEL.md` §T6.
+///
+/// # Errors
+///
+/// As [`rewrite_update`]; and, for imported pages, the files not handed over
+/// or not matching the plan's list, one `lopdf` will not read, one that is
+/// encrypted, or a page one of them does not have.
+pub fn rewrite_update_with(
+    original: &[u8],
+    plan: &Plan,
+    job: Job,
+    password: Option<&str>,
+    inputs: Option<Inputs<'_>>,
+) -> Result<Vec<u8>, Refusal> {
     if job == Job::RasterRedact {
         return Err("Image-only redaction requires the sandboxed rendering worker".into());
     }
-    let checked = checked(original, plan, job.view(), password)?;
+    let checked = checked(original, plan, job.view(), password, inputs)?;
     // **Between the phases, which is where the answer is.** `checked` holds the
     // encryption state it took off the document, so this reads what has already
     // been established rather than asking the bytes a second question.
@@ -3037,6 +3150,18 @@ pub fn merge_update(
     if inputs.each.is_empty() {
         return Err("a merge was asked for with no documents to merge in".into());
     }
+    // **Refused rather than half done.** `inputs` here are the files being
+    // merged in, and the base's own imported pages need files of their own ---
+    // a second list this request does not carry. Without this, the call below
+    // would refuse anyway, saying the other document "was not handed to the
+    // save": true, and a sentence about the wrong operation.
+    if !plan.sources.is_empty() {
+        return Err(
+            "save this document before merging it --- it holds pages inserted from another \
+             document, and a merge cannot carry those yet"
+                .into(),
+        );
+    }
     let base = rewrite_update(base, plan, Job::Save, password)?;
     let mut merged = Document::load_mem_with_options(
         &base,
@@ -3123,10 +3248,12 @@ fn checked(
     plan: &Plan,
     view: u8,
     password: Option<&str>,
+    inputs: Option<Inputs<'_>>,
 ) -> Result<Checked, Refusal> {
     if plan.pages.is_empty() {
         return Err("a document must keep at least one page".into());
     }
+    let incoming = incoming_documents(plan, inputs)?;
 
     // Not `mut`, and that is the split proving itself rather than a tidy-up:
     // every refusal below reads the document and none of them writes to it, so
@@ -3224,7 +3351,7 @@ fn checked(
         .iter()
         .filter_map(|page| match page.source {
             PageSource::Baseline(number) => Some(number),
-            PageSource::Blank(_) => None,
+            PageSource::Blank(_) | PageSource::Imported { .. } => None,
         })
         .collect();
 
@@ -3314,6 +3441,36 @@ fn checked(
                     }
                     Slot::Made(size)
                 }
+                PageSource::Imported {
+                    source,
+                    page: number,
+                } => {
+                    // Resolved against the plan's own list, which is the list
+                    // `incoming` was parsed in the order of. A page naming a
+                    // file the list does not have is a plan built wrongly, and
+                    // the page count is asked here rather than left to
+                    // `merge::import`, because that runs in the half that has
+                    // already changed the graph.
+                    let from = plan
+                        .sources
+                        .iter()
+                        .position(|one| one.id == source.get())
+                        .ok_or_else(|| {
+                            Refusal::from(format!(
+                                "the edits place a page from document {}, which the save was not \
+                                 given",
+                                source.get()
+                            ))
+                        })?;
+                    let has = ordered_pages(&incoming[from]).len();
+                    if number as usize >= has {
+                        return Err(Refusal::from(format!(
+                            "the edits place page {} of a document with {has} page(s)",
+                            number + 1
+                        )));
+                    }
+                    Slot::Imported { from, page: number }
+                }
             };
             // **Both operands are reduced, and `page.turns` is the one that
             // matters.** `PageView::turns` documents 0 to 3, and the model
@@ -3360,7 +3517,65 @@ fn checked(
         slots,
         moved,
         encryption,
+        incoming,
     })
+}
+
+/// Parses the documents a plan's imported pages come from.
+///
+/// One per entry of `plan.sources`, in that order, which is the order
+/// `staged_rewrite` read them into `inputs` --- so the two lists pair by
+/// position, and a count that disagrees is refused rather than paired short.
+///
+/// **An encrypted file is refused**, for `merge_update`'s reason: tpdf holds no
+/// key for it, and importing its pages into a document written in the clear
+/// would silently remove its encryption. Both of `lopdf`'s answers are asked,
+/// for the reason `checked` gives about the empty user password.
+///
+/// # Errors
+///
+/// A plan naming files and no inputs; a count that disagrees; a span outside
+/// the mapping; a file `lopdf` will not read; or an encrypted one.
+fn incoming_documents(plan: &Plan, inputs: Option<Inputs<'_>>) -> Result<Vec<Document>, Refusal> {
+    if plan.sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(inputs) = inputs else {
+        return Err(
+            "the edits place pages from another document, and that document was not handed to \
+             the save"
+                .into(),
+        );
+    };
+    if inputs.each.len() != plan.sources.len() {
+        return Err(format!(
+            "the edits place pages from {} other document(s), and the save was handed {}",
+            plan.sources.len(),
+            inputs.each.len()
+        )
+        .into());
+    }
+    let mut out = Vec::with_capacity(inputs.each.len());
+    for one in inputs.each {
+        let label = &one.label;
+        let document = Document::load_mem_with_options(
+            inputs.bytes_of(one)?,
+            lopdf::LoadOptions {
+                max_decompressed_size: Some(MAX_DECODE),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("could not read {label}: {e}"))?;
+        if document.was_encrypted() || document.is_encrypted() {
+            return Err(format!(
+                "{label} is encrypted, and inserting its pages would write them without that \
+                 --- save an unencrypted copy of it and insert from that instead"
+            )
+            .into());
+        }
+        out.push(document);
+    }
+    Ok(out)
 }
 
 /// Applies a checked plan and serialises the result.
@@ -3384,6 +3599,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         slots,
         moved,
         encryption,
+        incoming,
     } = checked;
 
     // **First, and the position is load-bearing in one direction only.** A note
@@ -3442,7 +3658,12 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // document nobody will serialise, which is harmless and is still a document
     // in a state no reader asked for. `Checked`'s doc comment records that
     // somebody would have to decide where this goes; this is the decision.
-    let turns: Vec<(lopdf::ObjectId, u8)> = make_blank_pages(&mut doc, &slots)?;
+    //
+    // Imported pages go in at the same point and for the same two reasons:
+    // `merge::import` adds objects, and it answers ids that `materialise` then
+    // places. Before `make_blank_pages`, which reads the ids it answers.
+    let imported = import_pages(&mut doc, &slots, &incoming)?;
+    let turns: Vec<(lopdf::ObjectId, u8)> = make_blank_pages(&mut doc, &slots, &imported)?;
 
     // What goes and in what order, in the one sequence both writers share ---
     // see `pagetree::materialise`, which carries why the outline is dropped for
@@ -3480,10 +3701,20 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // reason, and this reuses neither because the values it compares are four
     // numbers rather than one.
     let crops = agreed_crops(plan)?;
-    let crops: Vec<(lopdf::ObjectId, [f64; 4])> = crops
+    let mut crops: Vec<(lopdf::ObjectId, [f64; 4])> = crops
         .into_iter()
         .filter_map(|(source, box_pt)| Some((*pages.get(source as usize)?, box_pt)))
         .collect();
+    // An imported page's crop, by the object it became. `agreed_crops` keys by
+    // baseline page because two positions can be one object of the file; an
+    // imported position never shares one --- `import_pages` gives each its own
+    // --- so there is nothing to agree and the box goes straight on.
+    crops.extend(
+        plan.pages
+            .iter()
+            .zip(&imported)
+            .filter_map(|(page, id)| Some(((*id)?, page.crop?))),
+    );
     crop_pages(&mut doc, &crops, &written)?;
 
     // **Last, and everything above it is a reason this can be last rather than
@@ -4021,20 +4252,29 @@ fn unshared(pages: &[lopdf::ObjectId], kept: &[u32], dropped: &[u32]) -> Result<
 /// it on every page in the order. Writing it twice would be two places deciding
 /// what the tree looks like.
 ///
+/// `imported` is [`import_pages`]' answer, one entry per slot; a
+/// [`Slot::Imported`] takes its object from there.
+///
 /// # Errors
 ///
-/// Nothing today: no branch here can fail, and the signature carries a `Result`
-/// because the caller's chain does. That is worth naming rather than hiding ---
-/// a `Result` with no `Err` is a guard `docs/TRAPS.md` records as unable to
-/// fire, and it stays only until this has to read anything out of the document.
+/// An imported slot `import_pages` gave no object. It read *"nothing today"*
+/// until pages could be imported, with a note that the `Result` would stay
+/// only until this had to read something it was handed; it now does.
 fn make_blank_pages(
     doc: &mut Document,
     slots: &[(Slot, u8)],
+    imported: &[Option<lopdf::ObjectId>],
 ) -> Result<Vec<(lopdf::ObjectId, u8)>, Refusal> {
     let mut out = Vec::with_capacity(slots.len());
-    for &(slot, turns) in slots {
+    for (at, &(slot, turns)) in slots.iter().enumerate() {
         let id = match slot {
             Slot::Kept(id) => id,
+            // Made by `import_pages` a step earlier. A missing answer is a
+            // defect there, refused rather than unwrapped: a page left out of
+            // the order is a document one page short that says nothing.
+            Slot::Imported { .. } => imported.get(at).copied().flatten().ok_or_else(|| {
+                Refusal::from(format!("page {} of the edits was not imported", at + 1))
+            })?,
             Slot::Made(size) => doc.add_object(lopdf::Dictionary::from_iter([
                 ("Type", Object::Name(b"Page".to_vec())),
                 (
@@ -4055,6 +4295,67 @@ fn make_blank_pages(
         out.push((id, turns));
     }
     Ok(out)
+}
+
+/// Imports every [`Slot::Imported`] page, and answers the object each became.
+///
+/// One entry per slot, `None` for a slot that is not imported, so the answer
+/// lines up with the plan by position --- which is how [`make_blank_pages`] and
+/// the crop step read it.
+///
+/// **Through [`crate::merge::import`], whose selection was built for this.** It
+/// brings a page and everything it needs across as objects of `doc`, shifted
+/// past every number `doc` holds, places nothing, and refuses a selection that
+/// names one page twice. The last is the reason for the rounds below.
+///
+/// **A page placed twice becomes two objects, not one.** The model refuses a
+/// page twice within one import, and allows the same page in two imports ---
+/// the reader inserted it, then inserted it again. Asking `import` for both in
+/// one call would be refused; so each file's pages are taken in rounds, a
+/// round holding each page at most once, and every round is its own walk. A
+/// second round copies what the page needs a second time, which is the
+/// operation asked for: two positions, two pages, each markable and croppable
+/// on its own. One object in two positions is the hazard `mark_sites` and
+/// `agreed_crops` exist to refuse.
+///
+/// # Errors
+///
+/// Whatever `merge::import` refuses, named with the page.
+fn import_pages(
+    doc: &mut Document,
+    slots: &[(Slot, u8)],
+    incoming: &[Document],
+) -> Result<Vec<Option<lopdf::ObjectId>>, Refusal> {
+    let mut answer: Vec<Option<lopdf::ObjectId>> = vec![None; slots.len()];
+    for (from, other) in incoming.iter().enumerate() {
+        // Each round: (slot position, zero-based page), in the reader's order.
+        let mut rounds: Vec<Vec<(usize, u32)>> = Vec::new();
+        for (at, &(slot, _)) in slots.iter().enumerate() {
+            let Slot::Imported { from: here, page } = slot else {
+                continue;
+            };
+            if here != from {
+                continue;
+            }
+            match rounds
+                .iter_mut()
+                .find(|round| round.iter().all(|&(_, taken)| taken != page))
+            {
+                Some(round) => round.push((at, page)),
+                None => rounds.push(vec![(at, page)]),
+            }
+        }
+        for round in rounds {
+            let want: Vec<usize> = round.iter().map(|&(_, page)| page as usize).collect();
+            let ids = crate::merge::import(doc, other, &want).map_err(|why| {
+                format!("could not insert the pages from another document: {why}")
+            })?;
+            for (&(at, _), id) in round.iter().zip(ids) {
+                answer[at] = Some(id);
+            }
+        }
+    }
+    Ok(answer)
 }
 
 /// The crop each kept source page is to get, refusing two that disagree.
@@ -4300,3 +4601,6 @@ fn canonical_parent(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod import_tests;

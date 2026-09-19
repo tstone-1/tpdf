@@ -285,6 +285,7 @@ impl Rewriter for InWorker {
         plan: &Plan,
         job: Job,
         password: Option<&str>,
+        inputs: Option<crate::save::Inputs<'_>>,
     ) -> Result<usize, Refusal> {
         // The handles, never the pathnames. See [`Rewriter`].
         let mapped = if matches!(job, Job::RasterRedact | Job::RedactionFill) {
@@ -292,7 +293,24 @@ impl Rewriter for InWorker {
         } else {
             Shm::map_open_file(source, len)?
         };
-        let worker = Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?;
+        // **The files imported pages come from reach the worker the way a
+        // merge's do**: one read-only mapping on `crate::worker::IN_FD`, which
+        // `spawn_merging` hands over. It is `merge`'s spawn because it is
+        // `merge`'s situation --- documents tpdf never opened, parsed where
+        // there is no authority to do anything with them. The segment is the
+        // caller's and outlives the wait below, for the reason `merge` states.
+        let worker = match inputs {
+            Some(handed) => Worker::spawn_merging(
+                std::sync::Arc::new(mapped),
+                handed.whole,
+                out,
+                &self.library_dir,
+            )?,
+            None => Worker::spawn_writing(std::sync::Arc::new(mapped), out, &self.library_dir)?,
+        };
+        let incoming = inputs
+            .map(|handed| handed.each.to_vec())
+            .unwrap_or_default();
 
         // **Asked on a thread so the answer can be waited for with a bound**, as
         // in [`InWorker::pages`]: this worker is outside the pool, so nothing
@@ -304,7 +322,7 @@ impl Rewriter for InWorker {
         let key = password.map(str::to_string);
         let plan = plan.clone();
         let rx = asked_on_a_thread(worker, move |worker| {
-            Self::ask_rewrite(worker, &plan, job, key.as_deref())
+            Self::ask_rewrite(worker, &plan, job, &incoming, key.as_deref())
         });
         let deadline = if job == Job::RasterRedact {
             std::time::Duration::from_secs(180)
@@ -388,6 +406,7 @@ impl InWorker {
         worker: &mut Worker,
         plan: &Plan,
         job: Job,
+        incoming: &[crate::save::Incoming],
         password: Option<&str>,
     ) -> Result<usize, Refusal> {
         if let Some(password) = password {
@@ -406,6 +425,7 @@ impl InWorker {
         let answered = worker.call(&Request::Rewrite {
             plan: plan.clone(),
             job,
+            incoming: incoming.to_vec(),
         })?;
         if !answered.ok {
             // The one bit that has to survive the pipe: whether Reload is the
@@ -538,6 +558,7 @@ mod tests {
             redactions: vec![],
             notes: vec![],
             discards: vec![],
+            sources: Vec::new(),
             forms: Vec::new(),
             text_edits: Vec::new(),
         };

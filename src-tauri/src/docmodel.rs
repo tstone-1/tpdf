@@ -83,6 +83,15 @@
 //! baseline, so what a created page has to answer that a created mark does not
 //! is where its content comes from.
 //!
+//! ⚠ **That paragraph predates two commands that do create pages**:
+//! [`Command::Insert`] makes a blank one, and [`Command::Import`] (2026-09-19)
+//! places pages of a second file. The answer to *where its content comes from*
+//! is [`PageSource`]. An imported page names a [`SourceId`], and the file
+//! behind it --- its path, the digest of its bytes when the reader chose it,
+//! its page count --- is a [`SourceFile`] in [`Doc`]'s table, because undo
+//! replays the journal and nothing a replay does can re-read a file. That
+//! record is the one place this module names a path; it still opens nothing.
+//!
 //! Save, save-mode classification, crash recovery and external-modification
 //! handling are §5's other halves and none of them are here. This module holds
 //! no file, no bytes and no `lopdf` object, and it is the better for it: it can
@@ -992,6 +1001,87 @@ pub struct Redaction {
     pub area: Quad,
 }
 
+/// A second file this document has taken pages from.
+///
+/// **Issued by the [`Doc`] and only ever counting up**, which is
+/// [`Doc::next_mark`]'s rule for [`Doc::next_mark`]'s reason: an import undone
+/// and redone must name the file it named, and an id handed to a different file
+/// in between would make the redo import the wrong document while every page
+/// count agreed.
+///
+/// **Serialised as its bare number**, because it crosses to the frontend inside
+/// [`PageSource::Imported`] and to the worker inside a plan, and both sides only
+/// ever compare it. It is not an index into anything: the plan names the files
+/// it needs in a list of its own and pairs them by this number.
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct SourceId(u32);
+
+impl SourceId {
+    /// The raw value, for a plan and for a message. Not an index.
+    pub fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Rebuilds an id from a value [`get`](Self::get) produced.
+    ///
+    /// Safe for [`PageId::from_raw`]'s reason: nothing trusts one of these
+    /// without looking it up, and a number nobody issued names no file.
+    pub fn from_raw(value: u32) -> SourceId {
+        SourceId(value)
+    }
+}
+
+/// The file an import read, as it was when the reader chose it.
+///
+/// **Held so that a save can refuse a file that changed underneath it**, which
+/// is `crate::fingerprint`'s whole argument applied to a second document: the
+/// pages the reader placed are pages of *these bytes*, and a sync client
+/// landing a newer copy between the insert and the save would otherwise put
+/// somebody else's pages into the reader's document while every count agreed.
+/// The writer hashes the bytes it hands the worker and compares them with this.
+///
+/// `pages` is the file's page count at that moment, which is what lets
+/// [`Doc::import`] refuse a page the file does not have **before** issuing an
+/// id --- the model cannot open the file to ask.
+///
+/// This is the one thing in this module that names a path, and it is a name
+/// rather than a file: nothing here opens it. The module note's *holds no
+/// file* still holds.
+#[derive(Clone, PartialEq, Debug)]
+pub struct SourceFile {
+    /// Where the file was when the reader chose it.
+    pub path: std::path::PathBuf,
+    /// What its bytes were.
+    pub fingerprint: crate::fingerprint::Fingerprint,
+    /// How many pages it had.
+    pub pages: u32,
+}
+
+/// One import's selection, keyed by the id its command carries.
+///
+/// [`MarkId`]'s arrangement for a body that does not fit in a `Copy` command:
+/// the page list lives in [`Doc`]'s table and [`Command::Import`] names it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct SelectionId(u32);
+
+/// What one import placed: which file, and for each new page, its id and the
+/// page of that file it shows.
+///
+/// **The ids are written out rather than derived from a first id and a
+/// count**, which would have been smaller. The module note says there is no
+/// arithmetic on ids anywhere in this file, and a range would be the first.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Selection {
+    /// The file the pages come from.
+    pub source: SourceId,
+    /// Each new page, in the order the reader asked for them, and the
+    /// zero-based page of `source` it shows.
+    pub pages: Vec<(PageId, u32)>,
+}
+
 /// What supplies a page's content.
 ///
 /// **The seam the render path uses**: a viewport position indexes
@@ -1020,6 +1110,16 @@ pub enum PageSource {
     /// type's answer, which is the distinction [`Refusal::ShapeMismatch`] exists
     /// because [`Mark`] could not draw.
     Blank(Size),
+    /// Page `page` (zero-based) of a second file, which [`Doc::import`] took
+    /// it from.
+    ///
+    /// **A document as well as a page**, which is the widening
+    /// `docs/PLAN.md` names as the first cost of inserting pages from another
+    /// file: every consumer that asks the document's own worker about a page
+    /// number has to say what it does with a page that worker cannot see.
+    /// The file itself is in [`Doc`]'s table under `source`, not here, so the
+    /// enum stays `Copy`.
+    Imported { source: SourceId, page: u32 },
 }
 
 /// One page of the working document.
@@ -1088,6 +1188,25 @@ pub enum Command {
         page: PageId,
         after: Option<PageId>,
         size: Size,
+    },
+    /// Put pages of a second file immediately after `after`, or at the front
+    /// when `after` is `None`, in the order the selection lists them.
+    ///
+    /// [`Command::Insert`] for a page list, and **one command for the whole
+    /// list** rather than one per page: a reader who inserts five pages from a
+    /// file and presses undo wants the five gone, and five commands would take
+    /// five presses. The eraser's [`SweepId`] grouping would give the same
+    /// press count, but that id is minted by the frontend for a gesture it can
+    /// see the end of; this is one request and needs no gesture.
+    ///
+    /// **The list is in [`Doc`]'s table under `selection`**, which is what
+    /// keeps this enum `Copy`. The page ids are in that body rather than issued
+    /// here, so replay from a snapshot rebuilds the same pages rather than new
+    /// ones wearing their numbers --- [`Command::Insert`]'s property, arriving
+    /// by the table rather than by the command.
+    Import {
+        selection: SelectionId,
+        after: Option<PageId>,
     },
     /// Put a mark on a page.
     ///
@@ -1229,7 +1348,10 @@ impl Command {
             | Command::Rewrite { page, .. }
             | Command::Discard { page, .. }
             | Command::Redact { page, .. } => Some(page),
-            Command::Unannotate { .. }
+            // Several pages, and no one of them is the subject. The anchor is
+            // not either: it is where the pages went, not what was acted on.
+            Command::Import { .. }
+            | Command::Unannotate { .. }
             | Command::Renote { .. }
             | Command::Reink { .. }
             | Command::Recolor { .. }
@@ -1306,6 +1428,69 @@ pub enum Refusal {
     /// review list certifying the removal of nothing --- reaching the same
     /// conclusion by a different route.
     RedactionOnMadePage(PageId),
+    /// An import that names no pages.
+    ///
+    /// A command that places nothing would still cost an undo and mark the
+    /// document dirty with no sign of why --- [`EmptyMark`](Refusal::EmptyMark)'s
+    /// argument, for a list of pages.
+    EmptyImport,
+    /// An import naming a page past the end of the file it reads. Zero-based
+    /// `page`, and the file's `pages`.
+    NoSuchSourcePage { page: u32, pages: u32 },
+    /// An import naming one page of the file twice.
+    ///
+    /// **Refused rather than served**, for `crate::merge::import`'s reason:
+    /// the writer imports a selection as one walk of the second file's graph,
+    /// and two positions holding one page *object* is the hazard
+    /// `save::mark_sites` refuses a mark on. Two imports of the same page, in
+    /// two commands, are two walks and are allowed. Zero-based.
+    ImportedTwice(u32),
+    /// An import command naming a selection nobody issued.
+    ///
+    /// [`Doc::import`] issues the id and the body together, so this is only
+    /// reachable by a caller building [`Command::Import`] itself --- a defect on
+    /// the sending side, answered with a refusal rather than a panic because
+    /// [`Doc::apply`] is public.
+    NoSuchSelection(SelectionId),
+    /// A text replacement on a page taken from another file.
+    ///
+    /// **The replacement is validated against the opened document's content
+    /// streams**, by its worker, and addressed by the page's number in *that*
+    /// file. A page from another file has none, and its content is not in the
+    /// graph the writer edits text in until after the text has been written.
+    /// This expires with the render path and a second worker for the imported
+    /// file; it is not a fact about the page.
+    TextOnImportedPage(PageId),
+    /// A comment out of the file, rewritten or deleted, said to be on a page
+    /// taken from another file.
+    ///
+    /// The object number names an annotation of the *opened* file, and a page
+    /// of another file cannot hold one --- the writer would edit whatever the
+    /// opened file has at that number, on some other page. Only a caller that
+    /// paired the wrong page with the object reaches this.
+    ForeignCommentOnImportedPage(PageId),
+    /// A region marked for removal in a document holding pages from another
+    /// file.
+    ///
+    /// **Refused for the whole document, not for the imported pages alone**,
+    /// and the reason is the corollary `AGENTS.md` states for redaction: tpdf
+    /// never claims a redaction is clean unless it can prove it. Every step of
+    /// that proof --- the plan a worker computes against the file's objects,
+    /// the image-only render, and the scan of the written file for the words
+    /// that went --- is asked of the *opened* document's worker, and none of
+    /// them can see a page from another file. The scan in particular reads the
+    /// whole output, so imported text that happens to repeat a removed word
+    /// reads as a leak; and the image-only path renders every output page
+    /// through a worker that has no such page to render. Refusing is the safe
+    /// answer until each step can reach the second file. Save first, then
+    /// reopen and redact: a saved document's pages are all its own.
+    RedactionBesideImportedPages,
+    /// Pages from another file inserted while regions are marked for removal.
+    ///
+    /// [`RedactionBesideImportedPages`](Refusal::RedactionBesideImportedPages)
+    /// from the other side, and its own variant because it is its own
+    /// sentence: this reader was inserting, not redacting.
+    ImportBesideRedactions,
     /// No mark has ever had this id.
     NoSuchMark(MarkId),
     /// The id names a mark that was taken off the page. Distinct from
@@ -1745,6 +1930,29 @@ impl Working {
         self.discards.contains_key(&object)
     }
 
+    /// Refuses a live page that another file supplies, for a command whose
+    /// object number names an annotation of the opened file.
+    ///
+    /// One implementation for [`Command::Rewrite`], [`Command::Discard`] and
+    /// the two entry points that issue them, because a second copy of the
+    /// question is the pair `docs/TRAPS.md` records drifting. A page tpdf made
+    /// passes: it holds no annotation of any file, and whether one of its
+    /// comments can be edited is a question nobody can ask, since nothing lists
+    /// one.
+    fn opened_files_page(&self, id: PageId) -> Result<(), Refusal> {
+        match self.pages.get(&id).map(|page| page.source) {
+            Some(PageSource::Imported { .. }) => Err(Refusal::ForeignCommentOnImportedPage(id)),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether any live page was taken from another file.
+    pub fn holds_imported_pages(&self) -> bool {
+        self.pages
+            .values()
+            .any(|page| matches!(page.source, PageSource::Imported { .. }))
+    }
+
     /// Refuses unless the id names a live page, naming which of the two it is.
     fn live(&self, id: PageId) -> Result<(), Refusal> {
         if self.pages.contains_key(&id) {
@@ -1761,7 +1969,16 @@ impl Working {
     /// Every path checks its preconditions **before** the first mutation, which
     /// is what makes "a refusal changes nothing" true by construction rather than
     /// by each arm remembering to unwind.
-    fn apply(&mut self, cmd: Command) -> Result<(), Refusal> {
+    ///
+    /// `selections` is [`Doc`]'s table of import bodies, which
+    /// [`Command::Import`] names. **Passed in rather than held**, because a
+    /// body never changes and a snapshot has no reason to clone it --- the
+    /// argument [`Doc`]'s `marks` table makes for living outside this struct.
+    fn apply(
+        &mut self,
+        cmd: Command,
+        selections: &HashMap<SelectionId, Selection>,
+    ) -> Result<(), Refusal> {
         match cmd {
             Command::ReplaceText {
                 page,
@@ -1899,6 +2116,53 @@ impl Working {
                     },
                 );
             }
+            Command::Import { selection, after } => {
+                let body = selections
+                    .get(&selection)
+                    .ok_or(Refusal::NoSuchSelection(selection))?;
+                // **Only the anchor is checked again here, which is where this
+                // parts company with `Command::Insert`.** That command carries
+                // its size, so a caller building one can send a page of no area
+                // and the apply has to refuse it. This one carries an id into a
+                // table only `Doc::import` writes, after checking the selection
+                // --- so an empty or repeated selection cannot reach here, and
+                // a check for one would be a guard no input can fire. The anchor
+                // can: a caller can name any page, and `position` below panics
+                // on one that is not live.
+                if let Some(anchor) = after {
+                    self.live(anchor)?;
+                }
+                // `Command::Insert`'s assertion, for each page and for its
+                // reason: the ids are issued once and a journalled `Import` is
+                // replayed exactly where it was accepted.
+                debug_assert!(
+                    body.pages
+                        .iter()
+                        .all(|(id, _)| !self.pages.contains_key(id) && !self.graves.contains(id)),
+                    "an imported page was placed twice: {selection:?}"
+                );
+                // `start` rather than `Insert`'s `at`, so the mutation harness
+                // can aim at either arm: two identical statements make one
+                // anchor ambiguous, and an ambiguous anchor cannot fail.
+                let start = match after {
+                    None => 0,
+                    Some(anchor) => self.position(anchor) + 1,
+                };
+                for (offset, &(id, page)) in body.pages.iter().enumerate() {
+                    self.order.insert(start + offset, id);
+                    self.pages.insert(
+                        id,
+                        Page {
+                            source: PageSource::Imported {
+                                source: body.source,
+                                page,
+                            },
+                            extra_turns: 0,
+                            crop: None,
+                        },
+                    );
+                }
+            }
             Command::Annotate { mark, page, note } => {
                 self.live(page)?;
                 // Not a check on `mark_graves`: an id is issued once and a
@@ -1952,6 +2216,7 @@ impl Working {
                 // The page, and nothing about the object: this layer cannot ask
                 // whether the file holds it. See [`ObjectId`].
                 self.live(page)?;
+                self.opened_files_page(page)?;
                 self.rewrites.insert(object, Rewritten { page, edit });
             }
             Command::Discard { object, page } => {
@@ -1960,6 +2225,7 @@ impl Working {
                 // cannot ask whether it holds the object. The writer can, and
                 // refuses one it cannot find.
                 self.live(page)?;
+                self.opened_files_page(page)?;
                 // **The rewrite is left in place.** A comment can be edited and
                 // then deleted, and taking the edit out here would mean an undo
                 // of the deletion brought the comment back reading whatever the
@@ -2118,6 +2384,24 @@ pub struct Doc {
     rewrites: HashMap<RewriteId, NoteEdit>,
     /// The next rewrite id to issue. Only ever counts up.
     next_rewrite: u32,
+    /// The files imports have read, keyed by the id their pages carry.
+    ///
+    /// **Outside [`Working`], and it has to be**: undo rebuilds the working
+    /// document from the journal, and the record of what a file's bytes were
+    /// is not something a replay can recompute --- it was read when the reader
+    /// chose the file. So it lives beside the other bodies and goes when the
+    /// last selection naming it goes with a discarded redo tail.
+    ///
+    /// A `BTreeMap` so that a plan lists its files in one order on every run;
+    /// see [`Working`]'s `rewrites` for what an order that varied would cost.
+    sources: BTreeMap<SourceId, SourceFile>,
+    /// The next source id to issue. Only ever counts up, as
+    /// [`next_mark`](Doc::next_mark) does and for its reason.
+    next_source: u32,
+    /// What each import placed, keyed by the id its command carries.
+    selections: HashMap<SelectionId, Selection>,
+    /// The next selection id to issue. Only ever counts up.
+    next_selection: u32,
 }
 
 impl Doc {
@@ -2146,6 +2430,10 @@ impl Doc {
             next_page: u64::from(pages) + 1,
             rewrites: HashMap::new(),
             next_rewrite: 1,
+            sources: BTreeMap::new(),
+            next_source: 1,
+            selections: HashMap::new(),
+            next_selection: 1,
         }
     }
 
@@ -2158,6 +2446,9 @@ impl Doc {
         change: crate::textedit::Change,
     ) -> Result<(), Refusal> {
         self.now.live(page)?;
+        if let PageSource::Imported { .. } = self.now.pages[&page].source {
+            return Err(Refusal::TextOnImportedPage(page));
+        }
         if !self.now.redactions.is_empty() {
             return Err(Refusal::TextEdit(
                 "save or undo redactions before editing text",
@@ -2399,6 +2690,119 @@ impl Doc {
         Ok(id)
     }
 
+    /// Puts pages of a second file after `after`, issuing an id for each.
+    ///
+    /// [`insert`](Doc::insert) for a list of pages that another file supplies,
+    /// and journalled as **one** [`Command::Import`] --- one press of undo takes
+    /// them all away and one press of redo brings the same pages back, ids
+    /// included. `pages` is zero-based positions in `source`, in the order the
+    /// reader wants them.
+    ///
+    /// **The file is recorded once however many times it is imported from**:
+    /// a second import of the same path with the same bytes reuses its
+    /// [`SourceId`], so a save reads it once. The same path with *different*
+    /// bytes is a different file --- somebody changed it between the two
+    /// inserts --- and gets an id of its own, and the save then refuses
+    /// whichever of the two no longer matches the disk.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::ImportBesideRedactions`] while regions are marked for removal;
+    /// [`Refusal::EmptyImport`], [`Refusal::NoSuchSourcePage`] and
+    /// [`Refusal::ImportedTwice`] for the selection; and whatever the anchor
+    /// answers. **Every one is checked before an id is issued**, so a refused
+    /// import spends nothing --- the page ids, the selection id and the source
+    /// id alike. The anchor is checked again in the apply; the selection is
+    /// not, and [`Command::Import`]'s arm says why.
+    pub fn import(
+        &mut self,
+        after: Option<PageId>,
+        source: SourceFile,
+        pages: Vec<u32>,
+    ) -> Result<Vec<PageId>, Refusal> {
+        // First, because it is about the document rather than about this
+        // request: see `Refusal::RedactionBesideImportedPages`.
+        if !self.now.redactions.is_empty() {
+            return Err(Refusal::ImportBesideRedactions);
+        }
+        if pages.is_empty() {
+            return Err(Refusal::EmptyImport);
+        }
+        if let Some(&past) = pages.iter().find(|&&page| page >= source.pages) {
+            return Err(Refusal::NoSuchSourcePage {
+                page: past,
+                pages: source.pages,
+            });
+        }
+        let mut seen: HashSet<u32> = HashSet::with_capacity(pages.len());
+        if let Some(&twice) = pages.iter().find(|&&page| !seen.insert(page)) {
+            return Err(Refusal::ImportedTwice(twice));
+        }
+        if let Some(anchor) = after {
+            self.now.live(anchor)?;
+        }
+
+        // Nothing below can refuse, so ids are spent from here on.
+        let known = self
+            .sources
+            .iter()
+            .find(|(_, held)| **held == source)
+            .map(|(id, _)| *id);
+        let source_id = match known {
+            Some(id) => id,
+            None => {
+                let id = SourceId(self.next_source);
+                self.next_source += 1;
+                self.sources.insert(id, source);
+                id
+            }
+        };
+        let placed: Vec<(PageId, u32)> = pages
+            .into_iter()
+            .map(|page| {
+                let id = PageId(self.next_page);
+                self.next_page += 1;
+                (id, page)
+            })
+            .collect();
+        let ids = placed.iter().map(|(id, _)| *id).collect();
+        let selection = SelectionId(self.next_selection);
+        self.next_selection += 1;
+        self.selections.insert(
+            selection,
+            Selection {
+                source: source_id,
+                pages: placed,
+            },
+        );
+        // Routed through `apply` for the reason `insert` gives. The body is in
+        // the table before the call, which is `annotate`'s order and is what
+        // the discarded-tail pruning inside `apply_in` relies on: the source
+        // this selection names is named by a body that exists.
+        self.apply(Command::Import { selection, after })?;
+        Ok(ids)
+    }
+
+    /// The file an import read, for a source id this document has issued.
+    ///
+    /// Answers while any selection naming it is in the journal, applied or in
+    /// the redo tail, for [`mark`](Doc::mark)'s reason.
+    pub fn source(&self, id: SourceId) -> Option<&SourceFile> {
+        self.sources.get(&id)
+    }
+
+    /// How many source records are held. An accounting observable, for
+    /// [`mark_bodies`](Doc::mark_bodies)' reason.
+    pub fn source_bodies(&self) -> usize {
+        self.sources.len()
+    }
+
+    /// How many selection bodies are held. An accounting observable, for
+    /// [`mark_bodies`](Doc::mark_bodies)' reason.
+    pub fn selection_bodies(&self) -> usize {
+        self.selections.len()
+    }
+
     /// Marks a region of a page for removal, issuing its id.
     ///
     /// [`annotate`](Doc::annotate)'s counterpart, and the second entry point
@@ -2425,6 +2829,13 @@ impl Doc {
             return Err(Refusal::EmptyRedaction);
         }
         self.now.live(redaction.page)?;
+        // For the whole document rather than for the page, and after the
+        // liveness check so a deleted page keeps the better diagnosis. See
+        // `Refusal::RedactionBesideImportedPages` for why no page here is safe
+        // to redact while any page came from another file.
+        if self.now.holds_imported_pages() {
+            return Err(Refusal::RedactionBesideImportedPages);
+        }
         // **For a reason that does not expire**, unlike the same refusal in
         // `annotate`: a page tpdf made has no content, so a region on one
         // removes nothing --- which is `Refusal::EmptyRedaction`'s own argument
@@ -2623,6 +3034,8 @@ impl Doc {
         // second copy of the rule -- it is the same call, reached on the replay
         // path where this pre-check does not run.
         self.now.live(page)?;
+        // Before the body is issued, for the liveness check's reason above.
+        self.now.opened_files_page(page)?;
         let edit = self.issue_rewrite(NoteEdit { body, made });
         self.apply(Command::Rewrite { object, page, edit })
     }
@@ -2671,6 +3084,7 @@ impl Doc {
         // is no body to spend here, which is what makes this the cheapest
         // command in the file.
         self.now.live(page)?;
+        self.now.opened_files_page(page)?;
         // **Before the command, and it is the reason this method is not two
         // lines.** A reply the reader wrote carries this object in `/IRT`, and
         // an `/IRT` naming an object the file no longer has is a malformed
@@ -3023,7 +3437,7 @@ impl Doc {
     /// [`SweepId`] in one step, which is what makes one press of undo put back
     /// a whole sweep of the eraser rather than the last drawing it touched.
     pub fn apply_in(&mut self, cmd: Command, sweep: Option<SweepId>) -> Result<(), Refusal> {
-        self.now.apply(cmd)?;
+        self.now.apply(cmd, &self.selections)?;
         // Bodies belonging to the discarded tail go with it. Without this, a
         // reader who annotates and undoes in a loop grows the table forever ---
         // and the ids are never re-issued, so nothing else would ever notice.
@@ -3049,6 +3463,9 @@ impl Doc {
                 }
                 Command::Redact { redaction, .. } => {
                     self.redactions.remove(&redaction);
+                }
+                Command::Import { selection, .. } => {
+                    self.selections.remove(&selection);
                 }
                 // **Listed rather than left to a catch-all**, which is what
                 // this arm used to be. Every command that issues a body needs a
@@ -3077,6 +3494,11 @@ impl Doc {
                 | Command::Unredact { .. } => {}
             }
         }
+        // A file no surviving selection names has nothing left to be checked
+        // for. After the loop rather than inside the `Import` arm, because two
+        // selections can share one file and only the last to go takes it.
+        let named: HashSet<SourceId> = self.selections.values().map(|body| body.source).collect();
+        self.sources.retain(|id, _| named.contains(id));
         self.journal.truncate(self.cursor);
         // Snapshots past the cursor describe states that no longer exist. Keeping
         // one would not merely waste a clone: the next rebuild through that
@@ -3159,7 +3581,7 @@ impl Doc {
     /// produced, and redo has just reproduced those predecessors.
     fn step(&mut self) {
         let cmd = self.journal[self.cursor].cmd;
-        self.now.apply(cmd).unwrap_or_else(|why| {
+        self.now.apply(cmd, &self.selections).unwrap_or_else(|why| {
             panic!("a journalled command was refused on redo: {cmd:?} -> {why:?}")
         });
         self.cursor += 1;
@@ -3190,7 +3612,7 @@ impl Doc {
             None => Working::baseline(self.baseline),
         };
         for &Entry { cmd, .. } in &self.journal[from..upto] {
-            w.apply(cmd).unwrap_or_else(|why| {
+            w.apply(cmd, &self.selections).unwrap_or_else(|why| {
                 panic!("a journalled command was refused on replay: {cmd:?} -> {why:?}")
             });
         }
@@ -3869,7 +4291,7 @@ mod tests {
         let full = {
             let mut w = Working::baseline(3);
             for &Entry { cmd, .. } in &doc.journal[..target] {
-                w.apply(cmd).unwrap();
+                w.apply(cmd, &doc.selections).unwrap();
             }
             w
         };
@@ -5760,3 +6182,7 @@ mod tests {
 #[cfg(test)]
 #[path = "docmodel_text_tests.rs"]
 mod text_tests;
+
+#[cfg(test)]
+#[path = "docmodel_import_tests.rs"]
+mod import_tests;

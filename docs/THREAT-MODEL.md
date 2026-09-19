@@ -1853,6 +1853,39 @@ signed-document warning. Independent parser and PDFKit readback cover structure,
 text and pixels outside the edited line on synthetic producer exports. These
 examples establish compatibility for those inputs, not all output of a producer.
 
+#### T6.19 — Pages from another file, at save, added 2026-09-19
+
+**What changed.** A plan may place pages of a second document (`PageSource::Imported`), and
+every rewriting save of such a plan now parses that document too. No command reaches it yet:
+the model and the writer landed first, and nothing in the webview can create an imported page.
+So §3's list of writers is unchanged, and the new exposure is a **second input to a writer
+that already existed**, not a new writer.
+
+**Where the parse happens.** In the same sandboxed worker as the rewrite, on the merge's input
+channel: `save::staged_rewrite` reads each file the plan names into one read-only mapping and
+`save_outside::InWorker::write` spawns the child with it on `worker::IN_FD`. The coordinator
+reads those bytes and does not parse them, which is §3's rule for a merge. The worker loads
+each with `lopdf` under `MAX_DECODE`, and `merge::import` walks only the pages asked for,
+with the pages left behind as a wall (`docs/PLAN.md`, *The importer takes a selection*).
+
+**What is checked, and where.** In the coordinator, the SHA-256 of the bytes handed over
+against the digest recorded when the reader chose the file (`docmodel::SourceFile`), and a
+file never fingerprinted is refused rather than trusted --- so a file replaced between the
+insert and the save cannot put somebody else's pages into the reader's document. In the
+worker, before the graph is touched: a file `lopdf` will not read, an **encrypted** one
+(both `was_encrypted` and `is_encrypted`, for §T6.9's empty-password reason), and a page past
+its end are refusals. The total size is bounded by the merge's `MAX_MERGE_BYTES`.
+
+**What is refused rather than handled.** Redaction anywhere in a document holding an imported
+page, and inserting while regions are marked (`Refusal::RedactionBesideImportedPages`,
+`ImportBesideRedactions`): the plan, the image-only render and the scan that proves a
+redaction clean are all asked of the opened document's worker, which cannot see the other
+file's page. Text replacement on an imported page, and a merge of a document that holds one.
+
+**Residual.** The imported pages' own annotations, fonts and images come across as objects
+and are written as they were --- this is an import, not a sanitation, exactly as a merge is
+not. A `/Dest` from an imported page to one left behind dangles rather than importing it.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

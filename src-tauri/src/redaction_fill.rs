@@ -167,6 +167,7 @@ mod tests {
             marks: vec![],
             notes: vec![],
             discards: vec![],
+            sources: Vec::new(),
             forms: Vec::new(),
             text_edits: Vec::new(),
             redactions: vec![

@@ -12876,6 +12876,128 @@ and the second document's bytes have to reach the worker that writes, which toda
 handed exactly one descriptor. Nothing in the application can reach `import`'s
 selection yet — its live caller is `append`, asking for everything.
 
+#### The model and the save take pages of another file — done 2026-09-19
+
+Two of the three costs the *Not done* above lists, and the two that need no window: `PageSource`
+names a document as well as a page, the model owns the second file's identity across undo, and
+a save imports the graph through `merge::import`. **The render path is not done, and neither is
+the command**, so nothing in the application can create an imported page yet. This is the model
+and the writer, landed first for the reason the blank page landed before this: an increment
+carrying a render path, a model change and a graph import at once says little about which of
+them is wrong.
+
+```rust
+pub enum PageSource {
+    Baseline(u32),
+    Blank(Size),
+    Imported { source: SourceId, page: u32 },
+}
+```
+
+##### The model
+
+`Doc::import(after, SourceFile, pages)` places the pages behind `after` in the order given and
+journals **one** `Command::Import` for all of them, so one press of undo takes the lot and one
+press of redo brings back the same ids. `Command` stays `Copy` by carrying a `SelectionId` into
+a table, as a mark does; the table holds each new page's id beside the page of the file it
+shows, written out rather than derived from a first id and a count, because the module note
+forbids arithmetic on ids. The file itself is a `SourceFile` --- path, `Fingerprint`, page count
+--- in a second table keyed by a `SourceId` that only counts up. The same path with the same
+bytes reuses its id, so a save reads it once; the same path with other bytes is another file.
+
+Refused before any id is spent, and each is a test: an empty selection, a page past the file's
+end (the model cannot open the file, which is why the page count travels in the record), a page
+twice in one selection, a dead anchor, and --- see below --- an import while regions are marked.
+**The apply re-checks only the anchor**, which is where this parts company with `Insert`: a
+selection body is written by `Doc::import` alone, after its checks, so re-checking it in the
+apply would be a guard no input can fire.
+
+Turning, cropping, moving, marking and deleting an imported page are the baseline page's
+operations unchanged. Three things are refused on it, each with its own sentence:
+
+- **Text replacement** (`TextOnImportedPage`) --- the replacement is validated by the opened
+  document's worker and addressed by a page number in *that* file. It expires with the render
+  path.
+- **A foreign comment said to be on it** (`ForeignCommentOnImportedPage`), through `rewrite`,
+  `discard` or a caller-built command --- the object number names an annotation of the opened
+  file, so the writer would edit whatever that file has at that number on another page.
+- **Redaction anywhere in the document** while any page came from another file
+  (`RedactionBesideImportedPages`), and inserting while regions are marked
+  (`ImportBesideRedactions`). The whole document rather than the page, because every step that
+  proves a redaction clean --- the plan a worker computes, the image-only render, the scan of
+  the written file --- is asked of the opened document's worker and none of them can see the
+  other file's page. The scan in particular reads the whole output, so imported text that
+  repeats a removed word reads as a leak. Refusing is the answer that keeps *never claim clean
+  without proof* true; save and reopen and the pages are all the document's own.
+
+Form filling needed no refusal and is worth saying why: a form answer names a field by object,
+the scan that lists fields is the opened document's, and the rewrite writes answers **before**
+it imports anything --- so an answer can only ever reach the opened file's own fields.
+
+##### The save
+
+`Plan` gained `sources`, one `PlannedSource` per file a kept page names, in first-appearance
+order. The id crosses to the worker; the path and the fingerprint are `#[serde(skip)]`, which is
+`Plan::opened_as`' mechanism for `Plan::opened_as`' reason.
+
+**`is_appendable` gained no clause, and a clause would have been decoration.** An imported page
+is not the file's page at its position, so `pages_are_the_file` already answers no; a clause on
+`sources` could only differ from it for a plan the model never builds, and a mutation deleting
+it would survive. What the predicate did gain is an honest shape: it was a `matches!` whose
+comment said a third variant would be a compile error there, and `matches!` has a catch-all ---
+`docs/TRAPS.md` has the entry. It is a `match` with an arm per variant now, and the imported arm
+has a mutation, caught by the one plan shape where only that arm can answer: as many pages as
+the file, its own pages at their own indices, and a mark beside them.
+
+`save::staged_rewrite` is the one place the other files are read, because every rewriting path
+passes through it --- save in place, copy, extract, split and the working-document print job.
+It reads them into one mapping with the merge's `concatenated` and compares the SHA-256 **of
+the bytes being handed over** with the recorded digest, so a file replaced between the check
+and the read cannot be checked in one version and imported in another. No fingerprint is a
+refusal. Neither refusal sets `changed`: that flag offers Reload, which throws the journal away
+for a change in a different document.
+
+`Rewriter::write` takes the mapping as `Option<Inputs>`; `InWorker` spawns with it on
+`worker::IN_FD` exactly as a merge does, and `Request::Rewrite` carries the spans. In the
+worker, `checked` parses each file in the half that writes nothing --- refusing one `lopdf`
+will not read, an **encrypted** one (both of `lopdf`'s answers, for the empty-password reason
+`checked` already records), and a page past its end --- and `import_pages` runs where
+`make_blank_pages` runs, below the last refusal and above `materialise`.
+
+**A page placed twice becomes two objects.** `merge::import` refuses one page twice in one
+selection, and the model allows the same page in two imports; so each file's pages are imported
+in rounds, a round holding each page once, and every round is its own walk. Two positions, two
+objects, each markable and croppable on its own --- the alternative is one object in two
+positions, which is the hazard `mark_sites` and `agreed_crops` exist to refuse. Crops of
+imported pages are applied by the object each became, since no two positions can share one.
+
+Refused rather than handled in this increment: a **merge** of a document holding imported pages
+(the request carries the files being merged in and no second list), the **image-only
+redaction** (it renders every output page through the opened document's PDFium), and an
+encrypted or locked other file. Printing is not refused: it is built by the same rewrite.
+
+##### What was measured
+
+`worker-probe` gained three checks --- the worker and the coordinator write the same file
+byte for byte, it holds the document's pages plus the two imported, and the path needs a worker
+--- and reports **48/48, 0 not applicable** on macOS against `text-base14.pdf` and
+`links.pdf`. The second's output (18,707 bytes, the probe's turn plan plus page 8 and page 1 of
+the same file placed in front) was read back by two parsers that are not this crate's:
+`qpdf --check` found no errors, and `pypdf` read ten pages whose first lines are *Page 8, Page 1,
+Page 1, ..., Page 8*, the two imported pages at `/Rotate 0` and the eight turned ones at 90.
+
+Unit tests: fourteen in `docmodel::import_tests` and twelve in `save::import_tests`, plus one in
+`edits` that builds the plan from a real model. Mutations: eighteen new, one per guard this adds, and twelve existing ones re-aimed because
+their anchors moved (`pages_are_the_file`, the `rewriter.write` and `checked` calls, `Doc::rewrite`'s
+pre-check, and `Insert`'s placement, which the import arm now repeats under another name) ---
+**30 of 30 caught by the test named for each**.
+
+**Not done:** the render path --- an imported page has no tile, because no worker holds its
+file; the frontend, where `pages.ts` knows the variant exists and answers `undefined` for both
+its baseline number and its made size; and the command, with its file dialog, its page-count
+read through a worker and its README line. The merge and the image-only redaction of such a
+document, both refused above, are the smaller two.
+
 #### Deleting a comment the file came with — done 2026-08-30
 
 The last third of a family whose other two thirds shipped the day before: a reader
