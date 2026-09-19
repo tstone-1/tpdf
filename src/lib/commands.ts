@@ -70,6 +70,17 @@ export interface CommandArgument {
   /** What running it will do, shown once {@link problem} is happy. */
   preview: (raw: string) => string;
   run: (raw: string) => void | Promise<void>;
+  /**
+   * Called when the palette stops asking without running the command.
+   *
+   * For the one command that holds something while it asks:
+   * `edit.insertPages.range` is asked with another file already open in a
+   * worker pool, and a reader who presses Escape, clicks away or asks for
+   * something else has decided against it. Without this the pool would wait
+   * for an answer that is never coming, until the document closed. Every other
+   * argument is a value with nothing behind it, and leaves this out.
+   */
+  dismissed?: () => void;
 }
 
 /**

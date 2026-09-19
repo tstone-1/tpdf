@@ -8,9 +8,12 @@ restoration and the final page in all zoom modes. A mixed-size regression input
 can be generated with pypdf: add_blank_page for (600, 800), (1200, 1600), (600, 400).
 For --phase tabs-rotation, use (600, 800), (1200, 400), (600, 800) to expose a
 preceding sheet expanding under the old scroll offset.
-For --phase import, pass --other with a second PDF whose first page's text differs
-from the first PDF's: its pages are inserted after page 1 without the file dialog,
-read, searched, undone, redone and saved into the disposable copy.
+For --phase import, pass --other with a second PDF of at least three pages whose
+pages differ in their text from each other and from the first PDF's first page. Past
+the file dialog, the palette's page question is dismissed (nothing inserted, the file
+released), answered with 2-N (exactly those pages, in order), and left blank (every
+page), which is then read, searched, undone, redone and saved into the disposable copy:
+  uv run scripts/tabs_check.py <app> testdata/text-base14.pdf --phase import --other testdata/links.pdf
 """
 
 import argparse
@@ -42,7 +45,7 @@ def main() -> int:
         shutil.copyfile(args.pdf, first)
         if args.phase == "import":
             if not args.other:
-                parser.error("--phase import needs --other, a second PDF with different text")
+                parser.error("--phase import needs --other, a second PDF of three or more pages with different text")
             # A copy as well, so a save that went wrong could not touch the input.
             second = room / "other.pdf"
             shutil.copyfile(args.other, second)

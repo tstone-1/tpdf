@@ -5186,7 +5186,124 @@ MUTATIONS += [
     ),
 ]
 
+
+# The range question `edit.insertPages` asks, 2026-09-19: the waiting file's
+# lifetime on the webview side, the answer's grammar, and the palette's
+# dismissal hook that releases a file nobody answered for. What each of these
+# costs is a sandboxed worker pool held until the document closes, or pages of
+# the wrong file, or the wrong pages of the right one.
+MUTATIONS += [
+    Mutation(
+        # Forget the previous file without releasing it.
+        "pendingimport: replace a waiting file without releasing it",
+        "src/lib/pendingimport.ts",
+        "    if (previous) this.#release(previous.doc, previous.pending);",
+        "",
+        "releases the file a second prepare replaces",
+    ),
+    Mutation(
+        # Hand over an import prepared for another tab, placing its pages in
+        # the document the reader moved to.
+        "pendingimport: commit another document's file",
+        "src/lib/pendingimport.ts",
+        "    if (held.doc !== doc) {\n      this.#release(held.doc, held.pending);\n      return null;\n    }",
+        "",
+        "releases rather than hands over an import prepared for another document",
+    ),
+    Mutation(
+        # Offer the question on whichever tab is showing.
+        "pendingimport: offer the waiting file on every document",
+        "src/lib/pendingimport.ts",
+        "    return held !== null && held.doc === doc ? held : null;",
+        "    return held;",
+        "is offered only for the document it was prepared for",
+    ),
+    Mutation(
+        # Forget on dismissal without ending the backend's wait.
+        "pendingimport: drop without releasing",
+        "src/lib/pendingimport.ts",
+        "    if (held) this.#release(held.doc, held.pending);\n  }\n}",
+        "  }\n}",
+        "releases the file once when the question is dropped",
+    ),
+    Mutation(
+        # Read a blank answer the way extract does, as a refusal.
+        "pendingimport: refuse a blank answer",
+        "src/lib/pendingimport.ts",
+        "  if (raw.trim() === \"\") {\n    return { slots: Array.from({ length: file.pages }, (_, page) => page) };\n  }",
+        "",
+        "reads a blank answer as every page, in the file's order",
+    ),
+    Mutation(
+        # Tell the reader "this document" has a count that is the other file's.
+        "pendingimport: word a page past the end as the document's",
+        "src/lib/pendingimport.ts",
+        "  if (range.problem?.startsWith(\"This document has\")) {",
+        "  if (range.problem?.startsWith(\"never\")) {",
+        "names the file, not the document, when a page is past its end",
+    ),
+    Mutation(
+        # List the question when no file is waiting.
+        "appcommands: offer the range question with nothing waiting",
+        "src/lib/appcommands.ts",
+        "      enabled: () => withDocument() && actions.pendingImport() !== null,",
+        "      enabled: withDocument,",
+        "is not offered unless a file is waiting",
+    ),
+    Mutation(
+        # Leave the question with no dismissal: the file stays open.
+        "appcommands: release nothing when the range question is dismissed",
+        "src/lib/appcommands.ts",
+        "        dismissed: () => actions.dropImport(),",
+        "",
+        "releases the file when the question is dismissed",
+    ),
+    Mutation(
+        # Read the range against the open document's page count.
+        "appcommands: read the range against the document's count",
+        "src/lib/appcommands.ts",
+        "          if (!file) return \"No file is waiting to be inserted\";\n          return chosenPages(raw, file).problem ?? null;",
+        "          if (!file) return \"No file is waiting to be inserted\";\n          return chosenPages(raw, { ...file, pages: actions.pageCount() }).problem ?? null;",
+        "reads a range against the other file's count, not the document's",
+    ),
+    Mutation(
+        # Close without telling the command it was abandoned.
+        "palette: close without a dismissal",
+        "src/lib/palette.ts",
+        "    this.backdrop.style.display = \"none\";\n    this.leave();",
+        "    this.backdrop.style.display = \"none\";\n    this.asking = null;",
+        "is a dismissal when the palette is closed",
+    ),
+    Mutation(
+        # Escape back to the list without telling the command.
+        "palette: Escape back to the list without a dismissal",
+        "src/lib/palette.ts",
+        "  private stopAsking(): void {\n    this.leave();",
+        "  private stopAsking(): void {\n    this.asking = null;",
+        "is a dismissal on Escape back to the list, once",
+    ),
+    Mutation(
+        # Report an answered question as abandoned, which releases the file
+        # the answer is about to insert from.
+        "palette: count an answer as a dismissal",
+        "src/lib/palette.ts",
+        "    this.asking = null;\n    this.close();\n    // Unless",
+        "    this.close();\n    // Unless",
+        "is not a dismissal when the question is answered",
+    ),
+    Mutation(
+        # Swallow a run the registry refused, leaving the file held.
+        "palette: hold on to a question the registry would not run",
+        "src/lib/palette.ts",
+        "    if (!this.registry.run(command.id, raw)) command.argument.dismissed?.();",
+        "    this.registry.run(command.id, raw);",
+        "is a dismissal when the command can no longer run as answered",
+    ),
+]
+
 TEST_FILES = [
+    "src/lib/pendingimport.test.ts",
+    "src/lib/palette.test.ts",
     "src/lib/textedit.test.ts",
     "src/lib/signature.test.ts",
     "src/lib/forms.test.ts",
@@ -6670,16 +6787,25 @@ MUTATIONS += [
         "src/lib/edits.ts",
         "      pages: withSources(state.pages, state.sources),",
         "      pages: state.pages,",
-        "imports behind the page in a slot, and joins the handle the reply names",
+        "imports the named pages behind the page in a slot, and joins the handle the reply names",
     ),
     Mutation(
         # A stale press becomes an import at the front, `insertPage`'s trap in
         # the new command.
         "edits: turn a stale slot into an import at the front",
         "src/lib/edits.ts",
-        "  async importPages(after: number | null, path: string): Promise<EditState> {\n    const anchor =\n      after === null ? null : (this.current.pages[after]?.id ?? undefined);",
-        "  async importPages(after: number | null, path: string): Promise<EditState> {\n    const anchor = after === null ? null : (this.current.pages[after]?.id ?? null);",
-        "does not send an import for a slot the model has never mentioned",
+        "  async importPages(after: number | null, pending: number, pages: number[]): Promise<EditState> {\n    const anchor =\n      after === null ? null : (this.current.pages[after]?.id ?? undefined);",
+        "  async importPages(after: number | null, pending: number, pages: number[]): Promise<EditState> {\n    const anchor = after === null ? null : (this.current.pages[after]?.id ?? null);",
+        "releases the file rather than importing for a slot the model has never mentioned",
+    ),
+    Mutation(
+        # Send nothing for a stale slot, as `insertPage` does --- which leaves
+        # the file open for an answer that has already been given.
+        "edits: leave the file open when the slot has gone",
+        "src/lib/edits.ts",
+        "      await call(\"page_import_cancel\", { doc: this.doc, pending });\n      return this.current;",
+        "      return this.current;",
+        "releases the file rather than importing for a slot the model has never mentioned",
     ),
     Mutation(
         # Ask the opened document for the imported page's tiles.

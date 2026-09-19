@@ -27,6 +27,7 @@ import { PALETTE } from "./markcolors";
 import { NIBS } from "./marknibs";
 import type { StampName } from "./pages";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
+import type { PreparedImport } from "./pendingimport";
 
 /**
  * A registry with every application command in it, and a record of what fired.
@@ -63,6 +64,10 @@ function harness(
   // Default false because a document opens with nothing picked.
   redactionPicked = false,
   busyDocument = false,
+  // Null by default, which is the state every document is in unless the
+  // reader has just chosen a file to insert from: the range question is then
+  // withheld, and a test that says nothing about an import exercises that.
+  waiting: PreparedImport | null = null,
 ) {
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
@@ -114,6 +119,9 @@ function harness(
     insertBlankPage: () => fired.push("insertBlankPage"),
     insertSizedPage: (name) => fired.push(`insertSizedPage:${name}`),
     importPages: () => fired.push("importPages"),
+    pendingImport: () => waiting,
+    insertChosenPages: (pages) => fired.push(`insertChosenPages:${pages.join("+")}`),
+    dropImport: () => fired.push("dropImport"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
@@ -468,6 +476,9 @@ describe("every registered command", () => {
       // And a picked region, so `edit.removeRedaction` is allowed to run.
       // Fourth flag, same reason again.
       true,
+      false,
+      // And a file waiting to be inserted, so `edit.insertPages.range` is.
+      { pending: 1, pages: 3, name: "other.pdf" },
     );
     const shell = registry
       .all()
@@ -483,6 +494,82 @@ describe("every registered command", () => {
       );
     }
     expect(shell.length).toBeGreaterThan(3);
+  });
+});
+
+describe("the pages of another file to insert", () => {
+  const waiting = { pending: 4, pages: 8, name: "report.pdf" };
+  /** A harness with a document open and `file` waiting, or nothing. */
+  const withFile = (file: typeof waiting | null) =>
+    harness(true, {}, {}, false, false, false, {}, false, false, false, false, false, false, file);
+  const range = (registry: CommandRegistry) =>
+    registry.find("edit.insertPages.range");
+
+  it("is not offered unless a file is waiting", () => {
+    // The one command in the registry that exists only mid-flow: listed at
+    // any other time it would be a row that asks for the pages of nothing.
+    const idle = withFile(null);
+    expect(idle.registry.search("insert pages").map((r) => r.command.id)).not.toContain(
+      "edit.insertPages.range",
+    );
+    expect(idle.registry.run("edit.insertPages.range", "1")).toBe(false);
+    expect(idle.fired).toEqual([]);
+
+    const asking = withFile(waiting);
+    expect(asking.registry.search("insert pages").map((r) => r.command.id)).toContain(
+      "edit.insertPages.range",
+    );
+  });
+
+  it("is not offered with no document open, even with a file waiting", () => {
+    const { registry } = harness(
+      false, {}, {}, false, false, false, {}, false, false, false, false, false, false, waiting,
+    );
+    expect(registry.run("edit.insertPages.range", "1")).toBe(false);
+  });
+
+  it("names the file and its pages in the question", () => {
+    const command = range(withFile(waiting).registry);
+    expect(command?.title).toBe("Insert pages from report.pdf");
+    expect(command?.argument?.placeholder).toBe("Pages of report.pdf (1-8); blank for all");
+  });
+
+  it("inserts every page for a blank answer", () => {
+    const { registry, fired } = withFile(waiting);
+    expect(registry.run("edit.insertPages.range", "")).toBe(true);
+    expect(fired).toEqual(["insertChosenPages:0+1+2+3+4+5+6+7"]);
+  });
+
+  it("inserts the pages named, as pages of the other file in its order", () => {
+    // `8,2-3` rather than something already sorted, so an answer handed over
+    // in the order typed is a different answer.
+    const { registry, fired } = withFile(waiting);
+    expect(registry.run("edit.insertPages.range", "8,2-3")).toBe(true);
+    expect(fired).toEqual(["insertChosenPages:1+2+7"]);
+  });
+
+  it("reads a range against the other file's count, not the document's", () => {
+    // The harness document has three pages and the file eight: page 5 is past
+    // one and inside the other, which is the pair that says which count asked.
+    const command = range(withFile(waiting).registry);
+    expect(command?.argument?.problem("5")).toBeNull();
+    expect(command?.argument?.problem("9")).toBe("report.pdf has 8 pages");
+    expect(command?.argument?.preview("5")).toBe("Insert page 5 of report.pdf");
+    expect(command?.argument?.preview("")).toBe("Insert all 8 pages of report.pdf");
+  });
+
+  it("releases the file when the question is dismissed", () => {
+    const { registry, fired } = withFile(waiting);
+    range(registry)?.argument?.dismissed?.();
+    expect(fired).toEqual(["dropImport"]);
+  });
+
+  it("inserts nothing for an answer that does not parse", () => {
+    // The registry refuses it first; this is the guard behind that, for
+    // `file.extractPages`' reason.
+    const { registry, fired } = withFile(waiting);
+    range(registry)?.argument?.run("nonsense");
+    expect(fired).toEqual([]);
   });
 });
 
@@ -1153,6 +1240,9 @@ describe("the window shortcuts for editing", () => {
       insertBlankPage: () => fired.push("insertBlankPage"),
       insertSizedPage: (name) => fired.push(`insertSizedPage:${name}`),
       importPages: () => fired.push("importPages"),
+      pendingImport: () => null,
+      insertChosenPages: (pages) => fired.push(`insertChosenPages:${pages.join("+")}`),
+      dropImport: () => fired.push("dropImport"),
       cropPage: (to) => fired.push(`cropPage:${to}`),
       redactRegion: () => fired.push("redactRegion"),
       redactSelection: () => fired.push("redactSelection"),

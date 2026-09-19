@@ -116,7 +116,7 @@ export class Palette {
     this.returnFocus =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     this.backdrop.style.display = "flex";
-    this.asking = null;
+    this.leave();
     this.input.placeholder = SEARCH_PLACEHOLDER;
     this.input.value = "";
     this.refresh();
@@ -140,8 +140,25 @@ export class Palette {
   close(): void {
     if (!this.isOpen) return;
     this.backdrop.style.display = "none";
-    this.asking = null;
+    this.leave();
     this.returnFocus?.focus();
+  }
+
+  /**
+   * Stops asking for an argument, telling the command it was not answered.
+   *
+   * **Every way out of argument mode but a submit comes through here** ---
+   * Escape back to the list, closing, a click on the backdrop, reopening, and
+   * asking for another command --- and that is the whole reason it is one
+   * function: `CommandArgument.dismissed` is what releases a file an insert is
+   * holding, and a route out that set `asking` to null itself would be the one
+   * that leaks it. A submit clears `asking` before it closes, so it is not a
+   * dismissal.
+   */
+  private leave(): void {
+    const left = this.asking;
+    this.asking = null;
+    left?.argument?.dismissed?.();
   }
 
   /** Whether a value is being typed rather than a command searched for. */
@@ -172,6 +189,7 @@ export class Palette {
   /** Switches the input to collecting a command's argument. */
   private ask(command: Command): void {
     if (!command.argument) return;
+    this.leave();
     this.asking = command;
     this.input.value = "";
     this.input.placeholder = command.argument.placeholder;
@@ -181,7 +199,7 @@ export class Palette {
 
   /** Leaves argument mode, back to the command list. */
   private stopAsking(): void {
-    this.asking = null;
+    this.leave();
     this.input.placeholder = SEARCH_PLACEHOLDER;
     this.input.value = "";
     this.refresh();
@@ -217,8 +235,14 @@ export class Palette {
     // A refused value leaves the palette exactly as it is, still showing why.
     // Closing on a bad value would discard what was typed and say nothing.
     if (command.argument.problem(raw) !== null) return;
+    // Answered, so not dismissed: cleared before the close, which would
+    // otherwise report it as abandoned.
+    this.asking = null;
     this.close();
-    this.registry.run(command.id, raw);
+    // Unless the registry would not run it after all --- a command whose
+    // document went away while it was being asked --- in which case it was
+    // abandoned, and whatever it holds is released.
+    if (!this.registry.run(command.id, raw)) command.argument.dismissed?.();
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {

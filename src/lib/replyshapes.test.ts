@@ -75,6 +75,7 @@ import type { ScrollBenchConfig } from "./scrollbench";
 import type { PageMapping, PageMatches } from "./search";
 import type { Session } from "./session";
 import type { PageText } from "./text";
+import type { PreparedImport } from "./pendingimport";
 
 import Applied_ from "../../src-tauri/testdata/replies/Applied.json";
 import Comments_ from "../../src-tauri/testdata/replies/Comments.json";
@@ -88,6 +89,7 @@ import Outline_ from "../../src-tauri/testdata/replies/Outline.json";
 import PageMapping_ from "../../src-tauri/testdata/replies/PageMapping.json";
 import PageMatches_ from "../../src-tauri/testdata/replies/PageMatches.json";
 import PageText_ from "../../src-tauri/testdata/replies/PageText.json";
+import PreparedImport_ from "../../src-tauri/testdata/replies/PreparedImport.json";
 import Properties_ from "../../src-tauri/testdata/replies/Properties.json";
 import RegionPlan_ from "../../src-tauri/testdata/replies/RegionPlan.json";
 import ScrollBenchConfig_ from "../../src-tauri/testdata/replies/ScrollBenchConfig.json";
@@ -260,6 +262,11 @@ const SCHEMA = {
     prefetch_screens: ["number"],
     cancels: ["array"],
   } satisfies Shape<ScrollBenchConfig>,
+  PreparedImport: {
+    pending: ["number"],
+    pages: ["number"],
+    name: ["string"],
+  } satisfies Shape<PreparedImport>,
   Session: {
     places: ["array"],
     invert_pages: ["boolean"],
@@ -297,6 +304,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Properties: Properties_ satisfies Widen<Properties>,
   RegionPlan: RegionPlan_ satisfies Widen<RegionPlan>,
   ScrollBenchConfig: ScrollBenchConfig_ satisfies Widen<ScrollBenchConfig>,
+  PreparedImport: PreparedImport_ satisfies Widen<PreparedImport>,
   Session: Session_ satisfies Widen<Session>,
   Split: Split_ satisfies Widen<Split>,
 };
@@ -328,6 +336,7 @@ const COMMAND_SOURCES = import.meta.glob("../../src-tauri/src/commands/*.rs", {
  */
 const UNNAMED_LEAVES = new Set([
   "()",
+  "bool",
   "String",
   "&'static str",
   "usize",

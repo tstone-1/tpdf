@@ -452,8 +452,9 @@ jobs:
           --- and a sidebar panel lists every mark you have made. A comment the
           file already carried can be rewritten, answered in its own thread, or
           deleted outright. A blank page can be inserted, either the size of the
-          page you are on or A4, A3, A5, US Letter or US Legal, and so can every
-          page of another PDF, after the page you are on. All
+          page you are on or A4, A3, A5, US Letter or US Legal, and so can the
+          pages of another PDF --- all of them, or a range you type --- after
+          the page you are on. All
           of them are real annotations any PDF reader shows — `/Highlight`,
           `/Square`, `/Circle`, `/Ink`, `/FreeText` and the rest — rather than
           anything only tpdf can read. Everything is undoable, and the result is

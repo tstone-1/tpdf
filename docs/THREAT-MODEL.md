@@ -94,9 +94,10 @@ filesystem *itself* and can ask for nine specific writes; the flat version reads
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
-**`page_import` is not a tenth, and the list is right to leave it out.** It opens a file the
-reader chose, in the render service like any other document, and writes nothing; what it adds
-is read authority over one more path — §T6.20. Its pages reach the disk only through the
+**`page_import_prepare` is not a tenth, and the list is right to leave it out.** It opens a
+file the reader chose, in the render service like any other document, and writes nothing; what
+it adds is read authority over one more path — §T6.20. `page_import` and `page_import_cancel`,
+which place the file's pages or release it, take no path at all. Its pages reach the disk only through the
 writers above, which is where §T6.19 checks them.
 
 **It said "four" until 2026-08-24, and `merge_documents` had been the fifth since 2026-08-24.**
@@ -811,7 +812,9 @@ the document the render service actually opened, which it could be. It is not, b
 two would leave a consistent surface looking inconsistent; if this is closed, close both.
 
 **`page_import` is not a write, added 2026-09-19.** It reaches the render service's open, not
-a writer, and is recorded at §T6.20 rather than here; §3 says why it is not in the list.
+a writer, and is recorded at §T6.20 rather than here; §3 says why it is not in the list. The
+open moved to `page_import_prepare` the same day, when the reader could choose which pages;
+it is still a read, and still not in the list.
 
 **`extract_pages` is the same verb with a selection, added 2026-08-17**, and it is recorded
 here rather than given a section because it adds no authority: same write path, same
@@ -1910,18 +1913,30 @@ anything: `document_properties`, whose parse is the worker's too. An encrypted f
 refused there, because the save refuses one (§T6.19) and a reader should hear so before
 arranging the pages rather than after.
 
+**Split in two the same day, when the reader could choose which pages.**
+`page_import_prepare(doc, path)` does everything above --- the open, the encryption check,
+the fingerprint --- and holds the file for the importing document without placing anything;
+`page_import(doc, pending, after, pages)` places the pages named, and `page_import_cancel`
+releases the file. Neither of the second pair takes a path, so the read authority is still
+exactly one path per prepare. The fingerprint is still taken through the mapped handle, at
+prepare, so what a save checks is the bytes the reader was shown the count of.
+
 **The authority it adds.** The same as `open_document`'s: a caller able to reach it can have
 any PDF the reader can read parsed in a sandboxed worker, and see its pages' pixels and text
 through the tile and text commands. `dialog:allow-open` already granted the panel and
 `open_document` already granted the read, so this is not new reach; it is a second route to
 the same one, and it is recorded because it is a second *document* per tab.
 
-**Who owns the handle.** The importing document's model (`edits::Open::sources`), never the
+**Who owns the handle.** The importing document's model --- `edits::Open::pending` while the
+reader names the pages, `edits::Open::sources` once they are placed --- never the
 webview, which is told the handle so it can draw and never closes it —
 `docs/TRAPS.md`'s *A resource whose only owner is on the other side of a boundary* is what
 that rules out. `close_document`, the in-place save and the redaction's close hand every
-handle back to be released with the document; `release_documents` sweeps them with
-everything else. Undo does not release one, because redo draws the same pages. A second
+handle back to be released with the document, a waiting one included; `release_documents`
+sweeps them with everything else. A waiting file also ends when a second prepare replaces it,
+when the palette's question is dismissed (`page_import_cancel`), and when the model refuses
+the pages named. A webview that never answers holds one pool per document at most, until the
+document closes. Undo does not release one, because redo draws the same pages. A second
 import of the same bytes into the same document reuses the first handle and releases the new
 one; two tabs importing one file hold two pools, deliberately (see `page_import`).
 

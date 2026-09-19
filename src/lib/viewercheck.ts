@@ -3180,6 +3180,11 @@ async function appCommandChecks(
     // opening a file dialog: the dialog and the backend are `App.svelte`'s, and
     // `tabs_check.py --phase import` drives those against a real file.
     importPages: () => fired.push("importPages"),
+    // Null: nothing is waiting in this harness, so the range question is not
+    // offered, which is the direction `undriven` below names.
+    pendingImport: () => null,
+    insertChosenPages: (pages) => fired.push(`insertChosenPages:${pages.join("+")}`),
+    dropImport: () => fired.push("dropImport"),
     cropPage: (to) => fired.push(`cropPage:${to}`),
     redactRegion: () => fired.push("redactRegion"),
     redactSelection: () => fired.push("redactSelection"),
@@ -4285,6 +4290,12 @@ async function appCommandChecks(
     "edit.editForeignMark": "needs an open comment popup, which this phase has no corpus for",
     "edit.replyToComment": "needs an open comment popup, which this phase has no corpus for",
     "edit.deleteComment": "needs an open comment popup, which this phase has no corpus for",
+    // Offered only while a file chosen by `edit.insertPages` is open and
+    // waiting, which needs the open dialog this harness cannot answer.
+    // `tabs_check.py --phase import` drives it past the dialog, through the
+    // palette, answered and dismissed; `appcommands.test.ts` covers the guard
+    // and the argument in both directions.
+    "edit.insertPages.range": "needs a file waiting to be inserted; the import window phase drives it",
   };
 
   const registered = registry.all().map((command) => command.id);

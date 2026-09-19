@@ -3314,8 +3314,8 @@ MUTATIONS = [
         # back on the wire while the first page is being drawn.
         "hash: start the fingerprint at open rather than at the first edit",
         "src/edits.rs",
-        "                sources: HashMap::new(),\n            },\n        );\n    }",
-        "                sources: HashMap::new(),\n            },\n        );\n        self.wake(doc);\n    }",
+        "                sources: HashMap::new(),\n                pending: None,\n            },\n        );\n    }",
+        "                sources: HashMap::new(),\n                pending: None,\n            },\n        );\n        self.wake(doc);\n    }",
         "opening_a_document_does_not_start_the_hash",
     ),
     Mutation(
@@ -9708,6 +9708,61 @@ MUTATIONS += [
         "    if refusal.locked {\n        return locked(name);\n    }",
         "",
         "a_locked_file_is_refused_as_encrypted",
+    ),
+]
+
+
+# The file an insert holds open while the reader names its pages, 2026-09-19.
+# Every path out of the wait has to end it --- placed, replaced, cancelled,
+# refused or closed --- and a stale answer must not end a newer one.
+MUTATIONS += [
+    Mutation(
+        # Close a document and forget the file it was waiting on.
+        "edits: pending: close without handing back the waiting file",
+        "src/edits.rs",
+        "        held.extend(open.pending.map(|pending| pending.handle));\n",
+        "",
+        "closing_a_document_releases_the_file_waiting_for_its_pages",
+    ),
+    Mutation(
+        # Replace the waiting file and leave its pool to nobody.
+        "edits: pending: replace without handing back the first file",
+        "src/edits.rs",
+        "            .map(|previous| previous.handle);",
+        "            .map(|_| None).unwrap_or(None);",
+        "a_second_prepare_replaces_the_first_and_hands_it_back",
+    ),
+    Mutation(
+        # End whatever is waiting, whatever id the cancel names.
+        "edits: pending: cancel a newer import than the one named",
+        "src/edits.rs",
+        "        let open = docs.get_mut(&doc)?;\n        if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {\n            return None;\n        }",
+        "        let open = docs.get_mut(&doc)?;",
+        "a_cancel_hands_back_the_file_it_names_and_only_that_one",
+    ),
+    Mutation(
+        # Commit whatever is waiting, whatever id the answer names.
+        "edits: pending: commit an answer to another question",
+        "src/edits.rs",
+        "            if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {\n                return Err(format!(",
+        "            if open.pending.is_none() {\n                return Err(format!(",
+        "a_commit_naming_an_import_nobody_is_waiting_on_is_refused",
+    ),
+    Mutation(
+        # Take the file for a commit the model then refuses, and release nothing.
+        "edits: pending: leak the file on a refused commit",
+        "src/edits.rs",
+        "        let held = crate::imports::Held::new(taken.handle, release.clone());",
+        "        let held = crate::imports::Held::new(taken.handle, |_| {});",
+        "a_refused_commit_releases_the_file",
+    ),
+    Mutation(
+        # Keep a second pool for a file the document already draws from.
+        "edits: pending: keep the spare handle of a file already held",
+        "src/edits.rs",
+        "            debug_assert_eq!(spare, kept);\n            release(spare);",
+        "            debug_assert_eq!(spare, kept);",
+        "committing_a_file_already_held_releases_the_second_handle",
     ),
 ]
 

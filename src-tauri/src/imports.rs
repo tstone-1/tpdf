@@ -7,7 +7,7 @@
 //! imported page is drawn: every tile, text and search request for one names it
 //! with the page of *that* file.
 //!
-//! What lives here is the part of `page_import` that can be wrong without a
+//! What lives here is the part of `page_import_prepare` that can be wrong without a
 //! render service to be wrong about: the words a reader is shown when the file
 //! cannot be used, and the rule that a handle opened for an import is released
 //! on every path out except the one that hands it to the model. The command
@@ -47,7 +47,8 @@ impl<F: FnOnce(u32)> Held<F> {
     /// Hands the handle on: nothing is released, and the caller now owns it.
     ///
     /// The one path out that does not release, and it is taken only once the
-    /// model has recorded the handle --- see `edits::Edits::import`.
+    /// document's model holds the handle --- waiting for its pages
+    /// (`edits::Edits::prepare_import`) or drawing them (`edits::Edits::import`).
     #[must_use]
     pub fn keep(mut self) -> u32 {
         self.release = None;
@@ -106,15 +107,14 @@ pub fn display_name(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Every page of a file of `count` pages, in order.
+/// A file's page count, as the model counts pages.
 ///
 /// # Errors
 ///
 /// A count past what a page number can hold, which the model cannot represent.
-pub fn all_pages(count: usize) -> Result<Vec<u32>, String> {
-    let count = u32::try_from(count)
-        .map_err(|_| format!("a file of {count} pages is past what tpdf can insert"))?;
-    Ok((0..count).collect())
+pub fn page_count(count: usize) -> Result<u32, String> {
+    u32::try_from(count)
+        .map_err(|_| format!("a file of {count} pages is past what tpdf can insert"))
 }
 
 #[cfg(test)]
@@ -124,7 +124,7 @@ mod tests {
 
     /// A guard dropped without being kept releases its handle, once.
     ///
-    /// The property every refusal in `page_import` leans on: each `?` after the
+    /// The property every refusal in `page_import_prepare` leans on: each `?` after the
     /// open drops the guard, and the drop is the release.
     #[test]
     fn a_handle_nobody_kept_is_released_when_the_guard_goes() {
@@ -154,7 +154,7 @@ mod tests {
         let released = RefCell::new(Vec::new());
         let run = || -> Result<u32, String> {
             let held = Held::new(3, |id| released.borrow_mut().push(id));
-            let _pages = all_pages(0)?;
+            let _pages = page_count(0)?;
             Err::<(), _>("the model refused".to_string())?;
             Ok(held.keep())
         };
@@ -192,9 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn every_page_of_the_file_in_order() {
-        assert_eq!(all_pages(3), Ok(vec![0, 1, 2]));
-        assert_eq!(all_pages(0), Ok(vec![]));
+    fn a_page_count_is_the_model_s_number_or_a_refusal() {
+        assert_eq!(page_count(3), Ok(3));
+        assert_eq!(page_count(0), Ok(0));
+        if let Ok(past) = usize::try_from(u64::from(u32::MAX) + 1) {
+            assert!(page_count(past).is_err(), "past a page number is refused");
+        }
     }
 
     #[test]

@@ -194,15 +194,23 @@ pub async fn open_document(
     Ok(info)
 }
 
-/// Puts every page of another file into the working document, after `after`
-/// (or first when `after` is `null`), as one undoable step.
+/// Opens another file so some of its pages can be put into the working
+/// document, and answers how many it has.
+///
+/// **The first half of inserting from a file, and the half that reads it.**
+/// Nothing is placed here: the reader has chosen a file and has not yet said
+/// which of its pages they want, and a page range cannot be read before the
+/// page count is known. So this opens the file, checks it and holds it
+/// (`edits::Open::pending`), and [`page_import`] places the pages the reader
+/// names; [`page_import_cancel`] is the way out that places nothing.
 ///
 /// **The file is opened as a document of its own**, through the same
 /// `open_handed` the reader's documents take: its own sandboxed worker pool, its
 /// own lazy geometry, parsed nowhere else. The handle that comes back is what
 /// every tile, text and search request for one of these pages names, and it is
-/// owned by the importing document's model --- `edits::Open::sources` --- not by
-/// the webview, which is told it and never closes it. `close_document` does.
+/// owned by the importing document's model --- the pending slot now, and
+/// `edits::Open::sources` once placed --- not by the webview, which is told it
+/// and never closes it. `close_document` does, whichever of the two holds it.
 ///
 /// **One handle per importing document, not one per file across the session.**
 /// Two tabs importing the same file open it twice. Sharing would need a count of
@@ -211,10 +219,16 @@ pub async fn open_document(
 /// the *same* document reuses the first handle, because the model reuses its
 /// id for the same bytes and hands the new one back as `spare`.
 ///
-/// The fingerprint is taken through the handle the service mapped, for the
-/// reason `open_document` gives: two lookups of one name with a gap between them
-/// can describe two different files. A save compares it against the bytes it
-/// hands the writer (`docs/THREAT-MODEL.md` §T6.19).
+/// **The fingerprint is taken here, at prepare, and not at the commit.** It has
+/// to be taken through the handle the service mapped, for the reason
+/// `open_document` gives: two lookups of one name with a gap between them can
+/// describe two different files. Here that handle is in hand; at the commit it
+/// would have to be kept open in the pending slot beside the render handle, for
+/// as long as the reader takes to type a range, to hash the same bytes it
+/// could hash now. Taken now, the commit does no I/O and cannot refuse on a
+/// read after the reader has chosen their pages. A save compares it against the
+/// bytes it hands the writer (`docs/THREAT-MODEL.md` §T6.19), which is what
+/// still catches a file replaced while the question was open.
 ///
 /// An encrypted file is refused here rather than at the save, which refuses it
 /// too: arranging pages that can never be written is work a reader loses.
@@ -222,16 +236,15 @@ pub async fn open_document(
 /// # Errors
 ///
 /// The document is not open; the file will not open, is encrypted, cannot be
-/// read to fingerprint it, or has more pages than a page number holds; or the
-/// model refuses the placement. Every one of them releases the handle.
+/// read to fingerprint it, or has more pages than a page number holds. Every
+/// one of them releases the handle.
 #[tauri::command]
-pub async fn page_import(
+pub async fn page_import_prepare(
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
-    after: Option<u64>,
     path: String,
-) -> Result<edits::EditState, String> {
+) -> Result<edits::PreparedImport, String> {
     // Before anything is opened. A command for a document that is not open
     // would otherwise start a worker pool only to release it.
     if !edits.is_open(doc) {
@@ -246,7 +259,7 @@ pub async fn page_import(
 
     let (reply, rx) = reply_channel();
     service.open_handed(wanted.clone(), Some(file), lazy_geometry(), None, reply);
-    let info: DocumentInfo = await_reply("page_import", rx)
+    let info: DocumentInfo = await_reply("page_import_prepare", rx)
         .await
         .map_err(|refusal: progressive::Refusal| imports::open_refused(&refusal, &name))?;
 
@@ -256,7 +269,7 @@ pub async fn page_import(
 
     let (reply, rx) = reply_channel();
     service.properties(held.id(), reply);
-    let properties = await_reply("page_import", rx)
+    let properties = await_reply("page_import_prepare", rx)
         .await
         .map_err(|why| format!("Could not insert pages from {name}: {why}"))?;
     if properties.encryption.is_some() {
@@ -270,21 +283,74 @@ pub async fn page_import(
     .await
     .map_err(|e| format!("Could not read {name}: {e}"))??;
 
-    let pages = imports::all_pages(info.page_count)?;
+    let pages = imports::page_count(info.page_count)?;
     let source = crate::docmodel::SourceFile {
         path: wanted,
         fingerprint,
-        pages: u32::try_from(pages.len()).expect("all_pages bounded the count"),
+        pages,
     };
-    let imported = edits.import(doc, after, source, pages, held.id())?;
-    // Recorded by the model, so the document owns it now. A handle the model
-    // already had for these bytes comes back as `spare` instead.
-    let kept = held.keep();
-    if let Some(spare) = imported.spare {
-        debug_assert_eq!(spare, kept);
-        release_sources(&service, vec![spare]);
+    let prepared = edits.prepare_import(doc, source, held.id())?;
+    // Held by the document's model now, which releases it at close.
+    let _ = held.keep();
+    if let Some(previous) = prepared.replaced {
+        release_sources(&service, vec![previous]);
     }
-    Ok(imported.state)
+    Ok(edits::PreparedImport {
+        pending: prepared.pending,
+        pages,
+        name,
+    })
+}
+
+/// Puts the pages `pages` of the file [`page_import_prepare`] opened into the
+/// working document, after `after` (or first when `after` is `null`), as one
+/// undoable step.
+///
+/// `pages` are pages of *that* file, zero-based, in the order they are to
+/// appear; the model refuses an empty list, a page the file does not have and
+/// a page named twice. **Every answer but a stale `pending` ends the wait**:
+/// placed, or released on a refusal --- see `edits::Edits::commit_import` --- so
+/// the webview has nothing to release after calling this.
+///
+/// # Errors
+///
+/// The document is not open; `pending` is not the import it is waiting on; or
+/// the model refuses the placement.
+#[tauri::command]
+pub async fn page_import(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    pending: u64,
+    after: Option<u64>,
+    pages: Vec<u32>,
+) -> Result<edits::EditState, String> {
+    let releasing = service.inner().clone();
+    edits.commit_import(doc, pending, after, pages, move |id| {
+        release_sources(&releasing, vec![id]);
+    })
+}
+
+/// Ends an import the reader decided against, releasing the file, and answers
+/// whether there was one to end.
+///
+/// `false` is not an error: the palette reports a dismissal after a commit has
+/// already ended the wait, and a close or a second prepare may have got there
+/// first. Never ends a newer import than the one named. The answer is for the
+/// import window check, which asks a second time after a dismissal and expects
+/// `false` --- the one observable, from the webview, that the first reached here.
+#[tauri::command]
+pub async fn page_import_cancel(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    pending: u64,
+) -> Result<bool, String> {
+    let Some(handle) = edits.cancel_import(doc, pending) else {
+        return Ok(false);
+    };
+    release_sources(&service, vec![handle]);
+    Ok(true)
 }
 
 /// Closes the render handles a document held for the files it imported from.

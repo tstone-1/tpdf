@@ -427,6 +427,15 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "PreparedImport",
+        &edits::PreparedImport {
+            pending: 3,
+            pages: 12,
+            name: "report.pdf".into(),
+        },
+    );
+
+    put(
         "PageMapping",
         &encoding::PageMapping {
             composite: 3,
