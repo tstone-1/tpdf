@@ -551,9 +551,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         await start(); field()!.value = "ÄÖÜ äöü ß"; field()!.dispatchEvent(new Event("input", { bubbles: true }));
         document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
         let refusedInk = ""; try { await host.idle(); } catch (error) { refusedInk = String(error); }
-        check("a shorter draft whose ink escapes the left edge is refused", refusedInk.includes("replacement ink") && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
+        // The leading A overhangs its origin. Every edit has carried the editor's
+        // layout since 26.9.9, and the layout insets such a line by its overhang
+        // (0.0176 pt here) so its ink starts at the box's edge. The refusal this
+        // once expected, "replacement ink would exceed the original text bounds",
+        // is the byte-patch writer's, which the application no longer sends.
+        check("a shorter draft whose ink overhangs the left edge is inset into its box", refusedInk === "" && host.edits()!.state.text_edits?.[0]?.replacement === "ÄÖÜ äöü ß");
         document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
         await host.idle();
+        host.run("edit.undo"); await host.idle();
+        check("undo returns the line to the previous replacement", host.edits()!.state.text_edits?.[0]?.replacement === replacement && (await read()).includes(replacement));
       }
       host.run("file.save"); await host.idle();
       if (!await settle(() => !host.edits()?.state.dirty, SETTLE_MS)) throw new Error("text save did not finish");

@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.14] - Unreleased
+
+### Fixed
+
+- Editing text in many LaTeX, Word and Acrobat documents was refused as too wide
+  for its box, often even when the text was left unchanged. These producers
+  tighten a line by moving letters closer together, and the editor set the
+  text again without those adjustments, so it no longer fitted the space it had
+  always occupied. The editor now keeps the document's own letter and word
+  spacing wherever the text is unchanged, and the text stays exactly where it
+  was. A font size that is not a whole thousandth of a point, which is most
+  sizes LaTeX uses, no longer makes a line a hair too wide for its own box, and
+  a line that the document already clips, as Word often does, is no longer
+  refused for that clip when the edit stays within the line's own ink.
+
 ## [26.9.13] - 2026-09-19
 
 ### Added

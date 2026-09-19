@@ -227,6 +227,8 @@ hop through the index.
 - A budget passed down as `remaining.min(LIMIT)` caps everything charged below it
 - lopdf refuses a comment that ends a content stream with no end of line
 - ttf-parser's CFF `glyph_index` falls back to StandardEncoding for a code the font does not encode
+- Laying a run out again from its glyph widths drops the producer's kerning, and the run no longer fits its own advance
+- A box that shows its size to a thousandth rounds the source size up, and the run's own text no longer fits
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -490,6 +492,7 @@ hop through the index.
 - An edit under an opaque picture changes no pixel, and the round trip calls that a failure
 - A line breaker and an ink check that measure different strings refuse a line that fits
 - A request that names a page without its document asks the right page of the wrong file, and a shared page number hides it
+- The first `Tf` in an edited stream is the source's own, so a test of the written size read the wrong operator
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -23321,3 +23324,51 @@ other slot shows, and assert that **every** request naming it names the other ha
 wrong handle on either path is a request that should not exist. The same care went into the
 search test and the viewer's text test, whose fixtures spell the same letters on page 2 of
 both files so that only the document can tell the answers apart.
+
+### Laying a run out again from its glyph widths drops the producer's kerning, and the run no longer fits its own advance
+
+The text editor sends a layout with every edit (`defaultTextLayout`: a box as wide as the
+run's own advance), so every edit went through `layout::prepare`, which set the run again
+from glyph widths and wrote it as one string. A producer that tightens its lines with `TJ`
+kerning --- pdfTeX, xdvipdfmx, LuaTeX, Word through PDFMaker, Acrobat --- gives a run an
+advance shorter than the sum of its glyph widths, so the run's **unchanged** text came out
+wider than the box it had always occupied and was refused as "Text exceeds the box width".
+Measured on 2026-09-19 over 44,282 runs of the public sample: 48% refused their own text,
+the TeX producers 73 to 95%, ReportLab (no kerning) 0%. The byte-patch writer had kept the
+source's kerns since `kerning.rs` was written, and accepted 85% of the same-length edits the
+editor refused; nothing the editor sends ever reached it, and the earlier round trips that
+passed had been run without a layout, so they tested the writer the application does not use.
+
+Both writers now take their items from `textedit::own_items`: the source's own kerns and
+word gaps wherever the text around them is unchanged, placed at the run's own origin, and
+the run set again only where that does not fit. Two lessons outlast the fix. **Two writers
+behind one feature need one implementation of what they share**, or the one the application
+does not call is the one that gets it right. And **a round trip is a statement about the
+request it sent**: the request has to carry what the application's request carries, here
+the layout, or it proves a different path. `BUILD.md`, *Keeping the source's own positioning
+in the editor's box*, has the before and after.
+
+### A box that shows its size to a thousandth rounds the source size up, and the run's own text no longer fits
+
+The editor's size control shows a thousandth of a point, and `defaultTextLayout` rounds the
+source size **up** to it so the box is never too small. But the layout then set the text at
+that size: pdfTeX's 9.96264 pt became 9.963, a Word run at `Tf 1` under an 11.0417 scale
+became 11.042, and the run was wider than its own advance by about 0.01 pt on a 300 pt line.
+The box check allows 1e-6, so an **unkerned** run was refused unchanged too --- which is why
+fixing the kerning alone did not explain the whole refusal rate, and why the plain `Tj` test
+fixture had to be added before the kerned one could be believed. `layout::own_size` treats a
+requested size within one step of the source's as the source's size, exactly. Rounding a
+display value up is safe only for a quantity the value bounds; for one that is multiplied
+into another measurement, it is an error that grows with the line.
+
+### The first `Tf` in an edited stream is the source's own, so a test of the written size read the wrong operator
+
+The test for `layout::own_size` looked for the written size with
+`operations.iter().find(|op| op.operator == "Tf")` and compared it with the source's size. It
+passed --- and it would have passed with the rounding bug in place, because an edit leaves
+the source's own `BT /F1 12 Tf` in front of the expansion it writes, so the first `Tf` in the
+stream is always the source's. It was caught only because a companion case asked for a size
+that should **not** snap, and read 12 where it had asked for 12.0011. The expansion's `Tf` is
+the second; the tests take `.nth(1)` and say why. An edited stream keeps everything around
+the edit, so a lookup by operator name has to be anchored to the edit, and a test of a
+written value needs a case whose right answer differs from the source's.

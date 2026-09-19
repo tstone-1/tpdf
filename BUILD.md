@@ -9421,3 +9421,124 @@ already has its number: 41% of +10% and 33% of +25% edits fit when the box follo
 none of which needs reflow. After that, reflow is the right feature, and its first half is moving
 the rest of a line rather than wrapping: 82% of the overlaps (17,716 of 21,603 at +25%) are the
 next run on the same line, while wrapping onto a new line is what the 18% leaving the page need.
+
+### Keeping the source's own positioning in the editor's box — measured 2026-09-19
+
+The fix for the verdict above, measured with the same instrument on the same 31 files, macOS
+arm64, release probes built from `49cd191` (before) and from the change (after). The corpus
+digests and the trials are unchanged; `--records` kept each file's raw verdicts, and
+`--compare` diffed them run by run.
+
+```sh
+python3 scripts/textedit_growth.py <text-edit-probe> scratch/reflow-corpus/*.pdf \
+  --manifest testdata/textedit-public-corpus.json --jobs 6 \
+  --output <new report.json> --records <new directory>
+python3 scripts/textedit_growth.py <text-edit-probe> --compare <before records> <after records>
+```
+
+**Cause, as confirmed.** Two, not one. The layout set the run again from glyph widths and
+dropped its `TJ` kerns and word gaps, as the verdict said. But it also set it at the size the
+box sends, which `defaultTextLayout` rounds **up** to a thousandth of a point: pdfTeX's
+9.96264 became 9.963, so an unkerned `Tj` run was refused unchanged too. A synthetic
+`(PLAIN UNKERNED LINE OF TEXT) Tj` at `9.96264 Tf`, and at `Tf 1` under an 11.0417 scale, were
+both refused as box width before the change. Horizontal scaling is not a cause (only `100 Tz`
+is editable); character and word spacing were already carried over. Two smaller causes showed
+up once those were gone: a run whose glyphs reach past its advance or before its origin was
+held to the box (and a left overhang shifted the text right), and a run the document already
+clips (Word 2016 draws a clip around many lines) was refused for that clip.
+
+**Fix.** `textedit::own_items` is now the one place both writers get their items from: the
+source's own items around an unchanged start and end (`kerning.rs`), or where that version does
+not fit, the run written afresh. The layout (`layout::source_items`) uses it for a one-line
+replacement at the run's own font and size, placed at its own origin, with the box width as
+the advance limit and the box or the source's own ink as the ink limit; ink within the source's
+own is not held to a clip the source already had. A requested size within 0.001 pt of the
+source's is the source's (`layout::own_size`). The default box stays the run's own advance,
+kerning included (reason in `defaultTextLayout`'s comment). Anything else, and any
+source-positioned edit that then collides with a line or a clip, is laid out as before; that
+second try is what makes the run-by-run comparison come out at zero.
+
+| Producer | Runs | Unchanged ok % | Same length ok % | 25% shorter ok % | +10% widened ok % | +25% widened ok % | +50% widened ok % |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Acrobat 25 (Arcadia agenda) | 7461 | 70 -> 100 | 67 -> 77 | 100 -> 100 | 38 -> 38 | 29 -> 29 | 23 -> 23 |
+| pdfTeX (arXiv 2003.00976) | 3018 | 27 -> 100 | 16 -> 88 | 100 -> 100 | 27 -> 27 | 17 -> 17 | 13 -> 13 |
+| arXiv GenPDF (arXiv 2509.18965) | 3019 | 22 -> 100 | 18 -> 86 | 100 -> 100 | 56 -> 56 | 34 -> 35 | 24 -> 24 |
+| Word via PDFMaker 20 (Coatesville) | 1681 | 53 -> 98 | 57 -> 64 | 100 -> 100 | 33 -> 35 | 15 -> 15 | 10 -> 10 |
+| XeLaTeX / xdvipdfmx (fontspec) | 6190 | 22 -> 100 | 11 -> 77 | 100 -> 100 | 49 -> 49 | 40 -> 40 | 33 -> 33 |
+| PowerPoint via PDFMaker (Healdsburg) | 60 | 40 -> 100 | 33 -> 46 | 100 -> 100 | 75 -> 75 | 73 -> 73 | 70 -> 70 |
+| Word via PDFMaker 26 (Hugo) | 626 | 77 -> 98 | 77 -> 84 | 100 -> 100 | 31 -> 31 | 24 -> 24 | 18 -> 18 |
+| Word via PDFMaker 22 (Illinois) | 241 | 61 -> 100 | 50 -> 59 | 100 -> 100 | 55 -> 55 | 49 -> 49 | 46 -> 46 |
+| LuaTeX / ConTeXt, pages 1-128 | 10283 | 27 -> 98 | 19 -> 97 | 99 -> 99 | 53 -> 53 | 46 -> 46 | 41 -> 41 |
+| Word 2016 (Mercer Island) | 487 | 2 -> 100 | 1 -> 95 | 43 -> 100 | 15 -> 16 | 15 -> 15 | 13 -> 14 |
+| HM Passport Office guidance | 37 | 46 -> 100 | 46 -> 65 | 100 -> 100 | 84 -> 84 | 78 -> 78 | 54 -> 54 |
+| ReportLab, pages 1-128 | 7335 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 37 -> 37 | 33 -> 33 | 29 -> 29 |
+| pdfTeX (arXiv 1706.03762) | 189 | 5 -> 100 | 3 -> 91 | 100 -> 100 | 63 -> 63 | 49 -> 49 | 28 -> 28 |
+| Google Docs (SampleForms invoice) | 97 | 61 -> 87 | 72 -> 72 | 100 -> 100 | 58 -> 58 | 49 -> 49 | 48 -> 48 |
+| Typst | 228 | 83 -> 100 | 92 -> 100 | 100 -> 100 | 15 -> 15 | 14 -> 14 | 10 -> 10 |
+| IBM afp2pdf, pages 1-128 | 3104 | 92 -> 92 | 96 -> 96 | 92 -> 92 | 10 -> 10 | 10 -> 10 | 7 -> 7 |
+| W3C dummy | 1 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 100 -> 100 |
+| LibreOffice (W3C headers) | 68 | 78 -> 100 | 84 -> 97 | 100 -> 100 | 44 -> 44 | 35 -> 35 | 35 -> 35 |
+| Wellington agenda | 157 | 62 -> 100 | 57 -> 94 | 100 -> 100 | 50 -> 50 | 50 -> 50 | 44 -> 44 |
+| **All runs** | 44282 | 52 -> 99 | 49 -> 88 | 99 -> 99 | 41 -> 41 | 33 -> 33 | 28 -> 28 |
+| **Runs of 20+ characters** | 19632 | 52 -> 98 | 52 -> 86 | 99 -> 99 | 43 -> 44 | 27 -> 27 | 18 -> 18 |
+
+In counts: unchanged 22,992 -> 43,760 of 44,282; same length 18,518 -> 33,534 of 38,108 (the
+byte-patch writer, unchanged, 32,309); 25% shorter 38,463 -> 38,693; widened 18,246 -> 18,342,
+14,523 -> 14,557 and 12,190 -> 12,227 at +10/+25/+50%. "As typed" longer edits stay at 1%: the
+box is still the run's own advance, which the next increment (sizing the box to the text) is for.
+
+- **Run by run: 36,181 verdicts refused before and accepted now, 0 accepted before and refused
+  now**, over all 597,062 (trial, mode) verdicts. A first version without the second try had
+  140 regressions, every one a widened longer edit (Word 2016 70 clip, LuaTeX 38, Acrobat 30
+  and XeLaTeX 2 overlap): kept at the source's origin, a longer text collided where the layout
+  inset by an overhang did not. That is what the comparison is for.
+- **What is still refused unchanged** (522 runs): 260 whose default box already leaves the page
+  (258 in the afp2pdf file), 179 box height, 83 box width. The same-length remainder is mostly a
+  swap next to a kern: `kerning.rs` drops the kern of a changed pair, the text gets wider, and
+  the byte-patch writer refuses those too.
+- **One refusal changed message, not verdict**: for those 260 runs every longer trial now says
+  the box leaves the page rather than that the text is too wide, because the page-edge check
+  runs before the layout is tried twice.
+- **Worker agreement**: 9,309 trials also sent through the contained worker, 0 disagreements.
+  The before sweep reproduced the previous section's table exactly. The driver's `--self-test`
+  now requires the kerned fixture to be accepted unchanged and swapped, and fails on the
+  probe built before the change.
+- Wall time 1,030 s on six processes, as before.
+
+**Round trips with the application's layout** (`--growth-request <file> <page> <op> control
+<default width>`, then `--roundtrip`), on same-length edits refused before by every writer the
+application sends:
+
+| Producer | Before | After | `qpdf --check` | Readback |
+|---|---|---|---|---|
+| pdfTeX (arXiv 2003.00976) | box width | pass | clean | `pdftotext` and pypdf find the replacement |
+| XeLaTeX (fontspec) | box width | pass | clean | both find it |
+| LuaTeX (manual, pages 1-6 extracted with qpdf) | box width | pass | clean | only the two swapped characters differ in `pdftotext` output |
+| Acrobat 25 (Arcadia) | box width | pass | clean | both find it |
+| Word 2016 (Mercer Island) | ink exceeds the box | pass | clean | both find it |
+| arXiv GenPDF | box width | pass | clean | both find it |
+| Word via PDFMaker 20 (Coatesville) | box width | **fails**: pixels outside the edit | | |
+
+"Pass" is the probe's own verdict: the preview and the saved file render identically, and no
+pixel outside the edited run's box changed. The PDFMaker 20 failure is not this change: the
+probe built before it fails the same way on the same run with any box wide enough to be
+accepted (365 and 380 pt tried). The changed pixels are on the following lines of the same
+text block, x 53-71, y 412-576. That block positions every line with a relative `Td`, so the
+layout's closing `Tm`, which restores the line matrix computed in `f64` and written as `f32`,
+is the likely cause: PDFium accumulates the same `Td` chain in single precision, and a
+difference below the 0.0001 pt the writer checks flips anti-aliased pixels further down.
+Unverified; it is the same symptom the LibreOffice round trip above showed.
+
+**The `textedit-overhang` window phase had a stale expectation, found running this change.**
+Two of its 23 checks failed: *"a shorter draft whose ink escapes the left edge is refused"*,
+and *"saved and reopened text matches the unsaved revision"* as a consequence. The first
+required the message *"replacement ink would exceed the original text bounds"*, which only
+the byte-patch writer produces, and since 26.9.9 every edit the editor makes carries a
+layout. The layout path accepts the draft `ÄÖÜ äöü ß` and insets the line by the leading
+Ä's overhang, 0.0234 text units (0.0176 pt), so its ink begins at the box's left edge and
+within the source's own ink. Measured with `--roundtrip` on the same fixture and layout
+(`--growth-request … 0 14 shrink25 131.362`, replacement changed): the probe built from
+`49cd191` and the one built from this change both pass and write **byte-identical** files,
+so this change does not touch that edit; the phase was already failing at `49cd191`. The
+accepted draft then replaced the journal's revision, which is why the save check read other
+text. The phase now expects the draft to be accepted, and undoes it before saving.

@@ -4,6 +4,7 @@
 python3 scripts/textedit_growth.py <text-edit-probe> <input.pdf> ... --output <report.json>
     [--manifest testdata/textedit-public-corpus.json] [--agree-every N] [--jobs N]
 uv run --with pypdf scripts/textedit_growth.py <text-edit-probe> --self-test
+python3 scripts/textedit_growth.py <text-edit-probe> --compare <before-records> <after-records>
 
 Drives `text-edit-probe --growth` once per file (see src/probes/text_edit_growth.rs for
 the trials and modes) and aggregates the verdicts. Refusal messages are sorted into the
@@ -17,6 +18,11 @@ with no layout (`patch`), and with the box widened until its own width is no lon
 the objection (`widened`). What they are not: a population rate (the sample is
 chosen to cover producers), a claim about saving (see `--roundtrip`), or a model of
 text columns. Pages beyond the 128th are not inspected.
+
+`--records <new directory>` keeps each file's raw verdicts (operators and verdicts, no
+text), and `--compare` lists every verdict that was `ok` in the first set of records and
+is not in the second, run by run, so a change that moves the totals up cannot hide one
+that moved individual runs down.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -244,11 +250,12 @@ def self_test(probe):
         tried = report['pages'][0]['tried']
         assert sorted(r['chars'] for r in tried) == [4, 5, 8, 8, 9]
         kerned = next(r for r in tried if r['chars'] == 9)
-        # The editor lays the run out again without the source's kerns, so even the
-        # unchanged text is wider than the box it opens; the byte-patch writer keeps
-        # the kerns of the text it does not change.
-        assert classify(kerned['identity']['app']) == 'box_width', kerned['identity']
-        assert classify(kerned['control']['app']) == 'box_width'
+        # The box the editor opens is the run's own advance, kerns included, and the
+        # layout keeps the source's kerns around a change (until 26.9.14 it laid the
+        # run out again from glyph widths and refused both of these as box width).
+        assert classify(kerned['identity']['app']) == 'ok', kerned['identity']
+        assert classify(kerned['control']['app']) == 'ok', kerned['control']
+        assert classify(kerned['control']['patch']) == 'ok'
         assert classify(kerned['shrink25']['patch']) == 'ok'
         free = next(r for r in tried if r['right'] < 150 and r['chars'] == 8)
         edge = next(r for r in tried if r['right'] > 250)
@@ -278,8 +285,57 @@ def self_test(probe):
         else:
             raise AssertionError('a missing trial was counted')
         assert classify('something new') == 'other'
-    print('[PASS] kerned run refused unchanged in the default box, free line accepted when widened, page edge and same-line neighbour refused, '
+    print('[PASS] kerned run accepted unchanged and swapped in the default box, free line accepted when widened, page edge and same-line neighbour refused, '
           'app and patch refuse every longer edit, worker agrees, missing trials refused')
+
+
+def verdicts(record):
+    """Every (page, operator, trial, mode) and its verdict, from one raw record."""
+    found = {}
+    for page in record['pages']:
+        if page['status'] != 'editable':
+            continue
+        for run in page['tried']:
+            for trial in TRIALS:
+                result = run[trial]
+                if result is None:
+                    continue
+                for mode in ('app', 'patch'):
+                    if mode in result:
+                        found[(page['page'], run['operator'], trial, mode)] = result[mode]
+                if 'widened' in result:
+                    found[(page['page'], run['operator'], trial, 'widened')] = \
+                        result['widened']['verdict']
+    return found
+
+
+def compare(before_dir, after_dir):
+    """Verdicts accepted before and not after, and the counts moved each way."""
+    before_files = sorted(p.name for p in before_dir.glob('*.json'))
+    after_files = sorted(p.name for p in after_dir.glob('*.json'))
+    if not before_files or before_files != after_files:
+        raise SystemExit(f'record sets differ: {before_files} against {after_files}')
+    regressions, gained, same = [], 0, 0
+    for name in before_files:
+        old = json.loads((before_dir / name).read_text(encoding='utf-8'))
+        new = json.loads((after_dir / name).read_text(encoding='utf-8'))
+        if old['sha256'] != new['sha256']:
+            raise SystemExit(f'{name}: the records describe different source bytes')
+        a, b = verdicts(old), verdicts(new)
+        if a.keys() != b.keys():
+            raise SystemExit(f'{name}: the records tried different runs or trials')
+        for key, verdict in a.items():
+            if verdict == 'ok' and b[key] != 'ok':
+                regressions.append((name, *key, b[key]))
+            elif verdict != 'ok' and b[key] == 'ok':
+                gained += 1
+            else:
+                same += 1
+    for regression in regressions:
+        print('[REGRESSION]', json.dumps(regression))
+    print(f'[COMPARE] {len(before_files)} files, {same} verdicts unchanged in kind, '
+          f'{gained} refused before and accepted now, {len(regressions)} accepted before and refused now')
+    return 1 if regressions else 0
 
 
 def main():
@@ -291,7 +347,11 @@ def main():
     parser.add_argument('--agree-every', type=int, default=97)
     parser.add_argument('--jobs', type=int, default=4)
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--records', type=Path)
+    parser.add_argument('--compare', nargs=2, type=Path)
     args = parser.parse_args()
+    if args.compare:
+        raise SystemExit(compare(*args.compare))
     probe = args.probe.resolve(strict=True)
     if args.self_test:
         self_test(probe)
@@ -300,9 +360,15 @@ def main():
         parser.error('provide explicit PDFs and --output')
     if args.output.exists():
         parser.error('output already exists; choose a new report path')
+    if args.records is not None:
+        args.records.mkdir()  # new, so a stale record cannot enter a comparison
     started = time.monotonic()
     with ThreadPoolExecutor(args.jobs) as pool:
         records = list(pool.map(lambda p: measure(probe, p, args.agree_every), args.pdfs))
+    if args.records is not None:
+        for record in records:
+            path = args.records / (Path(record['source']).stem + '.json')
+            path.write_text(json.dumps(record) + '\n', encoding='utf-8')
     summary = aggregate(records, args.manifest)
     summary['probe_sha256'] = digest(probe)
     summary['wall_seconds'] = round(time.monotonic() - started, 1)
