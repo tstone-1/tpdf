@@ -456,7 +456,7 @@ MUTATIONS = [
     Mutation('stream patch: ignore operator identity', 'src/textedit/streams.rs', '!same_operator && !compensated_show', 'false', 'textedit_stream_patch_refuses_disagreement_and_bounds_work'),
     Mutation('stream patch: omit trailing source bytes', 'src/textedit/streams.rs', 'output.extend_from_slice(&bytes[copied..]);', '// trailing source omitted', 'textedit_stream_patch_preserves_coordinates_comments_and_untouched_text_bytes'),
 
-    Mutation('browser state: skip external state validation', 'src/textedit.rs', 'graphics::normal(doc, resources, name)?;', '// external state unchecked', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
+    Mutation('browser state: skip external state validation', 'src/textedit.rs', 'let width = graphics::normal(doc, resources, name)?;', 'let width: Option<f64> = None;', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
     Mutation('browser state: admit unknown effects', 'src/textedit/graphics.rs', '_ => return Err(invalid()),', '_ => {}', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
     Mutation('browser state: admit arbitrary blend mode', 'src/textedit/graphics.rs', 'if name == b"Normal"', 'if !name.is_empty()', 'textedit_graphics_state_refuses_effects_bad_types_and_later_resets_atomically'),
     Mutation('browser state: raise named state bound', 'src/textedit.rs', 'if graphics_states.len() >= 32 {', 'if graphics_states.len() >= 33 {', 'textedit_graphics_state_limits_names_and_refuses_missing_or_malformed_resources'),
@@ -678,7 +678,7 @@ MUTATIONS = [
     Mutation("textedit: accept hidden or clipping text modes", "src/textedit.rs", 'Object::Integer(mode @ 0..=3)', 'Object::Integer(mode @ 0..=7)', "textedit_stroke_styles_refuse_invalid_state_even_before_resets_atomically"),
     Mutation("textedit: default setter positions a following show", "src/textedit.rs", '("Ts", [value]) if number(value)? == 0.0 => {}', '("Ts", [value]) if number(value)? == 0.0 => { positioned = true; }', "textedit_default_setters_do_not_position_a_following_show"),
 
-    Mutation('image: skip image validation', 'src/textedit.rs', 'images::check(doc, resources, name, MAX_IMAGES - image_bytes)?', '0', 'textedit_images_refuse_masks_forms_and_malformed_samples_atomically'),
+    Mutation('image: skip image validation', 'src/textedit.rs', 'let image = images::check(doc, resources, name, MAX_IMAGES - image_bytes)?;', 'let image = images::Image { bytes: 0, stencil: false };', 'textedit_images_refuse_masks_forms_and_malformed_samples_atomically'),
     Mutation('image: reset per-page decoded budget', 'src/textedit.rs', 'images::check(doc, resources, name, MAX_IMAGES - image_bytes)?', 'images::check(doc, resources, name, MAX_IMAGES)?', 'textedit_images_share_decode_budget_and_bound_resource_names'),
     Mutation('image: omit distinct image name limit', 'src/textedit.rs', 'if image_names.len() >= 32 {', 'if false {', 'textedit_images_share_decode_budget_and_bound_resource_names'),
     Mutation('image: omit dimension ceiling', 'src/textedit/images.rs', 'if !(1..=8192).contains(&value) {', 'if value <= 0 {', 'textedit_images_share_decode_budget_and_bound_resource_names'),
