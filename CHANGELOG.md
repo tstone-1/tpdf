@@ -21,8 +21,10 @@ have the binary.)
 
 ### Added
 
-- Insert every page of another PDF after the page you are reading, from the Page
-  menu, the Pages toolbar menu or the palette. One undo takes them all back out.
+- Insert pages of another PDF after the page you are reading, from the Page
+  menu, the Pages toolbar menu or the palette. Once the file is chosen, the
+  palette asks which of its pages: type a range such as `2-5,9`, or leave it
+  blank for every page. One undo takes them all back out.
   The other file is opened in a sandboxed process of its own, so its pages are
   drawn, searched, selected, marked, turned and cropped like the document's own,
   and saving writes them into the file. An encrypted file is refused. Editing

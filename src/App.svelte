@@ -63,6 +63,7 @@
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
   import { namePages } from "./lib/pageranges";
   import { Palette } from "./lib/palette";
+  import { PendingImports } from "./lib/pendingimport";
   import { confirmSignatureSave, askSignatureSave, SaveCancelled } from "./lib/signedsave";
   import { SignatureDialog } from "./lib/signaturedialog";
   import { PropertiesDialog } from "./lib/propertiesdialog";
@@ -620,6 +621,9 @@
     insertBlankPage: () => void insertBlankPage(),
     insertSizedPage: (name) => void insertSizedPage(name),
     importPages: () => void importPages(),
+    pendingImport: () => pendingImports.current(edits?.doc ?? null),
+    insertChosenPages: (pages) => void insertChosenPages(pages),
+    dropImport: () => pendingImports.drop(),
     cropPage: (to) => void cropPage(to),
     redactRegion: () => viewer?.armRedact(),
     redactSelection: () => void redactSelection(),
@@ -1011,20 +1015,36 @@
   }
 
   /**
-   * Puts every page of a file the reader picks after the one they are on.
+   * The insert that is waiting for the reader to say which pages. See
+   * `pendingimport.ts`.
    *
-   * The dialog first and the edit second, and not inside `applyEdit`: the edit
+   * The release is posted rather than awaited, and its answer dropped: the
+   * backend answers `false` for an import it no longer waits on, which is the
+   * ordinary case after a commit, and there is nobody to tell about a cancel
+   * that failed --- the pool goes at the document's close regardless.
+   */
+  const pendingImports = new PendingImports((doc, pending) => {
+    void call("page_import_cancel", { doc, pending }).catch(() => {});
+  });
+
+  /**
+   * Opens a file the reader picks and asks which of its pages to insert after
+   * the one they are on.
+   *
+   * The dialog first and the edit last, and not inside `applyEdit`: the edit
    * queue is what every later command waits behind, and a reader looking at a
-   * file dialog would hold it for as long as they looked. The page is read
-   * again after the dialog for the same reason --- they may have scrolled.
+   * file dialog --- or at the range question --- would hold it for as long as
+   * they looked. The page is read again at the commit for the same reason:
+   * they may have scrolled.
    *
-   * One undo takes the whole file back out. The file is opened by the backend
-   * in a worker pool of its own and kept open until this document closes; a
-   * locked or encrypted file is refused there, in a sentence that says so.
+   * The palette is closed before anything else, which dismisses a range
+   * question still open from an earlier file and so releases that file. Left
+   * open, the question for this file would be asked over it.
    */
   async function importPages(): Promise<void> {
     if (opening || !edits) return;
     const model = edits;
+    palette?.close();
     const picked = await openDialog({
       multiple: false,
       directory: false,
@@ -1037,14 +1057,53 @@
   }
 
   /**
-   * {@link importPages} once the file is chosen: the edit itself, after the
-   * page the reader is on now. Its own function so the window check can reach
-   * the whole path but the dialog, which no harness can answer.
+   * {@link importPages} once the file is chosen: the backend opens and checks
+   * it, and the palette asks for the pages. Its own function so the window
+   * check can reach the whole path but the dialog, which no harness can answer.
+   *
+   * A file that will not open, is encrypted or cannot be read is refused here,
+   * before the question is asked, in the backend's own sentence.
    */
   async function importPagesFrom(path: string): Promise<void> {
+    const model = edits;
+    if (!model) return;
+    let prepared;
+    try {
+      prepared = await model.prepareImport(path);
+    } catch (error) {
+      if (edits === model) say(String(error));
+      return;
+    }
+    // The document went away while the file opened: its close released the
+    // file already, and there is nothing to ask about.
+    if (edits !== model) return;
+    pendingImports.hold(model.doc, prepared);
+    palette?.askFor("edit.insertPages.range");
+  }
+
+  /**
+   * Inserts the pages the reader named of the waiting file, after the page
+   * they are on now. `edits.ts`'s `importPages` releases the file if that page
+   * has gone; the backend releases it if the model refuses.
+   */
+  async function insertChosenPages(pages: number[]): Promise<void> {
+    const model = edits;
+    if (!model) return;
+    const waiting = pendingImports.take(model.doc);
+    if (!waiting) return;
+    const release = () =>
+      void call("page_import_cancel", { doc: waiting.doc, pending: waiting.pending }).catch(() => {});
     const at = viewer?.position.page;
-    if (at === undefined) return;
-    await applyEdit((e) => e.importPages(at, path));
+    if (at === undefined) return release();
+    await applyEdit((e) => {
+      // The queue runs this later, against whichever document is open then.
+      // The file was prepared for `model`, so another one releases it.
+      if (e !== model) {
+        release();
+        return Promise.resolve(e.state);
+      }
+      return e.importPages(at, waiting.pending, pages);
+    });
   }
 
   /**
@@ -2884,6 +2943,7 @@
           close: closeTab,
           run: (id) => { commands.run(id); },
           importPages: (path) => importPagesFrom(path),
+          pendingImport: () => pendingImports.current(edits?.doc ?? null),
           idle: async () => { await pendingEdit; await formLayer?.settle(); await textEditor?.settle(); await documentTasks.idle(); await tick(); },
         })
       )

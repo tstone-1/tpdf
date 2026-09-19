@@ -105,6 +105,56 @@ struct Open {
     /// same bytes, and [`Edits::import`] hands back the second handle rather
     /// than replacing the first, which a page already on screen is using.
     sources: HashMap<crate::docmodel::SourceId, u32>,
+    /// A file opened for an insert whose pages the reader has not chosen yet.
+    ///
+    /// **One per document, and a second prepare hands the first back** rather
+    /// than queueing it: the reader is answering one question about one file,
+    /// and a file they chose and then chose again over is a pool nobody will
+    /// ask about. Owned here for [`sources`](Self::sources)' reason --- the
+    /// webview is told an id and never holds the pool --- so [`Edits::close`]
+    /// hands it back with the rest, and a document closed while the question
+    /// is open cannot leave a worker pool behind it.
+    pending: Option<PendingImport>,
+}
+
+/// A file opened, checked and fingerprinted for an insert, and not yet placed.
+///
+/// What [`Edits::prepare_import`] holds and [`Edits::commit_import`] places.
+/// The fingerprint is in `source` already, taken at prepare: see
+/// `commands::document::page_import_prepare` for why then.
+#[derive(Debug)]
+struct PendingImport {
+    /// The id the webview names it by. Never reused within a session, so an
+    /// answer to a question that has since been replaced is refused rather
+    /// than applied to the file that replaced it.
+    id: u64,
+    /// The render service's handle for the file.
+    handle: u32,
+    source: crate::docmodel::SourceFile,
+}
+
+/// What [`Edits::prepare_import`] answers.
+#[derive(Debug)]
+#[must_use = "a replaced handle is a worker pool nobody else will close"]
+pub struct Prepared {
+    /// The id a commit or a cancel names this import by.
+    pub pending: u64,
+    /// The handle of an import this one replaced, which the caller releases.
+    pub replaced: Option<u32>,
+}
+
+/// What `page_import_prepare` answers: the file is open and waiting for pages.
+///
+/// Field names are the Rust identifiers, for [`PageView`]'s reason.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct PreparedImport {
+    /// The id `page_import` and `page_import_cancel` name it by.
+    pub pending: u64,
+    /// How many pages the file has, which is what a page range is read against.
+    pub pages: u32,
+    /// The file's name without its directories, for the question the reader is
+    /// asked. Never parsed.
+    pub name: String,
 }
 
 /// One page as the frontend sees it.
@@ -580,6 +630,12 @@ pub struct SourceView {
 #[derive(Clone, Default)]
 pub struct Edits {
     docs: Arc<Mutex<HashMap<u32, Open>>>,
+    /// The last id [`Edits::prepare_import`] issued, across every document.
+    ///
+    /// Across documents rather than per document so that an id cannot be
+    /// right for a document it was not issued to: document numbers are reused,
+    /// and a per-document counter would start again at the same number.
+    last_pending: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Runs the fingerprint, and answers `None` rather than unwinding.
@@ -659,6 +715,7 @@ impl Edits {
                 opened_as,
                 to_hash,
                 sources: HashMap::new(),
+                pending: None,
             },
         );
     }
@@ -784,6 +841,9 @@ impl Edits {
             return Vec::new();
         };
         let mut held: Vec<u32> = open.sources.into_values().collect();
+        // An import still waiting for its pages is a pool like the others, and
+        // this is the only place it would otherwise be forgotten.
+        held.extend(open.pending.map(|pending| pending.handle));
         held.sort_unstable();
         held
     }
@@ -1036,6 +1096,105 @@ impl Edits {
             state: reply(open),
             spare,
         })
+    }
+
+    /// Holds a file the reader chose, opened and checked, until they say which
+    /// of its pages to insert.
+    ///
+    /// **The handle is this layer's from the moment this answers `Ok`**, which
+    /// is when the caller stops owning it; before that, and on a refusal, it is
+    /// still the caller's to release. The answer's `replaced` is the handle of
+    /// an import this document was already waiting on, and the caller releases
+    /// that one too --- see [`Open::pending`] for why there is only one.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document.
+    pub fn prepare_import(
+        &self,
+        doc: u32,
+        source: crate::docmodel::SourceFile,
+        handle: u32,
+    ) -> Result<Prepared, String> {
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let id = self
+            .last_pending
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        let replaced = open
+            .pending
+            .replace(PendingImport { id, handle, source })
+            .map(|previous| previous.handle);
+        Ok(Prepared {
+            pending: id,
+            replaced,
+        })
+    }
+
+    /// Places the pages `pages` of the file `pending` names, after `after`,
+    /// and ends the wait for it.
+    ///
+    /// **The waiting import is taken before the model is asked**, so a refusal
+    /// cannot leave it behind: from the take on, the handle is held by an
+    /// [`imports::Held`](crate::imports::Held) that releases it through
+    /// `release` unless the model records it. So every answer but a stale id
+    /// ends the pending import --- placed, or released --- and the webview has
+    /// nothing to clean up after a commit.
+    ///
+    /// `release` is a closure for [`Held`](crate::imports::Held)'s reason: the
+    /// rule is testable without a render service. It is also what releases a
+    /// `spare`, when the document already held this file.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; `pending` is not the import this
+    /// document is waiting on, which is left waiting; or anything [`Doc::import`]
+    /// refuses, which releases the file.
+    pub fn commit_import(
+        &self,
+        doc: u32,
+        pending: u64,
+        after: Option<u64>,
+        pages: Vec<u32>,
+        release: impl FnOnce(u32) + Clone,
+    ) -> Result<EditState, String> {
+        let taken = {
+            let mut docs = self.docs.lock().expect("edits lock");
+            let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+            if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {
+                return Err(format!(
+                    "the file chosen for that insert is no longer open ({pending})"
+                ));
+            }
+            open.pending
+                .take()
+                .expect("the id matched a waiting import")
+        };
+        let held = crate::imports::Held::new(taken.handle, release.clone());
+        let imported = self.import(doc, after, taken.source, pages, held.id())?;
+        let kept = held.keep();
+        if let Some(spare) = imported.spare {
+            debug_assert_eq!(spare, kept);
+            release(spare);
+        }
+        Ok(imported.state)
+    }
+
+    /// Ends the wait for `pending` without placing anything, answering the
+    /// handle to release.
+    ///
+    /// `None` when the document is not waiting on that id --- it was placed,
+    /// replaced, cancelled or closed already --- so a cancel that arrives late
+    /// releases nothing twice and never ends a newer import.
+    #[must_use = "the handle is the other file's worker pool, and only the caller can close it"]
+    pub fn cancel_import(&self, doc: u32, pending: u64) -> Option<u32> {
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc)?;
+        if open.pending.as_ref().map(|waiting| waiting.id) != Some(pending) {
+            return None;
+        }
+        open.pending.take().map(|waiting| waiting.handle)
     }
 
     /// Puts a highlight on a page, over the rectangles the reader dragged across.
@@ -3423,6 +3582,184 @@ mod tests {
             edits.import(8, None, other_file(2), vec![0], 40).is_err(),
             "a document that is not open refuses too"
         );
+    }
+
+    /// A recorder for the handles a commit releases.
+    fn releases() -> (
+        std::rc::Rc<std::cell::RefCell<Vec<u32>>>,
+        impl FnOnce(u32) + Clone,
+    ) {
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let pushing = std::rc::Rc::clone(&seen);
+        (seen, move |id| pushing.borrow_mut().push(id))
+    }
+
+    /// A file waiting for its pages is handed back when its document closes.
+    ///
+    /// The case the pending slot exists for: a reader who closes the tab while
+    /// the range question is open has no other route to that pool.
+    #[test]
+    fn closing_a_document_releases_the_file_waiting_for_its_pages() {
+        let edits = opened();
+        let prepared = edits.prepare_import(7, other_file(4), 40).expect("prepare");
+        assert_eq!(prepared.replaced, None);
+        assert_eq!(
+            edits.state(7).expect("state").pages.len(),
+            3,
+            "a prepare places nothing"
+        );
+        assert_eq!(edits.close(7), vec![40]);
+        assert!(edits.close(7).is_empty(), "and only once");
+    }
+
+    /// A second prepare hands the first file back, and its id stops working.
+    #[test]
+    fn a_second_prepare_replaces_the_first_and_hands_it_back() {
+        let edits = opened();
+        let first = edits.prepare_import(7, other_file(4), 40).expect("first");
+        let second = edits
+            .prepare_import(7, another_file(2), 41)
+            .expect("second");
+        assert_eq!(second.replaced, Some(40), "the caller releases the first");
+        assert_ne!(first.pending, second.pending);
+        let (released, release) = releases();
+        assert!(
+            edits
+                .commit_import(7, first.pending, None, vec![0], release)
+                .is_err(),
+            "an answer to the replaced question is refused"
+        );
+        assert!(released.borrow().is_empty(), "and releases nothing");
+        assert_eq!(edits.close(7), vec![41], "the second is still waiting");
+    }
+
+    /// A cancel hands the file back once, and never a newer one.
+    #[test]
+    fn a_cancel_hands_back_the_file_it_names_and_only_that_one() {
+        let edits = opened();
+        let first = edits.prepare_import(7, other_file(4), 40).expect("first");
+        assert_eq!(edits.cancel_import(7, first.pending), Some(40));
+        assert_eq!(edits.cancel_import(7, first.pending), None, "only once");
+        let second = edits.prepare_import(7, other_file(4), 41).expect("second");
+        assert_eq!(
+            edits.cancel_import(7, first.pending),
+            None,
+            "a late cancel does not end the import that followed it"
+        );
+        assert_eq!(
+            edits.cancel_import(8, second.pending),
+            None,
+            "nor another document's"
+        );
+        assert_eq!(edits.close(7), vec![41]);
+    }
+
+    /// A commit places exactly the pages named, in the order named, and ends
+    /// the wait by recording the handle rather than releasing it.
+    #[test]
+    fn a_commit_places_exactly_the_pages_it_names() {
+        let edits = opened();
+        let first = edits.state(7).expect("open").pages[0].id;
+        let prepared = edits.prepare_import(7, other_file(5), 40).expect("prepare");
+        let (released, release) = releases();
+        let state = edits
+            .commit_import(7, prepared.pending, Some(first), vec![1, 2, 4], release)
+            .expect("commit");
+        let placed: Vec<u32> = state
+            .pages
+            .iter()
+            .filter_map(|page| match page.source {
+                PageSource::Imported { page, .. } => Some(page),
+                PageSource::Baseline(_) | PageSource::Blank(_) => None,
+            })
+            .collect();
+        assert_eq!(placed, vec![1, 2, 4], "those pages and no others");
+        assert!(
+            matches!(state.pages[1].source, PageSource::Imported { page: 1, .. }),
+            "after the page named: {:?}",
+            state.pages[1]
+        );
+        assert_eq!(state.pages.len(), 6);
+        assert!(released.borrow().is_empty(), "the handle was recorded");
+        assert_eq!(
+            state
+                .sources
+                .iter()
+                .map(|view| view.doc)
+                .collect::<Vec<_>>(),
+            vec![40]
+        );
+        assert_eq!(
+            edits.cancel_import(7, prepared.pending),
+            None,
+            "nothing is waiting after a commit"
+        );
+        assert_eq!(
+            edits.close(7),
+            vec![40],
+            "and the handle ends with the document"
+        );
+    }
+
+    /// A commit the model refuses releases the file, so nothing is left waiting.
+    #[test]
+    fn a_refused_commit_releases_the_file() {
+        let edits = opened();
+        let prepared = edits.prepare_import(7, other_file(2), 40).expect("prepare");
+        let (released, release) = releases();
+        assert!(edits
+            .commit_import(7, prepared.pending, None, vec![2], release)
+            .is_err());
+        assert_eq!(*released.borrow(), vec![40]);
+        assert!(edits.state(7).expect("state").sources.is_empty());
+        assert!(edits.close(7).is_empty(), "nothing to release twice");
+    }
+
+    /// An id nobody issued, or one for another document, is refused and leaves
+    /// the waiting import alone.
+    #[test]
+    fn a_commit_naming_an_import_nobody_is_waiting_on_is_refused() {
+        let edits = opened();
+        edits.open(8, 2, None);
+        let prepared = edits.prepare_import(7, other_file(2), 40).expect("prepare");
+        let (released, release) = releases();
+        assert!(edits
+            .commit_import(7, prepared.pending + 1, None, vec![0], release.clone())
+            .is_err());
+        assert!(edits
+            .commit_import(8, prepared.pending, None, vec![0], release.clone())
+            .is_err());
+        assert!(edits
+            .commit_import(9, prepared.pending, None, vec![0], release)
+            .is_err());
+        assert!(released.borrow().is_empty());
+        assert_eq!(edits.state(7).expect("state").pages.len(), 3);
+        assert_eq!(edits.close(7), vec![40], "still waiting");
+    }
+
+    /// Committing a file the document already holds hands back the new handle.
+    #[test]
+    fn committing_a_file_already_held_releases_the_second_handle() {
+        let edits = opened();
+        let (released, release) = releases();
+        let first = edits.prepare_import(7, other_file(2), 40).expect("first");
+        edits
+            .commit_import(7, first.pending, None, vec![0], release.clone())
+            .expect("first commit");
+        let again = edits.prepare_import(7, other_file(2), 41).expect("again");
+        edits
+            .commit_import(7, again.pending, None, vec![1], release)
+            .expect("second commit");
+        assert_eq!(*released.borrow(), vec![41]);
+        assert_eq!(edits.close(7), vec![40]);
+    }
+
+    /// A prepare for a document that is not open is refused and holds nothing.
+    #[test]
+    fn a_prepare_for_no_document_is_refused() {
+        let edits = opened();
+        assert!(edits.prepare_import(8, other_file(2), 40).is_err());
+        assert!(edits.close(7).is_empty());
     }
 
     /// The handles are in the reply and never in the plan a worker is sent.

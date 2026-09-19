@@ -45,6 +45,12 @@ import type { MarkKind, StampName } from "./pages";
 import type { Tab } from "./sidebar";
 import type { Viewer } from "./viewer";
 import { MAX_ZOOM, MIN_ZOOM, parseZoomPercent, percentOf } from "./zoom";
+import {
+  chosenPages,
+  rangePlaceholder,
+  rangePreview,
+  type PreparedImport,
+} from "./pendingimport";
 
 /**
  * What each stamp is called in the palette.
@@ -172,6 +178,19 @@ export interface AppActions {
    * `edits.ts`'s `importPages`.
    */
   importPages(): void;
+  /**
+   * The file `importPages` opened and is waiting to be told which pages of, or
+   * null. Read by the range question's `enabled`, title and placeholder, so it
+   * is asked at the moment the palette asks rather than captured.
+   */
+  pendingImport(): PreparedImport | null;
+  /**
+   * Insert these pages of the waiting file, zero-based and in its order, after
+   * the page the reader is on.
+   */
+  insertChosenPages(pages: number[]): void;
+  /** Stop waiting for an answer, releasing the file. See `pendingimport.ts`. */
+  dropImport(): void;
   /**
    * Crop the page the reader is on to the box its ink occupies, or put the
    * file's own box back.
@@ -1250,13 +1269,59 @@ export function registerAppCommands(
       // id that bullet has named since before it was built. The ellipsis is a
       // promise the title keeps: a dialog asks which file.
       //
-      // Every page of the file, in its own order, after the page being read ---
-      // one undo takes them all back out. Choosing *which* pages is not built;
-      // `docs/PLAN.md` says what it would cost.
+      // Which pages is asked next, by `edit.insertPages.range` below; the ones
+      // chosen land in the file's own order after the page being read, and one
+      // undo takes them all back out.
       id: "edit.insertPages",
       title: "Insert pages from file...",
       enabled: withDocument,
       run: () => actions.importPages(),
+    },
+    {
+      // The second question `edit.insertPages` asks, once the file is open and
+      // its page count known: which of its pages. Reached only through that
+      // command, which opens the palette straight into it with `askFor` --- so
+      // it is enabled only while a file is waiting, and a disabled command is
+      // not listed, which keeps it out of the palette the rest of the time
+      // rather than showing a row that does nothing.
+      //
+      // **A blank answer is every page**, which is what the command did before
+      // it asked. `chosenPages` has why extract does not share that default.
+      //
+      // `dismissed` is the other half of the pair and not optional here: the
+      // file is open in a worker pool while this asks, and a reader who presses
+      // Escape has decided against it. The parse runs in each callback for
+      // `file.extractPages`' reason.
+      id: "edit.insertPages.range",
+      get title() {
+        const file = actions.pendingImport();
+        return file ? `Insert pages from ${file.name}` : "Insert pages from the chosen file";
+      },
+      enabled: () => withDocument() && actions.pendingImport() !== null,
+      argument: {
+        get placeholder() {
+          const file = actions.pendingImport();
+          return file ? rangePlaceholder(file) : "Pages";
+        },
+        problem: (raw: string) => {
+          const file = actions.pendingImport();
+          if (!file) return "No file is waiting to be inserted";
+          return chosenPages(raw, file).problem ?? null;
+        },
+        preview: (raw: string) => {
+          const file = actions.pendingImport();
+          return file ? rangePreview(raw, file) : "";
+        },
+        run: (raw: string) => {
+          const file = actions.pendingImport();
+          const range = file ? chosenPages(raw, file) : null;
+          // Unreachable through the palette, which refuses to run a command
+          // whose `problem` answered; a guard for `file.extractPages`' reason.
+          if (!range?.slots) return;
+          actions.insertChosenPages(range.slots);
+        },
+        dismissed: () => actions.dropImport(),
+      },
     },
     {
       // No binding either, and for a different reason than the deletion above:

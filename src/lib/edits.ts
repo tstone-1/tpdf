@@ -31,6 +31,7 @@ import {
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
 import { INK_WIDTH } from "./markband";
+import type { PreparedImport } from "./pendingimport";
 
 // Re-exported because this is the module a reader of the edit state comes to
 // first, and the declaration lives in `pages.ts` so that the modules which only
@@ -347,20 +348,39 @@ export class Edits {
   }
 
   /**
-   * Puts every page of the file at `path` after the page in slot `after`, or at
-   * the front when `after` is `null`, as one undoable step.
+   * Opens the file at `path` so some of its pages can be inserted, and answers
+   * how many it has.
+   *
+   * Nothing is placed: the backend opens the file in a worker pool of its own,
+   * checks it and holds it for this document, and {@link importPages} places
+   * the pages the reader then names. `pendingimport.ts` has why it is two
+   * calls.
+   */
+  async prepareImport(path: string): Promise<PreparedImport> {
+    return call("page_import_prepare", { doc: this.doc, path });
+  }
+
+  /**
+   * Puts the pages `pages` of the file {@link prepareImport} opened after the
+   * page in slot `after`, or at the front when `after` is `null`, as one
+   * undoable step.
    *
    * {@link insertPage}'s shape, and the same distinction between `null` and a
-   * stale slot. The backend opens the file in a worker pool of its own and
-   * keeps the handle for the life of this document; the reply names it in
-   * `sources`, and {@link adopt} writes it onto the new pages.
+   * stale slot --- with one difference that matters: **a stale slot releases
+   * the file** rather than sending nothing. Nothing else would, since the
+   * question has been answered and `pendingimport.ts` has forgotten it. The
+   * reply names the file's handle in `sources`, and {@link adopt} writes it
+   * onto the new pages.
    */
-  async importPages(after: number | null, path: string): Promise<EditState> {
+  async importPages(after: number | null, pending: number, pages: number[]): Promise<EditState> {
     const anchor =
       after === null ? null : (this.current.pages[after]?.id ?? undefined);
-    if (anchor === undefined) return this.current;
+    if (anchor === undefined) {
+      await call("page_import_cancel", { doc: this.doc, pending });
+      return this.current;
+    }
     return this.adopt(
-      await call("page_import", { doc: this.doc, after: anchor, path }),
+      await call("page_import", { doc: this.doc, pending, after: anchor, pages }),
     );
   }
 

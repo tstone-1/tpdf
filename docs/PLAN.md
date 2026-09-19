@@ -13101,13 +13101,84 @@ past the dialog, and checks that they are drawn from a handle that is not the op
 the imported page's text is the other file's, that a search finds a word on it, that one undo
 and one redo move all of them, and that a save writes them into the file.
 
-**Not done:** choosing which pages of the other file to insert (a range prompt; every page is
-inserted today); following a web link or reading the outline of the other file; editing an
+**Not done:** following a web link or reading the outline of the other file; editing an
 imported page's text before a save; the character-mapping warning for an imported page;
 and a truncated other file stops the viewer asking for tiles for the whole document rather
 than for that file's pages, because `DocumentGone` is one flag per scroller. The merge and the
 image-only redaction of a document holding imported pages stay refused, as increment 1 left
 them.
+
+#### Which pages of the other file — done 2026-09-19
+
+The first item of the *Not done* above. After the file dialog, the palette asks
+*"Pages of report.pdf (1-12); blank for all"*; a range such as `2-5,9` inserts those pages of
+the file, in the file's order, and a blank answer inserts every page, which is what the
+command did before it asked.
+
+##### The command is two now, because the range needs the count
+
+A page range cannot be read before the file's page count is known, and the count is known
+only once the file is open. So `page_import` split into three commands: `page_import_prepare`
+opens the file, checks it and holds it, and answers `{pending, pages, name}`; `page_import`
+places the pages the reader named; `page_import_cancel` places nothing. The file is held in
+`edits::Open::pending` --- beside `sources`, and for the same reason: the webview is told an
+id, never the pool, and `Edits::close` hands the waiting file back with the others, so a tab
+closed while the question is open cannot leave a pool behind. One per document; a second
+prepare hands the first back.
+
+**The design said the slot would hold the `imports::Held` guard, and it holds the raw handle
+instead.** `Held` carries a closure that calls the render service, and `edits` is the layer
+that never touches the service --- `close` already answers handles for its caller to release
+rather than releasing them. So the slot is a handle, `prepare_import` and `close` answer it,
+and the guard is taken again at the commit: `Edits::commit_import` takes the waiting file out
+of the slot *before* asking the model, wraps the handle in a `Held`, and keeps it only once
+the model has recorded it. A refused commit therefore releases the file rather than leaving
+it waiting, and every answer but a stale id ends the wait --- which is what lets the webview
+forget the question the moment it answers. Ids come from one counter across documents,
+because document numbers are reused and a per-document counter would repeat.
+
+**The fingerprint is taken at prepare**, through the same descriptor the service mapped, for
+`open_document`'s reason. Taking it at the commit would mean keeping that descriptor open in
+the slot for as long as the reader takes to type, to hash bytes that could be hashed now; taken
+now, the commit does no I/O and cannot refuse on a read after the pages are chosen. What still
+catches a file replaced while the question was open is the save's digest check (§T6.19).
+
+##### The palette's question, and its dismissal
+
+`edit.insertPages.range` is an argument command, enabled only while a file is waiting, so the
+palette lists it at no other time; `edit.insertPages` reaches it with `askFor`. Its title and
+placeholder are getters, because they name a file chosen after the registry was built. The
+waiting file lives in `src/lib/pendingimport.ts`, not in `App.svelte`: which document it is
+for, that a replaced one is released, that an answer arriving on another tab is released
+rather than inserted there, and that a blank answer is every page. `chosenPages` rewords
+`parsePageRange`'s *"This document has 8 pages"* to name the file, since the document on screen
+has another count.
+
+**A dismissed question releases the file**, and that needed a hook the palette did not have.
+`CommandArgument.dismissed` is called by `Palette.leave`, which every route out of argument
+mode but a submit now goes through --- Escape back to the list, a close, a click on the
+backdrop, reopening, asking again --- and by a submit the registry refuses to run. Before this
+each of those routes set `asking` to null itself, and a sixth written that way would have been
+the one that leaked. `edit.insertPages` closes the palette before it opens the dialog, so a
+question still open for an earlier file is dismissed rather than asked over.
+
+##### What was measured
+
+Rust: eight tests in `edits` (close releases a waiting file; a second prepare hands back the
+first; a cancel names only its own import; a commit places exactly the pages named; a refused
+commit releases; a stale or foreign id is refused and leaves the wait alone; a file already
+held gives back the second handle; a prepare for no document is refused) and a reply sample,
+`PreparedImport.json`. TypeScript: eleven in `pendingimport`, eight in `appcommands` for the
+command, six in a new `palette.test.ts` for the dismissal hook, three in `edits`. Mutations:
+six Rust and fourteen frontend, each caught by the test named for it; one Rust and two frontend
+re-aimed because their lines moved, and re-run.
+
+**Not measured, and written for the window check:** `tabs_check.py --phase import` now opens
+`text-base14.pdf` and inserts from `links.pdf` (eight pages whose text differs) --- the roles
+swapped, since the other file needs pages to choose among. It dismisses the question and checks
+nothing was placed and that a second cancel finds nothing to end; answers `2-N` and checks
+exactly those pages arrive in order, the first reading as the file's second; and answers blank,
+which the rest of the phase then checks as before.
 
 #### Deleting a comment the file came with — done 2026-08-30
 

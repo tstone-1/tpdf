@@ -359,6 +359,15 @@ export const NOT_IN_MENU: { prefix: string; reason: string }[] = [
       "menu that follows it needs rebuilding with it — File > Open Recent is " +
       "worth having and is its own piece of work",
   },
+  {
+    // The whole id, not a family: a prefix one character shorter would
+    // exclude `edit.insertPages` too, which is in the Page menu.
+    prefix: "edit.insertPages.range",
+    reason:
+      "the second question Insert pages from file... asks, offered only while " +
+      "a file it opened is waiting; a menu item would be greyed at every other " +
+      "moment and do nothing the item before it does not",
+  },
 ];
 
 /**

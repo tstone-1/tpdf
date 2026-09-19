@@ -33,6 +33,7 @@ import { basename } from "./paths";
 import { SIDEBAR_CLASS } from "./sidebar";
 import type { Viewer } from "./viewer";
 import type { Edits } from "./edits";
+import type { PendingImport } from "./pendingimport";
 
 /** How long to wait for a document that should already be on its way. */
 const SETTLE_MS = 20_000;
@@ -72,10 +73,13 @@ export interface OpenCheckHost {
   close: (id: number) => Promise<void>;
   run: (id: string) => void;
   /**
-   * `edit.insertPages` past its dialog: the same edit, after the page the
-   * reader is on, with the file named rather than picked.
+   * `edit.insertPages` past its dialog: the file named rather than picked,
+   * opened, and the palette asking which of its pages --- which the phase then
+   * answers or dismisses through the palette's own input.
    */
   importPages: (path: string) => Promise<void>;
+  /** The file waiting for its pages to be named, as the palette sees it. */
+  pendingImport: () => PendingImport | null;
   idle: () => Promise<void>;
 }
 
@@ -158,9 +162,13 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     }
     case "import": {
       // `edit.insertPages`, end to end but the dialog: `first` is the opened
-      // document and `second` a different file, whose pages must differ in
-      // their text from the first's or the checks on *which* file answered
-      // cannot fail. `tabs_check.py --phase import --other <pdf>` supplies it.
+      // document and `other` a different file of at least three pages, whose
+      // pages differ in their text from each other and from the first's, or
+      // the checks on *which* page answered cannot fail.
+      // `tabs_check.py --phase import --other <pdf>` supplies it.
+      //
+      // Three passes over the same file: the question dismissed, a range, and
+      // a blank answer --- every page --- which the rest of the phase reads.
       const [first, other] = expected.split("|");
       if (!first || !other) throw new Error("the opened fixture and another file are required");
       await host.open(first); await host.idle();
@@ -172,12 +180,73 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const before = model.state.pages.length;
       const theirs = async (doc: number, page: number) =>
         String.fromCodePoint(...(await call("page_text", { doc, page: filePage(page), crop: null })).codes);
+      // The palette's real input, through its real listeners: the dismissal is
+      // what releases the file, and a check that called the release itself
+      // would be testing a second route to it.
+      const field = () => document.querySelector<HTMLInputElement>(".tpdf-palette input");
+      const key = (k: string) =>
+        field()?.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+      const answer = (text: string) => {
+        const input = field();
+        if (!input) throw new Error("the palette has no input");
+        input.value = text;
+        input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        key("Enter");
+      };
       host.viewer()!.goToPage(0); await quiet();
-      await host.importPages(other); await host.idle(); await quiet();
+
+      await host.importPages(other);
+      const asked = host.pendingImport();
+      const prompt = field()?.placeholder ?? "";
+      report.check("the palette asks which pages of the file, naming it and its count",
+        asked !== null && prompt === `Pages of ${asked.name} (1-${asked.pages}); blank for all`, prompt);
+      if (!asked) break;
+      if (asked.pages < 3) throw new Error(`the other file needs three pages and has ${asked.pages}`);
+      report.check("asking places nothing", host.edits()!.state.pages.length === before,
+        String(host.edits()!.state.pages.length));
+      key("Escape"); key("Escape"); await host.idle();
+      report.check("dismissing the question inserts nothing and forgets the file",
+        host.edits()!.state.pages.length === before && host.pendingImport() === null,
+        JSON.stringify({ pages: host.edits()!.state.pages.length, waiting: host.pendingImport() }));
+      // The dismissal's own release is posted, not awaited, so it is given a
+      // moment to land. A second release then finds nothing to end; one that
+      // finds the file still held means the dismissal never reached the backend.
+      await pause(300);
+      const stillHeld = await call("page_import_cancel", { doc: model.doc, pending: asked.pending });
+      report.check("and the backend is no longer holding it", !stillHeld, String(stillHeld));
+
+      await host.importPages(other);
+      const count = host.pendingImport()?.pages ?? 0;
+      answer(`2-${count}`); await host.idle(); await quiet();
+      const ranged = host.edits()!.state;
+      const placed = ranged.pages.slice(1, count).map((page) => ("imported" in page.source ? page.source.imported.page : -1));
+      const wanted = Array.from({ length: count - 1 }, (_, index) => index + 1);
+      report.check("a range inserts exactly those pages of the file, in its order, after the page being read",
+        ranged.pages.length === before + count - 1 && placed.join() === wanted.join() &&
+        !("imported" in (ranged.pages[0]?.source ?? {})),
+        JSON.stringify({ pages: ranged.pages.length, placed }));
+      const rangedFrom = ranged.sources?.[0]?.doc;
+      if (rangedFrom !== undefined) {
+        const second = await theirs(rangedFrom, 1);
+        report.check("the file's first and second pages differ, so the next check can fail",
+          second !== await theirs(rangedFrom, 0), "import");
+        host.viewer()!.goToPage(1); await quiet();
+        if (!await settle(() => host.viewer()?.textOn(1) != null, SETTLE_MS)) throw new Error("the ranged page's text did not arrive");
+        const shownRanged = String.fromCodePoint(...host.viewer()!.textOn(1)!.codes);
+        report.check("the first page inserted is the file's second", shownRanged === second,
+          JSON.stringify({ shown: shownRanged.slice(0, 40), expected: second.slice(0, 40) }));
+      }
+      host.run("edit.undo"); await host.idle(); await quiet();
+      report.check("one undo takes the range back out", host.edits()!.state.pages.length === before,
+        String(host.edits()!.state.pages.length));
+      host.viewer()!.goToPage(0); await quiet();
+
+      await host.importPages(other);
+      answer(""); await host.idle(); await quiet();
       const after = host.edits()!.state;
       const source = after.sources?.[0];
-      report.check("the other file's pages follow the page being read",
-        after.pages.length > before && "imported" in (after.pages[1]?.source ?? {}),
+      report.check("a blank answer inserts every page of the file after the page being read",
+        after.pages.length === before + count && "imported" in (after.pages[1]?.source ?? {}),
         JSON.stringify({ before, after: after.pages.length }));
       report.check("they are drawn from a handle that is not the opened document's",
         source !== undefined && source.doc !== model.doc && after.pages[1]?.from === source.doc,

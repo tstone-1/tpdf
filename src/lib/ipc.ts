@@ -67,6 +67,7 @@ import type {
 } from "./search";
 import type { Place, Session } from "./session";
 import type { PageText } from "./text";
+import type { PreparedImport } from "./pendingimport";
 
 /**
  * Page geometry in PDF points.
@@ -232,10 +233,15 @@ export interface Commands {
     };
     reply: EditState;
   };
+  page_import_prepare: {
+    args: { doc: number; path: string };
+    reply: PreparedImport;
+  };
   page_import: {
-    args: { doc: number; after: PageId | null; path: string };
+    args: { doc: number; pending: number; after: PageId | null; pages: number[] };
     reply: EditState;
   };
+  page_import_cancel: { args: { doc: number; pending: number }; reply: boolean };
   annot_mark: { args: { doc: number; mark: NewMark }; reply: EditState };
   annot_remove: {
     args: { doc: number; mark: number; sweep: number };

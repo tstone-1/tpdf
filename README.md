@@ -163,14 +163,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   measured against a page of the file and a redaction removes content, and a page tpdf
   made has neither — so both are refused when you try rather than lost when you save.
   <!-- built: edit.insertBlankPage edit.insertPage.a4 edit.insertPage.a3 edit.insertPage.a5 edit.insertPage.letter edit.insertPage.legal -->
-- **Insert the pages of another file** after the one you are reading — every page of it,
-  in its own order, as one step that one undo takes back out. The other file is opened the
-  way a document is, in a sandboxed process of its own, so its pages are drawn, searched,
-  selected, marked, turned and cropped like the document's own, and saving writes them into
-  the file. Three things wait for that save: editing their text, following a web link on
-  them, and redacting anything in a document that holds them. An encrypted file is refused,
-  and choosing only some of its pages is not built yet.
-  <!-- built: edit.insertPages -->
+- **Insert the pages of another file** after the one you are reading — every page of it, or
+  a range you type such as `2-5,9`, in its own order, as one step that one undo takes back
+  out. The other file is opened the way a document is, in a sandboxed process of its own,
+  so its pages are drawn, searched, selected, marked, turned and cropped like the
+  document's own, and saving writes them into the file. Three things wait for that save: editing their text, following a web link on
+  them, and redacting anything in a document that holds them. An encrypted file is refused.
+  <!-- built: edit.insertPages edit.insertPages.range -->
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
   file on disk.
