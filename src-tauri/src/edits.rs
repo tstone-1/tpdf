@@ -84,6 +84,27 @@ struct Open {
     /// there was never a file to hash. Taken rather than flagged, so starting it
     /// twice is not expressible --- see [`Edits::wake`].
     to_hash: Option<Opened>,
+    /// The render handle each other file is open under, by the model's id for it.
+    ///
+    /// **Held here, beside the journal, because this is the only owner that
+    /// outlives the webview's interest in it.** An imported page is drawn by
+    /// asking the other file's own worker pool, and that pool is a document of
+    /// the render service like any other --- which lives until somebody names its
+    /// id. `docs/TRAPS.md` records what happens to a resource whose only owner is
+    /// on the far side of a boundary, so the webview is told the handle and never
+    /// owns it: [`Edits::close`] hands every one back to be released with the
+    /// document, and `release_documents` sweeps them with everything else.
+    ///
+    /// **Undo does not release one**, and cannot: the redo tail still names the
+    /// file, and redo has to draw the same pages without asking the reader to
+    /// choose it again. So a handle lives exactly as long as the document that
+    /// imported it, whatever the journal says about the pages.
+    ///
+    /// Only files a successful import recorded are here. An entry never changes
+    /// once written --- the model reuses a [`crate::docmodel::SourceId`] for the
+    /// same bytes, and [`Edits::import`] hands back the second handle rather
+    /// than replacing the first, which a page already on screen is using.
+    sources: HashMap<crate::docmodel::SourceId, u32>,
 }
 
 /// One page as the frontend sees it.
@@ -509,6 +530,46 @@ pub struct EditState {
     /// more to the point a comparison would report "clean" for a journal that a
     /// save has not written.
     pub dirty: bool,
+    /// Where each other file's pages are drawn from: the render handle the file
+    /// is open under, by the id [`PageSource::Imported`] names it with.
+    ///
+    /// **A list beside `pages` rather than a field on each [`PageView`]**, because
+    /// a `PageView` is also what a save plan carries across the worker boundary,
+    /// and a render handle means nothing to a worker. The frontend joins the two
+    /// once, on arrival (`withSources` in `pages.ts`), and every tile, text and
+    /// search request for an imported page then names this handle and the page
+    /// of *that* file.
+    ///
+    /// Empty --- and absent on the wire --- for every document nobody has
+    /// imported into, which is almost all of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<SourceView>,
+}
+
+/// What [`Edits::import`] answers: the new state, and a handle nothing needs.
+#[derive(Debug)]
+#[must_use = "a spare handle is a worker pool nobody else will close"]
+pub struct Imported {
+    /// The state after the import, with the file's handle in `sources`.
+    pub state: EditState,
+    /// The handle the caller opened, when the document already held one for
+    /// the same file. The caller releases it.
+    pub spare: Option<u32>,
+}
+
+/// One other file, and the render handle its pages are drawn from.
+///
+/// Field names are the Rust identifiers, for [`PageView`]'s reason.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SourceView {
+    /// The model's id for the file, as [`PageSource::Imported`] carries it.
+    pub source: u32,
+    /// The render service's handle for the same file: what a tile request for
+    /// one of its pages names as `doc`.
+    ///
+    /// **Not a document the reader opened**, and nothing on the frontend may
+    /// close it: it is released with the document that imported it.
+    pub doc: u32,
 }
 
 /// Every open document's edit model.
@@ -597,6 +658,7 @@ impl Edits {
                 model: Doc::open(pages),
                 opened_as,
                 to_hash,
+                sources: HashMap::new(),
             },
         );
     }
@@ -708,9 +770,22 @@ impl Edits {
             .map(|open| Arc::clone(&open.opened_as))
     }
 
-    /// Drops a document's model. Silent if there is none.
-    pub fn close(&self, doc: u32) {
-        self.docs.lock().expect("edits lock").remove(&doc);
+    /// Drops a document's model, and answers the render handles it held for
+    /// other files. Silent, and empty, if there is none.
+    ///
+    /// **The handles come back rather than being released here**, because this
+    /// layer does not touch the render service --- `close_document` does, and it
+    /// closes every one of these before the document itself. A caller that drops
+    /// the answer leaks a sandboxed worker pool per file the reader imported,
+    /// which is why the result is `#[must_use]`.
+    #[must_use = "the handles are the other files' worker pools, and only the caller can close them"]
+    pub fn close(&self, doc: u32) -> Vec<u32> {
+        let Some(open) = self.docs.lock().expect("edits lock").remove(&doc) else {
+            return Vec::new();
+        };
+        let mut held: Vec<u32> = open.sources.into_values().collect();
+        held.sort_unstable();
+        held
     }
 
     /// Drops every document's model, returning how many there were.
@@ -723,6 +798,15 @@ impl Edits {
         let held = docs.len();
         docs.clear();
         held
+    }
+
+    /// Whether `doc` names an open document.
+    ///
+    /// For a command that is about to do something expensive for one --- open a
+    /// second file in a worker pool --- and would rather refuse first than start
+    /// the pool only to release it.
+    pub fn is_open(&self, doc: u32) -> bool {
+        self.docs.lock().expect("edits lock").contains_key(&doc)
     }
 
     /// How many documents have a model, for tests and diagnostics.
@@ -748,8 +832,7 @@ impl Edits {
         // wakes; this one reads.
         let docs = self.docs.lock().expect("edits lock");
         let open = docs.get(&doc).ok_or_else(|| unknown(doc))?;
-        let model = &open.model;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Turns one page, addressed by identity.
@@ -882,7 +965,8 @@ impl Edits {
             return Err(format!("a page cannot be {bad} points"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .insert(
                 after.map(PageId::from_raw),
@@ -892,35 +976,66 @@ impl Edits {
                 },
             )
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Puts pages of a second file immediately after `after`, or first when
-    /// `after` is `None`.
+    /// `after` is `None`, and records the render handle they are drawn from.
     ///
-    /// [`insert`](Edits::insert)'s counterpart, and a thin one: the caller has
-    /// read the file --- its fingerprint and its page count are what `source`
-    /// carries --- and the model refuses everything about the selection. No
-    /// command reaches this yet; it exists so the plan a save is handed can be
-    /// built from a real model, which is where the tests take it from.
+    /// [`insert`](Edits::insert)'s counterpart. The caller has opened the file
+    /// in the render service --- `handle` is that document --- and read its
+    /// fingerprint and page count, which is what `source` carries; the model
+    /// refuses everything about the selection.
+    ///
+    /// **The answer's `spare` is a handle the caller must release**, and it is
+    /// `Some` exactly when the model already had this file: the same path with
+    /// the same bytes reuses its [`crate::docmodel::SourceId`], the pages already
+    /// on screen are drawn through the handle recorded the first time, and a
+    /// second pool for one file would be a leak with a page count. The first
+    /// handle is kept rather than replaced because it is in use.
     ///
     /// # Errors
     ///
     /// The handle names no open document, or anything [`Doc::import`] refuses.
+    /// Either way nothing is recorded, and `handle` is still the caller's to
+    /// release.
     pub fn import(
         &self,
         doc: u32,
         after: Option<u64>,
         source: crate::docmodel::SourceFile,
         pages: Vec<u32>,
-    ) -> Result<EditState, String> {
+        handle: u32,
+    ) -> Result<Imported, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
-        model
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let placed = open
+            .model
             .import(after.map(PageId::from_raw), source, pages)
             .map_err(describe)?;
-        Ok(snapshot(model))
+        // Read back off the page the model placed rather than looked up by the
+        // record, which is the model's answer to "which file is this" --- the
+        // same question it answered when it decided to reuse an id.
+        let file = placed
+            .first()
+            .and_then(|&id| open.model.working().page(id))
+            .and_then(|page| match page.source {
+                PageSource::Imported { source, .. } => Some(source),
+                PageSource::Baseline(_) | PageSource::Blank(_) => None,
+            })
+            .expect("an import that succeeded placed a page of the file");
+        let spare = match open.sources.get(&file) {
+            Some(_) => Some(handle),
+            None => {
+                open.sources.insert(file, handle);
+                None
+            }
+        };
+        Ok(Imported {
+            state: reply(open),
+            spare,
+        })
     }
 
     /// Puts a highlight on a page, over the rectangles the reader dragged across.
@@ -1024,7 +1139,8 @@ impl Edits {
         }
 
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .annotate(
                 Mark {
@@ -1045,7 +1161,7 @@ impl Edits {
                 want.note,
             )
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Takes one mark off the page it is on, addressed by identity.
@@ -1096,7 +1212,8 @@ impl Edits {
             return Err(format!("a redaction cannot have a corner at {bad}"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .redact(Redaction {
                 page: PageId::from_raw(page),
@@ -1108,7 +1225,7 @@ impl Edits {
                 },
             })
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Takes a pending redaction back off its page, addressed by identity.
@@ -1169,7 +1286,8 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         let id = MarkId::from_raw(mark);
         let held = model.strokes_of(id).len();
         // Refused rather than ignored: a position past the end means the sender
@@ -1195,7 +1313,7 @@ impl Edits {
                 .apply_in(Command::Unannotate { mark: id }, joins)
                 .map_err(describe)?;
         }
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Replaces what one mark says, addressed by identity.
@@ -1233,7 +1351,8 @@ impl Edits {
         // is what a long note makes expensive to hold.
         too_long(&note)?;
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         let id = MarkId::from_raw(mark);
         // Read before the write, and only for the kind it applies to. A mark
         // that does not exist falls through to `model.renote`, which is the one
@@ -1248,7 +1367,7 @@ impl Edits {
             );
         }
         model.renote(id, note).map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Replaces what a comment out of the file says, addressed by its object.
@@ -1296,7 +1415,8 @@ impl Edits {
         // Before the lock, for `renote`'s reason.
         too_long(&body)?;
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .rewrite(
                 ObjectId::new(object.0, object.1),
@@ -1305,7 +1425,7 @@ impl Edits {
                 made,
             )
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Takes a comment out of the file off the page it is on.
@@ -1336,11 +1456,12 @@ impl Edits {
             return Err("that comment has no object to remove".to_string());
         }
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .discard(ObjectId::new(object.0, object.1), PageId::from_raw(page))
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Replaces what one mark is drawn in, addressed by identity.
@@ -1362,11 +1483,12 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .recolor(MarkId::from_raw(mark), color.map(channel))
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Moves one mark by an offset, addressed by identity.
@@ -1400,22 +1522,24 @@ impl Edits {
             return Err(format!("a mark cannot be moved by ({dx}, {dy})"));
         }
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .displace(MarkId::from_raw(mark), dx, dy)
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Changes a signature's width in page points as one undoable edit.
     pub fn resize_signature(&self, doc: u32, mark: u64, width: f32) -> Result<EditState, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .resize_signature(MarkId::from_raw(mark), width)
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Applies a command and returns the state it produced.
@@ -1442,9 +1566,10 @@ impl Edits {
         // chokepoint to put it in.
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model.apply_in(cmd, sweep).map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Record a worker-validated text replacement; no parser runs here.
@@ -1456,11 +1581,12 @@ impl Edits {
     ) -> Result<EditState, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .replace_text(PageId::from_raw(page), change)
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Journals an answer already checked against a worker's field description.
@@ -1472,11 +1598,12 @@ impl Edits {
     ) -> Result<EditState, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model
             .fill(ObjectId::new(object.0, object.1), value)
             .map_err(describe)?;
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Steps back one command.
@@ -1493,9 +1620,10 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model.undo();
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// Steps forward one command. Returns the state either way, as [`undo`](Edits::undo) does.
@@ -1507,9 +1635,10 @@ impl Edits {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
-        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
         model.redo();
-        Ok(snapshot(model))
+        Ok(reply(open))
     }
 
     /// What to write, or print, for one document.
@@ -2467,6 +2596,30 @@ fn unknown(doc: u32) -> String {
 }
 
 /// Reads a model into the reply shape.
+/// The state a command answers with: the model's, and the handles its other
+/// files are drawn from.
+///
+/// [`snapshot`] with the one thing the model cannot say, because the model holds
+/// no render handle and should not --- see [`Open::sources`]. Every command that
+/// answers the frontend goes through here; a save plan goes through `snapshot`
+/// alone, which is what keeps the handles out of anything a worker is sent.
+fn reply(open: &Open) -> EditState {
+    let mut state = snapshot(&open.model);
+    let mut sources: Vec<SourceView> = open
+        .sources
+        .iter()
+        .map(|(source, &doc)| SourceView {
+            source: source.get(),
+            doc,
+        })
+        .collect();
+    // In id order, so two replies about one document are equal when nothing
+    // changed. A `HashMap` iterates in whatever order it likes.
+    sources.sort_unstable_by_key(|view| view.source);
+    state.sources = sources;
+    state
+}
+
 fn snapshot(model: &Doc) -> EditState {
     let working = model.working();
     let pages = working
@@ -2607,6 +2760,8 @@ fn snapshot(model: &Doc) -> EditState {
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,
+        // The model holds no handle. See `reply`, which is what fills this.
+        sources: Vec::new(),
     }
 }
 
@@ -3080,8 +3235,9 @@ mod tests {
             .expect("a mark");
         let after = edits.delete(7, pages[2].id).expect("delete the last page");
         let state = edits
-            .import(7, Some(after.pages[1].id), other_file(4), vec![2, 3])
-            .expect("import two pages");
+            .import(7, Some(after.pages[1].id), other_file(4), vec![2, 3], 40)
+            .expect("import two pages")
+            .state;
         edits
             .delete(7, state.pages[3].id)
             .expect("keep one of them, so the length is the file's");
@@ -3101,6 +3257,192 @@ mod tests {
         assert!(
             subset.sources.is_empty(),
             "an extract of the opened file's pages reads no other file"
+        );
+    }
+
+    /// A second file record, with other bytes and another name.
+    fn another_file(pages: u32) -> crate::docmodel::SourceFile {
+        let mut file = other_file(pages);
+        file.path = "/nonexistent/third.pdf".into();
+        file.fingerprint.digest = [9; 32];
+        file
+    }
+
+    /// An import records the handle its pages are drawn from, and the reply
+    /// names it beside the pages that need it.
+    ///
+    /// The join the frontend makes: an imported page names a file by the
+    /// model's id, and `sources` is the one place that id meets a handle.
+    #[test]
+    fn an_import_answers_the_handle_its_pages_are_drawn_from() {
+        let edits = opened();
+        let first = edits.state(7).expect("open").pages[0].id;
+        let imported = edits
+            .import(7, Some(first), other_file(2), vec![1, 0], 40)
+            .expect("import");
+        assert_eq!(
+            imported.spare, None,
+            "the first import of a file keeps its handle"
+        );
+        let state = imported.state;
+        let PageSource::Imported { source, page } = state.pages[1].source else {
+            panic!("slot 1 is the first imported page: {:?}", state.pages[1]);
+        };
+        assert_eq!(
+            page, 1,
+            "the page of the other file, not a page of this one"
+        );
+        assert_eq!(
+            state.sources,
+            vec![SourceView {
+                source: source.get(),
+                doc: 40
+            }]
+        );
+        assert_eq!(
+            edits.state(7).expect("state").sources,
+            state.sources,
+            "every reply carries it, not only the import's"
+        );
+        assert!(
+            edits.state(7).expect("state").pages.len() == 5,
+            "the premise: two pages were placed"
+        );
+    }
+
+    /// Undoing an import keeps its handle, and closing the document releases it.
+    ///
+    /// **The redo tail still names the file**, so a handle released at undo
+    /// would leave redo drawing pages from a pool that is gone. The close is the
+    /// one place the handle ends.
+    #[test]
+    fn undoing_an_import_keeps_the_handle_and_closing_releases_it() {
+        let edits = opened();
+        assert_eq!(
+            edits
+                .import(7, None, other_file(1), vec![0], 40)
+                .expect("import")
+                .spare,
+            None
+        );
+        let undone = edits.undo(7).expect("undo");
+        assert_eq!(undone.pages.len(), 3, "the premise: the page is gone");
+        assert_eq!(
+            undone
+                .sources
+                .iter()
+                .map(|view| view.doc)
+                .collect::<Vec<_>>(),
+            vec![40],
+            "undo keeps the handle for redo"
+        );
+        let redone = edits.redo(7).expect("redo");
+        assert_eq!(redone.pages.len(), 4);
+        assert_eq!(
+            redone.sources, undone.sources,
+            "redo draws through the same one"
+        );
+
+        assert_eq!(
+            edits.close(7),
+            vec![40],
+            "the close hands it back to be released"
+        );
+        assert!(edits.close(7).is_empty(), "and only once");
+    }
+
+    /// Two files are two handles, and a close hands back both.
+    #[test]
+    fn closing_a_document_hands_back_every_file_it_imported_from() {
+        let edits = opened();
+        assert_eq!(
+            edits
+                .import(7, None, other_file(1), vec![0], 41)
+                .expect("the first file")
+                .spare,
+            None
+        );
+        assert_eq!(
+            edits
+                .import(7, None, another_file(1), vec![0], 40)
+                .expect("the second")
+                .spare,
+            None
+        );
+        assert_eq!(edits.state(7).expect("state").sources.len(), 2);
+        assert_eq!(edits.close(7), vec![40, 41]);
+    }
+
+    /// The same file imported twice reuses its handle and gives the new one back.
+    ///
+    /// The model reuses its id for the same bytes, so the pages already on
+    /// screen are drawn through the first handle; recording the second would
+    /// either orphan the first or send those pages somewhere new mid-scroll.
+    #[test]
+    fn importing_the_same_file_again_hands_back_the_second_handle() {
+        let edits = opened();
+        assert_eq!(
+            edits
+                .import(7, None, other_file(2), vec![0], 40)
+                .expect("first")
+                .spare,
+            None
+        );
+        let again = edits
+            .import(7, None, other_file(2), vec![1], 41)
+            .expect("again");
+        assert_eq!(
+            again.spare,
+            Some(41),
+            "the second handle is the caller's to release"
+        );
+        assert_eq!(
+            again
+                .state
+                .sources
+                .iter()
+                .map(|view| view.doc)
+                .collect::<Vec<_>>(),
+            vec![40],
+            "and the first is still the one drawn through"
+        );
+        assert_eq!(edits.close(7), vec![40]);
+    }
+
+    /// A refused import records nothing, so the caller still owns the handle.
+    #[test]
+    fn a_refused_import_records_no_handle() {
+        let edits = opened();
+        let why = edits
+            .import(7, None, other_file(2), vec![2], 40)
+            .expect_err("page 2 of a two-page file");
+        assert!(!why.is_empty());
+        assert!(edits.state(7).expect("state").sources.is_empty());
+        assert!(edits.close(7).is_empty(), "nothing to release twice");
+        assert!(
+            edits.import(8, None, other_file(2), vec![0], 40).is_err(),
+            "a document that is not open refuses too"
+        );
+    }
+
+    /// The handles are in the reply and never in the plan a worker is sent.
+    #[test]
+    fn a_save_plan_carries_no_render_handle() {
+        let edits = opened();
+        assert_eq!(
+            edits
+                .import(7, None, other_file(1), vec![0], 40)
+                .expect("import")
+                .spare,
+            None
+        );
+        let plan = edits.plan(7).expect("plan");
+        let sent = serde_json::to_string(&plan).expect("serialise");
+        assert!(!sent.contains("\"doc\""), "no handle crosses: {sent}");
+        assert_eq!(
+            plan.sources.len(),
+            1,
+            "the premise: the plan does name the file"
         );
     }
 
@@ -3651,7 +3993,7 @@ mod tests {
         let edits = opened();
         let first = edits.state(7).expect("open").pages[0].id;
         edits.rotate(7, first, 1).expect("rotate");
-        edits.close(7);
+        assert!(edits.close(7).is_empty(), "nothing was imported");
         assert!(edits.is_empty());
         assert!(
             edits.state(7).is_err(),

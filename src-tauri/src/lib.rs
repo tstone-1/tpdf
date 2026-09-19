@@ -26,6 +26,7 @@ pub mod fields;
 pub mod fingerprint;
 pub mod forms;
 pub mod images;
+pub mod imports;
 pub mod invert;
 #[cfg(target_os = "macos")]
 pub mod keylayout;
@@ -782,6 +783,7 @@ pub fn run() {
             page_delete,
             page_move,
             page_insert,
+            page_import,
             annot_mark,
             annot_remove,
             redact_mark,

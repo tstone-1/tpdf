@@ -14,7 +14,7 @@ use tauri::Manager;
 
 use super::{await_reply, reply_channel, ReplyRx};
 use crate::render::{DocumentInfo, RenderService};
-use crate::{edits, progressive, recentdocs, render, startup, webopen};
+use crate::{edits, imports, progressive, recentdocs, render, startup, webopen};
 
 /// Selects a local file in the platform file manager without opening its contents.
 #[tauri::command]
@@ -194,6 +194,122 @@ pub async fn open_document(
     Ok(info)
 }
 
+/// Puts every page of another file into the working document, after `after`
+/// (or first when `after` is `null`), as one undoable step.
+///
+/// **The file is opened as a document of its own**, through the same
+/// `open_handed` the reader's documents take: its own sandboxed worker pool, its
+/// own lazy geometry, parsed nowhere else. The handle that comes back is what
+/// every tile, text and search request for one of these pages names, and it is
+/// owned by the importing document's model --- `edits::Open::sources` --- not by
+/// the webview, which is told it and never closes it. `close_document` does.
+///
+/// **One handle per importing document, not one per file across the session.**
+/// Two tabs importing the same file open it twice. Sharing would need a count of
+/// holders that outlives any one document, and the only thing that would buy is
+/// one fewer worker pool in a case nobody has asked about; a second import into
+/// the *same* document reuses the first handle, because the model reuses its
+/// id for the same bytes and hands the new one back as `spare`.
+///
+/// The fingerprint is taken through the handle the service mapped, for the
+/// reason `open_document` gives: two lookups of one name with a gap between them
+/// can describe two different files. A save compares it against the bytes it
+/// hands the writer (`docs/THREAT-MODEL.md` §T6.19).
+///
+/// An encrypted file is refused here rather than at the save, which refuses it
+/// too: arranging pages that can never be written is work a reader loses.
+///
+/// # Errors
+///
+/// The document is not open; the file will not open, is encrypted, cannot be
+/// read to fingerprint it, or has more pages than a page number holds; or the
+/// model refuses the placement. Every one of them releases the handle.
+#[tauri::command]
+pub async fn page_import(
+    service: tauri::State<'_, RenderService>,
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    after: Option<u64>,
+    path: String,
+) -> Result<edits::EditState, String> {
+    // Before anything is opened. A command for a document that is not open
+    // would otherwise start a worker pool only to release it.
+    if !edits.is_open(doc) {
+        return Err(format!("no document is open under {doc}"));
+    }
+    let wanted = PathBuf::from(&path);
+    let name = imports::display_name(&wanted);
+    let file = std::fs::File::open(&wanted).map_err(|e| format!("Could not open {name}: {e}"))?;
+    let hashing = file
+        .try_clone()
+        .map_err(|e| format!("Could not open {name}: {e}"))?;
+
+    let (reply, rx) = reply_channel();
+    service.open_handed(wanted.clone(), Some(file), lazy_geometry(), None, reply);
+    let info: DocumentInfo = await_reply("page_import", rx)
+        .await
+        .map_err(|refusal: progressive::Refusal| imports::open_refused(&refusal, &name))?;
+
+    // From here every `?` drops this, and the drop is the release.
+    let releasing = service.inner().clone();
+    let held = imports::Held::new(info.id, move |id| release_sources(&releasing, vec![id]));
+
+    let (reply, rx) = reply_channel();
+    service.properties(held.id(), reply);
+    let properties = await_reply("page_import", rx)
+        .await
+        .map_err(|why| format!("Could not insert pages from {name}: {why}"))?;
+    if properties.encryption.is_some() {
+        return Err(imports::locked(&name));
+    }
+
+    let what = wanted.clone();
+    let fingerprint = tauri::async_runtime::spawn_blocking(move || {
+        crate::fingerprint::Fingerprint::of_open(&hashing, &what)
+    })
+    .await
+    .map_err(|e| format!("Could not read {name}: {e}"))??;
+
+    let pages = imports::all_pages(info.page_count)?;
+    let source = crate::docmodel::SourceFile {
+        path: wanted,
+        fingerprint,
+        pages: u32::try_from(pages.len()).expect("all_pages bounded the count"),
+    };
+    let imported = edits.import(doc, after, source, pages, held.id())?;
+    // Recorded by the model, so the document owns it now. A handle the model
+    // already had for these bytes comes back as `spare` instead.
+    let kept = held.keep();
+    if let Some(spare) = imported.spare {
+        debug_assert_eq!(spare, kept);
+        release_sources(&service, vec![spare]);
+    }
+    Ok(imported.state)
+}
+
+/// Closes the render handles a document held for the files it imported from.
+///
+/// **Posted, not awaited.** Nothing is waiting for these pools the way the
+/// reader waits for their next file, and `close_document` already argues that a
+/// teardown must not sit on that path; `Workers::close` drains a pool before
+/// dropping it, so nothing outstanding loses its worker to this. A close that
+/// fails is logged rather than raised --- there is nobody to raise it to, and
+/// the service reuses nothing it still holds.
+pub(crate) fn release_sources(service: &RenderService, handles: Vec<u32>) {
+    for handle in handles {
+        service.close(
+            handle,
+            Box::new(move |result| {
+                if let Err(why) = result {
+                    crate::diag::note(&format!(
+                        "[open] could not release imported file {handle}: {why}"
+                    ));
+                }
+            }),
+        );
+    }
+}
+
 /// Releases every document the backend still holds, for a webview that has just
 /// started.
 ///
@@ -305,10 +421,19 @@ pub async fn close_document(
     // numbers are reused, so a model left behind under a handle the service is
     // about to hand to another file is one document's journal applied to
     // another's pages.
-    edits.close(doc);
-    // And its web addresses, on the same argument: a token is an index into a
-    // list, so a list that outlived its document would answer the next one's
-    // clicks with somebody else's addresses.
+    //
+    // The files it imported from go with it, and first: they are documents of
+    // the service like this one, and nothing else holds their handles. Undo
+    // never released them, so this is the one place they end.
+    let sources = edits.close(doc);
+    // And every web address list, this document's and theirs, on the same
+    // argument: a token is an index into a list, so a list that outlived its
+    // document would answer the next one's clicks with somebody else's
+    // addresses. An imported file's list exists once its links were scanned.
+    for &source in &sources {
+        web.forget(source);
+    }
+    release_sources(&service, sources);
     web.forget(doc);
     let (reply, rx) = reply_channel();
     service.close(doc, reply);

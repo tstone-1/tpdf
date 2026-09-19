@@ -8,7 +8,7 @@ SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for 
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
-deleted, cropped and extracted, and a blank one inserted at the size you name; text can be highlighted, underlined, struck out or
+deleted, cropped and extracted, a blank one inserted at the size you name, and the pages of another file inserted; text can be highlighted, underlined, struck out or
 squiggled; and you can draw on a page, put a box, an ellipse, a text box, a stamp or a
 comment on it, move what you put there, erase any of it, rewrite, answer or delete a comment
 somebody else left, and save — over the open file or to a copy. **It redacts**: mark regions, review them in a list, and remove the words from
@@ -163,6 +163,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   measured against a page of the file and a redaction removes content, and a page tpdf
   made has neither — so both are refused when you try rather than lost when you save.
   <!-- built: edit.insertBlankPage edit.insertPage.a4 edit.insertPage.a3 edit.insertPage.a5 edit.insertPage.letter edit.insertPage.legal -->
+- **Insert the pages of another file** after the one you are reading — every page of it,
+  in its own order, as one step that one undo takes back out. The other file is opened the
+  way a document is, in a sandboxed process of its own, so its pages are drawn, searched,
+  selected, marked, turned and cropped like the document's own, and saving writes them into
+  the file. Three things wait for that save: editing their text, following a web link on
+  them, and redacting anything in a document that holds them. An encrypted file is refused,
+  and choosing only some of its pages is not built yet.
+  <!-- built: edit.insertPages -->
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
   file on disk.
@@ -418,11 +426,6 @@ are literals nowhere on disk. The scan this replaced was blind to all eleven of 
 including the four stamps the paragraph above is about, which it would have passed as
 unbuilt while they shipped.
 
-- Inserting pages **from another file**. The blank page above is the other half of this
-  and is built; this half is not a smaller version of it — a merge produces a file, and
-  an insert produces a document holding pages tpdf did not open, which every tile request,
-  every search and every save would then have to ask a second worker about.
-  <!-- not-built: edit.insertPages -->
 - A region over a **drawing** is reported rather than removed — a vector rule under a line
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn

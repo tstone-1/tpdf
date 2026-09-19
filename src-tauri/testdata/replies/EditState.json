@@ -80,6 +80,16 @@
         }
       },
       "turns": 0
+    },
+    {
+      "id": 3,
+      "source": {
+        "imported": {
+          "source": 1,
+          "page": 4
+        }
+      },
+      "turns": 0
     }
   ],
   "can_undo": true,
@@ -209,5 +219,11 @@
       "page": 2
     }
   ],
-  "dirty": true
+  "dirty": true,
+  "sources": [
+    {
+      "source": 1,
+      "doc": 12
+    }
+  ]
 }

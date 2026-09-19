@@ -107,8 +107,11 @@ impl save_order::Saving for LiveSave<'_> {
         }
     }
 
+    /// The files the document imported from close with it: their pages are in
+    /// the file being written, and nothing else holds the handles.
     fn close_model(&self) {
-        self.edits.close(self.doc);
+        let sources = self.edits.close(self.doc);
+        super::document::release_sources(self.service, sources);
     }
 
     /// The send happens now and the wait is what is awaited, which is the order

@@ -1048,6 +1048,50 @@ describe("Scroller when the page order changes", () => {
     expect(new Set(asked)).toEqual(new Set([0, 2]));
   });
 
+  it("asks the other file's handle for a page inserted from it", () => {
+    // Page 5 of document 40 in slot 1, between two of the opened file's. The
+    // number 5 is on no other slot, so every request naming it is this page's:
+    // there are two of them --- the placeholder and the tile, which are two
+    // separate request paths --- and each has to name the other file. A page
+    // number shared with a baseline page would let one path ask the opened
+    // document and hide behind the other's correct request.
+    scroller.setPages([
+      { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+      {
+        id: pageId(4),
+        source: { imported: { source: 1, page: 5 } },
+        turns: 0,
+        from: 40,
+      },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+    ]);
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+
+    const asked = tiles.fetchTile.mock.calls.map(
+      ([request]) => request as { doc: number; page: number },
+    );
+    const forImported = asked.filter((request) => request.page === 5);
+    expect(forImported.length, "the placeholder and the tile").toBeGreaterThanOrEqual(2);
+    expect(forImported.every((request) => request.doc === 40)).toBe(true);
+    expect(
+      asked.filter((request) => request.doc === 40).every((r) => r.page === 5),
+      "only the imported page is asked of the other file",
+    ).toBe(true);
+    expect(asked).toContainEqual(expect.objectContaining({ doc: 1, page: 0 }));
+  });
+
+  it("asks for nothing for an imported page nobody joined to its handle", () => {
+    // `withSources` not having run is a defect upstream, and the answer to it
+    // is no picture rather than page 0 of the opened file in its place.
+    scroller.setPages([
+      { id: pageId(4), source: { imported: { source: 1, page: 0 } }, turns: 0 },
+    ]);
+    tiles.fetchTile.mockClear();
+    scroller.frame(0, performance.now());
+    expect(tiles.fetchTile).not.toHaveBeenCalled();
+  });
+
   it("carries a learned size to wherever the page moved to", () => {
     // Sizes belong to the page, not to the position. Carried by slot instead,
     // every page below the gap is laid out at the size of the page that used to

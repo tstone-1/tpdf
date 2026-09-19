@@ -165,6 +165,14 @@ export interface AppActions {
    */
   insertSizedPage(name: PageSizeName): void;
   /**
+   * Put every page of a file the reader picks after the one they are on.
+   *
+   * A shell action because it opens a dialog and then an edit, and the page it
+   * lands after is the viewer's; the backend opens the file and owns it. See
+   * `edits.ts`'s `importPages`.
+   */
+  importPages(): void;
+  /**
    * Crop the page the reader is on to the box its ink occupies, or put the
    * file's own box back.
    *
@@ -1211,8 +1219,7 @@ export function registerAppCommands(
       //
       // **Named for the blank page rather than for inserting**, because
       // inserting pages *from another file* is the other half of the same
-      // README bullet and is not built --- see `docs/PLAN.md`. A command called
-      // `edit.insertPages` would claim that half.
+      // README bullet and has a command of its own, `edit.insertPages`, below.
       id: "edit.insertBlankPage",
       title: "Insert blank page",
       enabled: withDocument,
@@ -1238,6 +1245,19 @@ export function registerAppCommands(
       enabled: withDocument,
       run: () => actions.insertSizedPage(name),
     })),
+    {
+      // The other half of the README bullet the blank page is half of, and the
+      // id that bullet has named since before it was built. The ellipsis is a
+      // promise the title keeps: a dialog asks which file.
+      //
+      // Every page of the file, in its own order, after the page being read ---
+      // one undo takes them all back out. Choosing *which* pages is not built;
+      // `docs/PLAN.md` says what it would cost.
+      id: "edit.insertPages",
+      title: "Insert pages from file...",
+      enabled: withDocument,
+      run: () => actions.importPages(),
+    },
     {
       // No binding either, and for a different reason than the deletion above:
       // there is no chord left that reads as "move a page" rather than as "move

@@ -80,11 +80,11 @@ import { cancelTile, fetchTile, nextRequestId } from "./tiles";
 // inside them --- turning this `instanceof` into a TypeError thrown from a
 // failure handler, which surfaces as a frame loop that never settles.
 import {
-  baselineOf,
+  addressOf,
   madeSizeOf,
   quarterTurns,
   unedited,
-  type FilePage,
+  type PageAddress,
   type PageView,
 } from "./pages";
 import { DocumentGone } from "./tilestatus";
@@ -1739,7 +1739,7 @@ export class Scroller {
   }
 
   /**
-   * Which page of the file a slot draws.
+   * Which document and page a slot draws.
    *
    * `undefined` for a slot that is not in the document **and for a page tpdf
    * made**, and nothing asks for a tile in either case. The second is the
@@ -1747,13 +1747,17 @@ export class Scroller {
    * behind it, so a request for it would render whatever page happens to sit at
    * that number.
    *
+   * A page inserted from another file answers with *that* file's handle, which
+   * is the whole of how it is drawn: the tile is an ordinary render of an
+   * ordinary document, asked of a different worker pool. See `pages.ts`.
+   *
    * Deliberately not falling back to the slot number: that fallback is right for
    * every unedited document and asks for the wrong page in exactly the cases the
    * order exists for.
    */
-  private sourceOf(slot: number): FilePage | undefined {
+  private addressOf(slot: number): PageAddress | undefined {
     const view = this.order[slot];
-    return view === undefined ? undefined : baselineOf(view.source);
+    return view === undefined ? undefined : addressOf(view, this.opts.doc);
   }
 
   private send(key: TileKey): void {
@@ -1770,7 +1774,7 @@ export class Scroller {
     // A slot with no page behind it. Reachable while a state reply is in flight,
     // and the honest answer is to render nothing rather than to guess a page
     // number --- the next frame lays out the order that has arrived by then.
-    const source = this.sourceOf(key.page);
+    const source = this.addressOf(key.page);
     if (source === undefined) return;
     const id = keyOf(key);
     const rect = this.tileRect(key.page, key.col, key.row);
@@ -1791,8 +1795,8 @@ export class Scroller {
 
     void fetchTile({
       rid,
-      doc: this.opts.doc,
-      page: source,
+      doc: source.doc,
+      page: source.page,
       scale: this.opts.zoom * this.opts.dpr,
       turns: this.requestTurns(key.page),
       crop: this.cropOf(key.page),
@@ -1924,7 +1928,7 @@ export class Scroller {
    */
   private requestPlaceholder(page: number, now: number): void {
     if (this.gone) return;
-    const source = this.sourceOf(page);
+    const source = this.addressOf(page);
     if (source === undefined) return;
     const id = `p${page}`;
     if (this.placeholders.has(page) || this.inFlight.has(id)) return;
@@ -1952,8 +1956,8 @@ export class Scroller {
 
     void fetchTile({
       rid,
-      doc: this.opts.doc,
-      page: source,
+      doc: source.doc,
+      page: source.page,
       scale,
       turns: this.requestTurns(page),
       crop: this.cropOf(page),

@@ -287,9 +287,27 @@ pub async fn document_text_runs(
 
 fn text_page(edits: &crate::edits::Edits, doc: u32, page: u64) -> Result<u32, String> {
     let state = edits.state(doc)?;
-    match state.pages.iter().find(|p| p.id == page).map(|p| p.source) {
-        Some(crate::docmodel::PageSource::Baseline(index)) => Ok(index),
-        _ => Err("This page has no editable original text".into()),
+    page_text_source(state.pages.iter().find(|p| p.id == page).map(|p| p.source))
+}
+
+/// The page of the opened file whose text an edit would change, or why not.
+///
+/// A match with an arm per variant rather than a catch-all, so the next kind of
+/// page is a compile error here rather than a sentence that is true of one kind
+/// and shown for another --- the shape `docs/TRAPS.md` records for
+/// `is_appendable`. An imported page has text, and PDFium reads it through the
+/// other file's handle; what it has not got is a content stream the opened
+/// document's worker validated, which is what a replacement is checked against.
+fn page_text_source(source: Option<crate::docmodel::PageSource>) -> Result<u32, String> {
+    use crate::docmodel::PageSource;
+    match source {
+        Some(PageSource::Baseline(index)) => Ok(index),
+        Some(PageSource::Imported { .. }) => Err(
+            "Text on a page inserted from another file cannot be edited yet. Save the \
+             document and open it again to edit it."
+                .into(),
+        ),
+        Some(PageSource::Blank(_)) | None => Err("This page has no editable original text".into()),
     }
 }
 
@@ -315,4 +333,33 @@ pub async fn text_replace(
     service.text_runs(doc, source, pending, reply);
     await_reply("text_replace", rx).await?;
     edits.replace_text(doc, page, change)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::page_text_source;
+    use crate::docmodel::{PageSource, Size, SourceId};
+
+    /// An imported page is refused in words about where it came from, not as a
+    /// page with no text.
+    #[test]
+    fn an_imported_page_says_why_its_text_cannot_be_edited() {
+        let said = page_text_source(Some(PageSource::Imported {
+            source: SourceId::from_raw(1),
+            page: 0,
+        }))
+        .expect_err("refused");
+        assert!(said.contains("another file"), "{said}");
+    }
+
+    #[test]
+    fn a_page_of_the_file_is_its_baseline_number() {
+        assert_eq!(page_text_source(Some(PageSource::Baseline(4))), Ok(4));
+        assert!(page_text_source(Some(PageSource::Blank(Size {
+            width: 1.0,
+            height: 1.0
+        })))
+        .is_err());
+        assert!(page_text_source(None).is_err());
+    }
 }

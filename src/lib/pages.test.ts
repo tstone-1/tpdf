@@ -4,7 +4,10 @@ import type { Comment } from "./comments";
 import type { Link } from "./links";
 import type { OutlineItem } from "./outline";
 import {
+  addressOf,
+  allLinksIn,
   commentsIn,
+  importedLinksIn,
   linksIn,
   NO_PAGES,
   outlineIn,
@@ -13,6 +16,7 @@ import {
   quarterTurns,
   slotOfIdIn,
   unedited,
+  withSources,
   type PageView,
 } from "./pages";
 
@@ -483,5 +487,134 @@ describe("PageMap", () => {
       expect(NO_PAGES.length).toBe(0);
       expect(NO_PAGES.sourceOf(0)).toBeUndefined();
     });
+  });
+});
+
+/**
+ * A document of four pages: the opened file's 0 and 1, and pages 5 and 2 of
+ * another file between them, joined to handle 40 as `Edits.adopt` joins them.
+ */
+function withImports(): PageMap {
+  return new PageMap(
+    withSources(
+      [
+        { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+        { id: pageId(4), source: { imported: { source: 1, page: 5 } }, turns: 0 },
+        { id: pageId(5), source: { imported: { source: 1, page: 2 } }, turns: 0 },
+        { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+      ],
+      [{ source: 1, doc: 40 }],
+    ),
+  );
+}
+
+describe("page addresses", () => {
+  it("names the opened document for its own pages and the other file's handle for one of its", () => {
+    const pages = withImports();
+    expect(pages.addressOf(0, 7)).toEqual({ doc: 7, page: 0 });
+    expect(pages.addressOf(1, 7)).toEqual({ doc: 40, page: 5 });
+    expect(pages.addressOf(2, 7)).toEqual({ doc: 40, page: 2 });
+    expect(pages.addressOf(3, 7)).toEqual({ doc: 7, page: 1 });
+    expect(pages.addressOf(4, 7), "past the end").toBeUndefined();
+  });
+
+  it("keeps an imported page out of every question about the opened file", () => {
+    // `sourceOf` is what a crop, a text edit and a redaction plan ask, and each
+    // of those is about the opened file. Page 5 of another file answering 5
+    // there would measure, edit or redact page 5 of the wrong document.
+    const pages = withImports();
+    expect(pages.sources()).toEqual([0, undefined, undefined, 1]);
+    expect(pages.slotOf(5), "no page 5 of the opened file is shown").toBeUndefined();
+  });
+
+  it("answers no address for a page tpdf made", () => {
+    const blank: PageView = {
+      id: pageId(9),
+      source: { blank: { width: 10, height: 10 } },
+      turns: 0,
+    };
+    expect(addressOf(blank, 7)).toBeUndefined();
+  });
+
+  it("answers no address for an imported page nobody joined to its handle", () => {
+    // Rather than the opened document's handle, which would draw page 5 of the
+    // wrong file and look like a correct picture.
+    const unjoined: PageView = {
+      id: pageId(4),
+      source: { imported: { source: 1, page: 5 } },
+      turns: 0,
+    };
+    expect(addressOf(unjoined, 7)).toBeUndefined();
+    expect(
+      withSources([unjoined], [{ source: 2, doc: 40 }])[0]?.from,
+      "a handle for another file is not this one's",
+    ).toBeUndefined();
+  });
+
+  it("joins only the imported pages and leaves the others as they were", () => {
+    const own: PageView = { id: pageId(1), source: { baseline: 0 }, turns: 0 };
+    const joined = withSources([own], [{ source: 1, doc: 40 }]);
+    expect(joined[0]).toBe(own);
+    expect(withSources([own])).toEqual([own]);
+  });
+
+  it("finds the slot showing a page of the other file, and only of that file", () => {
+    const pages = withImports();
+    expect(pages.slotOfImported(40, 2)).toBe(2);
+    expect(pages.slotOfImported(40, 0), "page 0 of the other file was not imported").toBeUndefined();
+    expect(pages.slotOfImported(41, 5), "another handle").toBeUndefined();
+    expect(pages.importedDocs()).toEqual([40]);
+    expect(unedited(3).importedDocs()).toEqual([]);
+  });
+});
+
+describe("importedLinksIn", () => {
+  const link = (id: number, page: number, target: Link["target"]): Link => ({
+    id,
+    page,
+    rect: [0, 0, 10, 10],
+    target,
+  });
+
+  it("puts a link on the slot showing its page, and a destination on the slot showing its target", () => {
+    const pages = withImports();
+    const placed = importedLinksIn(
+      40,
+      [
+        link(0, 5, { kind: "page", page: 2, top_pt: null }),
+        link(1, 5, { kind: "page", page: 0, top_pt: null }),
+        link(2, 3, { kind: "page", page: 5, top_pt: null }),
+      ],
+      pages,
+      100,
+    );
+    expect(placed.map((one) => [one.id, one.page, one.target])).toEqual([
+      [100, 1, { kind: "page", page: 2, top_pt: null }],
+      // Page 0 of the other file was not imported. The opened file's page 0 is
+      // in slot 0, and a link resolving there would jump to the wrong document.
+      [101, 1, { kind: "broken" }],
+    ]);
+  });
+
+  it("does not follow a web address found in the other file", () => {
+    const placed = importedLinksIn(
+      40,
+      [link(0, 2, { kind: "web", token: 0, host: "example.com", rest: "/" })],
+      withImports(),
+    );
+    expect(placed[0]?.target).toEqual({ kind: "refused", action: "uri" });
+  });
+
+  it("numbers the other file's links on from the opened file's", () => {
+    // Both scans number from zero, and the viewer follows a link by its id.
+    const own = [link(0, 0, { kind: "none" }), link(3, 1, { kind: "none" })];
+    const other = new Map([[40, [link(0, 5, { kind: "none" })]]]);
+    const all = allLinksIn(own, other, withImports());
+    expect(all.map((one) => [one.id, one.page])).toEqual([
+      [0, 0],
+      [3, 3],
+      [4, 1],
+    ]);
+    expect(new Set(all.map((one) => one.id)).size).toBe(all.length);
   });
 });

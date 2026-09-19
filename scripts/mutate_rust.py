@@ -3314,8 +3314,8 @@ MUTATIONS = [
         # back on the wire while the first page is being drawn.
         "hash: start the fingerprint at open rather than at the first edit",
         "src/edits.rs",
-        "                to_hash,\n            },\n        );\n    }",
-        "                to_hash,\n            },\n        );\n        self.wake(doc);\n    }",
+        "                sources: HashMap::new(),\n            },\n        );\n    }",
+        "                sources: HashMap::new(),\n            },\n        );\n        self.wake(doc);\n    }",
         "opening_a_document_does_not_start_the_hash",
     ),
     Mutation(
@@ -3324,8 +3324,8 @@ MUTATIONS = [
         # start until the save that waits for it.
         "hash: do not start the fingerprint on an edit",
         "src/edits.rs",
-        '        self.wake(doc);\n        let mut docs = self.docs.lock().expect("edits lock");\n        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;\n        model.apply_in(cmd, sweep).map_err(describe)?;',
-        '        let mut docs = self.docs.lock().expect("edits lock");\n        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;\n        model.apply_in(cmd, sweep).map_err(describe)?;',
+        '        self.wake(doc);\n        let mut docs = self.docs.lock().expect("edits lock");\n        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;\n        let model = &mut open.model;\n        model.apply_in(cmd, sweep).map_err(describe)?;',
+        '        let mut docs = self.docs.lock().expect("edits lock");\n        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;\n        let model = &mut open.model;\n        model.apply_in(cmd, sweep).map_err(describe)?;',
         "every_edit_starts_the_hash",
     ),
     Mutation(
@@ -9631,6 +9631,83 @@ MUTATIONS += [
         "    if !plan.sources.is_empty() {\n        return Err(\n            \"save this document before merging it",
         "    if false {\n        return Err(\n            \"save this document before merging it",
         "a_merge_of_a_document_holding_imported_pages_says_why_it_is_refused",
+    ),
+]
+
+
+# The render handles of the other files a document imports from, and the
+# refusals of the command that opens them. What each of these costs is a
+# sandboxed worker pool leaked, or a page drawn from nowhere --- neither of
+# which a reader can see until the machine has a dozen of them.
+MUTATIONS += [
+    Mutation(
+        # Close a document and hand back nothing, leaking a pool per file.
+        "edits: sources: close without handing the handles back",
+        "src/edits.rs",
+        "        let mut held: Vec<u32> = open.sources.into_values().collect();",
+        "        let mut held: Vec<u32> = Vec::new();",
+        "closing_a_document_hands_back_every_file_it_imported_from",
+    ),
+    Mutation(
+        # Release on undo, which the redo tail still needs.
+        "edits: sources: release the handles when the import is undone",
+        "src/edits.rs",
+        "        let model = &mut open.model;\n        model.undo();",
+        "        let model = &mut open.model;\n        model.undo();\n        open.sources.clear();",
+        "undoing_an_import_keeps_the_handle_and_closing_releases_it",
+    ),
+    Mutation(
+        # Hand back the first handle of a file imported again, which releases
+        # the pool the pages on screen are drawn from.
+        "edits: sources: hand back the handle in use for a file imported again",
+        "src/edits.rs",
+        "            Some(_) => Some(handle),",
+        "            Some(&kept) => Some(kept),",
+        "importing_the_same_file_again_hands_back_the_second_handle",
+    ),
+    Mutation(
+        # Answer without the handles, so the frontend has nowhere to draw from.
+        "edits: sources: leave the handles out of the reply",
+        "src/edits.rs",
+        "    state.sources = sources;\n",
+        "",
+        "an_import_answers_the_handle_its_pages_are_drawn_from",
+    ),
+    Mutation(
+        # Hand an imported page's number to the text edit as a page of the
+        # opened file --- which edits whatever page of it has that number.
+        "read: text: edit an imported page as a page of the opened file",
+        "src/commands/read.rs",
+        "        Some(PageSource::Baseline(index)) => Ok(index),",
+        "        Some(PageSource::Baseline(index) | PageSource::Imported { page: index, .. }) => Ok(index),",
+        "an_imported_page_says_why_its_text_cannot_be_edited",
+    ),
+    Mutation(
+        # A guard dropped without being kept releases nothing: every refusal
+        # after the open leaks the pool it opened.
+        "imports: release nothing when the guard is dropped",
+        "src/imports.rs",
+        "        if let Some(release) = self.release.take() {\n            release(self.id);\n        }",
+        "        let _ = self.release.take();",
+        "a_refusal_after_the_open_releases_the_handle",
+    ),
+    Mutation(
+        # Keep and release anyway, which closes the pool the model just
+        # recorded as the one its pages are drawn from.
+        "imports: release a handle that was kept",
+        "src/imports.rs",
+        "        self.release = None;\n        self.id",
+        "        self.id",
+        "a_kept_handle_is_the_caller_s_and_is_not_released",
+    ),
+    Mutation(
+        # Pass a locked file on as the open's own sentence, which offers a
+        # password for a file the save would refuse anyway.
+        "imports: word a locked file like any other failure",
+        "src/imports.rs",
+        "    if refusal.locked {\n        return locked(name);\n    }",
+        "",
+        "a_locked_file_is_refused_as_encrypted",
     ),
 ]
 

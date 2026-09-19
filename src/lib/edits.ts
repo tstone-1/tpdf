@@ -25,7 +25,9 @@ import {
   type NoteEdited,
   type PageView,
   type RedactionView,
+  type SourceView,
   type StampName,
+  withSources,
 } from "./pages";
 import { colorFor, type MarkColor } from "./markcolors";
 import { INK_WIDTH } from "./markband";
@@ -34,7 +36,14 @@ import { INK_WIDTH } from "./markband";
 // first, and the declaration lives in `pages.ts` so that the modules which only
 // need the shape --- the scroller, the thumbnails --- do not have to import this
 // one, which cannot be loaded outside a webview.
-export type { Discarded, MarkView, NoteEdited, PageView, RedactionView };
+export type {
+  Discarded,
+  MarkView,
+  NoteEdited,
+  PageView,
+  RedactionView,
+  SourceView,
+};
 
 /**
  * What `save_copy` and `extract_pages` report about the file they wrote.
@@ -150,6 +159,14 @@ export interface EditState {
   can_redo: boolean;
   /** Whether anything differs from the file on disk. */
   dirty: boolean;
+  /**
+   * The render handle each other file's pages are drawn from.
+   *
+   * Absent for a document nobody has imported into. Joined onto `pages` by
+   * {@link Edits}, on arrival and nowhere else, so every page an `EditState`
+   * held here carries its own handle --- see `withSources` in `pages.ts`.
+   */
+  sources?: SourceView[];
 }
 
 /** The state of a document nobody has edited and nobody has opened. */
@@ -326,6 +343,24 @@ export class Edits {
         after: anchor,
         size: [...size],
       }),
+    );
+  }
+
+  /**
+   * Puts every page of the file at `path` after the page in slot `after`, or at
+   * the front when `after` is `null`, as one undoable step.
+   *
+   * {@link insertPage}'s shape, and the same distinction between `null` and a
+   * stale slot. The backend opens the file in a worker pool of its own and
+   * keeps the handle for the life of this document; the reply names it in
+   * `sources`, and {@link adopt} writes it onto the new pages.
+   */
+  async importPages(after: number | null, path: string): Promise<EditState> {
+    const anchor =
+      after === null ? null : (this.current.pages[after]?.id ?? undefined);
+    if (anchor === undefined) return this.current;
+    return this.adopt(
+      await call("page_import", { doc: this.doc, after: anchor, path }),
     );
   }
 
@@ -861,8 +896,16 @@ export class Edits {
 
   /** Records an answer, and the translation it implies, and returns it. */
   private adopt(state: EditState): EditState {
-    this.current = state;
-    this.pageMap = new PageMap(state.pages);
-    return state;
+    // The join is made here and nowhere else: every page this object hands out
+    // --- to the viewer, the strip, the panels --- then says which handle it is
+    // drawn from. Returned rather than the argument, because the caller's next
+    // step is to hand `pages` to the viewer.
+    const joined: EditState = {
+      ...state,
+      pages: withSources(state.pages, state.sources),
+    };
+    this.current = joined;
+    this.pageMap = new PageMap(joined.pages);
+    return joined;
   }
 }

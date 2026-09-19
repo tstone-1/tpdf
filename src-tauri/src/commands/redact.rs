@@ -509,7 +509,10 @@ pub async fn redact_document(
     // The model first --- document numbers are reused, and a journal left under a
     // handle the service is free to hand to another file is one document's edits
     // applied to another's pages. Here that close is also the truncation.
-    edits.close(doc);
+    // Empty today --- a redaction is refused beside an imported page --- and
+    // released anyway, because a refusal elsewhere is not a reason to leak here.
+    let sources = edits.close(doc);
+    super::document::release_sources(&service, sources);
     let (reply, rx) = reply_channel();
     service.close(doc, reply);
     let closed = await_reply("redact_document", rx).await;

@@ -258,6 +258,35 @@ describe("a cropped page", () => {
     viewer.destroy();
   });
 
+  it("measures a cropped page inserted from another file against that file", async () => {
+    // Its crop box is in its own page space and turned by its own `/Rotate`,
+    // which only the worker holding that file knows. Asked of the opened
+    // document, the answer would be the geometry of whatever page of it has
+    // the same number.
+    const asked: [number, number][] = [];
+    core.invoke.mockImplementation((command: string, args: { doc: number; page: number }) => {
+      if (command !== "page_geometry") return Promise.resolve(null);
+      asked.push([args.doc, args.page]);
+      return Promise.resolve(GEOMETRY);
+    });
+    const viewer = build();
+    await settle();
+    viewer.setPages([
+      {
+        id: pageId(9),
+        source: { imported: { source: 1, page: 4 } },
+        turns: 0,
+        crop: CROP,
+        from: 40,
+      },
+      { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+    ]);
+    await settle();
+    expect(asked).toEqual([[40, 4]]);
+    expect((viewer as unknown as Placing).cropAt(0).left).toBe(GEOMETRY.left);
+    viewer.destroy();
+  });
+
   it("lays the page out at the size the backend reported", async () => {
     const viewer = build();
     await settle();

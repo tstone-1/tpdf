@@ -22,7 +22,7 @@ import {
   type ScopeRange,
   type SearchOptions,
 } from "./search";
-import type { FilePage } from "./pages";
+import { filePage, type PageAddress } from "./pages";
 
 describe("sameOptions", () => {
   it("is true only when both options agree", () => {
@@ -104,8 +104,11 @@ describe("runFrom", () => {
       to: Infinity,
     }));
 
+  /** Page `page` of document 1, the opened one in every test here. */
+  const at = (page: number): PageAddress => ({ doc: 1, page: filePage(page) });
+
   /** The identity mapping: an unedited document, where a slot is its own page. */
-  const same = (slot: number) => slot as unknown as FilePage;
+  const same = (slot: number) => at(slot);
 
   it("takes a whole run of consecutive pages, bounded by RUN_PAGES", () => {
     // Longer than the bound, so the bound is what stops it rather than the plan
@@ -144,7 +147,7 @@ describe("runFrom", () => {
       [0, 2],
       [1, 3],
     ]);
-    const of = (slot: number) => consecutive.get(slot) as unknown as FilePage;
+    const of = (slot: number) => at(consecutive.get(slot) ?? -1);
     expect(runFrom(wrapped, 0, of)).toEqual([8, 9]);
   });
 
@@ -160,13 +163,33 @@ describe("runFrom", () => {
   it("stops where the file pages are not consecutive either", () => {
     // Slots 0,1,2 draw file pages 4,5,9: page 6 was deleted.
     const sources = [4, 5, 9];
-    const of = (slot: number) => sources[slot] as unknown as FilePage;
+    const of = (slot: number) => at(sources[slot] ?? -1);
     expect(runFrom(plan(0, 3), 0, of)).toEqual([0, 1]);
   });
 
+  /**
+   * The third thing a run has to agree on, and the one only an imported page
+   * can show: which document it is asking.
+   *
+   * **The pages of the other file are numbered to continue the opened file's
+   * sequence**, 2 after 1, which is the fixture where only the document guard
+   * can stop the run. With any other numbering the page guard beside it fires
+   * on the same entry and the document guard cannot be shown to do anything.
+   * Without it the request names the opened document's handle for page 2 of
+   * the other file, and searches page 2 of the wrong one.
+   */
+  it("stops where the pages start coming from another file", () => {
+    const docs = [1, 1, 40, 40];
+    const of = (slot: number): PageAddress => ({
+      doc: docs[slot] ?? -1,
+      page: filePage(slot),
+    });
+    expect(runFrom(plan(0, 4), 0, of)).toEqual([0, 1]);
+    expect(runFrom(plan(0, 4), 2, of), "and a run inside the other file is one").toEqual([2, 3]);
+  });
+
   it("stops at a slot with no page behind it", () => {
-    const of = (slot: number) =>
-      (slot === 2 ? undefined : slot) as unknown as FilePage | undefined;
+    const of = (slot: number) => (slot === 2 ? undefined : at(slot));
     expect(runFrom(plan(0, 5), 0, of)).toEqual([0, 1]);
   });
 
@@ -180,7 +203,7 @@ describe("runFrom", () => {
    * backend about a page number that means something else now.
    */
   it("stops at once when the first slot has no page behind it", () => {
-    const of = () => undefined as unknown as FilePage | undefined;
+    const of = (): PageAddress | undefined => undefined;
     expect(runFrom(plan(0, 5), 0, of)).toEqual([]);
   });
 

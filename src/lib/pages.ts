@@ -378,14 +378,101 @@ export type PageSource =
   | { readonly baseline: number }
   | { readonly blank: { readonly width: number; readonly height: number } }
   /**
-   * Page `page` (zero-based) of another document, which the model names by
-   * `source`. Nothing sends one yet: the command that inserts pages from another
-   * file does not exist, and until the render path can ask a second worker for
-   * its tiles every consumer here treats it as a page with no number in the
-   * opened file --- {@link baselineOf} and {@link madeSizeOf} both answer
-   * `undefined`.
+   * Page `page` (zero-based) of another file, which the model names by
+   * `source`.
+   *
+   * **Not a page of the opened file**, so {@link baselineOf} and
+   * {@link madeSizeOf} both answer `undefined` for it, and every question that
+   * is about the opened file --- a crop measured against it, its text edits,
+   * its redaction plans --- has no page to ask about. What such a page does
+   * have is a page of *another* file open under its own handle, which is
+   * {@link addressOf}'s answer and is how it is drawn, read and searched.
    */
   | { readonly imported: { readonly source: number; readonly page: number } };
+
+/**
+ * One other file, and the render handle its pages are drawn from.
+ *
+ * Mirrors `edits::SourceView`. The handle is a document of the render service
+ * like the one the reader opened, and nothing here may close it: the backend
+ * releases it with the document that imported it.
+ */
+export interface SourceView {
+  /** The model's id for the file, as {@link PageSource}'s `imported.source`. */
+  source: number;
+  /** The render handle: what a tile request for one of its pages names. */
+  doc: number;
+}
+
+/**
+ * Where a page's pixels, text and matches come from: a document handle and a
+ * page of *that* document.
+ *
+ * The opened document's own pages answer with its handle and their baseline
+ * number; a page inserted from another file answers with that file's handle and
+ * its page there. A page tpdf made has no address, because nothing renders it.
+ *
+ * **One pair rather than a page with the handle implied**, which is what every
+ * request here was until a page could come from somewhere else: a bare
+ * {@link FilePage} sent with the opened document's handle would ask for page
+ * `n` of the wrong file, and get it --- a correct-looking picture of somebody
+ * else's page.
+ */
+export interface PageAddress {
+  /** The render handle to ask. */
+  readonly doc: number;
+  /** The page of that document, zero-based. */
+  readonly page: FilePage;
+}
+
+/**
+ * The address a page is drawn from, or `undefined` for a page tpdf made.
+ *
+ * `doc` is the opened document's handle, which a baseline page names. An
+ * imported page names {@link PageView.from} instead, and one that arrived
+ * without it --- a state nobody joined with {@link withSources} --- answers
+ * `undefined` rather than falling back to `doc`: that fallback would render
+ * page `n` of the opened file in its place, which is exactly the picture the
+ * type exists to refuse.
+ */
+export function addressOf(
+  view: PageView,
+  doc: number,
+): PageAddress | undefined {
+  const source = view.source;
+  if ("baseline" in source) return { doc, page: filePage(source.baseline) };
+  if ("imported" in source) {
+    return view.from === undefined
+      ? undefined
+      : { doc: view.from, page: filePage(source.imported.page) };
+  }
+  return undefined;
+}
+
+/**
+ * The pages of a state with each imported page's render handle written on.
+ *
+ * **The one place the join is made**, on arrival, so that everything
+ * downstream --- the scroller, the strip, the viewer --- holds pages that say
+ * where they are drawn from and needs no second list. A page whose file is not
+ * in `sources` is left without a handle, and {@link addressOf} then answers
+ * `undefined` for it: nothing is drawn, rather than the wrong file.
+ *
+ * The input is not changed. A page that is not imported comes back as the same
+ * object, so a state with no imports is returned element for element.
+ */
+export function withSources(
+  pages: readonly PageView[],
+  sources: readonly SourceView[] = [],
+): PageView[] {
+  if (sources.length === 0) return [...pages];
+  const handles = new Map(sources.map((view) => [view.source, view.doc]));
+  return pages.map((view) => {
+    if (!("imported" in view.source)) return view;
+    const from = handles.get(view.source.imported.source);
+    return from === undefined ? view : { ...view, from };
+  });
+}
 
 /**
  * The baseline page a source names, or `undefined` for a page tpdf made.
@@ -474,6 +561,15 @@ export interface PageView {
    * `edits.ts`'s `pageGeometry`, which asks.
    */
   crop?: readonly [number, number, number, number];
+  /**
+   * The render handle an imported page is drawn from.
+   *
+   * **Not on the wire.** The backend sends the handles once, as
+   * `EditState.sources`, and {@link withSources} writes each onto its pages on
+   * arrival; a page that is not imported never has one. See {@link addressOf},
+   * which is the only reader.
+   */
+  from?: number;
 }
 
 /**
@@ -534,6 +630,59 @@ export class PageMap {
   sourceOf(slot: number): FilePage | undefined {
     const view = this.views[slot];
     return view === undefined ? undefined : baselineOf(view.source);
+  }
+
+  /**
+   * Where the page in a slot is drawn from, or `undefined` for a page tpdf made
+   * or a slot that is not in the document.
+   *
+   * {@link sourceOf}'s counterpart for the requests that can be answered by
+   * *any* file --- a tile, a page's text, a search, a page's size --- where
+   * `sourceOf` stays the answer for questions only the opened file can answer.
+   * `doc` is the opened document's handle; see {@link addressOf}.
+   */
+  addressOf(slot: number, doc: number): PageAddress | undefined {
+    const view = this.views[slot];
+    return view === undefined ? undefined : addressOf(view, doc);
+  }
+
+  /**
+   * The first slot showing page `page` of the file open under `doc`, when that
+   * file is not the opened one.
+   *
+   * {@link slotOf}'s counterpart for a link found on an imported page, whose
+   * destination names a page of the file it came from. `undefined` when that
+   * page was not imported, or was and has been deleted.
+   */
+  slotOfImported(doc: number, page: number): number | undefined {
+    for (let slot = 0; slot < this.views.length; slot++) {
+      const view = this.views[slot];
+      if (
+        view?.from === doc &&
+        "imported" in view.source &&
+        view.source.imported.page === page
+      ) {
+        return slot;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * The handles of the other files the document's pages are drawn from, each
+   * once, in slot order.
+   *
+   * For the consumers that ask a question of a whole document --- the links
+   * scan --- and so need one request per file rather than one per page.
+   */
+  importedDocs(): number[] {
+    const seen: number[] = [];
+    for (const view of this.views) {
+      if (view.from !== undefined && !seen.includes(view.from)) {
+        seen.push(view.from);
+      }
+    }
+    return seen;
   }
 
   /**
@@ -695,6 +844,87 @@ export function linksIn(items: readonly Link[], pages: PageMap): Link[] {
     mapped.push({ ...link, page: slot, target: targetIn(link.target, pages) });
   }
   return mapped;
+}
+
+/**
+ * The links on the pages imported from one other file, in slots.
+ *
+ * `items` is that file's own links scan, made through its handle `doc`, so
+ * every page in it is a page of *that* file. A rectangle is placed on each slot
+ * showing its page; a link whose page was not imported, or was deleted, is
+ * dropped with it --- {@link linksIn}'s rule.
+ *
+ * **Two kinds of destination do not survive the move, and they are said to be
+ * off rather than followed somewhere wrong.** A destination inside the file
+ * resolves to the slot showing that page if it was imported too, and is
+ * otherwise `broken`, which already says "points at a page this document does
+ * not have". A web address is `refused`: its token indexes a list the backend
+ * keeps per document, and following it through the opened document's list
+ * would open somebody else's address. Nothing reads the other file's outline.
+ */
+export function importedLinksIn(
+  doc: number,
+  items: readonly Link[],
+  pages: PageMap,
+  firstId = 0,
+): Link[] {
+  const mapped: Link[] = [];
+  let next = firstId;
+  for (const link of items) {
+    for (let slot = 0; slot < pages.length; slot++) {
+      const view = pages.at(slot);
+      if (
+        view?.from !== doc ||
+        !("imported" in view.source) ||
+        view.source.imported.page !== link.page
+      ) {
+        continue;
+      }
+      // A fresh id, because the other file's scan numbered its links from zero
+      // exactly as the opened file's did: the keyboard walk and a click both
+      // name a link by id, and two links sharing one would follow the other.
+      mapped.push({
+        ...link,
+        id: next++,
+        page: slot,
+        target: importedTarget(doc, link.target, pages),
+      });
+    }
+  }
+  return mapped;
+}
+
+/**
+ * Every link of the working document: the opened file's, and each other file's
+ * on the pages imported from it.
+ *
+ * {@link linksIn} for the opened file, then {@link importedLinksIn} per file,
+ * numbered on from the largest id the opened file used so no two links share
+ * one. `imported` is keyed by render handle; a handle no page is drawn from any
+ * more contributes nothing.
+ */
+export function allLinksIn(
+  items: readonly Link[],
+  imported: ReadonlyMap<number, readonly Link[]>,
+  pages: PageMap,
+): Link[] {
+  const mapped = linksIn(items, pages);
+  let next = items.reduce((top, link) => Math.max(top, link.id + 1), 0);
+  for (const [doc, links] of imported) {
+    const placed = importedLinksIn(doc, links, pages, next);
+    next += placed.length;
+    mapped.push(...placed);
+  }
+  return mapped;
+}
+
+/** {@link targetIn} for a destination named by another file. */
+function importedTarget(doc: number, target: Target, pages: PageMap): Target {
+  if (target.kind === "web") return { kind: "refused", action: "uri" };
+  if (target.kind !== "page") return target;
+  const slot = pages.slotOfImported(doc, target.page);
+  if (slot === undefined) return { kind: "broken" };
+  return { ...target, page: slot };
 }
 
 /**
