@@ -4490,6 +4490,10 @@ async function appCommandChecks(
     // Declared with the command, as the two above were, rather than after the
     // harness went red for it.
     "edit.removeRedaction",
+    // Guarded on a file waiting for its pages to be named, which only
+    // `edit.insertPages` leaves behind. It shipped without its entry here and
+    // the Windows run was the first to read the red, on both corpora.
+    "edit.insertPages.range",
     // Guarded on the document being edited, which an untouched one is not. It
     // joined this list late: the guard landed with "Save over the file the
     // reader opened" and turned this check red, and the red went unread because
