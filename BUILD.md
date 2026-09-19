@@ -9295,3 +9295,129 @@ that the three-entry count already refuses. One pre-existing mutation was remove
 rule it tested (OpenType TrueType without OS/2 refused). A first run also showed one test
 case that could not fail (49 operands with no operator after them ends the charstring
 before the stack bound is reached), and one mutation that did not compile.
+
+### Edit length and refusals across the public sample — measured 2026-09-19
+
+The question was whether paragraph reflow should be the next text-editing feature: how often
+is a replacement refused only because it is longer than the space it has, against refused for
+another reason, against accepted, as a function of how much longer it is. Measured on macOS
+arm64 at `79d5f53` plus this instrument, over every editable run with visible text on the
+first 128 pages of the corpus in `testdata/textedit-public-corpus.json`: 31 of its 32 files
+(803 pages, 629 editable, 44,282 runs). `wiki-pdf.pdf` was left out because the URL now serves
+different bytes (1,098,738 against the recorded 1,098,693); a regenerated export is a new sample,
+not this one.
+
+```sh
+python3 scripts/textedit_growth.py src-tauri/target/release/examples/text-edit-probe \
+  scratch/reflow-corpus/*.pdf --manifest testdata/textedit-public-corpus.json --jobs 6 \
+  --output <new report.json>
+uv run --with pypdf scripts/textedit_growth.py src-tauri/target/release/examples/text-edit-probe --self-test
+```
+
+`text-edit-probe --growth` (`src/probes/text_edit_growth.rs`) builds, per run, the unchanged
+text, a same-length change (two adjacent letters swapped), a quarter shorter, and 10, 25 and
+50% longer. The longer ones append only characters the run already has, so a missing glyph
+cannot be the reason. Each goes through `textedit::write` in three modes: `app`, the layout the
+editor sends when a reader types (`defaultTextLayout`: the box is the run's own advance);
+`patch`, no layout, the byte-patch writer; and, for the longer ones, `widened`, the app layout
+with the box grown in 5% steps until its own width is no longer the objection, which is what a
+reader resizing the box reaches. Refusals are sorted by message into the categories in the
+driver, with anything unmatched counted verbatim. Use a release build: the debug probe took 8
+minutes for one 7-page file. The whole run took 1,003 s wall on six processes, 1,002 s of it
+the one pdfTeX paper whose figure forms every trial re-inspects.
+
+Before any number was used:
+
+- **Synthetic fixture** (the driver's `--self-test`, generated with pypdf): a short word at the
+  start of a free line is accepted when widened; a line ending 3 pt from the right edge is refused
+  as off the page; a line with another run 2 pt after it is refused as an overlap and attributed
+  to that neighbour; a run shown as `[(KER) 80 (NED) 80 (RUN)] TJ` is refused unchanged in the
+  editor's box, as box width.
+- **Mutations of `textedit::write`** on three files (922 runs): refusing everything moved the
+  report to 0% accepted in every column and every refusal into `other`; accepting everything
+  moved it to 100%, and the worker comparison below reported 818 disagreements, so it can fail.
+  Restored, the same files read 78% unchanged, 28 / 72 / 0 at +10% widened.
+- **The in-process verdict is the worker's.** Every 97th trial also went through the contained
+  worker's `TextRuns` request, the application's own validation path: 9,601 checked, 0
+  verdicts or messages different. Each page's runs are rescanned after its trials, so an
+  accepted trial that was not undone would stop the run.
+- **An accepted trial is a real edit.** Four accepted +25% widened trials were saved with
+  `--roundtrip` (via `--growth-request`) and read back: Word via PDFMaker 20, PDFMaker 26 and
+  Typst pass the round trip; all four pass `qpdf --check` and `pdftotext` finds the
+  replacement. The LibreOffice one saves and previews identically, but the round trip refuses
+  it: PDFium renders 139 pixels of the next line (rows 318-328, only under the edited span,
+  largest channel difference 90) differently, while poppler at the same resolution shows the
+  following line unmoved to within 0.00002 pt. Unexplained.
+- Two full runs gave identical counts for every trial they shared.
+
+Rates are of the runs a trial applies to (a run too short or too uniform for a same-length
+change has none). Widened cells are accepted / no room (overlap, off the page, clipped) / other.
+
+| Producer | Runs | Unchanged ok % | Same length ok % | 25% shorter ok % | +25% as typed ok % | +10% widened | +25% widened | +50% widened |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Acrobat 25 (Arcadia agenda) | 7461 | 70 | 67 | 100 | 0 | 38 / 62 / 0 | 29 / 71 / 0 | 23 / 77 / 0 |
+| pdfTeX (arXiv 2003.00976) | 3018 | 27 | 16 | 100 | 0 | 27 / 73 / 0 | 17 / 82 / 0 | 13 / 87 / 0 |
+| arXiv GenPDF (arXiv 2509.18965) | 3019 | 22 | 18 | 100 | 0 | 56 / 44 / 0 | 34 / 66 / 0 | 24 / 76 / 0 |
+| Word via PDFMaker 20 (Coatesville) | 1681 | 53 | 57 | 100 | 0 | 33 / 67 / 0 | 15 / 85 / 0 | 10 / 90 / 0 |
+| XeLaTeX / xdvipdfmx (fontspec) | 6190 | 22 | 11 | 100 | 0 | 49 / 51 / 0 | 40 / 60 / 0 | 33 / 67 / 0 |
+| PowerPoint via PDFMaker (Healdsburg) | 60 | 40 | 33 | 100 | 0 | 75 / 25 / 0 | 73 / 27 / 0 | 70 / 30 / 0 |
+| Word via PDFMaker 26 (Hugo) | 626 | 77 | 77 | 100 | 0 | 31 / 69 / 0 | 24 / 76 / 0 | 18 / 82 / 0 |
+| Word via PDFMaker 22 (Illinois) | 241 | 61 | 50 | 100 | 0 | 55 / 45 / 0 | 49 / 51 / 0 | 46 / 54 / 0 |
+| LuaTeX / ConTeXt, pages 1-128 | 10283 | 27 | 19 | 99 | 2 | 53 / 45 / 2 | 46 / 53 / 2 | 41 / 57 / 2 |
+| Word 2016 (Mercer Island) | 487 | 2 | 1 | 43 | 0 | 15 / 61 / 24 | 15 / 65 / 20 | 13 / 69 / 18 |
+| HM Passport Office guidance | 37 | 46 | 46 | 100 | 0 | 84 / 16 / 0 | 78 / 22 / 0 | 54 / 46 / 0 |
+| ReportLab, pages 1-128 | 7335 | 100 | 100 | 100 | 0 | 37 / 63 / 0 | 33 / 67 / 0 | 29 / 71 / 0 |
+| pdfTeX (arXiv 1706.03762) | 189 | 5 | 3 | 100 | 0 | 63 / 37 / 0 | 49 / 51 / 0 | 28 / 72 / 0 |
+| Google Docs (SampleForms invoice) | 97 | 61 | 72 | 100 | 0 | 58 / 42 / 0 | 49 / 51 / 0 | 48 / 52 / 0 |
+| Typst | 228 | 83 | 92 | 100 | 0 | 15 / 85 / 0 | 14 / 86 / 0 | 10 / 90 / 0 |
+| IBM afp2pdf, pages 1-128 | 3104 | 92 | 96 | 92 | 0 | 10 / 90 / 0 | 10 / 90 / 0 | 7 / 93 / 0 |
+| W3C dummy | 1 | 100 | 100 | 100 | 0 | 100 / 0 / 0 | 100 / 0 / 0 | 100 / 0 / 0 |
+| LibreOffice (W3C headers) | 68 | 78 | 84 | 100 | 0 | 44 / 56 / 0 | 35 / 65 / 0 | 35 / 65 / 0 |
+| Wellington agenda | 157 | 62 | 57 | 100 | 0 | 50 / 50 / 0 | 50 / 50 / 0 | 44 / 56 / 0 |
+| **All runs** | 44282 | 52 | 49 | 99 | 1 | 41 / 58 / 1 | 33 / 67 / 1 | 28 / 72 / 1 |
+| **Runs of 20+ characters** | 19632 | 52 | 52 | 99 | 1 | 43 / 56 / 0 | 27 / 73 / 0 | 18 / 82 / 0 |
+
+The other twelve files have no editable run with visible text (ten have no editable page).
+
+The same totals as counts, with the refusal categories:
+
+| Trial | Mode | Tried | ok | box width | overlap | off page | clip | box height | glyph | other |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| unchanged | app | 44282 | 22992 | 20873 | 7 | 259 | 0 | 140 | 11 | 0 |
+| same length | app | 38108 | 18518 | 19432 | 7 | 130 | 0 | 10 | 11 | 0 |
+| same length | patch | 38108 | 32309 | 5733 | 0 | 0 | 0 | 0 | 64 | 2 |
+| 25% shorter | app | 39013 | 38463 | 218 | 0 | 259 | 7 | 27 | 9 | 30 |
+| +10% | app | 44282 | 390 | 43881 | 0 | 0 | 0 | 0 | 11 | 0 |
+| +10% | widened | 44282 | 18246 | 119 | 21680 | 3999 | 48 | 179 | 11 | 0 |
+| +25% | app | 44282 | 233 | 44038 | 0 | 0 | 0 | 0 | 11 | 0 |
+| +25% | widened | 44282 | 14523 | 103 | 21603 | 7814 | 49 | 179 | 11 | 0 |
+| +50% | widened | 44282 | 12190 | 93 | 21667 | 10099 | 44 | 179 | 10 | 0 |
+
+`patch` refuses every longer edit as wider than the original advance, as `app` does. Its two
+`other` are "cannot preserve following text at PDF number precision"; the 30 under `app` are
+"the selected fallback font does not contain a required character".
+
+Where the +25% widened trials of axis-aligned runs end up, judged against the hit rectangles of
+the other discovered runs on the page (read-only text, graphics and form fields are not in
+them, so this is a lower bound on what is in the way): accepted within the page's existing text
+extent 11,352; accepted only by running past the rightmost existing text, i.e. into the margin,
+3,161; overlap with another run on the same line to the right 17,716; overlap with other content
+3,887; off the page 7,814. For runs of 20 or more characters the same split is 3,660 / 1,643 /
+5,002 / 1,586 / 7,704: two in five would leave the page, and fewer than one in five fits within
+the page's existing text extent.
+
+**Verdict.** Length is the refusal that matters once a replacement gets as far as the page: with
+the box widened, 58% of +10% and 67% of +25% edits have no room, against at most 1% refused for
+any other reason. But reflow is not the next step, because most edits never get that far. In the
+box the editor opens, 48% of runs refuse their own unchanged text and 51% refuse a same-length
+change, all but a few hundred as wider than the box; the byte-patch writer, which the editor
+never sends, accepts 85% of the same same-length changes. The mechanism is shown by the kerned
+fixture and by reading `layout::prepare`: it lays the run out again from glyph widths alone,
+without the source's `TJ` kerning, so a run the producer tightened no longer fits its own advance.
+ReportLab, which writes no kerning, accepts 100% of its runs unchanged, the TeX producers 5 to 27%. The first
+increment is therefore the editor's own box: keep the source kerning (or take the patch path) for
+text that fits, and size the box to the typed text as far as the free space allows. The second
+already has its number: 41% of +10% and 33% of +25% edits fit when the box follows the text,
+none of which needs reflow. After that, reflow is the right feature, and its first half is moving
+the rest of a line rather than wrapping: 82% of the overlaps (17,716 of 21,603 at +25%) are the
+next run on the same line, while wrapping onto a new line is what the 18% leaving the page need.
