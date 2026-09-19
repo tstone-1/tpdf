@@ -3,7 +3,9 @@ use super::*;
 use lopdf::content::Operation;
 
 pub(super) struct Context {
-    pub line: [f64; 6],
+    // The operator that last set the line matrix (BT or Tm) before the run,
+    // and the leading in effect there; see `restore_line`.
+    pub line_origin: (usize, f64),
     pub shown: [f64; 6],
     pub cursor_after: f64,
     pub clip: Option<[f64; 4]>,
@@ -30,6 +32,51 @@ fn numeric(op: &str, values: &[f64]) -> Operation {
             .map(|value| Object::Real(*value as f32))
             .collect(),
     )
+}
+
+// The line matrix a following Td, TD or T* starts from, put back exactly.
+//
+// A reader keeps the text matrix and the line position apart and adds each
+// line move to the position in single precision: PDFium's CPDF_AllStates holds
+// `text_matrix_` and `text_line_pos_` as floats, `MoveTextPoint` does
+// `text_line_pos_ += point` and a glyph lands at `text_matrix_.Transform(pos)`.
+// One Tm carrying the accumulated origin is the same point in exact arithmetic
+// and a different one in floats, because float addition is not associative:
+// after `56.8 724.6 Td ... 451 0 Td ... -451 -23 Td` the source's lines start at
+// 56.799988 and a restored `Tm` put them at 56.8, which moved glyphs by a pixel
+// wherever that crossed a rounding boundary. So the restore replays what set
+// the line: the Tm (or the identity a BT sets) and every line move after it,
+// as the same operands, with the leading a replayed T* read reinstated first.
+// Whatever reads the page then accumulates the same operations in the same
+// order, in whatever precision it uses.
+fn restore_line(
+    operations: &[Operation],
+    (origin, leading): (usize, f64),
+    run: usize,
+) -> Result<Vec<Operation>, String> {
+    let start = operations.get(origin).ok_or("missing text line origin")?;
+    let moves = operations
+        .get(origin + 1..run)
+        .ok_or("missing text line origin")?;
+    let mut restored = Vec::new();
+    if moves.iter().any(|op| op.operator == "T*") {
+        restored.push(numeric("TL", &[leading]));
+    }
+    restored.push(match start.operator.as_str() {
+        "Tm" => start.clone(),
+        "BT" => Operation::new("Tm", [1, 0, 0, 1, 0, 0].map(Object::Integer).to_vec()),
+        _ => return Err("missing text line origin".into()),
+    });
+    for op in moves {
+        match op.operator.as_str() {
+            "Td" | "TD" | "T*" | "TL" => restored.push(op.clone()),
+            "Tm" | "BT" | "ET" | "'" | "\"" => {
+                return Err("Cannot preserve the following line origin precisely".into())
+            }
+            _ => {}
+        }
+    }
+    Ok(restored)
 }
 
 fn line_breaks(
@@ -454,18 +501,11 @@ pub(super) fn prepare(
     let (spacing, word_spacing) = page.text_spacing[&run.operator];
     operations.push(numeric("Tc", &[spacing]));
     operations.push(numeric("Tw", &[word_spacing]));
-    let local_xscale = context.line[0].hypot(context.line[1]);
-    let local_yscale = context.line[2].hypot(context.line[3]);
-    // A Tm round trip must not move the line origin accumulated by authored Td
-    // operations. Compare in page points, including the graphics transform.
-    let page_scale = (xscale / local_xscale).max(yscale / local_yscale);
-    if context.line[4..]
-        .iter()
-        .any(|value| (f64::from(*value as f32) - value).abs() * page_scale > 0.0001)
-    {
-        return Err("Cannot preserve the following line origin precisely".into());
-    }
-    operations.push(numeric("Tm", &context.line));
+    operations.extend(restore_line(
+        &page.content.operations,
+        context.line_origin,
+        run.operator as usize,
+    )?);
     let adjustment = (-context.cursor_after * 1000. / run.size) as f32;
     number(&Object::Real(adjustment))?;
     if !adjustment.is_finite()

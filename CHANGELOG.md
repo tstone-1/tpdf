@@ -17,6 +17,18 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.15] - Unreleased
+
+### Fixed
+
+- Editing a line of text could shift the lines below it in the same paragraph
+  by a hundred-thousandth of a point, which is enough to move some of their
+  letters by a pixel on screen, most visibly in documents from Word via Acrobat and from LibreOffice.
+  The editor put the lines after an edit back at a position it had calculated
+  itself, which readers round slightly differently from the document's own
+  instructions. It now repeats the document's own positioning instead, so every
+  following line starts exactly where it did before the edit.
+
 ## [26.9.14] - 2026-09-19
 
 ### Fixed

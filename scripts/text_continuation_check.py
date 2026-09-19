@@ -9,6 +9,13 @@ PDFKit: swift scripts/text_edit_pdfkit.swift <probe-directory> --continued
 Use --inline in that PDFKit command for fixtures generated with --inline.
 --leading generates two lines positioned by TD and T*. Use the ordinary probe,
 PDFKit check (without --continued), and make_textedit_embedded.py --check for it.
+--line-drift generates a block whose later lines start where single-precision
+addition puts them: 19.999992 200 Td, then 200 0 Td and -200 -30 Td bring the
+line back to 20.0 in float, not to 19.999992. Edit its first run in the default
+box and require that no pixel outside it changes:
+  text-edit-probe --growth-request <input.pdf> 0 3 control 108 > <ignored req.json>
+  text-edit-probe --roundtrip <input.pdf> <ignored req.json> <new-ignored-directory>
+A layout that restores the line with one recomputed Tm fails that round trip.
 """
 import argparse
 from pathlib import Path
@@ -31,7 +38,7 @@ def value(obj):
     return obj
 
 
-def generate(path, array, inline=None, leading=False):
+def generate(path, array, inline=None, leading=False, drift=False):
     writer = PdfWriter(clone_from=ROOT / "testdata/textedit-embedded.pdf")
     first = b"[(SYNTHETIC FIRST) -125] TJ" if array else b"(SYNTHETIC FIRST) Tj"
     spacer = b""
@@ -46,6 +53,10 @@ def generate(path, array, inline=None, leading=False):
         stream.set_data(b"% SYNTHETIC leading\nBT /F1 12 Tf 13 TL 20 220 Td "
                         b"% retain positioning\n20 -40 TD (SYNTHETIC FIRST) Tj "
                         b"T* (SYNTHETIC SECOND) Tj ET")
+    if drift:
+        stream.set_data(b"% SYNTHETIC line drift\nBT /F1 12 Tf 19.999992 200 Td (SYNTHETIC FIRST) Tj "
+                        b"200 0 Td (SECOND) Tj -200 -30 Td (SYNTHETIC SECOND) Tj 14 TL T* "
+                        b"(SYNTHETIC FIRST) Tj 0 -30 TD (SECOND SYNTHETIC) Tj ET")
     writer.pages[0][NameObject("/Contents")] = writer._add_object(stream)
     path.parent.mkdir(parents=True, exist_ok=True)
     writer.write(path)
@@ -108,12 +119,14 @@ def main():
     parser.add_argument("--array", action="store_true")
     parser.add_argument("--inline", choices=("tab", "bell", "tabs"))
     parser.add_argument("--leading", action="store_true")
+    parser.add_argument("--line-drift", action="store_true")
     args = parser.parse_args()
-    if args.leading and (args.array or args.inline):
-        parser.error("--leading cannot be combined with --array or --inline")
+    if (args.leading or args.line_drift) and (args.array or args.inline or (args.leading and args.line_drift)):
+        parser.error("--leading and --line-drift combine with nothing")
     if args.generate and not args.paths:
-        generate(args.generate, args.array, args.inline, args.leading)
-    elif not args.generate and not args.array and not args.inline and not args.leading and len(args.paths) == 2:
+        generate(args.generate, args.array, args.inline, args.leading, args.line_drift)
+    elif not args.generate and not args.array and not args.inline and not args.leading \
+            and not args.line_drift and len(args.paths) == 2:
         check(*args.paths)
     else:
         parser.error("provide --generate <input.pdf> [--array], or <before.pdf> <after.pdf>")

@@ -229,6 +229,7 @@ hop through the index.
 - ttf-parser's CFF `glyph_index` falls back to StandardEncoding for a code the font does not encode
 - Laying a run out again from its glyph widths drops the producer's kerning, and the run no longer fits its own advance
 - A box that shows its size to a thousandth rounds the source size up, and the run's own text no longer fits
+- A text matrix restored with one `Tm` is the same point in exact arithmetic and a different one in floats
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -493,6 +494,7 @@ hop through the index.
 - A line breaker and an ink check that measure different strings refuse a line that fits
 - A request that names a page without its document asks the right page of the wrong file, and a shared page number hides it
 - The first `Tf` in an edited stream is the source's own, so a test of the written size read the wrong operator
+- A check that measures in `f64` cannot see a drift a reader makes in `f32`
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -23372,3 +23374,45 @@ that should **not** snap, and read 12 where it had asked for 12.0011. The expans
 the second; the tests take `.nth(1)` and say why. An edited stream keeps everything around
 the edit, so a lookup by operator name has to be anchored to the edit, and a test of a
 written value needs a case whose right answer differs from the source's.
+
+### A text matrix restored with one `Tm` is the same point in exact arithmetic and a different one in floats
+
+A layout edit draws its replacement at its own `Tm` and then has to put the line matrix back,
+because the lines after it are positioned relative to it with `Td`, `TD` and `T*`. It did that
+with one `Tm` carrying the line origin the scanner had accumulated, rounded to `f32`. In exact
+arithmetic that is the same line. In a reader it is not: PDFium keeps the text matrix and the
+line position apart, both `float` (`CPDF_AllStates::text_matrix_`, `text_line_pos_`), adds
+each line move to the position, and places a show at `text_matrix_.Transform(pos)`. Before the
+edit a later line starts at `fl(fl(56.8 + 451) - 451)` = 56.799988; after it, at
+`56.8 + fl(451 - 451)` = 56.8. Float addition is not associative, so moving the origin from
+the position into the matrix moves every line after a round-trip `Td` by 1.1e-5 pt.
+
+That is invisible to poppler and to any f64 check, and it still moved glyphs by a whole pixel in
+PDFium on macOS: a synthetic sweep of sixteen starting points, each a few ulps from a
+boundary, changed pixels only where the shift crossed a whole point at scale 1 (324 pixels),
+never at a half or a sixteenth, so most lines absorb it and a few move a column of pixels. A LibreOffice export that hops right and back with `451 0 Td ... -451 -23
+Td` put 23 lines at 56.799988, and 26 of 59 same-length edits in the default box failed their
+round trip; Word via PDFMaker 20, which chains a relative `Td` per word, failed 25 of 97.
+
+The restore now replays what set the line: the source's own `Tm` (or the identity a `BT` sets),
+then every `Td`, `TD`, `T*` and `TL` between it and the run, as the same operands, with the
+leading in effect at that `Tm` reinstated first when a `T*` is replayed. A reader then repeats
+the same additions in the same order in whatever precision it uses. The general form: **when
+another program will redo your arithmetic, hand it the same operations, not your answer to
+them**; a value computed more precisely is still a different value. `BUILD.md`, *Restoring the
+line matrix by replaying the source*, has the measurements.
+
+### A check that measures in `f64` cannot see a drift a reader makes in `f32`
+
+`layout_rotations_and_continued_shows_preserve_later_geometry` and
+`resized_text_preserves_later_cursor_line_origin_and_resources` both assert that the lines
+after an edit do not move, and both passed while every line after a round-trip `Td` moved by a
+pixel in the application. They compare the positions `scan` reports, and `scan` accumulates
+the line matrix in `f64`, where `56.8 + 451 - 451` is 56.8 whichever way it is grouped; one of
+them also allowed 1e-5. The defect exists only in the reader's `f32`, so a check written in the
+scanner's arithmetic had no way to go red. The new test replays the saved stream the way PDFium
+does (`reader_line_starts`, which names the PDFium members it follows), compares the bits, and
+was proved red against the code before the fix; the probe fixture from
+`text_continuation_check.py --line-drift` checks the same thing with PDFium's own pixels. A
+check of a value some other program computes has to be written in that program's arithmetic,
+or it checks your model of the value instead.

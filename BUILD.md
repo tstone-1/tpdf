@@ -9563,3 +9563,73 @@ within the source's own ink. Measured with `--roundtrip` on the same fixture and
 so this change does not touch that edit; the phase was already failing at `49cd191`. The
 accepted draft then replaced the journal's revision, which is why the save check read other
 text. The phase now expects the draft to be accepted, and undoes it before saving.
+
+### Restoring the line matrix by replaying the source — measured 2026-09-19
+
+The round-trip failure the previous section left unexplained, on Word via PDFMaker 20 and
+LibreOffice, measured on macOS arm64 with release probes built from `5f67964` (before) and
+from the change (after).
+
+**Mechanism.** After drawing a replacement, the layout restored the line matrix with one `Tm`
+carrying the origin the scanner had accumulated in `f64`, rounded to `f32`. The hypothesis that
+the `f32` rounding itself was the cause is wrong in the case measured: the value written is the
+value PDFium held. What differs is where it is held. PDFium (`CPDF_AllStates`, checked at
+`chromium/7881`) keeps `text_matrix_` and `text_line_pos_` apart as floats, adds each `Td`/`TD`
+to the position, subtracts `text_leading_` for `T*`, resets the position at `BT` and `Tm`, and
+places a show at `text_matrix_.Transform(pos)`. The restore moved the accumulated origin from
+the position into the matrix, and float addition is not associative. In the LibreOffice export
+(`w3c-headers.pdf`, page 3) the lines hop right and back with `451 0 Td ... -451 -23 Td`, so the
+source's following lines start at `fl(fl(56.8 + 451) - 451)` = 56.799988 and the restored ones
+at 56.8 + 0 = 56.8. Replaying both streams in `f32` (a script following those members) gives
+exactly that 1.1e-5 pt difference on all 23 lines after the hop and on no other, and the changed
+pixels lie within those lines (x 68-86, rows 330-541). poppler and the `f64` scanner see no move.
+
+A synthetic block, `19.999992 200 Td (…) Tj 200 0 Td (…) Tj -200 -30 Td …`, reproduces it: 16
+starting points a few ulps under a boundary were tried, and only the one crossing a whole point
+changed pixels (324), so most lines absorb the shift and a few move a column of pixels.
+
+**Fix.** `layout::restore_line` replays what set the line: the source's own `Tm`, or the
+identity a `BT` sets, then every `Td`, `TD`, `T*` and `TL` between it and the run with the same
+operands, preceded by the leading in effect at that `Tm` whenever a `T*` is replayed. The
+scanner records that origin and leading (`Context::line_origin`). The old `f32` precision check
+on the restored origin is gone with the `Tm` it guarded; the `TJ` compensation for a continued
+line is unchanged. `'` and `"` are refused by the scanner, and form text is read-only, so
+neither reaches the layout.
+
+**Evidence.**
+
+- `a_layout_leaves_the_following_line_matrix_exactly_as_the_source_had_it` replays the saved
+  stream in PDFium's arithmetic and requires every following line start to be bit-identical
+  to the source's: across `TD`, `T*`, a leading set before the block and changed after the
+  edit, a line continued past the edit, a block `Tm`, quarter-turned text, and edits after the
+  hop. It fails on the code before the change (`SECOND` at bits 1101004796 against
+  1101004800).
+- `uv run --with pypdf scripts/text_continuation_check.py --generate <path> --line-drift`
+  writes the synthetic block; `--growth-request <path> 0 3 control 108` then `--roundtrip`
+  fails on the before probe (pixels outside the edit) and passes on the after probe.
+- Seven mutations in `scripts/mutate_rust.py` (`--only "line restore"` and `--only "boxed
+  edit: lose original line origin"`), each red on its named test. Two survived a first run,
+  because the fixture set its leading inside the block where replay reproduced it anyway; the
+  fixture now sets it before `BT`.
+
+Same-length edits in the default box (`--growth-request … control <default width>`, then
+`--roundtrip`), before -> after:
+
+| Producer | Trials | Pass before | Pass after |
+|---|---:|---:|---:|
+| LibreOffice (W3C headers), every run | 59 | 33 | 59 |
+| Word via PDFMaker 20 (Coatesville), every 10th | 97 | 72 | 97 |
+| Acrobat 25 (Arcadia) | 25 | 19 | 25 |
+| Word via PDFMaker 26 (Hugo) | 25 | 16 | 25 |
+| Word via PDFMaker 22 (Illinois) | 25 | 20 | 25 |
+| Typst, Word 2016 (Mercer), XeLaTeX (fontspec), pdfTeX (arXiv 2003), PowerPoint (Healdsburg), Google Docs (SampleForms), Wellington | 25 each | 25 each | 25 each |
+
+Every before-failure was "pixels changed outside edited text envelopes". The ReportLab guide
+cannot be round-tripped whole (over 128 pages) and was left out. One saved edit per producer
+from the table (nine) passes the probe, `qpdf --check` clean, and `pdftotext` and pypdf both
+find the replacement on its page.
+
+**No regression.** The growth instrument over the same 31 files with `--records`, compared
+with the records of the previous section's after run: 597,062 verdicts unchanged in kind, 0
+refused before and accepted now, 0 accepted before and refused now; 9,309 worker agreement
+checks, 0 disagreements; 1,089 s on six processes.

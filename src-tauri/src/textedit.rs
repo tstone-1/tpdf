@@ -632,6 +632,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut positioned = false;
     let mut cursor = 0.0;
     let mut previous_show = None;
+    // Where the current text line matrix was last set (the BT or Tm), and the
+    // leading then in effect: a layout restores the line by replaying from here.
+    let mut line_origin = (0_usize, 0.0_f64);
     let mut spacer: Option<spacers::Spacer> = None;
     let mut actual: Option<actual::Span> = None;
     // Inside an optional-content (layer) sequence: its text may be hidden.
@@ -889,6 +892,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 cursor = 0.0;
                 previous_show = None;
                 matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+                line_origin = (index, leading);
             }
             ("ET", []) if inside => inside = false,
             // Explicit defaults have the same semantics as an omitted setting.
@@ -992,6 +996,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 compose_affine([1., 0., 0., 1., 0., 0.], matrix)?;
                 positioned = true;
                 cursor = 0.0;
+                line_origin = (index, leading);
             }
             ("Td" | "TD", [x, y]) if inside => {
                 let (x, y) = (number(x)?, number(y)?);
@@ -1216,7 +1221,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         contexts.insert(
             index as u32,
             layout::Context {
-                line: matrix,
+                line_origin,
                 shown: shown_matrix,
                 cursor_after: cursor,
                 clip,

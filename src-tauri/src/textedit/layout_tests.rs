@@ -645,3 +645,121 @@ fn a_requested_size_within_one_step_of_the_source_is_the_source_size() {
         assert_eq!(font.operands[1].as_float().unwrap(), written, "{requested}");
     }
 }
+
+// Where a reader puts each line, in its own arithmetic. PDFium keeps the text
+// matrix and the line position apart, both in `float` (`CPDF_AllStates`:
+// `text_matrix_`, `text_line_pos_`, `text_leading_`), adds each Td or TD to the
+// position (`MoveTextPoint`), subtracts the leading for T* (`MoveTextToNextLine`),
+// resets the position at BT and Tm, and places a show at
+// `text_matrix_.Transform(pos)`. Each show that follows a line move is listed
+// with the bits of the point its line starts at; a show that continues a line
+// gets `None`, since its position also depends on the glyph advances before it.
+fn reader_line_starts(doc: &Document) -> Vec<(Object, Option<[u32; 2]>)> {
+    let page = crate::pagetree::ordered_pages(doc)[0];
+    let content = Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    let identity = [1_f32, 0., 0., 1., 0., 0.];
+    let (mut matrix, mut line, mut leading) = (identity, [0_f32; 2], 0_f32);
+    let mut moved = false;
+    let mut starts = Vec::new();
+    for op in content.operations {
+        let n: Vec<f32> = op
+            .operands
+            .iter()
+            .filter_map(|o| o.as_float().ok())
+            .collect();
+        match op.operator.as_str() {
+            "BT" => (matrix, line, moved) = (identity, [0., 0.], true),
+            "Tm" => {
+                matrix.copy_from_slice(&n);
+                (line, moved) = ([0., 0.], true);
+            }
+            "Td" | "TD" => {
+                (line[0], line[1], moved) = (line[0] + n[0], line[1] + n[1], true);
+                if op.operator == "TD" {
+                    leading = -n[1];
+                }
+            }
+            "T*" => (line[1], moved) = (line[1] - leading, true),
+            "TL" => leading = n[0],
+            "Tj" | "TJ" => {
+                let start = [
+                    matrix[0] * line[0] + matrix[2] * line[1] + matrix[4],
+                    matrix[1] * line[0] + matrix[3] * line[1] + matrix[5],
+                ];
+                starts.push((
+                    op.operands[0].clone(),
+                    moved.then(|| start.map(f32::to_bits)),
+                ));
+                moved = false;
+            }
+            _ => {}
+        }
+    }
+    starts
+}
+
+// Edits `target` in the editor's default box, swapping its first two letters,
+// and requires every show after it that starts a line to start it on exactly
+// the same bits as in the source.
+fn following_lines_are_identical(content: &str, target: &str, followers: &[&str]) {
+    let mut doc = tests::with_content(content.as_bytes());
+    let before = reader_line_starts(&doc);
+    let index = scan(&doc, 0)
+        .unwrap()
+        .runs
+        .iter()
+        .position(|run| run.text == target)
+        .unwrap_or_else(|| panic!("{content}: no run {target}"));
+    let mut swapped: Vec<char> = target.chars().collect();
+    swapped.swap(0, 1);
+    let replacement: String = swapped.into_iter().collect();
+    let change = in_default_box(&doc, index, &replacement);
+    write(&mut doc, &[change]).unwrap_or_else(|error| panic!("{content}: {error}"));
+    let after = reader_line_starts(&doc);
+    assert_eq!(scan(&doc, 0).unwrap().runs[index].text, replacement);
+    for text in followers {
+        let find = |starts: &[(Object, Option<[u32; 2]>)]| {
+            let found: Vec<_> = starts
+                .iter()
+                .filter(|(operand, _)| *operand == Object::string_literal(*text))
+                .map(|(_, start)| start.expect("a follower starts a line"))
+                .collect();
+            assert_eq!(found.len(), 1, "{content}: {text}");
+            found[0]
+        };
+        assert_eq!(find(&after), find(&before), "{content}: {text}");
+    }
+}
+
+// A line restored with one Tm is the same point in exact arithmetic and a
+// different one in floats: the source's lines after `200 0 Td ... -200 -30 Td`
+// start at 20, where the restored matrix put them at 19.999992, a pixel to the
+// left wherever that crosses a rounding boundary. The restore replays the
+// source's own Tm and line moves, so every reader repeats the same additions:
+// across TD, T*, a leading changed before and after the edit, a line continued
+// past it, a Tm in the block, and quarter-turned text. The leading a T* before
+// the edit read was set before the block, so only the restore can put it back.
+#[test]
+fn a_layout_leaves_the_following_line_matrix_exactly_as_the_source_had_it() {
+    let tail = "200 0 Td (AWAY) Tj -200 -30 Td (SECOND) Tj 0 -14 TD (THIRD) Tj \
+                T* (FOURTH) Tj 20 TL T* (FIFTH) Tj ET";
+    for content in [
+        format!("BT /F1 12 Tf 19.999992 200 Td (FIRST LINE) Tj {tail}"),
+        format!("BT /F1 12 Tf 19.999992 200 Td (FIRST LINE) Tj (MORE) Tj {tail}"),
+        format!("14 TL BT /F1 12 Tf 19.999992 214 Td T* 9 TL (FIRST LINE) Tj {tail}"),
+        format!("BT /F1 12 Tf 1 0 0 1 9.999992 150 Tm 10 50 Td (FIRST LINE) Tj {tail}"),
+    ] {
+        following_lines_are_identical(
+            &content,
+            "FIRST LINE",
+            &["AWAY", "SECOND", "THIRD", "FOURTH", "FIFTH"],
+        );
+    }
+    let turned = "BT /F1 12 Tf 0 1 -1 0 250 20 Tm 19.999992 0 Td (FIRST LINE) Tj \
+                  200 0 Td (AWAY) Tj -200 -30 Td (SECOND) Tj 14 TL T* (THIRD) Tj ET";
+    following_lines_are_identical(turned, "FIRST LINE", &["AWAY", "SECOND", "THIRD"]);
+    // An edit after the hop, and one on a later line of the chain.
+    let chain = format!("BT /F1 12 Tf 19.999992 200 Td (FIRST LINE) Tj {tail}");
+    following_lines_are_identical(&chain, "AWAY", &["SECOND", "THIRD", "FOURTH", "FIFTH"]);
+    following_lines_are_identical(&chain, "THIRD", &["FOURTH", "FIFTH"]);
+}
