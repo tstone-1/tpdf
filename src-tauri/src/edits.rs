@@ -895,6 +895,34 @@ impl Edits {
         Ok(snapshot(model))
     }
 
+    /// Puts pages of a second file immediately after `after`, or first when
+    /// `after` is `None`.
+    ///
+    /// [`insert`](Edits::insert)'s counterpart, and a thin one: the caller has
+    /// read the file --- its fingerprint and its page count are what `source`
+    /// carries --- and the model refuses everything about the selection. No
+    /// command reaches this yet; it exists so the plan a save is handed can be
+    /// built from a real model, which is where the tests take it from.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document, or anything [`Doc::import`] refuses.
+    pub fn import(
+        &self,
+        doc: u32,
+        after: Option<u64>,
+        source: crate::docmodel::SourceFile,
+        pages: Vec<u32>,
+    ) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let model = &mut docs.get_mut(&doc).ok_or_else(|| unknown(doc))?.model;
+        model
+            .import(after.map(PageId::from_raw), source, pages)
+            .map_err(describe)?;
+        Ok(snapshot(model))
+    }
+
     /// Puts a highlight on a page, over the rectangles the reader dragged across.
     ///
     /// `quads` are flat --- four numbers per rectangle, `left, top, right,
@@ -1518,6 +1546,7 @@ impl Edits {
             notes: planned_notes(model, &pages),
             // And this one, for the same reason again.
             discards: planned_discards(model, &pages),
+            sources: planned_sources(model, &pages),
             pages,
             // Empty, always. See the field.
             redactions: Vec::new(),
@@ -1646,6 +1675,9 @@ impl Edits {
         // it; dropping the list here would put the comment back in the extracted
         // file, which reads as the deletion having silently failed.
         let discards = planned_discards(model, &pages);
+        // Only the files the picked pages name: an extract that leaves every
+        // imported page behind reads no second file at all.
+        let sources = planned_sources(model, &pages);
         Ok(Plan {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
@@ -1656,6 +1688,7 @@ impl Edits {
             redactions: Vec::new(),
             notes,
             discards,
+            sources,
         })
     }
 }
@@ -1761,6 +1794,37 @@ fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<crate::textedit::Change>
         .collect()
 }
 
+/// The files `pages` take pages from, each once, in the order first named.
+///
+/// Driven by `pages` for [`planned_marks`]' reason: a file whose every page the
+/// reader has deleted, or left out of an extract, is not read at save.
+///
+/// **Panics on a source the model has no record of**, rather than leaving it
+/// out: a page naming a file the plan does not list would be refused by the
+/// writer with a message about the plan, and the defect would be here. The
+/// model keeps a record while any selection naming it is in the journal, so
+/// this is a broken model rather than a state a reader can reach.
+fn planned_sources(model: &Doc, pages: &[PageView]) -> Vec<PlannedSource> {
+    let mut out: Vec<PlannedSource> = Vec::new();
+    for view in pages {
+        let PageSource::Imported { source, .. } = view.source else {
+            continue;
+        };
+        if out.iter().any(|held| held.id == source.get()) {
+            continue;
+        }
+        let file = model
+            .source(source)
+            .expect("an imported page names a file the model recorded");
+        out.push(PlannedSource {
+            id: source.get(),
+            path: file.path.clone(),
+            opened_as: Some(file.fingerprint.clone()),
+        });
+    }
+    out
+}
+
 /// The foreign comments deleted on `pages`, in page order.
 ///
 /// [`planned_notes`]' twin, filtered the same way and for the same reason: a
@@ -1859,6 +1923,45 @@ pub struct Plan {
     /// half of what the reader asked for.
     #[serde(default)]
     pub discards: Vec<PlannedDiscard>,
+    /// The other files the kept pages come from, each once, in the order the
+    /// pages first name them.
+    ///
+    /// **The writer pairs this list with the documents it is handed by
+    /// position**, and pairs a page with an entry by [`PlannedSource::id`].
+    /// Only files a kept page names are here, so an extract of the opened
+    /// document's own pages hands the worker nothing.
+    ///
+    /// `#[serde(default)]` for [`Plan::notes`]' reason. ⚠ **A plan carrying one
+    /// is never appendable**, which needs no clause of its own in
+    /// [`Plan::is_appendable`]: an imported page is not the file's, so
+    /// `pages_are_the_file` already answers no. What the list adds is the
+    /// second thing a rewrite needs --- the bytes --- and `save::staged_rewrite`
+    /// is the one place that reads them.
+    #[serde(default)]
+    pub sources: Vec<PlannedSource>,
+}
+
+/// One file a plan's imported pages come from.
+///
+/// **The id crosses the worker boundary and nothing else here does.** The path
+/// and the fingerprint are facts about the filesystem, which a worker has no
+/// access to and no business asserting --- [`Plan::opened_as`]' argument, and
+/// the same mechanism: `#[serde(skip)]`, so a deserialised plan carries an
+/// empty path and no fingerprint and cannot be made to name one.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct PlannedSource {
+    /// The model's [`crate::docmodel::SourceId`], as its number.
+    pub id: u32,
+    /// Where the file was when the reader chose it. Coordinator only.
+    #[serde(skip)]
+    pub path: std::path::PathBuf,
+    /// What its bytes were then. Coordinator only.
+    ///
+    /// An `Option` so that the skipped field has a value to deserialise to;
+    /// one out of the model is always `Some`, and a save refuses `None` ---
+    /// `fingerprint.rs`'s *fail closed*.
+    #[serde(skip)]
+    pub opened_as: Option<Fingerprint>,
 }
 
 /// One edit to a comment that came out of the file.
@@ -2163,12 +2266,22 @@ impl Plan {
                 // **A page tpdf made is never the file's**, which is the whole
                 // of what an insert costs this predicate: it has no baseline
                 // number, so it cannot be the page at `at` and no `if let` can
-                // make it one. Written as a match rather than a helper on
-                // `PageSource` so that a third variant is an error here, which
-                // is the property this destructure exists for one level up.
-                matches!(source, PageSource::Baseline(n) if *n as usize == at)
-                    && turns % 4 == 0
-                    && crop.is_none()
+                // make it one. Nor is a page of another file, for the same
+                // reason, and that arm is the whole of what keeps a plan
+                // carrying one out of the append --- which could not write it.
+                //
+                // ⚠ **A `match` with an arm per variant, and it was a
+                // `matches!` whose comment said a third variant would be an
+                // error here.** It was not: `matches!` expands to a `match`
+                // with `_ => false`, so `Imported` compiled straight through
+                // and was classified by the catch-all. The answer happened to
+                // be right; the property the comment claimed did not exist.
+                let theirs = match source {
+                    PageSource::Baseline(n) => *n as usize == at,
+                    PageSource::Blank(_) => false,
+                    PageSource::Imported { .. } => false,
+                };
+                theirs && turns % 4 == 0 && crop.is_none()
             })
     }
 }
@@ -2205,7 +2318,11 @@ impl From<Refusal> for crate::failure::Failure {
             | Refusal::RedactionRemoved(_)
             | Refusal::ShapeMismatch(_)
             | Refusal::StampMismatch(_)
-            | Refusal::ReplyMismatch(_) => crate::failure::Action::Report,
+            | Refusal::ReplyMismatch(_)
+            // A selection id nobody issued, and a foreign comment paired with a
+            // page that cannot hold it: both are the sender's.
+            | Refusal::NoSuchSelection(_)
+            | Refusal::ForeignCommentOnImportedPage(_) => crate::failure::Action::Report,
             // Something the reader can change: keep a page, drag a box with area
             // in it, take their own reply off first.
             Refusal::TextEdit(_)
@@ -2216,7 +2333,14 @@ impl From<Refusal> for crate::failure::Failure {
             | Refusal::RedactionOnMadePage(_)
             | Refusal::EmptyMark
             | Refusal::EmptyRedaction
-            | Refusal::ReplyAnswersIt(_) => crate::failure::Action::Amend,
+            | Refusal::ReplyAnswersIt(_)
+            // Pick pages that exist, each once; save before redacting.
+            | Refusal::EmptyImport
+            | Refusal::NoSuchSourcePage { .. }
+            | Refusal::ImportedTwice(_)
+            | Refusal::TextOnImportedPage(_)
+            | Refusal::RedactionBesideImportedPages
+            | Refusal::ImportBesideRedactions => crate::failure::Action::Amend,
         };
         Self {
             message: describe(why),
@@ -2243,6 +2367,37 @@ pub(crate) fn describe(why: Refusal) -> String {
         // remove. See `Refusal::CropOnMadePage`.
         Refusal::CropOnMadePage(_) => "a blank page has nothing to crop to".into(),
         Refusal::RedactionOnMadePage(_) => "a blank page has nothing to remove".into(),
+        Refusal::EmptyImport => "choose at least one page to insert".into(),
+        // One-based in the sentence, as a reader counts pages; the model holds
+        // them zero-based, as every other page number in it is.
+        Refusal::NoSuchSourcePage { page, pages } => {
+            format!(
+                "that document has {pages} pages, so there is no page {}",
+                page + 1
+            )
+        }
+        Refusal::ImportedTwice(page) => format!(
+            "page {} was chosen twice --- insert it once, then insert it again",
+            page + 1
+        ),
+        Refusal::NoSuchSelection(_) => "no such inserted pages".into(),
+        Refusal::TextOnImportedPage(_) => {
+            "tpdf cannot edit text on a page inserted from another document yet --- save, reopen, \
+             and edit it there"
+                .into()
+        }
+        Refusal::ForeignCommentOnImportedPage(_) => {
+            "that comment is not on a page inserted from another document".into()
+        }
+        Refusal::RedactionBesideImportedPages => {
+            "tpdf cannot yet prove a redaction clean while the document holds pages inserted \
+             from another document --- save, reopen, and redact there"
+                .into()
+        }
+        Refusal::ImportBesideRedactions => {
+            "apply or remove the marked redactions before inserting pages from another document"
+                .into()
+        }
         Refusal::NoSuchMark(_) => "no such mark".into(),
         Refusal::MarkRemoved(_) => "that mark has already been removed".into(),
         Refusal::EmptyMark => "that mark covers nothing".into(),
@@ -2749,6 +2904,7 @@ mod tests {
         assert!(plan.opened_as.is_none());
     }
     use super::*;
+    use std::path::Path;
 
     /// A three-page document with a model, and its handle.
     fn opened() -> Edits {
@@ -2893,6 +3049,61 @@ mod tests {
         assert!(!plan.is_appendable());
     }
 
+    /// A file record for an import, naming a path nothing opens.
+    fn other_file(pages: u32) -> crate::docmodel::SourceFile {
+        crate::docmodel::SourceFile {
+            path: "/nonexistent/other.pdf".into(),
+            fingerprint: Fingerprint {
+                len: 1000,
+                modified_ns: None,
+                digest: [7; 32],
+            },
+            pages,
+        }
+    }
+
+    /// A plan built from a model holding an imported page names the file once,
+    /// with its path and fingerprint, and is neither the file nor an append.
+    ///
+    /// The shape is the one where only the imported page can answer
+    /// `pages_are_the_file`: the last page deleted and one page of the other
+    /// file put in its place, so the length agrees and the file's own pages are
+    /// at their own indices --- `a_deletion_and_an_insert_together_...`'s
+    /// fixture, for the third variant. A mark beside it is what would make the
+    /// plan an append if that answer were wrong.
+    #[test]
+    fn a_plan_holding_a_page_of_another_file_names_the_file_and_is_no_append() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        edits
+            .annotate(7, a_mark(pages[0].id), "D:20260919120000Z".into())
+            .expect("a mark");
+        let after = edits.delete(7, pages[2].id).expect("delete the last page");
+        let state = edits
+            .import(7, Some(after.pages[1].id), other_file(4), vec![2, 3])
+            .expect("import two pages");
+        edits
+            .delete(7, state.pages[3].id)
+            .expect("keep one of them, so the length is the file's");
+
+        let plan = edits.plan(7).expect("plan");
+        assert_eq!(plan.pages.len(), 3, "the premise: as long as the file");
+        assert!(!plan.is_appendable());
+        assert!(!plan.is_identity());
+        assert_eq!(plan.sources.len(), 1);
+        assert_eq!(plan.sources[0].path, Path::new("/nonexistent/other.pdf"));
+        assert_eq!(
+            plan.sources[0].opened_as.as_ref().map(|f| f.digest),
+            Some([7; 32])
+        );
+
+        let subset = edits.plan_subset(7, &[0, 1]).expect("the file's own pages");
+        assert!(
+            subset.sources.is_empty(),
+            "an extract of the opened file's pages reads no other file"
+        );
+    }
+
     /// The baseline page each slot shows, for the assertions about order.
     ///
     /// **Panics on a page tpdf made rather than skipping it**, which is what
@@ -2907,6 +3118,9 @@ mod tests {
                 PageSource::Baseline(number) => number,
                 PageSource::Blank(size) => {
                     panic!("a page tpdf made has no baseline number: {size:?}")
+                }
+                PageSource::Imported { source, page } => {
+                    panic!("page {page} of file {source:?} has no baseline number")
                 }
             })
             .collect()

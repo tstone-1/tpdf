@@ -39,6 +39,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         marks: vec![],
         notes: vec![],
         discards: vec![],
+        sources: Vec::new(),
         redactions: vec![],
         text_edits: vec![textedit::Change {
             layout: None,
@@ -104,7 +105,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         let mut input = File::open(source).map_err(|e| e.to_string())?;
         let len = input.metadata().map_err(|e| e.to_string())?.len() as usize;
         writer
-            .write(&mut input, len, out, plan, save::Job::Save, None)
+            .write(&mut input, len, out, plan, save::Job::Save, None, None)
             .map_err(|e| e.message)
     };
     let mut out = File::create_new(&saved_path).map_err(|e| e.to_string())?;

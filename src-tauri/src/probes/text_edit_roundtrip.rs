@@ -126,6 +126,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         marks: vec![],
         notes: vec![],
         discards: vec![],
+        sources: Vec::new(),
         redactions: vec![],
         text_edits: changes,
     };
@@ -191,7 +192,15 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
     let mut input = File::open(source).map_err(|e| e.to_string())?;
     let len = input.metadata().map_err(|e| e.to_string())?.len() as usize;
     let count = save::InWorker::at(library.clone())
-        .write(&mut input, len, &mut out, &plan, save::Job::Save, None)
+        .write(
+            &mut input,
+            len,
+            &mut out,
+            &plan,
+            save::Job::Save,
+            None,
+            None,
+        )
         .map_err(|e| e.message)?;
     if out.metadata().map_err(|e| e.to_string())?.len() != count as u64 {
         return Err("saved length mismatch".into());

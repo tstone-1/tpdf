@@ -233,6 +233,7 @@ fn keeping(baseline: u32, kept: Vec<u32>) -> Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: Vec::new(),

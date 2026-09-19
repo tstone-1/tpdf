@@ -274,6 +274,7 @@ hop through the index.
 - A guard whose neighbour refuses the same input cannot be tested by it
 - Putting a guard in front of a parser disarms the parser's own guard, and the test still passes
 - macOS has no `setsid`, so a detached restart never starts
+- `matches!` is not exhaustive, and a comment beside one said a new variant would be a compile error
 
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -23279,3 +23280,22 @@ failure. What settled it was one `eprintln!` at the refusal printing the line, i
 the box width: `"SYNTHETIC FIRST "`, 87.42 against 85. When two measurements must agree,
 have them call one function or assert the agreement; and print the values at the refusal
 before theorising about which change caused it.
+
+### `matches!` is not exhaustive, and a comment beside one said a new variant would be a compile error
+
+`Plan::pages_are_the_file` classified a page with
+`matches!(source, PageSource::Baseline(n) if *n as usize == at)`, and the comment above it said
+it was *"written as a match rather than a helper on `PageSource` so that a third variant is an
+error here"*. It is not. `matches!` expands to a `match` whose last arm is `_ => false`, so when
+`PageSource::Imported` was added on 2026-09-19 the predicate compiled without a word and
+classified the new variant through the catch-all. The answer happened to be right --- an
+imported page is not the file's --- and the property the comment claimed, the one that was
+supposed to make someone decide, did not exist.
+
+The compiler did find every real `match` over the enum (six sites, one per reader); this one
+was invisible to it by construction. Two things follow. **A `matches!`, an `if let` and a
+`let ... else` are all catch-alls**, and a comment asserting exhaustiveness beside one is a
+claim to check by adding a variant, not to believe. And where the point really is to be told,
+write the `match` with an arm per variant, which is what the predicate is now --- with the
+imported arm carrying a mutation of its own, because a correct answer arriving through a
+catch-all is an answer nothing tests.

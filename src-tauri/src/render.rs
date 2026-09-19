@@ -485,7 +485,11 @@ pub(crate) enum Job {
     },
     Append {
         doc: u32,
-        plan: crate::edits::Plan,
+        /// Boxed because a plan is the one large thing any job carries, and
+        /// every job is sized like the largest: clippy's `large_enum_variant`
+        /// went red when `Plan` gained the list of other documents an import
+        /// needs, 308 bytes against the next variant's 103.
+        plan: Box<crate::edits::Plan>,
         reply: Reply<crate::save::Update>,
     },
     /// What password this document was opened with, for a caller that has to
@@ -1025,7 +1029,15 @@ impl RenderService {
     /// had that order, for the unrelated reason that a rename over a mapped file
     /// leaves the mapping serving the old inode.
     pub fn append(&self, doc: u32, plan: crate::edits::Plan, reply: Reply<crate::save::Update>) {
-        if self.tx.send(Job::Append { doc, plan, reply }).is_err() {
+        if self
+            .tx
+            .send(Job::Append {
+                doc,
+                plan: Box::new(plan),
+                reply,
+            })
+            .is_err()
+        {
             // Render thread is gone; nothing left to reply with.
         }
     }
@@ -2264,11 +2276,15 @@ pub(crate) fn run_rewrite(
     document: &OpenDocument,
     plan: &crate::edits::Plan,
     job: crate::save::Job,
+    inputs: Option<crate::save::Inputs<'_>>,
 ) -> Result<Vec<u8>, crate::save::Refusal> {
+    // The image-only path renders every output page through this document's
+    // own PDFium, which has no page of another file to render; it refuses a
+    // plan that places one before anything is drawn.
     if job == crate::save::Job::RasterRedact {
         crate::raster_redact::rewrite(document, plan)
     } else {
-        document.graph().rewrite(plan, job)
+        document.graph().rewrite(plan, job, inputs)
     }
 }
 

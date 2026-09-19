@@ -178,6 +178,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         }],
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
     };

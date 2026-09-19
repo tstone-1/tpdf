@@ -376,7 +376,16 @@ export interface MarkView {
  */
 export type PageSource =
   | { readonly baseline: number }
-  | { readonly blank: { readonly width: number; readonly height: number } };
+  | { readonly blank: { readonly width: number; readonly height: number } }
+  /**
+   * Page `page` (zero-based) of another document, which the model names by
+   * `source`. Nothing sends one yet: the command that inserts pages from another
+   * file does not exist, and until the render path can ask a second worker for
+   * its tiles every consumer here treats it as a page with no number in the
+   * opened file --- {@link baselineOf} and {@link madeSizeOf} both answer
+   * `undefined`.
+   */
+  | { readonly imported: { readonly source: number; readonly page: number } };
 
 /**
  * The baseline page a source names, or `undefined` for a page tpdf made.

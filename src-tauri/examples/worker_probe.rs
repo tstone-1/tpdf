@@ -64,6 +64,7 @@ fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: Vec::new(),
@@ -107,6 +108,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         redactions: Vec::new(),
         notes: Vec::new(),
         discards: Vec::new(),
+        sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
         marks: vec![PlannedMark {
@@ -825,7 +827,15 @@ fn main() {
         let len = source.metadata().map_err(|e| e.to_string())?.len() as usize;
         let mut out = std::fs::File::create(to).map_err(|e| e.to_string())?;
         let wrote = who
-            .write(&mut source, len, &mut out, plan, save::Job::Save, None)
+            .write(
+                &mut source,
+                len,
+                &mut out,
+                plan,
+                save::Job::Save,
+                None,
+                None,
+            )
             .map_err(|why| why.message)?;
         // The same check the coordinator makes, for the same reason: the length
         // reported and the length on disk are two independent statements.
@@ -931,6 +941,7 @@ fn main() {
             let said = worker.call(&Request::Rewrite {
                 plan: turning.clone(),
                 job: save::Job::Save,
+                incoming: Vec::new(),
             });
             check(
                 "a worker with nowhere to write refuses to rewrite",
@@ -1230,6 +1241,91 @@ fn main() {
     );
     let _ = std::fs::remove_dir_all(&nowhere);
     let _ = std::fs::remove_file(&merged_out);
+
+    // --- Pages of another file, through the rewriting save ------------------
+    //
+    // **The merge's input channel, reached by an ordinary save.** A plan that
+    // places pages of a second document hands that document's bytes to the
+    // worker on the same read-only mapping a merge uses, and the worker imports
+    // the pages a selection names rather than all of them. The "other" document
+    // is this one again, for the merge section's reason: what is compared is
+    // the two writers. Its last page and its first go in front, in that order,
+    // on top of the turn plan --- so the output is this document's pages plus
+    // two, and only a writer that honoured the order and the selection agrees
+    // byte for byte with the other.
+    let imported_out = std::env::temp_dir().join("tpdf-worker-probe-imported.pdf");
+    let importing = {
+        use tpdf_lib::docmodel::SourceId;
+        use tpdf_lib::edits::{PageView, PlannedSource};
+        let mut plan = turn_plan(page_count);
+        let last = u32::try_from(page_count.saturating_sub(1)).unwrap_or(0);
+        for (id, page) in [(1_000_001, 0), (1_000_000, last)] {
+            plan.pages.insert(
+                0,
+                PageView {
+                    id,
+                    source: PageSource::Imported {
+                        source: SourceId::from_raw(1),
+                        page,
+                    },
+                    turns: 0,
+                    crop: None,
+                },
+            );
+        }
+        plan.sources = vec![PlannedSource {
+            id: 1,
+            path: document.clone(),
+            opened_as: tpdf_lib::fingerprint::Fingerprint::of(&document).ok(),
+        }];
+        plan
+    };
+    let import_to = |who: &dyn save::Rewriter| -> Result<Vec<u8>, String> {
+        let _ = std::fs::remove_file(&imported_out);
+        save::write_copy(&document, &importing, &imported_out, None, who)
+            .map_err(|why| why.message)?;
+        std::fs::read(&imported_out).map_err(|e| e.to_string())
+    };
+    let imported_here = import_to(rewriting);
+    let imported_worker = import_to(&rewrite_in_worker);
+    check(
+        "the worker and the coordinator import the same pages",
+        matches!((&imported_here, &imported_worker), (Ok(a), Ok(b)) if a == b && !a.is_empty()),
+        format!(
+            "coordinator {:?} bytes, worker {:?} bytes",
+            imported_here.as_ref().map(Vec::len),
+            imported_worker.as_ref().map(Vec::len)
+        ),
+    );
+    let imported_pages =
+        tpdf_lib::save::reread_pages(imported_worker.as_deref().unwrap_or_default(), None);
+    check(
+        "and the file holds this document's pages and the two imported",
+        matches!(&imported_pages, Ok(n) if *n as u64 == page_count + 2),
+        format!("{imported_pages:?} against {page_count} in the source"),
+    );
+    let nowhere = std::env::temp_dir().join("tpdf-worker-probe-import-no-engine");
+    let _ = std::fs::create_dir_all(&nowhere);
+    let import_without = import_to(&save::InWorker::at(nowhere.clone()));
+    check(
+        "and the import path really needs a worker",
+        import_without.is_err() && imported_here.is_ok(),
+        format!("worker {:?}", import_without.as_ref().err()),
+    );
+    let _ = std::fs::remove_dir_all(&nowhere);
+    // Kept only when asked, for a reader to put through a parser that is not
+    // this crate's. `BUILD.md` names the two.
+    if let (Some(keep), Ok(bytes)) = (
+        std::env::var_os("TPDF_PROBE_KEEP_IMPORTED"),
+        &imported_worker,
+    ) {
+        let _ = std::fs::write(&keep, bytes);
+        println!(
+            "[INFO] the worker's import is kept at {}",
+            Path::new(&keep).display()
+        );
+    }
+    let _ = std::fs::remove_file(&imported_out);
 
     // --- The verification, across the same boundary ------------------------
     //

@@ -639,7 +639,11 @@ fn handle(
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
-        Request::Rewrite { plan, job } => rewrite(document, out, plan, *job),
+        Request::Rewrite {
+            plan,
+            job,
+            incoming,
+        } => rewrite(document, out, inputs, plan, *job, incoming),
         Request::PrintRange { job } => print_range(document, out, job),
         Request::Merge { plan, incoming } => merge(document, out, inputs, plan, incoming),
         Request::Reread => match render::run_reread(document) {
@@ -685,15 +689,35 @@ fn handle(
 fn rewrite(
     document: &OpenDocument,
     out: Option<&mut std::fs::File>,
+    inputs: Option<&Shm>,
     plan: &crate::edits::Plan,
     job: crate::save::Job,
+    incoming: &[crate::save::Incoming],
 ) -> Response {
     let Some(out) = out else {
         return Response::err(
             "this worker was not started with anywhere to write, so it cannot rewrite a document",
         );
     };
-    let bytes = match render::run_rewrite(document, plan, job) {
+    // The other documents, when the plan imports pages from some. A request
+    // naming spans with no mapping to read them from is `merge`'s coordinator
+    // defect, said in `merge`'s words; a request naming none reads nothing,
+    // whatever was mapped, and `crate::save::rewrite_update_with` refuses a
+    // plan that needed them.
+    let handed = match (incoming.is_empty(), inputs) {
+        (true, _) => None,
+        (false, Some(whole)) => Some(crate::save::Inputs {
+            whole,
+            each: incoming,
+        }),
+        (false, None) => {
+            return Response::err(
+                "this worker was not started with the documents to import from, so it cannot \
+                 rewrite a document that places their pages",
+            )
+        }
+    };
+    let bytes = match render::run_rewrite(document, plan, job, handed) {
         Ok(bytes) => bytes,
         // `refused`, not `err`: some of these refusals are answerable by
         // reloading and the rest are not, and which is which is a fact the

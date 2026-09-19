@@ -326,11 +326,21 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String
     if plan.pages.is_empty() || plan.pages.len() > MAX_PAGES {
         return Err("raster redaction page limit exceeded".into());
     }
+    // Every output page is rendered through this document's PDFium, and a
+    // page from another file is not in it. The model refuses a redaction in
+    // such a document (`Refusal::RedactionBesideImportedPages`); this is the
+    // writer's own statement of it, ahead of a rewrite that would refuse for
+    // want of the other file in words about the wrong thing.
+    if !plan.sources.is_empty() {
+        return Err(
+            "image-only redaction cannot include pages inserted from another document".into(),
+        );
+    }
     let mut clean = plan.clone();
     clean.redactions.clear();
     let bytes = document
         .graph()
-        .rewrite(&clean, Job::Save)
+        .rewrite(&clean, Job::Save, None)
         .map_err(|e| e.message)?;
     if bytes.len() > MAX_BYTES {
         return Err("working PDF exceeds raster redaction size limit".into());
