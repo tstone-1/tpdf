@@ -12,6 +12,9 @@
 //! `--w3c-dummy <source.pdf> <new-output-directory>` edits the unchanged public
 //! W3C test fixture. `--roundtrip <source.pdf> <requests.json> <new-output-directory>`
 //! checks requested edits on a disposable copy without printing document text.
+//! `--growth <source.pdf> [--agree-every=N]` measures which longer, shorter and
+//! same-length replacements each run accepts; see `src/probes/text_edit_growth.rs`,
+//! which also documents `--growth-request` for reproducing one trial.
 //! The example re-execs as its contained worker.
 
 #[path = "../src/probes/text_edit_public.rs"]
@@ -19,6 +22,9 @@ mod public;
 
 #[path = "../src/probes/text_edit_roundtrip.rs"]
 mod roundtrip;
+
+#[path = "../src/probes/text_edit_growth.rs"]
+mod growth;
 
 use std::{fs::File, path::PathBuf};
 
@@ -127,6 +133,34 @@ fn run() -> Result<(), String> {
         }
         return roundtrip::run(args[1].as_ref(), args[2].as_ref(), args[3].as_ref());
     }
+    if args.first().is_some_and(|arg| arg == "--growth-request") {
+        let [_, source, page, operator, trial, width] = args.as_slice() else {
+            return Err(
+                "usage: --growth-request <source.pdf> <page> <operator> <trial> <width>".into(),
+            );
+        };
+        let number = |value: &str| value.parse::<f64>().map_err(|_| "invalid number");
+        return growth::request(
+            source.as_ref(),
+            page.parse().map_err(|_| "invalid page")?,
+            operator.parse().map_err(|_| "invalid operator")?,
+            trial,
+            number(width)?,
+        );
+    }
+    if args.first().is_some_and(|arg| arg == "--growth") {
+        let every = match args.get(2).map(|arg| arg.strip_prefix("--agree-every=")) {
+            None => 0,
+            Some(Some(every)) if args.len() == 3 => every
+                .parse::<usize>()
+                .map_err(|_| "invalid --agree-every")?,
+            _ => return Err("usage: --growth <source.pdf> [--agree-every=N]".into()),
+        };
+        if args.len() < 2 {
+            return Err("usage: --growth <source.pdf> [--agree-every=N]".into());
+        }
+        return growth::run(args[1].as_ref(), every);
+    }
     if args.first().is_some_and(|arg| arg == "--w3c-dummy") {
         if args.len() != 3 {
             return Err(
@@ -148,7 +182,7 @@ fn run() -> Result<(), String> {
     // as one, with synthetic fixtures written into it.
     if args.first().is_some_and(|arg| arg.starts_with('-')) {
         return Err(
-            "usage: text-edit-probe <scratch-directory> | --roundtrip | --inspect | --w3c-dummy"
+            "usage: text-edit-probe <scratch-directory> | --roundtrip | --inspect | --growth | --growth-request | --w3c-dummy"
                 .into(),
         );
     }
