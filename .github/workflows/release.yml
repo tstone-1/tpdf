@@ -423,14 +423,13 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Insert the pages of another PDF after the
-          page you are on: all of them, or a range you type. The other file is
-          opened in a sandboxed process of its own, so its pages are drawn,
-          searched, marked, turned, moved and cropped like the document's own,
-          and saving writes them into the file. Their text cannot be edited, and
-          a document holding them cannot be redacted, until it has been saved
-          and opened again. Search no longer jumps to the wrong page after a page
-          was deleted or moved.
+          **New in this release.** Editing text in LaTeX, Word and Acrobat
+          documents no longer fails as too wide for its box. The editor now keeps
+          the document's own letter and word spacing wherever the text is
+          unchanged, so a line fits the space it always occupied: across a sample
+          of public documents, unchanged text now fits for 99% of lines instead
+          of 52%. The previous release added inserting the pages of another PDF,
+          all of them or a range, after the page you are on.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
