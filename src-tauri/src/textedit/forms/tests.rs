@@ -87,6 +87,7 @@ fn textedit_layout_reserves_transformed_form_text_but_not_plain_graphics() {
                 size: 12.,
                 wrap: false,
                 font: EditFont::Original,
+                grow: false,
             }),
         };
         let objects = doc.objects.clone();
@@ -350,6 +351,7 @@ fn textedit_preserved_forms_accept_text_state_outside_a_text_object() {
                     size: 12.,
                     wrap: false,
                     font: EditFont::Original,
+                    grow: false,
                 }),
                 page: 0,
                 revision: scan.revision,

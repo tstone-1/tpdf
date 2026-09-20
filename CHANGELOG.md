@@ -19,6 +19,22 @@ have the binary.)
 
 ## [26.9.15] - Unreleased
 
+### Added
+
+- Text you type into an existing line now grows the editing box with it, into
+  whatever room the line actually has. Until now the box was exactly as wide as
+  the text already there, so anything longer was refused even when the rest of
+  the line was empty. The box stops before the next text on the line, at the
+  edge of the page, and at any area the document clips, and when the text no
+  longer fits it says which of those the line ran into rather than asking you to
+  widen a box you never set. Setting a width yourself still fixes the box, and
+  the box never gets narrower than the text it opened on.
+- Measured across the public sample of 31 documents: edits 10% longer are
+  accepted for 41% of lines against 1% before, 25% longer for 33% against 1%,
+  and 50% longer for 28% against 1%. Text still has to fit the room the line
+  has; moving the rest of a line along, or wrapping it onto a new one, is not
+  part of this and remains refused.
+
 ### Fixed
 
 - Editing a line of text could shift the lines below it in the same paragraph

@@ -8,6 +8,15 @@ restoration and the final page in all zoom modes. A mixed-size regression input
 can be generated with pypdf: add_blank_page for (600, 800), (1200, 1600), (600, 400).
 For --phase tabs-rotation, use (600, 800), (1200, 400), (600, 800) to expose a
 preceding sheet expanding under the old scroll offset.
+--phase textedit-grow types past the box the editor opens, on a line with room after
+it, and reads the popup's own status line: a longer draft has to preview, a much longer
+one has to say the line is full rather than name a box, and typing a width has to hand
+the box back to the reader. Growth is only visible in the running application.
+It needs a fixture whose "SYNTHETIC FIRST" line has room for four more of its own
+characters. testdata/textedit-embedded.pdf does: sixteen more of its own round-trip
+there against a 108 pt box. The draft is built from the run's own characters on
+purpose -- " AND MORE" is nine characters that do not fit that line, which is a
+refusal about those glyphs rather than about growth.
 For --phase import, pass --other with a second PDF of at least three pages whose
 pages differ in their text from each other and from the first PDF's first page. Past
 the file dialog, the palette's page question is dismissed (nothing inserted, the file
@@ -32,7 +41,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "import"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "import"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")

@@ -83,6 +83,13 @@ MUTATIONS = [
     Mutation('error copying: viewer intercepts native copy', 'src/lib/viewer.ts', '    if (inTextField(event) || nativeCopy(event)) return;', '    if (inTextField(event)) return;', 'does not steal native copying when focus remains on the PDF surface'),
     Mutation('error copying: treat every shortcut as copy', 'src/lib/keys.ts', '  if (!matches("edit.copy", event)) return false;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
     Mutation('descender layout: discard validated height', 'src/lib/textlayout.ts', 'run.minimum_height ?? 0', '0', 'keeps the validated descender height when sizing and rounding the default box'),
+    # The box the editor opens carries `grow`, which is what lets the worker
+    # size it to the typed text up to the room after the line.
+    Mutation('grown box: open the box already sized', 'src/lib/textlayout.ts', 'size, wrap: false, font: "auto", grow: true };', 'size, wrap: false, font: "auto", grow: false };', 'opens the box with room to grow and gives it up only when a width is typed'),
+    Mutation('grown box: any control counts as sizing it', 'src/lib/textlayout.ts', 'if (input === this.width) this.sized = true;', 'this.sized = true;', 'opens the box with room to grow and gives it up only when a width is typed'),
+    Mutation('grown box: a typed width does not size it', 'src/lib/textlayout.ts', 'if (input === this.width) this.sized = true;', '', 'opens the box with room to grow and gives it up only when a width is typed'),
+    Mutation('grown box: always report room to grow', 'src/lib/textlayout.ts', 'wrap: this.wrap.checked, grow: !this.sized };', 'wrap: this.wrap.checked, grow: true };', 'opens the box with room to grow and gives it up only when a width is typed'),
+    Mutation('grown box: reopen a sized box with room to grow', 'src/lib/textlayout.ts', 'this.wrap.checked = value.wrap; this.sized = !value.grow;', 'this.wrap.checked = value.wrap; this.sized = false;', 'reopens a sized box as sized and an untouched one with room to grow'),
     Mutation('text Enter: apply a Cancel button draft', 'src/lib/textedit.ts', ' && event.target === this.input', '', 'Enter on popup buttons leaves their native activation in charge'),
     Mutation('text Enter: ignore input activation', 'src/lib/textedit.ts', 'event.target === this.input', 'event.target === this.apply', 'Enter and Apply commit without a navigable form; composition does not commit'),
     Mutation('text Enter: apply during composition', 'src/lib/textedit.ts', ' && !event.isComposing', '', 'Enter and Apply commit without a navigable form; composition does not commit'),

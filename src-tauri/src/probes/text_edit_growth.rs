@@ -17,9 +17,11 @@
 //!
 //! Each trial runs in up to three modes. `app` sends the layout the editor sends when a
 //! reader types (`defaultTextLayout` in `src/lib/textlayout.ts`: the box is the run's own
-//! advance). `patch` sends no layout, which is the byte-patch writer. `widened` (growth
-//! only) keeps the app layout but widens the box along a 5% ladder until the refusal is no
-//! longer about the box's own width, which is what a reader resizing the box can reach.
+//! advance, and `grow` set, so the box follows the typed text as far as the room after
+//! the run allows). `patch` sends no layout, which is the byte-patch writer. `widened`
+//! (growth only) is a box a reader sized: `grow` cleared and the width widened along a 5%
+//! ladder until the refusal is no longer about the box's own width. That mode is
+//! deliberately unchanged by growth, so its column stays comparable across the change.
 //!
 //! Acceptance is decided by `textedit::write`, in this process, on the parsed document:
 //! the same function the worker's `TextRuns` request runs before it serialises and
@@ -32,9 +34,11 @@
 //! digests were checked first; it is why this is a probe and never an application path,
 //! where every parse belongs to a sandboxed worker.
 //!
-//! `--growth-request <source.pdf> <page> <operator> <trial> <width>` prints the
+//! `--growth-request <source.pdf> <page> <operator> <trial> <width> [grow]` prints the
 //! one-element request array `--roundtrip` takes for that trial, with the box at
 //! `width`; the array contains the replacement text, so write it to an ignored file.
+//! A trailing `grow` sets the flag the editor sets for a box a reader has not sized,
+//! which is how a round trip exercises a box that follows the text.
 //!
 //! What it does not measure: whether an accepted edit saves (see `--roundtrip`), how a
 //! real reader would phrase a longer replacement, or where a text column ends. The
@@ -50,7 +54,9 @@ const GROWTHS: [(&str, f64); 3] = [("grow10", 0.10), ("grow25", 0.25), ("grow50"
 const LADDER_STEP: f64 = 1.05;
 const LADDER_STEPS: usize = 24;
 
-/// The layout `defaultTextLayout` builds, in the same arithmetic.
+/// The layout `defaultTextLayout` builds, in the same arithmetic. `grow` is set,
+/// as it is for a reader who has not touched the width control, so `app` is what
+/// the editor actually sends; `widened` clears it, being a box a reader set.
 fn app_layout(run: &textedit::Run) -> textedit::Layout {
     let x = run.matrix[0].hypot(run.matrix[1]);
     let y = run.matrix[2].hypot(run.matrix[3]);
@@ -64,6 +70,7 @@ fn app_layout(run: &textedit::Run) -> textedit::Layout {
         size,
         wrap: false,
         font: textedit::EditFont::Auto,
+        grow: true,
     }
 }
 
@@ -118,7 +125,10 @@ fn shrunk(text: &str) -> Option<String> {
     (out != text && !out.trim().is_empty()).then_some(out)
 }
 
-/// A refusal about the box's own width, which widening the box can answer.
+/// A refusal about the box's own width, which widening the box can answer. A grown
+/// box says "no room for more text" instead and widening it by hand cannot help, so
+/// that message deliberately does not belong here -- the ladder would climb past the
+/// neighbour it was stopped by.
 fn box_width(reason: &str) -> bool {
     reason.contains("exceeds the box width") || reason.contains("ink exceeds the box")
 }
@@ -319,6 +329,7 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
                     let outcome = loop {
                         let mut layout = base.clone();
                         layout.width = width;
+                        layout.grow = false;
                         let edit = change(&replacement, Some(layout));
                         let outcome = trial(&mut doc, &page, edit.clone());
                         agreement.check(&mut worker, &edit, &outcome, label)?;
@@ -404,6 +415,7 @@ pub(super) fn request(
     operator: u32,
     label: &str,
     width: f64,
+    grow: bool,
 ) -> Result<(), String> {
     let library = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../vendor/pdfium")
@@ -426,6 +438,7 @@ pub(super) fn request(
     .ok_or("no such trial for this run")?;
     let mut layout = app_layout(run);
     layout.width = width;
+    layout.grow = grow;
     println!(
         "{}",
         json!([{"page": page, "operator": operator, "replacement": replacement, "layout": layout}])

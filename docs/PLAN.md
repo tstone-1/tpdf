@@ -4846,6 +4846,47 @@ platform. All four saved outputs passed independent readback with zero pixel
 changes outside the edited line. Four mutations were caught, 30,061 fuzz inputs
 completed without a finding and all 24 gates passed; details are in `BUILD.md`.
 
+**The box the editor opens follows the typed text — 2026-09-20.** The second of the
+two increments the length survey called for. `layout::room` answers how wide the
+box may be and what stops it there, from what is on the page rather than from the
+run alone: the nearest hit rectangle on the same line — another run, preserved
+read-only text or a form field, read from the one list the collision check reads —
+the edge of the displayed page, and the clip in force, with a compound clip handed
+the box growth would produce rather than reduced to an edge. The growth direction
+is read off the box's own display rectangle at two widths instead of derived from
+the page's quarter turns. `Layout.grow` says the box is one the reader has not
+sized; the width control alone clears it, and the box reported back is the size of
+the text rather than of the room it had. Across the 31-file public sample, edits as
+typed go from 1% accepted to 44% at +10% longer, 1% to 33% at +25% and 0% to 28% at
++50%, which passes the 41 / 33 / 28% a reader could reach by widening the box by
+hand; same-length edits go 88% to 97%. Run by run over 597,062 verdicts: 49,354
+refused before and accepted now, none the other way. `BUILD.md`, *The editing box
+follows the typed text into the room on its line*, has the rule, the tables, the
+sixteen round trips and the fourteen regressions a first version caused.
+
+Growth stops at the first thing on the line, and deliberately does not move it.
+Two halves remain, and the survey sized both: 82% of the overlaps at +25% are the
+next run on the same line and 18% would leave the page.
+
+- **Moving the rest of a line** is the nearer half and is a line-level edit rather
+  than a box-level one: every following run on the line translated by the change in
+  advance, each one's own `Td`/`Tm` rewritten, each one's collision, clip and page
+  checks re-run, and the whole set refused atomically — a line half moved is worse
+  than one not moved. The scanner already knows which runs share a line origin
+  (`Context::line_origin`), which is most of what that needs, and `restore_line`
+  already replays a line's positioning operator for operator, which is the form the
+  rewritten moves have to take.
+- **Wrapping onto a new line** is the further half and needs something the scanner
+  does not have: a paragraph model. Which runs are lines of one block, what the
+  leading between them is, where the block ends, and what may be pushed down —
+  none of which is derivable from a run's own operators, and all of which a tagged
+  document states and an untagged one does not. The box cannot answer it, which is
+  why growth stops where it does.
+
+Neither is reachable from the geometry in this increment, and `layout::room` is
+deliberately a *box* answer: it says how far the run may reach without anything
+else changing.
+
 ---
 
 ## 8. UX

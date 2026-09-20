@@ -13,9 +13,11 @@ so nothing is hidden. The report carries no document text.
 
 What the numbers are: for every editable run with visible text, whether the editor
 would accept the same text with two letters swapped, a quarter shorter, and 10/25/50%
-longer (using only the run's own characters), with the box the editor opens (`app`),
-with no layout (`patch`), and with the box widened until its own width is no longer
-the objection (`widened`). What they are not: a population rate (the sample is
+longer (using only the run's own characters), with the box the editor opens (`app`,
+which since 26.9.15 follows the typed text into the room after the line), with no
+layout (`patch`), and with the box widened by hand until its own width is no longer
+the objection (`widened`, which keeps `grow` cleared so the column stays comparable
+across that change). What they are not: a population rate (the sample is
 chosen to cover producers), a claim about saving (see `--roundtrip`), or a model of
 text columns. Pages beyond the 128th are not inspected.
 
@@ -34,8 +36,14 @@ import tempfile
 import time
 
 # First match wins. `box_width` is the box's (or the original advance's) own width:
-# the only refusal widening the box can answer.
+# the only refusal widening the box can answer. `line_full` is the same shortage
+# reported by a box that already grew to the room it had, and widening that one
+# by hand cannot help, which is why it is a category of its own rather than more
+# needles under `box_width` -- the ladder in the probe would climb past the thing
+# that stopped it. The message names the cause (a neighbour, the page edge, a
+# clip); the category does not, so read `reasons` when that matters.
 CATEGORIES = [
+    ('line_full', ('no room for more text on this line',)),
     ('box_width', ('exceeds the box width', 'ink exceeds the box',
                    'exceed the original text advance', 'exceed the original text bounds')),
     ('overlap', ('would overlap another line',)),
@@ -46,7 +54,9 @@ CATEGORIES = [
     ('glyph', ('no validated glyph', 'unmapped font code', 'several glyphs',
                'shows spaces as gaps')),
 ]
-NO_ROOM = ('overlap', 'page_edge', 'clip')
+# The `widened` mode clears `grow`, so `line_full` cannot appear in a widened
+# cell; it is listed here because it is the same shortage under another name.
+NO_ROOM = ('line_full', 'overlap', 'page_edge', 'clip')
 TRIALS = ['identity', 'control', 'shrink25', 'grow10', 'grow25', 'grow50']
 GROWTHS = ['grow10', 'grow25', 'grow50']
 LONG = 20  # characters; a run at least this long is counted as line-like too
@@ -266,8 +276,21 @@ def self_test(probe):
             assert classify(run['control']['app']) == 'ok'
             assert classify(run['shrink25']['app']) == 'ok'
             for g in GROWTHS:
-                assert classify(run[g]['app']) == 'box_width', run[g]['app']
+                # The byte-patch writer has the source's own advance and no box
+                # to grow, so it refuses every longer edit whatever the line has.
                 assert classify(run[g]['patch']) == 'box_width', run[g]['patch']
+        # A box the editor opens grows into the room the line has. FREEWORD has
+        # 280 pt of it; EDGEWORD ends 3 pt from the page and BOXED 2 pt short of
+        # NEXT, and one more character of either is 8 pt. The message has to name
+        # which of the two stopped it, or the reader is told the line is full and
+        # cannot see what filled it.
+        for g in GROWTHS:
+            assert classify(free[g]['app']) == 'ok', free[g]['app']
+            assert classify(kerned[g]['app']) == 'ok', kerned[g]['app']
+            assert classify(edge[g]['app']) == 'line_full', edge[g]['app']
+            assert 'edge of the page' in edge[g]['app'], edge[g]['app']
+            assert classify(boxed[g]['app']) == 'line_full', boxed[g]['app']
+            assert 'other text follows it' in boxed[g]['app'], boxed[g]['app']
         assert [free[g]['added'] for g in GROWTHS] == [1, 2, 4]
         assert all(classify(free[g]['widened']['verdict']) == 'ok' for g in GROWTHS)
         assert all(classify(edge[g]['widened']['verdict']) == 'page_edge' for g in GROWTHS)
@@ -285,8 +308,8 @@ def self_test(probe):
         else:
             raise AssertionError('a missing trial was counted')
         assert classify('something new') == 'other'
-    print('[PASS] kerned run accepted unchanged and swapped in the default box, free line accepted when widened, page edge and same-line neighbour refused, '
-          'app and patch refuse every longer edit, worker agrees, missing trials refused')
+    print('[PASS] kerned run accepted unchanged and swapped in the default box, a box the editor opens grows into a free line and is refused at the page edge '
+          'and at a neighbour by name, patch refuses every longer edit, a box widened by hand reaches the same ceiling, worker agrees, missing trials refused')
 
 
 def verdicts(record):

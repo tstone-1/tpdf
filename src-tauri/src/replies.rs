@@ -321,6 +321,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     size: 12.,
                     wrap: true,
                     font: crate::textedit::EditFont::Auto,
+                    grow: false,
                 }),
                 page: 0,
                 revision: vec![1; 32],

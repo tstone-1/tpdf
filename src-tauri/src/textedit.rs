@@ -111,6 +111,15 @@ pub struct Layout {
     pub wrap: bool,
     #[serde(default)]
     pub font: EditFont,
+    /// The reader has not sized this box, so it may follow the typed text as
+    /// far as the room after the run allows (`layout::free_width`).
+    ///
+    /// The editor sets it while the width control still holds the box it was
+    /// opened with, and clears it the moment a reader types a width of their
+    /// own. It defaults to off, so every request that predates it -- a saved
+    /// journal, a probe's request file, a test -- keeps the box it names.
+    #[serde(default)]
+    pub grow: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

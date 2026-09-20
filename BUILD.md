@@ -9633,3 +9633,234 @@ find the replacement on its page.
 with the records of the previous section's after run: 597,062 verdicts unchanged in kind, 0
 refused before and accepted now, 0 accepted before and refused now; 9,309 worker agreement
 checks, 0 disagreements; 1,089 s on six processes.
+
+### The editing box follows the typed text into the room on its line — measured 2026-09-20
+
+The second increment the length survey asked for. Until now the box the editor opens was
+exactly the run's own advance, so a replacement longer than the text already there was
+refused whatever the rest of the line held: 1% of +10% edits and 1% of +25% edits were
+accepted as typed. macOS arm64, release probes built from `760e013` (before) and from this
+change (after), over the same 31 files as the two sections above; the corpus digests, the
+trials and the probe's arithmetic are unchanged.
+
+```sh
+python3 scripts/textedit_growth.py <text-edit-probe> scratch/reflow-corpus/*.pdf \
+  --manifest testdata/textedit-public-corpus.json --jobs 6 \
+  --output <new report.json> --records <new directory>
+python3 scripts/textedit_growth.py <probe> --compare <before records> <after records>
+uv run --with pypdf scripts/textedit_growth.py <text-edit-probe> --self-test
+```
+
+**The rule, and where it is.** `layout::room` answers how wide the box may be and what stops
+it there, as pure geometry over displayed-page rectangles so it can be stated in numbers
+without a document; `layout::free_width` is the adapter that builds those rectangles for a
+discovered run. The box grows along the run's own text axis until it meets the first thing on
+its line, and no further than the page's edge or the clip in force.
+
+- **The direction** is read off the box's own display rectangle at two widths, not derived
+  from the page's quarter turns. A second hand-written table of turns is what `text::to_device`
+  warns about, and reading it costs one extra mapping.
+- **The probe width** those two rectangles are taken at is about one page point of box, not a
+  fixed unit of text space: a display rectangle is `f32`, and Word's `Tf 1` under a matrix of
+  11 and a `0.001` page transform are both real, so a fixed unit can be a few ulps at a page
+  coordinate.
+- **A neighbour** is any hit rectangle the collision check in `prepare` would compare against
+  — another run, preserved read-only text, a form field — and both read **one** list
+  (`layout::obstacles`), so the box cannot be grown into something that check would then
+  refuse it for. It counts as on this line when it overlaps the box's cross-axis span, taken
+  together with the run's own hit rectangle, by more than the 0.1 pt that check ignores. The
+  box stops at its near edge.
+- **A compound clip** is a set of rectangles with holes rather than an edge, so the box growth
+  would produce is handed to the region instead of being reduced to a coordinate; growth is
+  given up when the region refuses it.
+- **The box does not grow to the left.** The writer places a replacement at the run's own
+  origin and replays the source's own positioning to get there, so starting a line further left
+  is a move of the line rather than a wider box for it. A line set flush against the right edge
+  has a whole empty page to its left and does not grow.
+
+**Which box is the reader's.** `Layout.grow` (`TextLayout.grow` in the frontend) says the
+reader has not sized this box. `defaultTextLayout` sets it; `TextLayoutControls` clears it from
+the **width** control's own input event and takes the answer back from whatever layout `set`
+is given, so picking a font or ticking wrapping — neither of which says anything about the
+width — leaves the box free to follow the text, and a stored change that carried a sized box
+reopens sized. It defaults to off in the request, so a saved journal, a probe's request file
+and every test keep the box they name. The box reported back to the editor is the size of the
+**text**, not of the room it had, so the dashed outline a reader sees follows what they typed.
+
+**When the text no longer fits**, the refusal names what filled the line rather than a box the
+reader never set: *"there is no room for more text on this line: other text follows it"*, *"…
+it reaches the edge of the page"*, *"… the document clips the space after it"*. The driver
+sorts these under a `line_full` category of their own rather than as more needles under
+`box_width`, because widening such a box by hand cannot help and the probe's 5% ladder would
+climb straight past the neighbour that stopped it.
+
+Rates are of the runs a trial applies to. "As typed" is the `app` mode: the layout the editor
+sends when a reader types, which since this change carries `grow`.
+
+| Producer | Runs | Unchanged ok % | Same length ok % | 25% shorter ok % | +10% as typed | +25% as typed | +50% as typed |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Acrobat 25 (Arcadia agenda) | 7461 | 100 -> 100 | 77 -> 98 | 100 -> 100 | 0 -> 46 | 0 -> 29 | 0 -> 23 |
+| pdfTeX (arXiv 2003.00976) | 3018 | 100 -> 100 | 88 -> 97 | 100 -> 100 | 0 -> 27 | 0 -> 18 | 0 -> 13 |
+| arXiv GenPDF (arXiv 2509.18965) | 3019 | 100 -> 100 | 86 -> 99 | 100 -> 100 | 0 -> 54 | 0 -> 33 | 0 -> 24 |
+| Word via PDFMaker 20 (Coatesville) | 1681 | 98 -> 100 | 64 -> 85 | 100 -> 100 | 0 -> 40 | 0 -> 16 | 0 -> 10 |
+| XeLaTeX / xdvipdfmx (fontspec) | 6190 | 100 -> 100 | 77 -> 93 | 100 -> 100 | 0 -> 48 | 0 -> 40 | 0 -> 33 |
+| PowerPoint via PDFMaker (Healdsburg) | 60 | 100 -> 100 | 46 -> 100 | 100 -> 100 | 0 -> 75 | 0 -> 73 | 0 -> 70 |
+| Word via PDFMaker 26 (Hugo) | 626 | 98 -> 99 | 84 -> 99 | 100 -> 100 | 0 -> 32 | 0 -> 24 | 0 -> 18 |
+| Word via PDFMaker 22 (Illinois) | 241 | 100 -> 100 | 59 -> 99 | 100 -> 100 | 0 -> 57 | 0 -> 49 | 0 -> 46 |
+| LuaTeX / ConTeXt, pages 1-128 | 10283 | 98 -> 98 | 97 -> 99 | 99 -> 99 | 4 -> 58 | 2 -> 46 | 1 -> 42 |
+| Word 2016 (Mercer Island) | 487 | 100 -> 100 | 95 -> 97 | 100 -> 100 | 0 -> 15 | 0 -> 15 | 0 -> 13 |
+| HM Passport Office guidance | 37 | 100 -> 100 | 65 -> 100 | 100 -> 100 | 0 -> 81 | 0 -> 76 | 0 -> 57 |
+| ReportLab, pages 1-128 | 7335 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 0 -> 38 | 0 -> 33 | 0 -> 30 |
+| pdfTeX (arXiv 1706.03762) | 189 | 100 -> 100 | 91 -> 97 | 100 -> 100 | 0 -> 63 | 0 -> 61 | 0 -> 28 |
+| Google Docs (SampleForms invoice) | 97 | 87 -> 100 | 72 -> 100 | 100 -> 100 | 0 -> 57 | 0 -> 49 | 0 -> 48 |
+| Typst | 228 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 0 -> 14 | 0 -> 13 | 0 -> 8 |
+| IBM afp2pdf, pages 1-128 | 3104 | 92 -> 92 | 96 -> 96 | 92 -> 92 | 0 -> 10 | 0 -> 10 | 0 -> 7 |
+| W3C dummy | 1 | 100 -> 100 | 100 -> 100 | 100 -> 100 | 0 -> 100 | 0 -> 100 | 0 -> 100 |
+| LibreOffice (W3C headers) | 68 | 100 -> 100 | 97 -> 97 | 100 -> 100 | 0 -> 62 | 0 -> 35 | 0 -> 35 |
+| Wellington agenda | 157 | 100 -> 100 | 94 -> 100 | 100 -> 100 | 0 -> 49 | 0 -> 49 | 0 -> 44 |
+| **All runs** | 44282 | 99 -> 99 | 88 -> 97 | 99 -> 99 | 1 -> 44 | 1 -> 33 | 0 -> 28 |
+| **Runs of 20+ characters** | 19632 | 98 -> 99 | 86 -> 97 | 99 -> 99 | 1 -> 50 | 1 -> 29 | 0 -> 19 |
+
+In counts, "as typed": +10% 390 -> 19,389 of 44,282; +25% 233 -> 14,756; +50% 104 -> 12,316.
+Same-length edits went 33,534 -> 37,090 of 38,108 and unchanged text 43,760 -> 43,822 of
+44,282, because a box that may grow also lets a producer's own kerning fit where the run's own
+advance did not.
+
+**The as-typed rate now passes the ceiling a reader could reach by hand**, which the survey
+put at 41 / 33 / 28%: 19,389 against 18,342 at +10%, 14,756 against 14,557 at +25% and 12,316
+against 12,227 at +50%. Two reasons, and neither is that the ceiling was wrong. The ladder
+steps the box by 5% until the objection stops being the box's own width, so it stops at a
+width the room may not have and at one the room had more than; and it clears `grow`, so it
+reaches the run through the general layout rather than through the source's own positioning.
+The `widened` column is deliberately unchanged by this work — `grow` cleared, same ladder —
+and it reads 18,342 / 14,557 / 12,227 before and after, to the unit.
+
+**No regression, and it took two tries to get there.** Run by run over all 597,062 (trial,
+mode) verdicts, against the records of the *Restoring the line matrix* run: **49,354 refused
+before and accepted now, 0 accepted before and refused now**; 9,309 worker agreement checks, 0
+disagreements; 985.6 s on six processes.
+
+A first version grew the ceiling and gave the writer only the grown box to work in — the
+source's own positioning at the ceiling, then the general layout at the ceiling. That turned
+**14 verdicts from accepted into refused**: 13 same-length edits in Word 2016 (eleven as an
+overlap with the next line, two as the line being full) and one in XeLaTeX where the general
+layout has no glyph for a character the source's own items carry. The mechanism is that
+growing the ceiling changes *which version* `own_items` picks: a producer's kerning that did
+not fit the run's own advance fits a wider box, and the kept items are wider than the rewrite
+they displace, so an edit that used to be written at the source's origin was handed to the
+general layout, which insets the line by an overhang and put ink where the source had none.
+`prepare` now runs four writers and takes the first that succeeds — the source's positioning
+in the grown box, then in the box that arrived, then the general layout in each — so the last
+two are the writer exactly as it was before the box could grow. **Growth may add room; it may
+never take a writer away.**
+
+⚠ **Those last two are covered by this comparison and not by a unit test**, which is the
+honest state of it. Reaching them needs a page where the grown attempt fails and the ungrown
+one succeeds, and that needs an embedded font with *varying glyph widths* (so that keeping the
+source's kerns changes the advance) *together with* right ink overhang or a partly clipped
+run. A sweep of 5 kerned fixtures x 7 replacements x 11 neighbour positions, run against a
+copy of `layout.rs` with the ungrown pair deleted, found none: every fixture in the tree with
+ink overhang has uniform 600-unit widths, and every one with varying widths is Helvetica,
+whose ink does not pass its advance and which discovery refuses to clip at all. Building that
+font is the work a unit test here would take.
+
+**Round trips**, one per producer, on `grow25` trials the app layout accepted — every one a
+case where the text genuinely grew into the room after the line, since the box the request
+carries is the run's own advance and `grow` does the rest:
+
+```sh
+<probe> --growth-request <file> <page> <operator> grow25 <default width> grow > <req.json>
+<probe> --roundtrip <file> <req.json> <new directory>
+```
+
+| Producer | Page | Chars | Probe | `qpdf --check` | `pdftotext` | pypdf |
+|---|---:|---:|---|---|---|---|
+| Acrobat 25 (Arcadia agenda) | 2 | 40 | pass | clean | finds it | finds it |
+| pdfTeX (arXiv 2003.00976) | 1 | 32 | pass | clean | finds it | finds it |
+| arXiv GenPDF (arXiv 2509.18965) | 1 | 41 | pass | clean | finds it | finds it |
+| Word via PDFMaker 20 (Coatesville) | 1 | 35 | pass | clean | finds it | finds it |
+| XeLaTeX / xdvipdfmx (fontspec) | 1 | 14 | pass | clean | finds it | finds it |
+| PowerPoint via PDFMaker (Healdsburg) | 1 | 24 | pass | clean | finds it | finds it |
+| Word via PDFMaker 26 (Hugo) | 1 | 13 | pass | clean | finds it | finds it |
+| Word via PDFMaker 22 (Illinois) | 1 | 39 | pass | clean | finds it | finds it |
+| Word 2016 (Mercer Island) | 1 | 25 | pass | clean | finds it | finds it |
+| HM Passport Office guidance | 16 | 47 | pass | clean | finds it | finds it |
+| pdfTeX (arXiv 1706.03762) | 11 | 85 | pass | clean | finds it | finds it |
+| Google Docs (SampleForms invoice) | 1 | 27 | pass | clean | finds it | finds it |
+| Typst | 1 | 22 | pass | clean | finds it | finds it |
+| W3C dummy | 1 | 14 | pass | clean | finds it | finds it |
+| LibreOffice (W3C headers) | 3 | 30 | pass | clean | finds it | finds it |
+| Wellington agenda | 1 | 21 | pass | clean | finds it | finds it |
+
+"Pass" is the probe's own verdict: the preview and the saved file render identically and no
+pixel outside the edited run's box changed. `qpdf --check` exits 0 with *"No syntax or stream
+encoding errors"* on all sixteen. The pypdf readback asserts the replacement **is** on the
+saved page and **is not** on the same page of the source, so a reader that simply failed to
+find anything cannot pass it. LuaTeX/ConTeXt, ReportLab and the Union County budget are over
+128 pages and `--roundtrip` refuses them (`unsupported page count`), as before.
+
+**Unit tests.** Six over `layout::room` alone, in the displayed page's own space and with the
+numbers written out: the room reaching the page edge and stopping 40 pt short of a neighbour
+in **each of the four growth directions**, a neighbour 2 pt away, a clip with a nearer
+neighbour winning, a neighbour off the line and one overlapping it by less than 0.1 pt, a
+neighbour the run's own glyphs reach above or below the box, and a box already wider than the
+page keeping its width. Seven more through the writer on real pages: free space, a neighbour 2
+pt on (with the same edit accepted once that neighbour moves away, so the refusal is the
+neighbour rather than the length), the page edge, a line flush against the right edge that does
+not grow leftwards, a rectangular clip, a compound clip that gives growth up, a kerned run that
+keeps its kerns because the box grew, the reported box being the size of the text, and a
+fallback-font replacement growing too.
+
+**Two window phases had drafts that had stopped overflowing** (found by the lead running
+them on a checks build of this tree, macOS). One site in `src/lib/opencheck.ts` builds a
+draft to be refused — `(passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" :
+"S").repeat(80)` — and a draft only has to be wider than the *room* now, not wider than the
+run's own advance. Every one of the five was measured through the worker, with
+`--growth-request … grow` and `--roundtrip`:
+
+| phase group | draft | verdict | |
+|---|---|---|---|
+| `textedit-passport` (passport guide p16, op 413) | `"I" x 80` | **accepted, round-trips clean** | stale |
+| `textedit-w3c` (W3C dummy, op 10) | `"l" x 80` | **accepted, round-trips clean** | stale |
+| `textedit-agenda` (Wellington p1, op 65) | `"R" x 80` | refused: other text follows it | still valid |
+| `textedit-agenda-page2` (Wellington p2, op 62) | `"C" x 80` | refused: reaches the edge of the page | still valid |
+| every other textedit phase (embedded fixture, op 3) | `"S" x 80` | refused: reaches the edge of the page | still valid |
+
+The passport one is not a defect in the free-space rule and was checked as one before being
+called stale: `"I" x 80` **round-trips** — preview and saved file render identically and no
+pixel outside the edited box changes — the same draft with `grow` cleared is still refused as
+box width, and the line does fill up, at `"I" x 200`, refused as *other text follows it*. That
+label is vertical and runs up the right margin, which is why it holds 150 of them. The count
+is now **1,000**, measured to be refused for the room on all five, and short of both the
+4,096-character bound and any missing glyph. The check now also asserts **why** it refused
+(*"no room for more text on this line"*): it asserted only that the apply threw and the journal
+did not move, which a missing glyph or a character bound satisfies just as well — which is how
+two of five could stop testing anything without going red, and why only the one phase that was
+run showed up. `"x".repeat(21)` at the other site is a glyph refusal and is unaffected.
+
+**A window phase was added and deliberately not run here**: `tabs_check.py --phase
+textedit-grow`, on the same fixture as `--phase textedit`. Its first run by the lead was
+24/25: *"a longer draft previews in a line with room after it"* failed on
+`testdata/textedit-embedded.pdf`, and the phase was wrong rather than the product — that
+line has 260 pt of room and takes **sixteen** more of its own characters, while the nine of
+`" AND MORE"` are wider than that. The draft is four of the run's own characters now, which
+is how the growth instrument builds its longer trials and for the same reason. Everything this increment does
+that a reader can see happens in the running application — the preview and its dashed
+outline follow the typed text, and the status line names what filled the line — and none of
+it is reachable from a gate. The phase types a longer draft and requires a preview, types a
+much longer one and requires *"no room for more text on this line"* with no mention of a box,
+then dispatches an input on the width control and requires the refusal to go back to naming
+the box the reader now owns. It leaves the draft as it found it and applies nothing, so it
+does not disturb the rest of that phase's flow.
+
+**Mutations.** Eighteen in `scripts/mutate_rust.py` (`--only "room: " --only "free width: "
+--only "grown box: "`) and five in `scripts/mutate_frontend.py` (`--only "grown box: "`), each
+red on the test named for it. Three survived a first run and all three were findings rather
+than variants: the cross-axis span's union with the run's own hit rectangle was a no-op in
+every fixture (a new test gives the run a descender that reaches past the box); handing the
+source's items the grown ceiling changed only *which* items were written, not the verdict (a
+new test asserts the kerns survive an edit that needed the room); and checking the page
+rectangle at the grown box rather than at the one that arrived could not fail at all, because
+`room` already holds a grown box inside the page — that second guard was deleted rather than
+given a test.
+

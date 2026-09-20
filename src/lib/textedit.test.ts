@@ -48,6 +48,46 @@ describe("existing text editing", () => {
       expect(box.height).toBeGreaterThanOrEqual(box.size * 1.5);
     }
   });
+  // The box the editor opens carries `grow`, which is what lets the worker size
+  // it to the typed text up to the room after the line. The flag is not about
+  // the layout as a whole: it is about the width, and only the width control
+  // clears it -- a reader who picks a font or ticks wrapping has still not said
+  // how wide they want the box.
+  it("opens the box with room to grow and gives it up only when a width is typed", async () => {
+    const box = defaultTextLayout(runs.runs[0]!);
+    expect(box).toMatchObject({ width: 80, grow: true });
+    const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+    const { editor, root, field } = mount(write);
+    const control = (name: string) => (root as FakeElement & { querySelectorAll(): FakeElement[] }).querySelectorAll().find((node) => node.getAttribute("aria-label") === name)! as FakeElement & { value: string; checked: boolean };
+    field.value = "ACME edited"; field.dispatch("input", {});
+    control("Font").value = "noto_sans_bold"; control("Font").dispatch("change", {});
+    control("Wrap within box").checked = true; control("Wrap within box").dispatch("change", {});
+    control("Height (pt)").value = "40"; control("Height (pt)").dispatch("input", {});
+    editor.commit(); await editor.settle();
+    expect(write.mock.calls[0]![0].layout).toMatchObject({ grow: true, height: 40, wrap: true, font: "noto_sans_bold" });
+    control("Width (pt)").value = "150"; control("Width (pt)").dispatch("input", {});
+    editor.commit(); await editor.settle();
+    expect(write.mock.calls[1]![0].layout).toMatchObject({ grow: false, width: 150 });
+    editor.destroy();
+  });
+  // Reopening a run takes the answer from the layout the journal kept, rather
+  // than assuming one: a box a reader sized once stays sized.
+  it("reopens a sized box as sized and an untouched one with room to grow", async () => {
+    const sized = { ...defaultTextLayout(runs.runs[0]!), width: 150, grow: false };
+    const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
+    // The application always supplies a preview callback, and that is what
+    // makes every change carry a layout; without one the flag has no carrier.
+    const { editor, field } = mount(write, runs, undefined, vi.fn(async () => runs));
+    editor.update({ ...state, text_edits: [{ ...change, replacement: "ACME edit", layout: sized }] });
+    field.value = "ACME edited"; field.dispatch("input", {});
+    editor.commit(); await editor.settle();
+    expect(write.mock.calls[0]![0].layout).toMatchObject({ grow: false, width: 150 });
+    editor.update({ ...state, text_edits: [] });
+    field.value = "ACME again"; field.dispatch("input", {});
+    editor.commit(); await editor.settle();
+    expect(write.mock.calls[1]![0].layout).toMatchObject({ grow: true, width: 80 });
+    editor.destroy();
+  });
   it("offers CJK fonts and sends the selected style to the writer", async () => {
     const write = vi.fn(async (value: TextChange) => ({ ...state, text_edits: [value] }));
     const { editor, root, field } = mount(write);
@@ -72,7 +112,7 @@ describe("existing text editing", () => {
     control("Font").dispatch("change", {});
     editor.commit(); await editor.settle();
     expect(write).toHaveBeenLastCalledWith({ ...change, replacement: change.original,
-      layout: { width: 150, height: 15, size: 12, wrap: false, font: "noto_sans_bold" } });
+      layout: { width: 150, height: 15, size: 12, wrap: false, font: "noto_sans_bold", grow: false } });
     control("Wrap within box").checked = true; control("Wrap within box").dispatch("change", {});
     field.value = "ACME\nSECOND";
     form.dispatch("keydown", { target: field, key: "Enter" });
@@ -96,7 +136,7 @@ describe("existing text editing", () => {
     field.value = "FIRST"; field.dispatch("input", {}); await vi.advanceTimersByTimeAsync(250);
     field.value = "SECOND"; field.dispatch("input", {}); await vi.advanceTimersByTimeAsync(250);
     expect(preview).toHaveBeenCalledTimes(2);
-    expect(preview.mock.calls[0]).toEqual([{ ...change, replacement: "FIRST", layout: { width: 80, height: 15, size: 12, wrap: false, font: "auto" } }]);
+    expect(preview.mock.calls[0]).toEqual([{ ...change, replacement: "FIRST", layout: { width: 80, height: 15, size: 12, wrap: false, font: "auto", grow: true } }]);
     finish[0]!(reply); await Promise.resolve(); expect(create).not.toHaveBeenCalled();
     finish[1]!(reply); await Promise.resolve(); expect(create).toHaveBeenCalledOnce();
     form.dispatch("keydown", { key: "Escape" }); expect(revoke).toHaveBeenCalledWith("blob:preview");

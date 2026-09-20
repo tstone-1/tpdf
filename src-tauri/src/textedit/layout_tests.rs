@@ -14,6 +14,7 @@ fn edit(doc: &Document, replacement: &str, width: f64, height: f64, wrap: bool) 
             size: 12.,
             wrap,
             font: EditFont::Auto,
+            grow: false,
         }),
     }
 }
@@ -141,6 +142,7 @@ fn cjk_program_cache_distinguishes_glyph_sets_and_reuses_identical_sets() {
                 size: 12.,
                 wrap: false,
                 font: EditFont::Auto,
+                grow: false,
             }),
         })
         .collect();
@@ -384,6 +386,7 @@ fn replacement_fonts_keep_discovery_limits_and_share_programs() {
                 size: 1.,
                 wrap: false,
                 font: EditFont::Auto,
+                grow: false,
             }),
         })
         .collect();
@@ -437,7 +440,8 @@ fn wrapping_fits_a_line_by_its_words_not_the_space_it_broke_at() {
 
 // The layout `defaultTextLayout` (src/lib/textlayout.ts) sends when a reader
 // starts typing, in the same arithmetic: the run's own advance, its size
-// rounded up to the next thousandth of a point.
+// rounded up to the next thousandth of a point, and `grow` set, because the
+// reader has not touched the width control yet.
 fn default_layout(run: &Run) -> Layout {
     let x = run.matrix[0].hypot(run.matrix[1]);
     let y = run.matrix[2].hypot(run.matrix[3]);
@@ -451,6 +455,7 @@ fn default_layout(run: &Run) -> Layout {
         size,
         wrap: false,
         font: EditFont::Auto,
+        grow: true,
     }
 }
 
@@ -601,11 +606,18 @@ fn a_kerned_run_in_a_chosen_bundled_font_does_not_keep_source_codes() {
 
 // A kept kern can widen: the 1000-unit gap after A leaves no room in the box
 // for W, while the rewrite without it fits, so the rewrite is written.
+//
+// The box has to be one a reader sized (`grow` cleared), because that is what
+// makes the box the limit. A box the editor opens follows the typed text into
+// the room after the line, and on this page there is 280 pt of it, so the kept
+// gap fits and is kept -- which is the point of growing it and is covered by
+// `a_box_the_reader_has_not_sized_grows_into_the_free_space_after_the_line`.
 #[test]
 fn kept_kerns_that_do_not_fit_the_box_give_way_to_the_rewrite() {
     let mut doc = tests::with_content(b"BT /F1 12 Tf 20 100 Td [(A) -1000 (BC)] TJ ET");
     let source = doc.clone();
-    let change = in_default_box(&doc, 0, "ABW");
+    let mut change = in_default_box(&doc, 0, "ABW");
+    change.layout.as_mut().unwrap().grow = false;
     write(&mut doc, &[change]).unwrap();
     assert_eq!(shows(&doc)[0], Object::string_literal("ABW"));
     // A box narrowed below the source's advance, though still wider than its
@@ -613,6 +625,7 @@ fn kept_kerns_that_do_not_fit_the_box_give_way_to_the_rewrite() {
     let mut doc = source;
     let mut change = in_default_box(&doc, 0, "ABC");
     change.layout.as_mut().unwrap().width -= 1.;
+    change.layout.as_mut().unwrap().grow = false;
     write(&mut doc, &[change]).unwrap();
     assert_eq!(shows(&doc)[0], Object::string_literal("ABC"));
 }
@@ -762,4 +775,393 @@ fn a_layout_leaves_the_following_line_matrix_exactly_as_the_source_had_it() {
     let chain = format!("BT /F1 12 Tf 19.999992 200 Td (FIRST LINE) Tj {tail}");
     following_lines_are_identical(&chain, "AWAY", &["SECOND", "THIRD", "FOURTH", "FIFTH"]);
     following_lines_are_identical(&chain, "THIRD", &["FOURTH", "FIFTH"]);
+}
+
+// ---------------------------------------------------------------------------
+// The room after a run, and the box that follows the text into it.
+//
+// `layout::room` is pure geometry over displayed-page rectangles, so the rule
+// it implements is stated here in numbers rather than inferred from a document:
+// the box grows along the run's own text axis until it meets the first thing on
+// its line, and no further than the page's edge or the clip in force. The tests
+// below it run the same rule through the writer on real pages.
+// ---------------------------------------------------------------------------
+
+// The box of a run whose leading edge sits `lead` along the growth axis, and
+// one unit wider, in each of the four directions a quarter-turned run grows in.
+// Written out four times rather than derived from the first, because a second
+// hand-written table of turns is the thing `text::to_device` warns about: these
+// are four independent statements the one implementation has to satisfy.
+fn box_edges(direction: usize, lead: f64) -> ([f64; 4], [f64; 4], [f64; 2]) {
+    match direction {
+        0 => (
+            [lead, 48., lead, 63.],
+            [lead, 48., lead + 1., 63.],
+            [300., 240.],
+        ),
+        1 => (
+            [lead, 48., lead, 63.],
+            [lead - 1., 48., lead, 63.],
+            [300., 240.],
+        ),
+        2 => (
+            [48., lead, 63., lead],
+            [48., lead, 63., lead + 1.],
+            [240., 300.],
+        ),
+        _ => (
+            [48., lead, 63., lead],
+            [48., lead - 1., 63., lead],
+            [240., 300.],
+        ),
+    }
+}
+
+// The run's own hit rectangle, reaching 80 pt back from its leading edge, and a
+// neighbour whose near edge is `gap` further on, both in the same direction.
+fn own_and_neighbour(direction: usize, lead: f64, gap: f64) -> ([f64; 4], [f64; 4]) {
+    match direction {
+        0 => (
+            [lead - 80., 48., lead, 63.],
+            [lead + gap, 48., lead + gap + 40., 63.],
+        ),
+        1 => (
+            [lead, 48., lead + 80., 63.],
+            [lead - gap - 40., 48., lead - gap, 63.],
+        ),
+        2 => (
+            [48., lead - 80., 63., lead],
+            [48., lead + gap, 63., lead + gap + 40.],
+        ),
+        _ => (
+            [48., lead, 63., lead + 80.],
+            [48., lead - gap - 40., 63., lead - gap],
+        ),
+    }
+}
+
+#[test]
+fn the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour() {
+    for direction in 0..4 {
+        // Directions 1 and 3 grow towards zero, so their leading edge starts at
+        // the far end and has the same 200 pt of page in front of it.
+        let lead = if direction % 2 == 1 { 200. } else { 100. };
+        let (zero, one, page) = box_edges(direction, lead);
+        let (own, neighbour) = own_and_neighbour(direction, lead, 40.);
+        assert_eq!(
+            layout::room((zero, one), 1., page, None, own, [].into_iter(), 0.),
+            (200., layout::Room::Page),
+            "direction {direction}, nothing in the way"
+        );
+        assert_eq!(
+            layout::room(
+                (zero, one),
+                1.,
+                page,
+                None,
+                own,
+                [neighbour].into_iter(),
+                0.
+            ),
+            (40., layout::Room::Line),
+            "direction {direction}, a neighbour 40 pt on"
+        );
+    }
+}
+
+#[test]
+fn the_room_after_a_run_stops_two_points_short_of_a_close_neighbour() {
+    let (zero, one, page) = box_edges(0, 100.);
+    let (own, neighbour) = own_and_neighbour(0, 100., 2.);
+    assert_eq!(
+        layout::room(
+            (zero, one),
+            1.,
+            page,
+            None,
+            own,
+            [neighbour].into_iter(),
+            0.
+        ),
+        (2., layout::Room::Line)
+    );
+}
+
+#[test]
+fn the_room_after_a_run_stops_at_a_clip_and_a_nearer_neighbour_wins() {
+    let (zero, one, page) = box_edges(0, 100.);
+    let (own, neighbour) = own_and_neighbour(0, 100., 40.);
+    let clip = Some([0., 40., 180., 70.]);
+    assert_eq!(
+        layout::room((zero, one), 1., page, clip, own, [].into_iter(), 0.),
+        (80., layout::Room::Clip)
+    );
+    assert_eq!(
+        layout::room(
+            (zero, one),
+            1.,
+            page,
+            clip,
+            own,
+            [neighbour].into_iter(),
+            0.
+        ),
+        (40., layout::Room::Line)
+    );
+}
+
+#[test]
+fn the_room_after_a_run_ignores_what_is_not_on_its_line() {
+    let (zero, one, page) = box_edges(0, 100.);
+    let (own, _) = own_and_neighbour(0, 100., 40.);
+    // Below the line entirely, and overlapping it by less than the tenth of a
+    // point the collision check ignores.
+    for other in [[140., 70., 180., 90.], [140., 62.95, 180., 90.]] {
+        assert_eq!(
+            layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
+            (200., layout::Room::Page),
+            "{other:?}"
+        );
+    }
+    assert_eq!(
+        layout::room(
+            (zero, one),
+            1.,
+            page,
+            None,
+            own,
+            [[140., 62.5, 180., 90.]].into_iter(),
+            0.
+        ),
+        (40., layout::Room::Line)
+    );
+}
+
+#[test]
+fn the_room_after_a_run_is_never_less_than_the_box_it_was_given() {
+    let (zero, one, page) = box_edges(0, 100.);
+    let (own, neighbour) = own_and_neighbour(0, 100., 40.);
+    // A box already past the page edge keeps its width; growth only ever adds.
+    assert_eq!(
+        layout::room((zero, one), 1., page, None, own, [].into_iter(), 250.).0,
+        250.
+    );
+    // A neighbour already inside the box does not pull the box back over it.
+    assert_eq!(
+        layout::room(
+            (zero, one),
+            1.,
+            page,
+            None,
+            own,
+            [neighbour].into_iter(),
+            60.
+        ),
+        (200., layout::Room::Page)
+    );
+}
+
+// Every glyph of the synthetic font is 600/1000 wide, so a character at 12 pt
+// is exactly 7.2 pt and the arithmetic below is readable. The page is 300 x 240.
+fn synthetic(body: &str) -> Document {
+    let (mut doc, _, _, _) = fonts::tests::fixture();
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    let stream = doc.add_object(Stream::new(Dictionary::new(), body.as_bytes().to_vec()));
+    doc.get_dictionary_mut(id).unwrap().set("Contents", stream);
+    doc
+}
+
+// Built from the run's own characters, as the growth instrument builds its
+// longer trials, so a missing glyph can never be the reason for a refusal.
+const LONGER: &str = "FIRSTFIRSTFIRSTFIRS"; // 19 glyphs, 136.8 pt
+
+#[test]
+fn a_box_the_reader_has_not_sized_grows_into_the_free_space_after_the_line() {
+    // FIRST occupies 36 pt from x 40; the page leaves 260 pt after its origin.
+    let mut doc = synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+    let change = in_default_box(&doc, 0, LONGER);
+    let mut sized = change.clone();
+    sized.layout.as_mut().unwrap().grow = false;
+    let refusal = write(&mut doc.clone(), &[sized]).unwrap_err();
+    assert!(refusal.contains("exceeds the box width"), "{refusal}");
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(scan(&doc, 0).unwrap().runs[0].text, LONGER);
+}
+
+#[test]
+fn a_grown_box_stops_two_points_short_of_the_next_text_on_the_line() {
+    // The first FIRST ends at 76 and the second starts at 78: two points
+    // of room. Both runs are the same word because the synthetic font has no
+    // validated glyph for every code it declares, and a run it cannot show is
+    // not discovered at all.
+    let crowded =
+        synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 78 180 Td (FIRST) Tj ET");
+    let refusal = write(&mut crowded.clone(), &[in_default_box(&crowded, 0, LONGER)]).unwrap_err();
+    assert!(refusal.contains("other text follows it"), "{refusal}");
+    // The run's own text still fits the box it always had.
+    write(
+        &mut crowded.clone(),
+        &[in_default_box(&crowded, 0, "FIRST")],
+    )
+    .unwrap();
+    // Moving that neighbour away accepts the same edit, so the refusal above is
+    // the neighbour rather than the length.
+    let mut roomy =
+        synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 240 180 Td (FIRST) Tj ET");
+    let change = in_default_box(&roomy, 0, LONGER);
+    write(&mut roomy, &[change]).unwrap();
+    assert_eq!(scan(&roomy, 0).unwrap().runs[0].text, LONGER);
+}
+
+#[test]
+fn a_grown_box_stops_at_the_edge_of_the_page() {
+    // FIRST ends at 296 on a 300 pt page: four points of room.
+    let edge = synthetic("BT /F1 12 Tf 260 180 Td (FIRST) Tj ET");
+    let refusal = write(&mut edge.clone(), &[in_default_box(&edge, 0, LONGER)]).unwrap_err();
+    assert!(
+        refusal.contains("reaches the edge of the page"),
+        "{refusal}"
+    );
+    let mut inland = synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+    let change = in_default_box(&inland, 0, LONGER);
+    write(&mut inland, &[change]).unwrap();
+}
+
+// Growth is to the right of the run's own origin only: the writer places a
+// replacement where the source put it and replays the source's own positioning
+// to get there, so starting the line further left is reflow rather than a wider
+// box. A line set flush against the right edge has a whole empty page to its
+// left and still does not grow.
+#[test]
+fn a_line_against_the_right_edge_does_not_grow_into_the_space_on_its_left() {
+    let right = synthetic("BT /F1 12 Tf 264 180 Td (FIRST) Tj ET");
+    let before = scan(&right, 0).unwrap();
+    assert_eq!(before.runs[0].display_rect[2], 300.);
+    let refusal = write(&mut right.clone(), &[in_default_box(&right, 0, "FIRSTF")]).unwrap_err();
+    assert!(
+        refusal.contains("reaches the edge of the page"),
+        "{refusal}"
+    );
+    // One glyph shorter is accepted, so the run itself is editable.
+    let mut shorter = right.clone();
+    let change = in_default_box(&shorter, 0, "FIRS");
+    write(&mut shorter, &[change]).unwrap();
+}
+
+#[test]
+fn a_grown_box_stops_at_a_clip_the_document_has_in_force() {
+    // The clip reaches x 138, so the line has 98 pt of room from x 40.
+    let clipped = synthetic("q 38 170 100 30 re W n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET Q");
+    let refusal = write(&mut clipped.clone(), &[in_default_box(&clipped, 0, LONGER)]).unwrap_err();
+    assert!(refusal.contains("clips the space after it"), "{refusal}");
+    // Twelve glyphs are 86.4 pt and fit inside the same clip.
+    let mut fits = clipped.clone();
+    let change = in_default_box(&fits, 0, "FIRSTFIRSTFI");
+    write(&mut fits, &[change]).unwrap();
+    assert_eq!(scan(&fits, 0).unwrap().runs[0].text, "FIRSTFIRSTFI");
+}
+
+#[test]
+fn the_box_reported_back_is_the_size_of_the_text_not_of_the_room_it_had() {
+    let doc = synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET");
+    let grown = preview_layout(&doc, &in_default_box(&doc, 0, LONGER)).unwrap();
+    let width = f64::from(grown.rect[2] - grown.rect[0]);
+    assert!((width - 136.8).abs() < 0.01, "{width} for {LONGER}");
+    // Text that needs no room keeps the box it was opened with, so the outline
+    // a reader sees is their text and not the whole line.
+    let same = preview_layout(&doc, &in_default_box(&doc, 0, "FIRST")).unwrap();
+    assert!(
+        (f64::from(same.rect[2] - same.rect[0]) - 36.).abs() < 0.01,
+        "{:?}",
+        same.rect
+    );
+}
+
+// A replacement the original font cannot encode goes through the bundled
+// fallback, which lays the line out from glyph widths rather than keeping the
+// source's items. That path grows too.
+#[test]
+fn a_fallback_replacement_grows_into_the_free_space_as_well() {
+    // Helvetica at x 40 in a 300 pt page: 106.008 pt of text, 260 pt of room.
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET");
+    let longer = "SYNTHETIC FIRST AND \u{3a9}";
+    let change = in_default_box(&doc, 0, longer);
+    let mut sized = change.clone();
+    sized.layout.as_mut().unwrap().grow = false;
+    let refusal = write(&mut doc.clone(), &[sized]).unwrap_err();
+    assert!(refusal.contains("the box"), "{refusal}");
+    assert_eq!(preview_layout(&doc, &change).unwrap().font, "Noto Sans");
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(scan(&doc, 0).unwrap().runs[0].text, longer);
+}
+
+// A compound clip is a set of rectangles with holes rather than one edge, so
+// the box growth would produce is handed to the region instead of being reduced
+// to a coordinate. The region here ends at x 240 while the page runs to 300, so
+// the box the page alone would allow is refused and growth is given up.
+#[test]
+fn a_run_under_a_compound_clip_gives_growth_up_rather_than_guessing_an_edge() {
+    let clipped = synthetic(
+        "40 170 m 240 170 l 240 200 l 40 200 l h W n BT /F1 12 Tf 40 180 Td (FIRST) Tj ET",
+    );
+    assert_eq!(scan(&clipped, 0).unwrap().runs.len(), 1);
+    let refusal = write(&mut clipped.clone(), &[in_default_box(&clipped, 0, LONGER)]).unwrap_err();
+    assert!(refusal.contains("clips the space after it"), "{refusal}");
+    // The run is still editable inside the box it always had.
+    let mut shorter = clipped.clone();
+    let change = in_default_box(&shorter, 0, "FIRS");
+    write(&mut shorter, &[change]).unwrap();
+    assert_eq!(scan(&shorter, 0).unwrap().runs[0].text, "FIRS");
+}
+
+// The cross-axis span growth is measured over is the box's own together with
+// the run's hit rectangle: a descender or an accent takes a run's glyphs past
+// the box the editor opened, and something beside them is still on this line.
+#[test]
+fn the_room_after_a_run_counts_a_neighbour_its_own_glyphs_reach() {
+    let (zero, one, page) = box_edges(0, 100.);
+    for (own, other) in [
+        // Reaching below the box, and a neighbour only beside that reach.
+        ([20., 48., 100., 70.], [140., 64., 180., 90.]),
+        // And above it.
+        ([20., 30., 100., 63.], [140., 20., 180., 47.]),
+    ] {
+        assert_eq!(
+            layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
+            (40., layout::Room::Line),
+            "{own:?} beside {other:?}"
+        );
+        // The same neighbour beside a run that keeps to its box is not on the line.
+        assert_eq!(
+            layout::room(
+                (zero, one),
+                1.,
+                page,
+                None,
+                [20., 48., 100., 63.],
+                [other].into_iter(),
+                0.
+            ),
+            (200., layout::Room::Page),
+            "{other:?}"
+        );
+    }
+}
+
+// Growing the box hands the wider ceiling to the source's own items as well, so
+// a producer's kerning survives an edit that needed the room -- laying the run
+// out again from glyph widths is what the box was widened to avoid.
+#[test]
+fn a_kerned_run_grown_into_the_free_space_keeps_the_kerns_it_had() {
+    let mut doc = tests::with_content(b"BT /F1 12 Tf 20 100 Td [(KER) 80 (NED) 80 (RUN)] TJ ET");
+    let change = in_default_box(&doc, 0, "KERNEDRUNNING");
+    let mut sized = change.clone();
+    sized.layout.as_mut().unwrap().grow = false;
+    assert!(write(&mut doc.clone(), &[sized]).is_err());
+    write(&mut doc, &[change]).unwrap();
+    assert_eq!(
+        shows(&doc)[0],
+        kerned(&[("KER", 80), ("NED", 80), ("RUNNING", 0)])
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs[0].text, "KERNEDRUNNING");
 }

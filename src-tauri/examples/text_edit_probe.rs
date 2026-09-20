@@ -134,9 +134,16 @@ fn run() -> Result<(), String> {
         return roundtrip::run(args[1].as_ref(), args[2].as_ref(), args[3].as_ref());
     }
     if args.first().is_some_and(|arg| arg == "--growth-request") {
-        let [_, source, page, operator, trial, width] = args.as_slice() else {
+        // A trailing `grow` sets the flag the editor sets for a box a reader
+        // has not sized; without it the request is a box they did size.
+        let (rest, grow) = match args.last() {
+            Some(last) if last == "grow" => (&args[..args.len() - 1], true),
+            _ => (args.as_slice(), false),
+        };
+        let [_, source, page, operator, trial, width] = rest else {
             return Err(
-                "usage: --growth-request <source.pdf> <page> <operator> <trial> <width>".into(),
+                "usage: --growth-request <source.pdf> <page> <operator> <trial> <width> [grow]"
+                    .into(),
             );
         };
         let number = |value: &str| value.parse::<f64>().map_err(|_| "invalid number");
@@ -146,6 +153,7 @@ fn run() -> Result<(), String> {
             operator.parse().map_err(|_| "invalid operator")?,
             trial,
             number(width)?,
+            grow,
         );
     }
     if args.first().is_some_and(|arg| arg == "--growth") {

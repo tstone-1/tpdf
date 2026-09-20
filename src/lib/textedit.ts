@@ -15,7 +15,11 @@ export interface TextRun {
 export interface TextPreview { png: number[]; font: string; rect: [number, number, number, number]; lines: number }
 export interface TextRuns { page: number; revision: number[]; runs: TextRun[]; preview?: TextPreview }
 export interface TextLayout { width: number; height: number; size: number; wrap: boolean;
-  font: "auto" | "original" | "noto_sans" | "noto_sans_bold" | "noto_sans_italic" | "noto_sans_bold_italic" | "noto_sans_cjk_sc" | "noto_sans_cjk_sc_bold" }
+  font: "auto" | "original" | "noto_sans" | "noto_sans_bold" | "noto_sans_italic" | "noto_sans_bold_italic" | "noto_sans_cjk_sc" | "noto_sans_cjk_sc_bold";
+  /** The reader has not sized this box, so it follows the text they type as far
+   * as the room after the run allows; see `TextLayoutControls` and, in the
+   * worker, `textedit::layout::free_width`. */
+  grow: boolean }
 export interface TextChange { page: number; revision: number[]; operator: number; original: string; replacement: string; layout?: TextLayout }
 
 /** Compare per-page bodies, including edits removed by undo. */
@@ -97,7 +101,7 @@ export class TextEditor {
     const label = document.createElement("label"); label.textContent = "Replacement text";
     this.input.rows = 2; this.input.maxLength = 8192; this.input.style.cssText = "display:block;width:100%;box-sizing:border-box;margin:8px 0;resize:vertical";
     label.append(this.input);
-    const help = document.createElement("p"); help.textContent = "Resize the box or change the font size for longer text. Apply updates the page; Save writes the PDF. With wrapping, Ctrl+Enter applies.";
+    const help = document.createElement("p"); help.textContent = "Longer text grows into the room after the line by itself; set a width to size the box yourself. Apply updates the page; Save writes the PDF. With wrapping, Ctrl+Enter applies.";
     help.style.cssText = "font-size:12px;margin:6px 0";
     this.message.setAttribute("role", "alert"); this.message.tabIndex = 0;
     this.message.style.cssText = "font-size:12px;margin:6px 0";

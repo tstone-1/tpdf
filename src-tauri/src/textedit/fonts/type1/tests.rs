@@ -1013,6 +1013,7 @@ fn textedit_type1_layout_keeps_the_original_font_and_writes_gaps() {
                 size: 10.,
                 wrap,
                 font: textedit::EditFont::Auto,
+                grow: false,
             }),
         }
     };

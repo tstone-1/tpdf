@@ -27,6 +27,7 @@ fn actual_text_single_line_layout_survives_reopen_and_a_second_edit() {
                     size: 12.,
                     wrap: false,
                     font: EditFont::Original,
+                    grow: false,
                 }),
             }],
         )
@@ -61,6 +62,7 @@ fn actual_text_single_line_layout_survives_reopen_and_a_second_edit() {
                     size: 12.,
                     wrap: false,
                     font: EditFont::Original,
+                    grow: false,
                 }),
             }],
         )
@@ -157,6 +159,7 @@ fn alternate_actual_text_preserves_span_and_refuses_forged_edits_and_overlap() {
             size: 12.,
             wrap: false,
             font: EditFont::Original,
+            grow: false,
         });
         assert!(write(&mut doc, &[change.clone()])
             .unwrap_err()

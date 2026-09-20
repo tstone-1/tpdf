@@ -495,6 +495,7 @@ hop through the index.
 - A request that names a page without its document asks the right page of the wrong file, and a shared page number hides it
 - The first `Tf` in an edited stream is the source's own, so a test of the written size read the wrong operator
 - A check that measures in `f64` cannot see a drift a reader makes in `f32`
+- Widening a limit turns every test about that limit into a test of something else
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -582,6 +583,8 @@ hop through the index.
 - A probe copied from its neighbour inherits a starting point that may not apply
 - The gate guarding the anchors reads the file differently from the harness that uses them
 - A mutation written on one platform names a test the other platform does not compile
+- An anchor written before `cargo fmt` has seen the line is aimed at a line that no longer exists
+- An existing anchor that starts occurring twice can be a second copy of the code, not a second mention of it
 - Adding a third drag made five existing mutations aim at nothing, or at two things
 - A new test can make an existing mutation's anchor ambiguous, and the anchor never moved
 - A new command turns the mutation harness's control red, one layer from where it reads
@@ -23416,3 +23419,92 @@ was proved red against the code before the fix; the probe fixture from
 `text_continuation_check.py --line-drift` checks the same thing with PDFium's own pixels. A
 check of a value some other program computes has to be written in that program's arithmetic,
 or it checks your model of the value instead.
+
+### An anchor written before `cargo fmt` has seen the line is aimed at a line that no longer exists
+
+Four of the nineteen mutations written for the editing box's growth rule (`room` in
+`src/textedit/layout.rs`) reported `anchor occurs 0x` on their first gate run, and nothing was
+wrong with any of them. They had been copied out of source I had just written and not yet
+formatted, and `cargo fmt` does not leave a conditional in an argument position alone: what I
+wrote as
+
+```rust
+let near = at(if sign > 0. { other[axis] } else { other[axis + 2] });
+```
+
+is five lines by the time it is committed, so an anchor holding the one-line spelling matches
+nothing. It is cheap to catch --- the `anchors` gate is 0.2 s and says exactly this --- and
+easy to mis-read, because "anchor occurs 0x" is the same message a genuinely drifted anchor
+gives, and the entry above tells you to suspect a refactor or a killed harness. The order that
+avoids it is **`cargo fmt` first, copy the anchor second**.
+
+The better fix was not to re-copy the formatted five lines. That conditional appeared at four
+call sites, each choosing between `rect[axis]` and `rect[axis + 2]` by the growth direction ---
+one rule with four opinions, and four anchors the formatter could break again. Naming it once,
+
+```rust
+let edge = |rect: [f64; 4], ahead: bool| rect[if (sign > 0.) == ahead { axis + 2 } else { axis }];
+```
+
+left one line for the formatter to leave alone, one place for the rule, and anchors that read
+as sentences (`at(edge(clip, true))`, `at(edge(other, false))`). **A line the formatter keeps
+rewriting is usually a line saying something that wants a name.**
+
+### An existing anchor that starts occurring twice can be a second copy of the code, not a second mention of it
+
+The same gate run reported two *existing* mutations --- `partial editing: omit preserved
+collision checks` and `local text preservation: ignore preserved collisions`, both anchored on
+`.chain(&page.preserved)` --- as ambiguous, occurring twice in `src/textedit/layout.rs`. The
+recorded reasons for an anchor going ambiguous are all about mentions: a new test restating a
+line of production code, a near-copy of a command, a third drag added beside two others. This
+was none of them. I had written a shared `obstacles` helper precisely so the growth limit and
+the collision check could not read two different lists of what is on the page, and then had not
+actually routed the collision check through it. The second occurrence *was* the second list ---
+the duplication the helper existed to prevent, sitting in the source with a comment above the
+helper claiming it had been prevented.
+
+So the gate found a defect in the code while answering a question about a table, and the fix
+belonged in the source, not in either anchor: routing the loop through `obstacles(page, run)`
+took the count back to one and left both mutations aimed at the one list, where deleting
+`.chain(&page.preserved)` now weakens the growth limit and the collision check together, which
+is what they are for. **When an anchor you did not touch starts matching twice, read both
+matches before re-aiming either** --- if the anchor is a distinctive expression rather than a
+common idiom, a second copy of it is more often a second copy of the logic.
+
+### Widening a limit turns every test about that limit into a test of something else
+
+`kept_kerns_that_do_not_fit_the_box_give_way_to_the_rewrite` is a test about what the writer
+does when the source's own kerning no longer fits the box: the `[(A) -1000 (BC)] TJ` gap leaves
+no room for a `W`, so the run is set again from glyph widths and the kerns are dropped. It went
+red the moment the box began following the typed text, with `[(A) -1000 (BW)]` against an
+expected `(ABW)` --- because on that page there is 280 pt of empty line after the run, the box
+grew, the kept version fitted after all, and the give-way path it exists to cover was never
+reached. The test was not wrong and the new behaviour was not wrong; the **subject** had moved,
+and the test now measured the writer's preference for kept kerns instead of its fallback away
+from them. The repair is one line, `grow` cleared, plus a comment saying that a box a reader
+sized is what makes the box the limit here.
+
+Two things to carry. **After widening any limit, re-read every test whose subject is "what
+happens at that limit"** --- a test named for a bound is a test of the bound, and moving the
+bound moves what it covers. And the reason this one announced itself is worth noting rather
+than trusting: it asserts the *operand the writer produced*. A sibling test asserting only that
+the edit was refused, or only that the text came back, would have gone on passing while
+covering nothing --- which is the failure recorded under *A bound stops discriminating when the
+behaviour around it changes, and its test keeps passing*, arriving here in the direction where
+the assertion happened to be strong enough to catch it.
+
+**And in the direction where it was not.** The window harness builds one draft on purpose to be
+refused, `(passport ? "I" : … : "S").repeat(80)`, and checks that applying it throws and leaves
+the journal alone. Eighty characters were comfortably wider than any of those runs' own
+advances; they are not wider than the *room* those lines have, and two of the five stopped
+being refused at all — 80 `I` now fit the passport guide's vertical label, which runs up the
+right margin and holds 150, and 80 `l` fit the W3C dummy's line. Nothing went red for one of
+them, because only the phase that was actually run reported. The check's own wording is what
+allowed it: **"is refused" is not an assertion about the box**, and a missing glyph, a
+character bound or a clip satisfies it identically. It now asserts the message names the room,
+and the count is one measured to exhaust every line rather than one that looked large. Two
+habits, and the second is the one that generalises: after moving a limit, **measure every
+fixture that was chosen against the old limit** rather than the one that failed; and make a
+refusal test say *which* refusal, so that a draft which quietly stops reaching the guard cannot
+keep passing.
+

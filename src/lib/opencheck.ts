@@ -360,6 +360,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-agenda-page2":
     case "textedit-multipage":
     case "textedit-list-child":
+    case "textedit-grow":
     case "textedit-wide-spacing":
     case "textedit-wrapped":
     case "textedit-overhang":
@@ -377,6 +378,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const cidLatin1 = phase === "textedit-cid-latin1" || overhang;
       const wrapped = phase === "textedit-wrapped";
       const wideSpacing = phase === "textedit-wide-spacing";
+      const grow = phase === "textedit-grow";
       const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
       const original = listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
       const replacement = listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
@@ -394,6 +396,23 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       }
       const originalTab = host.tabs().find((tab) => tab.path === first)!;
       const field = () => document.querySelector<HTMLTextAreaElement>(".text-edit-popup textarea");
+      const status = () => document.querySelector<HTMLElement>(".text-edit-popup p[role=alert]")?.textContent ?? "";
+      // A draft built to fill the line, in a character the fixture's font can
+      // show. The count is not decoration: since 26.9.15 a box the reader has
+      // not sized follows the text into the room after the run, so a draft only
+      // has to be wider than the *room*, where 80 characters used only to have
+      // to be wider than the run's own advance. Measured at `760e013` plus this
+      // change, on the fixtures these phases are run with: 80 'I' now fit the
+      // passport guide's vertical label, which holds 150, and 80 'l' fit the
+      // W3C dummy's line -- both drafts had stopped being refused at all, and
+      // only one of the two was found by running a phase. At 1,000 every one of
+      // the five is refused, and refused for the room rather than for a
+      // character bound (4,096) or a missing glyph.
+      const overflow = (passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : "S").repeat(1000);
+      // The run's own characters, which is what a longer draft is built from
+      // wherever one has to be accepted: a glyph the font lacks, or one wider
+      // than the line has room for, would refuse it for a reason of its own.
+      const own = [...original].filter((ch) => ch.trim()).slice(0, 4).join("");
       const target = () => {
         const targets = [...document.querySelectorAll<HTMLButtonElement>(".text-edit-run")];
         // A list label may precede the item body; select the authored text.
@@ -416,6 +435,40 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (page === 1) check("both source pages have their original text", untouched.includes(agenda ? "REGULAR" : original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
+      if (grow) {
+        // The box the editor opens is the run's own advance, and it now follows
+        // the text a reader types as far as the room after the line allows.
+        // Nothing below can be seen anywhere but in the running application: the
+        // preview and its dashed outline are what the reader reads, and the
+        // status line is where a refusal names what filled the line.
+        const preview = () => document.querySelector<HTMLImageElement>('.text-edit-popup img[alt="PDF preview of the replacement"]');
+        const width = () => document.querySelector<HTMLInputElement>('.text-edit-popup input[aria-label="Width (pt)"]')!;
+        const type = async (text: string) => {
+          field()!.value = text;
+          field()!.dispatchEvent(new Event("input", { bubbles: true }));
+          // 250 ms of debounce, then a worker round trip for the preview.
+          await settle(() => status() !== "Preparing preview..." && status() !== "", SETTLE_MS);
+        };
+        // Four of the run's own characters appended. `${original} AND MORE` was
+        // tried first and is a worse draft: on `textedit-embedded.pdf` those
+        // nine characters are wider than the 260 pt the line has, while sixteen
+        // of the run's own fit, so the check failed on a fixture where growth
+        // was working.
+        await type(original + own);
+        check("a longer draft previews in a line with room after it",
+          status().startsWith("Preview:") && preview()?.hidden === false);
+        await type(overflow);
+        check("a draft past the room says the line is full, not that the box is narrow",
+          status().includes("no room for more text on this line") && !status().includes("the box"));
+        // A width the reader types is theirs from then on, and the refusal goes
+        // back to naming the box they set.
+        // Re-typing the number already there is still a reader typing a width.
+        width().dispatchEvent(new Event("input", { bubbles: true }));
+        await settle(() => status() !== "Preparing preview..." && status() !== "", SETTLE_MS);
+        check("a width the reader types hands the box back to them",
+          status().includes("exceeds the box width") || status().includes("ink exceeds the box"));
+        await type(original + (wrapped ? " " : ""));
+      }
       field()!.value = "DISCARDED DRAFT";
       document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       check("Escape returns focus to the selected text target", document.activeElement === target());
@@ -539,11 +592,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();
       check("redo restores exactly the edited pixels", redoPixels.length === editedPixels.length && redoPixels.every((value, index) => value === editedPixels[index]));
-      // Use a source glyph: S in synthetic lines, l in the W3C subset.
-      await start(); field()!.value = (passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : "S").repeat(80);
+      await start(); field()!.value = overflow;
       document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
       let refused = false; try { await host.idle(); } catch { refused = true; }
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
+      // And refused for the room, not by some other guard. Without this the
+      // check above is satisfied by a missing glyph or a character bound, which
+      // is how two of these drafts could stop overflowing without anything
+      // going red: they were still refused, just not by the box.
+      check("the overflowing draft is refused for the room on the line",
+        status().includes("no room for more text on this line"));
       document.querySelector<HTMLElement>(".text-edit-popup")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       await host.idle();
       check("cancelling a refused draft returns focus to its text target", document.activeElement === target());

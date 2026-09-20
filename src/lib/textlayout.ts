@@ -10,6 +10,13 @@ import type { TextLayout, TextRun } from "./textedit";
  * run the glyph widths are wider, and a box that wide would claim room the line
  * never had, up to its neighbour. The size is rounded up to the thousandth the
  * control shows; the writer reads a size within that step as the source's own.
+ *
+ * `grow` is set, because this is the box the editor opens rather than one a
+ * reader chose: the writer is free to follow the typed text past this width, as
+ * far as the room after the run allows (`layout::free_width`). The width stays
+ * the run's own advance all the same, and is what the box falls back to -- a
+ * grown box is never narrower than the one the run already occupies, and the
+ * reader still sees this number in the width control until they change it.
  */
 export function defaultTextLayout(run: TextRun): TextLayout {
   const x = Math.hypot(run.matrix[0], run.matrix[1]);
@@ -18,11 +25,23 @@ export function defaultTextLayout(run: TextRun): TextLayout {
   const sourceSize = run.size * y, size = round(sourceSize);
   const height = Math.max(sourceSize * 1.25, run.minimum_height ?? 0) * size / sourceSize;
   return { width: Math.max(0.1, round(run.advance * x)), height: Math.max(0.1, round(height)),
-    size, wrap: false, font: "auto" };
+    size, wrap: false, font: "auto", grow: true };
 }
 
 /** Native form controls also provide keyboard access to resizing and wrapping. */
 export class TextLayoutControls {
+  /**
+   * Whether a reader has typed a width of their own.
+   *
+   * It is the one thing that separates "this is the box the editor opened" from
+   * "this is the box I want", and the two want opposite treatment: the first
+   * follows the typed text up to the room on the line, the second is the
+   * reader's and is left alone. It is set from the width control's own input
+   * event -- not from any control change, because choosing a font or ticking
+   * wrap says nothing about the width -- and reset by `set`, which takes the
+   * answer from the layout it is given rather than assuming one.
+   */
+  private sized = false;
   readonly root = document.createElement("div");
   readonly width = document.createElement("input");
   readonly height = document.createElement("input");
@@ -39,7 +58,9 @@ export class TextLayoutControls {
       const label = document.createElement("label"); label.textContent = title;
       input.type = "number"; input.min = String(min); input.max = String(max); input.step = "0.1";
       input.style.cssText = "display:block;width:105px"; input.setAttribute("aria-label", title);
-      label.append(input); this.root.append(label); input.addEventListener("input", change);
+      label.append(input); this.root.append(label);
+      // One listener, so `sized` is already true when `change` reads the layout.
+      input.addEventListener("input", () => { if (input === this.width) this.sized = true; change(); });
     }
     const label = document.createElement("label"); label.textContent = "Font";
     this.font.setAttribute("aria-label", "Font"); this.font.style.cssText = "display:block;max-width:260px";
@@ -57,11 +78,11 @@ export class TextLayoutControls {
   }
   read(): TextLayout {
     return { width: Number(this.width.value), height: Number(this.height.value), size: Number(this.size.value),
-      font: this.font.value as TextLayout["font"], wrap: this.wrap.checked };
+      font: this.font.value as TextLayout["font"], wrap: this.wrap.checked, grow: !this.sized };
   }
   set(value: TextLayout): void {
     this.width.value = String(value.width); this.height.value = String(value.height); this.size.value = String(value.size);
-    this.font.value = value.font; this.wrap.checked = value.wrap;
+    this.font.value = value.font; this.wrap.checked = value.wrap; this.sized = !value.grow;
   }
   error(): string | null {
     const { width, height, size } = this.read();
