@@ -9936,3 +9936,230 @@ rectangle at the grown box rather than at the one that arrived could not fail at
 `room` already holds a grown box inside the page — that second guard was deleted rather than
 given a test.
 
+
+### What a paragraph model would have to work with — measured 2026-09-20
+
+Wrapping an edit onto a new line is the half of reflow the line push does not reach, and
+`docs/PLAN.md` §7 says it needs a paragraph model the scanner does not have: which runs are
+lines of one block, the leading between them, where the block ends, and what may be pushed
+down. This measures how much of the still-refused population wrapping could serve, where that
+model would come from, and what a page has room for. Nothing was built.
+
+macOS arm64 at `dbb4bee` plus this instrument, over the same 31 files as the three sections
+above (`testdata/textedit-public-corpus.json`, 803 pages, 629 editable, 44,282 runs).
+
+```sh
+python3 scripts/textedit_blocks.py <text-edit-probe> scratch/reflow-corpus/*.pdf \
+  --manifest testdata/textedit-public-corpus.json --jobs 6 \
+  --records <new directory> --output <new report.json>
+python3 scripts/textedit_blocks.py <probe> --report <records> --rule all|none --output <new>
+uv run --with pypdf scripts/textedit_blocks.py <text-edit-probe> --self-test
+```
+
+`text-edit-probe --blocks` (`src/probes/text_edit_blocks.rs`) runs the three longer trials of
+`--growth` in the one mode the editor sends (`app`, with `grow`), and adds three things that
+instrument does not carry: the MCID and owning structure element of every run, read from the
+parent tree **by the probe rather than by `textedit::tagging`**; and `ink_below`, the clear
+distance from a run's hit rectangle straight down to the first pixel that is not the page's
+own background, from one render per page. The block rule lives in the driver, not the probe,
+so the instrument cannot be the evidence for its own rule. 120.8 s on six processes — an
+eighth of `--growth`'s, because the 5% widening ladder is most of that instrument's cost.
+
+Before any number was used:
+
+- **The refusal population is the release's own.** Every one of the **132,846** (page,
+  operator, trial) verdicts this probe produced is byte-identical to the corresponding verdict
+  in the 26.9.15 records, with no key in one set and not the other. Two probes, two runs, one
+  answer.
+- **1,362 worker-agreement checks, 0 disagreements**, and each page's runs are rescanned after
+  its trials, so an accepted trial that was not undone would stop the run.
+- **A synthetic fixture with a known answer for every question** (the driver's `--self-test`):
+  a tagged page whose two paragraphs are geometrically identical and stated apart only by the
+  tags; an untagged page whose chain is ended by leading alone and whose next join is stopped
+  by a painted rule alone; and a third whose lines carry a gutter, three fragments that are
+  not a gutter, a pair differing only in left edge, one differing only in font and one
+  differing only in size.
+- **Mutations, both halves.** Four in the probe — the structure read always answering
+  untagged, the MCID walk finding nothing, the ink scan always reaching the page edge, the
+  ink test never firing — and fifteen in the driver, one per rule constant and one per signal.
+  Every one of the nineteen turned the self-test red. Three earlier survivors were findings
+  rather than variants: the fixture had no inline `Span` to climb past, no chain whose pitch
+  steps, and no gutter, and each got a case. A fourth survivor was a **guard that could not
+  fail** — the rule tested horizontal overlap, which `pairs` already requires of every pair it
+  hands over — and it was deleted rather than given a fixture.
+- **`--rule all` and `--rule none` move the corpus numbers, not only the fixture's**: false
+  joins go 577 -> 1,355 -> 0 and blocks 13,452 -> 3,970 -> 20,569.
+
+⚠ **`scripts/textedit_growth.py --self-test` was red on the tree that shipped 26.9.15**, found
+by running it here as the pre-flight its own docstring says it is. Its fixture asserts that a
+run 2 pt short of a neighbour is refused; the line push made that case an acceptance, correctly,
+and the assertion was left behind. No gate runs that harness, and the push increment measured
+itself with the corpus comparison instead, which cannot fail on a stale expectation. Corrected
+in the same session: the assertion now reads `ok`, and the fixture gained a second neighbour
+with the room behind it spent, so eight more characters are still refused and at the page rather
+than at the neighbour. Both halves were mutated in the fixture and both went red. The trap index
+has the entry.
+
+One defect the fixture found in the driver, worth recording because it is a shape rather than a
+typo: block membership was decided from the edge set, so a line the leading check *dropped* from
+a chain still carried its incoming edge, was therefore not a chain start, and appeared in no
+block at all. Five blocks reported as four. Chain starts are now decided by walking in reading
+order, where a line that is neither claimed nor claimed-from is a start by construction.
+
+**1. What is still refused, and whether wrapping is the answer.** The five refusals the editor
+can give for a full line are `layout::Room`, and they are exactly the split the question asks
+for: `page edge` is what wrapping exists for, the three `neighbour` reasons are what the line
+push met and could not move, `clip` is the document having cut the space off. Counts of 44,282
+runs, `app` mode, the layout a reader types into:
+
+| Trial | accepted | page edge | neighbour | clip | other |
+|---|---:|---:|---:|---:|---:|
+| +10% longer | 25,848 | 7,957 | 9,974 | 240 | 263 |
+| +25% longer | 21,196 | 12,201 | 10,355 | 265 | 265 |
+| +50% longer | 18,324 | 14,646 | 10,775 | 273 | 264 |
+
+As a share of the refusals rather than of the runs, the page edge takes over as the edit grows:
+43% of refusals at +10%, **53% at +25%**, 56% at +50%, against 54 / 45 / 41% for the neighbour
+family. At +25% that is **12,201 runs, 28% of every editable run in the corpus**, whose only
+obstacle is the edge of the page. The `other` column is 260 afp2pdf runs whose font cannot
+write the character the trial appends and five with several glyphs for one character; nothing
+in it is about length.
+
+| Producer | Runs | accepted | page edge | neighbour | clip | other | tagged pages |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| LuaTeX / ConTeXt | 10283 | 7303 | 2498 | 482 | 0 | 0 | 0 of 125 |
+| Acrobat 25 (Arcadia agenda) | 7461 | 4471 | 1858 | 1118 | 14 | 0 | 101 of 119 |
+| ReportLab | 7335 | 2999 | 2049 | 2287 | 0 | 0 | 0 of 88 |
+| XeLaTeX / xdvipdfmx (fontspec) | 6190 | 2957 | 1036 | 2190 | 0 | 7 | 0 of 71 |
+| IBM afp2pdf | 3104 | 323 | 2523 | 0 | 0 | 258 | 0 of 128 |
+| arXiv GenPDF (arXiv 2509.18965) | 3019 | 1356 | 724 | 939 | 0 | 0 | 0 of 24 |
+| pdfTeX (arXiv 2003.00976) | 3018 | 651 | 381 | 1986 | 0 | 0 | 0 of 11 |
+| Word via PDFMaker 20 (Coatesville) | 1681 | 278 | 859 | 544 | 0 | 0 | 21 of 21 |
+| Word via PDFMaker 26 (Hugo) | 626 | 194 | 160 | 272 | 0 | 0 | 7 of 7 |
+| Word 2016 (Mercer Island) | 487 | 72 | 0 | 207 | 208 | 0 | 4 of 4 |
+| Word via PDFMaker 22 (Illinois) | 241 | 118 | 36 | 86 | 1 | 0 | 2 of 2 |
+| Typst | 228 | 98 | 12 | 118 | 0 | 0 | 0 of 1 |
+| pdfTeX (arXiv 1706.03762) | 189 | 125 | 26 | 38 | 0 | 0 | 0 of 2 |
+| Wellington agenda | 157 | 106 | 24 | 27 | 0 | 0 | 0 of 2 |
+| Google Docs (SampleForms invoice) | 97 | 48 | 3 | 42 | 4 | 0 | 0 of 2 |
+| LibreOffice (W3C headers) | 68 | 24 | 0 | 6 | 38 | 0 | 4 of 4 |
+| PowerPoint via PDFMaker (Healdsburg) | 60 | 44 | 5 | 11 | 0 | 0 | 14 of 14 |
+| HM Passport Office guidance | 37 | 28 | 7 | 2 | 0 | 0 | 0 of 1 |
+| W3C dummy | 1 | 1 | 0 | 0 | 0 | 0 | 0 of 1 |
+| **All runs** | 44282 | 21196 | 12201 | 10355 | 265 | 265 | 153 of 629 |
+
+**2. Where the model would come from, and for how much of that population.** 153 of the 629
+editable pages carry a structure tree that reaches them, and 10,624 of the 44,282 runs are on
+one: **24% either way**. The refused population is split in the same proportion — 2,918 of the
+12,201 page-edge refusals are on a tagged page, which is 23.9% against a base of 24.0% — so
+tagging neither concentrates nor avoids the edits wrapping would serve. The numerator alone
+would have read as a finding; it is the denominator that says there is none.
+
+Two facts about the tagged quarter that are better than expected, and one that is worse:
+
+- **Every tagged page's parent tree was readable, on all 153.** No MCID map failed, and the
+  probe's own decode addressed the same operators the scanner does on every one of them.
+- **Every run the editor offers on a tagged page is tagged** — zero runs with no owning
+  element. That is not luck: `Tags::read_only` withholds text outside a marked-content
+  sequence on a page that has a tree at all, so on a tagged page "tagged page" and "tagged run"
+  are one population. It also means a fixture cannot mix the two halves on one page; the trap
+  index has that entry.
+- **`textedit::tagging` cannot answer the question anyway.** It keeps one tag *name* per MCID
+  and drops the element that owns it, so it can say *this text is in a paragraph* and cannot
+  say *these two runs are in the same paragraph*. The owner is read and discarded three lines
+  from where it is checked (`names[mcid] = tag.to_vec()`, beside `reference(&entries[mcid])? !=
+  id`), so carrying it is a field and not a walk — but nothing today carries it, and the
+  probe had to read the parent tree itself.
+
+**3. What geometry has to work with on the other three quarters.** Over every pair of
+consecutive lines, the signals a block rule would read, tagged pages against untagged:
+
+| Signal | tagged pairs (4,532) | untagged pairs (17,053) |
+|---|---:|---:|
+| same font resource | 85% | 65% |
+| same size | 99% | 90% |
+| nothing painted between the two lines | 99% | 92% |
+| pitch at most 1.5 em | 78% | 74% |
+| left edges within 0.1 pt | 76% | 61% |
+| left edges more than 36 pt apart | 12% | 17% |
+
+The left-edge distribution is **bimodal, which is the useful part**: either within a tenth of a
+point or more than twelve points away, with 122 tagged pairs and 552 untagged pairs in between.
+So the tolerance is not a knife edge — moving it from 1 pt to 3 pt moves about half a percent of
+pairs either way — and a rule can use it without its answer depending on the constant. The line
+pitch is not so kind: 3,102 untagged pairs sit at or below 1.0 em, which is not a line pitch at
+all but stacked fragments, superscripts and table rows, and they are indistinguishable by pitch
+from tight leading.
+
+**The candidate rule, and what it is wrong about.** Two consecutive lines are one block when the
+pitch is between zero and three ems, the font resource and size agree, the left edges agree to 1
+pt (or the earlier line is indented by up to four ems and has not already been joined from
+above), and the render shows nothing painted between them; chains are then cut wherever the
+pitch steps by more than half a point from the chain's first. Measured against the tagged pages,
+**where the answer is known**, over the 4,508 pairs whose page is tagged throughout:
+
+| Producer | Pairs | joined, one block | joined, two blocks | split, one block | split, two blocks | false joins |
+|---|---:|---:|---:|---:|---:|---:|
+| Acrobat 25 (Arcadia agenda) | 3016 | 1609 | 425 | 417 | 565 | 21% |
+| Word via PDFMaker 20 (Coatesville) | 897 | 781 | 64 | 7 | 45 | 8% |
+| Word via PDFMaker 26 (Hugo) | 234 | 128 | 37 | 16 | 53 | 22% |
+| Word 2016 (Mercer Island) | 157 | 34 | 25 | 33 | 65 | 42% |
+| Word via PDFMaker 22 (Illinois) | 114 | 10 | 3 | 35 | 66 | 23% |
+| LibreOffice (W3C headers) | 58 | 36 | 9 | 0 | 13 | 20% |
+| PowerPoint via PDFMaker (Healdsburg) | 32 | 4 | 14 | 0 | 14 | 78% |
+| **All tagged pairs** | 4508 | 2602 | 577 | 508 | 821 | 18% |
+
+**About one pair in six that the rule joins is not one block**, and it misses 16% of the pairs
+that are. The false-positive *shape* is the finding, and it is one shape: **468 of the 577 false
+joins, 81%, are one paragraph followed by another paragraph** — 238 where both are a single line
+and 230 where they are not — with 64 more involving a list body. Only 23 involve two different
+roles. So the rule is good at telling a heading from body text, which differ in font or size,
+and blind to the boundary between two paragraphs set solid in one style, which differ in nothing
+it can see. The leading check does not save it: those are the pairs where the producer left no
+extra space, and a break with extra space is already caught.
+
+The per-producer spread matters as much as the total. Word through PDFMaker 20 is 8% wrong and
+PowerPoint slides are 78% wrong, because a slide is a stack of separate text boxes at one pitch
+in one style — which is exactly the false-join shape, as the whole content of the page. And
+**the total is one document**: 3,016 of the 4,508 tagged pairs are the Arcadia agenda, so the
+18% is that agenda plus a little. A second heavily tagged producer would move it.
+
+**4. What is below, and whether one more line fits.** From the render, a block's last line has
+clear space below it, and one more line needs the block's own pitch plus the gap an existing
+following line leaves below a hit rectangle — which is measured from the block's own interior
+lines where it has them and from the page's otherwise, so the criterion reproduces a line that
+is already there rather than assuming what one would need.
+
+| Blocks | count | one more line fits | what is directly below |
+|---|---:|---:|---|
+| From the tags, on tagged pages | 1,481 | 471 (32%) | another line of text 88%, unaccounted ink 10%, page edge 2% |
+| From the tags, blocks whose own text is refused for the page edge | 755 | 287 (38%) | |
+| From the rule, on untagged pages | 13,452 | 2,494 (19%) | another line of text 81%, unaccounted ink 15%, page edge 4% |
+| From the rule, blocks whose own text is refused for the page edge | 5,768 | 1,039 (18%) | |
+
+**Two thirds of the blocks that need wrapping have no room to put the extra line.** Below a
+paragraph is another paragraph, nearly nine times in ten. The tagged number is the one to trust:
+the untagged one depends on the block model, and the same corpus reads 14 / 19 / 28% under
+`--rule none` / `signals` / `all`, which is the circularity to name rather than to average away.
+
+Two honest limits on this table. `ink_below` starts at the hit rectangle, which is a full em box
+rather than the ink in it, so the clearance is a lower bound and the "fits" counts are
+conservative. And two pages of the 629 are more than half non-background, where "the page's own
+background" is a weaker idea than elsewhere; they are reported rather than excluded.
+
+**Verdict.** Length is what refuses an edit, the page edge is now the majority of it, and
+wrapping is the right next feature. What the evidence changes is its **scope**:
+
+- **Tagged pages first, and on their own.** They are 24% of the corpus and 2,918 of the
+  page-edge refusals, the parent tree was readable on every one of them, every offered run
+  carries an element, and the answer is stated rather than inferred. The work is a field on
+  `Tags` and a reader for it, not a heuristic.
+- **Untagged pages out of the first increment.** A geometric rule is wrong about one join in
+  six, its errors are concentrated in the one case wrapping would damage — the next paragraph
+  gets pushed down as though it were this one — and the error rate is 8% for one producer and
+  78% for another, so there is no threshold at which it is uniformly safe. It is also the
+  three quarters of the corpus, so this is a real cost and not a cheap deferral.
+- **Wrapping into the space that is there, before wrapping that moves the page.** Only about a
+  third of the blocks that need it can take another line where they sit. The rest need what is
+  below to move, which is a second capability an order of magnitude larger, and the first
+  increment should refuse those rather than grow into them.

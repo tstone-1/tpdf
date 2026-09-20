@@ -632,6 +632,7 @@ hop through the index.
 - A re-aim keyed on anchors cannot see a replacement that names a removed field
 - A describe block's name is not part of the test name the harness reads
 - A glyph dropped with `Ok(None)` surfaces later as a different refusal, and instrumenting the errors misses it
+- A harness's own self-test asserts the behaviour of the increment that wrote it, and the next increment makes it a lie
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -737,6 +738,7 @@ hop through the index.
 - A control that turns the page in the plan turns nothing the writer reads
 - Two correct rules deciding every subject make each other unfalsifiable
 - The guard the type checker asked for made the loop bound untestable
+- A fixture cannot put tagged and untagged text on one page, and the untagged half simply is not there
 
 ## Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -23626,3 +23628,57 @@ Two habits come out of it, and the first is mechanical enough to apply without t
 an earlier check, and each needed a fixture in which the earlier check cannot fire, not a
 better assertion. And when two guards produce the same message on purpose, as these do, the
 test cannot tell them apart by reading it: it has to be a case only one of them can answer.
+
+### A fixture cannot put tagged and untagged text on one page, and the untagged half simply is not there
+
+A fixture for the block survey needed a tagged paragraph and an untagged one, to compare what
+the structure tree says with what geometry infers. Both went on one page, and the probe
+returned four runs where eight were expected.
+
+`Tags::read_only` answers `!self.names.is_empty()` for content outside any marked-content
+sequence: **on a page that carries a structure tree at all, text nobody tagged is read-only**,
+so it is never offered as an editable run. The four untagged lines were parsed, measured and
+then withheld, and nothing said so — a run that is read-only is absent from `PageRuns`, which
+is indistinguishable from a page that does not contain it. The assertion that caught it was a
+count, and a fixture built to be read rather than counted would have reported the tagged half
+as the whole answer.
+
+Two consequences worth carrying. A mixed page cannot be built at all, so the two halves go on
+**separate pages**, which is also what real documents look like — a tagged producer tags
+everything. And the same rule is a fact about the corpus and not only about fixtures: on a
+tagged page, every run the editor offers is tagged, so "tagged page" and "tagged run" are the
+same population there, and a count of untagged runs on tagged pages that comes back non-zero
+is evidence of a defect rather than of a producer's habits.
+
+### A harness's own self-test asserts the behaviour of the increment that wrote it, and the next increment makes it a lie
+
+`scripts/textedit_growth.py --self-test` was **red on the tree that shipped 26.9.15**, and was
+found by a later session running it as the pre-flight its own docstring says it is. Its
+fixture puts a run 2 pt short of a neighbour and asserts the longer edit is refused as *other
+text follows it*. The line push then made that exact case an acceptance -- correctly, which is
+the point of the increment -- and the assertion was left behind. The product was right and the
+control was wrong, which is the harder direction to notice, because the failure reads as
+"something in my tree is broken" to whoever runs it next.
+
+Three things let it through, and each is worth checking separately.
+
+**No gate runs it.** `scripts/gates.py` covers the unit tests and not the survey harnesses,
+deliberately -- they need a release build and minutes of corpus. So the only thing that runs
+this control is a person doing a survey, and between surveys it can be wrong indefinitely.
+
+**The increment that broke it never ran it.** The push increment ran the *corpus* comparison,
+which is the strong instrument and is why it found the ReportLab regression; the synthetic
+fixture is the weak one and was skipped. A corpus comparison cannot fail on a stale
+expectation, because it compares two runs of the same code against each other.
+
+**Relaxing the assertion would have removed the check.** Changing `line_full` to `ok` is
+correct and, on its own, leaves a self-test in which every longer edit is accepted -- an
+assertion that cannot fail. The fixture gained a second neighbour with the room behind it
+spent (1.9 pt of gap and 55 pt to the page edge, against 207 pt for the original), so two
+more characters fit and eight do not, and the refusal names the page rather than the
+neighbour. Both halves were then mutated in the fixture -- moving the tight neighbour into
+free space, and moving the loose one against the edge -- and both went red.
+
+The habit: **when an increment changes what a refusal is, grep the harnesses for the message
+it used to give**, not only the tests. And when a self-test's expectation has to be relaxed,
+the same commit owes it a case that still holds it.

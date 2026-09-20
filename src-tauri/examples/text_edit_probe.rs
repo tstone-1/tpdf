@@ -15,6 +15,10 @@
 //! `--growth <source.pdf> [--agree-every=N]` measures which longer, shorter and
 //! same-length replacements each run accepts; see `src/probes/text_edit_growth.rs`,
 //! which also documents `--growth-request` for reproducing one trial.
+//! `--blocks <source.pdf> [--agree-every=N]` measures what a paragraph model would have
+//! to work with: why a longer edit is still refused, what the structure tree states about
+//! which runs belong together, and what the page paints below each line. See
+//! `src/probes/text_edit_blocks.rs`.
 //! The example re-execs as its contained worker.
 
 #[path = "../src/probes/text_edit_public.rs"]
@@ -25,6 +29,9 @@ mod roundtrip;
 
 #[path = "../src/probes/text_edit_growth.rs"]
 mod growth;
+
+#[path = "../src/probes/text_edit_blocks.rs"]
+mod blocks;
 
 use std::{fs::File, path::PathBuf};
 
@@ -156,18 +163,26 @@ fn run() -> Result<(), String> {
             grow,
         );
     }
-    if args.first().is_some_and(|arg| arg == "--growth") {
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--growth" || arg == "--blocks")
+    {
+        let mode = args[0].clone();
         let every = match args.get(2).map(|arg| arg.strip_prefix("--agree-every=")) {
             None => 0,
             Some(Some(every)) if args.len() == 3 => every
                 .parse::<usize>()
                 .map_err(|_| "invalid --agree-every")?,
-            _ => return Err("usage: --growth <source.pdf> [--agree-every=N]".into()),
+            _ => return Err(format!("usage: {mode} <source.pdf> [--agree-every=N]")),
         };
         if args.len() < 2 {
-            return Err("usage: --growth <source.pdf> [--agree-every=N]".into());
+            return Err(format!("usage: {mode} <source.pdf> [--agree-every=N]"));
         }
-        return growth::run(args[1].as_ref(), every);
+        return if mode == "--blocks" {
+            blocks::run(args[1].as_ref(), every)
+        } else {
+            growth::run(args[1].as_ref(), every)
+        };
     }
     if args.first().is_some_and(|arg| arg == "--w3c-dummy") {
         if args.len() != 3 {
@@ -190,7 +205,7 @@ fn run() -> Result<(), String> {
     // as one, with synthetic fixtures written into it.
     if args.first().is_some_and(|arg| arg.starts_with('-')) {
         return Err(
-            "usage: text-edit-probe <scratch-directory> | --roundtrip | --inspect | --growth | --growth-request | --w3c-dummy"
+            "usage: text-edit-probe <scratch-directory> | --roundtrip | --inspect | --growth | --growth-request | --blocks | --w3c-dummy"
                 .into(),
         );
     }

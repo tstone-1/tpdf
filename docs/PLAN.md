@@ -4915,6 +4915,50 @@ about one line, and it stops at the first thing on that line it cannot move rath
 than looking for room anywhere else. The 18% of overlaps that would leave the page
 are what wrapping is for, and they are untouched.
 
+**What wrapping should be scoped to — measured 2026-09-20.** The population is bigger than
+that 18% suggested, because the push has since absorbed the movable half: of the 23,086
+edits still refused at +25% across the 31-file public sample, **12,201 — 53%, and 28% of
+every editable run — are refused only because the text would leave the page**, against
+10,355 stopped by a neighbour the push cannot move and 530 by a clip or a missing glyph. As
+the edit grows the page edge takes over: 43% of refusals at +10%, 53% at +25%, 56% at +50%.
+`BUILD.md`, *What a paragraph model would have to work with*, has the instrument, the
+tables and the nineteen mutations.
+
+Three findings decide the scope, and the third is the one that was not expected:
+
+- **A tagged page answers the question outright, and a quarter of the corpus is tagged.**
+  153 of 629 editable pages and 10,624 of 44,282 runs, the same 24% either way — so
+  tagging neither concentrates nor avoids the refused edits, and 2,918 of the page-edge
+  refusals sit on a page that states its own blocks. Every one of those 153 parent trees
+  was readable, and every run the editor offers on a tagged page carries an owning element,
+  because `Tags::read_only` withholds untagged text on a page that has a tree at all.
+  What is missing is small and is ours: `tagging.rs` keeps one tag **name** per MCID and
+  drops the element that owns it, three lines from where it checks that owner, so it can
+  say *this text is in a paragraph* and not *these two runs are in the same paragraph*.
+  A field, not a walk.
+- **A geometric rule is wrong about exactly the case wrapping would damage.** Measured
+  against the tagged pages, where the answer is known: **one pair in six that the rule joins
+  is not one block**, and 81% of those false joins are one paragraph followed by another in
+  the same style — which is the boundary that has no geometry, since the producer left no
+  extra space and the leading check already catches the ones that did. The rate is 8% for
+  Word through PDFMaker 20 and 78% for PowerPoint slides, where every text box is a separate
+  block at one pitch, so there is no threshold at which it is uniformly safe. The damage
+  from a false join is not a refused edit: it is the next paragraph pushed down as though it
+  were part of this one.
+- **Two thirds of the blocks that need wrapping have nowhere to put the extra line.** From
+  the render of each page, only 38% of the tag-defined blocks whose own text is refused for
+  the page edge have a clear line-pitch below their last line; below a paragraph is another
+  paragraph, 88% of the time. Wrapping that also moves what is below is a second capability,
+  an order of magnitude larger than this one.
+
+**So the first increment is tagged pages only, wrapping into space that is already there.**
+The block comes from the structure tree, not from a rule; a block with no room below it is
+refused with a reason rather than grown into; and untagged pages — three quarters of the
+corpus, so this is a real cost and not a cheap deferral — keep the refusal they have today.
+The geometric rule is worth revisiting only against a second heavily tagged producer: 3,016
+of the 4,508 tagged pairs measured are one agenda, so today's 18% is that document's number
+with a little else attached.
+
 ---
 
 ## 8. UX

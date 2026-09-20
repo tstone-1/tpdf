@@ -246,11 +246,18 @@ def self_test(probe):
             DictionaryObject({NameObject('/F1'): writer._add_object(font)})})
         stream = DecodedStreamObject()
         # Free: a short word at the start of a wide line. Edge: a line ending 3pt
-        # from the right edge. Neighbour: a line followed 1pt later by more text.
+        # from the right edge. Neighbour: a line followed 2pt later by more text,
+        # with 207pt of page after it, so since 26.9.15 the push moves that
+        # neighbour along and the edit is accepted. Pushed: the same shape with
+        # the room behind the neighbour spent -- 1.9pt of gap and 55pt to the page
+        # edge -- so the push has somewhere to go and not far enough, which is the
+        # case that keeps the acceptance above from being the only outcome tested.
         stream.set_data(b'BT /F1 12 Tf 20 200 Td (FREEWORD) Tj ET\n'
                         b'BT /F1 12 Tf 225 150 Td (EDGEWORD) Tj ET\n'
                         b'BT /F1 12 Tf 20 100 Td (BOXED) Tj ET\n'
                         b'BT /F1 12 Tf 64 100 Td (NEXT) Tj ET\n'
+                        b'BT /F1 12 Tf 100 70 Td (BOXEDBOXEDBOXED) Tj ET\n'
+                        b'BT /F1 12 Tf 228 70 Td (NX) Tj ET\n'
                         b'BT /F1 12 Tf 20 40 Td [(KER) 80 (NED) 80 (RUN)] TJ ET')
         page[NameObject('/Contents')] = writer._add_object(stream)
         path = root / 'growth.pdf'
@@ -258,7 +265,7 @@ def self_test(probe):
         report = measure(probe, path, 1)
         assert report['agreement']['checked'] > 0 and not report['agreement']['disagreements']
         tried = report['pages'][0]['tried']
-        assert sorted(r['chars'] for r in tried) == [4, 5, 8, 8, 9]
+        assert sorted(r['chars'] for r in tried) == [2, 4, 5, 8, 8, 9, 15]
         kerned = next(r for r in tried if r['chars'] == 9)
         # The box the editor opens is the run's own advance, kerns included, and the
         # layout keeps the source's kerns around a change (until 26.9.14 it laid the
@@ -279,25 +286,39 @@ def self_test(probe):
                 # The byte-patch writer has the source's own advance and no box
                 # to grow, so it refuses every longer edit whatever the line has.
                 assert classify(run[g]['patch']) == 'box_width', run[g]['patch']
-        # A box the editor opens grows into the room the line has. FREEWORD has
-        # 280 pt of it; EDGEWORD ends 3 pt from the page and BOXED 2 pt short of
-        # NEXT, and one more character of either is 8 pt. The message has to name
-        # which of the two stopped it, or the reader is told the line is full and
-        # cannot see what filled it.
+        # A box the editor opens grows into the room the line has, and since 26.9.15
+        # it then pushes the rest of the line along. FREEWORD has 280 pt of free line;
+        # EDGEWORD ends 3 pt from the page, which nothing can move. BOXED is 2 pt short
+        # of NEXT and is now **accepted**, because NEXT has 207 pt of page behind it --
+        # this assertion read `line_full` until 2026-09-20, written for the tree before
+        # the push and left behind by it, and it was the product that was right.
         for g in GROWTHS:
             assert classify(free[g]['app']) == 'ok', free[g]['app']
             assert classify(kerned[g]['app']) == 'ok', kerned[g]['app']
             assert classify(edge[g]['app']) == 'line_full', edge[g]['app']
             assert 'edge of the page' in edge[g]['app'], edge[g]['app']
-            assert classify(boxed[g]['app']) == 'line_full', boxed[g]['app']
-            assert 'other text follows it' in boxed[g]['app'], boxed[g]['app']
+            assert classify(boxed[g]['app']) == 'ok', boxed[g]['app']
+        # The push's own limit, which is what keeps the line above from being an
+        # assertion that everything is accepted: the same shape with 55 pt behind the
+        # neighbour instead of 207. Two more characters fit and eight do not, and the
+        # refusal names the page rather than the neighbour, because the neighbour did
+        # move and the page is where it stopped.
+        pushed = next(r for r in tried if r['chars'] == 15)
+        assert classify(pushed['grow10']['app']) == 'ok', pushed['grow10']['app']
+        assert classify(pushed['grow25']['app']) == 'ok', pushed['grow25']['app']
+        assert classify(pushed['grow50']['app']) == 'line_full', pushed['grow50']['app']
+        assert 'edge of the page' in pushed['grow50']['app'], pushed['grow50']['app']
         assert [free[g]['added'] for g in GROWTHS] == [1, 2, 4]
         assert all(classify(free[g]['widened']['verdict']) == 'ok' for g in GROWTHS)
         assert all(classify(edge[g]['widened']['verdict']) == 'page_edge' for g in GROWTHS)
         assert all(classify(boxed[g]['widened']['verdict']) == 'overlap' for g in GROWTHS)
         summary = aggregate([report], None)
-        assert summary['total']['ceiling'] == {'ok_inside_text_extent': 3, 'page_edge': 1,
-                                               'overlap_same_line_neighbour': 1}, summary['total']['ceiling']
+        # The `widened` column clears `grow`, so the push is not in it at all and the
+        # two neighbour lines both reach their neighbour: the long one is the second
+        # `overlap_same_line_neighbour`, and NX, which has the page to itself, is the
+        # fourth accepted within the page's existing text extent.
+        assert summary['total']['ceiling'] == {'ok_inside_text_extent': 4, 'page_edge': 1,
+                                               'overlap_same_line_neighbour': 2}, summary['total']['ceiling']
         # The collector must not accept a report with a trial missing.
         broken = json.loads(json.dumps(report))
         del broken['pages'][0]['tried'][0]['grow25']
@@ -308,8 +329,9 @@ def self_test(probe):
         else:
             raise AssertionError('a missing trial was counted')
         assert classify('something new') == 'other'
-    print('[PASS] kerned run accepted unchanged and swapped in the default box, a box the editor opens grows into a free line and is refused at the page edge '
-          'and at a neighbour by name, patch refuses every longer edit, a box widened by hand reaches the same ceiling, worker agrees, missing trials refused')
+    print('[PASS] kerned run accepted unchanged and swapped in the default box, a box the editor opens grows into a free line and is refused at the page edge, '
+          'a neighbour with room behind it is pushed along and one without it stops the edit at the page, patch refuses every longer edit, a box widened by hand '
+          'reaches the same ceiling, worker agrees, missing trials refused')
 
 
 def verdicts(record):
