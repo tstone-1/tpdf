@@ -346,6 +346,41 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         host.edits()!.state.pages.length === after.pages.length,
         String(host.edits()!.state.text_edits?.length ?? 0));
 
+      // Redaction beside an inserted page, which was refused for the whole
+      // document until 26.9.16. Through `Edits.redact`, which is the real
+      // command over the real IPC --- there is no gesture to drive, because
+      // the drag that produces these coordinates is the overlay's and no phase
+      // here has ever driven it.
+      //
+      // **Two calls, and the accept is the one that is new.** A refusal on the
+      // inserted page alone would pass against the old document-wide rule just
+      // as well, so the pair is what says the narrowing happened.
+      {
+        const state = host.edits()!.state;
+        const ownPage = state.pages[0]!.id;
+        const insertedPage = state.pages[1]!.id;
+        const area: [number, number, number, number] = [72, 90, 300, 108];
+        const mine = await host.edits()!.redact(ownPage, area);
+        report.check("a region on the reader's own page is accepted beside an inserted one",
+          mine.redactions.length === 1 && mine.redactions[0]!.page === ownPage,
+          JSON.stringify(mine.redactions.map((row) => row.page)));
+        let refused = "";
+        try {
+          await host.edits()!.redact(insertedPage, area);
+        } catch (why) {
+          refused = String(why);
+        }
+        report.check("and a region on the inserted page is refused, naming the page",
+          refused.includes("that page came from another document"), refused.slice(0, 80));
+        report.check("so the refused one put nothing in the review list",
+          host.edits()!.state.redactions.length === 1,
+          String(host.edits()!.state.redactions.length));
+        host.run("edit.undo"); await host.idle(); await quiet();
+        report.check("and one undo takes the accepted region back off",
+          host.edits()!.state.redactions.length === 0,
+          String(host.edits()!.state.redactions.length));
+      }
+
       host.run("edit.undo"); await host.idle(); await quiet();
       report.check("one undo takes every imported page back out",
         host.edits()!.state.pages.length === before && host.edits()!.state.sources?.[0]?.doc === source.doc,

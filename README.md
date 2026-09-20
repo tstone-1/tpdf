@@ -170,8 +170,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   document's own, and saving writes them into the file. Their text edits like the document's
   own text, with the same discovery, the same box and the same refusals. A web link on one
   opens in your browser after the same confirmation as a link on the document's own page.
-  One thing still waits for that save: redacting anything in a document that holds inserted
-  pages. An encrypted file is refused. Inserting the same page of the same file twice is
+  You can mark regions for removal on the document's own pages while they are there; what
+  waits for the save is redacting one of the inserted pages, and making an image-only copy,
+  both of which are refused where you ask for them and say which page they mean. An
+  encrypted file is refused. Inserting the same page of the same file twice is
   allowed, and editing the text of a page that is in the document twice is not — an edit
   reaches the file it came from, so it would appear in both.
   <!-- built: edit.insertPages edit.insertPages.range -->
@@ -252,7 +254,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   look at before anything happens to it. A region that has only been marked must not look
   like one that has been removed, so a pending region is never black, never saved, and never
   written into a copy — see the two entries under *What Phase 0 established* for why this
-  is the hardest thing here to get right.
+  is the hardest thing here to get right. A page inserted from another file cannot be
+  marked, and says so when you try: every check that would prove the removal clean is
+  addressed to the document you opened, and a removal reaches the file the page came from,
+  so it would strike every place that page appears.
   <!-- built: edit.redactRegion -->
 - **Review what you marked**, in a sidebar tab that lists every pending region down the
   document with the words under it, so you can check six regions across forty pages
@@ -308,7 +313,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   at 300 dpi, blackening the marked pixels, and writing a fresh PDF without the
   original text layers, annotations, links or metadata. It preserves encryption and
   keeps the original file. Text in the copy is no longer selectable. The output is
-  checked structurally and rendered back before it is saved.
+  checked structurally and rendered back before it is saved. It is the one removal a
+  document holding pages from another file cannot have, because every page of the copy is
+  drawn through the engine that holds the document you opened.
   <!-- built: file.redactRasterCopy -->
 - **Redact selection** marks the words you selected rather than a rectangle you aimed,
   one region per line, and the review list and the removal are the same ones the drag

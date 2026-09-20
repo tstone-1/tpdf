@@ -1024,4 +1024,87 @@ mod tests {
              reaches it: {why:?}"
         );
     }
+
+    /// **The measurement the 2026-09-20 redaction narrowing rests on, and there
+    /// is no inserted page anywhere in it.**
+    ///
+    /// `Refusal::RedactionBesideImportedPages` refused a redaction for the whole
+    /// document while any page came from another file, and one of the four
+    /// reasons it gave was this scan: *"the scan in particular reads the whole
+    /// output, so imported text that happens to repeat a removed word reads as
+    /// a leak"*. Every word of that is true and none of it is about imports.
+    /// This scans a two-page document that never left the opened file --- the
+    /// word is gone from page 1 and still printed on page 2 --- and the answer
+    /// is the same *still in the file*.
+    ///
+    /// So the ambiguity is a property of a whole-file scan and is already
+    /// shipped: an inserted page is exactly as opaque to it as page two, which
+    /// makes it a reason to say so in the report
+    /// ([`crate::redact::inserted_pages_note`]) and not a reason to refuse.
+    ///
+    /// The two needles are the control pair: one the writer put on the second
+    /// page only, one on neither. A scan that "found" both, or neither, would
+    /// pass an assertion about only the first.
+    #[test]
+    fn a_needle_on_another_page_reads_as_still_in_the_file() {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        const REPEATED: &str = "SECRET-4711";
+        const ABSENT: &str = "NOT-IN-THIS-FILE-AT-ALL";
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        // Page one, with the word removed from it --- what a redaction leaves.
+        let first = doc.add_object(Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 72 700 Td (this page was redacted) Tj ET".to_vec(),
+        ));
+        // Page two, which nobody marked, still printing the same word.
+        let second = doc.add_object(Stream::new(
+            dictionary! {},
+            format!("BT /F1 12 Tf 72 700 Td ({REPEATED}) Tj ET").into_bytes(),
+        ));
+        let mut kids = Vec::new();
+        for content in [first, second] {
+            kids.push(Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => content,
+            })));
+        }
+        let count = kids.len() as i64;
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => kids, "Count" => count,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+
+        let needles = vec![REPEATED.to_string(), ABSENT.to_string()];
+        let report = super::scan(&bytes, &needles, None);
+        assert!(
+            report.found.contains(REPEATED),
+            "a word still printed on another page of the same document is reported as still \
+             in the file: {:?}",
+            report.found
+        );
+        assert!(
+            !report.found.contains(ABSENT),
+            "and the control says the scan is discriminating rather than agreeable: {:?}",
+            report.found
+        );
+        let Verdict::NotVerified(why) = report.verdict() else {
+            panic!("a report that found a needle must never verify");
+        };
+        assert!(
+            why.iter().any(|reason| reason.contains(REPEATED)),
+            "and the reason names the word, not the page --- which is exactly what it cannot \
+             say: {why:?}"
+        );
+    }
 }

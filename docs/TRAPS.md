@@ -235,6 +235,9 @@ hop through the index.
 - Pushing a line by its `Td` moves every line after it; only a `TJ` displacement moves the cursor alone
 - A push measured from the room the box had moves the line a whole word too little
 - `array_text` reads exactly one leading number, so a displacement cannot be split the way a continuation is
+- A reason that is equally true of the ordinary case is not a reason for the special one
+- Two page numbers that agree in every case anyone tried, and the step that parts them fails safe
+- A derived plan clears the fields the writer thought of, and keeps the ones added since
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -636,6 +639,8 @@ hop through the index.
 - A describe block's name is not part of the test name the harness reads
 - A glyph dropped with `Ok(None)` surfaces later as a different refusal, and instrumenting the errors misses it
 - A harness's own self-test asserts the behaviour of the increment that wrote it, and the next increment makes it a lie
+- A probe that spawns a worker is also the worker, and without that the boundary takes the blame for `main`
+- A probe that writes its own input can be told to write it over its own output
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -23772,3 +23777,142 @@ The alternative --- applying each position's edits to its own clone of the incom
 document --- is what would have to be built if a reader ever wants two copies of one
 page edited differently. It needs the `Edit` to name a *position* rather than a page,
 which is a change to the wire shape and to the model's key; nothing has asked for it.
+
+### A reason that is equally true of the ordinary case is not a reason for the special one
+
+`Refusal::RedactionBesideImportedPages` refused a redaction **anywhere** in a document
+holding a page from another file, and its doc comment gave four reasons. Three were
+routing, and dissolved the way two earlier restrictions on the same feature had. The
+fourth read:
+
+> The scan in particular reads the whole output, so imported text that happens to repeat
+> a removed word reads as a leak.
+
+Every word of that is true. It is also true, word for word, of the document's **own page
+five**: `verify::scan` reads the whole file for the words that went and never says which
+page one is on, so a word the reader removed from page 3 and the document also prints on
+page 5 has always come back as *"still in the file"*. That behaviour ships, is correct,
+and nobody refuses a redaction over it.
+
+So the sentence was not a reason to refuse anything --- it was a description of the
+scanner, attached to the one case somebody happened to be looking at. It cost the feature
+for as long as it stood, and it was two minutes to settle:
+`verify::tests::a_needle_on_another_page_reads_as_still_in_the_file` builds a two-page
+document with nothing inserted in it and asserts the same answer.
+
+**The test to apply to any clause in a guard's stated reason: does the ordinary,
+already-shipping case satisfy it too?** If it does, the clause is about the machinery and
+not about the input being refused, and it belongs in the machinery's own documentation.
+What follows from such a clause is usually a *sentence in the report* rather than a
+refusal --- here, `redact::inserted_pages_note`, which says the scan cannot tell which
+page a hit was on and adds nothing at all when there was no hit. Adding it unconditionally
+would have made `redact::Applied::verified` false for every redaction in such a document,
+which is the refusal back again wearing a different coat.
+
+Related, from the other direction: *an unreachable guard is worth keeping if the type can
+carry it instead*. This one was not unreachable. It refused something that is safe, which
+is a different defect and has the opposite remedy --- delete it, and narrow what is left
+to the thing that is genuinely blocked (here `Refusal::RedactionOnImportedPage`, a region
+on the page itself, plus the image-only copy refused by the writer that cannot make it).
+
+### Two page numbers that agree in every case anyone tried, and the step that parts them fails safe
+
+A redaction's OCR gate reopens the file the removal **wrote** and renders a page of it by
+number. Everything else in a redaction is addressed to the file the removal **came from**:
+`PlannedRedaction::source` is a baseline page, because that is what the ordinals were
+computed against. `ocr_gate::GatePage::page` carried the second number into the first
+file, and its doc comment said so plainly --- *"the page's index in the file"* --- without
+either file being named.
+
+The two are equal exactly when the plan keeps every page in its original order. Deleting a
+page in front of the marked one was already enough to part them, long before anything
+could be inserted. Nothing noticed, for two reasons worth separating:
+
+* **It fails safe.** The control word comes from the page that was marked; it is not on
+  the page that gets rendered; the gate reports *not verified*. A certification thrown
+  away, never one wrongly given --- which is the right direction and is also why no
+  failing check exists to find it.
+* **The remap already existed one module away.** `redaction_fill::output_plan` maps the
+  same number to the same slot for the black fill and has since it was written, so the
+  rule was known, written down, applied once, and not applied here.
+
+Inserting pages from another file does not create the mismatch; it makes it ordinary
+rather than rare, which is what brought it up. `redact::gate_at_output_slots` is the
+remap, with the three arms a reader should look for: a page the plan does not place is
+**dropped** rather than pointed at slot zero, and a baseline page the document shows twice
+is gated once, because both positions are one page object and render the same pixels.
+
+**When one number is used to address two files, name both in the field's own doc comment.**
+"The page's index in the file" is a sentence that reads correctly in a module that only
+ever sees one.
+
+### A derived plan clears the fields the writer thought of, and keeps the ones added since
+
+`redaction_fill::output_plan` takes the plan a redaction ran under and derives the plan for
+the black-fill pass over the file it produced. It rebuilds `pages`, resets `baseline`, drops
+`opened_as`, and clears `marks`, `notes`, `discards` and `redactions` before re-adding the
+regions at their output slots. That is the complete list of what a plan held when it was
+written.
+
+`sources` --- the files inserted pages come from --- was added later, and `clone()` carried
+it straight through. The output already holds those pages, so nothing would have been
+imported twice; what the entry bought was `save::held_sources`, which reads and
+re-fingerprints every named file before the rewrite begins. A source moved, edited or
+deleted between the removal and the fill would refuse the black fill, naming an insert, on a
+pass that inserts nothing --- **after** the words were already gone, leaving a redacted file
+with no fill over it.
+
+The shape is general: a function that derives one plan from another by `clone()` and a list
+of clears is a **denylist**, and a denylist over a growing struct is wrong the first time the
+struct grows. Nothing says so, because the new field is usually harmless and occasionally
+not. Two remedies, and the second is better: assert in a test that the derived plan is inert
+in every way it is meant to be (which is what `the_fill_pass_names_no_other_file_and_no_text_edit`
+does), or build the derived value **field by field** so that adding one to the struct does not
+compile until somebody decides what this pass should do with it.
+
+### A probe that spawns a worker is also the worker, and without that the boundary takes the blame for `main`
+
+`save::InWorker` spawns its worker by re-executing `current_exe` with `worker::WORKER_ARGV`
+on the command line. In the application that is `tpdf`; in an example it is the example. A
+new probe that parsed its own arguments and knew nothing about that flag dropped the child
+straight into its usage branch, which printed the usage line and exited 2.
+
+What the parent reported was `worker stopped answering (still running)`. That is a sentence
+about the process boundary --- the sandbox, the pipe, the handover --- and the defect was six
+lines into the probe's own `main`. The usage line did appear on stderr, above the failure,
+which is the only clue and reads as noise beside it.
+
+Every probe that drives `save::InWorker` opens the same way, and the reason is worth stating
+at the top of a new one rather than copied silently:
+
+```rust
+let argv: Vec<String> = std::env::args().collect();
+if argv.iter().any(|arg| arg == worker::WORKER_ARGV) {
+    worker_child::main(&argv);
+}
+```
+
+The general form: **when a component re-executes the current binary, every binary that uses
+it has to be able to be that component.** A harness that forgets it does not get a missing
+feature, it gets the component's own failure vocabulary pointed at the harness.
+
+### A probe that writes its own input can be told to write it over its own output
+
+`redact-import-probe --echo` synthesises the file whose pages get inserted, so that its text
+is the removed word by construction. It wrote it as `echo.pdf` beside the output. The check
+script, choosing a name for that run's output, picked `echo.pdf` --- and the probe then
+deleted its own insert source with the `remove_file(out)` that clears a stale result, before
+handing the plan to the save.
+
+The refusal was `could not read echo.pdf: No such file or directory`, from a probe that had
+written `echo.pdf` twenty lines earlier. Worse, the message is `save::incoming_documents`'
+and names the file by **basename**, so it did not even look like the path the probe had
+just written; a round went into whether `Path::with_file_name` was doing something
+unexpected.
+
+Two things, and the second is the durable one. A generated input goes under a name that
+cannot be an output (`echo-source.pdf`, not `echo.pdf`). And a tool that both **writes** a
+file and **deletes** a file should compare the two paths and refuse, rather than discovering
+the collision as somebody else's error message: the probe now returns *"choose another name
+for the output: --echo writes its own file at ..."*, which is one line and names the actual
+problem.

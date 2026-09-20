@@ -11,6 +11,7 @@ use std::path::Path;
 use tauri::Manager;
 
 use super::{await_reply, outside_of, password_for, reply_channel};
+use crate::docmodel::PageSource;
 use crate::render::RenderService;
 use crate::{edits, ocr_gate, redact, save, verify, webopen, with_close_note, SaveFailure};
 
@@ -149,6 +150,13 @@ struct Asked {
     /// smallest box a region covered, and the removal takes exactly those boxes.
     /// See [`ocr_gate::GatePage`].
     gate: Vec<ocr_gate::GatePage>,
+    /// How many of the written pages came from another file.
+    ///
+    /// Not a count of anything being removed --- a page of another file cannot
+    /// be marked ([`crate::docmodel::Refusal::RedactionOnImportedPage`]). It is
+    /// what [`redact::inserted_pages_note`] needs to say, when the scan finds a
+    /// word, that the scan cannot say which page it was on.
+    inserted: usize,
 }
 
 /// Works out what removing every marked region would take.
@@ -217,6 +225,19 @@ async fn ask_redactions(
 
     let mut plan = edits.plan(doc)?;
     plan.redactions = planned;
+    // **After the plan, because the plan is what says where each page lands.**
+    // Everything above addresses the file the reader opened; the gate reopens
+    // what gets written and renders a page of it by number. See
+    // [`redact::gate_at_output_slots`], which also records that a deletion was
+    // already enough to part the two.
+    let gate = redact::gate_at_output_slots(&plan.pages, gate);
+    // How many of the written pages came from another file, counted off the
+    // plan the write uses rather than off the model --- one list, one reader.
+    let inserted = plan
+        .pages
+        .iter()
+        .filter(|page| matches!(page.source, PageSource::Imported { .. }))
+        .count();
     Ok(Asked {
         plan,
         needles,
@@ -224,6 +245,7 @@ async fn ask_redactions(
         regions,
         shows: shows_total,
         gate,
+        inserted,
     })
 }
 
@@ -415,6 +437,10 @@ pub async fn redact_copy(
     if let verify::Verdict::NotVerified(reasons) = report.verdict() {
         why.extend(reasons);
     }
+    // Directly under them, because it is about how to read them rather than a
+    // finding of its own --- and only when there is something to read. See
+    // `redact::inserted_pages_note`.
+    why.extend(redact::inserted_pages_note(asked.inserted, &report.found));
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
@@ -510,15 +536,20 @@ pub async fn redact_document(
     // The model first --- document numbers are reused, and a journal left under a
     // handle the service is free to hand to another file is one document's edits
     // applied to another's pages. Here that close is also the truncation.
-    // Empty today --- a redaction is refused beside an imported page --- and
-    // released anyway, because a refusal elsewhere is not a reason to leak here.
+    //
+    // ⚠ **These two calls were written against a document that could not hold
+    // an inserted page, and both said so**: *"empty today --- a redaction is
+    // refused beside an imported page --- and released anyway, because a
+    // refusal elsewhere is not a reason to leak here"*. Since 2026-09-20 a
+    // redaction on an own page is allowed beside them, so the lists are
+    // routinely non-empty and the release is load-bearing rather than
+    // defensive. Nothing here had to change, which is the argument for having
+    // written it that way: a document number would otherwise be handed out
+    // again while another file's pool and web addresses were still under it.
     let sources = edits.close(doc);
     // The addresses with them, this document's and theirs. `close_document`
     // makes the argument; this path is the third place that closes a document
-    // and the second that had not applied it. Empty sources today for the same
-    // reason the release above is empty --- a redaction is refused beside an
-    // imported page --- and forgotten anyway, because a refusal elsewhere is
-    // not a reason to leak here.
+    // and the second that had not applied it.
     web.forget(doc, &sources);
     super::document::release_sources(&service, sources);
     let (reply, rx) = reply_channel();
@@ -562,6 +593,10 @@ pub async fn redact_document(
     if let verify::Verdict::NotVerified(reasons) = report.verdict() {
         why.extend(reasons);
     }
+    // Under them for `redact_copy`'s reason, and sharper here: this is the only
+    // copy of the document left, so a reader deciding whether to act on a hit
+    // has nothing else to compare it against.
+    why.extend(redact::inserted_pages_note(asked.inserted, &report.found));
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
     why.extend(gate_written_file(&app, source.clone(), asked.gate, key.clone()).await);

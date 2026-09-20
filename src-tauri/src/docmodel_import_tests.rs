@@ -386,52 +386,107 @@ fn inserting_a_page_that_already_has_edited_text_is_refused() {
         .expect("another file's page 0");
 }
 
-/// A redaction anywhere is refused while any page came from another file,
-/// and the refusal lifts when the last such page goes.
+/// A region of the reader's own page while an inserted page is live.
+///
+/// ⚠ **This test asserted the opposite until 2026-09-20**, under the name
+/// `a_redaction_is_refused_while_any_page_came_from_another_file`, and its own
+/// message said what was wrong with it: *"on a page of the opened file too"*.
+/// The refusal it pinned was document-wide, and three of the four steps it
+/// named were routing --- see [`Refusal::RedactionOnImportedPage`], which
+/// records each of them and which one is still true.
+///
+/// The accept here is the narrowing; the two refusals below are what is left.
 #[test]
-fn a_redaction_is_refused_while_any_page_came_from_another_file() {
+fn a_region_on_the_reader_s_own_page_is_accepted_beside_an_inserted_one() {
     let mut doc = Doc::open(2);
     let own = doc.working().order()[0];
-    let placed = doc.import(None, file(1), vec![0]).expect("import")[0];
-    let region = Redaction {
-        page: own,
-        area: Quad {
-            left: 72.0,
-            top: 90.0,
-            right: 300.0,
-            bottom: 108.0,
-        },
-    };
-    assert_eq!(
-        doc.redact(region),
-        Err(Refusal::RedactionBesideImportedPages),
-        "on a page of the opened file too"
-    );
+    let placed = doc.import(None, file(2), vec![0]).expect("import")[0];
+    let mine = doc.redact(region_on(own)).expect("a region on my own page");
+    assert_eq!(doc.working().redactions_on(own), &[mine]);
 
-    doc.apply(Command::Delete { page: placed }).expect("delete");
-    doc.redact(region)
-        .expect("with no imported page left, the region is accepted");
+    // The inserted page is not refused for being beside a marked region
+    // either, which is the same rule from the other side --- and the variant
+    // that used to say so is gone with it.
+    doc.import(None, file(2), vec![1])
+        .expect("a second page inserted while a region is marked");
+    assert_eq!(doc.source_bodies(), 1, "one file, imported from twice");
+
+    // And the marked page is still the only marked one, which is what says the
+    // accept above did not quietly mark something else.
+    assert!(doc.working().redactions_on(placed).is_empty());
 }
 
+/// A region on a page that came from another file, by either route to it.
+///
+/// **Per page, which is `Refusal::CropOnMadePage`'s shape**: the sentence names
+/// what is true of this page rather than of the document around it.
 #[test]
-fn an_import_is_refused_while_regions_are_marked_for_removal() {
-    let mut doc = Doc::open(1);
+fn a_region_on_a_page_from_another_file_is_refused() {
+    let mut doc = Doc::open(2);
+    let placed = doc.import(None, file(1), vec![0]).expect("import")[0];
+    let depth = doc.depth();
+    assert_eq!(
+        doc.redact(region_on(placed)),
+        Err(Refusal::RedactionOnImportedPage(placed))
+    );
+    assert_eq!(doc.depth(), depth, "a refused redaction spends nothing");
+    assert!(doc.working().redactions_on(placed).is_empty());
+
+    // The refusal a reader is shown names the page and the way out, and does
+    // not name the document --- the sentence is the narrowing as much as the
+    // variant is.
+    let said = crate::edits::describe(Refusal::RedactionOnImportedPage(placed));
+    assert!(
+        said.contains("that page came from another document"),
+        "{said:?}"
+    );
+}
+
+/// The repeated-import hazard, answered by the refusal above rather than by one
+/// of its own.
+///
+/// **A removal reaches the file, not the position.** `save::apply_redactions`
+/// edits the page *object*, so a region on a page the document shows twice
+/// would strike both positions --- which is exactly the shape
+/// [`Refusal::TextOnRepeatedImport`] exists for on the text side. There is no
+/// counterpart here and there does not need to be: neither position of an
+/// imported page can carry a region at all, so the hazard has no way in.
+///
+/// Asserted on **both** placements, because a check that refused only the
+/// second would pass an assertion about the first.
+#[test]
+fn a_page_inserted_twice_can_be_redacted_at_neither_position() {
+    let mut doc = Doc::open(2);
     let own = doc.working().order()[0];
-    doc.redact(Redaction {
-        page: own,
+    let first = doc.import(None, file(1), vec![0]).expect("import")[0];
+    let second = doc.import(None, file(1), vec![0]).expect("again")[0];
+    assert_ne!(
+        first, second,
+        "two positions, two ids, one page of one file"
+    );
+
+    for placed in [first, second] {
+        assert_eq!(
+            doc.redact(region_on(placed)),
+            Err(Refusal::RedactionOnImportedPage(placed))
+        );
+    }
+    // And the document is still redactable where it is the reader's own.
+    doc.redact(region_on(own)).expect("my own page");
+}
+
+/// The one rectangle these three tests mark, so none of them can pass by
+/// marking a different one.
+fn region_on(page: crate::docmodel::PageId) -> Redaction {
+    Redaction {
+        page,
         area: Quad {
             left: 72.0,
             top: 90.0,
             right: 300.0,
             bottom: 108.0,
         },
-    })
-    .expect("mark a region");
-    assert_eq!(
-        doc.import(None, file(1), vec![0]),
-        Err(Refusal::ImportBesideRedactions)
-    );
-    assert_eq!(doc.source_bodies(), 0);
+    }
 }
 
 /// A comment of the opened file cannot be on a page of another one, through

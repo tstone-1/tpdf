@@ -29,6 +29,23 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
     result.notes.clear();
     result.discards.clear();
     result.redactions.clear();
+    // **The file this plan is pointed at already holds the inserted pages**,
+    // which the removal pass wrote into it --- so this pass must not be told to
+    // insert them a second time, and must not be made to depend on the other
+    // file still being where it was. `pages` above is already every output page
+    // as a baseline one, so `save::import_pages` has nothing to place; what
+    // these two lines take away is `save::held_sources`, which would reopen
+    // every source file and refuse the black fill if one had been touched or
+    // moved in the meantime --- a refusal about an insert, on a pass that
+    // inserts nothing, arriving after the words are already gone.
+    //
+    // The text edits go for the same reason and one more: they are addressed by
+    // `Edit::source` into the list being cleared, so leaving them would name a
+    // file this plan no longer has. A plan reaching here carries none in any
+    // case --- `save::rewrite` refuses text edits beside a redaction --- which
+    // makes this the belt rather than the braces.
+    result.sources.clear();
+    result.text_edits.clear();
     for (slot, page) in original.pages.iter().enumerate() {
         for redaction in &original.redactions {
             if page.source == PageSource::Baseline(redaction.source) {
@@ -142,6 +159,94 @@ mod tests {
             image_objects: 3,
             form_shows: vec![(1, 2)],
             form_text_objects: vec![(1, 3)],
+        }
+    }
+
+    /// The fill pass is pointed at the file the removal wrote, which already
+    /// holds the inserted pages --- so the plan it runs under must name no other
+    /// file.
+    ///
+    /// **Not about placing them twice**, which `pages` already rules out by
+    /// being every output page as a baseline one. It is about
+    /// `save::held_sources`, which reads and re-fingerprints every entry in
+    /// `sources` before the rewrite begins: a source file moved or touched
+    /// between the removal and the fill would refuse the black fill, naming an
+    /// insert, after the words were already gone. The reader would be left with
+    /// a redacted file and no fill over it.
+    #[test]
+    fn the_fill_pass_names_no_other_file_and_no_text_edit() {
+        let source = PlannedSourceForTest::plan();
+        assert!(
+            !source.sources.is_empty() && !source.text_edits.is_empty(),
+            "the fixture has to carry both, or this asserts nothing"
+        );
+        let mapped = output_plan(&source).unwrap();
+        assert!(mapped.sources.is_empty(), "no other file to reopen");
+        assert!(
+            mapped.text_edits.is_empty(),
+            "and nothing addressed into it"
+        );
+        // The pages are all the output's own, which is what leaves
+        // `save::import_pages` nothing to place.
+        assert!(mapped
+            .pages
+            .iter()
+            .all(|page| matches!(page.source, PageSource::Baseline(_))));
+        assert_eq!(mapped.redactions.len(), 1, "and the region still travels");
+        assert_eq!(
+            mapped.redactions[0].source, 1,
+            "at the slot the written file puts its page at"
+        );
+    }
+
+    /// The fixture for the test above: a plan as the redaction command builds
+    /// one for a document holding a page of another file.
+    struct PlannedSourceForTest;
+
+    impl PlannedSourceForTest {
+        fn plan() -> Plan {
+            Plan {
+                baseline: 2,
+                opened_as: None,
+                pages: vec![
+                    PageView {
+                        id: 9,
+                        source: PageSource::Imported {
+                            source: crate::docmodel::SourceId::from_raw(1),
+                            page: 0,
+                        },
+                        turns: 0,
+                        crop: None,
+                    },
+                    PageView {
+                        id: 1,
+                        source: PageSource::Baseline(0),
+                        turns: 0,
+                        crop: None,
+                    },
+                ],
+                marks: vec![],
+                notes: vec![],
+                discards: vec![],
+                sources: vec![crate::edits::PlannedSource {
+                    id: 1,
+                    path: std::path::PathBuf::from("other.pdf"),
+                    opened_as: None,
+                }],
+                forms: Vec::new(),
+                text_edits: vec![crate::textedit::Edit::imported(
+                    1,
+                    crate::textedit::Change {
+                        layout: None,
+                        page: 0,
+                        revision: Vec::new(),
+                        operator: 0,
+                        original: "before".into(),
+                        replacement: "after".into(),
+                    },
+                )],
+                redactions: vec![region(0, [30.0, 40.0, 60.0, 70.0])],
+            }
         }
     }
 

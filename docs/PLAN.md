@@ -2107,6 +2107,20 @@ touches a content stream, which is what makes them still true.
 go. `redact::Applied` cannot carry a `verified` without a reason beside it, which is step 4
 as a type.
 
+⚠ **What the scan says and what it does not, measured 2026-09-20.** It reads the whole file.
+It never says *which page* a word is on, so a word the reader removed from page 3 and the
+document also prints on page 5 comes back as *"still in the file"* and the file does not
+verify. That is not a defect and it is not new --- it is what a whole-file scan is --- and
+`verify::tests::a_needle_on_another_page_reads_as_still_in_the_file` is the measurement,
+taken on a document with nothing inserted in it at all. It is recorded here because the
+refusal that kept redaction out of a document holding inserted pages named this step as a
+reason, and it is not one: an inserted page is exactly as opaque to the scan as page five.
+What follows from it is a sentence, not a refusal --- `redact::inserted_pages_note`, added
+beside the finding when there is one, saying that the scan cannot tell which page and how
+many of the file's pages came from elsewhere. Attributing a hit to a page would need a
+per-page reachability walk the scan does not have; until it does, the report says so rather
+than implying otherwise. See *Redacting beside an inserted page*.
+
 **The two predicates that could have shipped an unredacted file both needed a new clause,
 and neither mentions a redaction on its own.** `Plan::is_identity` is what lets the print
 path hand the original bytes over; `Plan::only_adds_marks` is what routes a save to the
@@ -13042,14 +13056,16 @@ operations unchanged. Three things are refused on it, each with its own sentence
 - **A foreign comment said to be on it** (`ForeignCommentOnImportedPage`), through `rewrite`,
   `discard` or a caller-built command --- the object number names an annotation of the opened
   file, so the writer would edit whatever that file has at that number on another page.
-- **Redaction anywhere in the document** while any page came from another file
+- ~~**Redaction anywhere in the document** while any page came from another file
   (`RedactionBesideImportedPages`), and inserting while regions are marked
-  (`ImportBesideRedactions`). The whole document rather than the page, because every step that
-  proves a redaction clean --- the plan a worker computes, the image-only render, the scan of
-  the written file --- is asked of the opened document's worker and none of them can see the
-  other file's page. The scan in particular reads the whole output, so imported text that
-  repeats a removed word reads as a leak. Refusing is the answer that keeps *never claim clean
-  without proof* true; save and reopen and the pages are all the document's own.
+  (`ImportBesideRedactions`).~~ Narrowed 2026-09-20 to
+  `RedactionOnImportedPage`, a region on **the page itself** --- see *Redacting beside an
+  inserted page*. Three of the four steps that reason named were routing, and the fourth,
+  the scan, was not a fact about inserted pages at all. What is left is that every check
+  which would prove such a removal clean is addressed to the opened document, and that a
+  removal reaches the *file*, so it would strike every position showing that page ---
+  `TextOnRepeatedImport`'s hazard, answered here without a variant of its own. The
+  image-only copy is refused separately and by the writer that cannot make it.
 
 Form filling needed no refusal and is worth saying why: a form answer names a field by object,
 the scan that lists fields is the opened document's, and the rewrite writes answers **before**
@@ -13192,8 +13208,12 @@ Refused, each with a sentence: ~~editing an imported page's text (`document_text
 page came from another file)~~ (edited since 2026-09-20 --- see *Editing the text of an
 inserted page*, below, and read that entry rather than this sentence: the reason recorded here
 named the opened document's worker and forgot that the other file has one of its own),
-redaction anywhere in a document holding one and inserting
-beside pending redactions (increment 1's refusals), and an encrypted or locked file at insert.
+~~redaction anywhere in a document holding one and inserting
+beside pending redactions (increment 1's refusals)~~ (narrowed 2026-09-20 to a region on the
+imported page itself --- see *Redacting beside an inserted page*, below, and read that entry
+rather than this sentence: three of the four steps that refusal named were routing, and the
+fourth was equally true of the document's own pages),
+and an encrypted or locked file at insert.
 Form fields on an imported page are not listed --- the field scan is the opened document's ---
 so there is nothing to fill rather than a refusal.
 
@@ -13230,7 +13250,8 @@ page*, below); the character-mapping warning for an imported page;
 and a truncated other file stops the viewer asking for tiles for the whole document rather
 than for that file's pages, because `DocumentGone` is one flag per scroller. The merge and the
 image-only redaction of a document holding imported pages stay refused, as increment 1 left
-them.
+them --- and the image-only one now refuses in `raster_redact::rewrite`, which is where it is
+true, rather than in the model where it took the ordinary removal down with it.
 
 #### Which pages of the other file — done 2026-09-19
 
@@ -13478,12 +13499,81 @@ the other file's text, the journal entry names the file it came from, the page's
 the replacement, the opened document's page of the same number is untouched, and one undo
 takes the replacement back out before the phase's existing undo takes the import out.
 
-**Not done:** redaction in a document holding inserted pages is still refused, for the reason
-`Refusal::RedactionBesideImportedPages` gives --- and that reason is now worth re-reading
-rather than trusting, since the one this increment removed had the same shape. What is
-different there is stated in that refusal and in §T6.19: the *scan* that proves a redaction
-clean reads the whole written file, so imported text repeating a removed word reads as a leak,
-and the image-only path renders every output page. Neither is a page-number question.
+~~**Not done:** redaction in a document holding inserted pages is still refused~~ --- done
+2026-09-20, and the sentence above was half right about why. It said *"that reason is now
+worth re-reading rather than trusting, since the one this increment removed had the same
+shape"*, and it was: three of that refusal's four steps were routing, and the one it singled
+out --- the scan --- turned out not to be about inserted pages at all. See *Redacting beside
+an inserted page* below.
+
+#### Redacting beside an inserted page --- done 2026-09-20
+
+`Refusal::RedactionBesideImportedPages` refused a redaction **anywhere in the document**
+while any page came from another file, including a region on a page that had never left the
+opened file. It named four steps of the proof §6 requires. Each was measured rather than
+re-read.
+
+**The plan.** `edits::Edits::redaction_targets` resolves a region to a page of the opened
+file and skips anything else, so the worker it addresses has always been the one that owns
+the page. Nothing to build --- and the `continue` for a non-baseline page is now unreachable
+for a marked region rather than merely correct, which is the same shape
+`Refusal::RedactionOnMadePage` already gives it for a blank one.
+
+**The apply.** `save::rewrite` runs `apply_redactions` **last**, against `Checked::pages`,
+which is `ordered_pages` of the base document --- baseline page objects, by baseline index.
+`import_pages` runs above it and copies another file's objects in without touching one of
+them, which is exactly the property the comment over `apply_redactions` already claimed
+("nothing above touches a content stream"). Asserted rather than trusted:
+`save::import_tests::a_rewrite_removes_from_the_reader_s_page_and_carries_the_inserted_ones_whole`
+puts two inserted pages *in front of* the marked one, so the page's number in the file and
+its slot in the output are different numbers, and the mutation that addresses the removal by
+slot goes red.
+
+**The scan.** This is the one the old refusal singled out, and it is not a fact about
+imports. `verify::scan` reads the whole written file for the words that went, so a word
+repeated anywhere else is reported as still present --- and that is already true of the
+document's own page five. Measured, on a two-page document with no inserted page in it at
+all: `verify::tests::a_needle_on_another_page_reads_as_still_in_the_file`. So an inserted
+page is exactly as opaque to the scan as page two, which makes it a reason to **say so** and
+not a reason to refuse. `redact::inserted_pages_note` is the sentence, added to the reasons
+only when the scan actually found something --- adding it always would make
+`redact::Applied::verified` false for every redaction in such a document, which is the old
+refusal in a different coat. Nothing is silenced: the finding stays, and the note says what
+the scan structurally cannot, which is which page the word is on.
+
+**The image-only render.** Genuinely blocked. `render::run_rewrite` hands
+`raster_redact::rewrite` no incoming bytes at all, and every output page is drawn through
+the opened document's own PDFium, which has no page of another file in it. It refuses there,
+where the sentence is true, rather than in the model where it took the ordinary removal down
+with it.
+
+Two smaller things came out of the measuring and are fixes rather than features. The OCR
+gate rendered the written file at the **marked page's number in the source file**, so
+deleting a page in front of the marked one was already enough to point it at the wrong page
+--- pre-existing, failing safe (the control word is not on the page it renders, so the
+answer is *not verified*), and made ordinary rather than rare by inserting pages.
+`redact::gate_at_output_slots` is the remap, which `redaction_fill::output_plan` had been
+doing for the black fill since it was written. And that fill's plan kept the `sources` list,
+so it would have re-read and re-fingerprinted every file the insert came from --- a refusal
+about an insert, on a pass that inserts nothing, arriving after the words were already gone.
+
+`Refusal::ImportBesideRedactions` went with it. It was the same rule from the other side,
+and keeping it would have left which operations are possible decided by the order they were
+asked in. Deleted rather than kept as an unreachable guard, because it was not unreachable:
+it refused something that is now safe, which is the over-broad half itself.
+
+**Measured end to end:** `redact-import-probe` writes and verifies across the **sandboxed
+worker** (`save::InWorker`, the shipped writer), and `scripts/redact_import_check.py` reads
+the result back with `qpdf --check` and `pypdf` --- 17 checks over two runs. The second run
+is the one worth having: the inserted page prints the very word the region covered, so the
+scan reports it present, pypdf says which page it is on, and the report carries the sentence
+saying it could not tell rather than a claim that it could.
+
+**Not measured, and the window checks that would are written and have not been run:**
+`tabs_check.py --phase import` gains four checks --- a region on the reader's own page is
+accepted beside an inserted one, a region on the inserted page is refused naming the page,
+the refused one puts nothing in the review list, and one undo takes the accepted region back
+off.
 
 #### Deleting a comment the file came with — done 2026-08-30
 

@@ -2456,6 +2456,100 @@ pub fn aggregate(
     }
 }
 
+/// Moves each gate page from its number in the source file to its slot in the
+/// written one.
+///
+/// **The gate reads the file the removal produced, and everything else in a
+/// redaction is addressed to the file it came from.** `PlannedRedaction::source`
+/// is a page of the opened document, because that is what the ordinals were
+/// computed against and what `save::apply_redactions` looks up; the OCR gate is
+/// the one step that reopens the *output* and renders a page of it by number.
+/// Those two numbers are the same only for a plan that keeps every page in its
+/// original order.
+///
+/// ⚠ **They had been assumed the same since the gate was written, and a
+/// deletion was already enough to part them** --- delete page 1 and redact page
+/// 3, and the gate rendered position 3 of a file whose redacted page is at
+/// position 2. That failed *safe*, which is why it went unnoticed: the control
+/// word comes from the page that was redacted, it is not on the page that gets
+/// rendered, and the gate answers *not verified*. A certification thrown away
+/// rather than one wrongly given. Inserting pages from another file makes the
+/// same mismatch ordinary rather than rare, which is what brought it to light.
+///
+/// `crate::redaction_fill::output_plan` does the identical remap for the black
+/// fill and has since it was written; this is that rule reaching the third
+/// reader of it.
+///
+/// **A page the plan does not place is dropped**, not defaulted to a slot: it
+/// is not in the written file, so there is nothing to render. `redaction_targets`
+/// cannot produce one --- it resolves a region against the kept pages --- so
+/// this arm is unreachable rather than merely correct, and it is written out
+/// for the trap about a failure path that acts hardest where it knows least.
+///
+/// **The first slot when a baseline page is placed twice**, which is the only
+/// arm with a choice in it. Two positions showing one page of the file are one
+/// page *object*, so the removal takes the content from both and either renders
+/// the same pixels; a second gate page would judge the same image twice.
+#[must_use]
+pub fn gate_at_output_slots(
+    pages: &[crate::edits::PageView],
+    gate: Vec<crate::ocr_gate::GatePage>,
+) -> Vec<crate::ocr_gate::GatePage> {
+    gate.into_iter()
+        .filter_map(|mut one| {
+            let slot = pages
+                .iter()
+                .position(|page| page.source == crate::docmodel::PageSource::Baseline(one.page))?;
+            one.page = u32::try_from(slot).ok()?;
+            Some(one)
+        })
+        .collect()
+}
+
+/// What to add to a redaction's reasons when the scan found a word and the
+/// document holds pages from another file.
+///
+/// **Only when something was found**, which is the whole care in it. A sentence
+/// added to every redaction in such a document would make `redact::Applied`
+/// report *not verified* for every one of them --- `verified` is
+/// `why.is_empty()` --- and that is the document-wide refusal arriving again
+/// wearing a different coat. When the scan finds nothing the file is exactly as
+/// certifiable as it would be without the inserted pages, and it says so.
+///
+/// **And it adds a sentence rather than removing one.** The finding stays: a
+/// word the scan can still see is reported as still in the file, because that is
+/// what was measured. What this says is the thing the scan structurally cannot
+/// --- `verify::scan` reads the whole output and never says which page a hit was
+/// on, so a reader looking at *"4711-0815 is still in the file"* cannot tell a
+/// removal that failed from a second copy somewhere else. That ambiguity is not
+/// new and is not about imports: it is already true of the document's own page
+/// five, and `verify`'s `a_needle_on_another_page_reads_as_still_in_the_file` is
+/// the measurement that says so. What *is* new is that some of the pages it
+/// covers were never the reader's to redact, so the count of them is worth
+/// stating.
+///
+/// Every clause is provable at the point it is written. The inserted pages were
+/// not marked --- [`crate::docmodel::Refusal::RedactionOnImportedPage`] is why
+/// --- and nothing in the write touches one: `save::apply_redactions` addresses
+/// baseline page objects and `merge::import` copies the rest across untouched.
+/// Nothing here claims the removal worked, which the scan has just said it
+/// cannot show.
+#[must_use]
+pub fn inserted_pages_note(
+    inserted: usize,
+    found: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    if inserted == 0 || found.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "the scan reads the whole file and does not say which page a word is on, and this \
+         document holds {inserted} page(s) inserted from another document --- no region was \
+         marked on any of them and nothing in the write changed them, so a word reported above \
+         may be a second copy sitting on one of those pages"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -4481,5 +4575,140 @@ mod tests {
             shadow(1).contains("STRUCT-OTHER"),
             "and MCID 1 is the untouched line's"
         );
+    }
+
+    /// The one page view these tests build, so a mismatch is the slot and never
+    /// the rest of the record.
+    fn view(id: u64, source: crate::docmodel::PageSource) -> crate::edits::PageView {
+        crate::edits::PageView {
+            id,
+            source,
+            turns: 0,
+            crop: None,
+        }
+    }
+
+    /// The one gate page they hand in, named by its number in the source file.
+    fn gate(page: u32) -> crate::ocr_gate::GatePage {
+        crate::ocr_gate::GatePage {
+            page,
+            regions: vec![[1.0, 2.0, 3.0, 4.0]],
+            words: Vec::new(),
+            taking: String::new(),
+            width_pt: 612.0,
+            height_pt: 792.0,
+        }
+    }
+
+    /// **The identity case is the control**, and without it every assertion
+    /// below is satisfied by a function that renumbers everything to zero.
+    #[test]
+    fn an_unchanged_page_order_leaves_every_gate_page_where_it_was() {
+        use crate::docmodel::PageSource::Baseline;
+        let pages: Vec<_> = (0..4).map(|n| view(u64::from(n), Baseline(n))).collect();
+        let moved = super::gate_at_output_slots(&pages, vec![gate(0), gate(3)]);
+        assert_eq!(
+            moved.iter().map(|one| one.page).collect::<Vec<_>>(),
+            vec![0, 3]
+        );
+    }
+
+    /// The defect this function was written for, in the two shapes that reach
+    /// it: a page deleted in front of the marked one, and pages inserted from
+    /// another file in front of it.
+    ///
+    /// **The deletion is the older half and predates inserting anything**, which
+    /// is what says this is not an imports fix wearing a general name.
+    #[test]
+    fn a_gate_page_follows_its_page_to_where_the_written_file_puts_it() {
+        use crate::docmodel::PageSource::{Baseline, Imported};
+        use crate::docmodel::SourceId;
+
+        // Baseline pages 1, 2, 3 with page 0 deleted: the marked page 3 is at
+        // slot 2 of the output, and the gate used to render slot 3.
+        let dropped: Vec<_> = (1..4).map(|n| view(u64::from(n), Baseline(n))).collect();
+        let moved = super::gate_at_output_slots(&dropped, vec![gate(3)]);
+        assert_eq!(moved.len(), 1);
+        assert_eq!(
+            moved[0].page, 2,
+            "page 3 of the file is slot 2 of the output"
+        );
+        assert_eq!(moved[0].regions, gate(3).regions, "and nothing else moved");
+
+        // Two pages of another file in front of the marked one.
+        let inserted = vec![
+            view(
+                9,
+                Imported {
+                    source: SourceId::from_raw(1),
+                    page: 0,
+                },
+            ),
+            view(
+                8,
+                Imported {
+                    source: SourceId::from_raw(1),
+                    page: 1,
+                },
+            ),
+            view(0, Baseline(0)),
+            view(1, Baseline(1)),
+        ];
+        let moved = super::gate_at_output_slots(&inserted, vec![gate(1)]);
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].page, 3);
+    }
+
+    /// A page the plan does not place has nothing to render, so it is dropped
+    /// rather than pointed at slot zero.
+    #[test]
+    fn a_gate_page_the_plan_does_not_place_is_dropped() {
+        use crate::docmodel::PageSource::Baseline;
+        let pages = vec![view(0, Baseline(0))];
+        assert!(super::gate_at_output_slots(&pages, vec![gate(7)]).is_empty());
+        // And the page that *is* placed still comes through, so the filter is
+        // discriminating rather than empty.
+        assert_eq!(super::gate_at_output_slots(&pages, vec![gate(0)]).len(), 1);
+    }
+
+    /// One page object shown at two positions is judged once.
+    #[test]
+    fn a_page_the_document_shows_twice_is_gated_at_its_first_slot() {
+        use crate::docmodel::PageSource::Baseline;
+        let pages = vec![view(0, Baseline(0)), view(1, Baseline(0))];
+        let moved = super::gate_at_output_slots(&pages, vec![gate(0)]);
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].page, 0);
+    }
+
+    /// The note is added when the scan found something and the document holds
+    /// inserted pages, and in **no** other combination.
+    ///
+    /// All four, because the one that matters is the pair that must stay quiet:
+    /// a sentence on every redaction in such a document would make
+    /// `redact::Applied::verified` false for every one of them, which is the
+    /// document-wide refusal back again under another name.
+    #[test]
+    fn the_inserted_pages_note_is_added_only_when_the_scan_found_something() {
+        use std::collections::BTreeSet;
+        let nothing: BTreeSet<String> = BTreeSet::new();
+        let found: BTreeSet<String> = ["4711-0815".to_string()].into_iter().collect();
+
+        assert_eq!(super::inserted_pages_note(0, &nothing), None);
+        assert_eq!(
+            super::inserted_pages_note(2, &nothing),
+            None,
+            "the one that matters"
+        );
+        assert_eq!(super::inserted_pages_note(0, &found), None);
+        let said = super::inserted_pages_note(2, &found).expect("both halves are true");
+        assert!(said.contains("2 page(s) inserted"), "{said:?}");
+        assert!(
+            said.contains("does not say which page a word is on"),
+            "the sentence is about what the scan cannot say: {said:?}"
+        );
+        // And it claims nothing about the removal having worked, which the scan
+        // has just said it cannot show.
+        assert!(!said.contains("was removed"), "{said:?}");
     }
 }

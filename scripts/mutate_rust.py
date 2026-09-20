@@ -8477,8 +8477,8 @@ MUTATIONS += [
         # removal of nothing from a page that has nothing on it.
         "docmodel: let a redaction onto a page tpdf made",
         "src/docmodel.rs",
-        "        if let Some(page) = self.now.page(redaction.page) {\n            if let PageSource::Blank(_) = page.source {\n                return Err(Refusal::RedactionOnMadePage(redaction.page));\n            }\n        }",
-        "        let _ = redaction.page;",
+        "                PageSource::Blank(_) => {\n                    return Err(Refusal::RedactionOnMadePage(redaction.page));\n                }",
+        "                PageSource::Blank(_) => {}",
         "a_page_tpdf_made_takes_a_mark_and_no_redaction",
     ),
     Mutation(
@@ -9630,21 +9630,75 @@ MUTATIONS += [
         "a_discarded_import_takes_its_selection_and_its_file_record_with_it",
     ),
     Mutation(
-        # Let a region be marked while a page of another file is in the
-        # document. No step that proves a redaction clean can see that page.
-        "docmodel: import: redact beside a page of another file",
+        # Let a region be marked on a page of another file. Every step that
+        # proves a removal clean is addressed to the opened document, and the
+        # removal reaches the file, so it would strike every position showing
+        # that page.
+        "docmodel: import: redact a page of another file",
         "src/docmodel.rs",
-        "        if self.now.holds_imported_pages() {\n            return Err(Refusal::RedactionBesideImportedPages);\n        }",
-        "",
-        "a_redaction_is_refused_while_any_page_came_from_another_file",
+        "                PageSource::Imported { .. } => {\n                    return Err(Refusal::RedactionOnImportedPage(redaction.page));\n                }",
+        "                PageSource::Imported { .. } => {}",
+        "a_region_on_a_page_from_another_file_is_refused",
     ),
     Mutation(
-        # Import while regions are marked: the other direction of the same rule.
-        "docmodel: import: import beside marked regions",
+        # Refuse the region for the document rather than for the page --- the
+        # over-broad half that 2026-09-20 removed, put back. The accept is what
+        # goes red, which is what says the narrowing is load-bearing and not
+        # merely a rename.
+        "docmodel: import: refuse a region anywhere while a page came from another file",
         "src/docmodel.rs",
-        "        if !self.now.redactions.is_empty() {\n            return Err(Refusal::ImportBesideRedactions);\n        }",
+        "        if let Some(page) = self.now.page(redaction.page) {\n            match page.source {",
+        "        if self.now.pages.values().any(|page| matches!(page.source, PageSource::Imported { .. })) {\n            return Err(Refusal::RedactionOnImportedPage(redaction.page));\n        }\n        if let Some(page) = self.now.page(redaction.page) {\n            match page.source {",
+        "a_region_on_the_reader_s_own_page_is_accepted_beside_an_inserted_one",
+    ),
+    Mutation(
+        # Leave the gate page at its number in the source file. The gate
+        # reopens the written file and renders a page of it by number, and the
+        # two are the same only when nothing moved.
+        "redact: gate the page at its number in the source file",
+        "src/redact.rs",
+        "            one.page = u32::try_from(slot).ok()?;",
+        "            let _ = slot;",
+        "a_gate_page_follows_its_page_to_where_the_written_file_puts_it",
+    ),
+    Mutation(
+        # Gate a page the plan does not place, at slot zero --- the failure path
+        # that acts hardest where it knows least.
+        "redact: gate a page the plan does not place, at slot zero",
+        "src/redact.rs",
+        "            let slot = pages\n                .iter()\n                .position(|page| page.source == crate::docmodel::PageSource::Baseline(one.page))?;",
+        "            let slot = pages\n                .iter()\n                .position(|page| page.source == crate::docmodel::PageSource::Baseline(one.page))\n                .unwrap_or(0);",
+        "a_gate_page_the_plan_does_not_place_is_dropped",
+    ),
+    Mutation(
+        # Add the inserted-pages note to every redaction in such a document,
+        # whether the scan found anything or not. `verified` is `why.is_empty()`,
+        # so that is the document-wide refusal back under another name.
+        "redact: note the inserted pages even when the scan found nothing",
+        "src/redact.rs",
+        "    if inserted == 0 || found.is_empty() {\n        return None;\n    }",
+        "    if inserted == 0 {\n        return None;\n    }",
+        "the_inserted_pages_note_is_added_only_when_the_scan_found_something",
+    ),
+    Mutation(
+        # Let the black fill re-read every file the insert came from. A source
+        # touched since the removal then refuses the fill, after the words are
+        # already gone.
+        "redaction_fill: keep the other files in the fill pass's plan",
+        "src/redaction_fill.rs",
+        "    result.sources.clear();\n    result.text_edits.clear();",
         "",
-        "an_import_is_refused_while_regions_are_marked_for_removal",
+        "the_fill_pass_names_no_other_file_and_no_text_edit",
+    ),
+    Mutation(
+        # Edit the reader's own page by its slot in the output rather than by
+        # its number in the file. With pages inserted in front of it, that is
+        # the inserted page's content stream.
+        "save: address a removal by output slot rather than by baseline page",
+        "src/save.rs",
+        "        apply_redactions(&mut doc, &pages, &plan.redactions)?",
+        "        apply_redactions(&mut doc, &order, &plan.redactions)?",
+        "a_rewrite_removes_from_the_reader_s_page_and_carries_the_inserted_ones_whole",
     ),
     Mutation(
         # Edit a page of another file that this document shows twice. The

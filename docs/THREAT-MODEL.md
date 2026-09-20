@@ -1887,12 +1887,31 @@ worker, before the graph is touched: a file `lopdf` will not read, an **encrypte
 (both `was_encrypted` and `is_encrypted`, for §T6.9's empty-password reason), and a page past
 its end are refusals. The total size is bounded by the merge's `MAX_MERGE_BYTES`.
 
-**What is refused rather than handled.** Redaction anywhere in a document holding an imported
-page, and inserting while regions are marked (`Refusal::RedactionBesideImportedPages`,
-`ImportBesideRedactions`): the plan, the image-only render and the scan that proves a
-redaction clean are all asked of the opened document's worker, which cannot see the other
-file's page. ~~Text replacement on an imported page~~ (see below, 2026-09-20), and a merge of
-a document that holds one.
+**What is refused rather than handled.** ~~Redaction anywhere in a document holding an
+imported page, and inserting while regions are marked~~ (narrowed 2026-09-20, see below);
+~~text replacement on an imported page~~ (2026-09-20); and a merge of a document that holds
+one.
+
+**Redaction beside an imported page, narrowed 2026-09-20.** What is refused is now a region
+on **the imported page itself** (`Refusal::RedactionOnImportedPage`); a region on one of the
+opened document's own pages is served. Nothing about the parse changed: the removal is
+`save::apply_redactions` against baseline page objects, in the same worker, in the same
+rewrite that already parsed the incoming files --- so this adds no input, no parser and no
+channel. The verification is the part with a security reading, and it is unchanged in what
+it does and sharper in what it says. `verify::scan` reads the whole written file and never
+attributed a hit to a page; a word the reader removed from their own page and the file also
+carries elsewhere has always come back as *"still in the file"*, with the verdict *not
+verified*. An imported page is one more place it can be carried, not a new kind of blindness
+--- measured on a document with none
+(`verify::tests::a_needle_on_another_page_reads_as_still_in_the_file`). The direction of the
+error is the one §6 requires: the file is reported **less** certifiable than it may be, never
+more. `redact::inserted_pages_note` states the ambiguity beside the finding rather than
+resolving it, and adds nothing when the scan found nothing. **Residual: a redaction report
+cannot say which page a surviving word is on.** Attributing one would need a per-page
+reachability walk the scanner does not have, and a hit outside every page's reachable objects
+could not be attributed at all. The image-only copy remains refused for such a document,
+by `raster_redact::rewrite`, because `render::run_rewrite` hands that path no incoming bytes
+and every output page is drawn through the opened document's own engine.
 
 **Text replacement on an imported page, added 2026-09-20.** The writer now edits each
 incoming document before `merge::import` walks it, so `textedit::write` --- the content-stream

@@ -639,3 +639,116 @@ fn a_replacement_addressed_at_the_wrong_document_is_refused_by_its_digest() {
     );
     assert!(!out.exists());
 }
+
+/// A removal takes the words off the reader's own page while the pages of
+/// another file are written into the same file, in one rewrite.
+///
+/// **The step this was written to pin is an ordering one, and the comment above
+/// `apply_redactions` already claimed it.** A redaction's ordinals are worked
+/// out against the opened file's objects, and `rewrite` runs the removal last
+/// on the grounds that nothing above it touches a content stream. `import_pages`
+/// sits above it and copies another file's objects in --- so this asserts the
+/// claim rather than trusting it: the words go from the page they were marked
+/// on, both inserted pages arrive whole, and the opened file's other page keeps
+/// its own.
+///
+/// `text_objects: 1` is what the fixture has --- one `Tj` per page --- so
+/// `redact::remove_shows` is being given the truthful count it refuses to work
+/// without.
+///
+/// The three labels are the discrimination. A writer that redacted by output
+/// slot rather than by baseline page would take `THEIR-1`, which sits at the
+/// slot the marked page used to occupy; a writer that lost the import would
+/// leave a two-page file. Neither is caught by asking only whether `OWN-A` is
+/// gone.
+#[test]
+fn a_rewrite_removes_from_the_reader_s_page_and_carries_the_inserted_ones_whole() {
+    let scratch = Scratch::new("redact-beside-import");
+    let source = scratch.put("own.pdf", &labelled(&["OWN-A", "OWN-B"]));
+    let other = scratch.put("other.pdf", &labelled(&["THEIR-1", "THEIR-2"]));
+    let out = scratch.join("out.pdf");
+
+    // The inserted pages go in *front* of the marked one, so the page's number
+    // in the file and its slot in the output are different numbers.
+    let mut plan = plan_with(2, vec![theirs(3, 0), theirs(4, 1), own(0), own(1)], &other);
+    plan.redactions = vec![crate::edits::PlannedRedaction {
+        // Baseline page 0 --- `OWN-A` --- which is slot 2 of the output.
+        source: 0,
+        shows: vec![0],
+        text_objects: 1,
+        areas: vec![[0.0, 700.0, 595.0, 780.0]],
+        taking: vec!["OWN-A".to_string()],
+        form_shows: Vec::new(),
+        form_text_objects: Vec::new(),
+        images: Vec::new(),
+        image_objects: 0,
+    }];
+
+    write_copy(&source, &plan, &out, None, &Here).expect("the copy");
+
+    // A tolerant reader, because the marked page has no label left to find and
+    // `labels_of` requires one --- which is itself the first thing this asserts.
+    let after: Vec<String> = {
+        let document = Document::load(&out).expect("the written file must parse");
+        ordered_pages(&document)
+            .into_iter()
+            .map(|id| {
+                let text = String::from_utf8_lossy(&document.get_page_content(id)).into_owned();
+                match (text.find('('), text.find(')')) {
+                    (Some(open), Some(close)) if close > open => text[open + 1..close].to_string(),
+                    _ => String::new(),
+                }
+            })
+            .collect()
+    };
+    assert_eq!(
+        after.len(),
+        4,
+        "four pages, so the import happened at all: {after:?}"
+    );
+    assert_eq!(
+        &after[..2],
+        &["THEIR-1".to_string(), "THEIR-2".to_string()],
+        "both inserted pages came across with their own text"
+    );
+    assert_eq!(
+        after[3], "OWN-B",
+        "and the opened file's other page is untouched"
+    );
+    assert_eq!(
+        after[2], "",
+        "the marked page's show operator is gone from the page it was marked on"
+    );
+
+    // And the bytes, which is the reader `docs/PLAN.md` §6 actually requires:
+    // a label still in the file somewhere is a label that was not removed.
+    let bytes = std::fs::read(&out).expect("read back");
+    let holds = |needle: &str| bytes.windows(needle.len()).any(|w| w == needle.as_bytes());
+    assert!(!holds("OWN-A"), "the marked words are not in the file");
+    assert!(
+        holds("THEIR-1") && holds("THEIR-2") && holds("OWN-B"),
+        "and the control says the scan can see this file at all"
+    );
+}
+
+/// The image-only route is the one step an inserted page really blocks, and it
+/// says so itself rather than being refused for the whole document.
+///
+/// **Through `rewrite_update_with`, which is where that job is refused outside
+/// the render worker** --- `raster_redact::rewrite` is only reachable with a
+/// PDFium document in hand. What this pins is the pairing: the ordinary rewrite
+/// above accepts exactly the plan this refuses, so the two sentences cannot
+/// drift into refusing the same thing twice or neither.
+#[test]
+fn the_image_only_route_refuses_a_plan_that_places_another_file_s_pages() {
+    let scratch = Scratch::new("raster-import");
+    let other = scratch.put("other.pdf", &labelled(&["THEIR-1"]));
+    let plan = plan_with(1, vec![theirs(2, 0), own(0)], &other);
+    let refused = rewrite_update(&labelled(&["OWN-A"]), &plan, Job::RasterRedact, None)
+        .expect_err("the image-only job is not served here");
+    assert!(
+        refused.message.contains("sandboxed rendering worker"),
+        "{:?}",
+        refused.message
+    );
+}

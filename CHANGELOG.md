@@ -51,7 +51,46 @@ have the binary.)
   to a page of that file still lands on the page if it was inserted too, and still
   says so if it was not.
 
+- Regions can now be marked for removal on the document's own pages while pages
+  inserted from another file are in it. Until now a redaction anywhere in such a
+  document was declined with "tpdf cannot yet prove a redaction clean while the
+  document holds pages inserted from another document — save, reopen, and redact
+  there", including for a region on a page that had never left the opened file.
+  The four steps that reason named were measured one at a time. The plan a worker
+  computes and the removal a save writes were already addressed to the opened
+  document's own pages and needed nothing. The scan that reads the written file
+  for the words that went cannot say which page a word is on — and that is true
+  of the document's own page five as much as of an inserted page, so it was never
+  a reason to refuse; what it is a reason for is saying so, which the report now
+  does whenever it finds a word and the document holds inserted pages. Only the
+  image-only copy genuinely cannot be made, because every page of it is drawn
+  through the opened document's own engine, and that is now refused where it is
+  true rather than taking the ordinary removal down with it.
+
+  What is refused is narrower and names the page: a region on a page that came
+  from another file, because every step that would prove it clean is addressed to
+  the opened document — and because a removal reaches the *file*, so it would
+  strike every position showing that page. Inserting pages while regions are
+  marked is no longer refused either; it was the same rule from the other side,
+  and keeping it would have left the order you did the two things in deciding
+  whether either was possible.
+
 ### Fixed
+
+- The check that reads the removed areas back after a redaction now looks at the
+  page the removal was made on. It rendered the page at the marked page's number
+  in the *file*, while reading a file whose pages have since been deleted,
+  reordered or added to — so deleting a page in front of the marked one was
+  already enough to point it at the wrong page. It failed safe, because the words
+  it looks for are not on the page it rendered and the answer was then "not
+  verified": a certification thrown away rather than one wrongly given. Inserting
+  pages from another file made the same mismatch ordinary rather than rare.
+
+- The black fill written over a redacted area no longer re-reads the files pages
+  were inserted from. The file it is applied to already holds those pages, so
+  there was nothing to insert; what the entry bought was a refusal about an
+  insert, on a pass that inserts nothing, arriving after the words were already
+  gone — if one of those files had been moved or touched in the meantime.
 
 - Saving over the open document, and applying a redaction to it, now forget the
   web addresses of every file the document had pages inserted from, as closing it

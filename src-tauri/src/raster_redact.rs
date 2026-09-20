@@ -326,14 +326,25 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String
     if plan.pages.is_empty() || plan.pages.len() > MAX_PAGES {
         return Err("raster redaction page limit exceeded".into());
     }
-    // Every output page is rendered through this document's PDFium, and a
-    // page from another file is not in it. The model refuses a redaction in
-    // such a document (`Refusal::RedactionBesideImportedPages`); this is the
-    // writer's own statement of it, ahead of a rewrite that would refuse for
-    // want of the other file in words about the wrong thing.
+    // **The one step of a redaction that an inserted page genuinely blocks, and
+    // since 2026-09-20 the only place that says so.** Every output page is
+    // rendered through this document's own PDFium, which has no page of another
+    // file in it, and `render::run_rewrite` hands this path no incoming bytes
+    // at all --- so the rewrite a few lines below would refuse for want of the
+    // other file, in words about the wrong thing.
+    //
+    // The model used to carry the same refusal for the whole document
+    // (`Refusal::RedactionBesideImportedPages`), which took the ordinary
+    // text-removing redaction down with the image-only one. It is stated here,
+    // where it is true, and nowhere else; the sentence names the way out,
+    // because a reader who reaches it has a redaction that would work by the
+    // other route.
     if !plan.sources.is_empty() {
         return Err(
-            "image-only redaction cannot include pages inserted from another document".into(),
+            "An image-only copy is drawn from this document's own pages, and some of \
+                    these came from another document. Redact without the image-only option, or \
+                    save this document, reopen it, and make an image-only copy there."
+                .into(),
         );
     }
     let mut clean = plan.clone();

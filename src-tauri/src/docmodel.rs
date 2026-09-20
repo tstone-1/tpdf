@@ -1485,28 +1485,42 @@ pub enum Refusal {
     /// opened file has at that number, on some other page. Only a caller that
     /// paired the wrong page with the object reaches this.
     ForeignCommentOnImportedPage(PageId),
-    /// A region marked for removal in a document holding pages from another
-    /// file.
+    /// A region marked for removal on a page taken from another file.
     ///
-    /// **Refused for the whole document, not for the imported pages alone**,
-    /// and the reason is the corollary `AGENTS.md` states for redaction: tpdf
-    /// never claims a redaction is clean unless it can prove it. Every step of
-    /// that proof --- the plan a worker computes against the file's objects,
-    /// the image-only render, and the scan of the written file for the words
-    /// that went --- is asked of the *opened* document's worker, and none of
-    /// them can see a page from another file. The scan in particular reads the
-    /// whole output, so imported text that happens to repeat a removed word
-    /// reads as a leak; and the image-only path renders every output page
-    /// through a worker that has no such page to render. Refusing is the safe
-    /// answer until each step can reach the second file. Save first, then
-    /// reopen and redact: a saved document's pages are all its own.
-    RedactionBesideImportedPages,
-    /// Pages from another file inserted while regions are marked for removal.
+    /// ⚠ **This variant replaced `RedactionBesideImportedPages` on 2026-09-20,
+    /// and what that one rested on is worth keeping.** It refused a redaction
+    /// **for the whole document** while any page came from another file, and
+    /// named four steps of the proof `docs/PLAN.md` §6 requires. Three of them
+    /// were routing and one of them was not a fact about imports at all:
     ///
-    /// [`RedactionBesideImportedPages`](Refusal::RedactionBesideImportedPages)
-    /// from the other side, and its own variant because it is its own
-    /// sentence: this reader was inserting, not redacting.
-    ImportBesideRedactions,
+    /// * *The plan*: `edits::Edits::redaction_targets` already resolves a
+    ///   region to a page of the **opened file** and skips anything else, so a
+    ///   region on an own page has always addressed the worker that owns it.
+    /// * *The apply*: `save::rewrite` runs `apply_redactions` last, against the
+    ///   baseline page objects, and `merge::import` adds objects without
+    ///   touching one of them. An imported page changes what the output holds
+    ///   and changes nothing the ordinals address.
+    /// * *The scan*: `verify::scan` reads the whole file for the words that
+    ///   went, so a word repeated anywhere else reads as still present --- and
+    ///   that is **already true of the document's own pages** and always has
+    ///   been. `verify`'s own
+    ///   `a_needle_on_another_page_reads_as_still_in_the_file` is the
+    ///   measurement. An inserted page is no more and no less opaque to it than
+    ///   page five, so it was never a reason to refuse; what it is a reason for
+    ///   is saying so in the report, which `redact::inserted_pages_note` does.
+    /// * *The image-only render*: genuinely blocked. Every output page is drawn
+    ///   through the opened document's own PDFium, which has no page of another
+    ///   file in it, and `run_rewrite` hands that path no incoming bytes.
+    ///   `raster_redact::rewrite` refuses it there, where it is true, rather
+    ///   than here, where it would take the ordinary removal down with it.
+    ///
+    /// What is left is this: a page of another file cannot be redacted, because
+    /// every step above is addressed to the opened document. Refusing per page
+    /// rather than per document is `Refusal::CropOnMadePage`'s shape, and it
+    /// also answers the repeated-import hazard without a variant of its own ---
+    /// a removal reaches the *file*, so it would strike every position showing
+    /// that page, and no position of an imported page can carry one.
+    RedactionOnImportedPage(PageId),
     /// No mark has ever had this id.
     NoSuchMark(MarkId),
     /// The id names a mark that was taken off the page. Distinct from
@@ -1962,12 +1976,14 @@ impl Working {
         }
     }
 
-    /// Whether any live page was taken from another file.
-    pub fn holds_imported_pages(&self) -> bool {
-        self.pages
-            .values()
-            .any(|page| matches!(page.source, PageSource::Imported { .. }))
-    }
+    // ⚠ **`holds_imported_pages` stood here until 2026-09-20.** Its one caller
+    // asked *does this document hold any*, to refuse a redaction anywhere in it
+    // while one did --- the over-broad half that `Refusal::RedactionOnImportedPage`
+    // replaced, so the question went with the answer. What still asks about
+    // inserted pages after a redaction is `redact::inserted_pages_note`, and it
+    // counts them off the **plan** rather than off the model: the plan is what
+    // the write used, and a second count in a second place is the drift this
+    // repository keeps recording.
 
     /// How many live pages show page `page` of the file `source` names.
     ///
@@ -2811,7 +2827,6 @@ impl Doc {
     ///
     /// # Errors
     ///
-    /// [`Refusal::ImportBesideRedactions`] while regions are marked for removal;
     /// [`Refusal::EmptyImport`], [`Refusal::NoSuchSourcePage`] and
     /// [`Refusal::ImportedTwice`] for the selection; whatever the anchor
     /// answers; and [`Refusal::ImportOfEditedPage`] for a page of this same
@@ -2826,11 +2841,18 @@ impl Doc {
         source: SourceFile,
         pages: Vec<u32>,
     ) -> Result<Vec<PageId>, Refusal> {
-        // First, because it is about the document rather than about this
-        // request: see `Refusal::RedactionBesideImportedPages`.
-        if !self.now.redactions.is_empty() {
-            return Err(Refusal::ImportBesideRedactions);
-        }
+        // ⚠ **`Refusal::ImportBesideRedactions` stood here until 2026-09-20 and
+        // has gone with the document-wide refusal it mirrored.** It was the
+        // same rule from the other side, so narrowing one and keeping the other
+        // would have left which operations are possible decided by the order
+        // they were asked in: insert then mark would work and mark then insert
+        // would not, for a pair that is safe either way round. Nothing is left
+        // for it to refuse --- a region can only be on a page of the opened
+        // file (`Refusal::RedactionOnImportedPage`), an insert adds pages
+        // without touching one, and the removal addresses a baseline page
+        // object that the insert cannot move. Deleted rather than kept as a
+        // guard nothing can reach, because it was not unreachable: it refused
+        // something that is now safe, which is the over-broad half itself.
         if pages.is_empty() {
             return Err(Refusal::EmptyImport);
         }
@@ -2946,21 +2968,30 @@ impl Doc {
             return Err(Refusal::EmptyRedaction);
         }
         self.now.live(redaction.page)?;
-        // For the whole document rather than for the page, and after the
-        // liveness check so a deleted page keeps the better diagnosis. See
-        // `Refusal::RedactionBesideImportedPages` for why no page here is safe
-        // to redact while any page came from another file.
-        if self.now.holds_imported_pages() {
-            return Err(Refusal::RedactionBesideImportedPages);
-        }
-        // **For a reason that does not expire**, unlike the same refusal in
-        // `annotate`: a page tpdf made has no content, so a region on one
-        // removes nothing --- which is `Refusal::EmptyRedaction`'s own argument
-        // arriving by a different route. After the liveness check, so a deleted
-        // page gets the better diagnosis, and before the id is issued.
+        // **Both per page, and one `match` because they are one question about
+        // one field.** After the liveness check, so a deleted page gets the
+        // better diagnosis, and before the id is issued.
+        //
+        // The blank arm is **for a reason that does not expire**, unlike the
+        // same refusal in `annotate`: a page tpdf made has no content, so a
+        // region on one removes nothing --- which is `Refusal::EmptyRedaction`'s
+        // own argument arriving by a different route.
+        //
+        // The imported arm expires and says so: see
+        // `Refusal::RedactionOnImportedPage`, which records what the old
+        // document-wide refusal rested on and which of its four steps is still
+        // true. A region on the opened document's own page is not refused
+        // because some *other* page came from another file --- that was the
+        // over-broad half, and it is gone.
         if let Some(page) = self.now.page(redaction.page) {
-            if let PageSource::Blank(_) = page.source {
-                return Err(Refusal::RedactionOnMadePage(redaction.page));
+            match page.source {
+                PageSource::Blank(_) => {
+                    return Err(Refusal::RedactionOnMadePage(redaction.page));
+                }
+                PageSource::Imported { .. } => {
+                    return Err(Refusal::RedactionOnImportedPage(redaction.page));
+                }
+                PageSource::Baseline(_) => {}
             }
         }
 

@@ -132,7 +132,21 @@ fn flush(out: &mut Vec<ControlWord>, text: &mut String, rect: &mut Option<[f32; 
 /// [`crate::redact_document`] the file itself is gone too.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GatePage {
-    /// The page's index in the file.
+    /// The page's slot in the file the gate **reads** --- the one the removal
+    /// wrote, not the one it came from.
+    ///
+    /// ⚠ **This said "the page's index in the file" until 2026-09-20, and there
+    /// are two files.** Everything else in a redaction is addressed to the file
+    /// the removal came from: `crate::edits::PlannedRedaction::source` is a
+    /// baseline page, because that is what the ordinals were computed against.
+    /// [`judge_all`] reopens the *output* and renders this number of it, and the
+    /// two agree only for a plan that keeps every page in its original order ---
+    /// so deleting a page in front of the marked one was already enough to point
+    /// the gate at the wrong page. It failed safe (the control word is not on
+    /// the page that gets rendered, so the answer is *not verified*), which is
+    /// why nothing went red. `crate::redact::gate_at_output_slots` is the remap,
+    /// and `crate::redaction_fill::output_plan` had been doing the same one for
+    /// the black fill since it was written.
     pub page: u32,
     /// The reader's regions, in display space --- the same rectangles the marks
     /// carry, not the file-space ones `render::redaction_plans_of` derives.

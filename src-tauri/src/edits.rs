@@ -2695,8 +2695,7 @@ impl From<Refusal> for crate::failure::Failure {
             | Refusal::ImportedTwice(_)
             | Refusal::TextOnRepeatedImport(_)
             | Refusal::ImportOfEditedPage(_)
-            | Refusal::RedactionBesideImportedPages
-            | Refusal::ImportBesideRedactions => crate::failure::Action::Amend,
+            | Refusal::RedactionOnImportedPage(_) => crate::failure::Action::Amend,
         };
         Self {
             message: describe(why),
@@ -2753,13 +2752,14 @@ pub(crate) fn describe(why: Refusal) -> String {
         Refusal::ForeignCommentOnImportedPage(_) => {
             "that comment is not on a page inserted from another document".into()
         }
-        Refusal::RedactionBesideImportedPages => {
-            "tpdf cannot yet prove a redaction clean while the document holds pages inserted \
-             from another document --- save, reopen, and redact there"
-                .into()
-        }
-        Refusal::ImportBesideRedactions => {
-            "apply or remove the marked redactions before inserting pages from another document"
+        // Named for the page rather than for the document, which is the whole
+        // of the 2026-09-20 narrowing: a region on the opened document's own
+        // page is no longer refused because some other page was inserted. The
+        // sentence says what is true of *this* page and names the one step that
+        // cannot reach it --- see `Refusal::RedactionOnImportedPage`.
+        Refusal::RedactionOnImportedPage(_) => {
+            "that page came from another document, and tpdf cannot yet prove a removal from it \
+             clean --- save this document, reopen it, and redact there"
                 .into()
         }
         Refusal::NoSuchMark(_) => "no such mark".into(),

@@ -1175,6 +1175,51 @@ uv run --with pypdf scripts/insert_text_check.py
 #   insert-text-probe <base.pdf> <other.pdf> <out.pdf> \
 #       [--page N] [--after N] [--replacement TEXT]
 #
+
+# redact-import-check: a region removed from the reader's own page in a document
+# that also holds pages of another file, read back by two parsers that share no
+# code with tpdf.
+#
+# Unlike `insert-text-check` this goes through the SANDBOXED WORKER for both the
+# write and the verification (`save::InWorker`, which is what the application
+# uses); every other redaction probe passes `save::Here`. It is also the only
+# harness that drives a removal and an import in one plan.
+#
+# Two runs, and the second is the one worth having:
+#
+#   plain   the other file carries neither word. The scan finds nothing, the
+#           file verifies, no note is added -- which is what says the fix is not
+#           the old document-wide refusal wearing a different coat.
+#   --echo  the probe synthesises the other file so that its one page prints the
+#           very word the region covered. `verify::scan` reads the whole file, so
+#           it reports that word as still present; pypdf says WHICH PAGE it is on
+#           and the scan cannot, so the check asserts the thing the report does
+#           not claim: the hit is on the inserted page, the marked page is clean,
+#           and the reasons carry `redact::inserted_pages_note` rather than a
+#           claim the removal worked.
+#
+# The inserted page goes in FRONT of the marked one, so the marked page's number
+# in the base file and its slot in the output are different numbers. A writer
+# that addressed the removal by slot would strip the inserted page instead, and
+# the file would still be valid, still have the right page count and still be
+# missing the word.
+#
+# 17 checks over the two runs, all passing on `main` 2026-09-20. Proved by
+# control: the mutation `save: address a removal by output slot rather than by
+# baseline page` reddens the unit test that owns the same property.
+#
+cargo build --manifest-path src-tauri/Cargo.toml --example redact-import-probe
+uv run --with pypdf scripts/redact_import_check.py
+#
+# The probe alone, for a different fixture or word:
+#
+#   redact-import-probe <base.pdf> <other.pdf> <out.pdf> \
+#       [--library DIR] [--needle W] [--keep W] [--echo]
+#
+# `--echo` writes its own source file as `echo-source.pdf` beside the output; it
+# refuses an output named the same, because that path is removed before the save
+# and the refusal a reader would then see names a missing insert source.
+#
 # `--page` is the zero-based page of the OTHER file, `--after` the slot of the
 # opened document it lands behind. It prints one JSON object on stdout and
 # everything else on stderr. Without `--replacement` it shortens the original
