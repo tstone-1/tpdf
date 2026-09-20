@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address the document does not contain |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -1945,9 +1945,27 @@ imported it — the per-worker limits hold, and there is still no aggregate limi
 pools of one tab, which is the tabs' own residual (§3) arriving a second way. A file that is
 truncated under its mapping reports the document gone, and the viewer then stops asking for
 tiles for the whole document rather than for that file's pages. Links found on an imported
-page are followed only to pages that were imported with it; a web address on one is shown and
-refused, because its token indexes the other file's list, and nothing reads the other file's
+page are followed only to pages that were imported with it; nothing reads the other file's
 outline.
+
+**A web address on an imported page is followed too, since 26.9.16, and it adds no authority.**
+That sentence read "shown and refused, because its token indexes the other file's list" until
+then, and the reason was a fact about the *frontend*: a token indexes one scan's list, the
+working document's links are built from several scans, and the translated link had nowhere to
+record which one it came from. The list itself was never out of reach — `document_links` is
+asked of the imported file through its own handle and `webopen::Registry::adopt` takes the
+answer under that handle, exactly as for the opened document — so those addresses were already
+held and already nameable by anything that could call `open_web_link`. What changed is that the
+frontend now carries the handle on the target (`Target`'s `doc`, which is never on the wire) and
+hands it back, so the reader reaches an address of the file the page came from rather than
+whichever address sits at the same index in the opened document's list. §T8's first fact is
+restated for it.
+
+**The addresses die with the document that imported them, on every path that closes one.**
+`Registry::forget` takes the document *and* its sources, so the three closing paths cannot omit
+them; two of them did, and that is fixed in the same increment. A handle goes back to the render
+service to be reused, so a list left under one would answer the next file's clicks with this
+one's addresses.
 
 ### T7 — Distribution and update
 
@@ -2176,8 +2194,13 @@ differently:
    URL itself never leaves the app process: `links::Links::urls` holds it, `document_links`
    **drains** that list into `webopen::Registry` before the reply is serialised, and
    `open_web_link` takes a token and looks it up. So the widest thing a compromised webview
-   can ask for is *an address this document already contained*, which an attacker who wrote
-   the document had anyway. That matters more than it does for the other commands because a
+   can ask for is *an address a document open in this process already contained*, which an
+   attacker who wrote that document had anyway. Since a page can be inserted from another
+   file (§T6.20) "a document" is more than the one the reader opened, and it has been since
+   that landed: the imported file is scanned through its own handle and adopted under it, so
+   its addresses were reachable before 26.9.16 made the reader able to reach one. What that
+   release changed is which of them a *click* reaches — the target now carries the handle its
+   token was numbered by — not what the command can be asked for. That matters more than it does for the other commands because a
    URL is an outbound request to a host of the caller's choosing — an exfiltration channel
    that printing and saving are not.
 2. **What crosses cannot be rendered as anything but text.** The sink argument above is

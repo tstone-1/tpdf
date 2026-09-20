@@ -167,8 +167,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   a range you type such as `2-5,9`, in its own order, as one step that one undo takes back
   out. The other file is opened the way a document is, in a sandboxed process of its own,
   so its pages are drawn, searched, selected, marked, turned and cropped like the
-  document's own, and saving writes them into the file. Three things wait for that save: editing their text, following a web link on
-  them, and redacting anything in a document that holds them. An encrypted file is refused.
+  document's own, and saving writes them into the file. A web link on one opens in your browser
+  after the same confirmation as a link on the document's own page. Two things wait for that
+  save: editing their text, and redacting anything in a document that holds them. An encrypted
+  file is refused.
   <!-- built: edit.insertPages edit.insertPages.range -->
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the

@@ -228,6 +228,32 @@ describe("confirmAndOpen", () => {
     expect(d.open).toHaveBeenCalledWith(2, "outline", 5);
   });
 
+  /**
+   * A link on a page inserted from another file, which is the case the `doc`
+   * on a web target exists for.
+   *
+   * Both halves of "which list" have to travel: the source, above, and the
+   * document. That file's links were scanned through its own handle and its
+   * tokens index its own list, so opening token 5 through the opened
+   * document's list would open whatever address happened to be fifth there ---
+   * a wrong open rather than a failure, which is why it is asserted rather
+   * than reasoned about. The control is the test above: a target naming no
+   * handle still opens through the opened document.
+   */
+  it("opens a link from an inserted page through that file's own handle", async () => {
+    const d = deps();
+    await confirmAndOpen(2, "links", webTarget({ token: 5, doc: 41 }), d);
+    expect(d.open).toHaveBeenCalledWith(41, "links", 5);
+  });
+
+  it("asks about the address the target carries, whichever file it came from", async () => {
+    // The dialog shows the other file's host, not something derived from the
+    // document the reader has open --- there is nothing here that could.
+    const d = deps();
+    await confirmAndOpen(2, "links", webTarget({ doc: 41, host: "other.example" }), d);
+    expect(d.ask).toHaveBeenCalledWith({ host: "other.example", rest: "/spec#4" });
+  });
+
   it("reports the backend's own wording when the open fails", async () => {
     const d = deps({
       open: vi.fn().mockRejectedValue("this link is no longer available"),

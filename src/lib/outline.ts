@@ -25,8 +25,20 @@ export type Target =
    * already truncated; neither decision is remakeable here, and neither should
    * be re-derived, because a second opinion about a host is how the punycode
    * guarantee would quietly stop holding.
+   *
+   * **`doc` is never on the wire.** A token is an index into *one* scan, and
+   * which scan is the pair `(document handle, source)` --- `webopen::Source` is
+   * the second half and has been a named type from the start for exactly this
+   * reason. The first half was supplied implicitly by `App.svelte` as "the
+   * document that is open", which was true of everything the backend sends and
+   * stopped being true when a page could come from another file: that file's
+   * links are scanned through *its* handle, so its tokens index *its* list.
+   * `importedLinksIn` writes the handle on, and it is the only writer; absent
+   * means the opened document's own scan. Opening through the wrong list would
+   * open somebody else's address rather than fail, which is why this is carried
+   * rather than guessed.
    */
-  | { kind: "web"; token: number; host: string; rest: string }
+  | { kind: "web"; token: number; host: string; rest: string; doc?: number }
   | { kind: "refused"; action: string }
   | { kind: "none" };
 

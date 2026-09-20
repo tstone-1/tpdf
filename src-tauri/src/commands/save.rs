@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::{await_reply, outside_of, password_for, reply_channel};
 use crate::render::RenderService;
-use crate::{edits, save, save_order, SaveFailure};
+use crate::{edits, save, save_order, webopen, SaveFailure};
 
 /// The render service and the working model, as a save over the source needs them.
 ///
@@ -25,6 +25,8 @@ struct LiveSave<'a> {
     app: &'a tauri::AppHandle,
     service: &'a RenderService,
     edits: &'a edits::Edits,
+    /// Where the document's web addresses are held, so the close can end them.
+    web: &'a webopen::Registry,
     doc: u32,
     source: String,
 }
@@ -109,8 +111,18 @@ impl save_order::Saving for LiveSave<'_> {
 
     /// The files the document imported from close with it: their pages are in
     /// the file being written, and nothing else holds the handles.
+    ///
+    /// **Their web addresses go too, and this path did not forget them until
+    /// 26.9.16** --- `close_document` had carried the argument in a comment
+    /// since the import landed, and a save that closes the same documents was
+    /// simply a second place nobody applied it. A reader who follows a link on
+    /// an inserted page and then saves is the case: the handles go back to the
+    /// render service, and a list left under one would answer the next file's
+    /// clicks. `Registry::forget` takes the sources as a parameter so that this
+    /// cannot be written without them.
     fn close_model(&self) {
         let sources = self.edits.close(self.doc);
+        self.web.forget(self.doc, &sources);
         super::document::release_sources(self.service, sources);
     }
 
@@ -142,6 +154,7 @@ pub async fn save_document(
     app: tauri::AppHandle,
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
+    web: tauri::State<'_, webopen::Registry>,
     doc: u32,
     source: String,
 ) -> Result<(), SaveFailure> {
@@ -149,6 +162,7 @@ pub async fn save_document(
         app: &app,
         service: &service,
         edits: &edits,
+        web: &web,
         doc,
         source: source.clone(),
     };

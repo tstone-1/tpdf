@@ -108,16 +108,33 @@ impl Registry {
         held.get(&(document, source))?.get(token as usize)?.clone()
     }
 
-    /// Forgets a document's addresses, both sources.
+    /// Forgets a document's addresses and those of every file it imported from.
     ///
     /// Called when a document is closed. Not a memory bound --- the lists are
     /// small --- but the thing that makes a token from a closed document name
     /// nothing, which is the property [`address`](Self::address) is allowed to
     /// state.
-    pub fn forget(&self, document: u32) {
+    ///
+    /// **`sources` is a parameter rather than a second call, because a second
+    /// call is a call that can be left out --- and two of the three places that
+    /// close a document had left it out.** An imported file is a document of the
+    /// render service with a scan and a list of its own, and since 26.9.16 a
+    /// reader follows a web link on one of its pages through *its* handle, so
+    /// its list is reachable rather than merely held. A list that outlived the
+    /// document that imported from it would sit under a handle the service is
+    /// free to hand to another file, which is the hazard
+    /// [`forget_all`](Self::forget_all) states. The signature is what makes
+    /// forgetting it impossible to write; `imports::Held` is the same shape for
+    /// the handle itself.
+    ///
+    /// Empty `sources` is the ordinary case and means exactly what the old
+    /// single-document call meant.
+    pub fn forget(&self, document: u32, sources: &[u32]) {
         let mut held = self.by_document.lock();
-        held.remove(&(document, Source::Links));
-        held.remove(&(document, Source::Outline));
+        for id in std::iter::once(&document).chain(sources) {
+            held.remove(&(*id, Source::Links));
+            held.remove(&(*id, Source::Outline));
+        }
     }
 
     /// Forgets every document's addresses, for a webview that has just started.
@@ -242,7 +259,7 @@ mod tests {
         registry.adopt(3, Source::Outline, &mut urls(&["https://example.com/"]));
         registry.adopt(4, Source::Links, &mut urls(&["https://other.example/"]));
 
-        registry.forget(3);
+        registry.forget(3, &[]);
 
         assert_eq!(registry.address(3, Source::Links, 0), None);
         assert_eq!(registry.address(3, Source::Outline, 0), None);
@@ -252,6 +269,44 @@ mod tests {
         // is the mistake a single `retain` over the map would make.
         assert_eq!(
             registry.address(4, Source::Links, 0).map(|w| w.host),
+            Some("other.example".to_string())
+        );
+    }
+
+    /// A document takes the files it imported from with it.
+    ///
+    /// The case this exists for is a reader who inserts another file's pages,
+    /// follows a link on one of them, and then saves: the imported file's
+    /// handle goes back to the render service, and a list left under it would
+    /// answer the next file's clicks with this one's addresses. Two of the
+    /// three closing paths forgot exactly this until the second parameter made
+    /// it unwritable.
+    #[test]
+    fn a_document_takes_the_files_it_imported_from_with_it() {
+        let registry = Registry::default();
+        registry.adopt(10, Source::Links, &mut urls(&["https://opened.example/"]));
+        registry.adopt(11, Source::Links, &mut urls(&["https://first.example/"]));
+        registry.adopt(12, Source::Links, &mut urls(&["https://second.example/"]));
+        registry.adopt(13, Source::Links, &mut urls(&["https://other.example/"]));
+
+        registry.forget(10, &[11, 12]);
+
+        assert_eq!(registry.address(10, Source::Links, 0), None);
+        assert_eq!(
+            registry.address(11, Source::Links, 0),
+            None,
+            "the first imported file's addresses went with the document"
+        );
+        assert_eq!(
+            registry.address(12, Source::Links, 0),
+            None,
+            "and so did the second's, so it is not the first alone"
+        );
+        // The control: a document that imported nothing from either is
+        // untouched, which is what says this removed named keys rather than
+        // clearing the map.
+        assert_eq!(
+            registry.address(13, Source::Links, 0).map(|w| w.host),
             Some("other.example".to_string())
         );
     }

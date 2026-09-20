@@ -4533,6 +4533,28 @@ MUTATIONS += [
         'return "opens a web link --- not followed";',
         "holds no prose dash outside the separator sentinel",
     ),
+    Mutation(
+        # Open every web link through the document the reader has open. Right
+        # for the opened file's own links and wrong for one on a page inserted
+        # from another file, whose token indexes that file's list -- so it
+        # opens whichever address happens to sit at the same index.
+        "weblinkdialog: open every link through the opened document's list",
+        "src/lib/weblinkdialog.ts",
+        "    await deps.open(target.doc ?? opened, source, target.token);",
+        "    await deps.open(opened, source, target.token);",
+        "opens a link from an inserted page through that file's own handle",
+    ),
+    Mutation(
+        # The other half of the same expression: take the target's handle even
+        # when it names none, which is every link of the opened document and
+        # every entry of its outline. `undefined` reaches the command as the
+        # document to open through, and nothing opens.
+        "weblinkdialog: open every link through the target's own handle",
+        "src/lib/weblinkdialog.ts",
+        "    await deps.open(target.doc ?? opened, source, target.token);",
+        "    await deps.open(target.doc as number, source, target.token);",
+        "asks before it opens, and opens what was asked about",
+    ),
     # ------------------------------------------------------ split a document
     Mutation(
         # The boundary. `3` means "the first file ends at page 3", so the cut
@@ -6770,13 +6792,14 @@ MUTATIONS += [
         "puts a link on the slot showing its page, and a destination on the slot showing its target",
     ),
     Mutation(
-        # Follow a web link found in the other file through this document's
-        # token list, which opens somebody else's address.
-        "pages: follow a web link found in another file",
+        # Place the other file's web link without the handle its token was
+        # numbered by. The target still looks like a web link and still opens
+        # -- through the opened document's list, which is somebody else's.
+        "pages: drop the handle from a web link found in another file",
         "src/lib/pages.ts",
-        "  if (target.kind === \"web\") return { kind: \"refused\", action: \"uri\" };\n",
-        "",
-        "does not follow a web address found in the other file",
+        "  if (target.kind === \"web\") return { ...target, doc };",
+        "  if (target.kind === \"web\") return target;",
+        "follows a web address found in the other file through that file's handle",
     ),
     Mutation(
         # Keep the other file's link ids, which the opened file's scan also
@@ -7646,12 +7669,9 @@ MUTATIONS += [
         "weblink: open before the reader has answered",
         "src/lib/weblinkdialog.ts",
         "  const wanted = await deps.ask({ host: target.host, rest: target.rest });\n"
-        "  if (!wanted) return false;\n"
-        "  try {\n"
-        "    await deps.open(doc, source, target.token);",
-        "  try {\n"
-        "    await deps.open(doc, source, target.token);\n"
-        "    await deps.ask({ host: target.host, rest: target.rest });",
+        "  if (!wanted) return false;",
+        "  const wanted = true;\n"
+        "  void deps.ask({ host: target.host, rest: target.rest });",
         "does not open when the reader says no",
     ),
     Mutation(

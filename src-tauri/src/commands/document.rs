@@ -496,11 +496,8 @@ pub async fn close_document(
     // argument: a token is an index into a list, so a list that outlived its
     // document would answer the next one's clicks with somebody else's
     // addresses. An imported file's list exists once its links were scanned.
-    for &source in &sources {
-        web.forget(source);
-    }
+    web.forget(doc, &sources);
     release_sources(&service, sources);
-    web.forget(doc);
     let (reply, rx) = reply_channel();
     service.close(doc, reply);
     await_reply("close_document", rx).await

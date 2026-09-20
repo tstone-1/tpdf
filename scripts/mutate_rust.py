@@ -9310,10 +9310,22 @@ MUTATIONS += [
         # document number the service is about to reuse.
         "webopen: forget a document's links but not its outline",
         "src/webopen.rs",
-        "        held.remove(&(document, Source::Links));\n"
-        "        held.remove(&(document, Source::Outline));",
-        "        held.remove(&(document, Source::Links));",
+        "            held.remove(&(*id, Source::Links));\n"
+        "            held.remove(&(*id, Source::Outline));",
+        "            held.remove(&(*id, Source::Links));",
         "forgetting_a_document_makes_its_tokens_name_nothing",
+    ),
+    Mutation(
+        # Forget the document and none of the files it imported from. Since
+        # 26.9.16 a web link on an inserted page is opened through the imported
+        # file's own handle, so its list is reachable rather than merely held --
+        # and a list left under a handle the service is about to hand to another
+        # file answers that file's clicks with this one's addresses.
+        "webopen: forget a document but not the files it imported from",
+        "src/webopen.rs",
+        "        for id in std::iter::once(&document).chain(sources) {",
+        "        for id in std::iter::once(&document).chain(&sources[..0]) {",
+        "a_document_takes_the_files_it_imported_from_with_it",
     ),
     Mutation(
         # Give every web target token 0. One link works and every other one

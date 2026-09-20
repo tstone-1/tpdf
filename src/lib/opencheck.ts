@@ -164,7 +164,9 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // `edit.insertPages`, end to end but the dialog: `first` is the opened
       // document and `other` a different file of at least three pages, whose
       // pages differ in their text from each other and from the first's, or
-      // the checks on *which* page answered cannot fail.
+      // the checks on *which* page answered cannot fail. It must also carry an
+      // http or https link on one of its pages, for the web-link check at the
+      // end --- `testdata/links.pdf` is the one in the tree that does.
       // `tabs_check.py --phase import --other <pdf>` supplies it.
       //
       // Three passes over the same file: the question dismissed, a range, and
@@ -271,6 +273,24 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const imported = new Set(after.pages.flatMap((page, slot) => ("imported" in page.source ? [slot] : [])));
         report.check("a search finds a word on an imported page",
           host.viewer()!.searchMatches.some((match) => imported.has(match.page)), word);
+      }
+      // A web link on an inserted page, which was drawn and refused until
+      // 26.9.16. Read off the viewer's own list, so what is checked is the
+      // translation the reader's click goes through rather than the scan. The
+      // handle is the whole of it: the other file's links were scanned through
+      // its handle and its tokens index its list, so a target naming the opened
+      // document would open whichever address sits at the same index there --
+      // a wrong open rather than a failure. Nothing is opened here; the
+      // confirmation is `weblinkdialog.test.ts`'s and the browser is nobody's.
+      const importedSlots = new Set(after.pages.flatMap((page, slot) => ("imported" in page.source ? [slot] : [])));
+      const onImported = host.viewer()!.linkRows.filter((row) => importedSlots.has(row.page));
+      const web = onImported.find((row) => row.target.kind === "web");
+      report.check("the other file has a web link on an inserted page, so the next check can fail",
+        web !== undefined, `${onImported.length} link(s) on inserted pages`);
+      if (web?.target.kind === "web") {
+        report.check("a web link on an inserted page is followed through that file's own handle",
+          web.target.doc === source.doc,
+          JSON.stringify({ names: web.target.doc, drawn_from: source.doc, host: web.target.host }));
       }
       host.run("edit.undo"); await host.idle(); await quiet();
       report.check("one undo takes every imported page back out",

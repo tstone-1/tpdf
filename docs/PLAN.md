@@ -13176,9 +13176,11 @@ of the page's text, and the text now comes from the right file.
 Drawn, thumbnailed, selected, copied, searched, highlighted and otherwise marked, turned,
 moved, cropped by drag or to content, deleted, and saved. Links: a destination inside the
 other file lands on the slot showing that page if it was imported too and is otherwise
-`broken`; a web address is shown and refused (`refused`/`uri`), because its token indexes the
+`broken`; a web address is ~~shown and refused (`refused`/`uri`), because its token indexes the
 other file's list in the webopen registry and nothing here should open an address through a
-list it did not build. The other file's links are scanned once, through its handle, by
+list it did not build~~ (followed since 2026-09-20 --- see *Following a web link on an inserted
+page*, below, and read that entry rather than this sentence: the reason recorded here was about
+the backend and the defect was in the frontend). The other file's links are scanned once, through its handle, by
 `importedlinks.ts`; their ids are renumbered above the opened file's, since both scans number
 from zero and the viewer follows a link by id.
 
@@ -13214,7 +13216,8 @@ past the dialog, and checks that they are drawn from a handle that is not the op
 the imported page's text is the other file's, that a search finds a word on it, that one undo
 and one redo move all of them, and that a save writes them into the file.
 
-**Not done:** following a web link or reading the outline of the other file; editing an
+**Not done:** ~~following a web link~~ (done 2026-09-20 --- see *Following a web link on an
+inserted page*, below) or reading the outline of the other file; editing an
 imported page's text before a save; the character-mapping warning for an imported page;
 and a truncated other file stops the viewer asking for tiles for the whole document rather
 than for that file's pages, because `DocumentGone` is one flag per scroller. The merge and the
@@ -13292,6 +13295,71 @@ swapped, since the other file needs pages to choose among. It dismisses the ques
 nothing was placed and that a second cancel finds nothing to end; answers `2-N` and checks
 exactly those pages arrive in order, the first reading as the file's second; and answers blank,
 which the rest of the phase then checks as before.
+
+#### Following a web link on an inserted page — done 2026-09-20
+
+The first of the three things the section above left waiting for a save, and the smallest:
+a web address on an imported page was drawn and then declined with *"opens a web link ---
+not followed"*.
+
+**The reason recorded for it was about the backend and the defect was in the frontend.** That
+sentence read *"its token indexes the other file's list in the webopen registry and nothing
+here should open an address through a list it did not build"*, which is true and is not a
+reason to refuse: the registry already held that file's addresses, under that file's handle,
+put there by the same `document_links` call `importedlinks.ts` makes to get the links at all
+--- `adopt` runs on whatever handle the command was asked about. Nothing in the app process
+needed a capability it did not have, and `open_web_link` needed no change: it takes
+`(doc, source, token)` and always has.
+
+What was missing is that a **token means nothing without the scan that numbered it**, and a
+scan is the pair (handle, source). `webopen::Source` has been a named type from the start for
+the second half --- its own comment says passing the wrong one opens the wrong link rather
+than failing. The first half was never a value: `App.svelte` supplied "the document that is
+open", which was right for everything the backend sends and stopped being right the day a
+page could come from another file. So the frontend was refusing the case it could not
+address, which is the honest thing to do and is not a fix.
+
+**The fix is to carry it.** `Target`'s web arm gains `doc?: number`, absent on the wire and
+written only by `importedLinksIn`; `confirmAndOpen` opens through `target.doc ?? opened`.
+Three lines, and the whole of the argument is that the decision lives in `weblinkdialog.ts`
+rather than in `App.svelte` --- opening the right address through the wrong list is a wrong
+open rather than a failure, so it belongs where a test can reach it. The `sinks` gate reads
+that union and still passes: `doc` is a number of ours, not a string of the document's, and
+the arm still declares no `url`, `uri`, `href` or `address`.
+
+**What the increment also fixed is a leak the feature made reachable.** `close_document`
+forgets the address lists of a document *and of every file it imported from*, with the
+argument written out in a comment; the two other paths that close a document --- the in-place
+save and the redaction --- forgot neither. A rule written down in one of three places is the
+failure this repository keeps recording, so `Registry::forget` takes the sources as a
+parameter: the three call sites cannot omit them, because the compiler will not let them.
+`imports::Held` is the same shape for the handle itself.
+
+##### What was measured
+
+Rust: one new test in `webopen` (a document takes the files it imported from with it, with a
+document that imported neither as the control). TypeScript: two in `pages` (the other file's
+web target keeps its token and carries the handle; the opened file's own web targets carry
+none) and two in `weblinkdialog` (an inserted page's link opens through its own handle; the
+dialog asks about the address the target carries). Mutations: two Rust and three frontend ---
+forget the document but not its sources; forget the links but not the outline (re-aimed, its
+line moved); drop the handle when placing the other file's link; open every link through the
+opened document; open every link through the target's own handle --- **5 of 5 caught by the
+test named for each**, plus one re-aimed in `weblinkdialog.ts` whose anchor a comment had
+moved, re-run and caught.
+
+**Not measured, and written for the window check:** `tabs_check.py --phase import` gains two
+checks at the end --- that the other file has a web link on an inserted page, so the check
+after it can fail, and that the target names the handle the page is drawn from. It reads the
+viewer's own link list through a new `linkRows` accessor, so what is checked is the
+translation a click goes through rather than the scan. Nothing opens; the confirmation is
+`weblinkdialog.test.ts`'s and the browser is nobody's. The fixture roles are unchanged:
+`links.pdf` is the file inserted from, and it is the one in the tree carrying http links.
+
+**Not done:** the other file's **outline** is still not read, so a web link that exists only
+as a bookmark of the inserted file is unreachable --- there is no second outline request and
+no place to put its rows. Editing an imported page's text and redacting a document that holds
+one are still refused, and both are larger than this was.
 
 #### Deleting a comment the file came with — done 2026-08-30
 

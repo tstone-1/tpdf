@@ -854,13 +854,18 @@ export function linksIn(items: readonly Link[], pages: PageMap): Link[] {
  * showing its page; a link whose page was not imported, or was deleted, is
  * dropped with it --- {@link linksIn}'s rule.
  *
- * **Two kinds of destination do not survive the move, and they are said to be
- * off rather than followed somewhere wrong.** A destination inside the file
+ * **A destination inside the file does not survive the move unchanged.** It
  * resolves to the slot showing that page if it was imported too, and is
  * otherwise `broken`, which already says "points at a page this document does
- * not have". A web address is `refused`: its token indexes a list the backend
- * keeps per document, and following it through the opened document's list
- * would open somebody else's address. Nothing reads the other file's outline.
+ * not have".
+ *
+ * **A web address is followed, and carries the handle its token belongs to.**
+ * Until 26.9.16 it was `refused`, because a token indexes one scan's list and
+ * the frontend had nowhere to record which scan --- so following one through
+ * the opened document's list would have opened somebody else's address. The
+ * list itself was never the problem: the backend holds this file's addresses
+ * under this file's handle, adopted by the same `document_links` call that
+ * produced `items`. Nothing reads the other file's outline.
  */
 export function importedLinksIn(
   doc: number,
@@ -920,7 +925,14 @@ export function allLinksIn(
 
 /** {@link targetIn} for a destination named by another file. */
 function importedTarget(doc: number, target: Target, pages: PageMap): Target {
-  if (target.kind === "web") return { kind: "refused", action: "uri" };
+  // A web address is followed exactly as one on the document's own page is,
+  // through the handle whose scan numbered its token --- which is this file's,
+  // not the opened document's. `Target`'s `doc` is what carries that, and
+  // writing it here is the whole of the difference: the address itself is in
+  // `webopen::Registry` under the same handle, put there by the `document_links`
+  // call that produced `items`, and it was already reachable. What was missing
+  // was the frontend remembering which list the number belonged to.
+  if (target.kind === "web") return { ...target, doc };
   if (target.kind !== "page") return target;
   const slot = pages.slotOfImported(doc, target.page);
   if (slot === undefined) return { kind: "broken" };

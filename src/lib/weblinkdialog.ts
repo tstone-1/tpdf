@@ -82,6 +82,10 @@ export interface WebLinkDeps {
 /**
  * Asks, and opens only on a yes. Resolves with whether anything opened.
  *
+ * `opened` is the document the reader has open, and it is what a token is
+ * numbered by unless the target says otherwise --- see `Target`'s `doc`, which
+ * a link on a page inserted from another file carries.
+ *
  * **Separate from the dialog and from `App.svelte`, deliberately.** It is the
  * join between three things --- a question, a command, and what happens when
  * the command fails --- and every one of those has an answer that can be wrong:
@@ -95,7 +99,7 @@ export interface WebLinkDeps {
  * report their own decision back to them as a failure.
  */
 export async function confirmAndOpen(
-  doc: number,
+  opened: number,
   source: WebLinkSource,
   target: WebTarget,
   deps: WebLinkDeps,
@@ -103,7 +107,13 @@ export async function confirmAndOpen(
   const wanted = await deps.ask({ host: target.host, rest: target.rest });
   if (!wanted) return false;
   try {
-    await deps.open(doc, source, target.token);
+    // The handle whose scan numbered the token, which is the target's own when
+    // it came from a file whose pages were inserted and the opened document's
+    // otherwise. Resolved here rather than in `App.svelte`, which is the layer
+    // no gate reaches: opening the right address through the wrong list is a
+    // wrong open rather than a failure, and that decision belongs where a test
+    // can reach it --- the same argument `WebLinkSource` is a named type for.
+    await deps.open(target.doc ?? opened, source, target.token);
     return true;
   } catch (e) {
     // The backend's wording, not ours: it is the side that knows whether the

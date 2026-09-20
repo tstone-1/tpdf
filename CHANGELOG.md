@@ -17,6 +17,30 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.16] - Unreleased
+
+### Added
+
+- A web link on a page inserted from another file now opens in your browser,
+  after the same confirmation as a link on the document's own page. Until now it
+  was drawn and then declined with "opens a web link — not followed", which read
+  as a decision about web links and was really about bookkeeping: the address
+  behind a link is held by its own file, and the working document's link list had
+  nowhere to record which file each link came from. Following one through the
+  wrong list would have opened a different address rather than failing, which is
+  why it was declined until the file could be carried along with the link. A link
+  to a page of that file still lands on the page if it was inserted too, and still
+  says so if it was not.
+
+### Fixed
+
+- Saving over the open document, and applying a redaction to it, now forget the
+  web addresses of every file the document had pages inserted from, as closing it
+  already did. The addresses were held for the life of the application rather than
+  the life of the document; nothing a reader could do reached one, because the
+  links that name them go with the document, but a released handle is handed out
+  again and the list should not outlive what it belongs to.
+
 ## [26.9.15] - 2026-09-20
 
 ### Added

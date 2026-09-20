@@ -3190,6 +3190,20 @@ export class Viewer {
   }
 
   /**
+   * Every link, in the order a reader meets them. For the check harness.
+   *
+   * The links as the viewer *holds* them, which is the point: they have been
+   * through `allLinksIn`, so each one's page is a slot and each one's target
+   * has been translated against the page order --- and a link on a page
+   * inserted from another file carries the handle its web token was numbered
+   * by. A check that asked the backend instead would be reading the scan, and
+   * the translation is what it means to test.
+   */
+  get linkRows(): readonly Link[] {
+    return this.linkWalk;
+  }
+
+  /**
    * The first page carrying a link, or -1. For the check harness.
    *
    * From the walk order rather than from the scan order, so it is the page a

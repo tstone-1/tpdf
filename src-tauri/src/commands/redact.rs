@@ -12,7 +12,7 @@ use tauri::Manager;
 
 use super::{await_reply, outside_of, password_for, reply_channel};
 use crate::render::RenderService;
-use crate::{edits, ocr_gate, redact, save, verify, with_close_note, SaveFailure};
+use crate::{edits, ocr_gate, redact, save, verify, webopen, with_close_note, SaveFailure};
 
 // Paint only after both verification passes read the uncovered result. The
 // fingerprint prevents applying that verdict to a file changed in between.
@@ -479,6 +479,7 @@ pub async fn redact_document(
     app: tauri::AppHandle,
     service: tauri::State<'_, RenderService>,
     edits: tauri::State<'_, edits::Edits>,
+    web: tauri::State<'_, webopen::Registry>,
     doc: u32,
     source: String,
 ) -> Result<redact::Applied, SaveFailure> {
@@ -512,6 +513,13 @@ pub async fn redact_document(
     // Empty today --- a redaction is refused beside an imported page --- and
     // released anyway, because a refusal elsewhere is not a reason to leak here.
     let sources = edits.close(doc);
+    // The addresses with them, this document's and theirs. `close_document`
+    // makes the argument; this path is the third place that closes a document
+    // and the second that had not applied it. Empty sources today for the same
+    // reason the release above is empty --- a redaction is refused beside an
+    // imported page --- and forgotten anyway, because a refusal elsewhere is
+    // not a reason to leak here.
+    web.forget(doc, &sources);
     super::document::release_sources(&service, sources);
     let (reply, rx) = reply_channel();
     service.close(doc, reply);

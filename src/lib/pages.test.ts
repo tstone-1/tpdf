@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Comment } from "./comments";
-import type { Link } from "./links";
+import { refusalFor, type Link } from "./links";
 import type { OutlineItem } from "./outline";
 import {
   addressOf,
@@ -596,13 +596,52 @@ describe("importedLinksIn", () => {
     ]);
   });
 
-  it("does not follow a web address found in the other file", () => {
+  /**
+   * The web arm, which was `refused` until 26.9.16.
+   *
+   * The token is kept exactly as the other file's scan numbered it --- it is an
+   * index into that scan's list and renumbering it would name a different
+   * address --- and the handle of the scan is written on beside it. What makes
+   * this assertion able to fail is the handle: dropping it leaves a target that
+   * still looks like a web link and opens through the opened document's list.
+   */
+  it("follows a web address found in the other file through that file's handle", () => {
     const placed = importedLinksIn(
       40,
-      [link(0, 2, { kind: "web", token: 0, host: "example.com", rest: "/" })],
+      [link(0, 2, { kind: "web", token: 3, host: "example.com", rest: "/" })],
       withImports(),
     );
-    expect(placed[0]?.target).toEqual({ kind: "refused", action: "uri" });
+    expect(placed[0]?.target).toEqual({
+      kind: "web",
+      token: 3,
+      host: "example.com",
+      rest: "/",
+      doc: 40,
+    });
+    // And the reader is not told it goes nowhere, which is what they were told
+    // while it was refused.
+    expect(refusalFor(placed[0]!.target)).toBeNull();
+  });
+
+  /**
+   * The opened file's own web links are untouched, so the two are distinguished
+   * by the handle rather than by everything about them.
+   *
+   * Without this, writing the handle onto *every* web target would pass the
+   * check above and send the opened document's own tokens through whichever
+   * handle happened to be last.
+   */
+  it("leaves the opened file's own web links naming no handle", () => {
+    const own = link(0, 0, { kind: "web", token: 0, host: "own.example", rest: "/" });
+    const other = link(0, 2, { kind: "web", token: 0, host: "other.example", rest: "/" });
+    const all = allLinksIn([own], new Map([[40, [other]]]), withImports());
+    const targets = all.map((one) =>
+      one.target.kind === "web" ? [one.target.host, one.target.doc] : ["?", undefined],
+    );
+    expect(targets).toEqual([
+      ["own.example", undefined],
+      ["other.example", 40],
+    ]);
   });
 
   it("numbers the other file's links on from the opened file's", () => {

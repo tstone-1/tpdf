@@ -405,8 +405,9 @@
    * The whole of what this adds over `confirmAndOpen` is the three things only
    * the component knows: which document is open, which dialog to ask with, and
    * where an error goes. The decisions --- ask first, do not report a
-   * cancellation, use the backend's wording --- are in `weblinkdialog.ts`
-   * where a test can reach them.
+   * cancellation, use the backend's wording, and *which* scan's list a token
+   * indexes when the link came from a file whose pages were inserted --- are in
+   * `weblinkdialog.ts` where a test can reach them.
    *
    * A missing dialog is a refusal rather than a silent open. It cannot happen
    * once the component is mounted; what it rules out is the ordering where a
