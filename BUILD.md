@@ -5074,6 +5074,28 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.15 verification, macOS arm64 and Windows x64, 2026-09-20:** all 25 gates
+passed on macOS and `check_windows.py` type-checked the Windows tree. Every
+mutation selected `--since v26.9.14` ran: 38 frontend and 287 Rust, in 832 s. One
+Rust mutation was caught by six tests and not by the one it named (`clip: omit
+rectangle horizontal scale`), a stale expectation rather than lost coverage; it
+now names the test whose subject it is. All ten textedit window phases passed on
+macOS, including the new `textedit-push` at 6/6 and `textedit-grow` at 26/26. On
+Windows the push phase passed 6/6, the embedded textedit phase 23/23, the import
+phase 18/18, and the viewer sweeps 315 text-heavy and 217 vector-heavy checks;
+`print-probe` passed 10/10 and the OCR sweep found zero regions still reading as
+text. Both installers built. The installer upgrade and hidden-engine checks were
+not run, and neither was the macOS updater.
+
+**The measurements in this release were corrected twice before it was cut, both
+times downwards.** `docs/PLAN.md` and `CHANGELOG.md` claimed 62/51/44 as-typed
+acceptance at +10/+25/+50; those came from a tree whose push still refused some
+runs their own unchanged text, and the fix for that costs a few points. The
+finished code measures **58/48/41**, against 44/33/28 with the box growing alone
+and 1/1/0 before either. A number in prose describes whichever tree produced it,
+so the run that produces the release's numbers has to be the run on the code being
+released.
+
 **26.9.14 verification, macOS arm64 and Windows x64, 2026-09-19:** all 25 gates
 passed on the release commit on macOS, and `check_windows.py` type-checked the
 Windows tree. Every mutation selected `--since v26.9.13` was run: 4 frontend and
