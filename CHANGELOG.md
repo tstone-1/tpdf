@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.15] - Unreleased
+## [26.9.15] - 2026-09-20
 
 ### Added
 
@@ -30,7 +30,7 @@ have the binary.)
   widen a box you never set. Setting a width yourself still fixes the box, and
   the box never gets narrower than the text it opened on.
 - Measured across the public sample of 31 documents: edits 10% longer are
-  accepted for 41% of lines against 1% before, 25% longer for 33% against 1%,
+  accepted for 44% of lines against 1% before, 25% longer for 33% against 1%,
   and 50% longer for 28% against 1%.
 - When what you type needs more room than the line has left, the text that
   follows it on that line now moves along to make room, instead of the edit
@@ -42,8 +42,8 @@ have the binary.)
   or a drawing, at the edge of the page and at anything the document clips, and
   the message says which of those it was. The preview shows the text moving
   while you type, so what you see is what is saved.
-- Measured on the same 31 documents, edits as typed: 10% longer accepted for 62%
-  of lines, 25% longer for 51% and 50% longer for 44% — against 44 / 33 / 28%
+- Measured on the same 31 documents, edits as typed: 10% longer accepted for 58%
+  of lines, 25% longer for 48% and 50% longer for 41% — against 44 / 33 / 28%
   with the box growing alone, and 1 / 1 / 0% before either. Wrapping a line onto
   a new one is still not part of this and remains refused: it needs a model of
   where a paragraph begins and ends that tpdf does not have.

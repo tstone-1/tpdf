@@ -423,13 +423,17 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Editing text in LaTeX, Word and Acrobat
-          documents no longer fails as too wide for its box. The editor now keeps
-          the document's own letter and word spacing wherever the text is
-          unchanged, so a line fits the space it always occupied: across a sample
-          of public documents, unchanged text now fits for 99% of lines instead
-          of 52%. The previous release added inserting the pages of another PDF,
-          all of them or a range, after the page you are on.
+          **New in this release.** Editing an existing line is no longer
+          confined to the space the words already take. Type more than was there
+          and the box grows into the room the line has; type past that and the
+          rest of the line moves along to make room, keeping its spacing.
+          Nothing above or below the line moves. The line still stops at text
+          tpdf may not rewrite, at a picture, at the edge of the page and at
+          anything the document clips, and it says which. Across a sample of 31
+          public documents, edits a quarter longer than the text they replace
+          are accepted on 48% of lines, against 1% before. An edit no longer
+          shifts the lines after it by a pixel in documents that position each
+          line relative to the last, such as Word and LibreOffice exports.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
