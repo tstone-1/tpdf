@@ -4866,26 +4866,54 @@ sixteen round trips and the fourteen regressions a first version caused.
 
 Growth stops at the first thing on the line, and deliberately does not move it.
 Two halves remain, and the survey sized both: 82% of the overlaps at +25% are the
-next run on the same line and 18% would leave the page.
+next run on the same line and 18% would leave the page. `layout::room` is
+deliberately a *box* answer — how far the run may reach without anything else
+changing — so neither half is reachable from it alone.
 
-- **Moving the rest of a line** is the nearer half and is a line-level edit rather
-  than a box-level one: every following run on the line translated by the change in
-  advance, each one's own `Td`/`Tm` rewritten, each one's collision, clip and page
-  checks re-run, and the whole set refused atomically — a line half moved is worse
-  than one not moved. The scanner already knows which runs share a line origin
-  (`Context::line_origin`), which is most of what that needs, and `restore_line`
-  already replays a line's positioning operator for operator, which is the form the
-  rewritten moves have to take.
-- **Wrapping onto a new line** is the further half and needs something the scanner
-  does not have: a paragraph model. Which runs are lines of one block, what the
-  leading between them is, where the block ends, and what may be pushed down —
-  none of which is derivable from a run's own operators, and all of which a tagged
-  document states and an untagged one does not. The box cannot answer it, which is
-  why growth stops where it does.
+**The line moves with the text — 2026-09-20.** The nearer of those two halves,
+which the survey put at 82% of what growth still refuses. When a replacement needs
+more room than the line has free, the runs after it on that line are pushed along by
+exactly the distance it overran, and the edit is accepted instead of refused.
+`layout::reach` answers how far that set may go and what stops it: the page, the clip
+in force over *each* run that moves, the first text the editor may not rewrite, and,
+in a population only the push reads, the page's painted rectangles, paths and images.
+`layout::drag` walks the stream to decide which shows need a displacement of their
+own and which already ride the cursor of the one before them, and refuses to drag
+anything the editor does not own; `layout::push` writes it. Across the 31-file public
+sample, edits as typed go from 44% accepted to 58% at +10% longer, 33% to 48% at +25%
+and 28% to 41% at +50%; run by run over 597,062 verdicts, none accepted before is
+refused now. `BUILD.md`, *Moving the rest of the line along*, has the rule, the
+tables, the round trips, and the defect the corpus comparison found in it.
 
-Neither is reachable from the geometry in this increment, and `layout::room` is
-deliberately a *box* answer: it says how far the run may reach without anything
-else changing.
+(The three rates read 62/51/44 here until the run that produced this file's own
+numbers was repeated on the finished code: they were measured on a tree whose push
+still refused some runs their own unchanged text, and the fix for that costs a few
+points of acceptance. A number in prose is a measurement of whatever tree produced
+it, which is why the comparison is quoted run by run rather than as a total.)
+
+Three properties of it are decisions rather than consequences, and each is a
+constraint on what comes next:
+
+- **Nothing but the edited line moves, down to the last bit.** The push rewrites each
+  moved show's own array with a leading `TJ` displacement, which moves the text
+  cursor; `Td`, `TD`, `T*` and `Tm` all move the line matrix, which every following
+  line accumulates in single precision. Rewriting one of those would reintroduce the
+  drift `restore_line` was written to remove.
+- **The gap the producer left is spent first.** The distance is measured from the
+  nearest run the push moves, so a replacement that still fits the room moves nothing
+  and is written exactly as it was before; the push begins where growth stopped.
+- **A box the reader sized pushes nothing.** Typing a width says something about the
+  box, not about anybody else's text on the line, so the push is tied to the same
+  `Layout.grow` that growth is.
+
+**Wrapping onto a new line** is the further half and still needs something the
+scanner does not have: a paragraph model. Which runs are lines of one block, what the
+leading between them is, where the block ends, and what may be pushed down — none of
+which is derivable from a run's own operators, and all of which a tagged document
+states and an untagged one does not. The push does not bring it closer: it is a rule
+about one line, and it stops at the first thing on that line it cannot move rather
+than looking for room anywhere else. The 18% of overlaps that would leave the page
+are what wrapping is for, and they are untouched.
 
 ---
 

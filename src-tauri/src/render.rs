@@ -1721,11 +1721,14 @@ pub(crate) fn text_edit_runs(
                 .find(|run| run.operator == change.operator)
                 .ok_or("text preview source disappeared")?
                 .display_rect;
+            // `extent`, not `rect`: the box is what the reader outlines, while
+            // the crop has to show every run the draft pushed along the line as
+            // well, or the moved text is half outside the picture.
             let rect = [
-                preview.rect[0].min(original[0]) - 8.,
-                preview.rect[1].min(original[1]) - 8.,
-                preview.rect[2].max(original[2]) + 8.,
-                preview.rect[3].max(original[3]) + 8.,
+                preview.extent[0].min(original[0]) - 8.,
+                preview.extent[1].min(original[1]) - 8.,
+                preview.extent[2].max(original[2]) + 8.,
+                preview.extent[3].max(original[3]) + 8.,
             ];
             let scale = 2_f32
                 .min(1024. / (rect[2] - rect[0]).max(1.))

@@ -132,7 +132,7 @@ describe("existing text editing", () => {
     const preview = vi.fn(() => new Promise<TextRuns>((resolve) => finish.push(resolve)));
     const write = vi.fn(async () => state);
     const { editor, field, form } = mount(write, runs, undefined, preview);
-    const reply: TextRuns = { ...runs, preview: { png: [1,2,3], font: "Noto Sans", lines: 2, rect: [40,48,180,100] } };
+    const reply: TextRuns = { ...runs, preview: { png: [1,2,3], font: "Noto Sans", lines: 2, rect: [40,48,180,100], extent: [40,48,220,100] } };
     field.value = "FIRST"; field.dispatch("input", {}); await vi.advanceTimersByTimeAsync(250);
     field.value = "SECOND"; field.dispatch("input", {}); await vi.advanceTimersByTimeAsync(250);
     expect(preview).toHaveBeenCalledTimes(2);

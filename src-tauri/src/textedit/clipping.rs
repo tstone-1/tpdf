@@ -306,6 +306,56 @@ pub(super) fn path(ops: &[Operation], ctm: [f64; 6]) -> Result<usize, String> {
     Err(invalid())
 }
 
+/// The page-space envelope of a path sequence `painted` or `path` has already
+/// accepted, or `None` when the sequence paints nothing.
+///
+/// Every coordinate is already known to be finite and in range -- both callers
+/// check each point before returning -- so this only takes extrema. A cubic's
+/// control-point hull bounds the curve, which is why the operands are taken as
+/// they are written rather than flattened. The sequence's own ending operator
+/// decides whether there is anything to bound: `n` ends a path without painting
+/// it, which is the same test `tags.paint()` is guarded by.
+pub(super) fn drawn(
+    ops: &[Operation],
+    consumed: usize,
+    ctm: [f64; 6],
+) -> Result<Option<Rect>, String> {
+    let end = consumed
+        .checked_sub(1)
+        .and_then(|last| ops.get(last))
+        .ok_or("invalid painted path")?;
+    if end.operator == "n" {
+        return Ok(None);
+    }
+    let mut envelope: Option<Rect> = None;
+    for op in &ops[..consumed] {
+        let mut corners = Vec::new();
+        if op.operator == "re" {
+            let mut values = [0.; 4];
+            if op.operands.len() != 4 {
+                return Err("invalid rectangle operands".into());
+            }
+            for (dest, value) in values.iter_mut().zip(&op.operands) {
+                *dest = super::number(value)?;
+            }
+            let [x, y, w, h] = values;
+            corners.extend([[x, y], [x + w, y], [x, y + h], [x + w, y + h]]);
+        } else {
+            for pair in op.operands.chunks_exact(2) {
+                corners.push([super::number(&pair[0])?, super::number(&pair[1])?]);
+            }
+        }
+        for [x, y] in corners {
+            let [px, py] = point(ctm, x, y);
+            envelope = Some(match envelope {
+                None => [px, py, px, py],
+                Some(r) => [r[0].min(px), r[1].min(py), r[2].max(px), r[3].max(py)],
+            });
+        }
+    }
+    Ok(envelope)
+}
+
 fn rectangle(rect: &Operation, ctm: [f64; 6]) -> Result<Rect, String> {
     if rect.operator != "re" || rect.operands.len() != 4 {
         return Err("invalid rectangle operands".into());

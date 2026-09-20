@@ -108,7 +108,12 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
             if !preview.png.starts_with(&[137, 80, 78, 71]) {
                 return Err("invalid preview PNG".into());
             }
-            boxes.push((edit.page, preview.rect));
+            // The extent rather than the box: since 26.9.15 a draft may push the
+            // rest of its line along, and those runs are pixels the edit is
+            // meant to change. The extent is the box together with exactly the
+            // runs it pushed, so everything else on the page -- every other
+            // line included -- is still required to be identical.
+            boxes.push((edit.page, preview.extent));
         }
     }
     let plan = Plan {

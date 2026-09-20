@@ -24,6 +24,12 @@ const MAX_FORM_OPERATIONS: usize = 32 * MAX_OPERATIONS;
 pub(super) struct Form {
     pub bytes: usize,
     pub text_bounds: Option<[f64; 4]>,
+    /// The form's own BBox under its Matrix, which is everything it may paint
+    /// (ISO 32000-1 8.10.2 clips a form to it). `text_bounds` is the same
+    /// rectangle and is `None` unless the form shows text; this one is always
+    /// there, because a figure with no text is still something the editor must
+    /// not push a line of text onto.
+    pub bounds: [f64; 4],
 }
 
 pub(super) fn check(
@@ -47,10 +53,11 @@ pub(super) fn check(
         calls: 0,
         active: BTreeSet::new(),
     };
-    let text_bounds = visit(doc, resources, value, 0, &mut budget)?;
+    let (text_bounds, bounds) = visit(doc, resources, value, 0, &mut budget)?;
     Ok(Some(Form {
         bytes: remaining - budget.remaining,
         text_bounds,
+        bounds,
     }))
 }
 
@@ -72,7 +79,7 @@ fn visit(
     value: &Object,
     depth: usize,
     budget: &mut Budget,
-) -> Result<Option<[f64; 4]>, String> {
+) -> Result<(Option<[f64; 4]>, [f64; 4]), String> {
     budget.calls += 1;
     let id = value.as_reference().map_err(|_| INVALID)?;
     if depth >= 8 || budget.calls > 32 || !budget.active.insert(id) {
@@ -185,7 +192,7 @@ fn visit(
                     .as_stream()
                     .map_err(|_| INVALID)?;
                 if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Form") {
-                    has_text |= visit(doc, resources, child, depth + 1, budget)?.is_some();
+                    has_text |= visit(doc, resources, child, depth + 1, budget)?.0.is_some();
                 } else {
                     let image = images::check(doc, resources, name, budget.remaining)?;
                     // A form's fill colour is not tracked, and a stencil paints it.
@@ -218,7 +225,8 @@ fn visit(
         return Err(INVALID.into());
     }
     budget.active.remove(&id);
-    Ok(has_text.then(|| super::text_bounds(matrix, [bounds[0], bounds[1], bounds[2], bounds[3]])))
+    let box_bounds = super::text_bounds(matrix, [bounds[0], bounds[1], bounds[2], bounds[3]]);
+    Ok((has_text.then_some(box_bounds), box_bounds))
 }
 
 // ISO 32000-1 11.6.6, Table 147: a transparency group composites the form's

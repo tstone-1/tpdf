@@ -76,16 +76,32 @@ pub struct PageRuns {
 pub struct Preview {
     pub png: Vec<u8>,
     pub font: String,
+    /// The dashed outline the reader sees: the box their text needed.
     pub rect: [f32; 4],
+    /// What the crop has to cover: that box together with every run this draft
+    /// pushes along its line, where the draft puts them. The two differ only
+    /// while a draft is moving text, and a crop taken from `rect` alone would
+    /// cut the moved text in half.
+    #[serde(default)]
+    pub extent: [f32; 4],
     pub lines: usize,
 }
 
 pub(crate) fn preview_layout(doc: &Document, change: &Change) -> Result<Preview, String> {
-    let prepared = layout::prepare(doc, &inspect(doc, change.page)?, change)?;
+    // One change, so no other edit on its line has pushed it and none of the
+    // shows it pushes is being replaced beside it. A batch that does both is
+    // written by `write`; what the reader sees while typing is this one draft.
+    let prepared = layout::prepare(
+        doc,
+        &inspect(doc, change.page)?,
+        change,
+        &layout::Placement::default(),
+    )?;
     Ok(Preview {
         png: Vec::new(),
         font: prepared.label,
         rect: prepared.rect,
+        extent: prepared.extent,
         lines: prepared.lines,
     })
 }
@@ -478,6 +494,18 @@ struct Inspection {
     // collision bounds but never an editable operator address.
     preserved: Vec<Run>,
     form_text_bounds: Vec<[f32; 4]>,
+    /// Everything the page paints that is not text: a painted rectangle, a
+    /// painted path, an image, and a preserved form's whole BBox, in the
+    /// original displayed page.
+    ///
+    /// Nothing reads this when the editing box grows, and that asymmetry is
+    /// deliberate: growing a box puts the *reader's own* text where they are
+    /// watching it, while pushing the line along puts somebody else's text
+    /// somewhere they never asked for it to go, so the push is held to what the
+    /// editor can see and the box is not. The list is not complete -- an
+    /// annotation's rectangle is not in it, because the editor never reads the
+    /// page's /Annots -- which is why it can only ever refuse a push.
+    graphics: Vec<[f32; 4]>,
     actual_text: BTreeMap<u32, usize>,
     // The active Tf can precede a restored state, not just the last Tf in the
     // stream. Keep its address privately; display font names can be lossy UTF-8.
@@ -676,6 +704,27 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut contexts = BTreeMap::new();
     let mut preserved = Vec::new();
     let mut form_text_bounds = Vec::new();
+    let mut graphics: Vec<[f32; 4]> = Vec::new();
+    // What each named XObject paints, in its own space: the unit square for an
+    // image (ISO 32000-1 8.9.5.2 maps every image onto it) and the BBox for a
+    // preserved form. A name is checked once and drawn many times, each time
+    // under its own CTM, so the rectangle is kept and transformed per use.
+    let mut drawn_bounds: BTreeMap<Vec<u8>, [f64; 4]> = BTreeMap::new();
+    let sheet = crate::pagetree::displayed_page(doc, id);
+    let (sox, soy) = (f64::from(sheet.origin.0), f64::from(sheet.origin.1));
+    let to_display = |bounds: [f64; 4]| {
+        crate::text::to_device(
+            sheet.turns,
+            sheet.width,
+            sheet.height,
+            [
+                bounds[0] - sox,
+                bounds[1] - soy,
+                bounds[2] - sox,
+                bounds[3] - soy,
+            ],
+        )
+    };
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
@@ -785,6 +834,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     if content.operations[index + rectangles_consumed - 1].operator != "n" {
                         tags.paint();
                     }
+                    if let Some(bounds) = clipping::drawn(
+                        &content.operations[index..],
+                        rectangles_consumed,
+                        page_transform,
+                    )? {
+                        graphics.push(to_display(bounds));
+                    }
                     path_until = index + rectangles_consumed;
                 } else if !diagonal(page_transform) {
                     return Err("non-diagonal clips are not editable yet".into());
@@ -821,6 +877,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 if content.operations[index + consumed - 1].operator != "n" {
                     tags.paint();
                 }
+                if let Some(bounds) =
+                    clipping::drawn(&content.operations[index..], consumed, page_transform)?
+                {
+                    graphics.push(to_display(bounds));
+                }
                 path_until = index + consumed;
             }
             // Every accepted path is consumed as a complete sequence, so an
@@ -836,14 +897,31 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     {
                         image_bytes += form.bytes;
                         form_bounds.insert(name.clone(), form.text_bounds);
+                        drawn_bounds.insert(name.clone(), form.bounds);
                     } else {
                         let image = images::check(doc, resources, name, MAX_IMAGES - image_bytes)?;
                         image_bytes += image.bytes;
                         if image.stencil {
                             stencils.insert(name.clone());
                         }
+                        drawn_bounds.insert(name.clone(), [0., 0., 1., 1.]);
                     }
                     image_names.insert(name.clone());
+                }
+                // Where this use of it lands, clipped as its text bounds are.
+                if let Some(&painted) = drawn_bounds.get(name) {
+                    let mut bounds = text_bounds(page_transform, painted);
+                    if let Some(clip) = clip {
+                        bounds = [
+                            bounds[0].max(clip[0]),
+                            bounds[1].max(clip[1]),
+                            bounds[2].min(clip[2]),
+                            bounds[3].min(clip[3]),
+                        ];
+                    }
+                    if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
+                        graphics.push(to_display(bounds));
+                    }
                 }
                 // A stencil mask paints the fill colour current at each use.
                 if stencils.contains(name) {
@@ -1236,6 +1314,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 clip,
                 regions: compound_clips.clone(),
                 stroke,
+                size,
+                scale: page_matrix[0].hypot(page_matrix[1]),
             },
         );
         result.runs.push(Run {
@@ -1283,6 +1363,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         runs: result,
         preserved,
         form_text_bounds,
+        graphics,
         actual_text: BTreeMap::new(),
         font_operators,
         horizontal_bounds,
@@ -1398,7 +1479,30 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     }
     let mut prepared = BTreeMap::new();
     let mut seen = BTreeSet::new();
-    for change in changes {
+    // Left to right along each page, because an edit that pushes its line has
+    // to be written before the edits it pushes: each of those is placed where
+    // the one before it left it (`layout::Placement::inherited`) rather than
+    // being given a displacement its own expansion would throw away.
+    let mut ordered: Vec<&Change> = changes.iter().collect();
+    ordered.sort_by_key(|change| (change.page, change.operator));
+    let mut edited: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+    for change in &ordered {
+        edited
+            .entry(change.page)
+            .or_default()
+            .insert(change.operator);
+    }
+    // Where each show on a pushed line has ended up, page points along its text
+    // axis, as a running total: the operand is built once at the end from the
+    // source's own bytes, so the last edit to push a show is the one that says
+    // how far it went.
+    let mut shifts: BTreeMap<(u32, u32), f64> = BTreeMap::new();
+    // The subset of those that are given a displacement of their own. The rest
+    // of a pushed line rides the text cursor from the show before it, and
+    // writing a second displacement there would push it twice; `layout::drag`
+    // is what tells the two apart.
+    let mut pushes: BTreeMap<(u32, u32), f64> = BTreeMap::new();
+    for change in ordered {
         if !seen.insert((change.page, change.operator)) {
             return Err("duplicate text replacement".into());
         }
@@ -1418,9 +1522,26 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
         }
         if change.layout.is_some() {
             let page = prepared.get_mut(&change.page).ok_or("missing text page")?;
-            let replacement = layout::prepare(doc, page, change)?;
+            let placement = layout::Placement {
+                inherited: shifts
+                    .get(&(change.page, change.operator))
+                    .copied()
+                    .unwrap_or_default(),
+                edited: edited.get(&change.page).cloned().unwrap_or_default(),
+            };
+            let replacement = layout::prepare(doc, page, change, &placement)?;
             if page.actual_text.contains_key(&change.operator) && replacement.lines > 1 {
                 return Err("ActualText editing currently requires a single line".into());
+            }
+            // Every show this edit pushes, told where it ended up. The ones
+            // this batch also replaces are in here without being in `moved`:
+            // they move because their own `prepare` places them there, not
+            // because anything gave their show a displacement.
+            for show in &replacement.line {
+                shifts.insert((change.page, *show), replacement.shift);
+            }
+            for (show, shift) in &replacement.moved {
+                pushes.insert((change.page, *show), *shift);
             }
             page.expanded.insert(change.operator as usize, replacement);
             page.patched.insert(change.operator as usize);
@@ -1537,6 +1658,17 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             }
         }
     }
+    // The line's own push, applied once the whole batch is prepared and always
+    // from the source's own array, so that two edits on one line do not add
+    // their displacements to each other's output.
+    for ((page, operator), shift) in &pushes {
+        let page = prepared.get_mut(page).ok_or("missing text page")?;
+        let moved = layout::push(page, *operator, *shift)?;
+        let show = &mut page.content.operations[*operator as usize];
+        show.operator = "TJ".into();
+        show.operands[0] = moved;
+        page.patched.insert(*operator as usize);
+    }
     // Logical replacement strings are patched with their owning show.
     for change in changes {
         actual::patch(
@@ -1612,6 +1744,9 @@ mod leading_tests;
 
 #[cfg(test)]
 mod layout_tests;
+
+#[cfg(test)]
+mod push_tests;
 
 #[cfg(test)]
 mod rotation_tests;

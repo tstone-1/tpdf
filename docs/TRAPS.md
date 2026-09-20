@@ -230,6 +230,9 @@ hop through the index.
 - Laying a run out again from its glyph widths drops the producer's kerning, and the run no longer fits its own advance
 - A box that shows its size to a thousandth rounds the source size up, and the run's own text no longer fits
 - A text matrix restored with one `Tm` is the same point in exact arithmetic and a different one in floats
+- Pushing a line by its `Td` moves every line after it; only a `TJ` displacement moves the cursor alone
+- A push measured from the room the box had moves the line a whole word too little
+- `array_text` reads exactly one leading number, so a displacement cannot be split the way a continuation is
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -496,6 +499,8 @@ hop through the index.
 - The first `Tf` in an edited stream is the source's own, so a test of the written size read the wrong operator
 - A check that measures in `f64` cannot see a drift a reader makes in `f32`
 - Widening a limit turns every test about that limit into a test of something else
+- An envelope a pixel check calls "the edit" stops being the edit as soon as the edit moves other text
+- A mutation survives when a different guard refuses first, and the refusal reads the same either way
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -23508,3 +23513,116 @@ fixture that was chosen against the old limit** rather than the one that failed;
 refusal test say *which* refusal, so that a draft which quietly stops reaching the guard cannot
 keep passing.
 
+### Pushing a line by its `Td` moves every line after it; only a `TJ` displacement moves the cursor alone
+
+The obvious way to move the rest of a line along is to rewrite the positioning operator in
+front of each run: add the growth to the `Td` that places it. It is wrong, and it is wrong in
+the way this repository has already paid for once.
+
+`Td`, `TD` and `T*` move the **line matrix**, and every line after them starts from that
+matrix. A reader accumulates those moves in single precision — PDFium's `CPDF_AllStates`
+keeps `text_line_pos_` as a pair of floats and adds each move to it — so changing one operand
+changes the float sum every following line is placed by. That is exactly the failure
+`layout::restore_line` exists to prevent: a line restored with one `Tm` carrying the
+accumulated origin put the following 23 lines at 56.8 where the source had 56.799988, and
+moved a column of pixels wherever that crossed a rounding boundary.
+
+A number inside a `TJ` array moves only the **text cursor**, which the next `Td` resets. So
+the push rewrites each moved show's own array and touches no positioning operator at all, and
+the property that comes out of it is not "close enough" but bit-identical: replay the saved
+stream in the reader's own arithmetic and every following line starts on the same bits
+(`a_push_leaves_every_other_line_on_exactly_the_bits_the_source_had`).
+
+The general shape, which is worth carrying past this feature: **when two mechanisms produce
+the same geometry, prefer the one whose state nothing downstream reads.** The cursor is
+consumed by the next positioning operator and by nothing else; the line matrix is read by
+every line to the bottom of the block.
+
+### A push measured from the room the box had moves the line a whole word too little
+
+The push moves the text after an edit by the distance the text ran past what the line had
+free. There are two candidates for where that distance starts, they agree almost always, and
+the one that reads better in a sentence is wrong.
+
+`layout::room` answers how wide the **box** may be. It deliberately skips a neighbour whose
+near edge is inside the box the reader already has, because the box may never shrink —
+and the box the editor opens is the run's own advance *rounded up to a thousandth of a point*.
+A run set flush against the end of this one therefore begins a rounding inside that box and is
+skipped every single time, so `room` returns the near edge of the run **after** it.
+
+Measuring the push from that number moves the flush run by the distance its successor needed,
+which is short by the width of the run in between. Found on a Word minute where `7:00 p.m.` is
+three runs: the edit was accepted, the preview and the saved file agreed pixel for pixel, and
+poppler read the saved line back as `7:0called 0 thp.m.` — the pushed `0` sitting between the
+last two glyphs of the replacement. 9 pt of overlap, invisible to every check in the tree,
+because the pixel check's envelope covers the moved run by construction and the collision check
+leaves the runs it is moving out on purpose.
+
+The zero point is the near edge of the **nearest run the push moves**, which `free_width`
+now returns as `Free::from`. Two things follow. The ceiling is `from + shift` and is not
+widened back up to `room` when `room` is further on, because growing there would put the
+reader's text over the run `room` skipped. And the test that pins it has to reproduce the
+rounding rather than assert it: at `Tf 11.1` a five-glyph run is 33.30000114 pt wide, the box
+opens at 33.301, and a neighbour at exactly 33.3 is inside it.
+
+**What actually found it was an independent reader on a real document.** Nothing synthetic in
+the tree had a run flush against another, and the probe's own verdict was `[PASS]`.
+
+### `array_text` reads exactly one leading number, so a displacement cannot be split the way a continuation is
+
+`continuation_adjustment` writes its compensation as an integer plus an `f32` remainder, and
+the comment above it explains why: lopdf stores reals as `f32`, a whole line shown at `Tf 1`
+under a scaled matrix needs a number in the hundreds of thousands, and `f32` rounds those by
+hundredths. `TJ` sums consecutive numbers, so two items are the same displacement at better
+precision.
+
+Copying that into the push would make every run it moved undiscoverable. `array_text` splits
+**one** optional leading number off as where the run starts and then requires the next item to
+be a string; an array opening with two numbers is refused as an unsupported kerning shape. So
+`layout::push` writes a single `Object::Real` and checks what it can actually express, refusing
+the edit when the value exceeds a million or drifts more than 0.0001 pt — which is reachable,
+on a run set at a small `Tf` under a matrix that scales it back up.
+
+The other half of the same rule: where the source already opens with a number — an indented or
+justified line, which is how pdfTeX writes most of them — the push **replaces** it rather than
+adding a second. That also makes the displacement idempotent, which is what lets a second edit
+on the same line, and an undo back to the original text, be written from the source's own bytes
+instead of accumulated on top of whatever is there.
+
+### An envelope a pixel check calls "the edit" stops being the edit as soon as the edit moves other text
+
+`text-edit-probe --roundtrip` renders every page before and after, and requires every changed
+pixel to lie inside the preview's reported box. It is the strongest check in the text editor,
+and the first thing the push did was turn it red on seven producers out of twelve — correctly,
+because the moved text is outside the box and the check had no way to know it was meant to
+change.
+
+The wrong repair is to widen the envelope to "the line". That is a band, it is not derived
+from anything the edit did, and it would swallow a defect anywhere else on the line — including
+the 9 pt overlap the entry above records. The right one is to make the writer say what it
+moved: `Preview::extent` is the box **together with exactly the runs the draft pushed**, so
+the check still requires every other line and the rest of the page to be identical.
+
+The general form: when a feature legitimately changes pixels a check forbids, the fix is for
+the *producer* to report the new region, not for the check to widen its own idea of where the
+change might be. A region the check invents cannot go stale against the code; a region the code
+reports cannot silently cover more than the code did.
+
+### A mutation survives when a different guard refuses first, and the refusal reads the same either way
+
+`layout::drag` refuses to move a show the editor does not own, and the test for it edited a
+line whose next run was followed by a read-only one. Deleting the guard changed nothing: the
+read-only run is also a hit rectangle, so `reach` had already stopped the push at it and
+refused with the same sentence. The test asserted the message, the message was right, and the
+guard it was written for was never reached.
+
+The fixture that reaches it is one where the dragged show is **invisible**: a blank read-only
+show is in no hit list, so nothing geometric can stop the push at it, and only the stream walk
+can notice that the cursor would carry it along.
+
+Two habits come out of it, and the first is mechanical enough to apply without thinking.
+**When a mutation survives, find out which code answered instead** — not whether the test is
+"about the right thing". Four of the five survivors in this increment were guards shadowed by
+an earlier check, and each needed a fixture in which the earlier check cannot fire, not a
+better assertion. And when two guards produce the same message on purpose, as these do, the
+test cannot tell them apart by reading it: it has to be a case only one of them can answer.

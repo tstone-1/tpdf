@@ -442,7 +442,7 @@ fn wrapping_fits_a_line_by_its_words_not_the_space_it_broke_at() {
 // starts typing, in the same arithmetic: the run's own advance, its size
 // rounded up to the next thousandth of a point, and `grow` set, because the
 // reader has not touched the width control yet.
-fn default_layout(run: &Run) -> Layout {
+pub(super) fn default_layout(run: &Run) -> Layout {
     let x = run.matrix[0].hypot(run.matrix[1]);
     let y = run.matrix[2].hypot(run.matrix[3]);
     let round = |value: f64| (value * 1000.).ceil() / 1000.;
@@ -459,7 +459,7 @@ fn default_layout(run: &Run) -> Layout {
     }
 }
 
-fn in_default_box(doc: &Document, index: usize, replacement: &str) -> Change {
+pub(super) fn in_default_box(doc: &Document, index: usize, replacement: &str) -> Change {
     let page = scan(doc, 0).unwrap();
     let run = &page.runs[index];
     Change {
@@ -473,7 +473,7 @@ fn in_default_box(doc: &Document, index: usize, replacement: &str) -> Change {
 }
 
 // Every show the saved page makes, in order, with its operand.
-fn shows(doc: &Document) -> Vec<Object> {
+pub(super) fn shows(doc: &Document) -> Vec<Object> {
     let page = crate::pagetree::ordered_pages(doc)[0];
     Content::decode_strict(&doc.get_page_content(page))
         .unwrap()
@@ -484,7 +484,7 @@ fn shows(doc: &Document) -> Vec<Object> {
         .collect()
 }
 
-fn kerned(items: &[(&str, i64)]) -> Object {
+pub(super) fn kerned(items: &[(&str, i64)]) -> Object {
     let mut array = Vec::new();
     for (text, kern) in items {
         array.push(Object::string_literal(*text));
@@ -667,7 +667,7 @@ fn a_requested_size_within_one_step_of_the_source_is_the_source_size() {
 // `text_matrix_.Transform(pos)`. Each show that follows a line move is listed
 // with the bits of the point its line starts at; a show that continues a line
 // gets `None`, since its position also depends on the glyph advances before it.
-fn reader_line_starts(doc: &Document) -> Vec<(Object, Option<[u32; 2]>)> {
+pub(super) fn reader_line_starts(doc: &Document) -> Vec<(Object, Option<[u32; 2]>)> {
     let page = crate::pagetree::ordered_pages(doc)[0];
     let content = Content::decode_strict(&doc.get_page_content(page)).unwrap();
     let identity = [1_f32, 0., 0., 1., 0., 0.];
@@ -963,7 +963,7 @@ fn the_room_after_a_run_is_never_less_than_the_box_it_was_given() {
 
 // Every glyph of the synthetic font is 600/1000 wide, so a character at 12 pt
 // is exactly 7.2 pt and the arithmetic below is readable. The page is 300 x 240.
-fn synthetic(body: &str) -> Document {
+pub(super) fn synthetic(body: &str) -> Document {
     let (mut doc, _, _, _) = fonts::tests::fixture();
     let id = crate::pagetree::ordered_pages(&doc)[0];
     let stream = doc.add_object(Stream::new(Dictionary::new(), body.as_bytes().to_vec()));
@@ -988,14 +988,21 @@ fn a_box_the_reader_has_not_sized_grows_into_the_free_space_after_the_line() {
     assert_eq!(scan(&doc, 0).unwrap().runs[0].text, LONGER);
 }
 
+// The neighbour here is read-only, and since 26.9.15 that is what makes this a
+// statement about the box at all: a neighbour the writer may rewrite is pushed
+// along the line instead of stopping the box, which `push_tests` covers. What
+// is left for the box is the text it cannot move.
 #[test]
-fn a_grown_box_stops_two_points_short_of_the_next_text_on_the_line() {
-    // The first FIRST ends at 76 and the second starts at 78: two points
-    // of room. Both runs are the same word because the synthetic font has no
+fn a_grown_box_stops_two_points_short_of_text_it_cannot_move() {
+    // The first FIRST ends at 76 and the second starts at 78: two points of
+    // room. Both runs are the same word because the synthetic font has no
     // validated glyph for every code it declares, and a run it cannot show is
-    // not discovered at all.
-    let crowded =
-        synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 78 180 Td (FIRST) Tj ET");
+    // not discovered at all; the second draws back over itself, which keeps it
+    // read-only and so immovable.
+    let crowded = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 78 180 Td [(FIRST) 3000 (F)] TJ ET",
+    );
+    assert_eq!(scan(&crowded, 0).unwrap().runs.len(), 1);
     let refusal = write(&mut crowded.clone(), &[in_default_box(&crowded, 0, LONGER)]).unwrap_err();
     assert!(refusal.contains("other text follows it"), "{refusal}");
     // The run's own text still fits the box it always had.
@@ -1006,8 +1013,9 @@ fn a_grown_box_stops_two_points_short_of_the_next_text_on_the_line() {
     .unwrap();
     // Moving that neighbour away accepts the same edit, so the refusal above is
     // the neighbour rather than the length.
-    let mut roomy =
-        synthetic("BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 240 180 Td (FIRST) Tj ET");
+    let mut roomy = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 240 180 Td [(FIRST) 3000 (F)] TJ ET",
+    );
     let change = in_default_box(&roomy, 0, LONGER);
     write(&mut roomy, &[change]).unwrap();
     assert_eq!(scan(&roomy, 0).unwrap().runs[0].text, LONGER);

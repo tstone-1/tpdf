@@ -257,6 +257,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 png: vec![137, 80, 78, 71],
                 font: "Noto Sans".into(),
                 rect: [40., 48., 120., 63.],
+                extent: [40., 48., 180., 63.],
                 lines: 1,
             }),
             page: 0,

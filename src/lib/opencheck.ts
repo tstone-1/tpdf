@@ -361,6 +361,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-multipage":
     case "textedit-list-child":
     case "textedit-grow":
+    case "textedit-push":
     case "textedit-wide-spacing":
     case "textedit-wrapped":
     case "textedit-overhang":
@@ -379,6 +380,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const wrapped = phase === "textedit-wrapped";
       const wideSpacing = phase === "textedit-wide-spacing";
       const grow = phase === "textedit-grow";
+      const pushes = phase === "textedit-push";
       const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
       const original = listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
       const replacement = listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
@@ -435,6 +437,42 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (page === 1) check("both source pages have their original text", untouched.includes(agenda ? "REGULAR" : original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
+      if (pushes) {
+        // The line of `textedit-push.pdf` holds SYNTHETIC FIRST at 40 with 160
+        // pt of room and SECOND COLUMN at 200. The draft below is 215.352 pt, so
+        // the second run has to move 55.352 to 255.352, which the fixture's own
+        // generator records and `text-edit-probe --roundtrip` measured. Nothing
+        // here is visible anywhere but in the running application: the preview
+        // the reader watches, and the status line that names what filled a line
+        // when it cannot move any further.
+        const preview = () => document.querySelector<HTMLImageElement>('.text-edit-popup img[alt="PDF preview of the replacement"]');
+        const type = async (text: string) => {
+          field()!.value = text;
+          field()!.dispatchEvent(new Event("input", { bubbles: true }));
+          // 250 ms of debounce, then a worker round trip for the preview.
+          await settle(() => status() !== "Preparing preview..." && status() !== "", SETTLE_MS);
+        };
+        const longer = `${original} ${original}`;
+        await type(longer);
+        check("a draft past the room on its line previews rather than refusing",
+          status().startsWith("Preview:") && preview()?.hidden === false);
+        // Far past what the line can make room for even with the rest of it
+        // moved: the page ends at 400 and SECOND COLUMN has 93 pt behind it.
+        await type("S".repeat(1000));
+        check("a draft past what the line can make room for says the page stopped it",
+          status().includes("no room for more text on this line") && status().includes("edge of the page"));
+        await type(longer);
+        document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
+        await host.idle();
+        const moved = await read();
+        check("the pushed line keeps the replacement and the run it moved",
+          moved.includes(longer) && moved.includes("COLUMN"));
+        check("the line below the pushed one is untouched", moved.includes("SYNTHETIC SECOND"));
+        host.run("edit.undo"); await host.idle();
+        check("undo puts the whole line back", (await read()).includes(`${original}SECOND`) === false
+          && (await read()).includes(original) && (host.edits()?.state.text_edits?.length ?? 0) === 0);
+        break;
+      }
       if (grow) {
         // The box the editor opens is the run's own advance, and it now follows
         // the text a reader types as far as the room after the line allows.

@@ -9634,6 +9634,56 @@ with the records of the previous section's after run: 597,062 verdicts unchanged
 refused before and accepted now, 0 accepted before and refused now; 9,309 worker agreement
 checks, 0 disagreements; 1,089 s on six processes.
 
+### Moving the rest of the line along — measured 2026-09-20
+
+When a replacement needs more room than the line has free, the runs after it on that
+line are pushed along by exactly the distance it overran, and the edit is accepted
+instead of refused. `layout::reach` answers how far that set may go and what stops it;
+`layout::drag` decides which shows need a displacement of their own; `layout::push`
+writes it. The rule, and why it is a rule rather than a consequence, is in
+`docs/PLAN.md` §7.
+
+**The push moves the text cursor, never the line matrix.** A displacement inside a
+`TJ` array moves the cursor; `Td`, `TD`, `T*` and `Tm` move the line matrix that every
+following line accumulates in single precision. Rewriting one of those would
+reintroduce the drift *Restoring the line matrix by replaying the source* was written
+to remove, so the push rewrites each moved show's own array instead.
+
+**Measured on the 31-file public sample, 44,282 runs, macOS arm64, release probe:**
+
+| trial, as typed | before the push | after |
+|---|---:|---:|
+| +10% longer | 44% (19,389) | **58% (25,847)** |
+| +25% longer | 33% (14,756) | **48% (21,195)** |
+| +50% longer | 28% (12,316) | **41% (18,323)** |
+| same length | 97% | 97% |
+| unchanged | 99% | 99% |
+
+`--compare` against the pre-push records: 578,093 verdicts unchanged in kind, 18,968
+refused before and accepted now, **1 accepted before and refused now**, and that one is
+the defect below. 9,309 worker-agreement checks, 0 disagreements, 1,018 s on six
+processes.
+
+**The one regression, and what it cost to find.** On page 104 of the ReportLab guide a
+run of one character stopped being able to save its own **unchanged** text: *"There is
+no room for more text on this line: the text after it cannot be moved."* The push's
+origin — the point text has to pass before anything moves — was held to the run's own
+far edge but not to the box that arrived. The editor's default box is the run's advance
+rounded **up** to the thousandth, so text that merely fills the box measures a hair past
+that edge, which the push read as growth and then refused wherever the line could not
+move. `from` is now also held to the box's own width, and the run saves its own text
+again.
+
+⚠ **That fix is covered by the corpus comparison and not by a unit test.** Three
+synthetic fixtures were built to reproduce it — a rounded box against a neighbour that
+cannot move, the same with the neighbour inside the run's own ink, and the same again at
+a coordinate where single-precision steps are an order of magnitude coarser — and in all
+three the identity edit writes the same bytes with the fix and without it, so a test over
+them could not fail. What the real page has and the fixtures do not was not established;
+the honest statement is that the instrument that found this defect is the run-by-run
+comparison over real documents, and that is what has to be run when this code changes.
+An assertion that cannot go red was deleted rather than kept for the look of it.
+
 ### The editing box follows the typed text into the room on its line — measured 2026-09-20
 
 The second increment the length survey asked for. Until now the box the editor opens was

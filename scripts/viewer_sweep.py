@@ -124,6 +124,12 @@ WINDOW_CORPORA: list[tuple[str, str]] = [
 NOT_WINDOW: list[tuple[str, str]] = [
     ("textedit-embedded", "single-page synthetic subset for text-edit-probe and tabs_check.py --phase textedit"),
     (
+        "textedit-push",
+        "single-page synthetic line with a second run on it, for tabs_check.py "
+        "--phase textedit-push: the only fixture in testdata whose first line "
+        "has anything after it to push",
+    ),
+    (
         "links-rotated",
         "mixes page sizes, which reddens two rotation checks that derive what "
         "they expect from page 1's aspect ratio --- the same split, for the same "

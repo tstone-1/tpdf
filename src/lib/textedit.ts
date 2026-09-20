@@ -12,7 +12,13 @@ export interface TextRun {
   display_rect: [number, number, number, number];
   minimum_height?: number;
 }
-export interface TextPreview { png: number[]; font: string; rect: [number, number, number, number]; lines: number }
+export interface TextPreview { png: number[]; font: string;
+  /** The box the draft needed: what the dashed outline follows. */
+  rect: [number, number, number, number];
+  /** That box together with every run the draft pushes along its line, which is
+   * what the worker's crop covers. Only the backend reads it. */
+  extent: [number, number, number, number];
+  lines: number }
 export interface TextRuns { page: number; revision: number[]; runs: TextRun[]; preview?: TextPreview }
 export interface TextLayout { width: number; height: number; size: number; wrap: boolean;
   font: "auto" | "original" | "noto_sans" | "noto_sans_bold" | "noto_sans_italic" | "noto_sans_bold_italic" | "noto_sans_cjk_sc" | "noto_sans_cjk_sc_bold";
