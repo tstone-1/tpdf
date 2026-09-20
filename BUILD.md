@@ -5154,6 +5154,28 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.16 verification, macOS arm64, 2026-09-20:** all 25 gates passed on macOS
+and `check_windows.py` type-checked the Windows tree; the release run's own gate
+job passed on `windows-2025`. Every mutation selected `--since v26.9.15` ran: 207
+frontend and 570 Rust, the Rust set in 1,642 s. One Rust mutation did not compile
+-- `edits: address a mark by its baseline page rather than its position`, whose
+replacement rewrote a `match` that gained an arm when inserting pages added
+`PageSource::Imported`. It was fixed and caught. That is the third stale mutation
+in a week and all three were the same kind: the `anchors` gate asserts that a
+search string is present, never that the mutated file compiles, so a mutation can
+rot for months and read as covered.
+
+Ten textedit and import window phases passed on macOS, the import phase at 28/28
+after this cycle's three increments added ten checks to it. The redaction of an
+own page beside an inserted one was checked end to end through the sandboxed
+worker (`redact-import-probe`, 17/17) and read back with `qpdf --check` and pypdf.
+
+**The Windows window phases, `print-probe` and `redact-reach-probe` were not run:
+MOTHERSHIP was unreachable (asleep) for the whole release.** So this release has
+the Windows compiler, the Windows test suite and the Windows gate job behind it,
+and nothing that opens a window there. Worth running against the published tag
+when the machine is next up.
+
 **26.9.15 verification, macOS arm64 and Windows x64, 2026-09-20:** all 25 gates
 passed on macOS and `check_windows.py` type-checked the Windows tree. Every
 mutation selected `--since v26.9.14` ran: 38 frontend and 287 Rust, in 832 s. One
