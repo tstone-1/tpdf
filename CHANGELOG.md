@@ -21,6 +21,25 @@ have the binary.)
 
 ### Added
 
+- Text on a page inserted from another file can now be edited, with the same
+  discovery, the same box that grows into the room on its line and the same
+  refusals as text on the document's own pages. Until now it was declined with
+  "Text on a page inserted from another file cannot be edited yet. Save the
+  document and open it again to edit it." The reason recorded for that — that a
+  replacement is checked against the opened document's content streams, which an
+  inserted page has no page number in — was true and was not a reason: the file
+  those pages came from is open in a sandboxed process of its own, which is what
+  already draws and searches them, and asking it the same question is the whole
+  of what the edit needed. What a save writes is the edit, on that page, with
+  every other page of both files untouched.
+
+  Two things follow that a reader can meet. Inserting the same page of the same
+  file twice is still allowed; editing the text of a page that is in the document
+  twice is refused, because an edit reaches the *file* and would then appear in
+  the copy nobody edited — delete one of them and the other is editable. And
+  inserting a page that already has edited text in the document is refused for
+  the same reason, naming the page.
+
 - A web link on a page inserted from another file now opens in your browser,
   after the same confirmation as a link on the document's own page. Until now it
   was drawn and then declined with "opens a web link — not followed", which read

@@ -13032,9 +13032,13 @@ apply would be a guard no input can fire.
 Turning, cropping, moving, marking and deleting an imported page are the baseline page's
 operations unchanged. Three things are refused on it, each with its own sentence:
 
-- **Text replacement** (`TextOnImportedPage`) --- the replacement is validated by the opened
+- ~~**Text replacement** (`TextOnImportedPage`) --- the replacement is validated by the opened
   document's worker and addressed by a page number in *that* file. It expires with the render
-  path.
+  path.~~ Served since 2026-09-20 --- see *Editing the text of an inserted page*. What replaced
+  it is narrower and is about the document rather than the page:
+  `TextOnRepeatedImport` refuses an edit on a page this document shows twice, and
+  `ImportOfEditedPage` refuses inserting a page that already carries one, because an edit
+  reaches the *file* and the writer imports it once per position.
 - **A foreign comment said to be on it** (`ForeignCommentOnImportedPage`), through `rewrite`,
   `discard` or a caller-built command --- the object number names an annotation of the opened
   file, so the writer would edit whatever that file has at that number on another page.
@@ -13184,8 +13188,11 @@ the backend and the defect was in the frontend). The other file's links are scan
 `importedlinks.ts`; their ids are renumbered above the opened file's, since both scans number
 from zero and the viewer follows a link by id.
 
-Refused, each with a sentence: editing an imported page's text (`document_text_runs` says the
-page came from another file), redaction anywhere in a document holding one and inserting
+Refused, each with a sentence: ~~editing an imported page's text (`document_text_runs` says the
+page came from another file)~~ (edited since 2026-09-20 --- see *Editing the text of an
+inserted page*, below, and read that entry rather than this sentence: the reason recorded here
+named the opened document's worker and forgot that the other file has one of its own),
+redaction anywhere in a document holding one and inserting
 beside pending redactions (increment 1's refusals), and an encrypted or locked file at insert.
 Form fields on an imported page are not listed --- the field scan is the opened document's ---
 so there is nothing to fill rather than a refusal.
@@ -13217,8 +13224,9 @@ the imported page's text is the other file's, that a search finds a word on it, 
 and one redo move all of them, and that a save writes them into the file.
 
 **Not done:** ~~following a web link~~ (done 2026-09-20 --- see *Following a web link on an
-inserted page*, below) or reading the outline of the other file; editing an
-imported page's text before a save; the character-mapping warning for an imported page;
+inserted page*, below) or reading the outline of the other file; ~~editing an
+imported page's text before a save~~ (done 2026-09-20 --- see *Editing the text of an inserted
+page*, below); the character-mapping warning for an imported page;
 and a truncated other file stops the viewer asking for tiles for the whole document rather
 than for that file's pages, because `DocumentGone` is one flag per scroller. The merge and the
 image-only redaction of a document holding imported pages stay refused, as increment 1 left
@@ -13358,8 +13366,124 @@ translation a click goes through rather than the scan. Nothing opens; the confir
 
 **Not done:** the other file's **outline** is still not read, so a web link that exists only
 as a bookmark of the inserted file is unreachable --- there is no second outline request and
-no place to put its rows. Editing an imported page's text and redacting a document that holds
-one are still refused, and both are larger than this was.
+no place to put its rows. Redacting a document that holds
+one is still refused and is larger than this was; ~~editing an imported page's text~~ was too,
+and is done (2026-09-20, below).
+
+#### Editing the text of an inserted page — done 2026-09-20
+
+**The recorded reason was the same shape as the web link's, one increment earlier.**
+`Refusal::TextOnImportedPage` and `page_text_source`'s sentence both said a replacement is
+validated against *the opened document's* content streams, by its worker, and addressed by
+the page's number in that file --- which an inserted page has not got. Every clause of that
+is true. None of it is a reason: the file those pages come from is open as a document of the
+render service in a sandboxed pool of its own (`page_import_prepare`), which is already what
+draws, extracts and searches its pages, and asking *that* worker the same question is the
+whole of what discovery, the preview and the validation needed. The difference from the web
+link is worth stating, because it is the one thing that was genuinely backend: there the
+frontend was refusing a case it could have served, and here the command layer and the model
+were, with the writer carrying the other half.
+
+##### What the pages' numbers cost, and it is the whole increment
+
+Page *n* of the opened document and page *n* of a file inserted from are two different pages.
+Everything below is that collision, and the reason every test in this increment edits **the
+same page number in both files**: a check whose two fixtures differ in their page numbers
+passes with the two confused.
+
+* **`textedit::Edit`** is a `Change` and the file its page number belongs to, `None` for the
+  opened document. The file is *beside* the change rather than in it, which is the split
+  `PlannedSource` and `PageSource` already make --- a `Change` is a replacement addressed in
+  one document, and every validator, fixture and probe in `textedit` takes one together with
+  the `Document` it is addressed in. It is `#[serde(flatten)]`, so the wire shape is what it
+  always was with one optional key more, and a journal, plan or reply written before today
+  reads back as the replacement on the opened document it meant. Roughly 110 `Change`
+  literals across the crate are untouched by it, which is the second reason for the split.
+* **The model derives the file from the page**, never from the body: `Doc::replace_text`
+  matches on `PageSource` with an arm per variant, and `Doc::text_changes` reads each entry's
+  file off the page it is keyed by. Nothing can move a page between files, so the pairing is
+  as stable as the id --- and a body carrying its own copy is a second statement of one fact.
+* **The command layer routes.** `page_text_address` is `pages.ts`'s `addressOf` on this side
+  of the boundary, and it is this side that decides: the webview names a journal page id, and
+  which worker answers is the model's answer. A file the state has no handle for is refused
+  rather than read out of the opened document --- the same `undefined` `addressOf` answers,
+  which draws nothing rather than the wrong file's page. `PageRuns::source` carries the answer
+  back, filled in by the command because the worker holds one document and cannot name it.
+* **`Edits::render_changes` answers by render handle**, and two kinds of handle reach it: an
+  open document's, and one of the files it imported from. Everything that renders, extracts or
+  searches an inserted page names the second kind, so a lookup that only knew the first drew
+  every inserted page without the reader's own edit on it and nothing said so. That was the
+  one defect in this increment that no refusal would have reported.
+* **The writer edits the file, before it imports from it.** `save::rewrite` splits
+  `plan.text_edits` by `Edit::source` against `Plan::sources` and hands each file's
+  replacements to `textedit::write` on *that* document, above the opened document's own edits
+  and above `import_pages`. Doing it the other way round means addressing a page that is in no
+  page tree yet --- `merge::import` copies objects and places nothing, and the order is not
+  built until `materialise` --- and it means the objects an edit adds are not reachable from
+  the page when the import walks it. The revision digest is what makes this more than a
+  preference: a change addressed in the other file and handed to the opened document is
+  refused with *"text changed since this run was inspected"* rather than applied.
+
+##### One page in two positions, and the two refusals it needs
+
+A reader may insert the same page of the same file twice; the model allows it and the writer
+gives each position its own objects (`Refusal::ImportedTwice` is about one *selection*). An
+edit cannot follow, because the writer edits the **file** and then imports the edited page
+once per position --- so the copy nobody edited would carry the words too.
+
+The model is the only layer that can see both positions, so it refuses there:
+`Refusal::TextOnRepeatedImport` when a reader edits a page the document shows twice, and
+`Refusal::ImportOfEditedPage` when a reader inserts a page that already carries a
+replacement. Both name what to do instead. The writer refuses the same two shapes and a third
+--- a replacement on a page the plan does not place --- because a plan reaches it from outside
+the process, and because dropping one silently would report a save that did not write the
+reader's words.
+
+`Refusal::TextOnImportedPage` was **deleted** rather than left unreachable, on this
+repository's own rule about a guard whose removal reddens nothing.
+
+##### What was measured
+
+Rust: five tests in `docmodel_import_tests` (an edit named against its file with the opened
+file's page 0 edited beside it; undo and redo; a stale page number; a page shown twice, and
+the deletion that lifts it; an insert refused over an existing edit), four in `commands::read`
+(the handle, the refusal for a file with no handle, the filter that hands a worker only its
+own document's replacements, the baseline control), one in `edits` over **two** imported files
+(the render handles, the plan, and two extracts), five in `save::import_tests` (a replacement
+written into the imported page with the opened file's page of the same number untouched; both
+documents edited in one save; the three plan refusals; a change addressed at the wrong
+document refused by its digest), and one in `textedit` pinning `Edit`'s wire shape both ways.
+TypeScript: `changedTextPages` keyed by file, the editor matching its own file in both
+directions, `PageMap.slotOfSource`, and the viewer re-extracting only the edited page.
+
+Mutations: **thirteen Rust and six frontend, all nineteen caught by the test named for each**,
+plus two existing Rust anchors re-aimed because the lines they name moved and one stale
+mutation deleted with the refusal it aimed at. Two of the nineteen failed on their first run
+and both failures were the mutation's rather than the code's: one survived because the fixture
+had a single imported file, so the file comparison had one possible answer --- fixed by
+importing from a second file, which is the shape this increment's tests need everywhere --- and
+one did not compile.
+
+**The save round trip is `scripts/insert_text_check.py`**, through `insert-text-probe`: it
+inserts page 1 of `text-base14.pdf` into `links.pdf` after page 1, edits that page's first run
+to a word in neither fixture, saves, and reads the result back with `qpdf --check` and `pypdf`
+--- neither of which shares code with tpdf. Seven checks, including that the opened document's
+own page 1 --- the same number as the page inserted --- is unchanged, that every one of its
+eight pages reads back as it was, and that the replacement is on exactly one page. **Proved by
+control**: routing every replacement to the opened document made it exit 1.
+
+**Not measured, and the window check that would measure it is written and has not been run:**
+`tabs_check.py --phase import` gains six checks --- the editable run on the inserted page is
+the other file's text, the journal entry names the file it came from, the page's text picks up
+the replacement, the opened document's page of the same number is untouched, and one undo
+takes the replacement back out before the phase's existing undo takes the import out.
+
+**Not done:** redaction in a document holding inserted pages is still refused, for the reason
+`Refusal::RedactionBesideImportedPages` gives --- and that reason is now worth re-reading
+rather than trusting, since the one this increment removed had the same shape. What is
+different there is stated in that refusal and in §T6.19: the *scan* that proves a redaction
+clean reads the whole written file, so imported text repeating a removed word reads as a leak,
+and the image-only path renders every output page. Neither is a page-number question.
 
 #### Deleting a comment the file came with — done 2026-08-30
 

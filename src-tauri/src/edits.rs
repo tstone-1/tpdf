@@ -527,9 +527,11 @@ fn channel(value: f32) -> f32 {
 /// an answer, and the only way for it to be wrong is to be stale.
 #[derive(Clone, PartialEq, Debug, Serialize)]
 pub struct EditState {
-    /// Pending text bodies identify which rendered pages and character caches changed.
+    /// Pending text bodies identify which rendered pages and character caches
+    /// changed --- each with the file its page number belongs to, since a page
+    /// inserted from another document is numbered in *that* file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text_edits: Vec<crate::textedit::Change>,
+    pub text_edits: Vec<crate::textedit::Edit>,
     /// Pending form answers, shared by all widgets of each field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forms: Vec<crate::forms::Change>,
@@ -668,14 +670,58 @@ fn answered(take: impl FnOnce() -> Option<Fingerprint>) -> Option<Fingerprint> {
 }
 
 impl Edits {
-    /// Pending text bodies for rendering; this never waits for a file fingerprint.
-    pub fn text_changes(&self, doc: u32) -> Vec<crate::textedit::Change> {
+    /// Pending text bodies for one open document, each naming the file its
+    /// page number belongs to. This never waits for a file fingerprint.
+    pub fn text_changes(&self, doc: u32) -> Vec<crate::textedit::Edit> {
         self.docs
             .lock()
             .expect("edits lock")
             .get(&doc)
             .map(|open| open.model.text_changes())
             .unwrap_or_default()
+    }
+
+    /// The replacements addressed in the document open under the **render
+    /// handle** `handle`, ready to be applied to its own bytes.
+    ///
+    /// **Two kinds of handle answer here, and that is the point.** One names a
+    /// document the reader opened, whose model is in this table; the other
+    /// names a file that document imported from, which is a document of the
+    /// render service with no model of its own (`Open::sources`). Everything
+    /// that renders, extracts or searches an imported page names the second
+    /// kind --- `pages.ts`'s `addressOf` is where that is decided --- so a
+    /// lookup that only knew the first would draw every inserted page without
+    /// the reader's own edit on it, and nothing would say so.
+    ///
+    /// The answer is bare [`crate::textedit::Change`]s, because the caller has
+    /// the document in hand and every page number here is a page of it. A
+    /// source handle belongs to at most one open document: a second tab
+    /// importing the same file opens it again (`page_import_prepare`), so
+    /// there is no second model to ask.
+    pub fn render_changes(&self, handle: u32) -> Vec<crate::textedit::Change> {
+        let docs = self.docs.lock().expect("edits lock");
+        if let Some(open) = docs.get(&handle) {
+            return open
+                .model
+                .text_changes()
+                .into_iter()
+                .filter(|edit| edit.source.is_none())
+                .map(|edit| edit.change)
+                .collect();
+        }
+        for open in docs.values() {
+            let Some((&file, _)) = open.sources.iter().find(|(_, &held)| held == handle) else {
+                continue;
+            };
+            return open
+                .model
+                .text_changes()
+                .into_iter()
+                .filter(|edit| edit.source == Some(file.get()))
+                .map(|edit| edit.change)
+                .collect();
+        }
+        Vec::new()
     }
 
     /// Starts a model for a freshly opened document.
@@ -2070,16 +2116,29 @@ fn planned_notes(model: &Doc, pages: &[PageView]) -> Vec<PlannedNoteEdit> {
 }
 
 /// Only replacements on the pages the writer will keep reach its plan.
-fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<crate::textedit::Change> {
+///
+/// **Matched on the file as well as the page number**, which is the whole of
+/// what an imported page costs this filter: page 3 of the opened document and
+/// page 3 of a file inserted from are two pages, and a filter that compared
+/// only the number would put one file's replacement into the other's list.
+fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<crate::textedit::Edit> {
     model
         .text_changes()
         .into_iter()
-        .filter(|change| {
-            pages
-                .iter()
-                .any(|page| page.source == PageSource::Baseline(change.page))
-        })
+        .filter(|edit| pages.iter().any(|page| shows(page.source, edit)))
         .collect()
+}
+
+/// Whether a page draws the document and page number a replacement addresses.
+fn shows(source: PageSource, edit: &crate::textedit::Edit) -> bool {
+    match (edit.source, source) {
+        (None, PageSource::Baseline(number)) => number == edit.change.page,
+        (Some(file), PageSource::Imported { source, page }) => {
+            source.get() == file && page == edit.change.page
+        }
+        (None, PageSource::Imported { .. } | PageSource::Blank(_))
+        | (Some(_), PageSource::Baseline(_) | PageSource::Blank(_)) => false,
+    }
 }
 
 /// The files `pages` take pages from, each once, in the order first named.
@@ -2139,9 +2198,17 @@ fn planned_discards(model: &Doc, pages: &[PageView]) -> Vec<PlannedDiscard> {
 /// kept out of five from a five-page document that lost two under it.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Plan {
-    /// Replacements validated against the worker's original content scan.
+    /// Replacements validated against the worker's original content scan,
+    /// each naming the document its page number is a page of.
+    ///
+    /// **One list for both, rather than one per document**, because they are
+    /// one concept: a replacement, and where it goes. `save::rewrite` splits
+    /// them by `Edit::source` against [`Plan::sources`], which is the same
+    /// pairing an imported page itself takes. A plan written before an
+    /// imported page could be edited reads back with every entry on the
+    /// opened document, which is what it meant.
     #[serde(default)]
-    pub text_edits: Vec<crate::textedit::Change>,
+    pub text_edits: Vec<crate::textedit::Edit>,
     /// Answers to write with explicit appearances in the sandbox.
     #[serde(default)]
     pub forms: Vec<crate::forms::Change>,
@@ -2626,7 +2693,8 @@ impl From<Refusal> for crate::failure::Failure {
             | Refusal::EmptyImport
             | Refusal::NoSuchSourcePage { .. }
             | Refusal::ImportedTwice(_)
-            | Refusal::TextOnImportedPage(_)
+            | Refusal::TextOnRepeatedImport(_)
+            | Refusal::ImportOfEditedPage(_)
             | Refusal::RedactionBesideImportedPages
             | Refusal::ImportBesideRedactions => crate::failure::Action::Amend,
         };
@@ -2669,11 +2737,19 @@ pub(crate) fn describe(why: Refusal) -> String {
             page + 1
         ),
         Refusal::NoSuchSelection(_) => "no such inserted pages".into(),
-        Refusal::TextOnImportedPage(_) => {
-            "tpdf cannot edit text on a page inserted from another document yet --- save, reopen, \
-             and edit it there"
+        // Named for what the reader has to change rather than for the limit:
+        // the page is in the document twice, and taking one of them out is
+        // what makes it editable. See `Refusal::TextOnRepeatedImport`.
+        Refusal::TextOnRepeatedImport(_) => {
+            "that page of the other document is in this one twice, and an edit would appear in \
+             both --- delete one of them, then edit the other"
                 .into()
         }
+        Refusal::ImportOfEditedPage(page) => format!(
+            "page {} of that document already has edited text in this one, and inserting it \
+             again would show the edit twice --- undo the edit, or insert a different page",
+            page + 1
+        ),
         Refusal::ForeignCommentOnImportedPage(_) => {
             "that comment is not on a page inserted from another document".into()
         }
@@ -3416,6 +3492,139 @@ mod tests {
         assert!(
             subset.sources.is_empty(),
             "an extract of the opened file's pages reads no other file"
+        );
+    }
+
+    /// A replacement addressed at page `page` of whichever document, with a
+    /// replacement long enough to tell two of them apart.
+    fn a_change(page: u32, replacement: &str) -> crate::textedit::Change {
+        crate::textedit::Change {
+            layout: None,
+            page,
+            revision: vec![1; 32],
+            operator: 3,
+            original: "SYNTHETIC ORIGINAL TEXT".into(),
+            replacement: replacement.into(),
+        }
+    }
+
+    /// The renderer asks by **render handle**, and a handle that is an
+    /// imported file's answers with that file's replacements --- addressed by
+    /// its own page numbers, and without the opened document's.
+    ///
+    /// **The premise is the collision**: both edits are page 0, so a lookup
+    /// that answered the same list for both handles would draw each file's
+    /// page 0 with the other's words and nothing would say so.
+    #[test]
+    fn a_source_handle_answers_with_that_files_replacements() {
+        let edits = opened();
+        let own = edits.state(7).expect("open").pages[0].id;
+        let placed = edits
+            .import(7, Some(own), other_file(2), vec![0], 40)
+            .expect("import")
+            .state
+            .pages[1]
+            .id;
+        // **A second file, and it is not decoration.** With one imported file
+        // every comparison of "which file is this replacement addressed in"
+        // has only one answer, so a filter that dropped the file and kept the
+        // page number would agree with a correct one on every case. Both
+        // files' page 0 is edited here, so the two are told apart or they are
+        // not.
+        let elsewhere = edits
+            .import(7, Some(placed), another_file(2), vec![0], 41)
+            .expect("a second file")
+            .state
+            .pages[2]
+            .id;
+        edits
+            .replace_text(7, own, a_change(0, "OPENED"))
+            .expect("the opened file's page 0");
+        edits
+            .replace_text(7, placed, a_change(0, "IMPORTED"))
+            .expect("the other file's page 0");
+        edits
+            .replace_text(7, elsewhere, a_change(0, "ELSEWHERE"))
+            .expect("the second file's page 0");
+
+        let opened_side = edits.render_changes(7);
+        assert_eq!(
+            opened_side
+                .iter()
+                .map(|change| change.replacement.as_str())
+                .collect::<Vec<_>>(),
+            vec!["OPENED"],
+            "the opened document's handle answers with its own pages only"
+        );
+        let other_side = edits.render_changes(40);
+        assert_eq!(
+            other_side
+                .iter()
+                .map(|change| (change.page, change.replacement.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(0, "IMPORTED")],
+            "the other file's handle answers with that file's page numbers"
+        );
+        assert_eq!(
+            edits
+                .render_changes(41)
+                .iter()
+                .map(|change| change.replacement.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ELSEWHERE"],
+            "and the second file's handle answers with the second file's"
+        );
+        // A handle nobody opened and nobody imported from answers nothing,
+        // rather than falling through to the document that happens to exist.
+        assert!(edits.render_changes(42).is_empty());
+
+        // And the plan carries both, each still naming its own document.
+        let plan = edits.plan(7).expect("plan");
+        let mut carried: Vec<(Option<u32>, &str)> = plan
+            .text_edits
+            .iter()
+            .map(|edit| (edit.source, edit.change.replacement.as_str()))
+            .collect();
+        carried.sort();
+        assert_eq!(
+            carried,
+            vec![
+                (None, "OPENED"),
+                (Some(1), "IMPORTED"),
+                (Some(2), "ELSEWHERE")
+            ]
+        );
+        // An extract of the opened document's own pages leaves the other
+        // file's replacement behind with the page it belongs to --- the
+        // filter is by file as well as by page number, and both entries are
+        // page 0.
+        let subset = edits.plan_subset(7, &[0]).expect("the opened page alone");
+        assert_eq!(
+            subset
+                .text_edits
+                .iter()
+                .map(|edit| (edit.source, edit.change.replacement.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(None, "OPENED")]
+        );
+        let subset = edits.plan_subset(7, &[1]).expect("the inserted page alone");
+        assert_eq!(
+            subset
+                .text_edits
+                .iter()
+                .map(|edit| (edit.source, edit.change.replacement.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(Some(1), "IMPORTED")],
+            "one file's page 0, not the other file's page 0 beside it"
+        );
+        let subset = edits.plan_subset(7, &[2]).expect("the second file's page");
+        assert_eq!(
+            subset
+                .text_edits
+                .iter()
+                .map(|edit| (edit.source, edit.change.replacement.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(Some(2), "ELSEWHERE")]
         );
     }
 

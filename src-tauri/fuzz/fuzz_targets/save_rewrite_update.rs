@@ -134,6 +134,17 @@ struct RawText {
     operator: u16,
     original: String,
     replacement: String,
+    /// Which document the page number is a page of --- `None` for the opened
+    /// one, and otherwise a `docmodel::SourceId` as its number.
+    ///
+    /// **Arbitrary rather than always `None`**, and it has to be: since
+    /// 26.9.16 a replacement can be addressed in a file the plan imports
+    /// from, and `save::text_by_document` refuses three shapes of that
+    /// addressing --- a file the plan does not list, a page no slot places,
+    /// and a page more than one slot places. A target that only ever built
+    /// `None` could reach none of them, and the refusals would look covered
+    /// while nothing had ever driven them.
+    source: Option<u8>,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -253,13 +264,16 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
             .text_edits
             .into_iter()
             .take(128)
-            .map(|change| tpdf_lib::textedit::Change {
-                layout: None,
-                page: u32::from(change.page),
-                revision: change.revision.to_vec(),
-                operator: u32::from(change.operator),
-                original: change.original,
-                replacement: change.replacement,
+            .map(|change| tpdf_lib::textedit::Edit {
+                source: change.source.map(u32::from),
+                change: tpdf_lib::textedit::Change {
+                    layout: None,
+                    page: u32::from(change.page),
+                    revision: change.revision.to_vec(),
+                    operator: u32::from(change.operator),
+                    original: change.original,
+                    replacement: change.replacement,
+                },
             })
             .collect(),
         forms: raw

@@ -1891,11 +1891,31 @@ its end are refusals. The total size is bounded by the merge's `MAX_MERGE_BYTES`
 page, and inserting while regions are marked (`Refusal::RedactionBesideImportedPages`,
 `ImportBesideRedactions`): the plan, the image-only render and the scan that proves a
 redaction clean are all asked of the opened document's worker, which cannot see the other
-file's page. Text replacement on an imported page, and a merge of a document that holds one.
+file's page. ~~Text replacement on an imported page~~ (see below, 2026-09-20), and a merge of
+a document that holds one.
+
+**Text replacement on an imported page, added 2026-09-20.** The writer now edits each
+incoming document before `merge::import` walks it, so `textedit::write` --- the content-stream
+parser and rewriter --- runs over a **second** attacker-chosen document in the same call. It
+is the same code on the same kind of input in the same place: inside the sandboxed worker, on
+a document loaded from the merge's read-only input mapping under `MAX_DECODE`, with
+`textedit`'s own bounds (1 MiB decoded content, 16,384 operators, 32 MiB of images) applying
+per document rather than across them. No new parser, no new channel, and nothing comes back:
+the merged document goes out the rewrite's existing output channel as before.
+
+What is checked before any of it: each replacement names a file the plan lists, and a page of
+it that exactly one position places (`save::text_by_document`). A plan reaches the writer from
+outside the process, so those are the model's refusals restated where a forged plan meets
+them --- and the third case is why they are refusals rather than filters: editing the file and
+importing a different page of it would write nothing and report a save.
 
 **Residual.** The imported pages' own annotations, fonts and images come across as objects
 and are written as they were --- this is an import, not a sanitation, exactly as a merge is
 not. A `/Dest` from an imported page to one left behind dangles rather than importing it.
+And a replacement is now validated by the **inserted file's own render worker**
+(`document_text_runs` routed by `page_text_address`), which is a second worker parsing
+attacker-chosen bytes for an edit --- the same pool `page_import_prepare` already opened for
+drawing and searching those pages (§T6.20), asked one more kind of question.
 
 #### T6.20 — Opening a second file to insert its pages, added 2026-09-19
 

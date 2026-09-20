@@ -1452,15 +1452,31 @@ pub enum Refusal {
     /// the sending side, answered with a refusal rather than a panic because
     /// [`Doc::apply`] is public.
     NoSuchSelection(SelectionId),
-    /// A text replacement on a page taken from another file.
+    /// A text replacement on a page of another file that this document shows
+    /// in more than one position.
     ///
-    /// **The replacement is validated against the opened document's content
-    /// streams**, by its worker, and addressed by the page's number in *that*
-    /// file. A page from another file has none, and its content is not in the
-    /// graph the writer edits text in until after the text has been written.
-    /// This expires with the render path and a second worker for the imported
-    /// file; it is not a fact about the page.
-    TextOnImportedPage(PageId),
+    /// ⚠ **This variant replaced `TextOnImportedPage` on 2026-09-20, and the
+    /// sentence that one carried is the lesson.** It said the replacement is
+    /// validated against *the opened document's* content streams and that an
+    /// imported page has no page number there --- both true, and neither a
+    /// reason to refuse: the other file is open in a worker pool of its own,
+    /// which is what draws and searches its pages, and asking that worker the
+    /// same question is all the edit ever needed. What is left is narrower and
+    /// is genuinely about the document: the writer edits the *file* and then
+    /// imports the edited page once per position it occupies, so an edit on a
+    /// page placed twice would appear in the position nobody edited. Two
+    /// imports of one page are allowed and are what
+    /// [`Refusal::ImportedTwice`] leaves open; editing one of them is not.
+    TextOnRepeatedImport(PageId),
+    /// A page of another file placed again while a position already showing it
+    /// carries a text replacement. Zero-based, in that file.
+    ///
+    /// [`TextOnRepeatedImport`](Refusal::TextOnRepeatedImport) from the other
+    /// side, and its own variant because it is its own sentence: this reader
+    /// was inserting, not typing. Refused here rather than at the save so the
+    /// reader hears it while they can still act on it --- the writer refuses
+    /// the same shape, because a plan reaches it from outside this process.
+    ImportOfEditedPage(u32),
     /// A comment out of the file, rewritten or deleted, said to be on a page
     /// taken from another file.
     ///
@@ -1953,6 +1969,47 @@ impl Working {
             .any(|page| matches!(page.source, PageSource::Imported { .. }))
     }
 
+    /// How many live pages show page `page` of the file `source` names.
+    ///
+    /// **A count rather than a predicate**, because both callers ask a
+    /// different question of it: the text edit asks whether this page is the
+    /// only position holding its source page, and the import asks whether
+    /// placing it again would make a second. Returning the number lets each
+    /// say so in its own words rather than sharing one that fits neither ---
+    /// the trap `Refusal::CropOnMadePage` records paying for once.
+    fn placements_of(&self, source: SourceId, page: u32) -> usize {
+        self.pages
+            .values()
+            .filter(|held| {
+                matches!(
+                    held.source,
+                    PageSource::Imported { source: from, page: number }
+                        if from == source && number == page
+                )
+            })
+            .count()
+    }
+
+    /// Which pages of the file `source` names carry a pending replacement.
+    ///
+    /// The import's half of `placements_of`'s question: a page that is edited
+    /// in one position cannot be placed in a second, because the writer edits
+    /// the file and imports it once per position.
+    fn edited_pages_of(&self, source: SourceId) -> HashSet<u32> {
+        self.text_edits
+            .keys()
+            .filter_map(|(page, _)| match self.pages.get(page)?.source {
+                PageSource::Imported {
+                    source: from,
+                    page: number,
+                } if from == source => Some(number),
+                PageSource::Imported { .. } | PageSource::Baseline(_) | PageSource::Blank(_) => {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Refuses unless the id names a live page, naming which of the two it is.
     fn live(&self, id: PageId) -> Result<(), Refusal> {
         if self.pages.contains_key(&id) {
@@ -2438,24 +2495,50 @@ impl Doc {
     }
 
     /// Journal a worker-validated replacement against a stable page identity.
-    /// The source text and digest always describe the opened document, even
-    /// when replacing an earlier pending answer for this same operand.
+    /// The source text and digest describe the document the page is drawn
+    /// from --- the opened file for one of its own pages, and the other file
+    /// for a page inserted from it, whose worker validated the replacement
+    /// and addressed it by its page number *there*.
     pub fn replace_text(
         &mut self,
         page: PageId,
         change: crate::textedit::Change,
     ) -> Result<(), Refusal> {
         self.now.live(page)?;
-        if let PageSource::Imported { .. } = self.now.pages[&page].source {
-            return Err(Refusal::TextOnImportedPage(page));
-        }
         if !self.now.redactions.is_empty() {
             return Err(Refusal::TextEdit(
                 "save or undo redactions before editing text",
             ));
         }
-        if self.now.pages[&page].source != PageSource::Baseline(change.page) {
-            return Err(Refusal::TextEdit("text no longer belongs to this page"));
+        // **A match with an arm per variant**, so the next kind of page is a
+        // compile error here rather than a replacement addressed against
+        // whatever the catch-all happened to mean. The page number in the
+        // change is a page of the document this page is drawn from, and the
+        // check is that it still is: a page that has been replaced under the
+        // same id is the case `docs/TRAPS.md` records as an address going
+        // stale while a round trip is in flight.
+        match self.now.pages[&page].source {
+            PageSource::Baseline(number) if number == change.page => {}
+            PageSource::Imported {
+                source,
+                page: number,
+            } if number == change.page => {
+                // **The one thing an imported page cannot do, and it is about
+                // the document rather than about the page.** A replacement
+                // reaches the file it came from as an edit of *that*
+                // document's page, and the writer imports that page's objects
+                // once per position it occupies --- so two positions showing
+                // one page of one file would both get the edit, including the
+                // one nobody edited. The model is the only layer that can see
+                // both positions, so it refuses here rather than leaving the
+                // writer to discover it after the reader has typed.
+                if self.now.placements_of(source, number) > 1 {
+                    return Err(Refusal::TextOnRepeatedImport(page));
+                }
+            }
+            PageSource::Baseline(_) | PageSource::Imported { .. } | PageSource::Blank(_) => {
+                return Err(Refusal::TextEdit("text no longer belongs to this page"));
+            }
         }
         if change.revision.len() != 32
             || change
@@ -2527,13 +2610,34 @@ impl Doc {
         Ok(())
     }
 
-    /// Pending replacements on live pages, in original content coordinates.
-    pub fn text_changes(&self) -> Vec<crate::textedit::Change> {
+    /// Pending replacements on live pages, in original content coordinates,
+    /// each with the file whose page number it carries.
+    ///
+    /// **The file is read off the page rather than stored beside the body**,
+    /// which is what keeps the two from drifting: a replacement is addressed
+    /// in the document the page is drawn from, and that is the page's own
+    /// answer. Nothing can move a page between files, so the pairing is as
+    /// stable as the id.
+    pub fn text_changes(&self) -> Vec<crate::textedit::Edit> {
         self.now
             .text_edits
             .iter()
-            .filter(|((page, _), _)| self.now.pages.contains_key(page))
-            .map(|(_, version)| self.text_versions[version].clone())
+            .filter_map(|((page, _), version)| {
+                let change = self.text_versions[version].clone();
+                match self.now.pages.get(page)?.source {
+                    PageSource::Baseline(_) => Some(crate::textedit::Edit::opened(change)),
+                    PageSource::Imported { source, .. } => {
+                        Some(crate::textedit::Edit::imported(source.get(), change))
+                    }
+                    // **Unreachable, and the arm has to exist.** Nothing turns
+                    // a page into one tpdf made --- an insert issues a new id
+                    // --- and `replace_text` refuses a blank page outright, so
+                    // no version is ever keyed by one. Left out rather than
+                    // guessed at: a replacement with no document to be
+                    // addressed in is not something a writer can act on.
+                    PageSource::Blank(_) => None,
+                }
+            })
             .collect()
     }
 
@@ -2709,8 +2813,10 @@ impl Doc {
     ///
     /// [`Refusal::ImportBesideRedactions`] while regions are marked for removal;
     /// [`Refusal::EmptyImport`], [`Refusal::NoSuchSourcePage`] and
-    /// [`Refusal::ImportedTwice`] for the selection; and whatever the anchor
-    /// answers. **Every one is checked before an id is issued**, so a refused
+    /// [`Refusal::ImportedTwice`] for the selection; whatever the anchor
+    /// answers; and [`Refusal::ImportOfEditedPage`] for a page of this same
+    /// file that a position already shows with a replacement pending on it.
+    /// **Every one is checked before an id is issued**, so a refused
     /// import spends nothing --- the page ids, the selection id and the source
     /// id alike. The anchor is checked again in the apply; the selection is
     /// not, and [`Command::Import`]'s arm says why.
@@ -2741,13 +2847,24 @@ impl Doc {
         if let Some(anchor) = after {
             self.now.live(anchor)?;
         }
-
-        // Nothing below can refuse, so ids are spent from here on.
+        // Looked up here rather than below, because the last refusal needs it:
+        // a file this document has already imported from keeps its id, and the
+        // pages already placed under that id are the ones a second placement
+        // could collide with. A file nobody has imported from has no placed
+        // page and nothing to collide with.
         let known = self
             .sources
             .iter()
             .find(|(_, held)| **held == source)
             .map(|(id, _)| *id);
+        if let Some(id) = known {
+            let edited = self.now.edited_pages_of(id);
+            if let Some(&again) = pages.iter().find(|page| edited.contains(page)) {
+                return Err(Refusal::ImportOfEditedPage(again));
+            }
+        }
+
+        // Nothing below can refuse, so ids are spent from here on.
         let source_id = match known {
             Some(id) => id,
             None => {

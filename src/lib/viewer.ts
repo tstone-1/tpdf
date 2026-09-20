@@ -1,4 +1,3 @@
-import { filePage } from "./pages";
 import { changedTextPages, type TextChange } from "./textedit";
 /**
  * The reading surface: input, a frame loop, and a {@link Scroller} under it.
@@ -4683,14 +4682,38 @@ export class Viewer {
 
   private textEdits: readonly TextChange[] = [];
 
+  /**
+   * Adopts the pending replacements, repainting and re-extracting the pages
+   * whose words changed.
+   *
+   * **Resolved through the slot, not through the opened document's cache.** A
+   * replacement's page number is a page number of whichever document its page
+   * is drawn from, so the cache it belongs in is {@link textAt}'s answer for
+   * that slot --- the one place in this class that decides which document a
+   * slot's words come from, so that nothing here can disagree with the tile
+   * and search paths about it. Before inserted pages existed the two were the
+   * same cache and the same number; they are not any more, and asking the
+   * opened file's cache would drop its page `n` and leave the inserted page
+   * showing the words it had.
+   *
+   * A change whose page is no longer in the document invalidates nothing:
+   * there is no slot to repaint, and its entry comes back through here the
+   * moment an undo puts the page back, because the journal reports the
+   * replacement again with it.
+   */
   setTextEdits(changes: readonly TextChange[]): boolean {
     const changed = changedTextPages(this.textEdits, changes);
     this.textEdits = changes;
     if (!changed.length) return false;
-    for (const page of changed) {
-      this.text.invalidatePage(filePage(page));
-      const slot = this.pages.slotOf(page);
-      if (slot !== undefined) this.scroller.invalidatePage(slot);
+    for (const at of changed) {
+      const slot =
+        at.source === undefined
+          ? this.pages.slotOf(at.page)
+          : this.pages.slotOfSource(at.source, at.page);
+      if (slot === undefined) continue;
+      const text = this.textAt(slot);
+      if (text) text.cache.invalidatePage(text.page);
+      this.scroller.invalidatePage(slot);
     }
     this.clearSelection();
     if (this.searcher.query) this.search(this.searcher.query);
@@ -4704,11 +4727,33 @@ export class Viewer {
     if (slot !== undefined) this.goToDestination(slot, widget.display_rect[1]);
   }
 
+  /**
+   * Places a text run of the page with this **identity** under current crop
+   * and rotation.
+   *
+   * **By id rather than by page number**, which {@link formAnchor} cannot be:
+   * a field carries the number of the page of the opened file it is on, and a
+   * text run carries the number of a page of whichever document it is drawn
+   * from. Those two numbering systems collide the moment a reader inserts
+   * pages, and an id belongs to exactly one page --- so the editor holds the
+   * id it opened on and every hit target is placed from it.
+   */
+  textAnchor(page: PageId, rect: readonly [number, number, number, number]): (Anchor & { clip: string; scale: number }) | null {
+    const slot = this.pages.slotOfId(page);
+    if (slot === undefined) return null;
+    return this.anchorIn(slot, rect);
+  }
+
   /** Places a field under current crop and rotation. */
   formAnchor(widget: Pick<import("./forms").FormWidget, "page" | "display_rect">): (Anchor & { clip: string; scale: number }) | null {
     const slot = this.pages.slotOf(widget.page);
     if (slot === undefined) return null;
-    const box = this.viewRectOn(slot, widget.display_rect);
+    return this.anchorIn(slot, widget.display_rect);
+  }
+
+  /** One rectangle of a slot's page, on screen. Both anchors' whole body. */
+  private anchorIn(slot: number, rect: readonly [number, number, number, number]): (Anchor & { clip: string; scale: number }) | null {
+    const box = this.viewRectOn(slot, rect as [number, number, number, number]);
     const origin = this.scroller.pageOrigin(slot);
     const size = this.laidSize(slot);
     if (box.right <= 0 || box.bottom <= 0 || box.left >= size.width || box.top >= size.height) return null;

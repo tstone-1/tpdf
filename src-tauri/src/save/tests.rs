@@ -9924,7 +9924,8 @@ fn textedit_reaches_save_copy_print_and_forbids_append() {
     document.save_to(&mut original).unwrap();
     let mut plan = plan_of(&[0, 0]);
     assert!(plan.is_identity());
-    plan.text_edits.push(edit.clone());
+    plan.text_edits
+        .push(crate::textedit::Edit::opened(edit.clone()));
     assert!(!plan.is_identity());
     for job in [Job::Save, Job::Print { view: 0 }] {
         let bytes = rewrite_update(&original, &plan, job, None).unwrap();
@@ -9954,7 +9955,7 @@ fn textedit_reaches_save_copy_print_and_forbids_append() {
 
     let mut marked = plan_with_mark(one_quad());
     assert!(marked.is_appendable());
-    marked.text_edits.push(edit);
+    marked.text_edits.push(crate::textedit::Edit::opened(edit));
     assert!(!marked.is_appendable());
     // A forged append request must fail at the writer as well as its selector.
     assert!(append_update(original.clone(), &marked, None).is_err());
@@ -9965,7 +9966,10 @@ fn textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans() {
     let mut document = crate::textedit::tests::fixture();
     let mut plan = plan_of(&[0, 0]);
     let first = crate::textedit::tests::change(&document);
-    plan.text_edits = vec![first.clone(), crate::textedit::Change { page: 1, ..first }];
+    plan.text_edits = vec![
+        crate::textedit::Edit::opened(first.clone()),
+        crate::textedit::Edit::opened(crate::textedit::Change { page: 1, ..first }),
+    ];
     let mut original = Vec::new();
     document.save_to(&mut original).unwrap();
     let bytes = rewrite_update(&original, &plan, Job::Save, None).unwrap();
@@ -10019,7 +10023,7 @@ fn textedit_preserves_encryption() {
     let mut bytes = Vec::new();
     document.save_to(&mut bytes).unwrap();
     let mut plan = plan_of(&[0, 0]);
-    plan.text_edits.push(edit);
+    plan.text_edits.push(crate::textedit::Edit::opened(edit));
     let written = rewrite_update(&bytes, &plan, Job::Save, Some("synthetic-reader")).unwrap();
     let mut locked = lopdf::Document::load_mem(&written).unwrap();
     assert!(locked.is_encrypted());

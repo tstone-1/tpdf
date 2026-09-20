@@ -255,8 +255,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         JSON.stringify(after.sources));
       if (!source) break;
       const expectedText = await theirs(source.doc, 0);
+      // Page 0 of the *opened* document: the same number as the page being
+      // inserted, and the page an edit routed to the wrong document would
+      // land on. Read before anything is edited, so it is a control.
+      const collides = await theirs(model.doc, 0);
       report.check("the fixtures differ, so the next check can fail",
-        expectedText !== await theirs(model.doc, 0), "import");
+        expectedText !== collides, "import");
       // Text is extracted for visible pages only (`prefetchText`), and the
       // reading page can fill the window, so the inserted page is brought on
       // screen first; waiting while parked on page 1 waits for nothing.
@@ -292,6 +296,56 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
           web.target.doc === source.doc,
           JSON.stringify({ names: web.target.doc, drawn_from: source.doc, host: web.target.host }));
       }
+      // Editing the text of an inserted page, which was refused until
+      // 26.9.16. The reading page is slot 1, which is the inserted one.
+      //
+      // **The page number is the whole check.** The run's number is a page
+      // number of the *other* file, and the opened document has a page of the
+      // same number with different words on it --- so the journal entry has
+      // to name the file, and the words have to land on the inserted page and
+      // nowhere else. Undone at the end so the save below is still the save
+      // the rest of this phase checks.
+      const runTarget = () => document.querySelector<HTMLButtonElement>(".text-edit-run");
+      const textField = () => document.querySelector<HTMLTextAreaElement>(".text-edit-popup textarea");
+      host.run("edit.editText");
+      if (!await settle(() => !!runTarget() && !runTarget()!.disabled, SETTLE_MS))
+        throw new Error("no editable text appeared on the inserted page");
+      runTarget()!.click();
+      if (!await settle(() => !!textField() && document.activeElement === textField(), 3000))
+        throw new Error("the text input on the inserted page did not receive focus");
+      const sourceText = textField()!.value;
+      // Narrower than what it replaces, so no layout is needed, and a word
+      // that appears in **neither** fixture --- `links.pdf`'s body lines carry
+      // every ordinary word this repository's generators use, so a plausible
+      // one would already be on the page and the check that the replacement
+      // arrived could not fail.
+      const typed = "acme7";
+      report.check("the inserted page's editable run is the other file's text",
+        expectedText.includes(sourceText.trim()) && sourceText.trim() !== typed,
+        JSON.stringify(sourceText.slice(0, 40)));
+      textField()!.value = typed;
+      textField()!.dispatchEvent(new Event("input", { bubbles: true }));
+      document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
+      await host.idle(); await quiet();
+      const journalled = host.edits()!.state.text_edits?.[0];
+      report.check("the replacement is journalled against the file the page came from",
+        journalled?.source === source.source && journalled?.replacement === typed,
+        JSON.stringify(journalled && { source: journalled.source, page: journalled.page }));
+      document.querySelector<HTMLButtonElement>('.text-editor button[aria-label="Done"]')!.click();
+      if (!await settle(() => !document.querySelector(".text-editor"), SETTLE_MS))
+        throw new Error("Done did not close text editing on the inserted page");
+      if (!await settle(() => (host.viewer()!.textOn(1) ?? null) !== null &&
+        String.fromCodePoint(...host.viewer()!.textOn(1)!.codes).includes(typed), SETTLE_MS))
+        throw new Error("the inserted page's text did not pick up the replacement");
+      report.check("the opened document's page of the same number is untouched",
+        (await theirs(model.doc, 0)) === collides && !collides.includes(typed),
+        JSON.stringify(collides.slice(0, 40)));
+      host.run("edit.undo"); await host.idle(); await quiet();
+      report.check("one undo takes the replacement back out",
+        (host.edits()!.state.text_edits?.length ?? 0) === 0 &&
+        host.edits()!.state.pages.length === after.pages.length,
+        String(host.edits()!.state.text_edits?.length ?? 0));
+
       host.run("edit.undo"); await host.idle(); await quiet();
       report.check("one undo takes every imported page back out",
         host.edits()!.state.pages.length === before && host.edits()!.state.sources?.[0]?.doc === source.doc,

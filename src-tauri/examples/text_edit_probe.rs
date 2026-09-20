@@ -376,14 +376,14 @@ fn run() -> Result<(), String> {
         discards: vec![],
         sources: Vec::new(),
         redactions: vec![],
-        text_edits: vec![textedit::Change {
+        text_edits: vec![textedit::Edit::opened(textedit::Change {
             layout: None,
             page,
             revision: mapped.revision,
             operator: mapped.runs[0].operator,
             original: mapped.runs[0].text.clone(),
             replacement: replacement.into(),
-        }],
+        })],
     };
     let original_bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
     let tile = Request::Tile {
@@ -408,7 +408,11 @@ fn run() -> Result<(), String> {
     };
     let before = pixels(&mut worker, &tile)?;
     let view = |request: Request| Request::TextView {
-        changes: plan.text_edits.clone(),
+        changes: plan
+            .text_edits
+            .iter()
+            .map(|edit| edit.change.clone())
+            .collect(),
         request: Box::new(request),
     };
     let preview = pixels(&mut worker, &view(tile.clone()))?;
@@ -458,7 +462,11 @@ fn run() -> Result<(), String> {
             return Err("text view accepted metadata or a nested wrapper".into());
         }
     }
-    let mut invalid = plan.text_edits.clone();
+    let mut invalid: Vec<textedit::Change> = plan
+        .text_edits
+        .iter()
+        .map(|edit| edit.change.clone())
+        .collect();
     invalid[0].replacement = "S".repeat(80);
     if worker
         .call(&Request::TextRuns {
@@ -518,7 +526,7 @@ fn run() -> Result<(), String> {
         invalid_replacements.push(("ÄÖÜ äöü ß".into(), "replacement ink"));
     }
     for (invalid_text, reason) in invalid_replacements {
-        plan.text_edits[0].replacement = invalid_text;
+        plan.text_edits[0].change.replacement = invalid_text;
         let mut rejected =
             File::create(dir.join("synthetic-refused.pdf")).map_err(|e| e.to_string())?;
         let error = write(&plan, &mut rejected, save::Job::Save)
@@ -528,7 +536,7 @@ fn run() -> Result<(), String> {
         }
     }
     println!("[PASS] overflow and unsupported characters refused without output");
-    plan.text_edits[0].replacement = replacement.into();
+    plan.text_edits[0].change.replacement = replacement.into();
     plan.redactions.push(tpdf_lib::edits::PlannedRedaction {
         source: 0,
         shows: vec![],

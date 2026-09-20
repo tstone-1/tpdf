@@ -17,10 +17,13 @@ impl Source {
         *self.0.lock().expect("text source lock") = Some(edits.clone());
     }
 
+    /// The replacements addressed in the document open under this **render
+    /// handle**, which may be a file the reader inserted pages from rather
+    /// than one they opened. See `Edits::render_changes`.
     pub(crate) fn changes(&self, doc: u32) -> Vec<Change> {
         let source = self.0.lock().expect("text source lock").clone();
         source
-            .map(|edits| edits.text_changes(doc))
+            .map(|edits| edits.render_changes(doc))
             .unwrap_or_default()
     }
 

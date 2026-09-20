@@ -3599,7 +3599,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         slots,
         moved,
         encryption,
-        incoming,
+        mut incoming,
     } = checked;
 
     // **First, and the position is load-bearing in one direction only.** A note
@@ -3620,7 +3620,31 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     if !plan.text_edits.is_empty() && !plan.redactions.is_empty() {
         return Err("save text edits before applying redactions".into());
     }
-    crate::textedit::write(&mut doc, &plan.text_edits)?;
+    // **The other files first, and they are edited rather than the pages they
+    // become.** A replacement on an inserted page was validated by that file's
+    // own worker, against that file's page number and the digest of that
+    // page's decoded content --- so the document it is addressed in is the
+    // file, and `textedit::write` is handed the file. Doing it the other way
+    // round means addressing a page that is not in any page tree yet:
+    // `merge::import` copies objects and places nothing, and the order this
+    // document will have is not built until `materialise`, several steps
+    // below. It also means the objects an edit adds --- a subsetted font, a
+    // rewritten content stream --- are reachable from the page *before*
+    // `merge::import` walks it, which is what carries them across without a
+    // second renumbering by hand.
+    //
+    // **Above the base document's own edits**, so that everything either of
+    // them can refuse happens while `doc` is still the file as it was loaded.
+    // These documents are the writer's scratch: nothing reads them after the
+    // import, and no caller sees them.
+    let split = text_by_document(plan, &slots)?;
+    for (at, changes) in split.by_file {
+        let into = incoming
+            .get_mut(at)
+            .ok_or("the edits change text in a document this save was not given")?;
+        crate::textedit::write(into, &changes)?;
+    }
+    crate::textedit::write(&mut doc, &split.base)?;
     crate::forms::write(&mut doc, &plan.forms)?;
     rewrite_note_edits(&mut doc, &plan.notes)?;
 
@@ -4295,6 +4319,92 @@ fn make_blank_pages(
         out.push((id, turns));
     }
     Ok(out)
+}
+
+/// Splits a plan's replacements into the opened document's and each other
+/// file's, by that file's position in [`Checked::incoming`].
+///
+/// **Every refusal here is about the plan rather than about the file**, and
+/// that is why it runs before anything is written: a plan reaches this
+/// function from outside the process --- across the worker boundary, out of a
+/// restored session, out of `fuzz_targets/save_rewrite_update.rs` --- so the
+/// pairing the model guarantees is a claim to check, not one to lean on. The
+/// model refuses each of these at the point the reader acts
+/// (`Refusal::TextOnRepeatedImport`, `Refusal::ImportOfEditedPage`); these are
+/// the same rules stated where a plan that never went through the model still
+/// meets them.
+///
+/// **A replacement on a page this save does not place is refused rather than
+/// dropped.** Writing it would edit the other file's document and import a
+/// different page of it, so nothing would carry the edit and the save would
+/// report success --- the silent half-write `Plan::is_appendable`'s discard
+/// clause exists to refuse, in the one place where the thing lost is the
+/// reader's own words.
+///
+/// # Errors
+///
+/// A replacement naming a file the plan does not list, a page of one that no
+/// slot shows, or a page of one that more than one slot shows.
+fn text_by_document(plan: &Plan, slots: &[(Slot, u8)]) -> Result<TextSplit, Refusal> {
+    let mut base: Vec<crate::textedit::Change> = Vec::new();
+    let mut by_file: Vec<(usize, Vec<crate::textedit::Change>)> = Vec::new();
+    for edit in &plan.text_edits {
+        let Some(file) = edit.source else {
+            base.push(edit.change.clone());
+            continue;
+        };
+        let from = plan
+            .sources
+            .iter()
+            .position(|one| one.id == file)
+            .ok_or_else(|| {
+                Refusal::from(format!(
+                    "the edits change text on a page from document {file}, which the save was \
+                     not given"
+                ))
+            })?;
+        let placed = slots
+            .iter()
+            .filter(|(slot, _)| {
+                matches!(slot, Slot::Imported { from: here, page }
+                    if *here == from && *page == edit.change.page)
+            })
+            .count();
+        match placed {
+            0 => {
+                return Err(Refusal::from(format!(
+                    "the edits change text on page {} of another document, which this save does \
+                     not place",
+                    edit.change.page + 1
+                )))
+            }
+            1 => {}
+            _ => {
+                return Err(Refusal::from(format!(
+                    "page {} of another document is in this one {placed} times, and editing its \
+                     text would change every one of them",
+                    edit.change.page + 1
+                )))
+            }
+        }
+        match by_file.iter_mut().find(|(at, _)| *at == from) {
+            Some((_, changes)) => changes.push(edit.change.clone()),
+            None => by_file.push((from, vec![edit.change.clone()])),
+        }
+    }
+    Ok(TextSplit { base, by_file })
+}
+
+/// One plan's replacements, by the document each is addressed in.
+///
+/// `by_file` is keyed by a position in [`Checked::incoming`], which is the
+/// position of the same file in [`Plan::sources`] --- the pairing
+/// `incoming_documents` establishes and `checked` reads for a slot.
+struct TextSplit {
+    /// Replacements on pages of the document the reader opened.
+    base: Vec<crate::textedit::Change>,
+    /// Replacements on pages of another file, that file's own page numbers.
+    by_file: Vec<(usize, Vec<crate::textedit::Change>)>,
 }
 
 /// Imports every [`Slot::Imported`] page, and answers the object each became.

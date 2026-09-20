@@ -133,7 +133,8 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         discards: vec![],
         sources: Vec::new(),
         redactions: vec![],
-        text_edits: changes,
+        // Every request file names pages of the document the probe opened.
+        text_edits: changes.into_iter().map(textedit::Edit::opened).collect(),
     };
     let mut previews = Vec::new();
     for (page, size) in pages.iter().enumerate() {
@@ -159,11 +160,18 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         let preview = pixels(
             &mut worker,
             &Request::TextView {
-                changes: plan.text_edits.clone(),
+                changes: plan
+                    .text_edits
+                    .iter()
+                    .map(|edit| edit.change.clone())
+                    .collect(),
                 request: Box::new(request.clone()),
             },
         )?;
-        let edited = plan.text_edits.iter().any(|edit| edit.page == page as u32);
+        let edited = plan
+            .text_edits
+            .iter()
+            .any(|edit| edit.change.page == page as u32);
         if before.len() != preview.len() || (before == preview) == edited {
             return Err("preview changed the wrong pages or no pixels".into());
         }
@@ -217,7 +225,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
             return Err("saved pixels differ from preview".into());
         }
     }
-    for change in &plan.text_edits {
+    for change in plan.text_edits.iter().map(|edit| &edit.change) {
         let reopened = runs(&mut saved, change.page)?;
         let found = if change.layout.as_ref().is_some_and(|layout| layout.wrap) {
             reopened

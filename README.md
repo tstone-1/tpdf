@@ -167,10 +167,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   a range you type such as `2-5,9`, in its own order, as one step that one undo takes back
   out. The other file is opened the way a document is, in a sandboxed process of its own,
   so its pages are drawn, searched, selected, marked, turned and cropped like the
-  document's own, and saving writes them into the file. A web link on one opens in your browser
-  after the same confirmation as a link on the document's own page. Two things wait for that
-  save: editing their text, and redacting anything in a document that holds them. An encrypted
-  file is refused.
+  document's own, and saving writes them into the file. Their text edits like the document's
+  own text, with the same discovery, the same box and the same refusals. A web link on one
+  opens in your browser after the same confirmation as a link on the document's own page.
+  One thing still waits for that save: redacting anything in a document that holds inserted
+  pages. An encrypted file is refused. Inserting the same page of the same file twice is
+  allowed, and editing the text of a page that is in the document twice is not — an edit
+  reaches the file it came from, so it would appear in both.
   <!-- built: edit.insertPages edit.insertPages.range -->
 - **Print what you edited.** A print job carries the pages that are left, the order they
   are in and the way each one is turned, read from the document model rather than from the
@@ -402,7 +405,11 @@ embed only the glyphs they use. Replacements must fit the chosen box without cro
 clips or neighbouring content. Automatic table resizing, flow across pages and
 complex-script shaping are not supported. Unsupported pages or glyphs are refused.
 Text edits support undo and redo and must be
-saved before marking redactions.
+saved before marking redactions. A page inserted from another file edits the same
+way: the edit is checked against the file that page came from, and a save writes it
+into that page. A page the document shows twice --- the same page of the same file,
+inserted twice --- is refused, because the edit reaches the file and would appear in
+both.
 <!-- built: edit.editText -->
 
 ## Not built yet

@@ -144,7 +144,7 @@ type Shape<T> = Record<keyof T, readonly Kind[]>;
  */
 const SCHEMA = {
   Image: { width: ["number"], height: ["number"], rgba: ["array"] } satisfies Shape<SignatureImage>,
-  PageRuns: { page: ["number"], revision: ["array"], runs: ["array"], preview: ["object"] } satisfies Shape<TextRuns>,
+  PageRuns: { page: ["number"], source: ["number"], revision: ["array"], runs: ["array"], preview: ["object"] } satisfies Shape<TextRuns>,
   Form: { widgets: ["array"] } satisfies Shape<Form>,
   Applied: {
     regions: ["number"],

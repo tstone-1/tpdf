@@ -527,6 +527,23 @@ describe("page addresses", () => {
     expect(pages.slotOf(5), "no page 5 of the opened file is shown").toBeUndefined();
   });
 
+  it("finds the slot of another file's page by the model's id for that file", () => {
+    // What a pending text replacement carries, which is the model's `SourceId`
+    // and not the render handle a link scan carries --- two keys from two
+    // places, and `slotOfImported` answers the other one.
+    const pages = withImports();
+    expect(pages.slotOfSource(1, 5)).toBe(1);
+    expect(pages.slotOfSource(1, 2)).toBe(2);
+    expect(pages.slotOfSource(1, 0), "a page of that file nobody inserted").toBeUndefined();
+    expect(pages.slotOfSource(2, 5), "another file's page 5").toBeUndefined();
+    // And it is not the handle: asking with 40 --- the render handle of the
+    // very file these pages come from --- finds nothing here.
+    expect(pages.slotOfSource(40, 5)).toBeUndefined();
+    expect(pages.slotOfImported(40, 5), "which is what the handle answers").toBe(1);
+    // A page of the opened file is in neither direction of it.
+    expect(pages.slotOfSource(1, 1)).toBeUndefined();
+  });
+
   it("answers no address for a page tpdf made", () => {
     const blank: PageView = {
       id: pageId(9),

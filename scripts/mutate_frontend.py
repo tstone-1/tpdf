@@ -7815,5 +7815,35 @@ MUTATIONS += [
         "runs the clicked tab's actions without changing or leaking into the registry"),
 ]
 
+# Editing text on a page inserted from another file (26.9.16). Each of these
+# leaves the page number right and the *document* wrong, which is the pair
+# that collides only once a reader has inserted pages.
+MUTATIONS += [
+    Mutation("inserted text: key a change by its page number alone", "src/lib/textedit.ts",
+        'const key = (change: TextPage) => JSON.stringify([change.source ?? null, change.page]);',
+        'const key = (change: TextPage) => JSON.stringify([change.page]);',
+        "tells one file's page from another file's page of the same number"),
+    Mutation("inserted text: report a change as the opened file's", "src/lib/textedit.ts",
+        'return source === null ? { page: at } : { source, page: at }; });',
+        'return { page: at }; });',
+        "tells one file's page from another file's page of the same number"),
+    Mutation("inserted text: match a pending change on the page number alone", "src/lib/textedit.ts",
+        'return a.page === b.page && (a.source ?? -1) === (b.source ?? -1);',
+        'return a.page === b.page;',
+        "shows the replacement on its own file's page, not the opened file's of the same number"),
+    Mutation("inserted text: find the slot by page number alone", "src/lib/pages.ts",
+        'view.imported.source === source &&\n        view.imported.page === page',
+        'view.imported.page === page',
+        "finds the slot of another file's page by the model's id for that file"),
+    Mutation("inserted text: look a change's slot up as the opened file's", "src/lib/viewer.ts",
+        'at.source === undefined\n          ? this.pages.slotOf(at.page)\n          : this.pages.slotOfSource(at.source, at.page);',
+        'this.pages.slotOf(at.page);',
+        "re-extracts only the inserted page when its own text was edited"),
+    Mutation("inserted text: keep the edited page's words in the cache", "src/lib/viewer.ts",
+        'if (text) text.cache.invalidatePage(text.page);',
+        'void text;',
+        "re-extracts only the inserted page when its own text was edited"),
+]
+
 if __name__ == "__main__":
     sys.exit(main())

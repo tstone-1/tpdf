@@ -1309,7 +1309,10 @@
       if (!runs.runs.length) throw new Error("This page has no supported text to edit.");
       textEditor?.destroy();
       const editor = new TextEditor(host, page.id, runs,
-        (run) => mounted.formAnchor({ page: runs.page, display_rect: run.display_rect }),
+        // By the page's identity, not by `runs.page`: that number is a page
+        // number of whichever document this page is drawn from, and for an
+        // inserted page it names a different page of the opened file.
+        (run) => mounted.textAnchor(page.id, run.display_rect),
         async (change) => {
           let result: EditState | undefined;
           let failure: unknown;

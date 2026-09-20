@@ -262,6 +262,58 @@ describe("Reading a page's text, and asking for it again", () => {
     expect(viewer.selectedText).toBe(said(2));
   });
 
+  it("re-extracts only the inserted page when its own text was edited", async () => {
+    // Slot 0 is page 2 of the file under handle 40; slot 1 is page 2 of the
+    // opened file. Same page number, two documents --- which is the pair that
+    // collides, and the reason a replacement carries the file it belongs to.
+    const viewer = build();
+    viewer.setPages([
+      {
+        id: pageId(9),
+        source: { imported: { source: 1, page: 2 } },
+        turns: 0,
+        from: 40,
+      },
+      { id: pageId(3), source: { baseline: 2 }, turns: 0 },
+    ]);
+    await viewer.unturnedText(0);
+    await viewer.unturnedText(1);
+    expect(askedOf).toEqual([
+      [40, 2],
+      [1, 2],
+    ]);
+
+    const opened = {
+      page: 2,
+      revision: [1],
+      operator: 3,
+      original: "ab",
+      replacement: "AB",
+    };
+    const edit = { ...opened, source: 1 };
+    expect(viewer.setTextEdits([edit])).toBe(true);
+    await viewer.unturnedText(0);
+    await viewer.unturnedText(1);
+    expect(askedOf, "the edited page, of its own file, and nothing else").toEqual([
+      [40, 2],
+      [1, 2],
+      [40, 2],
+    ]);
+
+    // And the mirror: adding an edit on the opened file's page 2 --- while
+    // the inserted page's stands --- drops that page's words and only that
+    // page's.
+    expect(viewer.setTextEdits([edit, opened])).toBe(true);
+    await viewer.unturnedText(0);
+    await viewer.unturnedText(1);
+    expect(askedOf).toEqual([
+      [40, 2],
+      [1, 2],
+      [40, 2],
+      [1, 2],
+    ]);
+  });
+
   it("selects a whole page, after the page above went", async () => {
     const viewer = build();
     deleteFirstPage(viewer);

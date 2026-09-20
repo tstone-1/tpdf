@@ -253,6 +253,10 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "PageRuns",
         &crate::textedit::PageRuns {
+            // The sample is an inserted page's, so the mirror has to carry the
+            // file: a sample with no `source` would let the key sets agree
+            // while the one key an imported page adds went unmirrored.
+            source: Some(1),
             preview: Some(crate::textedit::Preview {
                 png: vec![137, 80, 78, 71],
                 font: "Noto Sans".into(),
@@ -315,7 +319,7 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "EditState",
         &edits::EditState {
-            text_edits: vec![crate::textedit::Change {
+            text_edits: vec![crate::textedit::Edit::opened(crate::textedit::Change {
                 layout: Some(crate::textedit::Layout {
                     width: 120.,
                     height: 30.,
@@ -329,7 +333,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 operator: 3,
                 original: "ACME original".into(),
                 replacement: "ACME edit".into(),
-            }],
+            })],
             forms: vec![crate::forms::Change {
                 object: (12, 0),
                 value: crate::forms::Value::Text("ACME answer".into()),

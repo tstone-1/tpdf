@@ -1146,6 +1146,41 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example turned-probe 
 # to READ differently, or a run in which every kind drew the same thing would be
 # entirely green.
 
+# insert-text-check: a replacement typed on an inserted page, read back by two
+# parsers that share no code with tpdf.
+#
+# `save::import_tests` proves the writer with lopdf on both sides, which cannot
+# notice a file it agrees with itself about. This runs the same path through
+# `insert-text-probe` and then asks `qpdf --check` about the structure and
+# `pypdf` about the words.
+#
+# The assertion that bites is NOT "the replacement is there". Page n of the
+# opened document and page n of the file its pages came from are two different
+# pages, and the fixtures make that collision real: page 1 of `text-base14.pdf`
+# is inserted after page 1 of `links.pdf`, which has a page 1 of its own with
+# different words on it. A save that edited the wrong document would produce a
+# valid file, with the right page count, containing the replacement -- on the
+# wrong page. So the check reads the opened document's page 1 back too, and
+# every other page of it, and counts the pages the replacement appears on.
+#
+# Proved by control 2026-09-20: routing every replacement to the opened document
+# (the mutation `save: import: write every replacement into the opened document`)
+# makes it exit 1. Seven checks, all passing on `main`.
+#
+cargo build --manifest-path src-tauri/Cargo.toml --example insert-text-probe
+uv run --with pypdf scripts/insert_text_check.py
+#
+# The probe alone, for a different pair or a different page:
+#
+#   insert-text-probe <base.pdf> <other.pdf> <out.pdf> \
+#       [--page N] [--after N] [--replacement TEXT]
+#
+# `--page` is the zero-based page of the OTHER file, `--after` the slot of the
+# opened document it lands behind. It prints one JSON object on stdout and
+# everything else on stderr. Without `--replacement` it shortens the original
+# to its first word, which fits by construction -- a longer one is refused by
+# the writer, and that refusal is a correct answer rather than a probe failure.
+
 # merge-probe: a merged document against the two that went into it.
 #
 # `save::write_merged`'s unit tests are lopdf reading back what lopdf wrote, plus

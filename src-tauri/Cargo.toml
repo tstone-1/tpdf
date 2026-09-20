@@ -479,3 +479,7 @@ path = "examples/redaction_fill_probe.rs"
 [[example]]
 name = "text-edit-probe"
 path = "examples/text_edit_probe.rs"
+
+[[example]]
+name = "insert-text-probe"
+path = "examples/insert_text_probe.rs"

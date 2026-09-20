@@ -41,14 +41,14 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         discards: vec![],
         sources: Vec::new(),
         redactions: vec![],
-        text_edits: vec![textedit::Change {
+        text_edits: vec![textedit::Edit::opened(textedit::Change {
             layout: None,
             page: 0,
             revision: mapped.revision.clone(),
             operator: mapped.runs[0].operator,
             original: "Dummy PDF file".into(),
             replacement: "Dummy PDF fill".into(),
-        }],
+        })],
     };
     let tile = Request::Tile {
         rid: 91,
@@ -74,7 +74,11 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
     let preview = pixels(
         &mut worker,
         &Request::TextView {
-            changes: plan.text_edits.clone(),
+            changes: plan
+                .text_edits
+                .iter()
+                .map(|edit| edit.change.clone())
+                .collect(),
             request: Box::new(tile.clone()),
         },
     )?;
@@ -127,7 +131,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         return Err("saved content disagrees with the preview or changed adjacent text".into());
     }
     for (index, invalid) in ["l".repeat(80), "B".into()].into_iter().enumerate() {
-        plan.text_edits[0].replacement = invalid;
+        plan.text_edits[0].change.replacement = invalid;
         let mut out = File::create_new(dir.join(format!("refused-{index}.pdf")))
             .map_err(|e| e.to_string())?;
         if write(&plan, &mut out).is_ok() || out.metadata().map_err(|e| e.to_string())?.len() != 0 {

@@ -627,7 +627,7 @@ MUTATIONS = [
     Mutation("textedit journal: retain a restored operand", "src/docmodel.rs", "self.text_edits.remove(&(page, operator));", "let _ = (page, operator);", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
     Mutation("textedit journal: retain discarded redo bodies", "src/docmodel.rs", "self.text_versions.remove(&version);", "let _ = version;", "textedit_journal_restores_original_and_discards_abandoned_bodies"),
     Mutation("textedit journal: remove the history bound", "src/docmodel.rs", "self.text_versions.len() - discarded >= MAX_TEXT_VERSIONS", "self.text_versions.len() - discarded >= usize::MAX", "textedit_journal_bounds_history_but_reclaims_the_redo_tail"),
-    Mutation("textedit journal: omit extraction filtering", "src/edits.rs", "page.source == PageSource::Baseline(change.page)", "true", "textedit_plans_follow_page_identity_and_filter_deleted_or_extracted_pages"),
+    Mutation("textedit journal: omit extraction filtering", "src/edits.rs", "        .filter(|edit| pages.iter().any(|page| shows(page.source, edit)))", "", "textedit_plans_follow_page_identity_and_filter_deleted_or_extracted_pages"),
     Mutation("textedit journal: accept a changed original", "src/docmodel.rs", "previous.revision != change.revision || previous.original != change.original", "previous.revision != change.revision", "textedit_journal_refuses_stale_or_unbounded_input_atomically"),
     Mutation("textedit: let print use the original bytes", "src/edits.rs", "pub fn is_identity(&self) -> bool {", "pub fn is_identity(&self) -> bool {\n        if !self.text_edits.is_empty() { return true; }", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: allow mixed edits to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() {", "textedit_reaches_save_copy_print_and_forbids_append"),
@@ -638,7 +638,7 @@ MUTATIONS = [
     # second. Remove both for this end-to-end completion property; the stream
     # patch mutations separately exercise the writer's boundary checks.
     Mutation("textedit: bypass both content completion checks", "src/textedit.rs", '    let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;\n    if content.operations.len() > MAX_OPERATIONS {\n        return Err("text operator count exceeds its limit".into());\n    }\n    // Discovery promises that deletion can use the byte-preserving writer too.\n    streams::rewrite(&bytes, &content, &BTreeSet::new())?;\n', '    let content = Content::decode(&bytes).map_err(|e| e.to_string())?;\n    if content.operations.len() > MAX_OPERATIONS {\n        return Err("text operator count exceeds its limit".into());\n    }\n    // Discovery promises that deletion can use the byte-preserving writer too.\n', "textedit_rejects_partial_or_undecodable_content"),
-    Mutation("textedit: omit the writer call", "src/save.rs", "    crate::textedit::write(&mut doc, &plan.text_edits)?;", "    // text replacement omitted", "textedit_reaches_save_copy_print_and_forbids_append"),
+    Mutation("textedit: omit the writer call", "src/save.rs", "    crate::textedit::write(&mut doc, &split.base)?;", "    // text replacement omitted", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: keep unreachable old content", "src/save.rs", "        || !plan.text_edits.is_empty()", "        || false", "textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans"),
     Mutation("textedit: accept a stale content revision", "src/textedit.rs", "change.revision != runs.revision || change.original != run.text", "change.original != run.text", "textedit_rejects_invalid_batches_without_mutating_the_document"),
 
@@ -9647,14 +9647,41 @@ MUTATIONS += [
         "an_import_is_refused_while_regions_are_marked_for_removal",
     ),
     Mutation(
-        # Take a text replacement on a page of another file to the check that
-        # compares baseline numbers, which answers with a sentence about text
-        # having moved rather than about where the page came from.
-        "docmodel: import: send text on an imported page to the baseline check",
+        # Edit a page of another file that this document shows twice. The
+        # writer edits the file and imports it once per position, so the edit
+        # would appear in the position nobody edited.
+        "docmodel: import: edit a page of another file placed twice",
         "src/docmodel.rs",
-        "        if let PageSource::Imported { .. } = self.now.pages[&page].source {\n            return Err(Refusal::TextOnImportedPage(page));\n        }",
+        "                if self.now.placements_of(source, number) > 1 {\n                    return Err(Refusal::TextOnRepeatedImport(page));\n                }",
         "",
-        "text_on_an_imported_page_is_refused",
+        "text_on_a_page_this_document_shows_twice_is_refused",
+    ),
+    Mutation(
+        # Accept a replacement addressed at another page of the same file: the
+        # stale-address case, on the other file's side of it.
+        "docmodel: import: take any page number as this imported page's",
+        "src/docmodel.rs",
+        "            } if number == change.page => {",
+        "            } if true => {",
+        "a_replacement_addressed_at_another_page_of_the_same_file_is_refused",
+    ),
+    Mutation(
+        # Insert a page that already carries a replacement. Two positions, one
+        # edit, and the writer would show it in both.
+        "docmodel: import: insert a page that already has edited text",
+        "src/docmodel.rs",
+        "        if let Some(id) = known {\n            let edited = self.now.edited_pages_of(id);\n            if let Some(&again) = pages.iter().find(|page| edited.contains(page)) {\n                return Err(Refusal::ImportOfEditedPage(again));\n            }\n        }",
+        "",
+        "inserting_a_page_that_already_has_edited_text_is_refused",
+    ),
+    Mutation(
+        # Report every replacement as the opened document's. The other file's
+        # would then be applied to whatever the opened file has at the number.
+        "docmodel: import: forget which file a replacement is addressed in",
+        "src/docmodel.rs",
+        "                    PageSource::Imported { source, .. } => {\n                        Some(crate::textedit::Edit::imported(source.get(), change))\n                    }",
+        "                    PageSource::Imported { .. } => Some(crate::textedit::Edit::opened(change)),",
+        "a_replacement_on_an_imported_page_names_the_file_it_came_from",
     ),
     Mutation(
         # Let a comment of the opened file be deleted off a page of another. The
@@ -9665,6 +9692,70 @@ MUTATIONS += [
         "            Some(PageSource::Imported { .. }) => Err(Refusal::ForeignCommentOnImportedPage(id)),",
         "            Some(PageSource::Imported { .. }) => Ok(()),",
         "a_foreign_comment_cannot_be_said_to_be_on_an_imported_page",
+    ),
+    Mutation(
+        # Keep a replacement in the plan on the page number alone, whatever
+        # file it names. An extract then carries the other file's edit with a
+        # page of the opened one.
+        "edits: filter a plan's replacements by page number alone",
+        "src/edits.rs",
+        "            source.get() == file && page == edit.change.page",
+        "            page == edit.change.page",
+        "a_source_handle_answers_with_that_files_replacements",
+    ),
+    Mutation(
+        # Hand the opened document's worker every replacement, the other
+        # files' included. Each would be applied to whatever the opened file
+        # has at the same page number.
+        "edits: render the opened document with every file's replacements",
+        "src/edits.rs",
+        "                .filter(|edit| edit.source.is_none())",
+        "",
+        "a_source_handle_answers_with_that_files_replacements",
+    ),
+    Mutation(
+        # And the mirror: hand an imported file's worker every replacement.
+        "edits: render an imported file with every file's replacements",
+        "src/edits.rs",
+        "                .filter(|edit| edit.source == Some(file.get()))",
+        "",
+        "a_source_handle_answers_with_that_files_replacements",
+    ),
+    Mutation(
+        # Answer a source handle as though it named nothing. Every inserted
+        # page would draw without the reader's own edit on it, silently.
+        "edits: stop looking for an imported file's handle",
+        "src/edits.rs",
+        "        for open in docs.values() {\n            let Some((&file, _)) = open.sources.iter().find(|(_, &held)| held == handle) else {\n                continue;\n            };",
+        "        for open in docs.values() {\n            let Some((&file, _)) = open.sources.iter().find(|(_, &held)| held != handle) else {\n                continue;\n            };",
+        "a_source_handle_answers_with_that_files_replacements",
+    ),
+    Mutation(
+        # Read an inserted page's text through the opened document's handle,
+        # which holds a different page of the same number.
+        "commands: read an inserted page's text from the opened document",
+        "src/commands/read.rs",
+        "            Ok(TextAddress {\n                doc: held,",
+        "            Ok(TextAddress {\n                doc,",
+        "an_imported_page_is_read_through_its_own_files_handle",
+    ),
+    Mutation(
+        # Fall back to the opened document for a file with no handle, which is
+        # the wrong-page picture `PageAddress` exists to refuse.
+        "commands: fall back to the opened document for an unopened file",
+        "src/commands/read.rs",
+        "                None => return Err(\"The file this page came from is no longer open\".into()),",
+        "                None => doc,",
+        "an_imported_page_whose_file_is_not_open_is_refused",
+    ),
+    Mutation(
+        # Hand a worker every pending replacement rather than the ones
+        # addressed in the document it holds.
+        "commands: preflight a page against every file's replacements",
+        "src/commands/read.rs",
+        "            .filter(|edit| edit.source == self.source)",
+        "",
+        "a_worker_is_handed_only_the_replacements_addressed_in_its_own_document",
     ),
     Mutation(
         # Call a plan with a page of another file the file on disk. With a mark
@@ -9733,6 +9824,53 @@ MUTATIONS += [
         "    if false {\n        return Err(\n            \"save this document before merging it",
         "a_merge_of_a_document_holding_imported_pages_says_why_it_is_refused",
     ),
+    Mutation(
+        # Edit the opened document with an inserted page's replacement. It is
+        # addressed in the other file, so the digest would either refuse it or
+        # -- worse, on a page that happens to match -- change the wrong page.
+        "save: import: write every replacement into the opened document",
+        "src/save.rs",
+        "        let Some(file) = edit.source else {\n            base.push(edit.change.clone());\n            continue;\n        };",
+        "        let file = 0;\n        if edit.source.is_none() || true {\n            base.push(edit.change.clone());\n            continue;\n        }\n        #[allow(unreachable_code)]\n        let _: u32 = file;",
+        "a_rewrite_writes_a_replacement_into_the_page_it_imports",
+    ),
+    Mutation(
+        # Drop an inserted page's replacement instead of writing it. The save
+        # reports success and the reader's words are not in the file.
+        "save: import: drop an inserted page's replacement",
+        "src/save.rs",
+        "        crate::textedit::write(into, &changes)?;",
+        "        let _ = (into, &changes);",
+        "a_rewrite_writes_a_replacement_into_the_page_it_imports",
+    ),
+    Mutation(
+        # Take a replacement naming a file the plan does not list. It would be
+        # written into whichever document happens to be at that position.
+        "save: import: accept a replacement naming a file the plan lacks",
+        "src/save.rs",
+        "        let from = plan\n            .sources\n            .iter()\n            .position(|one| one.id == file)",
+        "        let from = plan\n            .sources\n            .iter()\n            .position(|_| true)",
+        "replacements_a_save_cannot_place_are_refused_with_the_reason",
+    ),
+    Mutation(
+        # Accept a replacement on a page this save does not place. The other
+        # file is edited, a different page of it is imported, and nothing
+        # carries the reader's words -- a silent half-write reported as a save.
+        "save: import: accept a replacement on a page nothing places",
+        "src/save.rs",
+        "        match placed {\n            0 => {",
+        "        match placed {\n            usize::MAX => {",
+        "replacements_a_save_cannot_place_are_refused_with_the_reason",
+    ),
+    Mutation(
+        # Accept a replacement on a page the plan places twice, which would
+        # change the position nobody edited as well as the one they did.
+        "save: import: accept a replacement on a page placed twice",
+        "src/save.rs",
+        "            1 => {}\n            _ => {\n                return Err(Refusal::from(format!(",
+        "            _ => {}\n            #[allow(unreachable_patterns)]\n            _ => {\n                return Err(Refusal::from(format!(",
+        "replacements_a_save_cannot_place_are_refused_with_the_reason",
+    ),
 ]
 
 
@@ -9773,15 +9911,6 @@ MUTATIONS += [
         "    state.sources = sources;\n",
         "",
         "an_import_answers_the_handle_its_pages_are_drawn_from",
-    ),
-    Mutation(
-        # Hand an imported page's number to the text edit as a page of the
-        # opened file --- which edits whatever page of it has that number.
-        "read: text: edit an imported page as a page of the opened file",
-        "src/commands/read.rs",
-        "        Some(PageSource::Baseline(index)) => Ok(index),",
-        "        Some(PageSource::Baseline(index) | PageSource::Imported { page: index, .. }) => Ok(index),",
-        "an_imported_page_says_why_its_text_cannot_be_edited",
     ),
     Mutation(
         # A guard dropped without being kept releases nothing: every refusal

@@ -249,25 +249,141 @@ fn an_imported_page_turns_crops_moves_takes_a_mark_and_deletes() {
     assert_eq!(doc.working().page_of(mark), None, "the mark went with it");
 }
 
-/// A text replacement is validated against the opened document and addressed
-/// by its page number there, which an imported page does not have.
-#[test]
-fn text_on_an_imported_page_is_refused() {
-    let mut doc = Doc::open(1);
-    let placed = doc.import(None, file(1), vec![0]).expect("import")[0];
-    let change = crate::textedit::Change {
+/// A replacement addressed in the other file, on `page` of it.
+fn other_change(page: u32, replacement: &str) -> crate::textedit::Change {
+    crate::textedit::Change {
         layout: None,
-        page: 0,
+        page,
         revision: vec![1; 32],
         operator: 0,
         original: "SYNTHETIC ORIGINAL".into(),
-        replacement: "SYNTHETIC EDIT".into(),
-    };
+        replacement: replacement.into(),
+    }
+}
+
+/// A text replacement on an imported page is journalled against the **file the
+/// page came from**, by its page number there --- and a page of the opened
+/// file with the same number is untouched by it.
+///
+/// The second half is what makes this more than a smoke test: both edits are
+/// page 0, operator 0, so a journal that recorded only the page number would
+/// have one of them overwrite the other and every count would still agree.
+#[test]
+fn a_replacement_on_an_imported_page_names_the_file_it_came_from() {
+    let mut doc = Doc::open(1);
+    let own = doc.working().order()[0];
+    let placed = doc.import(None, file(2), vec![0]).expect("import")[0];
+    doc.replace_text(placed, other_change(0, "FROM THE OTHER FILE"))
+        .expect("the other file's page is editable");
+    doc.replace_text(
+        own,
+        crate::textedit::Change {
+            replacement: "FROM THE OPENED FILE".into(),
+            ..other_change(0, "")
+        },
+    )
+    .expect("the opened file's page is editable");
+
+    let mut edits = doc.text_changes();
+    edits.sort_by_key(|edit| edit.change.replacement.clone());
     assert_eq!(
-        doc.replace_text(placed, change),
-        Err(Refusal::TextOnImportedPage(placed))
+        edits
+            .iter()
+            .map(|edit| (edit.source, edit.change.replacement.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (None, "FROM THE OPENED FILE"),
+            (Some(1), "FROM THE OTHER FILE"),
+        ],
+        "one entry per page, each naming the document its page number belongs to"
     );
-    assert_eq!(doc.depth(), (1, 0));
+}
+
+/// Undo takes the imported page's replacement back, and redo brings it back
+/// still naming the file it came from.
+#[test]
+fn undo_and_redo_keep_an_imported_replacement_with_its_file() {
+    let mut doc = Doc::open(1);
+    let placed = doc.import(None, file(2), vec![1]).expect("import")[0];
+    doc.replace_text(placed, other_change(1, "EDITED")).unwrap();
+    assert!(doc.undo());
+    assert!(doc.text_changes().is_empty());
+    assert!(doc.redo());
+    assert_eq!(
+        doc.text_changes()
+            .iter()
+            .map(|edit| (edit.source, edit.change.page))
+            .collect::<Vec<_>>(),
+        vec![(Some(1), 1)]
+    );
+    // And the import itself undone takes the replacement with it: the page is
+    // gone, so nothing is addressed at all.
+    assert!(doc.undo());
+    assert!(doc.undo());
+    assert!(doc.text_changes().is_empty());
+}
+
+/// A replacement whose page number is not this page's is refused, even when
+/// the file is right --- the stale-address case, on the other file's side.
+#[test]
+fn a_replacement_addressed_at_another_page_of_the_same_file_is_refused() {
+    let mut doc = Doc::open(1);
+    let placed = doc.import(None, file(3), vec![2]).expect("import")[0];
+    assert_eq!(
+        doc.replace_text(placed, other_change(0, "WRONG PAGE")),
+        Err(Refusal::TextEdit("text no longer belongs to this page"))
+    );
+    assert!(doc.text_changes().is_empty());
+}
+
+/// One page of one file in two positions cannot be edited: the writer edits
+/// the file and imports it once per position, so the edit would appear in
+/// both.
+#[test]
+fn text_on_a_page_this_document_shows_twice_is_refused() {
+    let mut doc = Doc::open(1);
+    let first = doc.import(None, file(2), vec![0]).expect("first")[0];
+    let second = doc.import(None, file(2), vec![0]).expect("second")[0];
+    assert_eq!(
+        doc.replace_text(first, other_change(0, "EDITED")),
+        Err(Refusal::TextOnRepeatedImport(first))
+    );
+    assert_eq!(
+        doc.replace_text(second, other_change(0, "EDITED")),
+        Err(Refusal::TextOnRepeatedImport(second))
+    );
+    assert!(doc.text_changes().is_empty());
+    // Deleting one of the two is what the refusal tells the reader to do, and
+    // it is enough: the other is then the only position showing that page.
+    doc.apply(Command::Delete { page: second }).expect("delete");
+    doc.replace_text(first, other_change(0, "EDITED"))
+        .expect("the one that is left is editable");
+    // A *different* page of the same file was never in question.
+    let other = doc.import(None, file(2), vec![1]).expect("third")[0];
+    doc.replace_text(other, other_change(1, "ALSO EDITED"))
+        .expect("a page placed once is editable");
+}
+
+/// Inserting a page that already carries a replacement is refused, which is
+/// the same rule met from the other side --- and it names the page.
+#[test]
+fn inserting_a_page_that_already_has_edited_text_is_refused() {
+    let mut doc = Doc::open(1);
+    let placed = doc.import(None, file(2), vec![0]).expect("import")[0];
+    doc.replace_text(placed, other_change(0, "EDITED")).unwrap();
+    let depth = doc.depth();
+    assert_eq!(
+        doc.import(None, file(2), vec![1, 0]),
+        Err(Refusal::ImportOfEditedPage(0))
+    );
+    assert_eq!(doc.depth(), depth, "a refused import spends nothing");
+    // The page that is not edited may still be inserted.
+    doc.import(None, file(2), vec![1])
+        .expect("an unedited page of the same file");
+    // And a different file's page 0 is a different page: its own record, its
+    // own id, nothing to collide with.
+    doc.import(None, file_with(2, 9), vec![0])
+        .expect("another file's page 0");
 }
 
 /// A redaction anywhere is refused while any page came from another file,

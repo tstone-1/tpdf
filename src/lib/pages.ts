@@ -669,6 +669,33 @@ export class PageMap {
   }
 
   /**
+   * The first slot showing page `page` of the file the *model* calls
+   * `source`, or `undefined` when no slot does.
+   *
+   * {@link slotOfImported}'s twin, keyed by the model's id for the file
+   * rather than by its render handle --- **two different keys, because they
+   * come from two different places**, which is the distinction
+   * {@link slotOf} and {@link slotOfId} already draw. A link found on an
+   * inserted page carries the handle it was scanned through; a pending text
+   * replacement carries the model's `SourceId`, because that is what the
+   * journal keys it by and what survives the file being closed and reopened.
+   */
+  slotOfSource(source: number, page: number): number | undefined {
+    for (let slot = 0; slot < this.views.length; slot++) {
+      const view = this.views[slot]?.source;
+      if (
+        view !== undefined &&
+        "imported" in view &&
+        view.imported.source === source &&
+        view.imported.page === page
+      ) {
+        return slot;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * The handles of the other files the document's pages are drawn from, each
    * once, in slot order.
    *

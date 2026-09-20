@@ -487,3 +487,155 @@ fn a_merge_of_a_document_holding_imported_pages_says_why_it_is_refused() {
         "{why}"
     );
 }
+
+/// A replacement on page `page` of the file at `path`, read from that file's
+/// own scan --- which is where a reader's edit comes from too: the other
+/// file's worker, addressed by its page number there.
+fn edit_of(path: &Path, page: u32, replacement: &str) -> crate::textedit::Change {
+    let document = Document::load(path).expect("the other file must parse");
+    let runs = crate::textedit::scan(&document, page).expect("scan the other file's page");
+    let run = runs
+        .runs
+        .first()
+        .expect("one run on a labelled page")
+        .clone();
+    crate::textedit::Change {
+        layout: None,
+        page,
+        revision: runs.revision,
+        operator: run.operator,
+        original: run.text,
+        replacement: replacement.into(),
+    }
+}
+
+/// A replacement on an inserted page is written into that page, and the
+/// opened file's page of the same number is untouched by it.
+///
+/// **The second half is the assertion that bites.** Both edits address page 0
+/// with the same operator, so a writer that applied them to one document
+/// would produce a file where one label is right by accident and the other is
+/// wrong --- and a test that checked only the inserted page would pass. The
+/// labels are literal strings in uncompressed content streams, so this reads
+/// the words out of the written file rather than out of anything the writer
+/// reported.
+#[test]
+fn a_rewrite_writes_a_replacement_into_the_page_it_imports() {
+    let scratch = Scratch::new("text");
+    let source = scratch.put("own.pdf", &labelled(&["OWN-A", "OWN-B"]));
+    let other = scratch.put("other.pdf", &labelled(&["THEIR-1", "THEIR-2"]));
+    let out = scratch.join("out.pdf");
+    let mut plan = plan_with(2, vec![own(0), theirs(3, 0), own(1)], &other);
+    plan.text_edits = vec![crate::textedit::Edit::imported(
+        1,
+        edit_of(&other, 0, "EDITED"),
+    )];
+
+    write_copy(&source, &plan, &out, None, &Here).expect("the copy");
+
+    assert_eq!(
+        labels_of(&out),
+        vec!["OWN-A", "EDITED", "OWN-B"],
+        "the inserted page carries the reader's words, and only that page"
+    );
+    let bytes = std::fs::read(&out).expect("read back");
+    let holds = |needle: &str| bytes.windows(needle.len()).any(|w| w == needle.as_bytes());
+    assert!(!holds("THEIR-1"), "the replaced words are not in the file");
+    assert!(!holds("THEIR-2"), "the page nobody asked for is not here");
+}
+
+/// Both documents can be edited in one save, and each replacement reaches the
+/// document its page number belongs to.
+#[test]
+fn one_save_edits_the_opened_file_and_the_inserted_page() {
+    let scratch = Scratch::new("both");
+    let source = scratch.put("own.pdf", &labelled(&["OWN-A", "OWN-B"]));
+    let other = scratch.put("other.pdf", &labelled(&["THEIR-1"]));
+    let out = scratch.join("out.pdf");
+    let mut plan = plan_with(2, vec![own(0), theirs(3, 0), own(1)], &other);
+    plan.text_edits = vec![
+        crate::textedit::Edit::opened(edit_of(&source, 0, "OWN")),
+        crate::textedit::Edit::imported(1, edit_of(&other, 0, "EDITED")),
+    ];
+
+    write_copy(&source, &plan, &out, None, &Here).expect("the copy");
+
+    assert_eq!(
+        labels_of(&out),
+        vec!["OWN", "EDITED", "OWN-B"],
+        "each replacement landed on its own page"
+    );
+}
+
+/// The three ways a plan can address a replacement at a page this save will
+/// not place, each refused before the graph is touched and in its own words.
+///
+/// A plan reaches the writer from outside the process --- across the worker
+/// boundary, out of a restored session, out of the fuzz target --- so the
+/// model's refusals are claims to check here rather than to rely on.
+#[test]
+fn replacements_a_save_cannot_place_are_refused_with_the_reason() {
+    let scratch = Scratch::new("refuse-text");
+    let source = scratch.put("own.pdf", &labelled(&["OWN-A"]));
+    let other = scratch.put("other.pdf", &labelled(&["THEIR-1", "THEIR-2"]));
+    let edit = edit_of(&other, 0, "THEIR-EDIT");
+
+    // A file the plan does not list at all.
+    let out = scratch.join("unknown.pdf");
+    let mut plan = plan_with(1, vec![own(0), theirs(2, 0)], &other);
+    plan.text_edits = vec![crate::textedit::Edit::imported(9, edit.clone())];
+    let why = write_copy(&source, &plan, &out, None, &Here).expect_err("no such file");
+    assert!(
+        why.message
+            .contains("from document 9, which the save was not given"),
+        "{why}"
+    );
+    assert!(!out.exists());
+
+    // A page of a file the plan lists, at a position the plan does not place.
+    let out = scratch.join("unplaced.pdf");
+    let mut plan = plan_with(1, vec![own(0), theirs(2, 1)], &other);
+    plan.text_edits = vec![crate::textedit::Edit::imported(1, edit.clone())];
+    let why = write_copy(&source, &plan, &out, None, &Here).expect_err("not placed");
+    assert!(
+        why.message
+            .contains("text on page 1 of another document, which this save does not place"),
+        "{why}"
+    );
+    assert!(!out.exists());
+
+    // One page of one file in two positions: the edit would appear in both.
+    let out = scratch.join("twice.pdf");
+    let mut plan = plan_with(1, vec![own(0), theirs(2, 0), theirs(3, 0)], &other);
+    plan.text_edits = vec![crate::textedit::Edit::imported(1, edit)];
+    let why = write_copy(&source, &plan, &out, None, &Here).expect_err("placed twice");
+    assert!(
+        why.message
+            .contains("page 1 of another document is in this one 2 times"),
+        "{why}"
+    );
+    assert!(!out.exists());
+}
+
+/// A replacement addressed at the opened document while its page is really a
+/// page of the other file is refused by the digest, not silently applied ---
+/// the writer never reads a change against a document it was not validated
+/// in.
+#[test]
+fn a_replacement_addressed_at_the_wrong_document_is_refused_by_its_digest() {
+    let scratch = Scratch::new("digest");
+    let source = scratch.put("own.pdf", &labelled(&["OWN-A"]));
+    let other = scratch.put("other.pdf", &labelled(&["THEIR-1"]));
+    let out = scratch.join("out.pdf");
+    let mut plan = plan_with(1, vec![own(0), theirs(2, 0)], &other);
+    // The other file's own change, wrongly claimed to be the opened file's.
+    plan.text_edits = vec![crate::textedit::Edit::opened(edit_of(&other, 0, "EDIT"))];
+
+    let why = write_copy(&source, &plan, &out, None, &Here).expect_err("wrong document");
+    assert!(
+        why.message
+            .contains("text changed since this run was inspected"),
+        "{why}"
+    );
+    assert!(!out.exists());
+}

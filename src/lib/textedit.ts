@@ -19,27 +19,61 @@ export interface TextPreview { png: number[]; font: string;
    * what the worker's crop covers. Only the backend reads it. */
   extent: [number, number, number, number];
   lines: number }
-export interface TextRuns { page: number; revision: number[]; runs: TextRun[]; preview?: TextPreview }
+export interface TextRuns { page: number;
+  /** Which document `page` is a page of: the file an inserted page came from,
+   * by the model's id for it, and absent for the document the reader opened.
+   * Mirrors `textedit::PageRuns::source`, and it is what lets the editor tell
+   * its own pending replacements from those on the opened file's page of the
+   * same number. */
+  source?: number;
+  revision: number[]; runs: TextRun[]; preview?: TextPreview }
 export interface TextLayout { width: number; height: number; size: number; wrap: boolean;
   font: "auto" | "original" | "noto_sans" | "noto_sans_bold" | "noto_sans_italic" | "noto_sans_bold_italic" | "noto_sans_cjk_sc" | "noto_sans_cjk_sc_bold";
   /** The reader has not sized this box, so it follows the text they type as far
    * as the room after the run allows; see `TextLayoutControls` and, in the
    * worker, `textedit::layout::free_width`. */
   grow: boolean }
-export interface TextChange { page: number; revision: number[]; operator: number; original: string; replacement: string; layout?: TextLayout }
+export interface TextChange { page: number;
+  /** The file the page came from, for a page inserted from another document;
+   * absent for a page of the opened one. Mirrors `textedit::Edit::source`.
+   *
+   * **Only the backend sets it.** A draft on its way to `text_replace` does
+   * not carry one: the command resolves the file from the journal page id it
+   * is given, which is the only name for a page that cannot be ambiguous. */
+  source?: number;
+  revision: number[]; operator: number; original: string; replacement: string; layout?: TextLayout }
 
-/** Compare per-page bodies, including edits removed by undo. */
-export function changedTextPages(before: readonly TextChange[], after: readonly TextChange[]): number[] {
+/** A page of a document, and which document --- {@link TextChange}'s address. */
+export interface TextPage { readonly source?: number; readonly page: number }
+
+/** Whether two addresses name the same page of the same document. */
+export function sameTextPage(a: TextPage, b: TextPage): boolean {
+  return a.page === b.page && (a.source ?? -1) === (b.source ?? -1);
+}
+
+/** Compare per-page bodies, including edits removed by undo.
+ *
+ * **Keyed by the file as well as the page number**, and that is the whole of
+ * what an inserted page costs this: page 3 of the opened document and page 3
+ * of a file inserted from are two different pages that render in two
+ * different slots, so a key of the number alone would report an edit on one
+ * of them as a change to the other --- repainting a page nobody touched and
+ * leaving the edited one showing its old words. */
+export function changedTextPages(before: readonly TextChange[], after: readonly TextChange[]): TextPage[] {
+  const key = (change: TextPage) => JSON.stringify([change.source ?? null, change.page]);
   const group = (changes: readonly TextChange[]) => {
-    const pages = new Map<number, string[]>();
+    const pages = new Map<string, string[]>();
     for (const change of changes) {
-      const entries = pages.get(change.page) ?? [];
-      entries.push(JSON.stringify(change)); pages.set(change.page, entries);
+      const entries = pages.get(key(change)) ?? [];
+      entries.push(JSON.stringify(change)); pages.set(key(change), entries);
     }
     return new Map([...pages].map(([page, entries]) => [page, JSON.stringify(entries.sort())]));
   };
   const old = group(before), next = group(after);
-  return [...new Set([...old.keys(), ...next.keys()])].filter((page) => old.get(page) !== next.get(page));
+  return [...new Set([...old.keys(), ...next.keys()])]
+    .filter((page) => old.get(page) !== next.get(page))
+    .map((page) => { const [source, at] = JSON.parse(page) as [number | null, number];
+      return source === null ? { page: at } : { source, page: at }; });
 }
 
 export function replacementError(value: string, wrap = false): string | null {
@@ -141,8 +175,16 @@ export class TextEditor {
     const button = document.createElement("button"); button.type = "button"; button.textContent = title;
     button.setAttribute("aria-label", title); button.addEventListener("click", action); return button;
   }
+  /** The pending replacement on one of this page's runs, or the source text.
+   *
+   * Matched on the file too: this page's number is a number of whichever
+   * document it is drawn from, and the opened file's page of the same number
+   * can carry a replacement of its own. */
+  private pendingOn(run: TextRun): TextChange | undefined {
+    return this.changes.find((change) => sameTextPage(change, this.source) && change.operator === run.operator);
+  }
   private value(run: TextRun): string {
-    return this.changes.find((change) => change.page === this.source.page && change.operator === run.operator)?.replacement ?? run.text;
+    return this.pendingOn(run)?.replacement ?? run.text;
   }
   private select(run: TextRun): void {
     if (this.busy || this.saving || this.disposed) return;
@@ -151,7 +193,7 @@ export class TextEditor {
       this.commit(); void this.settle().then(() => this.select(run)).catch(() => {}); return;
     }
     this.active = run; this.accepted = this.value(run); this.input.value = this.accepted;
-    const previous = this.changes.find((change) => change.page === this.source.page && change.operator === run.operator);
+    const previous = this.pendingOn(run);
     this.layoutTouched = previous?.layout !== undefined;
     this.controls.set(previous?.layout ?? defaultTextLayout(run));
     this.acceptedLayout = JSON.stringify(this.controls.read());
@@ -175,7 +217,7 @@ export class TextEditor {
     this.changes = state.text_edits ?? [];
     if (this.active && !this.saving && !this.dirtyDraft()) {
       this.accepted = this.value(this.active); this.input.value = this.accepted;
-      const previous = this.changes.find((change) => change.page === this.source.page && change.operator === this.active?.operator);
+      const previous = this.active ? this.pendingOn(this.active) : undefined;
       this.layoutTouched = previous?.layout !== undefined;
       this.controls.set(previous?.layout ?? defaultTextLayout(this.active));
       this.acceptedLayout = JSON.stringify(this.controls.read());

@@ -64,6 +64,18 @@ pub struct Run {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PageRuns {
     pub page: u32,
+    /// Which document `page` is a page of: the file an inserted page came
+    /// from, by its `crate::docmodel::SourceId`, and absent for the document
+    /// the reader opened.
+    ///
+    /// **Filled in by the command rather than by the scan**, because the scan
+    /// is the worker's and a worker knows no source id --- it holds one
+    /// document and every page number it answers is a page of that one. The
+    /// reply carries it so the editor can tell its own pending replacements
+    /// from those on the opened file's page of the same number, which is a
+    /// pair that collides exactly when a reader inserts pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<u32>,
     /// Binds operator addresses to the exact decoded content that was inspected.
     pub revision: Vec<u8>,
     pub runs: Vec<Run>,
@@ -115,6 +127,52 @@ pub struct Change {
     pub replacement: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<Layout>,
+}
+
+/// One replacement, and which document its `page` is a page of.
+///
+/// **The file is beside the change rather than in it**, which is the same
+/// split `crate::edits::Plan` makes between `PlannedSource` and a page's
+/// `PageSource`: a [`Change`] is a replacement addressed in *one* document ---
+/// a page number, an operator ordinal and the digest of that page's decoded
+/// content --- and every function in this module takes one together with the
+/// `Document` it is addressed in. Which document that is, is a second fact,
+/// and putting it inside [`Change`] would have made every validator, fixture
+/// and probe in the module carry a field none of them can act on.
+///
+/// `source` is a [`crate::docmodel::SourceId`] as its bare number, absent for
+/// a page of the document the reader opened. It is the same spelling
+/// [`crate::docmodel::PageSource::Imported`] and `PlannedSource::id` use, and
+/// for the same reason: both sides only ever compare it.
+///
+/// **`#[serde(flatten)]` on the change**, so the wire shape is what it always
+/// was with one optional key more. A journal, a plan or a reply written before
+/// this existed therefore reads back as the replacement on the opened
+/// document it meant.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Edit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<u32>,
+    #[serde(flatten)]
+    pub change: Change,
+}
+
+impl Edit {
+    /// A replacement on a page of the document the reader opened.
+    pub fn opened(change: Change) -> Edit {
+        Edit {
+            source: None,
+            change,
+        }
+    }
+
+    /// A replacement on a page inserted from the file `source` names.
+    pub fn imported(source: u32, change: Change) -> Edit {
+        Edit {
+            source: Some(source),
+            change,
+        }
+    }
 }
 
 /// User-selected editing area and font size, in page points along the text axes.
@@ -656,6 +714,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut image_bytes = 0;
     let mut result = PageRuns {
         page,
+        // The scan holds one document and cannot name it; the command that
+        // chose which document to ask fills this in. See the field.
+        source: None,
         revision: Sha256::digest(&bytes).to_vec(),
         runs: Vec::new(),
         preview: None,
@@ -1761,6 +1822,47 @@ mod spacing_tests;
 pub(crate) mod tests {
     use super::*;
     use lopdf::dictionary;
+
+    /// An `Edit` is a `Change` with one optional key, on the wire as in the
+    /// type --- and a body written before the key existed reads back as the
+    /// replacement on the opened document it meant.
+    ///
+    /// **Flattened rather than nested**, which is what makes the second half
+    /// true: a nested `change` object would have made every stored journal,
+    /// plan and reply from before today unreadable, and the failure would
+    /// have been a replacement silently missing rather than an error.
+    #[test]
+    fn an_edit_is_a_change_with_one_optional_key() {
+        let change = Change {
+            layout: None,
+            page: 2,
+            revision: vec![1; 32],
+            operator: 3,
+            original: "SYNTHETIC ORIGINAL".into(),
+            replacement: "SYNTHETIC EDIT".into(),
+        };
+        let opened = serde_json::to_value(Edit::opened(change.clone())).expect("serialise");
+        assert_eq!(
+            opened,
+            serde_json::to_value(&change).expect("serialise the change"),
+            "a replacement on the opened document is byte-identical to the change it wraps"
+        );
+        let imported = serde_json::to_value(Edit::imported(4, change.clone())).expect("serialise");
+        assert_eq!(
+            imported.get("source").and_then(serde_json::Value::as_u64),
+            Some(4)
+        );
+        assert_eq!(
+            imported.get("page").and_then(serde_json::Value::as_u64),
+            Some(2),
+            "the change's own keys stay at the top level"
+        );
+        // And back, including the shape that predates the key.
+        let legacy: Edit = serde_json::from_value(opened).expect("a body with no source");
+        assert_eq!(legacy, Edit::opened(change.clone()));
+        let back: Edit = serde_json::from_value(imported).expect("a body with one");
+        assert_eq!(back, Edit::imported(4, change));
+    }
 
     // Clipping is authored artwork, not a reason to reject unrelated text.
     // Exercise a real replacement and prove every non-text operator survives.

@@ -258,11 +258,57 @@ describe("existing text editing", () => {
     for (const args of focus.mock.calls) expect(args).toEqual([{ preventScroll: true }]);
   });
   it("invalidates added, changed and undone pages without invalidating reordered changes", () => {
-    expect(changedTextPages([], [change])).toEqual([0]);
-    expect(changedTextPages([change], [])).toEqual([0]);
-    expect(changedTextPages([change], [{ ...change, replacement: "ACME" }])).toEqual([0]);
+    expect(changedTextPages([], [change])).toEqual([{ page: 0 }]);
+    expect(changedTextPages([change], [])).toEqual([{ page: 0 }]);
+    expect(changedTextPages([change], [{ ...change, replacement: "ACME" }])).toEqual([{ page: 0 }]);
     const second = { ...change, page: 2 };
     expect(changedTextPages([change, second], [second, change])).toEqual([]);
+  });
+  it("tells one file's page from another file's page of the same number", () => {
+    // Same page number, same operator, different documents: a key of the
+    // number alone reports one page when two changed, and reports the wrong
+    // one when the edit is on the inserted page.
+    const inserted = { ...change, source: 4 };
+    expect(changedTextPages([], [change, inserted])).toEqual([{ page: 0 }, { source: 4, page: 0 }]);
+    expect(changedTextPages([change], [change, inserted])).toEqual([{ source: 4, page: 0 }]);
+    expect(changedTextPages([change, inserted], [change])).toEqual([{ source: 4, page: 0 }]);
+    // And two files are two keys, not one.
+    expect(changedTextPages([inserted], [{ ...change, source: 5 }])).toEqual([
+      { source: 4, page: 0 },
+      { source: 5, page: 0 },
+    ]);
+  });
+  it("shows the replacement on its own file's page, not the opened file's of the same number", () => {
+    // The editor is open on page 0 of the file inserted as source 4, and the
+    // journal holds a replacement on page 0 of the opened document as well.
+    // Same page number, same operator: matching on the number alone would put
+    // the opened file's words into the inserted page's hit target and its
+    // input box.
+    const inserted: TextRuns = { ...runs, source: 4 };
+    const { editor, root, field } = mount(undefined, inserted);
+    editor.update({
+      ...state,
+      text_edits: [
+        { ...change, replacement: "FROM THE OPENED FILE" },
+        { ...change, source: 4, replacement: "FROM THE OTHER FILE" },
+      ],
+    });
+    expect(root.children[0]!.getAttribute("aria-label")).toBe("Edit: FROM THE OTHER FILE");
+    expect(field.value).toBe("FROM THE OTHER FILE");
+  });
+  it("shows the opened file's replacement when the editor is on the opened file's page", () => {
+    // The mirror of the test above, and it is what makes that one a
+    // statement about the file rather than about the last entry in the list.
+    const { editor, root, field } = mount();
+    editor.update({
+      ...state,
+      text_edits: [
+        { ...change, replacement: "FROM THE OPENED FILE" },
+        { ...change, source: 4, replacement: "FROM THE OTHER FILE" },
+      ],
+    });
+    expect(root.children[0]!.getAttribute("aria-label")).toBe("Edit: FROM THE OPENED FILE");
+    expect(field.value).toBe("FROM THE OPENED FILE");
   });
   it("bounds draft characters while allowing deletion", () => {
     expect(replacementError("")).toBeNull();

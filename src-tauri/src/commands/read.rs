@@ -258,7 +258,7 @@ pub async fn form_fill(
     edits.fill(doc, object, value)
 }
 
-/// Supported baseline text operands on one stable journal page.
+/// Supported text operands on one stable journal page.
 #[tauri::command]
 pub async fn document_text_runs(
     service: tauri::State<'_, RenderService>,
@@ -267,10 +267,10 @@ pub async fn document_text_runs(
     page: u64,
     change: Option<crate::textedit::Change>,
 ) -> Result<crate::textedit::PageRuns, String> {
-    let source = text_page(&edits, doc, page)?;
-    let mut changes = edits.text_changes(doc);
+    let at = text_address(&edits, doc, page)?;
+    let mut changes = at.mine(edits.text_changes(doc));
     if let Some(change) = change {
-        if change.page != source {
+        if change.page != at.page {
             return Err("Text no longer belongs to this page".into());
         }
         changes.retain(|old| (old.page, old.operator) != (change.page, change.operator));
@@ -281,33 +281,106 @@ pub async fn document_text_runs(
         changes.clear();
     }
     let (reply, rx) = reply_channel();
-    service.text_runs(doc, source, changes, reply);
-    await_reply("document_text_runs", rx).await
+    service.text_runs(at.doc, at.page, changes, reply);
+    let mut runs: crate::textedit::PageRuns = await_reply("document_text_runs", rx).await?;
+    // Said by the side that knows. The worker answered about the document it
+    // holds and cannot name it; this is the layer that chose which document to
+    // ask, so it is the layer that can say which one the page number is of.
+    runs.source = at.source;
+    Ok(runs)
 }
 
-fn text_page(edits: &crate::edits::Edits, doc: u32, page: u64) -> Result<u32, String> {
+/// Which worker answers for a page's text, and the page number it answers by.
+///
+/// **The frontend's `addressOf`, on this side of the boundary** --- and it is
+/// this side that decides, because the webview names a *journal page id* and
+/// the handle a request goes to is the model's answer, never the caller's. A
+/// page of the opened file is read by its own worker under its baseline
+/// number; a page inserted from another file is read by *that* file's worker,
+/// which is already what draws and searches it, under its number there.
+#[cfg_attr(test, derive(Debug))]
+struct TextAddress {
+    /// The render handle to ask.
+    doc: u32,
+    /// The page of that document, zero-based.
+    page: u32,
+    /// The model's id for the other file, or `None` for the opened document.
+    source: Option<u32>,
+}
+
+impl TextAddress {
+    /// The replacements already pending **in the document this addresses**.
+    ///
+    /// Filtered by file, not merely fetched: the worker is about to be handed
+    /// these as edits of the bytes it holds, and a replacement belonging to
+    /// another file would be applied to whatever that file has at the same
+    /// page number --- the wrong-page picture `PageAddress` exists to refuse,
+    /// arriving as text.
+    fn mine(&self, all: Vec<crate::textedit::Edit>) -> Vec<crate::textedit::Change> {
+        all.into_iter()
+            .filter(|edit| edit.source == self.source)
+            .map(|edit| edit.change)
+            .collect()
+    }
+}
+
+fn text_address(edits: &crate::edits::Edits, doc: u32, page: u64) -> Result<TextAddress, String> {
     let state = edits.state(doc)?;
-    page_text_source(state.pages.iter().find(|p| p.id == page).map(|p| p.source))
+    let source = state
+        .pages
+        .iter()
+        .find(|p| p.id == page)
+        .map(|p| p.source)
+        .ok_or("This page is no longer in the document")?;
+    page_text_address(doc, source, &state.sources)
 }
 
-/// The page of the opened file whose text an edit would change, or why not.
+/// The worker and page number a replacement on `source` is addressed by.
 ///
 /// A match with an arm per variant rather than a catch-all, so the next kind of
 /// page is a compile error here rather than a sentence that is true of one kind
 /// and shown for another --- the shape `docs/TRAPS.md` records for
-/// `is_appendable`. An imported page has text, and PDFium reads it through the
-/// other file's handle; what it has not got is a content stream the opened
-/// document's worker validated, which is what a replacement is checked against.
-fn page_text_source(source: Option<crate::docmodel::PageSource>) -> Result<u32, String> {
+/// `is_appendable`.
+///
+/// ⚠ **The imported arm used to be a refusal**, whose sentence said the
+/// replacement is validated against the opened document's content streams and
+/// that an imported page has no page number there. Both halves were true and
+/// the conclusion was not: the other file is open in a sandboxed worker pool
+/// of its own, which is what every tile, extraction and search for one of its
+/// pages already names, and asking it the same question is the whole of what
+/// the edit needed. What is refused now is a page whose file the state does
+/// not list a handle for --- the same `undefined` `addressOf` answers, which
+/// draws nothing rather than the wrong file's page.
+fn page_text_address(
+    doc: u32,
+    source: crate::docmodel::PageSource,
+    sources: &[crate::edits::SourceView],
+) -> Result<TextAddress, String> {
     use crate::docmodel::PageSource;
     match source {
-        Some(PageSource::Baseline(index)) => Ok(index),
-        Some(PageSource::Imported { .. }) => Err(
-            "Text on a page inserted from another file cannot be edited yet. Save the \
-             document and open it again to edit it."
-                .into(),
-        ),
-        Some(PageSource::Blank(_)) | None => Err("This page has no editable original text".into()),
+        PageSource::Baseline(index) => Ok(TextAddress {
+            doc,
+            page: index,
+            source: None,
+        }),
+        PageSource::Imported { source, page } => {
+            let file = source.get();
+            let held = match sources.iter().find(|view| view.source == file) {
+                Some(view) => view.doc,
+                // **Refused rather than answered with `doc`**, which is the
+                // same choice `addressOf` makes for a page whose handle the
+                // state does not carry: reading the opened document's page of
+                // the same number would answer a question about a different
+                // page and look like an answer about this one.
+                None => return Err("The file this page came from is no longer open".into()),
+            };
+            Ok(TextAddress {
+                doc: held,
+                page,
+                source: Some(file),
+            })
+        }
+        PageSource::Blank(_) => Err("This page has no editable original text".into()),
     }
 }
 
@@ -320,46 +393,123 @@ pub async fn text_replace(
     page: u64,
     change: crate::textedit::Change,
 ) -> Result<crate::edits::EditState, String> {
-    let source = text_page(&edits, doc, page)?;
-    if change.page != source {
+    let at = text_address(&edits, doc, page)?;
+    if change.page != at.page {
         return Err("Text no longer belongs to this page".into());
     }
-    let mut pending = edits.text_changes(doc);
+    let mut pending = at.mine(edits.text_changes(doc));
     pending.retain(|old| (old.page, old.operator) != (change.page, change.operator));
     if change.replacement != change.original || change.layout.is_some() {
         pending.push(change.clone());
     }
     let (reply, rx) = reply_channel();
-    service.text_runs(doc, source, pending, reply);
+    service.text_runs(at.doc, at.page, pending, reply);
     await_reply("text_replace", rx).await?;
     edits.replace_text(doc, page, change)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::page_text_source;
+    use super::page_text_address;
     use crate::docmodel::{PageSource, Size, SourceId};
+    use crate::edits::SourceView;
 
-    /// An imported page is refused in words about where it came from, not as a
-    /// page with no text.
+    /// An imported page is read through the handle its own file is open
+    /// under, by its page number in that file --- not through the opened
+    /// document's, which holds a different page of the same number.
     #[test]
-    fn an_imported_page_says_why_its_text_cannot_be_edited() {
-        let said = page_text_source(Some(PageSource::Imported {
-            source: SourceId::from_raw(1),
-            page: 0,
-        }))
+    fn an_imported_page_is_read_through_its_own_files_handle() {
+        let at = page_text_address(
+            7,
+            PageSource::Imported {
+                source: SourceId::from_raw(1),
+                page: 5,
+            },
+            &[SourceView { source: 1, doc: 40 }],
+        )
+        .expect("addressed");
+        assert_eq!((at.doc, at.page, at.source), (40, 5, Some(1)));
+    }
+
+    /// A file with no handle in the state draws nothing and is not silently
+    /// read out of the opened document.
+    #[test]
+    fn an_imported_page_whose_file_is_not_open_is_refused() {
+        let said = page_text_address(
+            7,
+            PageSource::Imported {
+                source: SourceId::from_raw(2),
+                page: 0,
+            },
+            &[SourceView { source: 1, doc: 40 }],
+        )
         .expect_err("refused");
-        assert!(said.contains("another file"), "{said}");
+        assert!(said.contains("no longer open"), "{said}");
+    }
+
+    /// The worker is handed the replacements addressed **in the document it
+    /// holds**, and no others.
+    ///
+    /// The premise is the collision again: both entries are page 0 operator 3,
+    /// so a filter that passed everything would hand the other file's worker a
+    /// replacement of the opened document's page 0 --- applied to whatever
+    /// that file has at the same number, which is the wrong-page picture
+    /// `PageAddress` exists to refuse arriving as text.
+    #[test]
+    fn a_worker_is_handed_only_the_replacements_addressed_in_its_own_document() {
+        let change = |replacement: &str| crate::textedit::Change {
+            layout: None,
+            page: 0,
+            revision: vec![1; 32],
+            operator: 3,
+            original: "SYNTHETIC ORIGINAL".into(),
+            replacement: replacement.into(),
+        };
+        let all = vec![
+            crate::textedit::Edit::opened(change("OPENED")),
+            crate::textedit::Edit::imported(1, change("IMPORTED")),
+            crate::textedit::Edit::imported(2, change("ANOTHER")),
+        ];
+        let opened = page_text_address(7, PageSource::Baseline(0), &[]).expect("addressed");
+        assert_eq!(
+            opened
+                .mine(all.clone())
+                .iter()
+                .map(|change| change.replacement.as_str())
+                .collect::<Vec<_>>(),
+            vec!["OPENED"]
+        );
+        let imported = page_text_address(
+            7,
+            PageSource::Imported {
+                source: SourceId::from_raw(1),
+                page: 0,
+            },
+            &[SourceView { source: 1, doc: 40 }],
+        )
+        .expect("addressed");
+        assert_eq!(
+            imported
+                .mine(all)
+                .iter()
+                .map(|change| change.replacement.as_str())
+                .collect::<Vec<_>>(),
+            vec!["IMPORTED"]
+        );
     }
 
     #[test]
     fn a_page_of_the_file_is_its_baseline_number() {
-        assert_eq!(page_text_source(Some(PageSource::Baseline(4))), Ok(4));
-        assert!(page_text_source(Some(PageSource::Blank(Size {
-            width: 1.0,
-            height: 1.0
-        })))
+        let at = page_text_address(7, PageSource::Baseline(4), &[]).expect("addressed");
+        assert_eq!((at.doc, at.page, at.source), (7, 4, None));
+        assert!(page_text_address(
+            7,
+            PageSource::Blank(Size {
+                width: 1.0,
+                height: 1.0
+            }),
+            &[]
+        )
         .is_err());
-        assert!(page_text_source(None).is_err());
     }
 }

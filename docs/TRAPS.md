@@ -118,6 +118,7 @@ hop through the index.
 - Where the parse runs is not observable from a unit test
 - A Rust process absorbs the first SIGSEGV you send it
 - A released id must leave a hole, because removing it renumbers the rest
+- A render handle can name a document the edit model has never heard of, and the lookup answers empty
 - Forgetting a node in a linked list is not removing it from the list
 - A resource whose only owner is on the other side of a boundary is leaked whenever that side forgets
 - Two copies of a distinction drift, and a mutation of one survives
@@ -169,6 +170,7 @@ hop through the index.
 - A withdrawal that is correct as a broadcast is expensive in exactly the moment it is used
 
 ## The document model: saving, structure, signatures
+- An edit reaches the file, and the writer imports the file once per position the page occupies
 - Redaction conflicts with incremental save — and a full rewrite is not sufficient either
 - Digital signatures constrain what may be edited at all
 - Whether `/Annots` is an indirect array decides how large an annotation edit is
@@ -325,6 +327,7 @@ hop through the index.
 - A survey counts editable pages, so a rule that refuses nearly every edit passed it
 
 ## Writing a check that can fail
+- A fixture with one of a thing cannot falsify a comparison of which thing
 - Break the code on purpose, or the test suite is decoration
 - There was no check on the overlay at all, and that is why a reader found the underline defect
 - A feature can be inert in the application while three layers of tests pass
@@ -23682,3 +23685,90 @@ free space, and moving the loose one against the edge -- and both went red.
 The habit: **when an increment changes what a refusal is, grep the harnesses for the message
 it used to give**, not only the tests. And when a self-test's expectation has to be relaxed,
 the same commit owes it a case that still holds it.
+
+### A render handle can name a document the edit model has never heard of, and the lookup answers empty
+
+`textview::Source::changes(doc)` fed every render, extraction and search with the
+document's pending text replacements, and it did it by calling
+`Edits::text_changes(doc)` --- a lookup in the map of **open documents**. That was
+exactly right for as long as every handle in a request named one.
+
+It stopped being right the day a page could be inserted from another file. That file
+is opened as a document of the render service in a pool of its own, and `addressOf`
+routes every tile, page-text and search request for one of its pages to *its* handle.
+So the lookup was handed a number that is not a key of that map, answered `None`,
+and `unwrap_or_default()` turned it into an empty list. Every inserted page then drew
+and extracted **without the reader's own edit on it**, and nothing anywhere reported
+anything: an empty list of pending changes is what an unedited document looks like.
+
+Two things make this worth an entry rather than a bug fix.
+
+**It is the failure mode with no refusal in it.** Everything else in this increment
+that could go wrong went wrong loudly --- a replacement addressed in the wrong
+document is refused by its content digest, a page the plan does not place is refused
+by the writer, a file with no handle is refused by the command. This one had no error
+path at all, because "no pending changes" is a legitimate answer that the caller
+cannot tell from "I do not know this handle".
+
+**The general form: a map lookup with a default is a silent authority check.**
+`get(k).unwrap_or_default()` says *"if you are not in my table, the answer is
+nothing"* --- which is correct when the table is the whole population and wrong the
+moment a second kind of key arrives at the same parameter. `Edits::render_changes`
+now takes both kinds and says so in its name and its doc; the test drives it with
+**two** imported files, because with one the wrong answer and the right one are the
+same list.
+
+### A fixture with one of a thing cannot falsify a comparison of which thing
+
+A mutation deleted `source.get() == file` from the predicate that decides whether a
+plan keeps a replacement, leaving it comparing the page number alone. It **survived**,
+and the test looked thorough: it edited a page of the opened document and a page of an
+inserted file, both page 0, and asserted the plan and two extracts kept each with its
+own page.
+
+The fixture had **one** imported file. So `file` was 1 and `source.get()` was 1 on
+every call, and the deleted comparison had exactly one possible outcome. Every
+assertion was about the other operand.
+
+The repair is the shape rather than the case: **for a predicate `a == b && c == d`,
+ask what value the fixture can give `a` that makes `a == b` false.** If there is only
+one `a` in the fixture, that half of the conjunction is decoration, and the suite will
+tell you so only under mutation --- this repository's entry about a conjunction being
+covered as a whole and unfalsifiable in each half is the same failure with both halves
+present. Importing from a **second** file fixed it in one line, and the second file is
+now the default shape for every test here, because the collision these types exist for
+is between two files and not between a file and the document.
+
+### An edit reaches the file, and the writer imports the file once per position the page occupies
+
+A reader may insert page 3 of a file, and then insert page 3 of the same file again.
+The model allows it and the writer gives each position its own objects ---
+`merge::import` is called once per round, and `Refusal::ImportedTwice` is about one
+*selection* rather than about the document.
+
+Editing that page's text cannot follow, and the reason is where the edit lands. A
+replacement on an inserted page is validated against **that file's** page and written
+by `textedit::write` into **that file's** document, before `merge::import` walks it.
+So one edit becomes one edited page of one file, and both positions import it. The
+copy nobody edited carries the words too, and the file is valid, the page count is
+right, and the reader's own page shows exactly what they typed --- so nothing looks
+wrong from any direction except the one page they never opened.
+
+Three consequences, and the third is the one that is easy to miss:
+
+* The **model** refuses the edit (`Refusal::TextOnRepeatedImport`), because it is the
+  only layer that can see both positions. The plan cannot: two positions showing one
+  page of one file produce one `Edit`, addressed at that page, and there is nothing
+  in it to say which position was meant.
+* The model also refuses the **insert** (`Refusal::ImportOfEditedPage`), because the
+  same collision can be built in the other order --- edit first, insert second.
+* The **writer** refuses both anyway. A plan arrives from outside the process, so the
+  model's refusals are claims to check rather than to lean on; and the writer's third
+  refusal has no model counterpart at all --- a replacement on a page no position
+  places would edit the file, import a different page of it, and report a save that
+  wrote none of the reader's words.
+
+The alternative --- applying each position's edits to its own clone of the incoming
+document --- is what would have to be built if a reader ever wants two copies of one
+page edited differently. It needs the `Edit` to name a *position* rather than a page,
+which is a change to the wire shape and to the model's key; nothing has asked for it.

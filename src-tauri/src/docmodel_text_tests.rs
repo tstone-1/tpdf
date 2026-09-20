@@ -1,5 +1,14 @@
 use super::*;
 
+/// The journal's answer for a replacement on a page of the opened document.
+///
+/// Every test in this file edits the file the document was opened from, so
+/// each entry names no other file; `docmodel_import_tests.rs` is where the
+/// other half is checked.
+fn opened(change: &crate::textedit::Change) -> crate::textedit::Edit {
+    crate::textedit::Edit::opened(change.clone())
+}
+
 fn change(page: u32, operator: u32, replacement: &str) -> crate::textedit::Change {
     crate::textedit::Change {
         layout: None,
@@ -25,18 +34,18 @@ fn layout_only_edits_are_journaled_and_undo_restores_the_exact_layout() {
         grow: false,
     });
     doc.replace_text(page, edit.clone()).unwrap();
-    assert_eq!(doc.text_changes(), [edit.clone()]);
+    assert_eq!(doc.text_changes(), [opened(&edit)]);
     let mut resized = edit.clone();
     resized.layout.as_mut().unwrap().width = 220.;
     doc.replace_text(page, resized.clone()).unwrap();
-    assert_eq!(doc.text_changes(), [resized.clone()]);
+    assert_eq!(doc.text_changes(), [opened(&resized)]);
     assert!(doc.undo());
-    assert_eq!(doc.text_changes(), [edit]);
+    assert_eq!(doc.text_changes(), [opened(&edit)]);
     assert!(doc.undo());
     assert!(doc.text_changes().is_empty());
     assert!(doc.redo());
     assert!(doc.redo());
-    assert_eq!(doc.text_changes(), [resized]);
+    assert_eq!(doc.text_changes(), [opened(&resized)]);
 }
 
 #[test]
@@ -46,7 +55,7 @@ fn textedit_journal_latin1_limit_counts_characters_not_utf8_bytes() {
     let mut update = change(0, 3, &"ä".repeat(crate::textedit::MAX_TEXT));
     update.original = "ö".repeat(crate::textedit::MAX_TEXT);
     doc.replace_text(page, update.clone()).unwrap();
-    assert_eq!(doc.text_changes(), vec![update.clone()]);
+    assert_eq!(doc.text_changes(), vec![opened(&update)]);
     for original in [false, true] {
         let mut bad = update.clone();
         if original {
@@ -55,12 +64,12 @@ fn textedit_journal_latin1_limit_counts_characters_not_utf8_bytes() {
             bad.replacement.push('ä');
         }
         assert!(doc.replace_text(page, bad).is_err());
-        assert_eq!(doc.text_changes(), vec![update.clone()]);
+        assert_eq!(doc.text_changes(), vec![opened(&update)]);
     }
     assert!(doc.undo());
     assert!(doc.text_changes().is_empty());
     assert!(doc.redo());
-    assert_eq!(doc.text_changes(), vec![update]);
+    assert_eq!(doc.text_changes(), vec![opened(&update)]);
 }
 
 #[test]
@@ -74,14 +83,20 @@ fn textedit_journal_replays_replacements_across_snapshots() {
     }
     assert_eq!(doc.text_changes().len(), 1);
     for i in (0..count).rev() {
-        assert_eq!(doc.text_changes()[0].replacement, format!("EDIT {i}"));
+        assert_eq!(
+            doc.text_changes()[0].change.replacement,
+            format!("EDIT {i}")
+        );
         assert!(doc.undo());
     }
     assert!(doc.text_changes().is_empty());
     assert!(!doc.can_undo());
     for i in 0..count {
         assert!(doc.redo());
-        assert_eq!(doc.text_changes()[0].replacement, format!("EDIT {i}"));
+        assert_eq!(
+            doc.text_changes()[0].change.replacement,
+            format!("EDIT {i}")
+        );
     }
     assert!(!doc.can_redo());
 }
@@ -112,7 +127,7 @@ fn textedit_journal_restores_original_and_discards_abandoned_bodies() {
         "restoring unchanged text adds no undo entry"
     );
     assert!(doc.undo());
-    assert_eq!(doc.text_changes()[0].replacement, "BRANCH");
+    assert_eq!(doc.text_changes()[0].change.replacement, "BRANCH");
     assert!(doc.redo());
     assert!(doc.text_changes().is_empty());
 }
@@ -162,7 +177,7 @@ fn textedit_journal_bounds_history_but_reclaims_the_redo_tail() {
     }
     doc.replace_text(page, change(0, 3, "BRANCH")).unwrap();
     assert_eq!(doc.text_versions.len(), MAX_TEXT_VERSIONS - 99);
-    assert_eq!(doc.text_changes()[0].replacement, "BRANCH");
+    assert_eq!(doc.text_changes()[0].change.replacement, "BRANCH");
     assert!(!doc.can_redo());
 }
 
@@ -221,16 +236,19 @@ fn textedit_plans_follow_page_identity_and_filter_deleted_or_extracted_pages() {
     assert!(!plan.is_appendable());
     assert_eq!(
         plan.text_edits,
-        vec![change(0, 3, "FIRST"), change(1, 3, "SECOND")]
+        vec![
+            opened(&change(0, 3, "FIRST")),
+            opened(&change(1, 3, "SECOND"))
+        ]
     );
     assert_eq!(
         edits.plan_subset(7, &[0]).unwrap().text_edits,
-        vec![change(1, 3, "SECOND")]
+        vec![opened(&change(1, 3, "SECOND"))]
     );
     edits.delete(7, first).unwrap();
     assert_eq!(
         edits.plan(7).unwrap().text_edits,
-        vec![change(1, 3, "SECOND")]
+        vec![opened(&change(1, 3, "SECOND"))]
     );
     assert!(edits.replace_text(7, first, change(0, 3, "STALE")).is_err());
     edits.undo(7).unwrap();
