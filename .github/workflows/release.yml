@@ -423,17 +423,15 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Editing an existing line is no longer
-          confined to the space the words already take. Type more than was there
-          and the box grows into the room the line has; type past that and the
-          rest of the line moves along to make room, keeping its spacing.
-          Nothing above or below the line moves. The line still stops at text
-          tpdf may not rewrite, at a picture, at the edge of the page and at
-          anything the document clips, and it says which. Across a sample of 31
-          public documents, edits a quarter longer than the text they replace
-          are accepted on 48% of lines, against 1% before. An edit no longer
-          shifts the lines after it by a pixel in documents that position each
-          line relative to the last, such as Word and LibreOffice exports.
+          **New in this release.** A page inserted from another file is now
+          treated like one of the document's own: its text can be edited, and a
+          web link on it opens after the same confirmation. Regions can be marked
+          for removal on your own pages while such inserted pages are in the
+          document. Two things stay refused and say why: removing a region from
+          an inserted page, because tpdf cannot yet prove that removal clean, and
+          the image-only redaction copy of a document holding one. The previous
+          release let an edit grow into the room its line has and move the rest
+          of the line along.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
