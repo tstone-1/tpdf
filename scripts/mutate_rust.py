@@ -8504,7 +8504,7 @@ MUTATIONS += [
         "edits: address a mark by its baseline page rather than its position",
         "src/edits.rs",
         "            let at = u32::try_from(at).unwrap_or(u32::MAX);",
-        "            let at = match view.source {\n                PageSource::Baseline(number) => number,\n                PageSource::Blank(_) => 0,\n            };",
+        "            let at = match view.source {\n                PageSource::Baseline(number) => number,\n                PageSource::Blank(_) | PageSource::Imported { .. } => 0,\n            };",
         "a_marks_reply_names_the_page_by_identity_and_the_plan_by_position",
     ),
     Mutation(
