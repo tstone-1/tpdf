@@ -5170,11 +5170,16 @@ after this cycle's three increments added ten checks to it. The redaction of an
 own page beside an inserted one was checked end to end through the sandboxed
 worker (`redact-import-probe`, 17/17) and read back with `qpdf --check` and pypdf.
 
-**The Windows window phases, `print-probe` and `redact-reach-probe` were not run:
-MOTHERSHIP was unreachable (asleep) for the whole release.** So this release has
-the Windows compiler, the Windows test suite and the Windows gate job behind it,
-and nothing that opens a window there. Worth running against the published tag
-when the machine is next up.
+**The Windows window phases, `print-probe` and `redact-reach-probe` were not run
+before the tag: MOTHERSHIP was unreachable (asleep) for the whole release.** They
+were run against the published tag the next morning, 2026-09-21, and all passed:
+viewer sweeps 315 text-heavy and 217 vector-heavy checks, `textedit-push` 6/6,
+the embedded textedit phase 23/23, the import phase **28/28** including every
+inserted-page check this cycle added, `print-probe` 10/10 against the real
+spooler, the OCR sweep with zero regions still reading as text, and both
+installers built. So the published 26.9.16 has the same Windows evidence as the
+releases before it -- after publication rather than before, which is the order
+this record exists to state rather than smooth over.
 
 **26.9.15 verification, macOS arm64 and Windows x64, 2026-09-20:** all 25 gates
 passed on macOS and `check_windows.py` type-checked the Windows tree. Every
