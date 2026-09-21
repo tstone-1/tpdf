@@ -118,7 +118,10 @@
   import { runOpenCheckIfRequested } from "./lib/harness";
   import { Serial } from "./lib/serial";
   import { DegradedLabel } from "./lib/degraded";
-  import { Updates, updateLabel, updateNotice, type UpdateState } from "./lib/update";
+  import {
+    finishUpdate, installEndsProcess, Updates, updateLabel, updateNotice,
+    type FinishStep, type UpdateState,
+  } from "./lib/update";
   import { Viewer, type ViewerStatus } from "./lib/viewer";
   import { describeFit, percentOf } from "./lib/zoom";
 
@@ -614,7 +617,8 @@
     checkForUpdates: () => void checkAndSay(),
     automaticUpdates: () => updates.automatic,
     setAutomaticUpdates: (enabled) => setAutomaticUpdates(enabled),
-    applyUpdate: () => void updates.install(),
+    applyUpdate: () => void finishUpdateStep("install"),
+    restartForUpdate: () => void finishUpdateStep("restart"),
     updateAvailable: () => updates.state.kind === "available",
     updateReady: () => updates.state.kind === "ready",
     rotatePage: (delta) => void rotatePage(delta),
@@ -3020,6 +3024,66 @@
     notice = updateNotice(await updates.check(), appVersion);
   }
 
+  /**
+   * Runs one half of the update, with the same unsaved-work question a close asks.
+   *
+   * **Why this exists at all**: a relaunch is not a window close. Tauri's
+   * `request_restart` sends `ExitRequested` with its own exit code straight at
+   * the run-event loop, so no window is asked to close and the
+   * `onCloseRequested` handler in `setup` --- the one that counts dirty tabs
+   * and asks --- never runs. Wiring the button to `relaunch()` would throw a
+   * reader's edits away on one press.
+   *
+   * The install is gated by the same call, on the platform where it ends the
+   * process: on Windows `downloadAndInstall` hands over to the installer and
+   * calls `exit(0)`, so it is a quit wearing another name. That direction had
+   * no question in front of it before 26.9.17 either, and the answer had to be
+   * one function rather than two copies of a dialog.
+   *
+   * The settle before reading `dirty` mirrors the close path exactly:
+   * `documentTasks.idle()`, then `settleDocument()`, which commits open popups
+   * and lets a pending edit land. Reading `dirty` before those is reading it
+   * early, and reading it early is how a document with unsaved work reports
+   * that it has none.
+   */
+  async function finishUpdateStep(step: FinishStep): Promise<void> {
+    const ends = step === "restart" || installEndsProcess(isMac());
+    await finishUpdate(step, updates.state, ends, {
+      unsaved: async () => {
+        await documentTasks.idle();
+        await settleDocument();
+        return tabs.all
+          .filter((tab) => tab.edits.state.dirty)
+          .map((tab) => basename(tab.path));
+      },
+      confirm: (prompt) => confirmDialog(prompt.message, {
+        title: prompt.title,
+        kind: "warning",
+        okLabel: prompt.okLabel,
+        cancelLabel: prompt.cancelLabel,
+      }),
+      act: async () => {
+        // `install` reports its own failures through the state machine, which
+        // is what puts `failed` in the header; it never rejects, so `say`
+        // below is not a second channel for the same news.
+        if (step === "install") {
+          await updates.install();
+          return;
+        }
+        // The place is issued by `settleDocument` above and **awaited** here,
+        // which `flush()` on its own does not do. The process ends inside the
+        // next call, so an unanswered write is a lost reading position ---
+        // restoring after an update has to land where an ordinary restart
+        // lands, and this is the only step in the path that can wait.
+        await places.settled();
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      },
+      say: (message) => say(message),
+    });
+    refreshMenu();
+  }
+
   function setAutomaticUpdates(enabled: boolean): void {
     try {
       updates.setAutomatic(enabled);
@@ -3768,11 +3832,13 @@
       <button
         class="update"
         class:ready={updateState.kind === "ready"}
-        disabled={updates.busy || updateState.kind === "ready"}
+        disabled={updates.busy}
         title={updateState.kind === "ready"
-          ? "Quit and open tpdf again to finish updating"
+          ? "Restart tpdf now to finish installing the update"
           : "Download and apply this update"}
-        onclick={() => void updates.install()}>{updateLabel(updateState)}</button
+        onclick={() => void finishUpdateStep(
+          updateState.kind === "ready" ? "restart" : "install",
+        )}>{updateLabel(updateState)}</button
       >
     {/if}
   </header>

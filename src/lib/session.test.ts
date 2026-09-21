@@ -191,6 +191,38 @@ describe("SessionWriter", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("waits for a flushed write to be answered, so a relaunch cannot outrun it", async () => {
+    // **The one caller that can wait, and must.** `flush()` issues the write and
+    // returns, which is right for `pagehide` and for a closing window; a
+    // relaunch ends the process inside its very next call, so an unanswered
+    // write is a lost reading position. Mutation: resolve `settled()` before the
+    // queue -> red, because `answered` would still be false when it resolves.
+    let answered = false;
+    let land!: () => void;
+    const writer = new SessionWriter((_p) => new Promise<void>((resolve) => {
+      land = () => { answered = true; resolve(); };
+    }), 1000);
+
+    writer.note(place({ page: 1 }));
+    let settledYet = false;
+    void writer.settled().then(() => { settledYet = true; });
+    await settle();
+    expect(settledYet).toBe(false);
+
+    land();
+    await settle();
+    expect(settledYet).toBe(true);
+    expect(answered).toBe(true);
+  });
+
+  it("settles rather than rejecting when a write fails", async () => {
+    // A caller about to end the process has nothing useful to do with the news,
+    // and an unhandled rejection there would be the last thing it did.
+    const writer = new SessionWriter(() => Promise.reject(new Error("no disk")), 1000);
+    writer.note(place({ page: 1 }));
+    await expect(writer.settled()).resolves.toBeUndefined();
+  });
+
   it("drops a scheduled write when stopped", async () => {
     const { sent, send } = recorder();
     const writer = new SessionWriter(send, 1000);

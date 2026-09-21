@@ -626,7 +626,22 @@ pub fn run() {
         // against `plugins.updater.pubkey` in `tauri.conf.json` BEFORE anything
         // is unpacked, so the archive parsers this pulls in (zip, tar) never see
         // bytes that were not signed by the key in `docs/THREAT-MODEL.md` §T9.
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Ending this process and starting it again, which is the *second half*
+        // of an update on macOS and nothing at all on Windows --- see
+        // `installEndsProcess` in `src/lib/update.ts` for the measurement.
+        //
+        // `AppHandle::request_restart` is what the `restart` command calls, and
+        // it does not go through a window close: it sends `ExitRequested` with
+        // `Some(RESTART_EXIT_CODE)` straight at the run-event loop. The arm
+        // below matches `code: None`, which is native Quit, so a restart does
+        // not match it and is not turned into a window close by us either. So
+        // the webview's own `onCloseRequested` handler --- the one that asks
+        // about unsaved tabs --- is **not** invoked by a relaunch, and the
+        // frontend has to ask that question itself before calling this.
+        // `update.ts`'s `finishUpdate` does, and `update.test.ts` is what keeps
+        // it doing so.
+        .plugin(tauri_plugin_process::init());
 
     // The native menu bar. macOS only, for the reason `menu.rs` gives: there the
     // bar is outside the window and its emptiness was the defect, and on Windows
@@ -909,6 +924,53 @@ pub fn run() {
 mod tests {
 
     use crate::save;
+
+    /// The capability file, read at compile time so no test can miss it.
+    const CAPABILITY: &str = include_str!("../capabilities/default.json");
+
+    /// The webview may ask for a restart and may not ask to quit.
+    ///
+    /// `docs/THREAT-MODEL.md` §T9 states that bound, and until this test it was
+    /// stated by a document and enforced by nothing --- one word in a JSON file
+    /// stands between the two. `process:default` reads like the obvious entry
+    /// and is the wrong one: it is `allow-exit` **and** `allow-restart`, and a
+    /// restart reopens the reader's session where a quit does not, so they are
+    /// not the same act and only one of them is needed here.
+    ///
+    /// The emptiness check is the control. A scan that found no permissions at
+    /// all --- a renamed file, a key spelled differently, a parse that returned
+    /// nothing --- would satisfy every "is absent" assertion below and report a
+    /// capability list that grants nothing as a capability list that is safe.
+    ///
+    /// No mutation aims at this, because what it reads is a **data file** and
+    /// `mutate_rust.py` edits source. Proved able to go red by hand instead, on
+    /// 2026-09-21, three ways and then restored green: `process:allow-restart`
+    /// deleted, `process:allow-restart` replaced by `process:default`, and the
+    /// permission list emptied, which is the control firing rather than the two
+    /// absence assertions passing on nothing.
+    #[test]
+    fn the_webview_may_restart_the_process_and_may_not_exit_it() {
+        let granted: Vec<&str> = CAPABILITY
+            .lines()
+            .filter_map(|line| line.trim().trim_end_matches(',').strip_prefix('"'))
+            .filter_map(|line| line.strip_suffix('"'))
+            .filter(|line| line.contains(':'))
+            .collect();
+        assert!(
+            granted.len() > 4,
+            "no permissions were found, so nothing below can fail: {granted:?}"
+        );
+        assert!(
+            granted.contains(&"process:allow-restart"),
+            "finishing an update needs it: {granted:?}"
+        );
+        for refused in ["process:default", "process:allow-exit"] {
+            assert!(
+                !granted.contains(&refused),
+                "{refused} hands the webview a quit it has no use for: {granted:?}"
+            );
+        }
+    }
 
     /// A [`save::Verifier`] that answers what it is told to and records the ask.
     ///

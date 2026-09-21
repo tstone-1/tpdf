@@ -127,6 +127,7 @@ const UNLISTED: Record<string, string> = {
   "app.about": "the version is a menu item, and the Releases link is what a reader wants",
   "app.checkForUpdates": "updating is described by the Releases link, not by a command",
   "app.installUpdate": "the other half of the update flow, and the same answer",
+  "app.restartForUpdate": "the last step of the same flow, and the same answer again",
   // Moving about a document. Five commands for one idea, and naming them
   // individually would describe the palette rather than what the product does.
   // Following a *link* is different and is claimed above, because a viewer that

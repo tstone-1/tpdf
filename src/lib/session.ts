@@ -175,6 +175,24 @@ export class SessionWriter {
     }
   }
 
+  /**
+   * Resolves once every write issued so far has been answered.
+   *
+   * {@link flush} issues the write and returns at once, which is right for the
+   * paths it was written for: `pagehide` cannot be awaited and a closing window
+   * is not going to wait. A **relaunch** is the one path that can, and must ---
+   * the process ends the moment the restart is requested, so a place written
+   * one `invoke` earlier is in a race with it, and losing that race puts the
+   * reader back on the page they were on two positions ago.
+   *
+   * Never rejects. The chain in {@link write} already swallows a failed write
+   * so that one error cannot stop later positions being recorded, and a caller
+   * about to end the process has nothing useful to do with the news anyway.
+   */
+  settled(): Promise<void> {
+    return this.queue.then(() => undefined, () => undefined);
+  }
+
   /** Stops accepting notes, and drops any scheduled write. */
   stop(): void {
     this.stopped = true;

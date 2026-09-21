@@ -2531,7 +2531,7 @@ SOFTWARE.
 
 ## Rust crates
 
-404 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+405 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2831,6 +2831,7 @@ SOFTWARE.
 | tauri-macros | 2.6.3 | Apache-2.0 OR MIT |
 | tauri-plugin-dialog | 2.7.3 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.5.2 | Apache-2.0 OR MIT |
+| tauri-plugin-process | 2.3.1 | Apache-2.0 OR MIT |
 | tauri-plugin-single-instance | 2.4.4 | Apache-2.0 OR MIT |
 | tauri-plugin-updater | 2.11.0 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.11.3 | Apache-2.0 OR MIT |
@@ -11217,6 +11218,7 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 |---|---|---|
 | @tauri-apps/api | 2.11.1 | Apache-2.0 OR MIT |
 | @tauri-apps/plugin-dialog | 2.7.3 | MIT OR Apache-2.0 |
+| @tauri-apps/plugin-process | 2.3.1 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-updater | 2.11.0 | MIT OR Apache-2.0 |
 | svelte | 5.57.0 | MIT |
 

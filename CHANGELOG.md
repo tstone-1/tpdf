@@ -17,6 +17,42 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.17] - Unreleased
+
+### Added
+
+- **Finishing an update no longer means quitting tpdf by hand.** On macOS the
+  updater replaces the application bundle on disk and leaves the running process
+  on the old code, so an applied update ended with the header reading *"Update
+  ready — restart to finish"* beside a button that was disabled. There was no
+  relaunch anywhere in the application; the only way through was to quit and
+  reopen it.
+
+  The header button is now the action. In the ready state it reads **Restart to
+  finish update** and restarts, and the same step is in the command palette and
+  the tpdf menu under that name.
+
+- **A restart asks about unsaved work, exactly as closing the window does.** This
+  is not a courtesy: Tauri's restart does *not* go through a window close, so the
+  question tpdf already asks about dirty tabs would simply not have been asked. A
+  reader who says no keeps the update ready, the button offered and their work
+  open. Pending edits and open note fields are settled before the tabs are
+  counted, and the reading position is written *and waited for* before the
+  process ends, so restoring after an update lands where an ordinary restart
+  lands.
+
+### Changed
+
+- **"Install update and restart" is now "Install update", because it does not
+  restart.** On macOS it installs and stops; the restart is the separate command
+  above. On Windows the installer does close and reopen tpdf — a title may
+  promise less than a command performs, never more.
+
+- **Installing on Windows now asks about unsaved work first.** There the plugin
+  hands over to the installer and ends this process, so installing has always
+  been a quit wearing another name, and nothing asked. macOS keeps no question
+  in front of its install, which discards nothing.
+
 ## [26.9.16] - 2026-09-20
 
 ### Added

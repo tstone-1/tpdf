@@ -28,6 +28,7 @@ import { NIBS } from "./marknibs";
 import type { StampName } from "./pages";
 import { PAGE_SIZE_NAMES } from "./pagesizes";
 import type { PreparedImport } from "./pendingimport";
+import { updateLabel } from "./update";
 
 /**
  * A registry with every application command in it, and a record of what fired.
@@ -110,6 +111,7 @@ function harness(
     automaticUpdates: () => automatic,
     setAutomaticUpdates: (enabled) => { automatic = enabled; fired.push(`setAutomaticUpdates:${enabled}`); },
     applyUpdate: () => fired.push("applyUpdate"),
+    restartForUpdate: () => fired.push("restartForUpdate"),
     // Default false, so a test that says nothing about updates exercises the
     // state a launch actually starts in rather than the convenient one.
     updateAvailable: () => update.available ?? false,
@@ -375,6 +377,51 @@ describe("the update commands", () => {
     expect(fired).toEqual([]);
   });
 
+  it("withholds the restart until the update is actually applied", () => {
+    // The control for the pair below. `available` alone is not enough: an
+    // update found and not yet installed has nothing for a restart to finish,
+    // and offering one would end the process for no gain.
+    for (const update of [{}, { available: true }]) {
+      const { registry, fired } = harness(true, update);
+      expect(registry.search("").map((r) => r.command.id)).not.toContain("app.restartForUpdate");
+      expect(registry.run("app.restartForUpdate")).toBe(false);
+      expect(fired).toEqual([]);
+    }
+  });
+
+  it("offers the restart exactly where the install is withdrawn", () => {
+    // **The two guards are not mirror images and this is where that shows.**
+    // `install` needs an update found *and* not yet applied; `restart` needs it
+    // applied. In the one state a reader is left in after installing, exactly
+    // one of the two must be live --- before 26.9.17 neither was, and the
+    // header said "restart to finish" over a disabled button.
+    const { registry, fired } = harness(true, { available: true, ready: true });
+    const offered = registry.search("").map((r) => r.command.id);
+    expect(offered).not.toContain("app.installUpdate");
+    expect(offered).toContain("app.restartForUpdate");
+    expect(registry.run("app.restartForUpdate")).toBe(true);
+    expect(fired).toEqual(["restartForUpdate"]);
+  });
+
+  it("gives the header and the palette one name for the restart", () => {
+    // A button and a palette row that read differently are two actions to a
+    // reader. Compared against `updateLabel` rather than against a literal, so
+    // changing either side alone is what goes red.
+    const { registry } = harness(true, { available: true, ready: true });
+    expect(registry.find("app.restartForUpdate")?.title).toBe(
+      updateLabel({ kind: "ready", version: "26.9.17" }),
+    );
+  });
+
+  it("promises no restart from the command that may not perform one", () => {
+    // On macOS installing replaces the bundle and leaves this process running
+    // the old code, so "Install update and restart" --- which is what this said
+    // until 26.9.17 --- was a title claiming a step the command does not take.
+    // A title may promise less than a command performs; never more.
+    const { registry } = harness(true, { available: true });
+    expect(registry.find("app.installUpdate")?.title).toBe("Install update");
+  });
+
   it("finds both by typing, which is the only way to reach either", () => {
     // Neither has a binding, so palette rank is not one route among several.
     expect(harness().registry.search("check for updates")[0]?.command.id).toBe(
@@ -452,9 +499,18 @@ describe("every registered command", () => {
     // command reach an action", which presumes each is in a state where it is
     // allowed to run; the guards themselves are asserted above, in both
     // directions.
-    const { registry, fired } = harness(
+    //
+    // **Two harnesses, because the update flow has two states and no single one
+    // offers both of its commands.** `app.installUpdate` needs an update found
+    // and not yet applied; `app.restartForUpdate` needs it applied. Run in one
+    // state, the sweep reads whichever is correctly withheld as a no-op
+    // command. Excluding one by name would be the wrong repair --- an exclusion
+    // list is exactly where a genuine no-op hides --- so each command has to
+    // reach an action in *at least one* of the two, and the two guards
+    // themselves are asserted above in both directions.
+    const built = (update: { available?: boolean; ready?: boolean }) => harness(
       true,
-      { available: true },
+      update,
       { undo: true, redo: true },
       true,
       true,
@@ -480,20 +536,31 @@ describe("every registered command", () => {
       // And a file waiting to be inserted, so `edit.insertPages.range` is.
       { pending: 1, pages: 3, name: "other.pdf" },
     );
-    const shell = registry
+    const found = built({ available: true });
+    const applied = built({ available: true, ready: true });
+    const states = [found, applied];
+    const shell = found.registry
       .all()
       .filter(
         (command) => !REACHES_THE_VIEWER.some((p) => command.id.startsWith(p)),
       );
     for (const command of shell) {
-      const before = fired.length;
-      const argument = command.argument ? "1" : undefined;
-      registry.run(command.id, argument);
-      expect(fired.length, `${command.id} fired nothing`).toBeGreaterThan(
-        before,
-      );
+      const reached = states.some(({ registry, fired }) => {
+        const before = fired.length;
+        registry.run(command.id, command.argument ? "1" : undefined);
+        return fired.length > before;
+      });
+      expect(reached, `${command.id} fired nothing in either update state`).toBe(true);
     }
     expect(shell.length).toBeGreaterThan(3);
+    // The control for the arrangement above: without it, a second state that
+    // happened to offer nothing new would still let the sweep pass, and the
+    // two-state shape would be decoration. Each update command must be the one
+    // its own state reaches, and neither state reaches both.
+    expect(found.fired).toContain("applyUpdate");
+    expect(found.fired).not.toContain("restartForUpdate");
+    expect(applied.fired).toContain("restartForUpdate");
+    expect(applied.fired).not.toContain("applyUpdate");
   });
 });
 
@@ -1233,6 +1300,7 @@ describe("the window shortcuts for editing", () => {
       automaticUpdates: () => true,
       setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
       applyUpdate: () => fired.push("applyUpdate"),
+      restartForUpdate: () => fired.push("restartForUpdate"),
       updateAvailable: () => false,
       updateReady: () => false,
       rotatePage: (delta) => fired.push(`rotatePage:${delta}`),

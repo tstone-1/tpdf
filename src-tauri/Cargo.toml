@@ -117,6 +117,20 @@ caseless = "0.2.2"
 # attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version.
 tauri-plugin-updater = "2.11"
 
+# Ending this process and starting it again, which is the second half of an
+# update on macOS: the plugin there replaces the `.app` on disk and leaves this
+# process running the old code, so without a relaunch the reader has to quit and
+# reopen by hand. MIT OR Apache-2.0, and the smallest addition the tree has
+# taken: **one package, itself** (591 to 592 over the whole tree), because it is
+# two commands over `AppHandle` and `tauri` is already here doing the work. The
+# opposite extreme from the updater above, which brought 48.
+#
+# Only `process:allow-restart` is granted in `capabilities/default.json`, not
+# `process:default`, which would also give the webview `exit`. Restarting is
+# recoverable and reopens the reader's session; quitting is not the same act and
+# nothing here needs it. See `docs/THREAT-MODEL.md` §T9.
+tauri-plugin-process = "2.3"
+
 # The signer's certificate out of a signature's `/Contents`: `cms` for the CMS
 # `SignedData`, `x509-cert` for the certificate inside it, `der` underneath both.
 # Nine packages between them, every one `Apache-2.0 OR MIT` except `flagset`,

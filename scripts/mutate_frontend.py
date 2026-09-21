@@ -4522,8 +4522,8 @@ MUTATIONS += [
     Mutation(
         "update: spell the ready-to-restart notice with the prose dash",
         "src/lib/update.ts",
-        "return `Version ${state.version} is ready — restart to finish`;",
-        "return `Version ${state.version} is ready --- restart to finish`;",
+        "return `Version ${state.version} is installed — restart tpdf to finish`;",
+        "return `Version ${state.version} is installed --- restart tpdf to finish`;",
         "holds no prose dash outside the separator sentinel",
     ),
     Mutation(
@@ -5528,6 +5528,14 @@ TEST_FILES = [
     # already refused.
     "src/lib/pagesizes.test.ts",
     "src/lib/importedlinks.test.ts",
+    # Moved up out of `UNMUTATED` on 2026-09-21, which is the entry that table
+    # exists to make cheap: `session.ts` grew `settled()` for the relaunch --- the
+    # one caller that can wait for a place to land before the process ends --- and
+    # a mutation now aims at it, so the reason for excluding the suite ("no
+    # mutation aims at src/lib/session.ts") stopped being true in the same commit
+    # that made it stop being true. Fourteenth, and moved in that commit rather
+    # than a step later.
+    "src/lib/session.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.
@@ -5567,7 +5575,6 @@ UNMUTATED = {
     "src/lib/lifetime.test.ts": "no mutation aims at src/lib/lifetime.ts",
     "src/lib/paths.test.ts": "no mutation aims at src/lib/paths.ts",
     "src/lib/serial.test.ts": "no mutation aims at src/lib/serial.ts",
-    "src/lib/session.test.ts": "no mutation aims at src/lib/session.ts",
     "src/lib/tiles.test.ts": "no mutation aims at src/lib/tiles.ts",
     # A different shape from the ten above, and the reason is worth stating
     # rather than borrowing theirs. This suite has no production module at all:
@@ -7843,6 +7850,82 @@ MUTATIONS += [
         'if (text) text.cache.invalidatePage(text.page);',
         'void text;',
         "re-extracts only the inserted page when its own text was edited"),
+]
+
+# Finishing an update from inside the application (26.9.17). The header used to
+# read "Update ready --- restart to finish" over a button that was `disabled`, so
+# the one state whose label asks for a step offered no way to take it. The step
+# ends the process, which is why every one of these is about the question in
+# front of it rather than about the relaunch itself.
+MUTATIONS += [
+    Mutation("update finish: run a step the state does not allow", "src/lib/update.ts",
+        '  if (state.kind !== wanted) return "withheld";',
+        '',
+        "refuses a restart before the update is applied"),
+    Mutation("update finish: guard every step against the ready state", "src/lib/update.ts",
+        '  const wanted = step === "install" ? "available" : "ready";',
+        '  const wanted = "ready";',
+        "refuses an install that is already applied, and one never found"),
+    Mutation("update finish: ask about unsaved work even when nothing ends", "src/lib/update.ts",
+        '  if (ends) {',
+        '  if (ends || true) {',
+        "asks nothing for a step that does not end the process"),
+    Mutation("update finish: act although the reader said no", "src/lib/update.ts",
+        '    if (prompt && !await effects.confirm(prompt)) return "cancelled";',
+        '    if (prompt) await effects.confirm(prompt);',
+        "leaves the update ready when the reader says no"),
+    Mutation("update finish: swallow a failed relaunch", "src/lib/update.ts",
+        '    effects.say(String(e));',
+        '',
+        "tells the reader when the step itself fails, rather than failing silently"),
+    # Backwards is the dangerous direction: it takes the question away from the
+    # Windows install, which ends the process, and puts it in front of the macOS
+    # one, which discards nothing.
+    Mutation("update platform: installing ends the process on macOS too", "src/lib/update.ts",
+        '  return !mac;',
+        '  return true;',
+        "does not end on macOS, where the restart is a separate step"),
+    Mutation("update prompt: ask although nothing is unsaved", "src/lib/update.ts",
+        '  if (unsaved.length === 0) return null;',
+        '',
+        "asks nothing when nothing is unsaved"),
+    Mutation("update prompt: one wording for both steps", "src/lib/update.ts",
+        '  return step === "restart"',
+        '  return true',
+        "says which act is about to happen, and the two are not the same act"),
+    Mutation("update prompt: count the one document instead of naming it", "src/lib/update.ts",
+        '    ? `unsaved changes to ${unsaved[0]}`',
+        '    ? `unsaved changes in 1 open document`',
+        "names the one document, and counts several"),
+    Mutation("update label: name the step rather than the action that takes it", "src/lib/update.ts",
+        '      return "Restart to finish update";',
+        '      return "Update ready \u2014 restart to finish";',
+        "names the version on offer, and the restart when one is waiting"),
+    # The registry half. Both guards are one line each and neither is visible
+    # from the other, which is what let the install stay live after it had run.
+    Mutation("update command: offer the restart before anything is installed", "src/lib/appcommands.ts",
+        '      enabled: () => actions.updateReady(),',
+        '      enabled: () => true,',
+        "withholds the restart until the update is actually applied"),
+    Mutation("update command: keep promising a restart it may not perform", "src/lib/appcommands.ts",
+        '      title: "Install update",',
+        '      title: "Install update and restart",',
+        "promises no restart from the command that may not perform one"),
+    # The shell, where no test imports the file and a source assertion is the
+    # only instrument there is.
+    Mutation("update shell: read the platform alone, so a macOS restart asks nothing",
+        "src/App.svelte",
+        '    const ends = step === "restart" || installEndsProcess(isMac());',
+        '    const ends = installEndsProcess(isMac());',
+        "asks about unsaved work before a restart, whatever installing does here"),
+    Mutation("update shell: end the process without waiting for the place", "src/App.svelte",
+        '        await places.settled();',
+        '',
+        "waits for the reading position to land before ending the process"),
+    Mutation("session settle: resolve before the write is answered", "src/lib/session.ts",
+        '    return this.queue.then(() => undefined, () => undefined);',
+        '    return Promise.resolve();',
+        "waits for a flushed write to be answered, so a relaunch cannot outrun it"),
 ]
 
 if __name__ == "__main__":

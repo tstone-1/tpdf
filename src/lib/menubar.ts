@@ -102,7 +102,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
     // "About tpdf" leads, which is where a reader looks for it on both
     // platforms and is also the order the question comes in: which version is
     // this, and is there a newer one. The first answers without the network.
-    items: ["app.about", "app.checkForUpdates", "app.installUpdate", SEPARATOR,
+    items: ["app.about", "app.checkForUpdates", "app.installUpdate",
+      // Beside the install rather than anywhere else, because the two are one
+      // sequence: whichever of them is live, it is the next thing to press.
+      "app.restartForUpdate", SEPARATOR,
       "app.disableAutomaticUpdates", "app.enableAutomaticUpdates"],
   },
   {

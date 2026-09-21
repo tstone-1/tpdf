@@ -133,12 +133,23 @@ export interface AppActions {
   /** Download and apply the update the last check found. */
   applyUpdate(): void;
   /**
+   * End this process and start it again, so an applied update takes effect.
+   *
+   * Asks about unsaved work first, exactly as closing the window does --- a
+   * relaunch does not go through the window's close handler, so the question
+   * has to be asked on this side. `update.ts`'s `finishUpdate` is where it is,
+   * and where the reader's "no" is respected without changing the state.
+   */
+  restartForUpdate(): void;
+  /**
    * Whether an update is downloaded and waiting for a relaunch.
    *
-   * Read by the two update commands' `enabled` guards, so that "Install update"
-   * is offered only when there is one and is withdrawn once it is applied ---
-   * the two states are different and a single "is there an update" flag would
-   * leave the command live after it had already run.
+   * Read by the guards of both update commands that act, so that "Install update"
+   * is offered only when there is one and is withdrawn once it is applied, and
+   * "Restart to finish update" appears exactly when the install is the thing
+   * already done --- the two states are different and a single "is there an
+   * update" flag would leave the install live after it had already run and
+   * would never say when a restart is what is left.
    */
   updateReady(): boolean;
   /** Whether the last check found an update that has not been applied. */
@@ -589,9 +600,30 @@ export function registerAppCommands(
       // second. Applying twice is not harmful, but a command that stays live
       // after it has run says the first run did not work.
       id: "app.installUpdate",
-      title: "Install update and restart",
+      // **"and restart" came off on 2026-09-21, because it did not.** On macOS
+      // the plugin replaces the `.app` on disk and leaves this process running
+      // the old code, so the command installed and then sat there while the
+      // header said a restart was needed and offered nothing to press. A title
+      // may promise less than a command performs --- on Windows the installer
+      // does close and reopen tpdf --- but never more, and `docs/TRAPS.md` has
+      // why that direction is the one that costs. The restart is its own
+      // command below, offered exactly when it is the step that remains.
+      title: "Install update",
       enabled: () => actions.updateAvailable() && !actions.updateReady(),
       run: () => actions.applyUpdate(),
+    },
+    {
+      // The other half, and it exists at all because the header used to say
+      // "restart to finish" beside a disabled button: the reader was told what
+      // to do and given no way to do it but quitting the application by hand.
+      //
+      // Guarded on `updateReady` alone, which is the state `install` leaves
+      // behind. That is why the two guards are not mirror images: `install`
+      // needs an update found *and* not yet applied, this one needs it applied.
+      id: "app.restartForUpdate",
+      title: "Restart to finish update",
+      enabled: () => actions.updateReady(),
+      run: () => actions.restartForUpdate(),
     },
     {
       id: "file.properties",

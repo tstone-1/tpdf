@@ -6413,9 +6413,21 @@ starts at 0 and increments within the month.
     ```
     # With the PREVIOUS release installed in /Applications, launched normally:
     #   1. the toolbar offers "Update to <new version>" within a second or two
-    #   2. clicking it shows progress, then "Update ready — restart to finish"
-    #   3. quit, reopen, and "About tpdf" -- palette or the tpdf menu -- reports
-    #      the new version
+    #   2. clicking it shows progress, then "Restart to finish update"
+    #   3. clicking THAT restarts tpdf -- no quit and reopen by hand -- and
+    #      "About tpdf" (palette or the tpdf menu) reports the new version
+    #   4. the document and the page you were on come back, as after any restart
+    #
+    # Step 2's label read "Update ready — restart to finish" over a DISABLED
+    # button until 26.9.17, and step 3 was "quit, reopen" for the same reason:
+    # nothing in the application could relaunch it. Both are the action now.
+    #
+    # And run step 3 twice, the second time with an edit outstanding: with a
+    # mark drawn and not saved, pressing Restart must ask before discarding it,
+    # and answering "Keep open" must leave the update still offered and the
+    # document still open. A relaunch does not go through the window's close
+    # handler, so that question is asked by `finishUpdate` and by nothing else
+    # -- see the trap of that name.
     #
     # That third line named a Help/About that did not exist until 2026-08-19, so
     # this step could never have been carried out. See the trap; the short of it
@@ -6423,6 +6435,15 @@ starts at 0 and increments within the month.
     # exactly like one that keeps passing.
     curl -s https://github.com/tstone-1/tpdf/releases/latest/download/latest.json | head -20
     ```
+
+    **On Windows steps 2 and 3 are one step, and that is the plugin rather than
+    a difference in tpdf.** `Update::install_inner` there hands the installer to
+    `ShellExecuteW` and calls `exit(0)`, so the application closes while
+    installing and the installer starts it again; "Restart to finish update"
+    never appears, because no process is left to show it. What to check instead
+    is the question in front of it: with an unsaved mark, pressing **Install
+    update** must ask before closing, and "Keep open" must leave the update
+    still offered. Not verified on Windows as of 2026-09-21.
 
     **Windows live update verified 2026-09-12, from 26.9.5 to 26.9.6.** The old
     installation offered the published update; applying it installed the executable

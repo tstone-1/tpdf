@@ -3162,9 +3162,12 @@ async function appCommandChecks(
     automaticUpdates: () => true,
     setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
     applyUpdate: () => fired.push("applyUpdate"),
+    restartForUpdate: () => fired.push("restartForUpdate"),
     // False both, so the install command's `enabled` guard is exercised in the
     // direction the check can assert: it must not appear in the palette on a
-    // run where nothing has been found.
+    // run where nothing has been found. `updateReady` false also withholds the
+    // restart, which is the only direction a check that must not end its own
+    // process can assert.
     updateReady: () => false,
     updateAvailable: () => false,
     // The page operations. Recorders like the rest of the shell half: the model
@@ -4266,6 +4269,13 @@ async function appCommandChecks(
     "app.disableAutomaticUpdates": "the persisted setting is covered by update tests",
     "app.enableAutomaticUpdates": "the persisted setting is covered by update tests",
     "app.installUpdate": "it would replace the running binary mid-run",
+    // And this one would end the process the check is running in, which is not
+    // a failure the harness could report: the transcript it is writing would
+    // stop mid-sentence and `viewer_check.py` would read that as a crash. Its
+    // guard is asserted in both directions in `appcommands.test.ts`, and what
+    // it does once pressed --- settle, count the dirty tabs, ask, respect a no
+    // --- is `update.test.ts`, which fakes the relaunch.
+    "app.restartForUpdate": "it would end the process this check is writing its transcript from",
     // Driving either from the palette would time the layout against a chain of
     // two IPC round trips --- measure the ink, then ask what size the page
     // becomes --- and the probe framework's settle is a frame-loop wait, not a
@@ -4452,6 +4462,10 @@ async function appCommandChecks(
     // is offered. Opening a document does not change that preference.
     "app.enableAutomaticUpdates",
     "app.installUpdate",
+    // Needs an update already applied, which is a state a check run can never
+    // be in: nothing here installs one. In registry order, immediately after
+    // the install it follows.
+    "app.restartForUpdate",
     "find.inSelection",
     "edit.highlightSelection",
     "edit.underlineSelection",

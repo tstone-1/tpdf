@@ -14288,6 +14288,87 @@ describing a command wrongly passes exactly like one describing it well. Both
 limits are stated in the test rather than left to be discovered, and
 `BUILD.md`'s release checklist carries that half.
 
+#### An applied update could not be finished from inside tpdf — done 2026-09-21
+
+Reported as a question: the header read *"Update ready — restart to finish"* and
+there was nothing to press. The button was `disabled` in exactly that state, and
+`@tauri-apps/plugin-process` was not a dependency, so no code path in the
+application could relaunch it. The only way through was to quit and reopen by
+hand.
+
+**The label was the worse half, and it was in the palette rather than the
+header.** `app.installUpdate` was titled *"Install update and restart"* and did
+not restart. That is a title promising a step the command does not take, which
+is the direction `docs/TRAPS.md` keeps recording as the expensive one: a reader
+who believes it waits for something that is not coming. It is *"Install update"*
+now, and the restart is its own command.
+
+##### The two platforms are not symmetric, and the asymmetry decides the design
+
+Read out of `tauri-plugin-updater` 2.11's own source before anything was wired,
+because assuming symmetry here gets it backwards in the dangerous direction.
+
+| | what `downloadAndInstall` does | where the reader lands |
+|---|---|---|
+| **macOS** | unpacks the gzipped tar the bundler writes for it, moves the running bundle aside, renames the new one into its place, returns | `ready` — the process is still running the old code, and nothing restarts it |
+| **Windows** | hands the MSI or NSIS setup to `ShellExecuteW`, then `std::process::exit(0)` | nowhere — the promise never resolves, and `restart_after_install` (default true) has the installer start tpdf again |
+
+So `ready` is a macOS state that Windows never reaches, and the *install* on
+Windows is a quit wearing another name. `installEndsProcess` in `update.ts` is
+that one fact, read once, rather than the same sentence copied into two call
+sites.
+
+##### Unsaved work was the part that made this more than a button
+
+**A relaunch does not go through the window's close handler.**
+`AppHandle::request_restart` sends `RunEvent::ExitRequested` with
+`Some(RESTART_EXIT_CODE)` straight at the run-event loop; no window is asked to
+close, so `onCloseRequested` — which is where tpdf counts dirty tabs and asks
+before discarding them — never runs. tpdf's own arm there matches `code: None`,
+which is what lets the restart through and is also why nothing else intercepts
+it. A button wired directly to `relaunch()` would have thrown a reader's edits
+away on one press.
+
+`finishUpdate` is the gate, and it gates the Windows install by the same call
+for the same reason. It settles first (`documentTasks.idle()`, then
+`settleDocument()`, which commits open popups and lets a pending edit land),
+then counts, then asks in the close dialog's own words, and a reader who says no
+changes **no state at all** — the update stays `ready`, the button stays
+offered, the work stays open. The reading position is written by the settle and
+then **awaited** before the process ends: `flush()` issues the write and returns,
+which is right for `pagehide` and for a closing window, and a relaunch is the one
+caller that can wait and must, or restoring after an update lands a position
+behind where an ordinary restart lands.
+
+##### What the dependency cost, and what was checked
+
+One cargo package (`tauri-plugin-process` 2.3.1, `Apache-2.0 OR MIT`; 591 to 592
+over the whole tree) and one npm package (`@tauri-apps/plugin-process` 2.3.1,
+`MIT OR Apache-2.0`). It is two commands over `AppHandle` and brings no
+transitive of its own. `cargo metadata` over the whole tree and a walk of
+`node_modules` both came back with the same picture as before: no AGPL or GPL,
+MPL-2.0 file-level in Servo's CSS crates via Tauri, and `r-efi` triple-licensed
+with an `MIT OR Apache-2.0` arm. `THIRD-PARTY-NOTICES.md` is regenerated, 404 to
+405 linked crates and 4 to 5 npm packages.
+
+Only `process:allow-restart` is in `capabilities/default.json`, not
+`process:default`, which would also hand the webview `exit`.
+`docs/THREAT-MODEL.md` §T9 carries what the new authority is bounded by and the
+one residual it adds — the question lives on the webview's side of the boundary,
+because the settle that makes `dirty` current does.
+
+##### What was measured here and what was not
+
+macOS only. Fifteen frontend mutations go red at the test named for each,
+control green: the state guard both ways, the `ends` flag, the cancellation, the
+failure report, the platform answer, three prompt properties, the two registry
+guards, the two `App.svelte` wirings and the session settle. What no check here
+can reach is a **real** update applied from one published release to the next —
+`update.test.ts` fakes the plugin and `viewer_check.py` cannot drive a command
+that ends the process it writes its transcript from. `BUILD.md` schedules that as
+a manual step, and the Windows half of the install gate has not been exercised on
+Windows at all.
+
 ### Phase 3 — Redaction
 
 The full subsystem of §6: whole-graph sanitation, clone-on-write, GC'd rewrite,

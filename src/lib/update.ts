@@ -223,10 +223,166 @@ export function updateLabel(state: UpdateState): string | null {
         ? "Downloading update"
         : `Downloading update — ${state.percent}%`;
     case "ready":
-      return `Update ready — restart to finish`;
+      // The same words as the command that does it, deliberately: this is a
+      // button now rather than a sign, and a reader who reads "Restart to
+      // finish update" in the header and then types the same thing into the
+      // palette must find one action rather than two names for it.
+      //
+      // It read `Update ready — restart to finish` until 26.9.17, beside a
+      // button that was `disabled` in exactly this state. That is a label
+      // promising something the control does not perform, which is the shape
+      // `docs/TRAPS.md` keeps recording: the words were true of the *world* and
+      // false of the thing they were printed on.
+      return "Restart to finish update";
     case "failed":
       return null;
   }
+}
+
+/**
+ * Whether applying the update ends this process, which differs by platform.
+ *
+ * **Read off `tauri-plugin-updater` 2.11 rather than assumed, because the two
+ * platforms are not symmetric and the asymmetry decides whether unsaved work is
+ * at stake.**
+ *
+ * - **Windows**: `Update::install_inner` hands the MSI or the NSIS setup to
+ *   `ShellExecuteW` and then calls `std::process::exit(0)`. So the install
+ *   *is* the shutdown: `downloadAndInstall` never resolves, {@link
+ *   UpdateState} never reaches `ready`, and whatever was open goes with the
+ *   process. `restart_after_install` defaults to true, so the installer starts
+ *   tpdf again afterwards.
+ * - **macOS**: the same function unpacks the `.app.tar.gz`, moves the running
+ *   bundle aside and renames the new one into its place. The process keeps
+ *   running the code it already mapped, the promise resolves, and `ready` is
+ *   where a reader lands. Nothing restarts on its own.
+ *
+ * The consequence that is easy to get backwards: on macOS the *install* costs
+ * nothing and the *restart* is the step that ends things, while on Windows the
+ * install is the only step there is. One flag, read once, rather than two
+ * copies of that sentence in the two call sites.
+ */
+export function installEndsProcess(mac: boolean): boolean {
+  return !mac;
+}
+
+/** Which half of the update a {@link finishUpdate} call is running. */
+export type FinishStep = "install" | "restart";
+
+/** What a reader is asked before a step that would discard their work. */
+export interface FinishPrompt {
+  title: string;
+  message: string;
+  okLabel: string;
+  cancelLabel: string;
+}
+
+/**
+ * What to ask before a step that ends the process, or `null` to just do it.
+ *
+ * Shaped after the dialog the close button already puts up, and that is the
+ * point rather than a coincidence: a relaunch discards exactly what a quit
+ * discards, so a reader must meet the same question with the same words. One
+ * document is named, because a reader with one open knows which it is and a
+ * count tells them less than the name does; several are counted, because a list
+ * of names in a modal is a wall.
+ */
+export function finishPrompt(step: FinishStep, unsaved: string[]): FinishPrompt | null {
+  if (unsaved.length === 0) return null;
+  const what = unsaved.length === 1
+    ? `unsaved changes to ${unsaved[0]}`
+    : `unsaved changes in ${unsaved.length} open documents`;
+  return step === "restart"
+    ? {
+      title: "Restart tpdf",
+      message: `Discard ${what} and restart to finish updating?`,
+      okLabel: "Discard and restart",
+      cancelLabel: "Keep open",
+    }
+    : {
+      title: "Install update",
+      message: `Installing closes tpdf. Discard ${what}?`,
+      okLabel: "Discard and install",
+      cancelLabel: "Keep open",
+    };
+}
+
+/**
+ * How a {@link finishUpdate} call ended.
+ *
+ * `withheld` and `cancelled` are kept apart although both mean "nothing
+ * happened": the first is the state machine refusing a step that does not
+ * belong in this state, the second is the reader saying no. A caller that
+ * collapsed them could not tell a stuck update from a respected decision.
+ */
+export type FinishOutcome = "acted" | "cancelled" | "withheld" | "failed";
+
+/** The shell's half: reading the tabs, asking, acting, reporting. */
+export interface FinishEffects {
+  /**
+   * Names of the open documents with unsaved edits.
+   *
+   * Async because the caller has to settle pending edits first --- a popup
+   * still open and an edit still in flight both change the answer, and reading
+   * `dirty` before they land is reading it early.
+   */
+  unsaved(): Promise<string[]>;
+  /** Asks the reader. `true` goes ahead. */
+  confirm(prompt: FinishPrompt): Promise<boolean>;
+  /**
+   * Does the thing.
+   *
+   * It need not return: on success the process may already be gone. A rejection
+   * is a failure the reader is told about; a resolution is success.
+   */
+  act(): Promise<void>;
+  /** Reports a failure. */
+  say(message: string): void;
+}
+
+/**
+ * Runs one half of an update, asking first if work would be lost.
+ *
+ * **The gate is here rather than in the shell because a relaunch does not go
+ * through the window's close handler.** `AppHandle::request_restart` sends
+ * `ExitRequested` straight at the run-event loop with an explicit exit code; no
+ * window is asked to close, so `onCloseRequested` --- which is where tpdf's
+ * "discard unsaved changes in N documents" question lives --- never runs. A
+ * button wired directly to `relaunch()` would therefore throw a reader's edits
+ * away without a word, which is the one thing a viewer must not do with a
+ * single press.
+ *
+ * The guard on {@link UpdateState} is part of the same job. `install` belongs
+ * only to `available` and `restart` only to `ready`; a second press while a
+ * confirm dialog is up, or a command reached from a menu one frame behind the
+ * state, must do nothing rather than act twice.
+ *
+ * Cancelling changes no state at all --- which is what leaves the update ready
+ * and the button still offered, so a reader who saves and comes back finds the
+ * same thing waiting.
+ *
+ * @param ends Whether this step ends the process; see {@link installEndsProcess}.
+ *             When it does not, there is nothing to discard and nothing to ask.
+ */
+export async function finishUpdate(
+  step: FinishStep,
+  state: UpdateState,
+  ends: boolean,
+  effects: FinishEffects,
+): Promise<FinishOutcome> {
+  const wanted = step === "install" ? "available" : "ready";
+  if (state.kind !== wanted) return "withheld";
+  if (ends) {
+    const prompt = finishPrompt(step, await effects.unsaved());
+    if (prompt && !await effects.confirm(prompt)) return "cancelled";
+  }
+  try {
+    await effects.act();
+  } catch (e) {
+    effects.say(String(e));
+    return "failed";
+  }
+  return "acted";
 }
 
 /**
@@ -255,7 +411,10 @@ export function updateNotice(state: UpdateState, version: string): string {
     case "downloading":
       return `Downloading version ${state.version}`;
     case "ready":
-      return `Version ${state.version} is ready — restart to finish`;
+      // "installed", not "ready": the bytes are already on disk under the
+      // running process, and the only thing outstanding is the restart. A
+      // reader who reads "ready" reasonably asks what is left to download.
+      return `Version ${state.version} is installed — restart tpdf to finish`;
     case "failed":
       // The version still leads, because the reader asked two questions with one
       // press and only one of them failed.

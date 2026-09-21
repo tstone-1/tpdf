@@ -273,6 +273,8 @@ hop through the index.
 - A max over a filtered set is a binary search once the filter is a prefix
 - Concatenating a selection to compare it with the empty string
 - Tauri exports a command's wrapper macro only for a function that is visible
+- A relaunch is not a window close, so the question the close handler asks is never asked
+- A label that instructs, over a control that is disabled
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -518,6 +520,7 @@ hop through the index.
 - Copying a tree while a mutation harness runs copies the mutation in flight
 - A `pgrep -f` wait loop is defeated by the command that checks on it
 - A wait built on `pgrep -f` outlives the job, and every later check agrees with it
+- The npm half of the notices is read from the build, so regenerating before building omits what you just added
 - A mutation harness that dies leaves the mutation in the tree
 - A design that wiped the state on every ordinary run was useless in the workflow it was for
 - The check aimed at the mutation is the one that raised, and a traceback names no check
@@ -712,6 +715,7 @@ hop through the index.
 - A PDF with no NUL in its first 8000 bytes is text to git, and autocrlf shipped a damaged one inside the binary
 - A platform gate widened in one of three copies, and the two left behind blamed the engine
 - A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
+- The updater ends the process on one platform and not the other, so `ready` is a state only macOS reaches
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -23916,3 +23920,113 @@ file and **deletes** a file should compare the two paths and refuse, rather than
 the collision as somebody else's error message: the probe now returns *"choose another name
 for the output: --echo writes its own file at ..."*, which is one line and names the actual
 problem.
+
+
+### A relaunch is not a window close, so the question the close handler asks is never asked
+
+tpdf asks before discarding unsaved edits, and it asks in `getCurrentWindow().onCloseRequested`
+--- the window's own handler, which `event.preventDefault()`s, settles the document, counts the
+dirty tabs and only then calls `destroy()`. That is the whole of the question, and it reads like
+the application's answer to "is anything unsaved" rather than like one route's.
+
+It is one route's. `AppHandle::request_restart` --- what `@tauri-apps/plugin-process`'s
+`relaunch()` reaches --- sends `Message::RequestExit(RESTART_EXIT_CODE)` to the event loop, which
+fires `RunEvent::ExitRequested { code: Some(i32::MAX) }` and then sets `ControlFlow::Exit`. **No
+window is asked to close at any point**, so `onCloseRequested` does not run, `preventDefault` has
+nothing to prevent, and a button wired straight to `relaunch()` discards every unsaved edit on one
+press with no dialog.
+
+Two details make this harder to notice than it should be. tpdf's *own* run-event arm matches
+`ExitRequested { code: None, .. }` and forwards native Quit to the window --- so there **is** a
+place where an exit is turned into a close, and it is the one path a restart deliberately does not
+take, because its code is `Some`. And nothing about the symptom points here: the process ends, a
+new one starts, the reader's document reopens from the session file, and what is missing is edits
+they made in the last few minutes.
+
+The shape to carry: **a confirmation attached to an event is a property of that event, not of the
+thing it is about.** Before adding a second way to end the process --- a restart, a "quit and
+install", a crash-handler exit --- find every question the first way asks and ask who asks it. Here
+the fix was to move the question into a module both routes call (`update.ts`'s `finishUpdate`),
+because the close handler could not be reached from the other one.
+
+### A label that instructs, over a control that is disabled
+
+The defect that started this work, and it was in the words rather than in the code. An applied
+update put `Update ready — restart to finish` in the header, on a `<button>` whose `disabled`
+attribute read `updates.busy || updateState.kind === "ready"` --- so the single state whose label
+tells the reader to do something was the single state offering nothing to press. The only way
+through was to quit the application by hand, which nothing said.
+
+It is a specific and repeatable mistake rather than an oversight: the label was written as a
+**status**, the control was styled as a status (`.update.ready` is just bolder), and the `disabled`
+was correct for the sentence *"there is nothing left to download"*. Every one of those is true. What
+nobody asked is what the reader does next, and the label was the only thing on screen claiming to
+answer that.
+
+The palette had the same fault one step worse, because there the words promise a step that is
+**taken by nothing**: `app.installUpdate` was titled *Install update and restart* and did not
+restart --- on macOS the updater replaces the `.app` on disk and leaves the process running the old
+code. A title may promise *less* than a command performs (on Windows that same command does close
+and reopen tpdf) and never more, because a reader who believes the extra clause waits for something
+that is not coming.
+
+Two rules came out of it. **A label in the imperative needs a control that performs it** --- if the
+words are "restart to finish", either the thing under them restarts or the words are wrong. And
+**an enabled state is part of the label**: a control that is disabled in exactly the state its text
+addresses is telling the reader two different things, and the one they act on is the text.
+
+### The updater ends the process on one platform and not the other, so `ready` is a state only macOS reaches
+
+`tauri-plugin-updater` 2.11's `Update::install_inner` is a different function on each platform, and
+the difference is not a detail of the unpacking:
+
+- **Windows** hands the MSI or the NSIS setup to `ShellExecuteW` and then calls
+  `std::process::exit(0)`. The install **is** the shutdown. `downloadAndInstall` never resolves,
+  because there is no process left to resolve it in, and `restart_after_install` (default `true`)
+  has the installer start tpdf again afterwards.
+- **macOS** unpacks the `.app.tar.gz`, renames the running bundle aside, renames the new one into
+  place, `touch`es it and **returns**. The process keeps running the code it already mapped.
+
+So an `UpdateState` of `ready` --- downloaded, applied, waiting --- is a **macOS-only** state. On
+Windows nothing that runs after the install can observe it, because nothing runs after the install.
+Every consequence flows from that and none of them is symmetric: on macOS the restart is the step a
+reader presses and the install costs them nothing; on Windows the install is the only step there is
+and it is a quit wearing another name, so it is the one that has to ask about unsaved work.
+
+Getting this backwards is easy and the wrong answer is quiet. An "install ends the process" flag
+written as `mac` rather than `!mac` puts a "discard your changes?" dialog in front of a macOS
+install, which discards nothing, and takes it away from the Windows one, which discards everything
+--- and on a Mac every test still passes, because the Windows branch is not the one being exercised.
+
+Read the plugin's source for the platform you are **not** on before writing the flag, and write it
+once. Two call sites each deciding "does this end the process" is two places for the answer to be
+different.
+
+### The npm half of the notices is read from the build, so regenerating before building omits what you just added
+
+`scripts/third_party_notices.py` builds the crate list from `cargo metadata` and the npm list from
+**the sourcemaps under `dist/`** --- deliberately, because what a `package.json` declares and what
+reaches the bundle are different sets, and the obligation is about what ships.
+
+The consequence is an ordering rule that nothing states at the point of use: a package added to the
+frontend this minute is invisible to the generator until `npm run build` has run. Adding
+`@tauri-apps/plugin-process` and regenerating straight away printed
+
+```
+crates=405  npm=4  pdfium components=18
+[OK] wrote THIRD-PARTY-NOTICES.md
+```
+
+--- the crate arrived, the npm package did not, and the `[OK]` is the same `[OK]` either way. A
+build and a second run gave `npm=5`. Nothing was red in between; `--check` would have agreed the
+file was current, because it renders from the same stale `dist/` it was generated from, so the
+generator and its own gate are wrong together.
+
+`scripts/gates.py` has this right and says so --- `notices` runs **last**, after `build`, for
+exactly this reason --- so a full gate run cannot be fooled. What can be fooled is a person
+regenerating the file by hand mid-change, which is when it is most likely to be regenerated.
+`npm run build` first, then the generator, then read the `npm=` count against what you added.
+
+The general shape, and it is not only about notices: **a tool that derives one of its inputs from a
+build artifact reports on the last build, not on the tree.** Its output is a statement about
+`dist/` that looks like a statement about the repository.

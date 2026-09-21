@@ -72,7 +72,7 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
@@ -2091,7 +2091,34 @@ caller to addresses the document already held.
 - **A failed check is reported and forgotten.** Nothing retries, so an endpoint that is
   hostile, slow or absent cannot turn into a loop that keeps dialling out.
 
-**Residual, and there are four.**
+**Restarting is a new authority the webview holds as of 26.9.17, and it is narrower than it
+sounds.** Finishing an update on macOS needs a relaunch — the plugin replaces the `.app` on
+disk and leaves the running process on the old code — so `tauri-plugin-process` is linked and
+the webview can ask for one. Four things bound it, and the first is the one that decides the
+shape:
+
+- **It chooses nothing.** `AppHandle::request_restart` ends the event loop and
+  `tauri::process::restart` starts `current_binary()` again — on macOS by reading
+  `CFBundleExecutable` out of the bundle's own `Info.plist`. No path, argument or command
+  crosses the boundary, so the whole of the authority is *this application, again*.
+- **Only `process:allow-restart` is granted**, not `process:default`, which would also hand
+  over `exit`. Restarting reopens the reader's session; quitting is a different act and
+  nothing here needs it.
+- **No network, no filesystem, nothing unpacked.** This is not a second updater. It adds one
+  crate, which is two commands over `AppHandle`.
+- **It is reachable only from the applied state.** The command's guard is `updateReady()` and
+  `update.ts`'s `finishUpdate` refuses any state but `ready`, so a press that arrives one
+  frame behind the state does nothing rather than ending the process with nothing installed.
+
+**And the question a restart must not skip is asked in the webview, which is where the
+residual is.** `request_restart` does **not** close the window: it sends `ExitRequested` with
+its own exit code straight at the run-event loop, so the `onCloseRequested` handler that
+counts dirty tabs and asks before discarding them never runs. `finishUpdate` therefore asks
+that question itself, in the same words the close dialog uses, before it calls `relaunch()` —
+and the same call gates the Windows *install*, which ends the process just as surely
+(`Update::install_inner` there hands over to the installer and calls `exit(0)`).
+
+**Residual, and there are five.**
 
 1. **The release workflow is the single point of trust.** Anyone who can run it can sign a
    payload every installed copy will accept. That is the same exposure as any signed
@@ -2105,7 +2132,18 @@ caller to addresses the document already held.
    this only matters if the signing key is compromised — at which point it is the least of
    the problems. Recorded because the boundary claim elsewhere in this document is about
    *PDFium*, and this is a second parser family that the app process now links.
-4. **Untested against a real endpoint.** `update.test.ts` fakes the plugin, and the tests
+4. **The unsaved-work question before a restart lives on the webview's side of the
+   boundary.** The coordinator does not know whether a tab is dirty — the edit models are
+   Rust state, but the settle that makes `dirty` current runs in the frontend — so
+   `finishUpdate` asks and `relaunch()` obeys. A webview compromised through T8 could
+   therefore end the process without the reader answering, losing unsaved edits. That is the
+   same authority a compromised webview already has through `core:window:allow-destroy`, and
+   it is a denial rather than a disclosure: the restart runs the binary already installed at
+   the application's own path, and the reading position and recovery record are written
+   continuously rather than at exit. Moving the question into Rust would mean moving the
+   settle with it, which is the frontend's job for reasons that have nothing to do with
+   updates.
+5. **Untested against a real endpoint.** `update.test.ts` fakes the plugin, and the tests
    there cover the state machine rather than signature verification, TLS, or the real
    `latest.json`. The first genuine end-to-end proof is the first update applied from one
    published release to the next, and `BUILD.md` schedules it as a manual step because it

@@ -1114,7 +1114,7 @@ every mode it reads consumes input bits, so its work is bounded by the encoded l
 which `images/stencil.rs` caps like any encoded stream. Both lockfiles carry it: the fuzz
 package resolves the application by path.
 
-Three plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
+Four plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) — the
 capability list in `src-tauri/capabilities/default.json` names `dialog:allow-open` and, since
 2026-08-16, `dialog:allow-save`; that second one opens a panel and writes nothing, and what
@@ -1123,7 +1123,12 @@ actually writes is `save_copy` and, since 2026-08-19, `save_document`, whose aut
 document handover macOS gets from `RunEvent::Opened`; and `tauri-plugin-updater` (MIT OR
 Apache-2.0), which is the largest single addition the tree has taken — **48 crates,
 325 to 373**, because it brings a TLS stack (`rustls`) and archive extraction (`zip`, `tar`).
-All permissive, swept as below.
+And, since 2026-09-21, `tauri-plugin-process` (Apache-2.0 OR MIT), which is the opposite
+extreme — **one crate**, two commands over `AppHandle`, and no transitive of its own. It is
+there because finishing an update on macOS needs a relaunch: the updater replaces the `.app`
+on disk and leaves the process running the old code, so without it the reader has to quit and
+reopen by hand. The capability list names `process:allow-restart` alone rather than
+`process:default`, which would also hand the webview `exit`. All permissive, swept as below.
 
 **That plugin is also the only network authority in the application, and it changed a property
 that had held until 26.8.2: tpdf made no request at all.** It is spent narrowly — one check per

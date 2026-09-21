@@ -48,7 +48,8 @@ PDF contents, passwords, form answers and signature images are processed locally
 tpdf does not upload them or include analytics or telemetry. It automatically
 checks GitHub for an update once per launch. This sends an ordinary HTTPS request,
 including the connection's IP address and request metadata, to GitHub. Downloading
-and installing an update requires a click. GitHub's handling of those requests is
+and installing an update requires a click, and finishing it is another: tpdf restarts only
+when asked, and asks first if an open document has unsaved changes. GitHub's handling of those requests is
 covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
 Links in PDFs open in the browser only after confirmation, where the destination's
 privacy policy applies. Use **Disable automatic update checks** in
