@@ -399,6 +399,170 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         (await theirs(host.edits()!.doc, 1)) === expectedText, "import");
       break;
     }
+    // What a reader is told after a redaction, read off the screen they read it
+    // from. `verify.rs` and `redact.rs` assert the *report* in Rust, and
+    // `scripts/redact_import_check.py` asserts it across the sandboxed worker;
+    // between that report and the words on screen sit `recovery.ts`'s
+    // `afterRedaction` and `App.svelte`'s message area, which no gate reaches
+    // and which `docs/TRAPS.md` records a whole shipped-inert feature living in.
+    //
+    // **Through the in-place command, because it is the only redaction with no
+    // file dialog in it.** `file.redactCopy` asks for a name and a phase cannot
+    // answer a native panel; `file.redactDocument` writes over the file that is
+    // open, which here is a disposable copy `tabs_check.py` made and deletes.
+    // Both report through `afterRedaction`, so the sentence is the same object.
+    //
+    // **The observable is the DOM, not the reply.** Asking `edits.redactDocument`
+    // for its `Applied` and formatting it here would be a second copy of the
+    // rules under test; `[data-testid="problem"]` is what the reader looks at.
+    //
+    // Three copies and one pass each: a redaction spends its regions and its
+    // journal, and every pass needs a document with all four words still in it.
+    // `testdata/make_redact_pages_pdf.py` lays out which word produces which
+    // answer and why.
+    case "redact-pages": {
+      const copies = expected.split("|").filter((path) => path !== "");
+      if (copies.length < 3) throw new Error("three disposable copies of the fixture are required");
+      const quiet = async () => {
+        if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("the viewer did not settle");
+        await pause(100);
+      };
+      /** What the message area is showing --- the reader's own sentence. */
+      const shown = () => document.querySelector('[data-testid="problem"]')?.textContent ?? "";
+      const offer = () => document.querySelector<HTMLButtonElement>('[data-testid="offer-redact"]');
+      // Display space, `left, top, right, bottom`, which is what `Edits.redact`
+      // takes. PDFium reports the fixture's lines at page y 319.87--328.75,
+      // 239.86--248.63, 199.87--208.63 and 159.87--168.75 on a 360 pt page, so
+      // each 20 pt band below holds exactly one of them and reaches no other
+      // object --- the nearest neighbour to any band edge is 25 pt away. The
+      // left edge sits outside the ink on purpose: overlap is the test, not
+      // containment, and a rectangle a reader drags starts in the margin.
+      const band: Record<"repeated" | "elsewhere" | "shared" | "control",
+        [number, number, number, number]> = {
+        repeated: [30, 26, 300, 46],
+        elsewhere: [30, 106, 300, 126],
+        shared: [30, 146, 300, 166],
+        control: [30, 186, 300, 206],
+      };
+      /**
+       * Marks the bands on page 1 of a fresh copy, redacts it, and returns what
+       * the reader is left looking at.
+       *
+       * The four checks it makes itself are the ones every pass needs and none
+       * of them is decoration. The first is the leftover-state control: a pass
+       * that inherited the previous one's message would find a *Redact this
+       * file* button already on screen and click it, and every assertion after
+       * that would be about the wrong document. The second says the marks
+       * reached the model, so a pass cannot pass by redacting nothing. The
+       * third says the command reached its warning rather than doing anything,
+       * which is the only thing standing between a reader and a file with no
+       * original. The fourth says a verdict arrived at all, and carries the
+       * message when one did not --- a refusal is said in the same place, so
+       * without it the pass's real assertions would fail with no sign of why.
+       */
+      const redactInPlace = async (
+        label: string,
+        copy: string,
+        bands: [number, number, number, number][],
+      ): Promise<string> => {
+        await host.open(copy); await host.idle(); await quiet();
+        report.check(`${label} starts with a clear message area`,
+          shown() === "" && offer() === null, shown().slice(0, 80));
+        const model = host.edits()!;
+        const page = model.state.pages[0]!.id;
+        // Through `Edits.redact`, the real command over the real IPC, for the
+        // reason the import phase gives: the drag that produces these
+        // coordinates is the overlay's and no phase here has ever driven one.
+        for (const area of bands) await model.redact(page, area);
+        report.check(`${label} puts every region in the review list`,
+          host.edits()!.state.redactions.length === bands.length,
+          String(host.edits()!.state.redactions.length));
+        host.run("file.redactDocument");
+        if (!await settle(() => offer() !== null, 5000))
+          throw new Error(`${label}: redacting in place offered nothing to confirm --- ${shown().slice(0, 120)}`);
+        report.check(`${label} warns before writing over the file, naming it`,
+          shown().includes(name(copy)) && shown().includes("There is no undo"),
+          shown().slice(0, 120));
+        offer()!.click();
+        await host.idle();
+        const arrived = await settle(() => shown().includes("Redacted "), SETTLE_MS);
+        await quiet();
+        report.check(`${label} reaches a verdict`, arrived, shown().slice(0, 220));
+        return shown();
+      };
+
+      // Pass 1. The second copy of `KILO-2200` sits on the page the regions
+      // were marked on, so the removal visibly did not take it there --- the
+      // failure a reader must not miss. Red if the scan reports the word
+      // without a page (attribution gone), with another page (attribution
+      // wrong), or not at all (the second copy went too, so the fixture no
+      // longer makes the case).
+      const marked = await redactInPlace("pass 1 (marked page)", copies[0]!,
+        [band.repeated, band.control]);
+      report.check("a copy left on the marked page leaves the file unverified",
+        marked.includes("Redaction not verified."), marked.slice(0, 140));
+      report.check("the reader is shown the regions marked and the operations removed",
+        marked.includes("Redacted 2 regions, 2 removals"), marked.slice(0, 140));
+      report.check("the surviving word is named with the page it is still on",
+        marked.includes("KILO-2200 is still in the file, on page 1"), marked.slice(0, 300));
+      report.check("and that page is named as one regions were marked on",
+        marked.includes("where regions were marked for removal, so the removal did not take it there"),
+        marked.slice(0, 400));
+      // The control for every assertion above, and the reason they are evidence
+      // about this fixture rather than about redaction never removing anything.
+      // `NOVEMBER-5500` is covered by a region in all three passes and occurs
+      // nowhere else in the document, so a verdict naming it means either the
+      // removal did not take or the scan reports whatever it is handed. The
+      // only other place a message quotes document text is the OCR gate, which
+      // quotes what it could still *read* in a filled region --- also a failure.
+      report.check("a word the removal did take is named nowhere in the verdict",
+        !marked.includes("NOVEMBER-5500"), marked.slice(0, 300));
+
+      // Pass 2. `LIMA-3300` survives only on page 2, which carries no region.
+      // This is the sentence that must not read as clean: the file still holds
+      // the word, so the verdict stays *not verified*, and the note says which
+      // pages were proved rather than saying the file is.
+      const unmarked = await redactInPlace("pass 2 (unmarked page)", copies[1]!,
+        [band.elsewhere, band.control]);
+      report.check("a copy left on an unmarked page leaves the file unverified too",
+        unmarked.includes("Redaction not verified."), unmarked.slice(0, 140));
+      report.check("the word is placed on the page nobody marked",
+        unmarked.includes("LIMA-3300 is still in the file, on page 2"), unmarked.slice(0, 300));
+      report.check("the note says every finding is off the marked pages",
+        unmarked.includes("every word reported above is on a page no region was marked on"),
+        unmarked.slice(0, 400));
+      report.check("and names the page that did carry the regions",
+        unmarked.includes("page 1 carried the regions"), unmarked.slice(0, 400));
+      // The control that says the note is computed rather than constant: pass 1
+      // earned the other branch from the same code on the same fixture, so a
+      // note that always said this would have been red there.
+      report.check("it does not claim the removal failed where regions were marked",
+        !unmarked.includes("so the removal did not take it there"), unmarked.slice(0, 400));
+      report.check("and the word the removal took is named nowhere here either",
+        !unmarked.includes("NOVEMBER-5500"), unmarked.slice(0, 300));
+
+      // Pass 3. `MIKE-4400` survives in the form object both pages draw, so no
+      // page owns it. Two things follow and neither is guessable from the other
+      // two passes: the sentence says the page could not be established rather
+      // than naming the first page that reached the object, and the note about
+      // the marked pages is withheld entirely --- `Report::placed` is `all`,
+      // because one unplaced finding could be sitting on a marked page.
+      const carried = await redactInPlace("pass 3 (shared carrier)", copies[2]!,
+        [band.shared, band.control]);
+      report.check("a word in something two pages draw leaves the file unverified",
+        carried.includes("Redaction not verified."), carried.slice(0, 140));
+      report.check("the verdict says no page owns it",
+        carried.includes("MIKE-4400 is still in the file, carried by something more than one page draws") &&
+        carried.includes("pages 1 and 2"), carried.slice(0, 300));
+      report.check("and says which page it is on could not be established",
+        carried.includes("so which page it is on could not be established"), carried.slice(0, 300));
+      report.check("no note compares an unplaced finding against the marked pages",
+        !carried.includes("every word reported above is on a page no region was marked on") &&
+        !carried.includes("so the removal did not take it there"), carried.slice(0, 400));
+      report.check("and the word the removal took is named nowhere in this one",
+        !carried.includes("NOVEMBER-5500"), carried.slice(0, 300));
+      break;
+    }
     case "tabs-position": {
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable fixture paths required");

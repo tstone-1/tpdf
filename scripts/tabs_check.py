@@ -34,6 +34,20 @@ the file dialog, the palette's page question is dismissed (nothing inserted, the
 released), answered with 2-N (exactly those pages, in order), and left blank (every
 page), which is then read, searched, undone, redone and saved into the disposable copy:
   uv run scripts/tabs_check.py <app> testdata/text-base14.pdf --phase import --other testdata/links.pdf
+--phase redact-pages reads the sentence a reader is shown after a redaction, off
+the message area rather than out of the reply that produced it. It needs
+testdata/redact-pages.pdf, whose four marked words each make the report answer
+differently -- one survives on the page that was marked, one only on a page that
+was not, one in a form object both pages draw, and one is genuinely removed and
+must be named nowhere. Three passes, so this phase gets a third disposable copy;
+each pass opens one, marks two regions on page 1 through the real IPC, runs
+file.redactDocument, confirms at its warning and reads what is left on screen.
+file.redactCopy is the sibling command and is not used: it opens a native save
+panel, which no phase can answer, and both report through the same sentence.
+  python3 testdata/make_redact_pages_pdf.py
+  uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
+--saved-copy keeps the first pass's redacted output, which is a real redacted
+file an independent reader can be pointed at.
 """
 
 import argparse
@@ -52,7 +66,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "import"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "import", "redact-pages"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--timeout", type=float, default=90)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
@@ -63,15 +77,25 @@ def main() -> int:
         room = Path(directory)
         first, second = room / "first.pdf", room / "second.pdf"
         shutil.copyfile(args.pdf, first)
+        copies = [first, second]
         if args.phase == "import":
             if not args.other:
                 parser.error("--phase import needs --other, a second PDF of three or more pages with different text")
             # A copy as well, so a save that went wrong could not touch the input.
             second = room / "other.pdf"
+            copies = [first, second]
             shutil.copyfile(args.other, second)
         else:
             shutil.copyfile(args.pdf, second)
-        env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{first}|{second}",
+        if args.phase == "redact-pages":
+            # A third, because a redaction spends the file it is applied to and
+            # the phase makes three of them. Each case needs a document with all
+            # four of the fixture's words still in it.
+            third = room / "third.pdf"
+            shutil.copyfile(args.pdf, third)
+            copies.append(third)
+        joined = "|".join(str(copy) for copy in copies)
+        env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{joined}",
                    TPDF_SESSION_FILE=str(room / "session.json"))
         if os.name == "nt":
             # Keep this unattended check running behind other windows without

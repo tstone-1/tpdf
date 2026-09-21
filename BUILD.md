@@ -247,6 +247,26 @@ uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-signatures/signature-sourc
 # links.pdf has eight. The roles were the other way round until the range question.
 uv run scripts/tabs_check.py <built-binary> testdata/text-base14.pdf --phase import --other testdata/links.pdf
 
+# The sentence a reader is shown after a redaction, read off the message area
+# rather than out of the reply that produced it. `verify.rs` and `redact.rs`
+# assert the report, and `redact_import_check.py` asserts it across the worker;
+# between them and the screen sit `recovery.ts`'s `afterRedaction` and
+# `App.svelte`, which no gate reaches. Three passes over three disposable
+# copies, each marking two regions on page 1 and confirming at the warning:
+# a word still on the page that was marked, one surviving only on a page that
+# was not, and one in a form object both pages draw, which has no page at all.
+# The fourth word is marked in every pass, occurs nowhere else, and must be
+# named nowhere in any verdict -- the control that says the other three are
+# about the fixture rather than about a scan that reports whatever it is given.
+# `file.redactCopy` is the sibling command and cannot be driven: it opens a
+# native save panel. Both report through the same sentence.
+# `<checks-binary>`, not an ordinary build: every tabs_check phase is reached
+# through `src/lib/harness.ts`, which a normal build strips -- so a release
+# binary launches, ignores TPDF_OPENCHECK and is killed by the timeout, which
+# reads as a hang rather than as the wrong binary.
+python3 testdata/make_redact_pages_pdf.py
+uv run scripts/tabs_check.py <checks-binary> testdata/redact-pages.pdf --phase redact-pages
+
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.

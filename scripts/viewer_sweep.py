@@ -130,6 +130,16 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "has anything after it to push",
     ),
     (
+        "redact-pages",
+        "four words laid out so that each one a region covers makes "
+        "verify::scan answer differently -- one survives on the page that was "
+        "marked, one only on a page that was not, one in a form object both "
+        "pages draw, and one is genuinely removed. Read by tabs_check.py "
+        "--phase redact-pages, which asserts the sentence those answers become. "
+        "Nothing in a window run turns on the layout, and its two 400x360 "
+        "sheets meet none of the sample points the viewer checks pin",
+    ),
+    (
         "links-rotated",
         "mixes page sizes, which reddens two rotation checks that derive what "
         "they expect from page 1's aspect ratio --- the same split, for the same "
