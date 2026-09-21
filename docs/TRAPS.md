@@ -238,6 +238,7 @@ hop through the index.
 - A reason that is equally true of the ordinary case is not a reason for the special one
 - Two page numbers that agree in every case anyone tried, and the step that parts them fails safe
 - A derived plan clears the fields the writer thought of, and keeps the ones added since
+- A page tree has edges pointing everywhere, so attributing an object to a page is a skip list
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -509,6 +510,8 @@ hop through the index.
 - Widening a limit turns every test about that limit into a test of something else
 - An envelope a pixel check calls "the edit" stops being the edit as soon as the edit moves other text
 - A mutation survives when a different guard refuses first, and the refusal reads the same either way
+- Two bounds sharing a counter, and the mutation for the inner one survived on the outer one's answer
+- A warning written for one consumer of a control is not attached to the control
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24094,3 +24097,86 @@ first.** A tree that does not compile before anything is mutated makes every bat
 attribution then names whichever mutation happens to sit on the compiler's line --- a wrong
 diagnosis rather than a missing one. That is the everyday case for a gate, because the everyday
 reason to run one is that you have just edited the code.
+
+### Two bounds sharing a counter, and the mutation for the inner one survived on the outer one's answer
+
+`verify::reach` walks each page's reachable objects, and it has two step checks on one shared
+counter: one in `reach`'s own pop loop, and one inside `push_refs`, which exists because a
+single object holding a billion direct values would otherwise spend the whole budget before the
+outer check got a turn. The mutation that deletes the inner check **survived**: the test named
+for it stayed green.
+
+Nothing was wrong with the test's subject and nothing was wrong with the bound. The fixture was
+a page whose `/Resources` was an array of four million integers — and that page still had a
+`/Contents`. So `push_refs` burned the budget on the array, returned `true`, and `reach` then
+popped the content stream, incremented the **shared** counter past the bound and answered `None`
+anyway. The walk truncated, the assertion passed, and it passed for the other guard's reason.
+
+**Two guards on one counter are not two guards for the purposes of a test.** Whichever runs last
+answers for both, so the fixture has to leave the one under test as the only thing standing
+between it and a result — here by stripping every reference from the page, so that `push_refs`
+returning `true` ends the walk with an answer instead of handing `reach` something to check. A
+test whose page has one more edge is measuring the wrong guard while reading exactly like a test
+of the right one.
+
+Worth noticing about the shape: the survivor was not a missing test, it was a test that *could
+not fail* for its stated reason, and the only instrument that said so was the mutation. The
+corpus has this in several other forms; what is specific here is that the masking guard was six
+lines away and looked like part of the same check.
+
+### A page tree has edges pointing everywhere, so attributing an object to a page is a skip list
+
+Placing a redacted word on a page sounds like a traversal problem and is a *pruning* problem. A
+page dictionary names its `/Parent`, which names `/Kids`, which names every other page; an
+annotation names its `/P`; a link's `/A` names a `/Dest` on some other page; an outline entry
+names `/Next`; a structure element reaches every page it spans; a form field's tree spans the
+document. Follow any one of them from page one and the walk reaches everything, at which point
+it answers *every page* for every object — and that is not a weaker answer than none, it is a
+**wrong** one. A wrong page turns *"the word is still in the file"* into *"the word is on a page
+you did not mark"*, which is the single sentence a redaction report must never produce.
+
+So `verify::NOT_CONTENT` is the whole soundness of the feature, and the walk is written to reach
+too little rather than too much: an appearance stream under `/D` is skipped along with the
+actions that share the key, and a word living only there is reported as unplaceable rather than
+placed. Under-claiming is recoverable; a fabricated page number is not.
+
+**The controls are ordinary-looking tests, which is why they are easy not to write.** A two-page
+document with the word on page one, asserted as `Pages([0])` and *not* `Pages([0, 1])`, is what
+catches `/Parent`; a `GoTo` link from page one to page three, asserted as `Pages([2])` exactly,
+is what catches `/A`. Both would pass an assertion written as *"page three is in the answer"*,
+which is the assertion somebody writes first. Assert the whole set.
+
+The second thing the walk needed, and it is the opposite of an optimisation: **a bound tripping
+anywhere withholds every answer**. A walk truncated on page 400 has not merely lost page 400 —
+an object it would have reached there is now recorded as page 1's alone, so the truncation
+*manufactures* the wrong attribution rather than omitting a right one.
+
+### A warning written for one consumer of a control is not attached to the control
+
+`redact-import-probe` passes two words to `verify::scan`: the one a region covered, and `--keep`,
+a control on another line of the same page that proves a scan finding nothing has actually
+looked. It then filters `keep` out before handing the findings to `redact::inserted_pages_note`,
+with a comment saying exactly why:
+
+> From the removal's own needles, never from the control. … feeding it to the note would fire the
+> sentence on every run. What proves the instrument must not become part of what the instrument
+> reports.
+
+A second note was added beside that one — `redact::marked_pages_note`, which asks whether a
+surviving word sits on a page somebody marked — and it was given the **unfiltered** report. By
+construction `keep` survives on the marked page, so both runs of the probe reported *"page 2 was
+marked for removal and still carries a word reported above, so the removal did not take it
+there"*: a failure sentence, on a correct removal, in the plain run as well as the interesting
+one. The comment warning about it was eight lines up and named the other function.
+
+**A caveat written into one call site protects one call site.** The general form is already here
+— *a check bound to one caller covers only that caller* — and this is its mirror: a *warning*
+bound to one caller warns about one caller. Where a value must not reach a class of consumer, the
+cheap fix is to make the narrowed value the thing that exists, so the next consumer has to go out
+of its way to get the wrong one; here that is one `narrowed` report, built once and passed to
+both notes.
+
+Two things made it visible rather than shipped. The end-to-end script asserts the *sentence*
+rather than a boolean, so a plausible-looking wrong sentence had somewhere to be caught; and it
+asserts the plain run's silence as its own check, which is the run where a note firing is
+unambiguously wrong.

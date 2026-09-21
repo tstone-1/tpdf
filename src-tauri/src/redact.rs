@@ -2534,20 +2534,89 @@ pub fn gate_at_output_slots(
 /// baseline page objects and `merge::import` copies the rest across untouched.
 /// Nothing here claims the removal worked, which the scan has just said it
 /// cannot show.
+///
+/// ⚠ **`placed` was added on 2026-09-21 and it narrows this to what is still
+/// true.** The sentence's first clause --- *the scan does not say which page a
+/// word is on* --- was a statement about `verify::scan`, and since that day the
+/// scan says so whenever a page can be earned. Leaving the note unconditional
+/// would have made it the thing it was written to avoid being: a sentence added
+/// to a report that is not about the report's contents, keeping `verified`
+/// false on the strength of a blindness that is no longer there. So it speaks
+/// only when at least one finding went unplaced, which is exactly when its
+/// first clause is a fact rather than a memory.
 #[must_use]
 pub fn inserted_pages_note(
     inserted: usize,
     found: &std::collections::BTreeSet<String>,
+    placed: bool,
 ) -> Option<String> {
-    if inserted == 0 || found.is_empty() {
+    if inserted == 0 || found.is_empty() || placed {
         return None;
     }
     Some(format!(
-        "the scan reads the whole file and does not say which page a word is on, and this \
-         document holds {inserted} page(s) inserted from another document --- no region was \
-         marked on any of them and nothing in the write changed them, so a word reported above \
-         may be a second copy sitting on one of those pages"
+        "the scan reads the whole file and could not say which page every word above is on, \
+         and this document holds {inserted} page(s) inserted from another document --- no \
+         region was marked on any of them and nothing in the write changed them, so a word \
+         reported above may be a second copy sitting on one of those pages"
     ))
+}
+
+/// How to read the findings against the pages the reader actually marked.
+///
+/// **The caller-side half of attribution, and only the caller has both facts.**
+/// `verify::scan` knows where a surviving word is, in slots of the file it just
+/// read; only the command knows which of those slots carry a region somebody
+/// marked, because that mapping is `gate_at_output_slots`' and is made from the
+/// plan. Neither half is a sentence on its own: a page number with nothing to
+/// compare it against is trivia, and *"the pages you marked are clean"* with no
+/// page numbers behind it is a claim.
+///
+/// **Silent unless every finding was placed.** [`crate::verify::Report::placed`]
+/// is `all` and not `any` for the reason this function is the only consumer of:
+/// one word the walk would not place makes the whole comparison unsound, since
+/// the unplaced one could be sitting on the marked page. When that happens this
+/// says nothing and the reasons stay as the scan wrote them --- which is the
+/// same rule [`inserted_pages_note`] follows from the other side.
+///
+/// **Two sentences, and the first is a failure.** A word still on a page the
+/// reader marked is a removal that did not take, and it is named as one. A word
+/// only on pages nobody marked is the case that was unreadable before this
+/// existed, and it is the only thing here that could be mistaken for
+/// reassurance --- so it says what was proved (the marked pages do not carry
+/// it) and nothing about the file, which still holds the word and is still
+/// reported *not verified* for it. `docs/PLAN.md` §6 forbids the other reading.
+#[must_use]
+pub fn marked_pages_note(report: &crate::verify::Report, marked: &[u32]) -> Option<String> {
+    if !report.placed() {
+        return None;
+    }
+    let marked: std::collections::BTreeSet<u32> = marked.iter().copied().collect();
+    let hit: std::collections::BTreeSet<u32> = report
+        .placed_pages()
+        .intersection(&marked)
+        .copied()
+        .collect();
+    if !hit.is_empty() {
+        // **Worded so one page and several read the same**, because `hit` is a
+        // set and a reader can mark regions on any number of pages. The obvious
+        // phrasing puts the pages in the subject --- *"page 3 was marked for
+        // removal and still carries a word"* --- and then agrees with nothing
+        // when there are two of them. `Placed::sentence` answers *page 3* or
+        // *pages 3 and 5*, so every verb around it has to be neutral to which.
+        return Some(format!(
+            "a word reported above is still on {}, where regions were marked for removal, so \
+             the removal did not take it there",
+            crate::verify::Placed::of(&hit).sentence()
+        ));
+    }
+    Some(match marked.is_empty() {
+        true => "every word reported above is on a page no region was marked on".to_string(),
+        false => format!(
+            "every word reported above is on a page no region was marked on --- {} carried the \
+             regions, and none of them carries any of those words",
+            crate::verify::Placed::of(&marked).sentence()
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -4681,34 +4750,140 @@ mod tests {
         assert_eq!(moved[0].page, 0);
     }
 
-    /// The note is added when the scan found something and the document holds
-    /// inserted pages, and in **no** other combination.
+    /// The note is added when the scan found something it could not place and
+    /// the document holds inserted pages, and in **no** other combination.
     ///
-    /// All four, because the one that matters is the pair that must stay quiet:
-    /// a sentence on every redaction in such a document would make
+    /// All of them, because the ones that matter are the pairs that must stay
+    /// quiet: a sentence on every redaction in such a document would make
     /// `redact::Applied::verified` false for every one of them, which is the
-    /// document-wide refusal back again under another name.
+    /// document-wide refusal back again under another name. The `placed` arm is
+    /// the 2026-09-21 half and has the same shape --- a note whose first clause
+    /// is *the scan could not say which page* must not appear beside a report
+    /// in which it did.
     #[test]
     fn the_inserted_pages_note_is_added_only_when_the_scan_found_something() {
         use std::collections::BTreeSet;
         let nothing: BTreeSet<String> = BTreeSet::new();
         let found: BTreeSet<String> = ["4711-0815".to_string()].into_iter().collect();
 
-        assert_eq!(super::inserted_pages_note(0, &nothing), None);
+        assert_eq!(super::inserted_pages_note(0, &nothing, false), None);
         assert_eq!(
-            super::inserted_pages_note(2, &nothing),
+            super::inserted_pages_note(2, &nothing, false),
             None,
             "the one that matters"
         );
-        assert_eq!(super::inserted_pages_note(0, &found), None);
-        let said = super::inserted_pages_note(2, &found).expect("both halves are true");
+        assert_eq!(super::inserted_pages_note(0, &found, false), None);
+        assert_eq!(
+            super::inserted_pages_note(2, &found, true),
+            None,
+            "and the other one: the walk placed every word, so there is nothing to disclaim"
+        );
+        let said = super::inserted_pages_note(2, &found, false).expect("every half is true");
         assert!(said.contains("2 page(s) inserted"), "{said:?}");
         assert!(
-            said.contains("does not say which page a word is on"),
-            "the sentence is about what the scan cannot say: {said:?}"
+            said.contains("could not say which page"),
+            "the sentence is about what the scan could not say: {said:?}"
         );
         // And it claims nothing about the removal having worked, which the scan
         // has just said it cannot show.
         assert!(!said.contains("was removed"), "{said:?}");
+    }
+
+    /// A report whose findings the walk placed, read against the marked pages.
+    fn placed_on(slots: &[u32]) -> crate::verify::Report {
+        let mut report = crate::verify::Report::default();
+        report.found.insert("4711-0815".to_string());
+        report.located.insert(
+            "4711-0815".to_string(),
+            crate::verify::Located::Pages(crate::verify::Placed {
+                pages: slots.to_vec(),
+                more: 0,
+            }),
+        );
+        report
+    }
+
+    /// The word is on a page the reader marked: a removal that did not take.
+    ///
+    /// **Two subjects, and the second is about the sentence rather than the
+    /// logic.** One marked page and two marked pages have to read as English,
+    /// and the phrasing that comes first --- the pages as the subject of *was
+    /// marked* --- agrees with nothing in the plural. A test of one page only
+    /// cannot see that.
+    #[test]
+    fn a_word_still_on_a_marked_page_is_named_as_a_removal_that_did_not_take() {
+        let said = super::marked_pages_note(&placed_on(&[2]), &[2]).expect("placed and marked");
+        assert_eq!(
+            said,
+            "a word reported above is still on page 3, where regions were marked for removal, \
+             so the removal did not take it there"
+        );
+
+        let two = super::marked_pages_note(&placed_on(&[2, 4]), &[2, 4]).expect("both marked");
+        assert_eq!(
+            two,
+            "a word reported above is still on pages 3 and 5, where regions were marked for \
+             removal, so the removal did not take it there"
+        );
+    }
+
+    /// The word is only where nothing was marked, which is the case that was
+    /// unreadable before the walk existed.
+    ///
+    /// **The sentence must not read as a clean verdict.** `Applied::verified`
+    /// is `why.is_empty()` and the scan's own *still in the file* reason is
+    /// still in that list, so the file is still *not verified* --- this only
+    /// says which half of the finding is the reader's to act on. The assertion
+    /// pins the absence of any claim about the file being clean.
+    #[test]
+    fn a_word_only_on_unmarked_pages_says_so_and_claims_nothing_more() {
+        let said = super::marked_pages_note(&placed_on(&[0]), &[2]).expect("placed and marked");
+        assert_eq!(
+            said,
+            "every word reported above is on a page no region was marked on --- page 3 carried \
+             the regions, and none of them carries any of those words"
+        );
+        assert!(
+            !said.contains("verified") && !said.contains("clean"),
+            "the note says what was proved about the marked pages and nothing about the file"
+        );
+    }
+
+    /// Nothing is said while any finding went unplaced, however few.
+    ///
+    /// **The control the whole function rests on**, and it is `all` rather than
+    /// `any` because an unplaced word could be the one on the marked page. Two
+    /// needles, one placed off the marked page and one placed nowhere: reading
+    /// only the first would produce *the pages you marked are clean* about a
+    /// file nobody has accounted for.
+    #[test]
+    fn a_single_unplaced_finding_silences_the_comparison() {
+        let mut report = placed_on(&[0]);
+        report.found.insert("SECOND".to_string());
+        report
+            .located
+            .insert("SECOND".to_string(), crate::verify::Located::Unplaced);
+        assert!(!report.placed());
+        assert_eq!(super::marked_pages_note(&report, &[2]), None);
+
+        // And the control: with that one placed too, the sentence comes back.
+        report.located.insert(
+            "SECOND".to_string(),
+            crate::verify::Located::Pages(crate::verify::Placed {
+                pages: vec![0],
+                more: 0,
+            }),
+        );
+        assert!(super::marked_pages_note(&report, &[2]).is_some());
+    }
+
+    /// A report that found nothing says nothing, rather than saying it is clean.
+    #[test]
+    fn a_report_with_no_findings_draws_no_comparison() {
+        assert_eq!(
+            super::marked_pages_note(&crate::verify::Report::default(), &[2]),
+            None,
+            "there is nothing to place, so there is nothing to compare"
+        );
     }
 }

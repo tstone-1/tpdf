@@ -39,6 +39,22 @@
 //! for either list. What the split buys is that the reason names the next step
 //! rather than ending the conversation.
 //!
+//! **Since 2026-09-21 a hit carries a page, when one can be earned.** Until
+//! then a report said *"4711-0815 is still in the file"* and nothing more, which
+//! a reader cannot act on: a removal that failed and a second copy on a page
+//! nobody marked produce the identical sentence. [`Located`] is the answer, and
+//! it has **three** values rather than two because the middle one is where a
+//! two-valued version would lie --- an object more than one page draws belongs
+//! to no page, and naming the first page that reached it would turn *still in
+//! the file* into *on a page you did not mark*. So: placed on a page set, shared
+//! between pages and therefore unplaceable, or reached by no page at all. A
+//! bound tripping anywhere withholds every answer rather than shortening one,
+//! because a truncated walk does not lose an answer, it invents a wrong one.
+//!
+//! What that does **not** change is the verdict. A word still in the file is
+//! still a leak whatever page it is on, and this module will not certify one:
+//! the location makes the finding actionable, not forgivable.
+//!
 //! **Two things the byte scan can see and the graph walk cannot**, both from
 //! spike 0.4 and both preserved here: bytes past the last `%%EOF` belong to no
 //! object at all, and a file with more than one `%%EOF` has revisions that no
@@ -47,7 +63,7 @@
 //! it is compressed, to the byte scan as well. Such a file cannot be certified;
 //! it can only be rewritten and then certified.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lopdf::{Document, Object};
 
@@ -176,6 +192,359 @@ pub fn classify(filters: &[&[u8]]) -> Carrier {
     }
 }
 
+/// How deep one page's reachability walk may follow references.
+///
+/// A page reaches its content stream at depth 1 and a form's resources two
+/// levels further down, so a document nesting forms eight deep --- which is the
+/// bound `crate::textedit::forms` enforces for the editor --- sits at about 17.
+/// Thirty-two leaves room for that and stops a reference cycle that the
+/// per-page visited set somehow did not.
+const MAX_REACH_DEPTH: usize = 32;
+
+/// How many distinct objects one page's walk may reach.
+///
+/// Per page rather than per document, because the question the walk answers is
+/// per page: a document of ten thousand pages is not more suspicious than one
+/// page, but a single page that reaches a hundred thousand objects is.
+const MAX_REACH_OBJECTS: usize = 100_000;
+
+/// How much work the whole walk may do, across every page.
+///
+/// The per-page bound above cannot bound the document: a hostile file can pay
+/// its cost once per page. This is the one that makes the walk's total cost a
+/// function of nothing the file controls without limit.
+const MAX_REACH_STEPS: usize = 4_000_000;
+
+/// How many objects may carry one needle before the walk stops placing it.
+///
+/// Not a performance bound --- it is the point at which an answer stops being
+/// one. A word in a thousand objects is not *on* a page, and the honest answer
+/// for it is [`Located::Unplaced`] rather than a list nobody can read.
+const MAX_CARRIERS: usize = 1_000;
+
+/// How many pages one answer names before it counts the rest.
+///
+/// [`MAX_OBJECT_REASONS`]'s rule, in the place the same pressure shows up: the
+/// report crosses a pipe under [`crate::worker_proto::MAX_REPLY_BYTES`], and a
+/// needle on every page of a ten-thousand-page file would otherwise put ten
+/// thousand numbers in it, once per needle. The enumeration is shortened and
+/// the count survives; the verdict is untouched either way.
+const MAX_LOCATED_PAGES: usize = 64;
+
+/// Dictionary keys a page's walk must not follow, because they leave the page.
+///
+/// **The whole soundness of attribution is this list.** A page dictionary names
+/// its `/Parent`, an annotation names its `/P`, a link names a `/Dest` on some
+/// other page, and an outline entry names its `/Next`. Following any one of
+/// them walks out of this page and into the rest of the document, and the walk
+/// would then answer *every page* for every object --- which is not a weaker
+/// answer than none, it is a **wrong** one, and a wrong attribution turns
+/// *"still in the file"* into *"on a page you did not mark"*.
+///
+/// So this errs towards reaching too little. An appearance stream under `/D`
+/// (an annotation's *down* look) is skipped with the actions that share the
+/// key, and a needle sitting only there is reported [`Located::Unplaced`]
+/// rather than placed --- which withholds an answer instead of inventing one.
+/// That is the direction this module is built around.
+const NOT_CONTENT: &[&[u8]] = &[
+    // Up and across the page tree.
+    b"Parent",
+    b"Kids",
+    b"Root",
+    b"Pages",
+    b"PageLabels",
+    // An annotation's page, and a reply's antecedent.
+    b"P",
+    b"IRT",
+    // Destinations and actions, which name another page by design.
+    b"Dest",
+    b"D",
+    b"A",
+    b"AA",
+    b"OpenAction",
+    b"Names",
+    // The outline and the article threads, which are document-wide chains.
+    b"Outlines",
+    b"First",
+    b"Last",
+    b"Next",
+    b"Prev",
+    b"Threads",
+    b"B",
+    // The structure tree, which reaches every page from any element.
+    b"StructTreeRoot",
+    b"StructParent",
+    b"StructParents",
+    b"K",
+    // The form, whose field tree spans the document.
+    b"AcroForm",
+];
+
+/// Pages an answer names, with however many it did not name.
+///
+/// Slots are **0-based positions in the file that was scanned**, which for a
+/// redaction is the file that was just written --- not page numbers of the
+/// document the reader opened, and not the baseline numbers the plan is in
+/// terms of. [`Placed::sentence`] is the only thing that turns one into a page
+/// number a person reads, and it is the only place the `+ 1` happens.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Placed {
+    /// Ascending, at most [`MAX_LOCATED_PAGES`] of them.
+    pub pages: Vec<u32>,
+    /// How many further pages there were.
+    pub more: usize,
+}
+
+impl Placed {
+    /// Takes the first [`MAX_LOCATED_PAGES`] and counts the rest.
+    #[must_use]
+    pub fn of(pages: &BTreeSet<u32>) -> Self {
+        Placed {
+            pages: pages.iter().copied().take(MAX_LOCATED_PAGES).collect(),
+            more: pages.len().saturating_sub(MAX_LOCATED_PAGES),
+        }
+    }
+
+    /// The pages as a person reads them, one-based.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        let numbers: Vec<String> = self
+            .pages
+            .iter()
+            .map(|slot| (slot + 1).to_string())
+            .collect();
+        if self.more > 0 {
+            return format!("pages {}, and {} more", numbers.join(", "), self.more);
+        }
+        match numbers.as_slice() {
+            [] => "no page".to_string(),
+            [one] => format!("page {one}"),
+            [first, second] => format!("pages {first} and {second}"),
+            [rest @ .., last] => format!("pages {} and {last}", rest.join(", ")),
+        }
+    }
+}
+
+/// Where a needle the scan found still sits, as far as the walk can prove.
+///
+/// **Three answers rather than two, and the third is the point.** A scan that
+/// could only say *found* or *not found* was what made *"4711-0815 is still in
+/// the file"* unactionable: a reader could not tell a removal that failed from
+/// a second copy on a page nobody marked. Two answers would have been *placed*
+/// and *not placed*, and that is the version that ships a lie --- an object
+/// more than one page draws has no page, and calling it the first page that
+/// reached it is exactly the wrong attribution this type exists to refuse.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Located {
+    /// Every object carrying it is reached by exactly one page, and these are
+    /// those pages.
+    Pages(Placed),
+    /// Something carrying it is drawn by more than one page --- a shared form,
+    /// a shared font --- so no page owns it. The pages that share it.
+    Shared(Placed),
+    /// Something carrying it is reached by no page at all: bytes outside the
+    /// page tree, the file's own metadata, or a hit the byte scan found and the
+    /// graph walk never accounted for.
+    Unplaced,
+}
+
+/// Which pages of a document reach which objects.
+///
+/// Built once per scan and only when there is something to place. The `Vec` per
+/// object is exact rather than a set because the outer loop runs slots in
+/// ascending order and visits each object at most once per page, so pushing
+/// when the last entry is not this slot is a deduplication.
+///
+/// **Keyed by the whole [`lopdf::ObjectId`], generation included, and not by the
+/// object number.** The number is what a report *prints* --- every `object N`
+/// message in this module drops the generation --- and for a message that is
+/// fine. For attribution it is not: `lopdf` keys `Document::objects` by the
+/// pair, so a file defining both `5 0 obj` and `5 1 obj` holds two objects here,
+/// and a walk keyed on `5` would hand one of them the other's pages. That is a
+/// *wrong* page, which is the one answer this whole walk exists to refuse.
+///
+/// **Defensive rather than demonstrated**, and worth saying so: an ordinary
+/// cross-reference table carries one generation per number, and `lopdf`'s writer
+/// emits generation 0 for everything, so no fixture here can be built with the
+/// collision in it. It costs nothing, and the direction it fails in if it ever
+/// does fire is the expensive one.
+struct Reach {
+    by_object: std::collections::HashMap<lopdf::ObjectId, Vec<u32>>,
+}
+
+/// Every page's reachable objects, or `None` when a bound stopped the walk.
+///
+/// **A bound anywhere withholds attribution everywhere, and that is the safe
+/// direction rather than a convenience.** A walk truncated on page 400 has not
+/// merely lost page 400's answer: an object it would have reached there is now
+/// recorded as reached by page 1 alone, and [`locate`] would place a needle on
+/// page 1 that sits on both. Under-claiming is what this module is for, so a
+/// truncated walk answers nothing at all.
+fn reach(doc: &Document) -> Option<Reach> {
+    let pages = crate::pagetree::ordered_pages(doc);
+    let mut by_object: std::collections::HashMap<lopdf::ObjectId, Vec<u32>> =
+        std::collections::HashMap::new();
+    let mut steps = 0usize;
+    for (slot, page) in pages.iter().enumerate() {
+        let slot = u32::try_from(slot).ok()?;
+        let mut seen: BTreeSet<lopdf::ObjectId> = BTreeSet::new();
+        let mut stack: Vec<(lopdf::ObjectId, usize)> = vec![(*page, 0)];
+        while let Some((id, depth)) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if seen.len() > MAX_REACH_OBJECTS {
+                return None;
+            }
+            steps += 1;
+            if steps > MAX_REACH_STEPS {
+                return None;
+            }
+            let reached = by_object.entry(id).or_default();
+            if reached.last() != Some(&slot) {
+                reached.push(slot);
+            }
+            let Ok(object) = doc.get_object(id) else {
+                // Not a truncation: a dangling reference reaches nothing, and a
+                // page that names one is a page with a hole in it rather than a
+                // page this walk failed to read. Anything carried by the object
+                // that is not there cannot be found by the scan either.
+                continue;
+            };
+            if !push_refs(object, depth, &mut stack, &mut steps) {
+                return None;
+            }
+        }
+    }
+    Some(Reach { by_object })
+}
+
+/// Pushes every reference inside one object, skipping the keys that leave the page.
+///
+/// Returns `false` when a bound tripped, which the caller turns into no
+/// attribution at all. The inner walk is a worklist rather than recursion
+/// because its depth is the file's to choose: a directly nested array is not a
+/// reference and so is not bounded by [`MAX_REACH_DEPTH`], and recursing on it
+/// would put the file in charge of this process's stack.
+fn push_refs(
+    object: &Object,
+    depth: usize,
+    stack: &mut Vec<(lopdf::ObjectId, usize)>,
+    steps: &mut usize,
+) -> bool {
+    let mut inner: Vec<&Object> = vec![object];
+    while let Some(value) = inner.pop() {
+        *steps += 1;
+        if *steps > MAX_REACH_STEPS {
+            return false;
+        }
+        match value {
+            Object::Reference(id) => {
+                if depth + 1 > MAX_REACH_DEPTH {
+                    return false;
+                }
+                stack.push((*id, depth + 1));
+            }
+            Object::Array(items) => inner.extend(items.iter()),
+            Object::Dictionary(dict) => push_entries(dict, &mut inner),
+            Object::Stream(stream) => push_entries(&stream.dict, &mut inner),
+            _ => {}
+        }
+    }
+    true
+}
+
+/// A dictionary's values, minus the ones [`NOT_CONTENT`] names.
+///
+/// **One function for the two arms above, so the skip list has one call site.**
+/// The obvious shape is the loop written twice, and it is what this was; a
+/// content stream's dictionary carries none of these keys in any fixture here,
+/// so the second copy of the guard was one no test could reach and no mutation
+/// could aim at. `docs/TRAPS.md` has the general form more than once --- a check
+/// bound to one caller covers only that caller, and two copies of one rule
+/// drift.
+fn push_entries<'a>(dict: &'a lopdf::Dictionary, inner: &mut Vec<&'a Object>) {
+    for (key, value) in dict {
+        if NOT_CONTENT.contains(&key.as_slice()) {
+            continue;
+        }
+        inner.push(value);
+    }
+}
+
+/// Which objects carry one needle, and whether there were too many to say.
+#[derive(Default)]
+struct Carriers {
+    objects: BTreeSet<lopdf::ObjectId>,
+    /// More than [`MAX_CARRIERS`] of them, so the list is not an answer.
+    overflowed: bool,
+}
+
+impl Carriers {
+    fn note(&mut self, object: lopdf::ObjectId) {
+        if self.objects.len() >= MAX_CARRIERS {
+            self.overflowed = true;
+            return;
+        }
+        self.objects.insert(object);
+    }
+}
+
+/// Turns each needle's carriers into the pages that reach them.
+///
+/// **The weakest carrier decides.** A needle carried by one page-1-only object
+/// and one object nobody reaches is not on page 1: it is somewhere this walk
+/// cannot account for, and saying *page 1* would be the wrong attribution. So
+/// [`Located::Unplaced`] outranks [`Located::Shared`], which outranks
+/// [`Located::Pages`], and a needle only gets the specific answer when every
+/// one of its carriers earned it.
+fn locate(
+    doc: &Document,
+    found: &BTreeSet<String>,
+    carriers: &BTreeMap<String, Carriers>,
+) -> BTreeMap<String, Located> {
+    let Some(reach) = reach(doc) else {
+        return BTreeMap::new();
+    };
+    let mut out = BTreeMap::new();
+    for needle in found {
+        // No object carries it and the byte scan found it anyway: it is in
+        // bytes no page reaches. That is the one case that can never become an
+        // answer, however good the walk gets.
+        let Some(carried) = carriers.get(needle) else {
+            out.insert(needle.clone(), Located::Unplaced);
+            continue;
+        };
+        if carried.overflowed || carried.objects.is_empty() {
+            out.insert(needle.clone(), Located::Unplaced);
+            continue;
+        }
+        let mut pages: BTreeSet<u32> = BTreeSet::new();
+        let mut shared: BTreeSet<u32> = BTreeSet::new();
+        let mut unplaced = false;
+        for object in &carried.objects {
+            match reach.by_object.get(object) {
+                None => unplaced = true,
+                Some(slots) => {
+                    if slots.len() > 1 {
+                        shared.extend(slots.iter().copied());
+                    }
+                    pages.extend(slots.iter().copied());
+                }
+            }
+        }
+        let answer = if unplaced {
+            Located::Unplaced
+        } else if !shared.is_empty() {
+            Located::Shared(Placed::of(&shared))
+        } else {
+            Located::Pages(Placed::of(&pages))
+        };
+        out.insert(needle.clone(), answer);
+    }
+    out
+}
+
 /// One word for a caller that needs one, and never a bare success.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
@@ -198,6 +567,15 @@ pub enum Verdict {
 pub struct Report {
     /// Needles still present. For a redaction, any of these is a leak.
     pub found: BTreeSet<String>,
+    /// Where each of them is, for the ones the walk could place.
+    ///
+    /// **Absent is not a page, and an entry is not an excuse.** A needle with no
+    /// entry here was never attributed --- either nothing was found, or the walk
+    /// was withheld --- and [`Report::verdict`] then says exactly what it said
+    /// before this existed. A needle with an entry is still a leak; the entry
+    /// only says where, which is what makes the finding actionable.
+    #[serde(default)]
+    pub located: BTreeMap<String, Located>,
     /// Bytes nothing here can account for. No instrument would change this.
     pub blind: Vec<String>,
     /// Pictures nobody read. OCR is the instrument that would.
@@ -222,7 +600,23 @@ impl Report {
     pub fn verdict(&self) -> Verdict {
         let mut why = Vec::new();
         for needle in &self.found {
-            why.push(format!("{needle} is still in the file"));
+            why.push(match self.located.get(needle) {
+                // What this said before attribution existed, and what it still
+                // says whenever the walk did not run or would not answer.
+                None => format!("{needle} is still in the file"),
+                Some(Located::Pages(placed)) => {
+                    format!("{needle} is still in the file, on {}", placed.sentence())
+                }
+                Some(Located::Shared(placed)) => format!(
+                    "{needle} is still in the file, carried by something more than one page \
+                     draws ({}), so which page it is on could not be established",
+                    placed.sentence()
+                ),
+                Some(Located::Unplaced) => format!(
+                    "{needle} is still in the file, in something no page of it reaches, so \
+                     which page it is on could not be established"
+                ),
+            });
         }
         why.extend(self.blind.iter().cloned());
         why.extend(self.deferred.iter().cloned());
@@ -231,6 +625,39 @@ impl Report {
         } else {
             Verdict::NotVerified(why)
         }
+    }
+
+    /// Whether every word the scan found was placed on a page set.
+    ///
+    /// **The precondition for anything a caller says about marked pages.** A
+    /// caller knows which slots the reader marked and this knows where the
+    /// words are; only both together make *"none of them is on a page you
+    /// marked"* a provable sentence. One needle the walk would not place makes
+    /// the whole comparison unsound, so this is `all` and not `any`.
+    ///
+    /// False for a report that found nothing, deliberately: there is nothing to
+    /// compare, and a caller reading this as *"the pages you marked are clean"*
+    /// would be reading a claim out of an empty set.
+    #[must_use]
+    pub fn placed(&self) -> bool {
+        !self.found.is_empty()
+            && self
+                .found
+                .iter()
+                .all(|needle| matches!(self.located.get(needle), Some(Located::Pages(_))))
+    }
+
+    /// Every page a placed needle sits on, as slots in the file that was scanned.
+    #[must_use]
+    pub fn placed_pages(&self) -> BTreeSet<u32> {
+        self.located
+            .values()
+            .filter_map(|where_| match where_ {
+                Located::Pages(placed) => Some(placed.pages.iter().copied()),
+                Located::Shared(_) | Located::Unplaced => None,
+            })
+            .flatten()
+            .collect()
     }
 }
 
@@ -429,11 +856,17 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
             // this is a counter and not `report.blind.len()`.
             let mut blind_objects = 0usize;
             let mut deferred_objects = 0usize;
+            // Which objects carry which needle, so the walk below can turn that
+            // into pages. Recorded here because this is the only loop that
+            // decodes anything, and only for needles that actually match, so a
+            // clean file pays nothing for it.
+            let mut carriers: BTreeMap<String, Carriers> = BTreeMap::new();
             for (id, object) in &doc.objects {
                 let strings = flatten_strings(object);
                 for needle in needles {
                     if find(&strings, needle.as_bytes()) {
                         report.found.insert(needle.clone());
+                        carriers.entry(needle.clone()).or_default().note(*id);
                     }
                 }
                 let Object::Stream(stream) = object else {
@@ -476,6 +909,7 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                             for needle in needles {
                                 if find(&decoded, needle.as_bytes()) {
                                     report.found.insert(needle.clone());
+                                    carriers.entry(needle.clone()).or_default().note(*id);
                                 }
                             }
                         }
@@ -511,6 +945,26 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
                      individually",
                     blind_objects - MAX_OBJECT_REASONS
                 ));
+            }
+
+            // **Only when there is something to place, and only in a file the
+            // walk can account for.**
+            //
+            // The first half is cost: a clean scan --- the common one --- never
+            // walks a page at all.
+            //
+            // The second is soundness, and it is this module's opening
+            // paragraph arriving as a guard. A file with more than one `%%EOF`
+            // holds revisions no parser resolves: an object a later revision
+            // overwrote sits at its old offset, addressable by nothing, so the
+            // graph walk cannot see it and neither can the byte scan if it is
+            // compressed. Attributing a needle to page 5 in such a file would
+            // be a claim about the *live* graph offered as a claim about the
+            // file, with a dead copy of the same word invisible beside it.
+            // `blind` already says the file is uncertifiable; this says the
+            // location is unknowable too, rather than answering anyway.
+            if !report.found.is_empty() && report.eofs <= 1 {
+                report.located = locate(&doc, &report.found, &carriers);
             }
         }
     }
@@ -588,7 +1042,7 @@ fn collect_strings(object: &Object, out: &mut Vec<u8>) {
 mod tests {
 
     use super::structure;
-    use super::{classify, Carrier, Report, Verdict};
+    use super::{classify, Carrier, Located, Report, Verdict};
 
     /// A minimal file with the shape `structure` expects, to perturb.
     ///
@@ -1025,6 +1479,103 @@ mod tests {
         );
     }
 
+    /// A document of one content stream per page, serialised as the writer does.
+    ///
+    /// **Built here rather than taken from `testdata/`**, for the reason
+    /// `well_formed` gives and one more: these fixtures differ from each other
+    /// by exactly one property --- which page prints a word, whether a form is
+    /// shared, whether a link points somewhere --- and a tracked corpus cannot
+    /// be varied one property at a time.
+    fn document(pages: &[&str]) -> Vec<u8> {
+        pieces(pages, &[], false)
+    }
+
+    /// The same, with optional extras: a form every page draws, and a link from
+    /// page 1 to the last page.
+    fn pieces(pages: &[&str], form: &[u8], link: bool) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        // One form object, drawn by every page, so a needle inside it is
+        // carried by something no single page owns.
+        let shared = (!form.is_empty()).then(|| {
+            doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Form",
+                    "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                },
+                form.to_vec(),
+            ))
+        });
+        let mut kids: Vec<Object> = Vec::new();
+        let mut ids: Vec<lopdf::ObjectId> = Vec::new();
+        for text in pages {
+            let content = doc.add_object(Stream::new(
+                dictionary! {},
+                format!("BT /F1 12 Tf 72 700 Td ({text}) Tj ET").into_bytes(),
+            ));
+            let mut page = dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => content,
+            };
+            if let Some(form) = shared {
+                page.set(
+                    "Resources",
+                    dictionary! { "XObject" => dictionary! { "X1" => form } },
+                );
+            }
+            let id = doc.add_object(page);
+            ids.push(id);
+            kids.push(Object::Reference(id));
+        }
+        // A `GoTo` from page one to the last page. Following `/A` or `/D` would
+        // walk page one's attribution into that page's content; this is the
+        // control that says it does not.
+        if link {
+            if let (Some(first), Some(last)) = (ids.first().copied(), ids.last().copied()) {
+                let annot = doc.add_object(dictionary! {
+                    "Type" => "Annot",
+                    "Subtype" => "Link",
+                    "Rect" => vec![0.into(), 0.into(), 10.into(), 10.into()],
+                    "P" => first,
+                    "A" => dictionary! {
+                        "S" => "GoTo",
+                        "D" => vec![Object::Reference(last), "Fit".into()],
+                    },
+                });
+                if let Ok(Object::Dictionary(page)) = doc.get_object_mut(first) {
+                    page.set("Annots", vec![Object::Reference(annot)]);
+                }
+            }
+        }
+        let count = kids.len() as i64;
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => kids, "Count" => count,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise the fixture");
+        bytes
+    }
+
+    /// The reason a report gave for one needle, so a test asserts the sentence.
+    fn reason(report: &Report, needle: &str) -> String {
+        let Verdict::NotVerified(why) = report.verdict() else {
+            panic!("a report that found {needle} must never verify");
+        };
+        why.into_iter()
+            .find(|one| one.starts_with(needle))
+            .unwrap_or_else(|| panic!("no reason named {needle}"))
+    }
+
     /// **The measurement the 2026-09-20 redaction narrowing rests on, and there
     /// is no inserted page anywhere in it.**
     ///
@@ -1042,49 +1593,23 @@ mod tests {
     /// makes it a reason to say so in the report
     /// ([`crate::redact::inserted_pages_note`]) and not a reason to refuse.
     ///
+    /// ⚠ **The sentence it ends on changed on 2026-09-21, and the test's old
+    /// last assertion said the opposite of what is now true.** It read *"the
+    /// reason names the word, not the page --- which is exactly what it cannot
+    /// say"*, and the walk this file gained makes it say it: the answer here is
+    /// [`Located::Pages`] naming page two. What has **not** changed is the
+    /// verdict, which is the half the redaction narrowing actually rests on ---
+    /// a word still in the file is still *not verified*, wherever it is.
+    ///
     /// The two needles are the control pair: one the writer put on the second
     /// page only, one on neither. A scan that "found" both, or neither, would
     /// pass an assertion about only the first.
     #[test]
     fn a_needle_on_another_page_reads_as_still_in_the_file() {
-        use lopdf::{dictionary, Document, Object, Stream};
-
         const REPEATED: &str = "SECRET-4711";
         const ABSENT: &str = "NOT-IN-THIS-FILE-AT-ALL";
 
-        let mut doc = Document::with_version("1.7");
-        let pages_id = doc.new_object_id();
-        // Page one, with the word removed from it --- what a redaction leaves.
-        let first = doc.add_object(Stream::new(
-            dictionary! {},
-            b"BT /F1 12 Tf 72 700 Td (this page was redacted) Tj ET".to_vec(),
-        ));
-        // Page two, which nobody marked, still printing the same word.
-        let second = doc.add_object(Stream::new(
-            dictionary! {},
-            format!("BT /F1 12 Tf 72 700 Td ({REPEATED}) Tj ET").into_bytes(),
-        ));
-        let mut kids = Vec::new();
-        for content in [first, second] {
-            kids.push(Object::Reference(doc.add_object(dictionary! {
-                "Type" => "Page",
-                "Parent" => pages_id,
-                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
-                "Contents" => content,
-            })));
-        }
-        let count = kids.len() as i64;
-        doc.objects.insert(
-            pages_id,
-            Object::Dictionary(dictionary! {
-                "Type" => "Pages", "Kids" => kids, "Count" => count,
-            }),
-        );
-        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
-        doc.trailer.set("Root", catalog);
-        let mut bytes = Vec::new();
-        doc.save_to(&mut bytes).expect("serialise the fixture");
-
+        let bytes = document(&["this page was redacted", REPEATED]);
         let needles = vec![REPEATED.to_string(), ABSENT.to_string()];
         let report = super::scan(&bytes, &needles, None);
         assert!(
@@ -1098,13 +1623,416 @@ mod tests {
             "and the control says the scan is discriminating rather than agreeable: {:?}",
             report.found
         );
-        let Verdict::NotVerified(why) = report.verdict() else {
-            panic!("a report that found a needle must never verify");
-        };
         assert!(
-            why.iter().any(|reason| reason.contains(REPEATED)),
-            "and the reason names the word, not the page --- which is exactly what it cannot \
-             say: {why:?}"
+            matches!(report.verdict(), Verdict::NotVerified(_)),
+            "a report that found a needle must never verify, however well it is placed"
         );
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Pages(super::Placed {
+                pages: vec![1],
+                more: 0
+            })),
+            "the walk places it on the page that prints it, and on no other"
+        );
+        assert_eq!(
+            reason(&report, REPEATED),
+            format!("{REPEATED} is still in the file, on page 2"),
+            "and the reason a reader is shown names that page"
+        );
+        assert!(
+            !report.located.contains_key(ABSENT),
+            "nothing is placed for a word that was never found"
+        );
+    }
+
+    /// The word is on the page the reader marked, which is the loud failure.
+    ///
+    /// **The control that makes the test above mean something.** Both fixtures
+    /// are two pages and one needle; only *which* page prints it differs, and
+    /// the two answers have to differ with it. A walk that attributed
+    /// everything to page one would pass this and fail that, and one that
+    /// followed `/Parent` up to `/Pages` and back down through `/Kids` --- the
+    /// route [`NOT_CONTENT`] exists to cut --- would answer *both pages* here
+    /// and fail neither assertion about *a* page.
+    #[test]
+    fn a_needle_on_the_page_it_was_removed_from_is_placed_there() {
+        const REPEATED: &str = "SECRET-4711";
+
+        let bytes = document(&[REPEATED, "this page was never marked"]);
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Pages(super::Placed {
+                pages: vec![0],
+                more: 0
+            })),
+            "page one, and not both pages --- the page tree is not a route between them"
+        );
+        assert_eq!(
+            reason(&report, REPEATED),
+            format!("{REPEATED} is still in the file, on page 1")
+        );
+    }
+
+    /// A word on two pages is placed on both, each by its own carrier.
+    ///
+    /// Distinct from [`Located::Shared`], which is one carrier that two pages
+    /// draw. Here there are two carriers and each is owned, so the answer is
+    /// specific --- and the sentence has to read as a list rather than as a
+    /// singular page.
+    #[test]
+    fn a_needle_on_two_pages_is_placed_on_both() {
+        const REPEATED: &str = "SECRET-4711";
+
+        let bytes = document(&[REPEATED, "clean", REPEATED]);
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Pages(super::Placed {
+                pages: vec![0, 2],
+                more: 0
+            }))
+        );
+        assert_eq!(
+            reason(&report, REPEATED),
+            format!("{REPEATED} is still in the file, on pages 1 and 3")
+        );
+    }
+
+    /// **One object that two pages draw has no page, and says so.**
+    ///
+    /// The middle of the three answers, and the one a two-valued version would
+    /// get wrong: a shared form reached by page one and page two would be
+    /// reported as *on page one* by anything that took the first answer it
+    /// found, and a reader comparing that against the page they marked would
+    /// act on a fabrication. The verdict is unchanged --- the word is still in
+    /// the file --- and the sentence withholds the page instead of inventing
+    /// one.
+    #[test]
+    fn a_needle_in_something_two_pages_draw_is_not_placed_on_either() {
+        const REPEATED: &str = "SECRET-4711";
+
+        let form = format!("BT /F1 12 Tf 10 10 Td ({REPEATED}) Tj ET").into_bytes();
+        let bytes = pieces(&["one", "two"], &form, false);
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert!(
+            report.found.contains(REPEATED),
+            "the scan reads inside the form, which is the precondition for the rest"
+        );
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Shared(super::Placed {
+                pages: vec![0, 1],
+                more: 0
+            })),
+            "shared, and naming the pages that share it"
+        );
+        assert_eq!(
+            reason(&report, REPEATED),
+            format!(
+                "{REPEATED} is still in the file, carried by something more than one page \
+                 draws (pages 1 and 2), so which page it is on could not be established"
+            )
+        );
+        assert!(
+            !report.placed(),
+            "and a caller must not compare this against the pages a reader marked"
+        );
+    }
+
+    /// A link is not a route: following `/A` would put page three's words on page one.
+    ///
+    /// **The [`NOT_CONTENT`] list's own control, and the only one of its
+    /// entries a plain two-page fixture does not already exercise.** A `GoTo`
+    /// action's destination array names another page's object, so a walk that
+    /// followed it would reach that page's content stream from page one --- and
+    /// the needle would come back [`Located::Shared`] between pages one and
+    /// three, which is a *softer* wrong answer than a wrong page and still a
+    /// wrong answer. The assertion is therefore the exact `Pages([2])`, not
+    /// merely that page three is in the set.
+    #[test]
+    fn a_link_to_another_page_does_not_reach_that_page_s_words() {
+        const REPEATED: &str = "SECRET-4711";
+
+        let bytes = pieces(&["one", "two", REPEATED], &[], true);
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Pages(super::Placed {
+                pages: vec![2],
+                more: 0
+            })),
+            "the link's own page reaches the annotation, and stops there"
+        );
+    }
+
+    /// Bytes past the last `%%EOF` belong to no object, so they belong to no page.
+    ///
+    /// **The third answer, and the one no walk will ever improve on.** The byte
+    /// scan finds the word and the graph walk never accounts for it, which is
+    /// the module's opening paragraph arriving as an attribution: there is no
+    /// page to name because there is no object.
+    #[test]
+    fn a_needle_no_object_carries_is_not_placed() {
+        const REPEATED: &str = "SECRET-4711";
+
+        let mut bytes = document(&["clean", "also clean"]);
+        bytes.extend_from_slice(REPEATED.as_bytes());
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert!(report.found.contains(REPEATED), "the byte scan sees it");
+        assert_eq!(report.located.get(REPEATED), Some(&Located::Unplaced));
+        assert_eq!(
+            reason(&report, REPEATED),
+            format!(
+                "{REPEATED} is still in the file, in something no page of it reaches, so which \
+                 page it is on could not be established"
+            )
+        );
+    }
+
+    /// The same answer for an object the page tree does not reach at all.
+    ///
+    /// A different subject from the one above and it needs its own fixture: the
+    /// word here *is* in an object, and the object is the document's own
+    /// `/Info` --- which `save::apply_redactions` scrubs precisely because a
+    /// redacted word can sit in it. A walk keyed on pages cannot place it, and
+    /// the honest answer is the same one trailing bytes get.
+    #[test]
+    fn a_needle_in_the_file_s_own_metadata_is_not_placed() {
+        use lopdf::{dictionary, Document, Object};
+
+        const REPEATED: &str = "SECRET-4711";
+
+        // Rebuilt through `lopdf` rather than patched into the bytes, so the
+        // `/Info` really is an object in the graph rather than loose text.
+        let mut doc =
+            Document::load_mem(&document(&["clean", "also clean"])).expect("the fixture loads");
+        let info = doc.add_object(Object::Dictionary(dictionary! {
+            "Title" => Object::string_literal(REPEATED),
+        }));
+        doc.trailer.set("Info", info);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert!(report.found.contains(REPEATED));
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Unplaced),
+            "an object no page reaches cannot be attributed to a page"
+        );
+    }
+
+    /// More than one revision withholds every answer, not just the ambiguous one.
+    ///
+    /// **This module's opening paragraph as a guard.** An object a later
+    /// revision overwrote sits at its old offset addressable by nothing: the
+    /// graph walk cannot see it, and nor can the byte scan if it is compressed.
+    /// So the live graph can honestly answer *page two* for a file that also
+    /// holds a dead copy of the same word --- an answer about the graph offered
+    /// as an answer about the file. The needle is still reported; only the
+    /// place is withheld.
+    #[test]
+    fn a_file_with_more_than_one_revision_places_nothing() {
+        const REPEATED: &str = "SECRET-4711";
+
+        let one = document(&["clean", REPEATED]);
+        let report = super::scan(&one, &[REPEATED.to_string()], None);
+        assert!(
+            report.located.contains_key(REPEATED),
+            "the control: one revision, and the walk answers"
+        );
+
+        let mut two = one.clone();
+        two.extend_from_slice(&one);
+        let report = super::scan(&two, &[REPEATED.to_string()], None);
+        assert!(report.eofs > 1, "the fixture really does hold two of them");
+        assert!(report.found.contains(REPEATED), "the finding survives");
+        assert!(
+            report.located.is_empty(),
+            "and nothing is placed: {:?}",
+            report.located
+        );
+        assert_eq!(
+            reason(&report, REPEATED),
+            format!("{REPEATED} is still in the file"),
+            "the sentence falls back to the one it gave before attribution existed"
+        );
+    }
+
+    /// A word in more objects than [`MAX_CARRIERS`] is not *on* a page.
+    ///
+    /// The list stops being an answer long before it stops being affordable, so
+    /// this is not a performance bound. Two hundred over the cap, for the reason
+    /// [`MAX_OBJECT_REASONS`]'s test gives: a round excess would not tell an
+    /// off-by-one from a cap-and-stop.
+    #[test]
+    fn a_needle_in_more_objects_than_the_cap_is_not_placed() {
+        use lopdf::{Document, Object};
+
+        const REPEATED: &str = "SECRET-4711";
+        const EXTRA: usize = 200;
+
+        let mut doc = Document::load_mem(&document(&["clean"])).expect("the fixture loads");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let mut carried: Vec<Object> = Vec::new();
+        for _ in 0..super::MAX_CARRIERS + EXTRA {
+            carried.push(Object::Reference(
+                doc.add_object(Object::string_literal(REPEATED)),
+            ));
+        }
+        // Hung off the page so every one of them is reachable: the point is the
+        // number of carriers, not whether they could have been placed.
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page) {
+            page.set("Resources", carried);
+        }
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        assert!(report.found.contains(REPEATED));
+        assert_eq!(
+            report.located.get(REPEATED),
+            Some(&Located::Unplaced),
+            "a thousand carriers is not a location"
+        );
+    }
+
+    /// The page list is shortened and the count survives it.
+    ///
+    /// [`MAX_OBJECT_REASONS`]'s rule in the place the same pressure shows up.
+    /// Asserted in two halves for that test's reason: the list is bounded *and*
+    /// the remainder accounts for every page it left out, so a walk that gave
+    /// up at the cap fails the second.
+    #[test]
+    fn a_placed_needle_names_a_bounded_number_of_pages_and_counts_the_rest() {
+        const REPEATED: &str = "SECRET-4711";
+        const EXTRA: usize = 3;
+
+        let pages = vec![REPEATED; super::MAX_LOCATED_PAGES + EXTRA];
+        let bytes = document(&pages);
+        let report = super::scan(&bytes, &[REPEATED.to_string()], None);
+        let Some(Located::Pages(placed)) = report.located.get(REPEATED) else {
+            panic!("every page owns its own carrier, so this is placed: {report:?}");
+        };
+        assert_eq!(placed.pages.len(), super::MAX_LOCATED_PAGES);
+        assert_eq!(placed.more, EXTRA);
+        assert!(
+            placed.sentence().ends_with(", and 3 more"),
+            "{}",
+            placed.sentence()
+        );
+    }
+
+    /// A chain of references deeper than [`MAX_REACH_DEPTH`] stops the walk.
+    ///
+    /// **Called against [`reach`] rather than through [`scan`], and that is what
+    /// makes the three bound tests affordable.** Each of them needs a document
+    /// at the bound, and serialising a hundred thousand objects to exercise a
+    /// limit on how many are *visited* would spend the whole cost on the one
+    /// step that is not the subject. The `None`/`Some` pair is the control:
+    /// without the second, a `reach` that returned `None` for everything would
+    /// pass all three.
+    #[test]
+    fn a_reference_chain_past_the_depth_bound_stops_the_walk() {
+        assert!(
+            super::reach(&chain(super::MAX_REACH_DEPTH - 2)).is_some(),
+            "a chain inside the bound is walked"
+        );
+        assert!(
+            super::reach(&chain(super::MAX_REACH_DEPTH + 2)).is_none(),
+            "and one past it withholds every answer, not just its own"
+        );
+    }
+
+    /// A page reaching more objects than [`MAX_REACH_OBJECTS`] stops the walk.
+    #[test]
+    fn a_page_reaching_past_the_object_bound_stops_the_walk() {
+        assert!(
+            super::reach(&fan(super::MAX_REACH_OBJECTS - 10)).is_some(),
+            "a page inside the bound is walked"
+        );
+        assert!(super::reach(&fan(super::MAX_REACH_OBJECTS + 10)).is_none());
+    }
+
+    /// Work past [`MAX_REACH_STEPS`] stops the walk, however it was spent.
+    ///
+    /// **Direct objects, which is the half the per-page object bound cannot
+    /// reach.** A hostile array of two million integers costs two million steps
+    /// and one object, so a walk bounded only by objects visited would grind
+    /// through it. The bound is on the work rather than on the graph.
+    ///
+    /// See [`heap`] for why its page has no content stream: with one, this test
+    /// passed for the wrong reason and the mutation that deletes the guard it
+    /// is named for survived.
+    #[test]
+    fn work_past_the_step_bound_stops_the_walk() {
+        assert!(
+            super::reach(&heap(super::MAX_REACH_STEPS / 2)).is_some(),
+            "half the budget is spent and answered"
+        );
+        assert!(super::reach(&heap(super::MAX_REACH_STEPS + 10)).is_none());
+    }
+
+    /// One page whose `/Resources` is a chain of `deep` references.
+    fn chain(deep: usize) -> lopdf::Document {
+        use lopdf::{dictionary, Document, Object};
+
+        let mut doc = Document::load_mem(&document(&["clean"])).expect("the fixture loads");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let mut last = doc.add_object(Object::Null);
+        for _ in 0..deep {
+            last = doc.add_object(dictionary! { "Link" => last });
+        }
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page) {
+            page.set("Resources", last);
+        }
+        doc
+    }
+
+    /// One page whose `/Resources` references `wide` separate objects.
+    fn fan(wide: usize) -> lopdf::Document {
+        use lopdf::{Document, Object};
+
+        let mut doc = Document::load_mem(&document(&["clean"])).expect("the fixture loads");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let spread: Vec<Object> = (0..wide)
+            .map(|_| Object::Reference(doc.add_object(Object::Null)))
+            .collect();
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page) {
+            page.set("Resources", spread);
+        }
+        doc
+    }
+
+    /// One page whose `/Resources` is a direct array of `many` integers, and
+    /// which references **nothing** --- not even its own content stream.
+    ///
+    /// ⚠ **The `/Contents` had to go, and finding out why is the interesting
+    /// part.** There are two step checks: one in [`push_refs`], which stops a
+    /// single object from burning the whole budget, and one in [`reach`]'s own
+    /// loop. They share a counter, so with a content stream still on the page
+    /// the stack was not empty when `push_refs` returned --- `reach` popped it,
+    /// incremented the shared counter past the bound and answered `None`
+    /// anyway. The mutation that deletes the inner check therefore **survived**
+    /// on the first run of it: the walk still truncated, for the other reason.
+    ///
+    /// A guard that cannot be shown to fire is not a guard, and the failure
+    /// here is not hypothetical --- it is exactly what an object holding a
+    /// billion direct values would exploit, spending a billion steps before the
+    /// outer check gets a turn. Stripping every reference from the page is what
+    /// leaves the inner check as the only thing standing between the fixture
+    /// and an answer.
+    fn heap(many: usize) -> lopdf::Document {
+        use lopdf::{Document, Object};
+
+        let mut doc = Document::load_mem(&document(&["clean"])).expect("the fixture loads");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        if let Ok(Object::Dictionary(page)) = doc.get_object_mut(page) {
+            page.remove(b"Contents");
+            page.set("Resources", vec![Object::Integer(0); many]);
+        }
+        doc
     }
 }

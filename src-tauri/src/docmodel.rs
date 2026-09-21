@@ -1520,6 +1520,34 @@ pub enum Refusal {
     /// also answers the repeated-import hazard without a variant of its own ---
     /// a removal reaches the *file*, so it would strike every position showing
     /// that page, and no position of an imported page can carry one.
+    ///
+    /// ⚠ **The scan bullet above stopped being a blocker on 2026-09-21, and the
+    /// reader-facing sentence had been naming it.** `verify::scan` walks the
+    /// written file per page now, so a hit on an inserted page is placed on that
+    /// page rather than reported as somewhere in the file --- and
+    /// `save::import_tests::a_word_surviving_on_an_inserted_page_is_placed_there_and_not_on_the_marked_one`
+    /// measures exactly that, through the writer, on two files. So *"tpdf cannot
+    /// yet prove a removal from it clean"*, which is what `edits::describe` said,
+    /// named the one step that no longer applies.
+    ///
+    /// What is missing is the removal itself, and it is two whole steps rather
+    /// than a proof:
+    ///
+    /// * *The ask*: `commands::redact::ask_redactions` sends every region to
+    ///   `service.redaction_plans(doc, page, ..)`, which is the worker holding
+    ///   the **opened** document. A page of another file is not in that document
+    ///   at all, so there is no page to compute ordinals against, and
+    ///   `edits::Edits::redaction_targets` resolves a region to a baseline page
+    ///   or skips it.
+    /// * *The apply*: `save::apply_redactions` looks its target up in
+    ///   `Checked::pages`, which is `pagetree::ordered_pages` of the **base**
+    ///   document. `merge::import` adds the other file's page objects after
+    ///   that list is taken, so no index into it names one.
+    ///
+    /// Building either needs ordinals computed against the incoming file and a
+    /// removal addressed to its objects --- the shape `save::text_by_document`
+    /// gave text replacement --- which is an increment of its own and not a
+    /// wording change. Until then the refusal stays and says that.
     RedactionOnImportedPage(PageId),
     /// No mark has ever had this id.
     NoSuchMark(MarkId),

@@ -256,9 +256,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   like one that has been removed, so a pending region is never black, never saved, and never
   written into a copy — see the two entries under *What Phase 0 established* for why this
   is the hardest thing here to get right. A page inserted from another file cannot be
-  marked, and says so when you try: every check that would prove the removal clean is
-  addressed to the document you opened, and a removal reaches the file the page came from,
-  so it would strike every place that page appears.
+  marked, and says so when you try: tpdf can only remove content from the pages of the file
+  you opened — both working out what to take and taking it are addressed to that document —
+  and a removal reaches the file the page came from, so it would strike every place that
+  page appears.
   <!-- built: edit.redactRegion -->
 - **Review what you marked**, in a sidebar tab that lists every pending region down the
   document with the words under it, so you can check six regions across forty pages
@@ -271,7 +272,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Redact and save as** writes a new file with the marked regions' text removed from the
   page's instructions and then reads that file back and
   tells you what it found. It says *verified*, or it says it could not prove the file is
-  clean and why. It never says nothing. **That reading is visual as well as textual**: the
+  clean and why. It never says nothing. **When a word you removed is still somewhere in the
+  file it says which page**, and whether that page is one you marked: a word left on a page
+  you marked is a removal that did not take, and the same word on a page nobody marked is
+  another copy the removal was never asked about. Where it cannot place one — a block more
+  than one page draws, or bytes no page reaches — it says it could not, rather than naming a
+  page it cannot stand behind. Either way the file is still not called clean while a word you
+  removed is anywhere in it. **That reading is visual as well as textual**: the
   area you removed is rendered and put through the system's own text recogniser, which is
   the only way to catch words that were never text — a scan, or a heading turned into
   outlines. Nothing is called clean on that evidence unless the recogniser was first shown

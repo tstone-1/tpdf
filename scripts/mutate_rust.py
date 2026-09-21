@@ -2721,6 +2721,147 @@ MUTATIONS = [
         "pub fn structure(bytes: &[u8]) -> Vec<String> {\n    let mut wrong = vec![String::from(\"planted\")];",
         "every_rewritten_fixture_is_structurally_sound",
     ),
+    # --- attribution: which page a surviving word is on (2026-09-21) ---------
+    Mutation(
+        # Follow the keys that leave the page. /Parent reaches /Pages and /Kids
+        # reaches every other page, so every object becomes reachable from every
+        # page and the walk answers "both" for a word on one of them -- a wrong
+        # attribution, which is worse than no attribution.
+        "verify: follow the dictionary keys that leave the page",
+        "src/verify.rs",
+        "        if NOT_CONTENT.contains(&key.as_slice()) {\n            continue;\n        }",
+        "        if false && NOT_CONTENT.contains(&key.as_slice()) {\n            continue;\n        }",
+        "a_needle_on_the_page_it_was_removed_from_is_placed_there",
+    ),
+    Mutation(
+        # Place a word in a file holding more than one revision. An object an
+        # earlier revision overwrote sits at its old offset addressable by
+        # nothing, so the live graph's answer is not an answer about the file.
+        "verify: attribute a page in a file with more than one revision",
+        "src/verify.rs",
+        "            if !report.found.is_empty() && report.eofs <= 1 {",
+        "            if !report.found.is_empty() {",
+        "a_file_with_more_than_one_revision_places_nothing",
+    ),
+    Mutation(
+        # Walk on past the per-page object bound. A truncated walk does not lose
+        # an answer, it invents a wrong one.
+        "verify: keep walking past the per-page object bound",
+        "src/verify.rs",
+        "            if seen.len() > MAX_REACH_OBJECTS {\n                return None;\n            }",
+        "            if seen.len() > MAX_REACH_OBJECTS {}",
+        "a_page_reaching_past_the_object_bound_stops_the_walk",
+    ),
+    Mutation(
+        # Follow a reference chain past the depth bound.
+        "verify: follow a reference chain past the depth bound",
+        "src/verify.rs",
+        "                if depth + 1 > MAX_REACH_DEPTH {\n                    return false;\n                }",
+        "                if depth + 1 > MAX_REACH_DEPTH {}",
+        "a_reference_chain_past_the_depth_bound_stops_the_walk",
+    ),
+    Mutation(
+        # Spend past the total work bound inside one object. Direct values are
+        # not references, so the per-page object bound cannot see this at all.
+        "verify: spend past the total work bound on direct objects",
+        "src/verify.rs",
+        "        *steps += 1;\n        if *steps > MAX_REACH_STEPS {\n            return false;\n        }",
+        "        *steps += 1;",
+        "work_past_the_step_bound_stops_the_walk",
+    ),
+    Mutation(
+        # Call a carrier that two pages draw a page. The first page that reached
+        # it is not the page it is on, and a reader comparing that against the
+        # page they marked would act on a fabrication.
+        "verify: attribute a shared carrier to the pages that share it",
+        "src/verify.rs",
+        "                    if slots.len() > 1 {\n                        shared.extend(slots.iter().copied());\n                    }",
+        "                    if false {\n                        shared.extend(slots.iter().copied());\n                    }",
+        "a_needle_in_something_two_pages_draw_is_not_placed_on_either",
+    ),
+    Mutation(
+        # Ignore a carrier no page reaches. The word is then reported as on the
+        # pages its other carriers gave, with the unreachable one silent.
+        "verify: ignore a carrier no page reaches",
+        "src/verify.rs",
+        "                None => unplaced = true,",
+        "                None => {}",
+        "a_needle_in_the_file_s_own_metadata_is_not_placed",
+    ),
+    Mutation(
+        # Say nothing at all about a needle only the byte scan found, instead of
+        # saying it cannot be placed. Absent reads as "not asked", which is the
+        # sentence a reader gets for a file nobody walked.
+        "verify: leave a byte-only hit out of the attribution",
+        "src/verify.rs",
+        "        let Some(carried) = carriers.get(needle) else {\n            out.insert(needle.clone(), Located::Unplaced);\n            continue;\n        };",
+        "        let Some(carried) = carriers.get(needle) else {\n            continue;\n        };",
+        "a_needle_no_object_carries_is_not_placed",
+    ),
+    Mutation(
+        # Place a word carried by more objects than the cap. The list stopped
+        # being an answer long before it stopped being affordable.
+        "verify: place a word with more carriers than the cap",
+        "src/verify.rs",
+        "        if carried.overflowed || carried.objects.is_empty() {",
+        "        if carried.objects.is_empty() {",
+        "a_needle_in_more_objects_than_the_cap_is_not_placed",
+    ),
+    Mutation(
+        # Shorten the page list and lose the count with it -- the cap-and-stop
+        # shape MAX_OBJECT_REASONS' own test was written against.
+        "verify: shorten the page list without counting what it left out",
+        "src/verify.rs",
+        "            more: pages.len().saturating_sub(MAX_LOCATED_PAGES),",
+        "            more: 0,",
+        "a_placed_needle_names_a_bounded_number_of_pages_and_counts_the_rest",
+    ),
+    Mutation(
+        # Report the walk as complete when any one finding was placed. The
+        # unplaced one could be the word sitting on the marked page.
+        "verify: call the walk complete when any finding was placed",
+        "src/verify.rs",
+        "                .all(|needle| matches!(self.located.get(needle), Some(Located::Pages(_))))",
+        "                .any(|needle| matches!(self.located.get(needle), Some(Located::Pages(_))))",
+        "a_single_unplaced_finding_silences_the_comparison",
+    ),
+    Mutation(
+        # Ignore the attribution when writing the reasons, which is the sentence
+        # a reader actually sees.
+        "verify: leave the page out of the reason a reader is shown",
+        "src/verify.rs",
+        "            why.push(match self.located.get(needle) {",
+        "            why.push(match None::<&Located> {",
+        "a_needle_on_another_page_reads_as_still_in_the_file",
+    ),
+    Mutation(
+        # Keep the could-not-tell disclaimer beside a report that did tell. Its
+        # first clause is then a memory rather than a fact, and `verified` stays
+        # false on a blindness that is gone.
+        "redact: disclaim an answer the walk gave",
+        "src/redact.rs",
+        "    if inserted == 0 || found.is_empty() || placed {",
+        "    if inserted == 0 || found.is_empty() {",
+        "the_inserted_pages_note_is_added_only_when_the_scan_found_something",
+    ),
+    Mutation(
+        # Compare against the marked pages without the walk having placed every
+        # finding, which is a claim about an empty or partial set.
+        "redact: compare against the marked pages without a complete walk",
+        "src/redact.rs",
+        "    if !report.placed() {\n        return None;\n    }",
+        "    if false {\n        return None;\n    }",
+        "a_report_with_no_findings_draws_no_comparison",
+    ),
+    Mutation(
+        # Report a word still on the marked page as though it were somewhere
+        # else -- the one direction of this sentence that reads as success.
+        "redact: read a hit on a marked page as a hit somewhere else",
+        "src/redact.rs",
+        "    if !hit.is_empty() {",
+        "    if false {",
+        "a_word_still_on_a_marked_page_is_named_as_a_removal_that_did_not_take",
+    ),
     Mutation(
         # Never collect, which is what the save path did until 2026-08-26.
         # Extracting one page of eight then produces a one-page file carrying all
@@ -9676,8 +9817,8 @@ MUTATIONS += [
         # so that is the document-wide refusal back under another name.
         "redact: note the inserted pages even when the scan found nothing",
         "src/redact.rs",
-        "    if inserted == 0 || found.is_empty() {\n        return None;\n    }",
-        "    if inserted == 0 {\n        return None;\n    }",
+        "    if inserted == 0 || found.is_empty() || placed {\n        return None;\n    }",
+        "    if inserted == 0 || placed {\n        return None;\n    }",
         "the_inserted_pages_note_is_added_only_when_the_scan_found_something",
     ),
     Mutation(

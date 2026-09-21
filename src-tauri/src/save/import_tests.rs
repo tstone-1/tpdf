@@ -731,6 +731,100 @@ fn a_rewrite_removes_from_the_reader_s_page_and_carries_the_inserted_ones_whole(
     );
 }
 
+/// The inserted page prints the very word the region covered, and the scan says
+/// which page that is.
+///
+/// **The case the 2026-09-20 narrowing could only disclaim.** `verify::scan`
+/// read the whole output and reported *"OWN-A is still in the file"*, which a
+/// reader cannot tell from a removal that did not take --- so
+/// `redact::inserted_pages_note` was added to say the scan could not tell
+/// either. Since 2026-09-21 it can: the per-page walk places the surviving word
+/// on slot 0, which is the inserted page, and `redact::marked_pages_note` reads
+/// that against the slot the region was actually on.
+///
+/// Two things make this the real subject rather than a restatement of
+/// `verify`'s own unit tests. The pages come from **two different files**, so
+/// the carrier is an object `merge::import` renumbered into the output rather
+/// than one the fixture builder placed; and the marked page's number in the
+/// base file (0) and its slot in the output (1) are different numbers, so a
+/// walk that answered in the wrong space would name the inserted page for the
+/// marked one and vice versa --- which is the mistake that would read as
+/// success.
+///
+/// The verdict is **unchanged and must be**: the word is in the file, so the
+/// file is not verified. What the attribution buys is which half of that the
+/// reader has to act on.
+#[test]
+fn a_word_surviving_on_an_inserted_page_is_placed_there_and_not_on_the_marked_one() {
+    let scratch = Scratch::new("redact-import-attribution");
+    let source = scratch.put("own.pdf", &labelled(&["OWN-A", "OWN-B"]));
+    // The other file prints the same label the region covers.
+    let other = scratch.put("other.pdf", &labelled(&["OWN-A"]));
+    let out = scratch.join("out.pdf");
+
+    let mut plan = plan_with(2, vec![theirs(3, 0), own(0), own(1)], &other);
+    plan.redactions = vec![crate::edits::PlannedRedaction {
+        source: 0,
+        shows: vec![0],
+        text_objects: 1,
+        areas: vec![[0.0, 700.0, 595.0, 780.0]],
+        taking: vec!["OWN-A".to_string()],
+        form_shows: Vec::new(),
+        form_text_objects: Vec::new(),
+        images: Vec::new(),
+        image_objects: 0,
+    }];
+    write_copy(&source, &plan, &out, None, &Here).expect("the copy");
+
+    let bytes = std::fs::read(&out).expect("read back");
+    let needles = vec!["OWN-A".to_string(), "OWN-B".to_string()];
+    let report = crate::verify::scan(&bytes, &needles, None);
+
+    assert!(
+        report.found.contains("OWN-A"),
+        "the inserted page still prints it, which is the whole fixture: {:?}",
+        report.found
+    );
+    assert_eq!(
+        report.located.get("OWN-A"),
+        Some(&crate::verify::Located::Pages(crate::verify::Placed {
+            pages: vec![0],
+            more: 0,
+        })),
+        "on the inserted page, which is slot 0 --- and on no other"
+    );
+    // The control, and it is what says the walk is answering in output slots
+    // rather than in baseline page numbers: `OWN-B` is baseline page 1 and
+    // output slot 2, and the two answers have to differ.
+    assert_eq!(
+        report.located.get("OWN-B"),
+        Some(&crate::verify::Located::Pages(crate::verify::Placed {
+            pages: vec![2],
+            more: 0,
+        })),
+        "the untouched page is placed where the output puts it, not where the file had it"
+    );
+
+    assert!(
+        matches!(report.verdict(), crate::verify::Verdict::NotVerified(_)),
+        "a word still in the file is still a leak, however well placed"
+    );
+    // Slot 1 is where the region was: baseline page 0, one page further down
+    // because of the insert.
+    assert_eq!(
+        crate::redact::marked_pages_note(&report, &[1]).as_deref(),
+        Some(
+            "every word reported above is on a page no region was marked on --- page 2 carried \
+             the regions, and none of them carries any of those words"
+        ),
+    );
+    assert_eq!(
+        crate::redact::inserted_pages_note(1, &report.found, report.placed()),
+        None,
+        "and the sentence that exists to disclaim an answer stays quiet now there is one"
+    );
+}
+
 /// The image-only route is the one step an inserted page really blocks, and it
 /// says so itself rather than being refused for the whole document.
 ///

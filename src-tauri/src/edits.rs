@@ -2757,9 +2757,18 @@ pub(crate) fn describe(why: Refusal) -> String {
         // page is no longer refused because some other page was inserted. The
         // sentence says what is true of *this* page and names the one step that
         // cannot reach it --- see `Refusal::RedactionOnImportedPage`.
+        // ⚠ **Narrowed 2026-09-21 to what is actually missing.** It said *"tpdf
+        // cannot yet prove a removal from it clean"*, which named the
+        // verification --- and since `verify::scan` walks the written file per
+        // page, a removal from such a page *could* be proved clean. What is
+        // missing is the removal: the ask is addressed to the worker holding
+        // the opened document, and the apply looks its target up in that
+        // document's own page list. `Refusal::RedactionOnImportedPage` has
+        // both, and the sentence now says the thing a reader can act on rather
+        // than the one that has been fixed underneath it.
         Refusal::RedactionOnImportedPage(_) => {
-            "that page came from another document, and tpdf cannot yet prove a removal from it \
-             clean --- save this document, reopen it, and redact there"
+            "that page came from another document, and tpdf can only remove content from the \
+             pages of the file you opened --- save this document, reopen it, and redact there"
                 .into()
         }
         Refusal::NoSuchMark(_) => "no such mark".into(),

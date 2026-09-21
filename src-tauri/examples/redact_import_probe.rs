@@ -17,8 +17,18 @@
 //!   a different coat.
 //! * **`--echo`**: the other file is synthesised here and *prints the very word
 //!   the region covers*. The scan finds it, the file does not verify, and the
-//!   report carries `redact::inserted_pages_note` beside the finding. Nothing
-//!   is silenced to make it look clean, which is `docs/PLAN.md` §6's rule.
+//!   report says which page it is on. Nothing is silenced to make it look
+//!   clean, which is `docs/PLAN.md` §6's rule.
+//!
+//! ⚠ **The second run's answer changed on 2026-09-21 and the sentence above
+//! used to end differently.** It read *"the report carries
+//! `redact::inserted_pages_note` beside the finding"* --- a note saying the
+//! scan could not tell which page the word was on. `verify::scan` now walks the
+//! written file per page, so it can: the hit is placed on slot 0, the inserted
+//! page, and that note stays quiet because its own first clause is no longer
+//! true. `redact::marked_pages_note` is what speaks instead, and it compares
+//! the walk's answer against the slot the region was on. The verdict is the
+//! same either way --- a word still in the file is still *not verified*.
 //!
 //! The echo file is built rather than tracked because it has to agree with
 //! `--needle`, and a fixture that has to agree with an argument is a fixture
@@ -244,7 +254,48 @@ fn run(
         .filter(|one| one.as_str() == needle)
         .cloned()
         .collect();
-    let note = redact::inserted_pages_note(inserted, &removed);
+    // **The same report with the control taken out of it, and both notes read
+    // that one.** ⚠ The comment above is the whole reason this exists, and it
+    // was written before `marked_pages_note` did and then not applied to it:
+    // `keep` is the probe's instrument, not one of the removal's needles, and
+    // it survives *on the marked page* by construction. Handing it to a note
+    // that asks whether a marked page still carries a reported word makes every
+    // run report a removal that did not take --- which is what happened, in
+    // both runs, the first time this was wired up. The command never scans for
+    // it: `redact::aggregate` pushes only what the removal takes.
+    let narrowed = {
+        let mut narrowed = report.clone();
+        narrowed.found = removed.clone();
+        narrowed.located.retain(|word, _| removed.contains(word));
+        narrowed
+    };
+    let note = redact::inserted_pages_note(inserted, &removed, narrowed.placed());
+    // Where the walk put each surviving word, and how that reads against the
+    // slot the region was on. `marked_slot` is 1 below: the marked page is
+    // baseline page 0 with one inserted page in front of it.
+    let marked = redact::marked_pages_note(&narrowed, &[1]);
+    let placed = |word: &str| match report.located.get(word) {
+        Some(tpdf_lib::verify::Located::Pages(where_)) => format!(
+            "{{\"kind\": \"pages\", \"pages\": [{}], \"more\": {}}}",
+            where_
+                .pages
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            where_.more
+        ),
+        Some(tpdf_lib::verify::Located::Shared(_)) => "{\"kind\": \"shared\"}".to_string(),
+        Some(tpdf_lib::verify::Located::Unplaced) => "{\"kind\": \"unplaced\"}".to_string(),
+        None => "null".to_string(),
+    };
+    // The reason a reader is actually shown, which is what carries the page
+    // number --- a JSON field the probe built itself would agree with the probe
+    // rather than with `Report::verdict`.
+    let reasons: Vec<String> = match report.verdict() {
+        tpdf_lib::verify::Verdict::NotVerified(why) => why,
+        tpdf_lib::verify::Verdict::Verified => Vec::new(),
+    };
 
     let escape = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
     let strings = |values: &[String]| {
@@ -260,7 +311,8 @@ fn run(
          \"inserted_at\": 0, \"inserted\": {inserted}, \"marked_slot\": 1, \
          \"needle\": \"{}\", \"keep\": \"{}\", \"found\": [{}], \
          \"needle_found\": {}, \"keep_found\": {}, \"objects\": {}, \
-         \"note\": {}}}",
+         \"placed\": {}, \"needle_at\": {}, \"keep_at\": {}, \
+         \"reasons\": [{}], \"marked_note\": {}, \"note\": {}}}",
         escape(&out.display().to_string()),
         escape(&source_file.display().to_string()),
         escape(needle),
@@ -269,6 +321,14 @@ fn run(
         !removed.is_empty(),
         report.found.contains(keep),
         report.objects,
+        narrowed.placed(),
+        placed(needle),
+        placed(keep),
+        strings(&reasons),
+        match &marked {
+            Some(said) => format!("\"{}\"", escape(said)),
+            None => "null".to_string(),
+        },
         match &note {
             Some(said) => format!("\"{}\"", escape(said)),
             None => "null".to_string(),

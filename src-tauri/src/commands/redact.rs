@@ -157,6 +157,17 @@ struct Asked {
     /// what [`redact::inserted_pages_note`] needs to say, when the scan finds a
     /// word, that the scan cannot say which page it was on.
     inserted: usize,
+    /// Which slots of the **written** file carry a region somebody marked.
+    ///
+    /// Taken off [`Asked::gate`] after [`redact::gate_at_output_slots`] has
+    /// moved it, because that is the one list already in the space
+    /// `verify::scan` answers in --- the file that gets written, not the one it
+    /// came from. Kept as a field rather than read back off `gate` because
+    /// `gate` is moved into the OCR run before the report is read.
+    ///
+    /// It is what [`redact::marked_pages_note`] compares the walk's answer
+    /// against; without it a page number in a reason is trivia.
+    marked: Vec<u32>,
 }
 
 /// Works out what removing every marked region would take.
@@ -231,6 +242,22 @@ async fn ask_redactions(
     // [`redact::gate_at_output_slots`], which also records that a deletion was
     // already enough to part the two.
     let gate = redact::gate_at_output_slots(&plan.pages, gate);
+    // The same slots, kept: this is the reader's answer to "which pages did I
+    // mark", in the space the verification answers in.
+    //
+    // **A page that remap drops cannot make this list wrong**, which is worth
+    // stating because dropping one silently is the shape that usually does.
+    // `gate_at_output_slots` drops a marked page the plan does not place --- and
+    // `redaction_targets` and `plan` take *two* snapshots of the model with a
+    // worker round trip between them, so the two page lists are not guaranteed
+    // to agree. The reason it is harmless is the space: both this and
+    // `verify::Report::placed_pages` are output slots, and a page that is not in
+    // the written file has no slot, so the walk cannot attribute a word to it
+    // either. An omission here can only remove a page nothing could have been
+    // found on. Adding a marked page that is *not* in the output would be the
+    // dangerous direction, and the remap cannot do that: it takes the slot from
+    // the plan or drops the entry.
+    let marked: Vec<u32> = gate.iter().map(|page| page.page).collect();
     // How many of the written pages came from another file, counted off the
     // plan the write uses rather than off the model --- one list, one reader.
     let inserted = plan
@@ -246,6 +273,7 @@ async fn ask_redactions(
         shows: shows_total,
         gate,
         inserted,
+        marked,
     })
 }
 
@@ -437,10 +465,16 @@ pub async fn redact_copy(
     if let verify::Verdict::NotVerified(reasons) = report.verdict() {
         why.extend(reasons);
     }
-    // Directly under them, because it is about how to read them rather than a
-    // finding of its own --- and only when there is something to read. See
-    // `redact::inserted_pages_note`.
-    why.extend(redact::inserted_pages_note(asked.inserted, &report.found));
+    // Directly under them, because they are about how to read them rather than
+    // findings of their own --- and only when there is something to read. The
+    // two are exclusive by construction: one speaks when every word was placed
+    // on a page and the other when at least one was not.
+    why.extend(redact::marked_pages_note(&report, &asked.marked));
+    why.extend(redact::inserted_pages_note(
+        asked.inserted,
+        &report.found,
+        report.placed(),
+    ));
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
@@ -596,7 +630,12 @@ pub async fn redact_document(
     // Under them for `redact_copy`'s reason, and sharper here: this is the only
     // copy of the document left, so a reader deciding whether to act on a hit
     // has nothing else to compare it against.
-    why.extend(redact::inserted_pages_note(asked.inserted, &report.found));
+    why.extend(redact::marked_pages_note(&report, &asked.marked));
+    why.extend(redact::inserted_pages_note(
+        asked.inserted,
+        &report.found,
+        report.placed(),
+    ));
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
     why.extend(gate_written_file(&app, source.clone(), asked.gate, key.clone()).await);

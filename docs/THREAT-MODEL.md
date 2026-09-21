@@ -1906,10 +1906,10 @@ verified*. An imported page is one more place it can be carried, not a new kind 
 (`verify::tests::a_needle_on_another_page_reads_as_still_in_the_file`). The direction of the
 error is the one §6 requires: the file is reported **less** certifiable than it may be, never
 more. `redact::inserted_pages_note` states the ambiguity beside the finding rather than
-resolving it, and adds nothing when the scan found nothing. **Residual: a redaction report
-cannot say which page a surviving word is on.** Attributing one would need a per-page
-reachability walk the scanner does not have, and a hit outside every page's reachable objects
-could not be attributed at all. The image-only copy remains refused for such a document,
+resolving it, and adds nothing when the scan found nothing. ~~**Residual: a redaction report
+cannot say which page a surviving word is on.**~~ **Closed 2026-09-21** --- see *Attributing a
+surviving word to a page* below; what the residual called for is what was built. The
+image-only copy remains refused for such a document,
 by `raster_redact::rewrite`, because `render::run_rewrite` hands that path no incoming bytes
 and every output page is drawn through the opened document's own engine.
 
@@ -1935,6 +1935,35 @@ And a replacement is now validated by the **inserted file's own render worker**
 (`document_text_runs` routed by `page_text_address`), which is a second worker parsing
 attacker-chosen bytes for an edit --- the same pool `page_import_prepare` already opened for
 drawing and searching those pages (§T6.20), asked one more kind of question.
+
+**Attributing a surviving word to a page, added 2026-09-21.** `verify::scan` now walks, per
+page of the file it just read, that page's reachable objects --- content streams, annotations
+and their appearance streams, resources and the forms and fonts inside them --- and reports
+each surviving needle as placed on a page set, shared between pages, or reachable from none.
+**It adds no input, no parser and no channel**: it is the same `lopdf` document the scan
+already loaded, inside the same sandboxed worker (`save::Verifier`, `Request::Verify`), read
+and never written, and the report crosses the same pipe it did before with one bounded field
+added.
+
+What it needs bounding is the walk's own cost and the reply's size, both against a document
+an attacker chose: `MAX_REACH_DEPTH` (32) on the reference chain, `MAX_REACH_OBJECTS`
+(100,000) per page, `MAX_REACH_STEPS` (4,000,000) across the document including the direct
+values inside one object, `MAX_CARRIERS` (1,000) per needle, and `MAX_LOCATED_PAGES` (64)
+pages named per answer with the rest counted. The first three withhold **every** answer when
+they trip rather than shortening one, which is the safe direction here and not the obvious
+one: a truncated walk leaves an object it would have reached from a later page recorded as an
+earlier page's alone, so it does not lose an answer, it manufactures a wrong one. A file with
+more than one `%%EOF` withholds them too, for §6's revision reason.
+
+**The failure that matters is a wrong page, not a missing one**, because a page number is
+what a reader compares against the pages they marked. So the traversal is a deny list
+(`verify::NOT_CONTENT`) of every key that leaves a page --- `/Parent`, `/Kids`, `/P`,
+`/Dest`, `/A`, the outline chain, the structure tree, the form --- and where it is unsure it
+reaches too little: a word it does not reach is reported unplaceable, never placed on a
+guess. **Residual: an appearance stream under `/D` is not reached**, since that key is
+shared with actions, so a word living only there is reported as unplaceable rather than
+found on its page. The verdict is unchanged in every case --- a word still in the file is
+still a leak, and this only says where.
 
 #### T6.20 — Opening a second file to insert its pages, added 2026-09-19
 

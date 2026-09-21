@@ -1192,11 +1192,20 @@ uv run --with pypdf scripts/insert_text_check.py
 #           the old document-wide refusal wearing a different coat.
 #   --echo  the probe synthesises the other file so that its one page prints the
 #           very word the region covered. `verify::scan` reads the whole file, so
-#           it reports that word as still present; pypdf says WHICH PAGE it is on
-#           and the scan cannot, so the check asserts the thing the report does
-#           not claim: the hit is on the inserted page, the marked page is clean,
-#           and the reasons carry `redact::inserted_pages_note` rather than a
-#           claim the removal worked.
+#           it reports that word as still present -- and since 2026-09-21 it also
+#           says WHICH PAGE, which is what this run now checks against pypdf
+#           saying the same thing from outside: the hit is placed on the inserted
+#           page exactly, the control word that survives on the marked page is
+#           placed there instead, the reason a reader sees names that page number,
+#           and `redact::inserted_pages_note` -- the sentence that existed to
+#           disclaim an answer -- is asserted ABSENT.
+#
+# The `--keep` control must not reach either note. It survives on the marked page
+# by construction, so handing it to `redact::marked_pages_note` reports a removal
+# that did not take on EVERY run; the probe narrows the report to the removal's
+# own needles first. The comment saying so had been written for the other note and
+# was not applied to this one -- `docs/TRAPS.md`, *A warning written for one
+# consumer of a control is not attached to the control*.
 #
 # The inserted page goes in FRONT of the marked one, so the marked page's number
 # in the base file and its slot in the output are different numbers. A writer
@@ -1204,9 +1213,11 @@ uv run --with pypdf scripts/insert_text_check.py
 # the file would still be valid, still have the right page count and still be
 # missing the word.
 #
-# 17 checks over the two runs, all passing on `main` 2026-09-20. Proved by
-# control: the mutation `save: address a removal by output slot rather than by
-# baseline page` reddens the unit test that owns the same property.
+# 22 checks over the two runs, all passing on `main` 2026-09-21 (17 until the
+# attribution landed). Proved by control: the mutation `save: address a removal
+# by output slot rather than by baseline page` reddens the unit test that owns
+# the same property, and `verify: follow the dictionary keys that leave the page`
+# reddens the walk's own.
 #
 cargo build --manifest-path src-tauri/Cargo.toml --example redact-import-probe
 uv run --with pypdf scripts/redact_import_check.py

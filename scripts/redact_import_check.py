@@ -18,10 +18,16 @@ number of pages and still be missing the word.
 **And the second run is what the increment is really about.** With `--echo` the
 inserted page prints the very word the region covered. `verify::scan` reads the
 whole file, so it reports that word as still present --- which is honest and is
-not a failed removal. pypdf can say which page it is on and the scan cannot, so
-this script asserts the thing the scan structurally could not: the hit is on the
-inserted page, the marked page is clean, and the report carries the sentence
-saying it could not tell them apart rather than a claim that it could.
+not a failed removal.
+
+Since 2026-09-21 the scan also says **which page**, and this script is what
+checks that answer against a reader that shares no code with it: pypdf says the
+word is on the inserted page, tpdf's own report has to say the same slot, and
+the sentence a reader sees has to name that page number. The old disclaimer ---
+*the scan does not say which page a word is on* --- must now be absent, because
+it is no longer true; `redact::marked_pages_note` speaks in its place. A wrong
+attribution is worse than none, so the assertion is the exact page list, not
+that the right page is somewhere in it.
 
 Fixtures are the tracked synthetic corpus; the echo file and both outputs go to a
 temporary directory and are removed.
@@ -180,6 +186,13 @@ def main() -> int:
             "plain: so no note about inserted pages was added, and the file can verify",
             said["note"] is None,
         )
+        # Nothing was found, so there is nothing to place and nothing to compare
+        # against the marked page. A note here would be a claim about an empty
+        # set, which is the shape `Report::placed` returns False for.
+        check(
+            "plain: and no comparison is drawn against the marked page either",
+            said["placed"] is False and said["marked_note"] is None,
+        )
 
         # --- Run two: the inserted page prints the very word ----------------
         echoed = work / "echo-out.pdf"
@@ -201,27 +214,58 @@ def main() -> int:
             NEEDLE in page_text(saved, at),
             f"page {at + 1}",
         )
-        # The whole point. tpdf's scan reports the word as present and cannot
-        # say which page; pypdf has just said which page, which is the
-        # attribution the report does not claim to have.
+        # The whole point. tpdf's scan reports the word as present, and now says
+        # which page --- against pypdf, which has just said the same thing from
+        # outside.
         check(
             "echo: tpdf's scan reports the word as still in the file",
             said["needle_found"] is True,
         )
         check(
-            "echo: and the report says it cannot tell which page that is",
-            isinstance(said["note"], str)
-            and "does not say which page a word is on" in said["note"],
-            (said["note"] or "")[:60],
+            "echo: and it places that word on the inserted page, exactly",
+            said["needle_at"] == {"kind": "pages", "pages": [at], "more": 0},
+            f"{said['needle_at']} against slot {at}",
+        )
+        # The discrimination. `keep` survives on the marked page, so a walk that
+        # answered the same slot for everything, or that answered in the source
+        # file's page numbers, disagrees here and nowhere else.
+        check(
+            "echo: and the surviving control on the marked page is placed there instead",
+            said["keep_at"] == {"kind": "pages", "pages": [marked], "more": 0},
+            f"{said['keep_at']} against slot {marked}",
         )
         check(
-            "echo: the note claims nothing about the removal having worked",
-            isinstance(said["note"], str) and "was removed" not in said["note"],
+            "echo: the reason a reader is shown names that page number",
+            any(
+                one.startswith(NEEDLE) and one.endswith(f"on page {at + 1}")
+                for one in said["reasons"]
+            ),
+            "; ".join(said["reasons"])[:120],
         )
         check(
-            "echo: and it counts the inserted pages it is talking about",
-            isinstance(said["note"], str)
-            and f"{said['inserted']} page(s) inserted" in said["note"],
+            "echo: and the file is still not verified, because the word is still in it",
+            any(one.startswith(NEEDLE) for one in said["reasons"]),
+        )
+        check(
+            "echo: the report says the marked page does not carry those words",
+            isinstance(said["marked_note"], str)
+            and "no region was marked on" in said["marked_note"]
+            and f"page {marked + 1}" in said["marked_note"],
+            (said["marked_note"] or "")[:90],
+        )
+        check(
+            "echo: and it claims nothing about the file being clean",
+            isinstance(said["marked_note"], str)
+            and "verified" not in said["marked_note"]
+            and "clean" not in said["marked_note"],
+        )
+        # The sentence that existed to disclaim an answer must be gone now there
+        # is one. An unconditional note would keep `verified` false on a
+        # blindness the walk has removed.
+        check(
+            "echo: and the old could-not-tell disclaimer is not added beside it",
+            said["placed"] is True and said["note"] is None,
+            f"placed={said['placed']} note={said['note']}",
         )
     finally:
         shutil.rmtree(work, ignore_errors=True)

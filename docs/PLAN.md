@@ -2121,6 +2121,15 @@ many of the file's pages came from elsewhere. Attributing a hit to a page would 
 per-page reachability walk the scan does not have; until it does, the report says so rather
 than implying otherwise. See *Redacting beside an inserted page*.
 
+⚠ **It has that walk since 2026-09-21, so the paragraph above is history rather than the
+state.** *"It never says which page a word is on"* is false now: `verify::scan` walks each
+page's reachable objects and places each finding, so the reason reads *"still in the file,
+on page 5"*. Two clauses of that paragraph survive unchanged and are the load-bearing ones
+--- the verdict is still *not verified*, and the refusal it was written to unpick is still
+not this step's. What changed is that `redact::inserted_pages_note` now speaks **only when a
+finding could not be placed**, since a disclaimer of an answer that was given keeps a file
+unverified on a blindness that is gone. See *Attributing a surviving word to a page* below.
+
 **The two predicates that could have shipped an unredacted file both needed a new clause,
 and neither mentions a redaction on its own.** `Plan::is_identity` is what lets the print
 path hand the original bytes over; `Plan::only_adds_marks` is what routes a save to the
@@ -4193,6 +4202,72 @@ is exactly `lopdf`'s idea of it, and touches none of the carriers in the table a
 `/ActualText`, an appearance stream, a form field's value, a thumbnail, a prior incremental
 revision. A reader who has to be told which of those two a command did is being told the
 wrong thing; the difference has to be in the command, which is what steps 1 and 2 are.
+
+#### Attributing a surviving word to a page — built 2026-09-21
+
+Step 7's string search answered *found* or *not found* over the whole file, and a reader
+could not act on either: a removal that did not take and a second copy on a page nobody
+marked produce the identical sentence. `verify::scan` now walks the written file **per
+page** and places each finding, so the reason names a page and a second sentence says how
+that reads against the pages regions were marked on.
+
+**Three answers, and the middle one is the reason there are not two.** `verify::Located` is
+`Pages`, `Shared` or `Unplaced`. A carrier more than one page draws --- a shared form, a
+shared font --- belongs to no page, and the obvious two-valued design would call it the
+first page that reached it. That is not a weaker answer, it is a **wrong** one, and a wrong
+page turns *"still in the file"* into *"on a page you did not mark"*. A word found only in
+bytes no page reaches is the third, and no walk will ever improve on it. Anything not
+cleanly placed keeps the sentence it had before this existed.
+
+**The walk's soundness is a skip list, not a traversal.** `verify::NOT_CONTENT` names the
+keys that leave a page --- `/Parent` and `/Kids`, an annotation's `/P`, a link's `/Dest` and
+`/A`, the outline's chain, the structure tree, the form --- and following any one of them
+reaches every page from any page, at which point the walk answers *everywhere* for
+everything. It errs the other way instead: an appearance under `/D` is skipped with the
+actions that share the key, and a word sitting only there comes back `Unplaced` rather than
+placed. Two tests are that list's controls --- a two-page document places a word on the page
+that prints it and on no other (which `/Parent` alone would break), and a `GoTo` from page
+one to page three does not reach page three's words.
+
+**Four bounds, because this runs on attacker-chosen bytes inside the worker**: depth of the
+reference chain, objects one page may reach, total work across every page, and carriers per
+needle. A bound tripping anywhere withholds **every** answer rather than shortening one ---
+a truncated walk does not lose an answer, it invents a wrong one, since an object it would
+have reached from page 400 is left recorded as page 1's alone. More than one `%%EOF`
+withholds them the same way and for this section's own reason: an object an earlier revision
+overwrote sits at its old offset addressable by nothing, so the live graph's answer is not an
+answer about the file.
+
+**The verdict does not move, and that is a decision rather than an omission.** A word still
+in the file is still a leak wherever it is, so `redact::Applied::verified` stays false for
+it. The case that tempts otherwise --- every finding placed on pages nobody marked --- reads
+as a clean removal, and it is one; but the *file* still carries the word, and §6's rule is
+never claim clean. `redact::marked_pages_note` says what was proved (the marked pages do not
+carry it) and nothing about the file. Whether that should one day certify is an open
+question, not an oversight.
+
+**What it did not unlock.** `Refusal::RedactionOnImportedPage` stays. Its reader-facing
+sentence named this step --- *"tpdf cannot yet prove a removal from it clean"* --- and that
+half is now false: `save::import_tests::a_word_surviving_on_an_inserted_page_is_placed_there_and_not_on_the_marked_one`
+places a word on an inserted page, through the writer, across two files. What is missing is
+the **removal**, in two whole steps rather than a proof. The ask sends every region to the
+worker holding the *opened* document, which has no page of the other file in it; and
+`save::apply_redactions` looks its target up in `pagetree::ordered_pages` of the base
+document, a list taken before `merge::import` adds anything. Building either needs ordinals
+computed against the incoming file and a removal addressed to its objects --- the shape
+`save::text_by_document` gave text replacement --- which is an increment of its own. The
+refusal's wording was narrowed to say that.
+
+**Measured end to end** by `redact-import-probe` across the sandboxed worker and
+`scripts/redact_import_check.py` reading the result back with `qpdf --check` and `pypdf` ---
+22 checks over two runs. The second is the one worth having: the inserted page prints the
+very word the region covered, pypdf says which page that is, and tpdf's own report has to
+name the same slot, with the control word that survives on the marked page placed there
+instead. One finding came out of wiring it: the probe feeds `--keep` to the scan as an
+instrument control, and it survives *on the marked page* by construction, so handing it to
+`marked_pages_note` reported a removal that did not take on every run. The probe's own
+comment had warned about exactly that for `inserted_pages_note` and was not applied to the
+new one.
 
 ### Sanitized full rewrite — measured 2026-07-26
 
@@ -13568,6 +13643,20 @@ the result back with `qpdf --check` and `pypdf` --- 17 checks over two runs. The
 is the one worth having: the inserted page prints the very word the region covered, so the
 scan reports it present, pypdf says which page it is on, and the report carries the sentence
 saying it could not tell rather than a claim that it could.
+
+⚠ **Updated 2026-09-21, and the last clause is what changed: it can tell now.** The check is
+22 checks over the same two runs, and the second asserts the attribution rather than its
+absence --- tpdf's own report places the word on slot 0, the inserted page, and places the
+control word that survives on the marked page at slot 1, which is what says the walk answers
+in **output slots** rather than in the source file's page numbers. The note that existed to
+disclaim an answer is asserted **absent**. See *Attributing a surviving word to a page* in §6
+for the walk, its bounds and what it did not unlock.
+
+**`Refusal::RedactionOnImportedPage` stays, and its sentence was narrowed.** It read *"tpdf
+cannot yet prove a removal from it clean"*, naming the scan --- the step that no longer
+blocks anything. What blocks it is the removal, in two places: the ask goes to the worker
+holding the opened document, and `save::apply_redactions` indexes the base document's own
+page list. The wording says that now, and the §6 subsection has the account.
 
 **Not measured, and the window checks that would are written and have not been run:**
 `tabs_check.py --phase import` gains four checks --- a region on the reader's own page is

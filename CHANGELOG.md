@@ -21,6 +21,28 @@ have the binary.)
 
 ### Added
 
+- **A redaction report now says which page a surviving word is on.** Until now
+  it said *"4711-0815 is still in the file"* and stopped there, which a reader
+  cannot act on: a removal that failed and a second copy on a page nobody marked
+  produce the identical sentence. The verification walks the written file page by
+  page and places each finding, so the reason reads *"…is still in the file, on
+  page 7"*, and a second line says how that compares with the pages regions were
+  marked on — either *"a word reported above is still on page 3, where regions
+  were marked for removal, so the removal did not take it there"*, or *"every
+  word reported above is on a page no region was marked on"*.
+
+  **The verdict is unchanged, deliberately.** A word still in the file is still a
+  leak wherever it sits, so the file is still reported as not verified; what the
+  page buys is knowing which half of the finding is yours to act on.
+
+  There are three answers, not two, and the middle one is why. A word carried by
+  something more than one page draws — a shared form, a shared font — belongs to
+  no page, and a word found only in bytes no page reaches cannot be placed at
+  all. Both say so rather than naming the first page that happened to reach them:
+  a wrong page would read as *"on a page you did not mark"*, which is the one
+  sentence this must never produce. Anything not cleanly placed keeps the plain
+  wording it had before.
+
 - **Finishing an update no longer means quitting tpdf by hand.** On macOS the
   updater replaces the application bundle on disk and leaves the running process
   on the old code, so an applied update ended with the header reading *"Update
@@ -52,6 +74,22 @@ have the binary.)
   hands over to the installer and ends this process, so installing has always
   been a quit wearing another name, and nothing asked. macOS keeps no question
   in front of its install, which discards nothing.
+
+- **Marking a region on a page inserted from another file is refused for a
+  different reason, and the sentence says so.** It read *"tpdf cannot yet prove a
+  removal from it clean"*, which named the verification — and the verification
+  can now prove it, since it places a word on the page it is on whichever file
+  that page came from. What is actually missing is the removal: the step that
+  works out what to take is addressed to the document you opened, and so is the
+  step that takes it. The refusal now reads *"tpdf can only remove content from
+  the pages of the file you opened — save this document, reopen it, and redact
+  there"*.
+
+- **The note about inserted pages is added only when a word could not be
+  placed.** It exists to say the scan cannot tell which page a hit is on; where
+  the scan now tells, the note would be a disclaimer of an answer that was given,
+  and it would keep the report unverified on a blindness that is no longer
+  there.
 
 ## [26.9.16] - 2026-09-20
 
