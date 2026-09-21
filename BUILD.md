@@ -225,7 +225,7 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-p
 # Use a scratch directory; the application check edits only its own copies.
 TPDF_FORM_FIXTURE=/tmp/tpdf-form-fixture.pdf TPDF_FORM_PROBE=/tmp/tpdf-filled-form.pdf \
     cargo test --locked --manifest-path src-tauri/Cargo.toml --lib forms::tests::forms_round_trip_values_and_every_shared_widget_appearance
-uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-form-fixture.pdf --phase forms
+uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase forms
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
@@ -234,7 +234,7 @@ TPDF_SIGNATURE_PROBE=/tmp/tpdf-signatures \
     cargo test --locked --manifest-path src-tauri/Cargo.toml --lib signature_pixels_alpha_and_placement
 uv run --with pypdfium2 --with pillow scripts/signature_pdf_check.py /tmp/tpdf-signatures
 swift scripts/signature_pdfkit_check.swift /tmp/tpdf-signatures
-uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-signatures/signature-source-0.pdf --phase signatures
+uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-signatures/signature-source-0.pdf --phase signatures
 # On Windows, set TPDF_SIGNATURE_PROBE with $env:TPDF_SIGNATURE_PROBE and use a local scratch path.
 # Use an isolated TAURI_CONFIG identifier if another instance of tpdf is running.
 
@@ -245,7 +245,7 @@ uv run scripts/tabs_check.py <built-binary> /tmp/tpdf-signatures/signature-sourc
 # the disposable copy. The other file needs three pages whose text differs from each
 # other and from the opened file's, or the checks on *which* page answered cannot fail;
 # links.pdf has eight. The roles were the other way round until the range question.
-uv run scripts/tabs_check.py <built-binary> testdata/text-base14.pdf --phase import --other testdata/links.pdf
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase import --other testdata/links.pdf
 
 # The sentence a reader is shown after a redaction, read off the message area
 # rather than out of the reply that produced it. `verify.rs` and `redact.rs`
