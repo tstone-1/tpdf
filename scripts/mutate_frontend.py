@@ -711,8 +711,14 @@ MUTATIONS = [
         # two lines and then wakes, where the box's goes on to sample for ink.
         "        const { x, y } = this.pageAndPoint(at);\n        live.to = { x, y };\n"
         "        // **Sampled, not every event.**",
-        "        const at2 = this.pageAndPoint(at);\n        live.slot = at2.page;\n"
-        "        live.to = { x: at2.x, y: at2.y };\n"
+        # **`x` and `y` are destructured here and read below**, by the ink
+        # sampler that arrived after this mutation was written. An earlier
+        # replacement bound `at2` instead and left those reads dangling, so the
+        # mutation threw a `ReferenceError` before reaching the behaviour it
+        # claims to change --- the test reddened, the harness filed it as
+        # caught, and it proved nothing. `check_mutation_types.py` found it.
+        "        const { page, x, y } = this.pageAndPoint(at);\n"
+        "        live.slot = page;\n        live.to = { x, y };\n"
         "        // **Sampled, not every event.**",
         "keeps the box on the page it started from",
     ),
@@ -1998,8 +2004,20 @@ MUTATIONS = [
         "search: pair every slot whatever came back",
         "src/lib/search.ts",
         "  for (const [step, answer] of answers.entries()) {\n    const slot = slots[step];\n    if (slot === undefined) break;",
-        "  for (const [step, answer] of slots.entries()) {\n    const answer = answers[step] ?? reply;\n    void step;",
-        "pairs a full run with the slots it was asked about",
+        # **The loop variable has to be `slot`**, which the body below pushes.
+        # An earlier replacement iterated `slots.entries()` while still naming
+        # the pair's second element `answer`, so it redeclared the loop's own
+        # binding and left `slot` undefined: a `SyntaxError` under esbuild and a
+        # `ReferenceError` if it had got that far, either way a red test that
+        # says nothing about pairing. `check_mutation_types.py` found it.
+        "  for (const [step, slot] of slots.entries()) {\n    const answer = answers[step] ?? reply;",
+        # **Re-aimed with the replacement.** It named `pairs a full run with the
+        # slots it was asked about`, and that expectation was only ever met
+        # vacuously: the broken replacement threw, which reddened every test in
+        # the file including that one. A working replacement is noticed by the
+        # test whose subject it actually is --- a reply is a prefix, so pairing
+        # past its end files pages that never came back.
+        "files only the pages that came back",
     ),
     Mutation(
         # Read only the first page of a run's reply. Fifteen pages in sixteen
@@ -2491,8 +2509,15 @@ MUTATIONS = [
         # tags agree about *which* block comes first there for two of three.
         "structure: order the tagged blocks geometrically after all",
         "src/lib/reading.ts",
-        "  if (tagged) {\n    return ownership(text, tagged).map((owned, at) => ({",
-        "  if (tagged) {\n    tagged = [...tagged].sort((a, b) => a.start - b.start);\n    return ownership(text, tagged).map((owned, at) => ({",
+        # **`tagged` is a `const`, so the order goes into a new binding.** An
+        # earlier replacement assigned to it, which is a `TypeError` in a
+        # module's strict mode: the mutation threw before ordering anything and
+        # its test went red for that. The anchor reaches the `tag:` line so both
+        # the ownership and the label read the same array --- sorting only the
+        # first would be a third thing, and not the one the name claims.
+        # `check_mutation_types.py` found it.
+        "  if (tagged) {\n    return ownership(text, tagged).map((owned, at) => ({\n      tag: tagged[at]?.tag ?? null,",
+        "  if (tagged) {\n    const ordered = [...tagged].sort((a, b) => a.start - b.start);\n    return ownership(text, ordered).map((owned, at) => ({\n      tag: ordered[at]?.tag ?? null,",
         "follows the tags even where they disagree with the geometry entirely",
     ),
     Mutation(
@@ -6652,8 +6677,13 @@ MUTATIONS += [
         "src/lib/viewer.ts",
         "    await at.cache.load(at.page);\n"
         "    return at.cache.peekUnturned(at.page);",
-        "    await at.cache.load(filePage(slot));\n"
-        "    return at.cache.peekUnturned(filePage(slot));",
+        # The slot number raw, as every neighbouring page-addressing mutation
+        # here passes it. It was `filePage(slot)`, which `viewer.ts` does not
+        # import, so the mutation threw `ReferenceError: filePage is not
+        # defined` and the red test said nothing about which page was read.
+        # `check_mutation_types.py` found it.
+        "    await at.cache.load(slot);\n"
+        "    return at.cache.peekUnturned(slot);",
         "answers a page's unturned text, after the page above went",
     ),
     Mutation(
@@ -6671,7 +6701,10 @@ MUTATIONS += [
         "viewer: drop the cropped extraction under the slot's number",
         "src/lib/viewer.ts",
         "      source.cache.setPageCrop(source.page, want);",
-        "      source.cache.setPageCrop(filePage(slot), want);",
+        # The slot raw, for the same reason as `unturnedText`'s above: the
+        # `filePage` this named is not imported in `viewer.ts`, so the mutation
+        # threw rather than dropping the wrong page's extraction.
+        "      source.cache.setPageCrop(slot, want);",
         "drops the cropped page's extraction, not the extraction at its slot",
     ),
     Mutation(

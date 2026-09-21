@@ -94,6 +94,17 @@ drifting; the titles had not, and were three short on the day this was written.
 It compares the two as **sets**, which is the invariant -- a tally goes stale the
 next time an entry is added, and a set diff needs no number at all.
 
+`types` is `anchors` asked the other way round, and the distinction is the whole
+of why it exists: `anchors` proves a mutation's `before` is still in the tree,
+and that says nothing about whether its `after` still compiles. A replacement
+that no longer type-checks hands the harness a compile error instead of a red
+test, and until somebody runs that harness -- tens of minutes -- nothing says
+so, because `git status` is clean and `anchors` is green. It is the one gate
+that writes to the working tree: it applies mutations in batches, type-checks,
+and puts the bytes back, with a `.mutations/types-inflight.json` recovery for a
+run that is killed between the two. Do not run it and a mutation harness at the
+same time, for the same reason two harnesses cannot share a checkout.
+
 `corpora` is the same shape aimed at a different list: which `testdata/*.pdf`
 files `viewer_check.py` is run against. That list had no home until 2026-08-16 --
 it lived in whatever shell loop somebody typed -- and on that day it acquired
@@ -190,6 +201,30 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "anchors",
             [sys.executable, str(ROOT / "scripts" / "check_mutation_anchors.py")],
             "a mutation is aimed at code that is gone, or a killed harness left its edit behind",
+        ),
+        (
+            # The other half of `anchors`, and the only gate here that writes to
+            # the working tree. An anchor that still matches is not a mutation
+            # that still works: the `before` can sit untouched while the code
+            # around it grows a return value or an enum arm the `after` does not
+            # account for, and the harness then gets a compile error where it
+            # wanted a red test. Three of those were found in one week, each by
+            # a full `--since` run of a harness that takes tens of minutes.
+            #
+            # It is here rather than in `BUILD.md`'s release list because the
+            # defect is *introduced* by a source change and this is what gets run
+            # after a source change. Measured 2026-09-21 on a warm tree: 0.4 s
+            # when nothing under `src-tauri/src` or `src` has moved since the last
+            # run, 1.8 s after a TypeScript edit, ~16 s after a Rust one, 22 s for
+            # the whole 2,389-mutation table from an empty cache. The cache is
+            # keyed on a digest of every file its checkers read, so it invalidates
+            # bluntly and cannot be quietly wrong.
+            #
+            # `--self-test` is its control, and it is not run here: it plants a
+            # replacement that cannot run and requires the sweep to name it.
+            "types",
+            [sys.executable, str(ROOT / "scripts" / "check_mutation_types.py")],
+            "a mutation's replacement no longer compiles, so it can never be executed",
         ),
         (
             # Out of cheapest-first order on purpose: it runs `vitest list`,

@@ -1233,7 +1233,7 @@ scripts/gates.py --list
 
 Currently, in the order `--list` prints them: a toolchain-pin check, a PDFium pin check, a trap-index check, a
 future-date check, a
-workflow-parity check, a workflow-fixture check, a mutation-anchor check, a mutation-suite check, a
+workflow-parity check, a workflow-fixture check, a mutation-anchor check, a mutation-compiles check, a mutation-suite check, a
 corpus-classification check, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`,
 a locked build of all fuzz targets, `cargo build --locked --bins --examples`, a webview-sink check, a viewer-wiring check, a
@@ -1283,6 +1283,10 @@ rather than the account.** `docs/RATIONALE.md` has the full version of every one
 - `anchors` — every mutation's search string occurs exactly once in the file it names, the
   test it names exists, and that test can go red on this platform. A killed harness's leftover
   edit and a drifted anchor are both invisible in `git status`.
+- `types` — and the other half, because an anchor that still matches is not a mutation that
+  still works: the *replacement* has to still compile. Three that no longer did were found in
+  one week, each by a harness run measured in tens of minutes. The only gate that writes to the
+  working tree; 0.4 s cached, ~16 s after a Rust edit, 22 s for all 2,389 from an empty cache.
 - `mutations` — every suite `vitest list --json` collects is either mutated or excluded with a
   reason, so a harness omission is caught in twelve seconds rather than after a control pass.
 - `corpora` — every `testdata/*.pdf` is a window corpus with a stated purpose or an exclusion

@@ -681,6 +681,79 @@ sufficiency from "every `setAttribute` passes a constant name, so there is no UR
 attribute to poison" — and `setAttribute("href", row.title)` satisfies both. Correct about
 the tree in front of it, wrong about what it guaranteed.
 
+## Type-checking the mutation table
+
+`anchors` proves a mutation's `before` is still in the tree. Nothing proved its `after` still
+compiles, and the two are not the same claim --- the anchor can sit untouched while the code
+around it grows a return value, an enum arm, or a use of a binding the replacement removes.
+`mutate_rust.py` reports the result correctly as `no summary line -- the run did not finish`,
+and that report costs a run measured in tens of minutes. Three stale mutations turned up in one
+week that way; until each run, `git status` was clean and `anchors` was green.
+
+**The obvious shape --- apply, type-check, revert, times 1,568 --- is hours, and was never
+built.** What made it a gate instead was measuring three things first.
+
+*Batching.* Two mutations can be applied at once unless their anchors overlap, since every offset
+is taken against the original text. Greedy packing puts the whole Rust table into **five**
+batches, 1,349 of them in the first, and the front end into four. So the floor is not 1,568
+compiles, it is five.
+
+*Attribution instead of bisection.* The first batch of 1,349 produced exactly **one** error.
+Bisecting to it would have been eleven more compiles; reading `rustc --message-format=short`'s
+own `file:line` and asking which replacement's span covers it is none. That mutation is then
+checked alone, which is what separates "this replacement is broken" from "these two do not like
+each other" --- the first is a defect in the table and the second is not. Bisection is kept for
+an error that lands where no replacement is, which happens when the damage surfaces in another
+file, and it fired twice in the first full sweep.
+
+*Where the cache can be sound.* A mutation's verdict is a statement about the whole crate, not
+about its own file: two of the three stale ones broke because a callee elsewhere changed. So the
+key is a digest of every file the checker reads, and any edit anywhere re-runs the group. Blunt,
+and deliberately --- a narrower key is a cache that can be quietly wrong, which is the one thing
+this must not be. Measured on a warm tree: **0.4 s** cached, **1.8 s** after a TypeScript edit,
+**~16 s** after a Rust one, **22 s** for all 2,389 from an empty cache, thirteen compiles.
+
+Two measurements decided details that would otherwise have been guesses, and both went against
+the first instinct.
+
+**The target directory.** Sharing `mutate_rust.py`'s `target/mutations` looked like an
+optimisation for the harness's benefit; the honest reason is that the default directory is far
+slower. The same clean sweep took **86.7 s** in `target/debug` against **21.4 s** in
+`target/mutations`, warm both times, and the difference was almost entirely `sys` --- cargo
+stat-ing two hundred gigabytes of debug builds. A directory holding only check artifacts is
+scanned in a fraction of the time. (The first version of the fingerprint made the same mistake in
+miniature: `CRATE.rglob("*.rs")` with `target` filtered out of the *results* still walks
+`target`, and a cached run that does nothing but hash took **17.6 s**. Scoped to `src/`, 0.35 s.)
+
+**What to require of TypeScript.** The first version required the front end to type-check, by
+analogy with Rust, and reported **40** mutations. Thirty-six of them were deliberate and run
+exactly as written: `mutate_frontend.py` runs vitest, which transpiles with esbuild and never
+type-checks, so no diagnostic stops a mutation at all --- and passing a slot number where a
+branded `FilePage` is wanted is *how* you mutate a page-addressing bug into existence.
+`noUncheckedIndexedAccess` turns any dropped guard into an error; removing a call leaves its
+import unread. A gate that red-flags working mutations gets answered by casting them until it
+stops, which is worse than not having it.
+
+The criterion that transfers is not "type-checks" but **can it even run**: names that do not
+resolve, redeclarations, assignments to a constant --- the diagnostics whose runtime consequence
+is a thrown `ReferenceError`, `SyntaxError` or strict-mode `TypeError` rather than a wrong value.
+That reported **5**, and all five were vacuous. Two called a `filePage` that `viewer.ts` does not
+import. One assigned to a `const`. One dropped the `const { x, y }` destructuring that two lines
+added later still read. One redeclared its own loop variable and left `slot` undefined. Every one
+of them had been reddening its named test for a reason unrelated to what it claimed to break, and
+being filed as caught --- which is a worse failure than the Rust one, because there the harness at
+least says something.
+
+The exemption is counted rather than dropped, and the control has an arm for it: a planted
+type-only break must pass **and** be counted. An exemption whose size nobody can see is the same
+thing as no exemption.
+
+**And a control on the unmutated tree, before anything else.** A tree that does not compile
+already makes every batch fail, and attribution then names whichever mutation sits on the
+compiler's line --- a wrong diagnosis rather than a missing one. For a gate that is the everyday
+case, because the everyday reason to run one is that you have just edited the code. It costs one
+compile and it is the first thing the sweep does; `mutate_rust.py` opens the same way.
+
 ## The release workflow, and what a green sweep does not say
 
 `.github/workflows/release.yml` fires only on a CalVer tag. It **invokes `scripts/gates.py`**

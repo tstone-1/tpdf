@@ -644,6 +644,7 @@ hop through the index.
 - A harness's own self-test asserts the behaviour of the increment that wrote it, and the next increment makes it a lie
 - A probe that spawns a worker is also the worker, and without that the boundary takes the blame for `main`
 - A probe that writes its own input can be told to write it over its own output
+- An anchor that still matches is not a mutation that still works
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -24030,3 +24031,66 @@ regenerating the file by hand mid-change, which is when it is most likely to be 
 The general shape, and it is not only about notices: **a tool that derives one of its inputs from a
 build artifact reports on the last build, not on the tree.** Its output is a statement about
 `dist/` that looks like a statement about the repository.
+
+### An anchor that still matches is not a mutation that still works
+
+`check_mutation_anchors.py` asserts that every mutation's `before` string occurs exactly once in
+the file it names. That is a real invariant and it is half of one. The other half has no checker
+and no symptom: the anchor can sit untouched for months while the code *around* it changes, and
+the `after` --- which replaces it --- stops being valid. The call the replacement drops gains a
+return value. The `match` it rewrites gains an arm. The binding it removes is read two lines
+further down by something added since.
+
+**What that costs is the whole mutation, and nothing says so.** `mutate_rust.py` reports it
+correctly --- `no summary line -- the run did not finish` --- and far too late: the run that says
+it is measured in tens of minutes and is made at release time, and until then `git status` is
+clean, `anchors` is green, and the row reads as coverage. Three were found in one week, all the
+same shape: `browser state: skip external state validation` and `image: skip image validation` in
+26.9.14, `edits: address a mark by its baseline page rather than its position` in 26.9.16.
+
+A stale mutation is worth **less** than no mutation. No mutation is an admitted gap in a table
+somebody can read; this one is a gap wearing a row.
+
+`scripts/check_mutation_types.py` closes it, and three things about how are worth carrying past
+this repository.
+
+**Batch, and let the compiler do the searching.** One mutation per compile is hours. Two
+mutations can be applied together unless their anchors *overlap*, because every offset is taken
+against the original text --- so 1,568 Rust mutations pack into five batches. When a batch fails,
+the file and line rustc printed is attributed to the mutation whose replaced span covers it, and
+that one is then checked alone to tell "this replacement is broken" from "these two do not like
+each other". Bisection is the fallback, not the design. The whole 2,389-mutation sweep is
+thirteen compiles and 22 s.
+
+**Cache on what the answer depends on, which is not the mutation's own file.** Two of the three
+above broke because a *callee elsewhere* changed. A cache keyed on the mutated file would have
+called them fresh. The key is a digest of every file the checker reads, so any edit anywhere
+re-runs the group --- blunt on purpose, because the alternative is a cache that can be silently
+wrong, and 0.4 s of hashing is not worth making that trade.
+
+**Ask each language the question its pipeline actually answers.** Rust's criterion is *does it
+compile*, because cargo refuses to run a mutation that does not. TypeScript's cannot be:
+`mutate_frontend.py` runs vitest, which transpiles with esbuild and never type-checks, and a good
+third of that table breaks the types **on purpose** --- passing a slot number where a branded
+`FilePage` is wanted is how you mutate a page-addressing bug into existence, and
+`noUncheckedIndexedAccess` makes any dropped guard an error. Measured over the whole table:
+requiring the front end to type-check reported **40** mutations, **36** of them deliberate and
+running exactly as written. The criterion that transfers is not "type-checks" but **can it even
+run** --- names that do not resolve, redeclarations, assignments to a constant, the diagnostics
+whose runtime consequence is a thrown error rather than a wrong value. That reported **5**, and
+all five were vacuous: two called a `filePage` that `viewer.ts` does not import, one reassigned a
+`const`, one left `x` and `y` dangling after dropping the destructuring that bound them, one
+redeclared its own loop variable. Each had been reddening its test for a reason that had nothing
+to do with what it claimed to break, and each was being filed as caught.
+
+A gate built on the weaker criterion would have been answered by casting the 36 until it went
+quiet, which is worse than not having it. The population it does not fail on is counted and
+printed instead, so a deliberately narrow exemption stays distinguishable from a checker that saw
+nothing --- and the control has an arm for exactly that: a planted type-only break must pass
+**and** be counted.
+
+One more thing this needed and would have been wrong without: **a control on the unmutated tree,
+first.** A tree that does not compile before anything is mutated makes every batch fail, and
+attribution then names whichever mutation happens to sit on the compiler's line --- a wrong
+diagnosis rather than a missing one. That is the everyday case for a gate, because the everyday
+reason to run one is that you have just edited the code.

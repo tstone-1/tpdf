@@ -5572,6 +5572,46 @@ starts at 0 and increments within the month.
    the table's own consistency is unverified, and `scripts/gates.py`'s `anchors` gate covers
    the anchors but not the runner assignment.
 
+   **Nor does `anchors` cover whether a mutation still compiles, which is what the `types`
+   gate was added for on 2026-09-21.** An anchor that still matches is not a mutation that
+   still works: the `before` string can sit untouched while the code around it grows a return
+   value, an enum arm or an argument the `after` does not account for, and the harness then
+   gets a compile error where it wanted a red test. Three of those were found in one week,
+   each by a `--since <tag>` run of a table measured in tens of minutes, and each invisible
+   until then — `git status` clean, `anchors` green. `scripts/check_mutation_types.py` applies
+   every mutation, type-checks, and puts the bytes back; it is in the gate list, so a stale
+   replacement now goes red in seconds on the run that made it stale. Its own cost, measured
+   on this Mac with a warm build tree: **0.4 s** when nothing under `src-tauri/src` or `src`
+   has moved since the last run, **1.8 s** after a TypeScript edit, **~16 s** after a Rust
+   one, and **22 s** for the whole 2,389-mutation table from an empty cache — thirteen
+   compiles, because mutations with non-overlapping anchors are applied together and the
+   compiler's own file:line is what names the culprit in a failing batch.
+
+   Two things to know before relying on it. **It is the one gate that writes to the working
+   tree**, so do not run it and a mutation harness against the same checkout at once;
+   a killed run is recovered from `.mutations/types-inflight.json` on the next one, which
+   says so loudly. And **the two groups are judged by different criteria**: Rust must
+   compile, because cargo refuses to run a mutation that does not, while TypeScript is
+   checked only for names that *resolve*, because vitest never type-checks and a good third
+   of the front-end table breaks the types on purpose — passing a slot number where a branded
+   `FilePage` is wanted is how you mutate a page-addressing bug into existence. Requiring the
+   front end to type-check reported 40 mutations of which 36 were deliberate; requiring it to
+   resolve reported 5, and all 5 were vacuous.
+
+   ```
+   scripts/check_mutation_types.py              # both groups, using the cache
+   scripts/check_mutation_types.py --all        # ignore the cache
+   scripts/check_mutation_types.py --group rust # one group
+   scripts/check_mutation_types.py --list       # what would be checked, and what cannot be
+   scripts/check_mutation_types.py --self-test  # the control
+   ```
+
+   `--self-test` is the control and takes about 10 s. It plants a replacement that cannot run
+   beside real mutations and requires the sweep to name it, requires the real ones beside it
+   to come back clean, and — the arm that is easy to leave out — requires a planted
+   *type-only* TypeScript break to pass while being **counted**, so a deliberately narrow
+   exemption stays distinguishable from a checker that saw nothing.
+
    **The full tables:**
 
    ```
