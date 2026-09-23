@@ -513,6 +513,7 @@ hop through the index.
 - Two bounds sharing a counter, and the mutation for the inner one survived on the outer one's answer
 - A warning written for one consumer of a control is not attached to the control
 - A pixel envelope that covers where text went and where it was passes an edit that moved nothing
+- Two em boxes overlapping is not two runs on one line
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24209,3 +24210,24 @@ third of the smaller glyph each way, which no kerning reaches.
 The general form, beside the previous entry's: a check that confines change to a region is a
 check about everything else. Whatever is *supposed* to change inside the region needs its own
 assertion about where it ended up, by a reader that did not write it.
+
+### Two em boxes overlapping is not two runs on one line
+
+The editor's hit rectangles are em boxes: a quarter em below the baseline and a whole em above
+it. At ordinary leading that makes adjacent lines' boxes overlap — 12 pt on a 14 pt pitch by a
+point, and Word's single spacing is about 1.2 em. `Axis::beside` counted any overlap past a
+tenth of a point as "on this line", so the line push moved runs of the next line with its own,
+and the growing box stopped at them. Found while writing a fixture for something else: growing
+a run pushed the line above it 18 pt, because in that fixture the line above came later in the
+stream.
+
+Nothing had caught it for three days, and the reason is the instruments: the growth survey
+records verdicts, not what a save moved, so a wrong save reads as an acceptance; and the round
+trip confines changed pixels to an envelope the push itself reports, which included the runs it
+wrongly moved. When the fix was measured, 622 acceptances turned into refusals, and every one
+sampled had been a save that shifted part of another line sideways — a regression count that
+was the defect disappearing.
+
+The general form: overlap of boxes that are built to be generous says nothing about membership.
+Ask whether the two share *most* of something — here, more than half of the shorter height —
+and leave actual contact to the check that measures ink.

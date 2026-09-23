@@ -659,3 +659,60 @@ fn an_unchanged_edit_pushes_nothing_even_where_the_next_run_starts_a_hair_early(
     assert_eq!(visible(&after).len(), 2);
     assert_eq!(visible(&after), visible(&before));
 }
+
+// Hit rectangles are em boxes, and at 12 pt on a 14 pt pitch the next line's
+// overlaps this one's by a point. That is not the same line: a run on the line
+// below, starting past the end of the edited one, stays where it is. The push
+// used to count anything overlapping by more than a tenth of a point, and moved
+// it along with its own line.
+#[test]
+fn the_next_line_is_not_pushed_along_with_this_one() {
+    let doc = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 100 166 Td (SECOND) Tj ET \
+         BT /F1 12 Tf 200 180 Td (THIRD) Tj ET",
+    );
+    // FIRST ends at 76; SECOND starts at 100 on the line below, THIRD at 200
+    // on this one. Eleven characters end at 119.2, past SECOND's start and
+    // short of THIRD's.
+    let mut saved = doc.clone();
+    write(&mut saved, &[in_default_box(&doc, 0, "FIRSTFIRSTF")]).unwrap();
+    let second = find(&saved, "SECOND");
+    assert_eq!((second.matrix[4], second.matrix[5]), (100., 166.));
+    assert_eq!(find(&saved, "THIRD").matrix[4], 200.);
+    // Twenty-three reach 205.6 and push THIRD, on this line, by 5.6 pt; SECOND
+    // still stays.
+    let mut pushed = doc.clone();
+    write(&mut pushed, &[in_default_box(&doc, 0, &"F".repeat(23))]).unwrap();
+    let third = find(&pushed, "THIRD");
+    assert!(
+        (third.matrix[4] - 205.6).abs() < 0.0001,
+        "{}",
+        third.matrix[4]
+    );
+    assert_eq!(find(&pushed, "SECOND").matrix[4], 100.);
+}
+
+// The mirror: what stops a pushed run is what is on *its* line. Text the editor
+// cannot move, on the line below and ahead of the run being pushed, is a point
+// into that run's em box at a 14 pt pitch and is not in its way.
+#[test]
+fn text_on_the_next_line_does_not_stop_a_push() {
+    // THIRD at 100..136 on this line; a read-only run (it draws back over
+    // itself) at 150 on the line below.
+    let doc = synthetic(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 100 180 Td (THIRD) Tj ET \
+         BT /F1 12 Tf 150 166 Td [(FIRST) 3000 (F)] TJ ET",
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs.len(), 2);
+    // Twelve characters end at 126.4: THIRD goes to 126.4..162.4, over the
+    // read-only run's start at 150, but on its own line.
+    let mut pushed = doc.clone();
+    write(&mut pushed, &[in_default_box(&doc, 0, &"F".repeat(12))])
+        .unwrap_or_else(|error| panic!("{error}"));
+    let third = find(&pushed, "THIRD");
+    assert!(
+        (third.matrix[4] - 126.4).abs() < 0.0001,
+        "{}",
+        third.matrix[4]
+    );
+}

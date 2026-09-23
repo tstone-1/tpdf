@@ -914,27 +914,28 @@ fn the_room_after_a_run_stops_at_a_clip_and_a_nearer_neighbour_wins() {
 fn the_room_after_a_run_ignores_what_is_not_on_its_line() {
     let (zero, one, page) = box_edges(0, 100.);
     let (own, _) = own_and_neighbour(0, 100., 40.);
-    // Below the line entirely, and overlapping it by less than the tenth of a
-    // point the collision check ignores.
-    for other in [[140., 70., 180., 90.], [140., 62.95, 180., 90.]] {
+    // The box spans 48..63. Below the line entirely; the next line's em box at a
+    // 14 pt pitch, reaching a point into this one; and half of the box exactly,
+    // which is not more than half.
+    for other in [
+        [140., 70., 180., 90.],
+        [140., 62., 180., 77.],
+        [140., 55.5, 180., 70.5],
+    ] {
         assert_eq!(
             layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
             (200., layout::Room::Page),
             "{other:?}"
         );
     }
-    assert_eq!(
-        layout::room(
-            (zero, one),
-            1.,
-            page,
-            None,
-            own,
-            [[140., 62.5, 180., 90.]].into_iter(),
-            0.
-        ),
-        (40., layout::Room::Line)
-    );
+    // A tenth of a point past half, and a superscript wholly inside the box.
+    for other in [[140., 55.4, 180., 70.4], [140., 50., 180., 56.]] {
+        assert_eq!(
+            layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
+            (40., layout::Room::Line),
+            "{other:?}"
+        );
+    }
 }
 
 #[test]
@@ -1129,10 +1130,12 @@ fn a_run_under_a_compound_clip_gives_growth_up_rather_than_guessing_an_edge() {
 fn the_room_after_a_run_counts_a_neighbour_its_own_glyphs_reach() {
     let (zero, one, page) = box_edges(0, 100.);
     for (own, other) in [
-        // Reaching below the box, and a neighbour only beside that reach.
-        ([20., 48., 100., 70.], [140., 64., 180., 90.]),
-        // And above it.
-        ([20., 30., 100., 63.], [140., 20., 180., 47.]),
+        // Reaching below the box, and a neighbour that shares more than half
+        // of itself only with that reach: 58..70 is 12 pt, 12 of it with
+        // 48..70 and 5 with the box's own 48..63.
+        ([20., 48., 100., 70.], [140., 58., 180., 70.]),
+        // And above it: 38..50 shares 12 with 30..63 and 2 with 48..63.
+        ([20., 30., 100., 63.], [140., 38., 180., 50.]),
     ] {
         assert_eq!(
             layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),

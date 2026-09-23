@@ -10511,3 +10511,48 @@ its own. Hit rectangles are em boxes; at 12 pt on a 14 pt pitch adjacent lines o
 point, and the push's "same line" test allows a tenth. Growing a run on one line pushed the line
 above it 18 pt to the right in a synthetic fixture (a run earlier in the stream, so the line
 above was the one after it). It is ranked first in `docs/PLAN.md` §7.
+
+### Which runs share a line — measured 2026-09-23
+
+`layout::Axis::beside` decides it for the growing box (`room`), for what the push may move
+(`free_width`) and for what may stop a pushed run (`reach`). It counted anything overlapping
+the line by more than 0.1 pt. Hit rectangles are em boxes — a quarter em below the baseline,
+a whole em above — so 12 pt text on a 14 pt pitch has adjacent boxes overlapping by 1 pt, and
+the push moved runs of the next line with its own. Now a run shares the line when it shares
+more than half of the shorter of the two heights: a superscript, a larger word and a run's own
+descender reach all do, the next line's sliver does not. Whether new ink meets the next line's
+glyphs is the collision check's question, unchanged.
+
+Growth instrument, release probes built from `09c8c03` in a worktree and from this tree,
+31 files, 44,282 runs, `app` mode, as typed:
+
+| trial | before | after |
+|---|---:|---:|
+| unchanged | 43,828 (99.0%) | 43,833 (99.0%) |
+| same length | 37,177 (97.6%) | 37,267 (97.8%) |
+| +10% | 26,119 (59.0%) | **28,153 (63.6%)** |
+| +25% | 22,265 (50.3%) | **24,216 (54.7%)** |
+| +50% | 19,626 (44.3%) | **21,466 (48.5%)** |
+
+`--compare`: 589,898 unchanged in kind, **6,542 refused before and accepted now, 622 accepted
+before and refused now.** 9,309 worker-agreement checks, 0 disagreements. The 622 are in eleven
+files, most in arXiv 2509.18965 (169), the ReportLab guide (157) and Typst (104).
+
+**What the 622 were.** 24 were sampled at random and saved with the old probe; 5 of them are
+beyond the round trip's 128 pages. Of the 19 that saved, every one shifted glyphs sideways on
+a line other than the edited one — 16 on two to six lines, and 3 on the line 8.4 pt below
+the edit in the pdfTeX paper, whose appended characters landed on the edited line and whose
+next line moved whole. They were accepted because the defect made the room.
+
+**What the 6,542 are.** 30 were sampled (outside the three files over 128 pages) and saved
+with the new probe: every one shifted glyphs sideways on one line only, counting tops within
+2 pt as one line (a pdfTeX line with sub- and superscripts spans 3.4 pt), and none added a
+pair of overlapping glyphs, counted through pdfplumber as `text_wrap_check.py` counts them.
+
+Tests: `push_tests::the_next_line_is_not_pushed_along_with_this_one` was red before the fix
+(the run below moved from 100 to 119.2), and `text_on_the_next_line_does_not_stop_a_push`
+covers `reach`. Two `room` unit tests encoded the old tenth-of-a-point rule and were rewritten
+to the new boundary: 7.5 pt of a 15 pt box is off the line, 7.6 pt on it. Six mutations under
+`same line:`, one per call site restoring the old rule plus the boundary itself, all caught;
+the box's own call site is caught by the `room` unit tests rather than the push test, because
+a box stopped at the next line is rescued by the push path around it.

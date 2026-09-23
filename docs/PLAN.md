@@ -5090,11 +5090,11 @@ to refused.
 
 Ranked by what the measurement says is left, the next increments are:
 
-1. **The line push counts the next line as this one.** Found while building this, and a
-   defect rather than a gap: hit rectangles are em boxes, at ordinary leading adjacent lines
-   overlap by a point, and the "same line" test allows a tenth. So a push can move runs of
-   the line below along with its own, and the growing box stops at them. Measure it on the
-   corpus and fix it first.
+1. ~~**The line push counts the next line as this one.**~~ Fixed 2026-09-23: a run is on
+   the line when it shares more than half of the shorter of the two heights. Across the
+   sample, +10/+25/+50% as typed go from 59.0/50.3/44.3% to 63.6/54.7/48.5%; the 622 edits
+   now refused had all, where sampled, shifted part of another line sideways. `BUILD.md`,
+   *Which runs share a line*.
 2. **The rest of the line after the edit**, which has to flow onto the new line — reflow of
    the line's remainder: 904 of the 909 still refused at the page edge.
 3. **Moving what is below the paragraph**, the 916. The larger capability named above, and

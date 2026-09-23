@@ -232,11 +232,11 @@ impl Around<'_> {
 ///   multiple, so exactly one display edge moves with the width; which one is a
 ///   measurement here, not a table, because a second hand-written table of
 ///   turns is what `text::to_device`'s own comment warns about.
-/// - A *neighbour* counts as on this line when its rectangle overlaps the grown
-///   box's cross-axis span by more than the 0.1 pt the collision check ignores,
-///   and it stops the box at its near edge, so the box comes up to it rather
-///   than over it. The cross span is the box's own together with the run's hit
-///   rectangle, whose glyphs may reach above and below the box.
+/// - A *neighbour* counts as on this line when it shares more than half of the
+///   shorter of its own cross-axis span and the box's ([`Axis::beside`]), and it
+///   stops the box at its near edge, so the box comes up to it rather than
+///   over it. The box's span is its own together with the run's hit rectangle,
+///   whose glyphs may reach above and below the box.
 /// - The *page* is the displayed page the box is already refused for.
 ///
 /// What it does not do is grow to the **left**. The writer places a replacement
@@ -342,10 +342,23 @@ impl Axis {
         )
     }
 
-    /// Whether `rect` is on this line, by more than the tenth of a point the
-    /// collision check ignores.
+    /// Whether `rect` is on this line: across the line, it shares more than
+    /// half of whichever of the two spans is shorter.
+    ///
+    /// Not "overlaps at all". Hit rectangles are em boxes, a quarter em below
+    /// the baseline and a whole em above it, so at ordinary leading the next
+    /// line's box reaches a point into this one's: 12 pt on a 14 pt pitch does,
+    /// and Word's single spacing is about 1.2 em. Counting that as this line
+    /// stopped the box at the next line's runs and pushed them along with this
+    /// one. A superscript, a larger word or a run whose own glyphs reach below
+    /// the box all share more than half of the shorter span; the next line
+    /// shares a sliver. Whether new ink actually meets the next line's glyphs
+    /// is the collision check's question, not this one's.
     fn beside(&self, (low, high): (f64, f64), rect: [f64; 4]) -> bool {
-        rect[self.cross() + 2].min(high) - rect[self.cross()].max(low) > 0.1
+        let cross = self.cross();
+        let shared = rect[cross + 2].min(high) - rect[cross].max(low);
+        let shorter = (rect[cross + 2] - rect[cross]).min(high - low);
+        shared > 0.1 && shared > shorter / 2.
     }
 
     /// How far along the axis the page, and a clip if there is one, allow.

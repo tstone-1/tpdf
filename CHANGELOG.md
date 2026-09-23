@@ -93,6 +93,23 @@ have the binary.)
   process ends, so restoring after an update lands where an ordinary restart
   lands.
 
+### Fixed
+
+- **Editing a line no longer moves text on the line below it.** When an edit
+  pushed the rest of its line along, it could push runs of the next line too:
+  hit boxes reach a quarter of the text size below the baseline and a whole size
+  above it, so at ordinary line spacing the next line's box overlaps this one's
+  by about a point, and the test for "on this line" counted anything past a
+  tenth of a point. A run counts as on the line now only when it shares more
+  than half of its height with it. The same test was stopping the growing box at
+  runs of the next line, so edits refused for no visible reason are now accepted:
+  across the public sample, an edit a quarter longer is accepted 54.7% of the
+  time, up from 50.3%.
+
+  622 edits that were accepted are refused now. Every one sampled had been saved
+  with part of a neighbouring line shifted sideways, so those were wrong saves
+  rather than lost capability.
+
 ### Changed
 
 - **The outlines in the text editor follow the text an edit moved.** After an
