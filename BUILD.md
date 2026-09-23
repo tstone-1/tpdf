@@ -5201,6 +5201,11 @@ update, including the new *Restart to finish update*. Windows had none of its st
 no window phases, `print-probe` or `redact-reach-probe`. The CI release run's gate job on
 `windows-2025` is the only Windows evidence for this release until those are run.
 
+Published 2026-09-24 from `703ce12`, after `ci.yml` passed both legs on that commit: the
+release run passed all five jobs, the draft carried 8 assets under the tag, and the published
+release is Latest. Unauthenticated fetches of the `.dmg`, the `.msi` and `latest.json` answered
+200, and the public `latest.json` offers 26.9.17 for `darwin-aarch64` and `windows-x86_64`.
+
 **26.9.16 verification, macOS arm64, 2026-09-20:** all 25 gates passed on macOS
 and `check_windows.py` type-checked the Windows tree; the release run's own gate
 job passed on `windows-2025`. Every mutation selected `--since v26.9.15` ran: 207
