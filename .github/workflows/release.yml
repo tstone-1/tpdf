@@ -423,21 +423,22 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** A page inserted from another file is now
-          treated like one of the document's own: its text can be edited, and a
-          web link on it opens after the same confirmation. Regions can be marked
-          for removal on your own pages while such inserted pages are in the
-          document. Two things stay refused and say why: removing a region from
-          an inserted page, because tpdf cannot yet prove that removal clean, and
-          the image-only redaction copy of a document holding one. The previous
-          release let an edit grow into the room its line has and move the rest
-          of the line along.
+          **New in this release.** On a tagged page, an edit that reaches the
+          edge of the page now wraps onto a new line of its own paragraph, and
+          the rest of the paragraph moves down to make room; where there is no
+          room below the paragraph, the refusal says so. Editing a line no longer
+          moves text on the line below it, which the previous release's line
+          push could do. A redaction report now says which page a word it could
+          not remove is on. And an applied update finishes from inside tpdf:
+          *Restart to finish update* relaunches it, asking first about unsaved
+          work.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
           papers, and documents made with XeLaTeX, LuaTeX and Typst. Math
           symbols, slide backgrounds and page stamps stay read-only.
-          Edits must fit their chosen box, clips and surrounding content.
+          Edits must fit their chosen box, clips and surrounding content; a box
+          you have not sized grows with the text, and on tagged pages wraps.
           Unsupported pages and glyphs are refused; automatic table resizing,
           flow across pages and complex-script shaping remain unbuilt.
           Save text edits before marking redactions.

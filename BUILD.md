@@ -5185,6 +5185,22 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.17 verification, macOS arm64, 2026-09-23:** all 26 gates passed on the release tree
+(1,886 Rust tests with three expected skips, 1,782 frontend) and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--since v26.9.16` ran and was caught:
+101 frontend in 50 s and 718 Rust in 36 min 54 s. The text-edit changes were checked on the
+public sample through the worker, with round trips and independent readback, in *Wrapping onto
+a new line of the paragraph* and *Which runs share a line*.
+
+**Not run before the tag, and each is a gap rather than a pass.** The release was cut unattended
+with the Mac's screen locked, so nothing needing a window ran: the 14 `mutate_viewer.py` window
+mutations `--since` selected, every window phase — including `textedit-wrapped`, whose LibreOffice
+fixture this Mac does not have and which is the one tagged phase fixture the wrap was not checked
+against — the external smoke test of the normal bundle (step 8), and step 12's hand-applied
+update, including the new *Restart to finish update*. Windows had none of its steps run either:
+no window phases, `print-probe` or `redact-reach-probe`. The CI release run's gate job on
+`windows-2025` is the only Windows evidence for this release until those are run.
+
 **26.9.16 verification, macOS arm64, 2026-09-20:** all 25 gates passed on macOS
 and `check_windows.py` type-checked the Windows tree; the release run's own gate
 job passed on `windows-2025`. Every mutation selected `--since v26.9.15` ran: 207

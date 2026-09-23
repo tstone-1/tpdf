@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.17] - Unreleased
+## [26.9.17] - 2026-09-23
 
 ### Added
 
