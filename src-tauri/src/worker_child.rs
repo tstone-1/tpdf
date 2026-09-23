@@ -613,7 +613,13 @@ fn handle(
         }
         Request::Outline => Response::reply(Reply::Outline(render::run_outline(document))),
         Request::TextRuns { page, changes } => {
-            match render::text_edit_runs(bindings, document, *page, changes) {
+            match render::text_edit_runs(bindings, document, *page, changes, false) {
+                Ok(runs) => Response::reply(Reply::TextRuns(runs)),
+                Err(error) => Response::err(error),
+            }
+        }
+        Request::TextOutlines { page, changes } => {
+            match render::text_edit_runs(bindings, document, *page, changes, true) {
                 Ok(runs) => Response::reply(Reply::TextRuns(runs)),
                 Err(error) => Response::err(error),
             }

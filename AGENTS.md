@@ -461,7 +461,10 @@ then repeat Apply and Save with the packaged application. A pass taken before
 a later parser restriction does not establish compatibility of the release.
 
 Tagged editing accepts direct or referenced `/RoleMap`, layout `/A` dictionaries
-and parent-tree `/Nums` arrays. Structure-element `/Type` may be absent; supplied
+and parent-tree `/Nums` arrays. `Tags` also keeps each MCID's owning block element
+(a paragraph, heading, item or cell, above its Span leaves; a link inside a
+paragraph is the paragraph's), which is how a wrap finds its paragraph's lines on
+a tagged page (`textedit/layout/wrap.rs`, `docs/PLAN.md` §7). Structure-element `/Type` may be absent; supplied
 values must be `/StructElem`. Reference resolution retains the existing bound,
 and every resolved value still passes the same grammar and ownership checks.
 `make_textedit_symbolic.py --tagged-indirect` generates the combined fixture for

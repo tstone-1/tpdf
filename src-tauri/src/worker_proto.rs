@@ -159,6 +159,16 @@ pub enum Request {
         #[serde(default)]
         changes: Vec<crate::textedit::Change>,
     },
+    /// The same runs, each outlined where `changes` leaves it: an edited run
+    /// at its box, a run an edit pushed along its line or moved down its
+    /// paragraph where it now is. No preview is rendered. The editor asks for
+    /// this when it opens and after each Apply, so that its outlines follow the
+    /// text the reader sees (`crate::textedit::placements`).
+    TextOutlines {
+        page: u32,
+        #[serde(default)]
+        changes: Vec<crate::textedit::Change>,
+    },
     /// Read every comment in the document.
     ///
     /// Document-level and lazy, like [`Request::Mapping`] and for the same two
@@ -784,6 +794,8 @@ mod tests {
             ("Comments", "comments"),
             ("Form", "form"),
             ("TextRuns", "text_runs"),
+            // The same method with `outlines` set: `Workers` picks the variant.
+            ("TextOutlines", "text_runs"),
             ("Links", "links"),
             ("Mapping", "mapping"),
             ("Properties", "properties"),
@@ -1056,6 +1068,10 @@ mod tests {
             Request::Form,
             Request::TextRuns {
                 page: 0,
+                changes: Vec::new(),
+            },
+            Request::TextOutlines {
+                page: 1,
                 changes: Vec::new(),
             },
             Request::Comments,

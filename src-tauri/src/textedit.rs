@@ -583,6 +583,20 @@ struct Inspection {
     compound_run_clips: BTreeMap<u32, (Vec<clipping::Region>, [f64; 4])>,
     contexts: BTreeMap<u32, layout::Context>,
     expanded: BTreeMap<usize, layout::Prepared>,
+    /// The block element owning every show on a tagged page -- editable,
+    /// read-only and spacer shows alike -- so that a wrap can find all of its
+    /// paragraph's text, including what it may not move (`layout::wrap`).
+    blocks: BTreeMap<u32, ObjectId>,
+    /// The shows a wrap moves down its paragraph, each with the operations
+    /// that draw it there (`layout::Prepared::lowered`), gathered across the
+    /// batch so that `write` can refuse two edits that move one show.
+    lowered: BTreeMap<usize, Vec<lopdf::content::Operation>>,
+    /// Every annotation's rectangle except a popup's, in the original
+    /// displayed page. Only a wrap reads it: moving a paragraph's lines down
+    /// would leave a highlight or a link over the text that used to be there.
+    /// `None` when the page's list could not be read, which refuses a wrap and
+    /// nothing else: no other edit ever read annotations.
+    annotations: Option<Vec<[f32; 4]>>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
@@ -758,6 +772,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
     let mut horizontal_bounds = BTreeMap::new();
+    let mut blocks = BTreeMap::new();
     let mut text_spacing = BTreeMap::new();
     let mut leads = BTreeMap::new();
     let mut gaps = BTreeMap::new();
@@ -1165,7 +1180,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("Tj", [_]) | ("TJ", [Object::Array(_)])
                 if inside && (positioned || previous_show.is_some()) =>
             {
-                tags.text()?
+                tags.text()?;
+                if let Some(block) = tags.block() {
+                    blocks.insert(index as u32, block);
+                }
             }
             _ => {
                 return Err(refusal::operation(
@@ -1377,6 +1395,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 stroke,
                 size,
                 scale: page_matrix[0].hypot(page_matrix[1]),
+                transform: page_transform,
             },
         );
         result.runs.push(Run {
@@ -1436,6 +1455,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         compound_run_clips,
         contexts,
         expanded: BTreeMap::new(),
+        blocks,
+        lowered: BTreeMap::new(),
+        annotations: annotation_rects(doc, id).ok(),
     };
     for span in actual_spans {
         span.finish(&mut inspection)?;
@@ -1445,6 +1467,72 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     }
     grouping::collect(&mut inspection);
     Ok(inspection)
+}
+
+/// The page's annotation rectangles in the original displayed page, popups
+/// left out: a popup is the window a note opens in, not a mark on the page.
+///
+/// Bounded like every other list the scan reads, and strict about shape: an
+/// annotation whose rectangle cannot be read is one the editor cannot see, and
+/// a wrap that moved text under it would be moving it blind. The scan keeps
+/// the failure rather than raising it (`Inspection::annotations`).
+fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<[f32; 4]>, String> {
+    const MAX_ANNOTATIONS: usize = 4096;
+    let dict = doc.get_dictionary(page).map_err(|e| e.to_string())?;
+    let Ok(list) = dict.get(b"Annots") else {
+        return Ok(Vec::new());
+    };
+    let list = crate::encoding::resolve(doc, list)
+        .as_array()
+        .map_err(|_| "page annotations are not an array")?;
+    if list.len() > MAX_ANNOTATIONS {
+        return Err("page annotation count exceeds its limit".into());
+    }
+    let geometry = crate::pagetree::displayed_page(doc, page);
+    let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
+    let mut rects = Vec::new();
+    for entry in list {
+        let annotation = crate::encoding::resolve(doc, entry)
+            .as_dict()
+            .map_err(|_| "page annotation is not a dictionary")?;
+        if annotation
+            .get(b"Subtype")
+            .and_then(Object::as_name)
+            .is_ok_and(|kind| kind == b"Popup")
+        {
+            continue;
+        }
+        let rect = crate::encoding::resolve(
+            doc,
+            annotation
+                .get(b"Rect")
+                .map_err(|_| "page annotation has no rectangle")?,
+        )
+        .as_array()
+        .map_err(|_| "page annotation rectangle is not an array")?;
+        let [a, b, c, d] = rect.as_slice() else {
+            return Err("page annotation rectangle is not four numbers".into());
+        };
+        let [a, b, c, d] = [
+            number(crate::encoding::resolve(doc, a))?,
+            number(crate::encoding::resolve(doc, b))?,
+            number(crate::encoding::resolve(doc, c))?,
+            number(crate::encoding::resolve(doc, d))?,
+        ];
+        if ![a, b, c, d]
+            .iter()
+            .all(|n| n.is_finite() && n.abs() <= 1_000_000.)
+        {
+            return Err("page annotation rectangle exceeds its limit".into());
+        }
+        rects.push(crate::text::to_device(
+            geometry.turns,
+            geometry.width,
+            geometry.height,
+            [a.min(c) - ox, b.min(d) - oy, a.max(c) - ox, b.max(d) - oy],
+        ));
+    }
+    Ok(rects)
 }
 
 // lopdf stores reals as f32, about seven significant digits. A whole line
@@ -1535,6 +1623,43 @@ pub fn scan(doc: &Document, page: u32) -> Result<PageRuns, String> {
 /// # Errors
 /// Unsupported, stale, duplicate, unchanged, or overflowing replacements.
 pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
+    let prepared = prepare_batch(doc, changes)?;
+    commit_batch(doc, prepared)
+}
+
+/// Where a batch puts what it moves, on one page: each edited run's box, and
+/// every run it pushes along a line or moves down a paragraph, as hit
+/// rectangles in the original displayed page, keyed by operator.
+///
+/// The editor outlines runs by these, so a line an earlier edit moved is
+/// outlined where the reader sees it rather than where the source drew it. It
+/// prepares the batch exactly as [`write`] does and writes nothing.
+///
+/// # Errors
+/// Whatever [`write`] would refuse the batch for.
+pub(crate) fn placements(
+    doc: &Document,
+    page: u32,
+    changes: &[Change],
+) -> Result<BTreeMap<u32, [f32; 4]>, String> {
+    let mut prepared = prepare_batch(doc, changes)?;
+    let mut placed = BTreeMap::new();
+    if let Some(inspection) = prepared.remove(&page) {
+        // Operator order is the order `write` prepared them in, so a run two
+        // edits pushed ends up where the later one, carrying the running
+        // total, put it.
+        for (operator, value) in inspection.expanded {
+            placed.insert(operator as u32, value.rect);
+            placed.extend(value.placed.iter().copied());
+        }
+    }
+    Ok(placed)
+}
+
+/// Everything [`write`] decides before it changes the document: each page's
+/// inspection with its replacements, pushes and moved lines applied to the
+/// decoded content. It reads the document and nothing else.
+fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Inspection>, String> {
     if changes.len() > MAX_CHANGES {
         return Err("too many text replacements".into());
     }
@@ -1603,6 +1728,18 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             }
             for (show, shift) in &replacement.moved {
                 pushes.insert((change.page, *show), *shift);
+            }
+            // A wrap moves each of these down; an earlier edit on the same
+            // visual line -- another block's run set before this paragraph --
+            // may already have pushed one along, and the two are written from
+            // separate copies of its bytes. Every show belongs to one block, so
+            // two wraps never move the same one.
+            for (show, operations) in &replacement.lowered {
+                if shifts.contains_key(&(change.page, *show)) {
+                    return Err(layout::WRAP_CONFLICT.into());
+                }
+                page.lowered.insert(*show as usize, operations.clone());
+                page.patched.insert(*show as usize);
             }
             page.expanded.insert(change.operator as usize, replacement);
             page.patched.insert(change.operator as usize);
@@ -1724,6 +1861,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
     // their displacements to each other's output.
     for ((page, operator), shift) in &pushes {
         let page = prepared.get_mut(page).ok_or("missing text page")?;
+        // A later edit pushed a line an earlier one moved down: the push would
+        // be written into the source's array while the wrap draws that show
+        // from its own copy of it.
+        if page.lowered.contains_key(&(*operator as usize)) {
+            return Err(layout::WRAP_CONFLICT.into());
+        }
         let moved = layout::push(page, *operator, *shift)?;
         let show = &mut page.content.operations[*operator as usize];
         show.operator = "TJ".into();
@@ -1738,6 +1881,12 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
             &change.replacement,
         )?;
     }
+    Ok(prepared)
+}
+
+/// Writes a prepared batch into the document: one new content stream per page,
+/// and the fallback fonts its replacements installed.
+fn commit_batch(doc: &mut Document, prepared: BTreeMap<u32, Inspection>) -> Result<(), String> {
     let ready = prepared
         .into_values()
         .map(
@@ -1747,6 +1896,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                  bytes,
                  patched,
                  expanded,
+                 lowered,
                  ..
              }| {
                 let mut font_names = BTreeSet::new();
@@ -1766,6 +1916,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                 let expansions = expanded
                     .iter()
                     .map(|(index, value)| (*index, value.operations.clone()))
+                    .chain(lowered)
                     .collect();
                 streams::rewrite_expanded(&bytes, &content, &patched, &expansions)
                     .map(|bytes| (id, bytes, expanded))
@@ -1808,6 +1959,9 @@ mod layout_tests;
 
 #[cfg(test)]
 mod push_tests;
+
+#[cfg(test)]
+mod wrap_tests;
 
 #[cfg(test)]
 mod rotation_tests;

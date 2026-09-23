@@ -5048,6 +5048,60 @@ The geometric rule is worth revisiting only against a second heavily tagged prod
 of the 4,508 tagged pairs measured are one agenda, so today's 18% is that document's number
 with a little else attached.
 
+**Wrapping into the room below — built 2026-09-23.** The first increment, as scoped above.
+When the box the editor opened is refused because the page edge filled the line, and the
+page is tagged, the edit is laid out at its paragraph's measure and pitch and the paragraph's
+lines below it move down by the lines it added. `textedit/layout/wrap.rs` has the rule;
+`BUILD.md`, *Wrapping onto a new line of the paragraph*, has the measurement, the round trips
+and the mutations.
+
+- **The paragraph is the structure element, and nothing geometric stands in for it.**
+  `Tags` now keeps, beside each MCID's tag name, the element that owns it — the paragraph,
+  heading, list item or cell, above any `Span` leaf. A link or field set inside a paragraph
+  counts as the paragraph's, so its read-only text refuses the wrap rather than being left
+  behind on a moved line.
+- **Its measure, pitch and left edge are the paragraph's own.** The first line may reach as
+  far as the paragraph's widest line and no further than the room the line had; continuation
+  lines start where the paragraph's lines after its first do, which is the body margin under
+  a first-line indent. The pitch is to the paragraph's next line down, else the line above;
+  a "next line" more than three ems away is not a pitch, and the wrap is not offered.
+- **A moved show keeps its bytes and moves nothing else.** Each is written with an explicit
+  `Tm` and followed by the same replay of the line matrix and the cursor that a replacement
+  ends with, so every show after it that does not move is drawn from exactly the state it
+  was. Rewriting a `Td` would have moved every later line of the text object.
+- **Nothing below the paragraph moves.** A moved line must stay on the page and in its clip,
+  and may come as close to what is below as the paragraph's own lines come to each other; a
+  drawing or annotation partly over the lines that move refuses it, one holding them all
+  does not.
+- **Deliberately not triggered:** at a size other than the run's own, after an earlier edit
+  pushed the run along its line, with the paragraph's text after the run on its line, and
+  when a clip rather than the page ends the line. The last matters more than its count: every
+  Edge export in the test fixtures clips its page, so no browser document wraps. It is 265
+  runs of 44,282 in the public sample, against 12,201 at the page edge.
+- **One batch cannot wrap a paragraph and edit a line the wrap moves.** Every edit in a batch
+  is addressed to the page as it was scanned; a replacement written where its source was
+  would land on the line the wrap has just filled. The reader is told to save first.
+
+What it bought, across the public sample, edits as typed, a quarter longer: 1,069 of the
+2,918 page-edge refusals on tagged pages accepted, 916 refused for the paragraph having no
+room below, 24 for something in it that cannot move, and 909 still at the page edge — 904 of
+them with more of their paragraph after them on the same line. No verdict moved from accepted
+to refused.
+
+Ranked by what the measurement says is left, the next increments are:
+
+1. **The line push counts the next line as this one.** Found while building this, and a
+   defect rather than a gap: hit rectangles are em boxes, at ordinary leading adjacent lines
+   overlap by a point, and the "same line" test allows a tenth. So a push can move runs of
+   the line below along with its own, and the growing box stops at them. Measure it on the
+   corpus and fix it first.
+2. **The rest of the line after the edit**, which has to flow onto the new line — reflow of
+   the line's remainder: 904 of the 909 still refused at the page edge.
+3. **Moving what is below the paragraph**, the 916. The larger capability named above, and
+   the one where what is below is usually another paragraph that would have to move too.
+4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
+   wrong about the case a wrap damages.
+
 ---
 
 ## 8. UX

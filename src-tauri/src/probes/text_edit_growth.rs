@@ -34,7 +34,7 @@
 //! digests were checked first; it is why this is a probe and never an application path,
 //! where every parse belongs to a sandboxed worker.
 //!
-//! `--growth-request <source.pdf> <page> <operator> <trial> <width> [grow]` prints the
+//! `--growth-request <source.pdf> <page> <operator> <trial> <width|app> [grow]` prints the
 //! one-element request array `--roundtrip` takes for that trial, with the box at
 //! `width`; the array contains the replacement text, so write it to an ignored file.
 //! A trailing `grow` sets the flag the editor sets for a box a reader has not sized,
@@ -414,7 +414,7 @@ pub(super) fn request(
     page: u32,
     operator: u32,
     label: &str,
-    width: f64,
+    width: Option<f64>,
     grow: bool,
 ) -> Result<(), String> {
     let library = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -437,7 +437,9 @@ pub(super) fn request(
     }
     .ok_or("no such trial for this run")?;
     let mut layout = app_layout(run);
-    layout.width = width;
+    if let Some(width) = width {
+        layout.width = width;
+    }
     layout.grow = grow;
     println!(
         "{}",

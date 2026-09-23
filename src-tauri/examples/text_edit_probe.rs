@@ -149,17 +149,21 @@ fn run() -> Result<(), String> {
         };
         let [_, source, page, operator, trial, width] = rest else {
             return Err(
-                "usage: --growth-request <source.pdf> <page> <operator> <trial> <width> [grow]"
+                "usage: --growth-request <source.pdf> <page> <operator> <trial> <width|app> [grow]"
                     .into(),
             );
         };
-        let number = |value: &str| value.parse::<f64>().map_err(|_| "invalid number");
+        // `app` keeps the width of the box the editor opens for the run.
+        let width = match width.as_str() {
+            "app" => None,
+            value => Some(value.parse::<f64>().map_err(|_| "invalid number")?),
+        };
         return growth::request(
             source.as_ref(),
             page.parse().map_err(|_| "invalid page")?,
             operator.parse().map_err(|_| "invalid operator")?,
             trial,
-            number(width)?,
+            width,
             grow,
         );
     }

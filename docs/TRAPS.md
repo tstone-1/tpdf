@@ -512,6 +512,7 @@ hop through the index.
 - A mutation survives when a different guard refuses first, and the refusal reads the same either way
 - Two bounds sharing a counter, and the mutation for the inner one survived on the outer one's answer
 - A warning written for one consumer of a control is not attached to the control
+- A pixel envelope that covers where text went and where it was passes an edit that moved nothing
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24180,3 +24181,31 @@ Two things made it visible rather than shipped. The end-to-end script asserts th
 rather than a boolean, so a plausible-looking wrong sentence had somewhere to be caught; and it
 asserts the plain run's silence as its own check, which is the run where a note firing is
 unambiguously wrong.
+
+### A pixel envelope that covers where text went and where it was passes an edit that moved nothing
+
+A wrap moves the lines of its paragraph below the edit down by the lines it adds. For the
+round-trip probe to accept that, `Preview::extent` reports every moved run's rectangle where it
+ends up **and where it was** — the old place has to be in the envelope, because the line moved
+into it need not reach as far. The previous entry's rule, applied as written.
+
+Then the move was deleted from the writer (the moved shows' operations were no longer written
+into the stream) and the probe was run on the synthetic paragraph: **`[PASS]`**, preview and
+save agreeing pixel for pixel, nothing outside the envelope changed. Both halves are true. The
+preview and the save come from the same writer, so they agree about the defect too; and the
+continuation line printed over the line that failed to move is inside the envelope, because the
+envelope is exactly where that line was supposed to leave from. An envelope says nothing changed
+**outside** it. It cannot say that what should have changed inside it did.
+
+What caught it was reading the saved file with something that is not PDFium:
+`scripts/text_wrap_check.py --check` (pypdf's content interpreter, `'THIRD LINE' at (20.0,
+172.0), expected (20.0, 158.0)`), and, on documents the script did not write, `--compare`, which
+counts overlapping glyphs through pdfplumber and fails when the saved page has more than the
+source. The first version of that count went through pdfplumber's **words**, and passed the same
+defect: pdfplumber merges characters printed on top of each other into one word, so text set
+over text is never two overlapping words. It counts characters now, overlapping by more than a
+third of the smaller glyph each way, which no kerning reaches.
+
+The general form, beside the previous entry's: a check that confines change to a region is a
+check about everything else. Whatever is *supposed* to change inside the region needs its own
+assertion about where it ended up, by a reader that did not write it.

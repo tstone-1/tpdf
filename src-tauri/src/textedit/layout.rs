@@ -2,6 +2,10 @@
 use super::*;
 use lopdf::content::Operation;
 
+mod wrap;
+
+pub(super) use wrap::CONFLICT as WRAP_CONFLICT;
+
 pub(super) struct Context {
     // The operator that last set the line matrix (BT or Tm) before the run,
     // and the leading in effect there; see `restore_line`.
@@ -19,6 +23,10 @@ pub(super) struct Context {
     // the show's own size and scale rather than the edited run's.
     pub size: f64,
     pub scale: f64,
+    // The page transform in force at this show (the CTM), which a wrap needs to
+    // turn a distance measured down the edited run's page into a `Tm` operand
+    // in this show's own space.
+    pub transform: [f64; 6],
 }
 
 pub(super) struct Prepared {
@@ -44,6 +52,13 @@ pub(super) struct Prepared {
     /// The box together with every pushed run's new hit rectangle, so that the
     /// preview crop shows the reader the text that moved as well as their own.
     pub extent: [f32; 4],
+    /// The shows a wrap moves down its paragraph, each with the operations
+    /// that replace it (`wrap::lowered`). Empty unless this edit wraps.
+    pub lowered: Vec<(u32, Vec<Operation>)>,
+    /// Every discovered run this edit moves, pushed along its line or down its
+    /// paragraph, and its hit rectangle where it ends up, so that the editor
+    /// can outline the text where the reader now sees it.
+    pub placed: Vec<(u32, [f32; 4])>,
 }
 
 /// Where an edit sits by the time it is written, and who else is being written
@@ -796,7 +811,7 @@ pub(super) fn push(page: &Inspection, operator: u32, shift: f64) -> Result<Objec
 
 fn line_breaks(
     text: &str,
-    width: f64,
+    (width, rest): (f64, f64),
     wrap: bool,
     too_wide: &str,
     measure: impl Fn(&str) -> Result<f64, String>,
@@ -807,13 +822,17 @@ fn line_breaks(
             result.push(String::new());
             continue;
         }
-        let mut rest = paragraph;
-        while !rest.is_empty() {
+        let mut remaining = paragraph;
+        while !remaining.is_empty() {
+            // The first line of the replacement may be given a different width
+            // from the lines after it: a wrap starts them at the paragraph's
+            // left edge rather than at the run.
+            let width = if result.is_empty() { width } else { rest };
             let mut end = 0;
             let mut space = 0;
-            for (index, ch) in rest.char_indices() {
+            for (index, ch) in remaining.char_indices() {
                 let next = index + ch.len_utf8();
-                if measure(&rest[..next])? > width + 0.000001 {
+                if measure(&remaining[..next])? > width + 0.000001 {
                     break;
                 }
                 end = next;
@@ -821,8 +840,8 @@ fn line_breaks(
                     space = next;
                 }
             }
-            if end == rest.len() {
-                result.push(rest.to_owned());
+            if end == remaining.len() {
+                result.push(remaining.to_owned());
                 break;
             }
             if !wrap || end == 0 {
@@ -831,8 +850,8 @@ fn line_breaks(
             if space > 0 {
                 end = space;
             }
-            result.push(rest[..end].to_owned());
-            rest = &rest[end..];
+            result.push(remaining[..end].to_owned());
+            remaining = &remaining[end..];
             if result.len() > 128 {
                 return Err("Text exceeds 128 lines".into());
             }
@@ -912,6 +931,189 @@ fn source_items(
     .ok()?;
     let inside = bounds[1] <= original[1] + 0.000_001;
     fits(advance, bounds).then_some((items, advance, bounds, inside))
+}
+
+/// Whether text a wrap does not move sits inside one of the lines it does:
+/// a run the editor may not move, sharing a line with runs that do, would be
+/// left behind on its own -- a read-only word in the middle of a moved line.
+/// `wrap::plan` refuses the ones the structure tree puts in the block; this
+/// catches one the tree puts elsewhere and the page puts in the middle of the
+/// paragraph's line. Asked before the text is laid out, because it does not
+/// depend on how many lines the text takes, and the new line landing on that
+/// word would otherwise be refused as a lack of room.
+fn left_behind(
+    page: &Inspection,
+    below: &BTreeSet<u32>,
+    hits: &[([f64; 4], bool)],
+) -> Result<(), String> {
+    let moving: Vec<[f64; 4]> = page
+        .runs
+        .runs
+        .iter()
+        .filter(|other| below.contains(&other.operator) && !other.text.trim().is_empty())
+        .map(|other| other.display_rect.map(f64::from))
+        .collect();
+    // The paragraph's lines run along whichever display axis its runs are
+    // longer in; a quarter-turned page turns that axis too.
+    let vertical = moving
+        .iter()
+        .map(|rect| (rect[2] - rect[0]) - (rect[3] - rect[1]))
+        .sum::<f64>()
+        >= 0.;
+    let (along, cross) = if vertical { (0, 1) } else { (1, 0) };
+    let span = moving
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), rect| {
+            (low.min(rect[along]), high.max(rect[along + 2]))
+        });
+    for (other, moves) in hits {
+        let centre = (other[along] + other[along + 2]) / 2.;
+        if *moves || centre < span.0 || centre > span.1 {
+            continue;
+        }
+        for old in &moving {
+            let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
+            let smaller = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
+            if shared > smaller / 2. {
+                return Err(wrap::UNMOVABLE.into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether the block's lines below a wrap can move `moved_by` down the displayed
+/// page, and where each of their runs ends up.
+///
+/// `hits` is the page's hit list with each run a wrap moves flagged, and
+/// `pitch` the block's line pitch in the displayed page. Two things refuse it
+/// here; [`left_behind`] has already been asked, before the text was laid out:
+///
+/// - **The page, a clip, and text that stays.** A moved run must stay on the
+///   page and inside the clip in force over it, and must not land on text that
+///   does not move. "Land on" allows exactly the overlap the block's own lines
+///   already have with each other: hit rectangles are em boxes, and at ordinary
+///   leading two lines of one paragraph overlap by a sliver. A moved line may
+///   come as close to what is below as its own lines are to each other, and no
+///   closer.
+/// - **Drawings and annotations over the move.** A rule under a word, a
+///   highlight, a link's rectangle: anything partly over the area the moved
+///   lines sweep would stay where it is while the text under it left. One that
+///   holds the whole area -- a page background, a coloured box around the
+///   paragraph -- still holds it afterwards.
+///
+/// A blank run has a hit rectangle and no ink, so it moves with its line and is
+/// checked against nothing.
+#[allow(clippy::too_many_arguments)]
+fn wrap_room(
+    page: &Inspection,
+    below: &BTreeSet<u32>,
+    hits: &[([f64; 4], bool)],
+    moved_by: [f64; 2],
+    pitch: f64,
+    geometry: &crate::pagetree::DisplayedPage,
+    display: &impl Fn([f64; 4]) -> [f32; 4],
+) -> Result<Vec<(u32, [f32; 4])>, String> {
+    let vertical = moved_by[1].abs() >= moved_by[0].abs();
+    let cross = usize::from(vertical);
+    let shift = |rect: [f64; 4]| {
+        [
+            rect[0] + moved_by[0],
+            rect[1] + moved_by[1],
+            rect[2] + moved_by[0],
+            rect[3] + moved_by[1],
+        ]
+    };
+    let moving: Vec<(u32, [f64; 4], Option<[f64; 4]>)> = page
+        .runs
+        .runs
+        .iter()
+        .filter(|other| below.contains(&other.operator) && !other.text.trim().is_empty())
+        .map(|other| {
+            (
+                other.operator,
+                other.display_rect.map(f64::from),
+                page.contexts[&other.operator]
+                    .clip
+                    .map(|clip| display(clip).map(f64::from)),
+            )
+        })
+        .collect();
+    let height = moving
+        .iter()
+        .map(|(_, rect, _)| rect[cross + 2] - rect[cross])
+        .fold(0., f64::max);
+    let mut slack = [0.1; 2];
+    slack[cross] = (height - pitch).max(0.) + 0.1;
+    let (width, depth) = (f64::from(geometry.width), f64::from(geometry.height));
+    let mut placed = Vec::new();
+    for (operator, old, clip) in &moving {
+        let new = shift(*old);
+        if new[0] < -0.001 || new[1] < -0.001 || new[2] > width + 0.001 || new[3] > depth + 0.001 {
+            return Err(wrap::NO_ROOM.into());
+        }
+        if clip.is_some_and(|clip| !wrap::holds(clip, new)) {
+            return Err(wrap::NO_ROOM.into());
+        }
+        if hits
+            .iter()
+            .any(|(other, moves)| !*moves && wrap::overlaps(new, *other, slack))
+        {
+            return Err(wrap::NO_ROOM.into());
+        }
+        placed.push((*operator, new.map(|value| value as f32)));
+    }
+    let swept: Vec<[f64; 4]> = moving
+        .iter()
+        .map(|(_, old, _)| {
+            let new = shift(*old);
+            [
+                old[0].min(new[0]),
+                old[1].min(new[1]),
+                old[2].max(new[2]),
+                old[3].max(new[3]),
+            ]
+        })
+        .collect();
+    // An annotation list the scan could not read may hold one over the lines.
+    let annotations = page.annotations.as_deref().ok_or(wrap::DRAWN)?;
+    for thing in page.graphics.iter().chain(annotations) {
+        let thing = thing.map(f64::from);
+        if swept
+            .iter()
+            .any(|rect| wrap::overlaps(*rect, thing, [0.1, 0.1]))
+            && !swept.iter().all(|rect| wrap::holds(thing, *rect))
+        {
+            return Err(wrap::DRAWN.into());
+        }
+    }
+    Ok(placed)
+}
+
+/// The lines a replacement is laid out in: how wide the first may be, where the
+/// ones after it start and how wide they may be, and their pitch. A box gives
+/// every line its own width at the run's origin and the writer's default pitch,
+/// inside the box's height; a wrap (`wrap::plan`) gives its paragraph's.
+struct Shape {
+    first: f64,
+    start: f64,
+    rest: f64,
+    wrap: bool,
+    /// The paragraph's own line pitch, for a wrap. `None` is a box, whose lines
+    /// are set at the writer's default and must fit the box's height.
+    pitch: Option<f64>,
+}
+
+impl Shape {
+    fn boxed(limit: f64, wrap: bool) -> Self {
+        Shape {
+            first: limit,
+            start: 0.,
+            rest: limit,
+            wrap,
+            pitch: None,
+        }
+    }
 }
 
 pub(super) fn prepare(
@@ -1116,24 +1318,27 @@ pub(super) fn prepare(
         return Err("The editing box extends beyond the page".into());
     }
     // One writer: the replacement either at the source's own positioning
-    // (`kept`) or laid out afresh, inside a box of `limit`. `prepare` runs it
-    // over the plans below, taking the first that succeeds.
+    // (`kept`) or laid out afresh, in the lines `shape` describes. `prepare`
+    // runs it over the plans below, taking the first that succeeds, and a wrap
+    // runs it once more with its own shape.
     let lay_out = |kept: Option<&(Vec<Object>, f64, [f64; 2], bool)>,
-                   limit: f64,
-                   moving: bool|
+                   shape: &Shape,
+                   moving: bool,
+                   hits: &[([f64; 4], bool)]|
      -> Result<(Vec<Operation>, usize, f64), String> {
-        // The widest the text itself turned out to be. The box reported
-        // back is this rather than the whole ceiling, so a grown box is
-        // the size of what the reader typed and the dashed outline they
-        // see follows their text instead of the room it had.
+        // The widest the text itself turned out to be, measured from the
+        // run's origin. The box reported back is this rather than the whole
+        // ceiling, so a grown box is the size of what the reader typed and
+        // the dashed outline they see follows their text instead of the room
+        // it had.
         let mut used = 0_f64;
         let lines = if kept.is_some() {
             vec![change.replacement.clone()]
         } else {
             line_breaks(
                 &change.replacement,
-                limit,
-                settings.wrap,
+                (shape.first, shape.rest),
+                shape.wrap,
                 too_wide,
                 |text| {
                     metrics
@@ -1143,12 +1348,13 @@ pub(super) fn prepare(
             )?
         };
         let [bottom, top] = metrics.vertical_bounds.unwrap_or([-250., 1000.]);
-        let line_height = size * 1.25;
+        let line_height = shape.pitch.unwrap_or(size * 1.25);
         let first_baseline = run.size - size;
         let minimum = first_baseline - (lines.len().saturating_sub(1) as f64) * line_height
             + bottom * size / 1000.;
-        if minimum < run.size - height - 0.000001
-            || first_baseline + top * size / 1000. > run.size + 0.000001
+        if shape.pitch.is_none()
+            && (minimum < run.size - height - 0.000001
+                || first_baseline + top * size / 1000. > run.size + 0.000001)
         {
             return Err(
                 "Text exceeds the box height. Enlarge the box or reduce the font size.".into(),
@@ -1172,6 +1378,12 @@ pub(super) fn prepare(
                 text.as_str()
             };
             let dy = first_baseline - index as f64 * line_height;
+            // Where this line starts and how far it may reach from there.
+            let (start, limit) = if index == 0 {
+                (0., shape.first)
+            } else {
+                (shape.start, shape.rest)
+            };
             // Ink is measured without that trailing space, as `line_breaks`
             // measured the line: a space draws nothing, and counting its advance
             // refused lines whose words fit the box exactly.
@@ -1192,15 +1404,15 @@ pub(super) fn prepare(
                 if ink[1] + inset > limit + 0.001 {
                     return Err(too_wide_ink.into());
                 }
-                used = used.max(advance.max(ink[1] + inset));
+                used = used.max(start + advance.max(ink[1] + inset));
                 (ink, inset)
             };
             let ink = text_bounds(
                 run.matrix,
                 [
-                    inherited + ink[0] + inset,
+                    inherited + start + ink[0] + inset,
                     dy + bottom * size / 1000.,
-                    inherited + ink[1] + inset,
+                    inherited + start + ink[1] + inset,
                     dy + top * size / 1000.,
                 ],
             );
@@ -1218,10 +1430,24 @@ pub(super) fn prepare(
                     region.contains(ink)?;
                 }
                 let shown = display(ink).map(f64::from);
-                for (other, moves) in &free.hits {
+                // A box keeps its lines inside itself, and the box is already
+                // held to the page; a wrap's lines are below the box, so each
+                // one is held to the page on its own.
+                if shape.pitch.is_some()
+                    && (shown[0] < -0.001
+                        || shown[1] < -0.001
+                        || shown[2] > f64::from(geometry.width) + 0.001
+                        || shown[3] > f64::from(geometry.height) + 0.001)
+                {
+                    return Err(wrap::NO_ROOM.into());
+                }
+                for (other, moves) in hits {
                     // A run this plan pushes along is not in the way: it ends up
                     // exactly as far on as the text that displaced it, which is
                     // what `reach` measured and what the shift written below is.
+                    // A run a wrap moves down is not in the way either: it ends
+                    // up the lines this text adds further down, at its own
+                    // block's pitch, and `wrap_room` checks where it lands.
                     if moving && *moves {
                         continue;
                     }
@@ -1244,8 +1470,8 @@ pub(super) fn prepare(
             }
             let mut matrix = context.shown;
             let (dx, dy) = (
-                (inherited + inset) * matrix[0] + dy * matrix[2],
-                (inherited + inset) * matrix[1] + dy * matrix[3],
+                (inherited + start + inset) * matrix[0] + dy * matrix[2],
+                (inherited + start + inset) * matrix[1] + dy * matrix[3],
             );
             shift_position(&mut matrix, dx, dy)?;
             operations.push(numeric("Tm", &matrix));
@@ -1294,12 +1520,119 @@ pub(super) fn prepare(
         if positioned && kept.is_none() {
             continue;
         }
-        outcome = lay_out(kept.as_ref(), limit, limit > free.from);
+        outcome = lay_out(
+            kept.as_ref(),
+            &Shape::boxed(limit, settings.wrap),
+            limit > free.from,
+            &free.hits,
+        );
         if outcome.is_ok() {
             break;
         }
     }
-    let (mut operations, line_count, used) = outcome?;
+    // The line is full and it is the page that filled it: on a tagged page the
+    // text may still wrap onto a new line of its own paragraph (`wrap`). That
+    // refusal is only ever given to a box the editor opened, since a box the
+    // reader sized is refused for its own width instead, and a box the reader
+    // sized is theirs. Only at the run's own size, which is the size the
+    // paragraph's pitch belongs to, and only with nothing already pushing the
+    // run along its line, whose geometry the plan does not carry.
+    let full = outcome
+        .as_ref()
+        .is_err_and(|error| error == Room::Page.refusal());
+    let mut wrapped = None;
+    if full && placement.inherited == 0. && size == run.size {
+        // The room the line has without pushing anything along it.
+        let room = if free.line.is_empty() {
+            ceiling
+        } else {
+            free.from.min(ceiling)
+        };
+        match wrap::plan(page, run, room.max(width)) {
+            Err(wrap::Refused::NotApplicable) => {}
+            Err(wrap::Refused::Blocked(reason)) => return Err(reason.into()),
+            Ok(plan) => {
+                let below: BTreeSet<u32> = plan.below.iter().copied().collect();
+                // Every show of every edit in the batch, grouped members
+                // included: a replacement is written where its source was, so
+                // one this wrap moved down would land on the wrap's own line.
+                if placement
+                    .edited
+                    .iter()
+                    .flat_map(|edited| shows_of(page, *edited))
+                    .any(|show| below.contains(&show))
+                {
+                    return Err(wrap::CONFLICT.into());
+                }
+                let hits: Vec<([f64; 4], bool)> = obstacles(page, run)
+                    .map(|other| match other {
+                        Around::Run(id, rect) => (
+                            rect.map(f64::from),
+                            shows_of(page, id).iter().any(|show| below.contains(show)),
+                        ),
+                        other => (other.rect().map(f64::from), false),
+                    })
+                    .collect();
+                left_behind(page, &below, &hits)?;
+                let shape = Shape {
+                    first: plan.first,
+                    start: plan.start,
+                    rest: plan.rest,
+                    wrap: true,
+                    pitch: Some(plan.pitch),
+                };
+                let (operations, lines, used) =
+                    lay_out(None, &shape, true, &hits).map_err(|error| {
+                        if error.starts_with("Text would overlap another line") {
+                            wrap::NO_ROOM.to_string()
+                        } else {
+                            error
+                        }
+                    })?;
+                // How far the block's lines below go: the lines this edit
+                // added, at the block's own pitch, down the run's own text axis.
+                let drop = lines.saturating_sub(1) as f64 * plan.pitch;
+                let offset = (-drop * run.matrix[2], -drop * run.matrix[3]);
+                let corner = |y: f64| display(text_bounds(run.matrix, [0., y, 0., y]));
+                let (low, high) = (corner(-drop), corner(0.));
+                let moved_by = [
+                    f64::from(low[0]) - f64::from(high[0]),
+                    f64::from(low[1]) - f64::from(high[1]),
+                ];
+                let pitch = {
+                    let (low, high) = (corner(-plan.pitch), corner(0.));
+                    (f64::from(low[0]) - f64::from(high[0]))
+                        .abs()
+                        .max((f64::from(low[1]) - f64::from(high[1])).abs())
+                };
+                let placed = wrap_room(page, &below, &hits, moved_by, pitch, &geometry, &display)?;
+                let lowered = plan
+                    .below
+                    .iter()
+                    .map(|show| Ok((*show, wrap::lowered(page, *show, offset)?)))
+                    .collect::<Result<Vec<_>, String>>()?;
+                let rect = display(text_bounds(
+                    run.matrix,
+                    [
+                        plan.start.min(0.),
+                        run.size - height - drop,
+                        used.max(width),
+                        run.size,
+                    ],
+                ));
+                wrapped = Some((operations, lines, rect, lowered, placed));
+            }
+        }
+    }
+    let (mut operations, line_count, used, wrap) = match wrapped {
+        Some((operations, lines, rect, lowered, placed)) => {
+            (operations, lines, 0., Some((rect, lowered, placed)))
+        }
+        None => {
+            let (operations, lines, used) = outcome?;
+            (operations, lines, used, None)
+        }
+    };
     // How far the text ran past the room the line already had, which is exactly
     // how far the text after it has to go.
     //
@@ -1327,38 +1660,57 @@ pub(super) fn prepare(
         push(page, *show, *shift)?;
     }
     // The box that goes back to the reader: what they set, or what their text
-    // needed, never past the room it had.
-    let rect = display(text_bounds(
-        run.matrix,
-        [
-            inherited,
-            run.size - height,
-            inherited + width.max(used).min(ceiling),
-            run.size,
-        ],
-    ));
-    // What the preview has to show: the box, and every run this edit pushed,
-    // where it ends up. Without the second the crop stops at the reader's own
-    // text and the neighbour it just moved is half outside the picture.
-    let mut extent = rect;
-    for (show, shift) in &moved {
-        let Some(other) = page
-            .runs
-            .runs
-            .iter()
-            .find(|other| other.operator == *show)
-            .map(|other| other.display_rect)
-        else {
-            continue;
-        };
+    // needed, never past the room it had. A wrap's box is every line it set.
+    let rect = match &wrap {
+        Some((rect, ..)) => *rect,
+        None => display(text_bounds(
+            run.matrix,
+            [
+                inherited,
+                run.size - height,
+                inherited + width.max(used).min(ceiling),
+                run.size,
+            ],
+        )),
+    };
+    // Every run this edit moves, where it ends up: along its line when pushed,
+    // down its paragraph when wrapped. The runs a push moves are the whole
+    // line it rewrites, not only the shows given a displacement of their own,
+    // since the rest ride the cursor; a run this batch also replaces is placed
+    // by its own edit.
+    let mut placed = Vec::new();
+    if delta > 0. {
         let corner = |x: f64| display(text_bounds(run.matrix, [x, run.size, x, run.size]));
         let (here, origin) = (corner(shift / xscale), corner(0.));
         let (dx, dy) = (here[0] - origin[0], here[1] - origin[1]);
+        for other in &page.runs.runs {
+            if free.line.contains(&other.operator) && !placement.edited.contains(&other.operator) {
+                let rect = other.display_rect;
+                placed.push((
+                    other.operator,
+                    [rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy],
+                ));
+            }
+        }
+    }
+    let (lowered, down) = match wrap {
+        Some((_, lowered, down)) => (lowered, down),
+        None => (Vec::new(), Vec::new()),
+    };
+    placed.extend(down);
+    // What the preview has to show: the box, and every run this edit moved,
+    // where it ends up. Without the second the crop stops at the reader's own
+    // text and the text it moved is half outside the picture. Where a wrapped
+    // line was needs nothing of its own: the extent is one rectangle, from the
+    // box down to the lowest line moved, and every place a line left is
+    // between the two.
+    let mut extent = rect;
+    for (_, other) in &placed {
         extent = [
-            extent[0].min(other[0] + dx),
-            extent[1].min(other[1] + dy),
-            extent[2].max(other[2] + dx),
-            extent[3].max(other[3] + dy),
+            extent[0].min(other[0]),
+            extent[1].min(other[1]),
+            extent[2].max(other[2]),
+            extent[3].max(other[3]),
         ];
     }
     // q/Q cannot restore the text matrices. Restore both explicitly, including
@@ -1402,5 +1754,7 @@ pub(super) fn prepare(
         moved,
         shift,
         extent,
+        lowered,
+        placed,
     })
 }

@@ -10362,3 +10362,152 @@ wrapping is the right next feature. What the evidence changes is its **scope**:
   third of the blocks that need it can take another line where they sit. The rest need what is
   below to move, which is a second capability an order of magnitude larger, and the first
   increment should refuse those rather than grow into them.
+
+### Wrapping onto a new line of the paragraph — measured 2026-09-23
+
+The first wrapping increment, scoped by the section above: tagged pages only, into room that is
+already below the paragraph. `textedit/layout/wrap.rs` plans it, `layout::prepare` lays it out
+and checks where the moved lines land (`left_behind`, `wrap_room`), `write` applies it.
+`docs/PLAN.md` §7, *Wrapping into the room below*, has the rule and the decisions in it.
+
+macOS arm64, the same 31 files as the sections above (`testdata/textedit-public-corpus.json`,
+803 pages, 629 editable, 44,282 runs), the growth instrument run twice, once with a release
+probe built from `1907d70` in a separate worktree and once with this tree:
+
+```sh
+python3 scripts/textedit_growth.py <text-edit-probe> scratch/reflow-corpus/*.pdf \
+  --manifest testdata/textedit-public-corpus.json --jobs 6 \
+  --output <new report.json> --records <new directory>
+python3 scripts/textedit_growth.py <probe> --compare <before records> <after records>
+```
+
+`--compare`: **594,391 verdicts unchanged in kind, 2,671 refused before and accepted now, 0
+accepted before and refused now.** 9,309 worker-agreement checks, 0 disagreements, 1,073.5 s on
+six processes (1,021.7 s for the baseline). The growth driver has no category for the new
+refusals; they were counted from the records, with the tagged pages taken from the block
+records of the section above.
+
+Edits as typed, in the app's own box, on the 10,624 runs of tagged pages:
+
+| trial | page-edge refusals before | now wrap | now name the paragraph | still the page edge |
+|---|---:|---:|---:|---:|
+| +10% longer | 1,144 | 271 | 103 | 770 |
+| +25% longer | 2,918 | **1,069** | 940 | 909 |
+| +50% longer | 3,671 | 1,302 | 1,193 | 1,176 |
+
+"Name the paragraph" is 916 *"its lines would move onto what is below it"* and 24 for something
+below that cannot move or a drawing over it, at +25%. **904 of the 909** still refused at the
+page edge have more of their own paragraph after them on the line, which is reflow of the line's
+remainder and not this increment. Across the whole sample, +25% goes from 21,196 accepted to
+22,265 (47.9% to 50.3%); untagged pages do not move, by construction.
+
+All of it is in four files: the Acrobat 25 agenda (29 / 440 / 579 at +10 / +25 / +50%),
+Coatesville via PDFMaker 20 (195 / 549 / 624), Hugo via PDFMaker 26 (47 / 79 / 97) and Illinois
+via PDFMaker 22 (0 / 1 / 2). Mercer Island (Word 2016) and the LibreOffice export have no
+page-edge refusals to begin with, and the PowerPoint slides five.
+
+⚠ **Two changes in kind that are not a longer edit.** In Coatesville, 27 same-length edits (two
+letters swapped) and 2 unchanged runs were refused at the page edge and now wrap. Their own text,
+laid out again from glyph widths, is wider than the room the line has; the wrap is the first
+writer that fits it, so the reader gets two lines for an edit that added nothing. It is 29
+verdicts of 597,062 and better than a refusal, but it is not what a same-length edit looks
+like, and it is where to look if a reader reports a line that wrapped for no reason.
+
+**Round trips, three per file** (one in Illinois, which has one), each a +25% edit refused at the
+page edge before and accepted now, through the probe, `qpdf --check`, and an independent reading:
+
+```sh
+<probe> --growth-request <file> <page> <operator> grow25 app grow > <req.json>
+<probe> --roundtrip <file> <req.json> <new directory>
+uv run --with pypdf --with pdfplumber scripts/text_wrap_check.py --compare <file> <dir>/edited.pdf <page>
+```
+
+| Producer | page | glyphs moved | distance | probe | `qpdf` | `--compare` |
+|---|---:|---:|---:|---|---|---|
+| Acrobat 25 (Arcadia agenda) | 2 | 0 (its last line) | — | pass | clean | pass |
+| Acrobat 25 | 30 | 80 | 15.0 pt | pass | clean | pass |
+| Acrobat 25 | 70 | 8 | 13.4 pt | pass | clean | pass |
+| Word via PDFMaker 20 (Coatesville) | 1 | 114 | 13.2 pt | pass | clean | pass |
+| Word via PDFMaker 20 | 8 | 362 | 13.2 pt | pass | clean | pass |
+| Word via PDFMaker 20 | 15 | 115 | 13.2 pt | pass | clean | pass |
+| Word via PDFMaker 26 (Hugo) | 1 | 136 | 13.8 pt | pass | clean | pass |
+| Word via PDFMaker 26 | 4 | 82 | 13.8 pt | pass | clean | pass |
+| Word via PDFMaker 26 | 5 | 175 | 13.8 pt | pass | clean | pass |
+| Word via PDFMaker 22 (Illinois) | 2 | 13 | 8.6 pt | pass | clean | pass |
+
+`--compare` reads both files with pdfplumber and pairs every glyph on the page: each is where it
+was, or straight down by one distance every moved glyph shares, and what is left over from the
+source lies on the edited line alone. It also fails when the saved page has more pairs of
+overlapping glyphs than the source, and overlapping pairs were 0 -> 0 on all ten. The glyph and
+distance columns are its report.
+
+⚠ **The probe's own pass cannot see a wrap that moved nothing,** and the table above is not
+redundant with it. With the moved lines deleted from the writer, `--roundtrip` passed the
+synthetic paragraph — the preview and the save come from one writer and agree, and the new line
+printed over the unmoved one is inside the envelope, because the envelope is where that line
+was meant to leave from. `text_wrap_check.py` failed it both ways: `--check` read `'THIRD
+LINE' at (20.0, 172.0), expected (20.0, 158.0)`, and `--compare` counted 10 overlapping pairs
+against 0. The trap index has the entry, and the two ways `--compare` itself was wrong first:
+
+- It paired pypdf's **text chunks**, which a reader cuts at every `Tm`, and every moved show has
+  one of its own — the same glyphs came back in different pieces. It pairs glyphs now.
+- It paired glyphs to a hundredth of a point, and pdfminer places a cursor-continued show 0.024
+  pt from where poppler does **in the untouched source**, while both agree on the saved file
+  where the show has a `Tm`. `pdftotext -bbox` put the Hugo word at 302.94 before and after.
+  The tolerance is 0.05 pt.
+
+The synthetic case, generated and read by pypdf rather than by the editor's own lopdf:
+
+```sh
+uv run --with pypdf scripts/text_wrap_check.py --generate <new directory>
+<probe> --growth-request <dir>/source.pdf 0 8 grow25 app grow > <dir>/requests.json
+<probe> --roundtrip <dir>/source.pdf <dir>/requests.json <new result directory>
+uv run --with pypdf scripts/text_wrap_check.py --check <dir>/source.pdf <result>/edited.pdf
+```
+
+`--check` asserts the two lines below the edit moved exactly one 14 pt pitch at the same x, the
+continuation starts at the paragraph's left edge, and the next paragraph — placed by a `Td`
+chained through every moved line — is where it was to a thousandth of a point. `app` is new in
+`--growth-request`: the width of the box the editor opens, measured by the probe.
+
+**Unit tests.** 25 in `textedit/wrap_tests.rs`, on a synthetic tagged page: the move itself with
+the next paragraph's start compared bit for bit; no room below, and exactly one pitch of room; an
+untagged page and text after the run on its line keeping the old refusal; the last line wrapping
+into space and moving nothing; a continuation under a first-line indent; a rule under a moved
+line refusing and a page background not; a highlight refusing and a popup not; a batch conflict
+in either order; a single-line paragraph at the default pitch; read-only text of the paragraph
+below; a link in the paragraph's last line; pushes and wraps meeting in a show, from either side
+of the stream and through a show that only rides the cursor; a quarter-turned page at each of
+90, 180 and 270; the outlines the editor draws; three ems as the largest pitch; a moved line
+opening with a `TJ` displacement; a show of another block continuing a moved line from the
+cursor; the foot of the page; another block's text inside a moved line; another size and a run
+already pushed; a clip over the paragraph; the preview's extent; an unreadable annotation list.
+
+**Mutations: 34 in `mutate_rust.py` under `wrap`, and 3 in `mutate_frontend.py` under `text
+outlines`, all caught by the test each names.** The first run had three survivors, and all three
+were findings about the code rather than the tests:
+
+- `wrap: the preview crop leaves out where the lines were` could not be caught because the
+  property always holds: the extent is one rectangle from the box to the lowest moved line, and
+  every place a line left lies between them. The code that added the old places was deleted.
+- `wrap tags: a link is a block of its own` exercised a branch that never runs for a link inside
+  a paragraph: the paragraph's walk takes the link in as one of its own leaves and gives it the
+  paragraph's block already. The branch was deleted; the test stays, because it is what proves
+  the leaf path.
+- `wrap write: over an earlier push` was shadowed by the check at the end of `write`, which sees
+  every show a push *displaced*. It is the only check that sees a show that only rides a pushed
+  line's cursor, and that got a test of its own.
+
+**What the window phases meet.** Eight text-edit phase fixtures are tagged. The seven Edge
+exports among them were checked through the writer with the phase's 1,000-character overflow
+draft, and each is refused *"the document clips the space after it"*: Edge clips its page, a clip
+ends those lines rather than the page edge, and a clip is not a trigger. The eighth, the
+LibreOffice export `textedit-wrapped` runs on, is not on this machine and was **not** checked;
+run that phase before the next release. A paragraph whose refusal does now come from a wrap still begins *"There is
+no room for more text on this line"*, which is what those phases assert.
+
+**Found while building it, and not fixed here:** the line push takes runs of the next line for
+its own. Hit rectangles are em boxes; at 12 pt on a 14 pt pitch adjacent lines overlap by a
+point, and the push's "same line" test allows a tenth. Growing a run on one line pushed the line
+above it 18 pt to the right in a synthetic fixture (a run earlier in the stream, so the line
+above was the one after it). It is ranked first in `docs/PLAN.md` §7.

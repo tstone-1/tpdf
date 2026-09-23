@@ -269,6 +269,9 @@ pub async fn document_text_runs(
 ) -> Result<crate::textedit::PageRuns, String> {
     let at = text_address(&edits, doc, page)?;
     let mut changes = at.mine(edits.text_changes(doc));
+    // No draft is a request for the page's runs as the pending edits leave
+    // them, which is what the editor outlines; a draft is a preview.
+    let outlines = change.is_none();
     if let Some(change) = change {
         if change.page != at.page {
             return Err("Text no longer belongs to this page".into());
@@ -277,11 +280,9 @@ pub async fn document_text_runs(
         if change.replacement != change.original || change.layout.is_some() {
             changes.push(change);
         }
-    } else {
-        changes.clear();
     }
     let (reply, rx) = reply_channel();
-    service.text_runs(at.doc, at.page, changes, reply);
+    service.text_runs(at.doc, at.page, changes, outlines, reply);
     let mut runs: crate::textedit::PageRuns = await_reply("document_text_runs", rx).await?;
     // Said by the side that knows. The worker answered about the document it
     // holds and cannot name it; this is the layer that chose which document to
@@ -403,7 +404,7 @@ pub async fn text_replace(
         pending.push(change.clone());
     }
     let (reply, rx) = reply_channel();
-    service.text_runs(at.doc, at.page, pending, reply);
+    service.text_runs(at.doc, at.page, pending, false, reply);
     await_reply("text_replace", rx).await?;
     edits.replace_text(doc, page, change)
 }

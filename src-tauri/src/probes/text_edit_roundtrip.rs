@@ -227,7 +227,10 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
     }
     for change in plan.text_edits.iter().map(|edit| &edit.change) {
         let reopened = runs(&mut saved, change.page)?;
-        let found = if change.layout.as_ref().is_some_and(|layout| layout.wrap) {
+        // A wrapped layout -- one the reader asked for, or one the paragraph
+        // gave a box that met the page edge -- splits the text over several
+        // runs, in reading order.
+        let found = if change.layout.is_some() {
             reopened
                 .runs
                 .iter()

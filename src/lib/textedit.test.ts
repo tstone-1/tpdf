@@ -427,4 +427,35 @@ describe("existing text editing", () => {
     const next = mount(); next.editor.update(NOTHING_OPEN); expect(next.close).toHaveBeenCalledOnce();
     expect(close).not.toHaveBeenCalled();
   });
+  // A wrap moves the rest of its paragraph down a line, and a push moves the
+  // rest of a line along it; the editor outlines each run where the pending
+  // edits leave it rather than where the source drew it. Only the latest
+  // answer counts, and only one about the same decoded page.
+  it("moves each outline to where the pending edits leave its run", async () => {
+    const lower: TextRuns["runs"][number] = { operator: 9, text: "TEN", font: "F1", size: 12, advance: 21.6, matrix: [1,0,0,1,40,166], display_rect: [40,62,61.6,77] };
+    const source: TextRuns = { ...runs, runs: [{ ...runs.runs[0]! }, { ...lower }] };
+    const moved = (top: number, revision = runs.revision): TextRuns => ({ ...source, revision,
+      runs: [{ ...runs.runs[0]!, display_rect: [40,48,220,77] }, { ...lower, display_rect: [40,top,61.6,top + 15] }] });
+    const answers: ((value: TextRuns) => void)[] = [];
+    const outlines = vi.fn(() => new Promise<TextRuns>((resolve) => { answers.push(resolve); }));
+    const anchor = (run: TextRuns["runs"][number]) => ({ left: run.display_rect[0], top: run.display_rect[1], right: run.display_rect[2], bottom: run.display_rect[3], clip: "inset(0px)" });
+    const editor = new TextEditor(dom.root as unknown as HTMLElement, 1, source, anchor,
+      async (value) => ({ ...state, text_edits: [value] }), vi.fn(), undefined, outlines);
+    const buttons = dom.root.children[0]!.children.filter((node) => node.classList.contains("text-edit-run"));
+    editor.update(state);
+    editor.update({ ...state, text_edits: [change] });
+    expect(outlines).toHaveBeenCalledTimes(2);
+    // The later answer arrives first and is adopted; the earlier one, arriving
+    // after it, is not.
+    answers[1]!(moved(76)); await Promise.resolve(); await Promise.resolve();
+    expect(buttons[1]!.style.top).toBe("76px");
+    expect(buttons[0]!.style.height).toBe("29px");
+    answers[0]!(moved(90)); await Promise.resolve(); await Promise.resolve();
+    expect(buttons[1]!.style.top).toBe("76px");
+    // An answer about another revision of the page is somebody else's page.
+    editor.update(state);
+    answers[2]!(moved(120, [9])); await Promise.resolve(); await Promise.resolve();
+    expect(buttons[1]!.style.top).toBe("76px");
+    editor.destroy();
+  });
 });

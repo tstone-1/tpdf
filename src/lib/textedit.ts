@@ -112,12 +112,20 @@ export class TextEditor {
   private busy = false;
   private saving = false;
   private disposed = false;
+  private outlineGeneration = 0;
 
+  /**
+   * `outlines` answers where each run is drawn once the pending edits are
+   * applied: an edited run at its box, a run an edit pushed along its line or
+   * wrapped down its paragraph where it now is. Without it the outlines stay
+   * where the source drew its text, which after a wrap is a line too high.
+   */
   constructor(host: HTMLElement, private readonly pageId: number, private readonly source: TextRuns,
     private readonly anchor: (run: TextRun) => Anchor | null,
     private readonly write: (change: TextChange) => Promise<EditState>,
     private readonly close: () => void,
-    private readonly preview?: (change: TextChange) => Promise<TextRuns>) {
+    private readonly preview?: (change: TextChange) => Promise<TextRuns>,
+    private readonly outlines?: () => Promise<TextRuns>) {
     this.controls = new TextLayoutControls(() => { this.layoutTouched = true; this.draftChanged(); });
     this.root.className = "text-editor";
     for (const event of ["pointerdown", "click", "dblclick"]) this.root.addEventListener(event, (e) => e.stopPropagation());
@@ -225,6 +233,32 @@ export class TextEditor {
     }
     this.buttons.forEach((button, index) => button.setAttribute("aria-label", `Edit: ${this.value(this.source.runs[index]!) || "empty text"}`));
     this.layout();
+    this.refreshOutlines();
+  }
+  /**
+   * Moves each outline to where the pending edits leave its run. Every change
+   * to the journal reaches {@link update} --- an Apply, an undo, a redo --- and
+   * each asks again; only the latest answer is adopted. The runs keep their
+   * source addresses, so only `display_rect` changes, and only for an answer
+   * about the same decoded page.
+   *
+   * A failed answer leaves the outlines where they were. They are where the
+   * source drew its text, which is still true of every run no edit moved, and
+   * any error in the batch itself is reported by the write that carried it.
+   */
+  private refreshOutlines(): void {
+    if (!this.outlines) return;
+    const generation = ++this.outlineGeneration;
+    void this.outlines().then((fresh) => {
+      if (this.disposed || generation !== this.outlineGeneration
+        || fresh.revision.join() !== this.source.revision.join()) return;
+      const rects = new Map(fresh.runs.map((run) => [run.operator, run.display_rect]));
+      for (const run of this.source.runs) {
+        const rect = rects.get(run.operator);
+        if (rect) run.display_rect = rect;
+      }
+      this.layout();
+    }).catch(() => {});
   }
   setBusy(busy: boolean): void {
     this.busy = busy;

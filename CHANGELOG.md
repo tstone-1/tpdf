@@ -21,6 +21,36 @@ have the binary.)
 
 ### Added
 
+- **Text that no longer fits its line now wraps onto the next line of its own
+  paragraph, on a tagged page.** Until now an edit that ran past the edge of the
+  page was refused with *"it reaches the edge of the page"*. Where the document's
+  structure tree says which lines are one paragraph, the edit is now set at that
+  paragraph's own width and line spacing, its second line starts at the
+  paragraph's left edge, and the rest of the paragraph moves down by the lines
+  it added. The preview shows it before anything is applied.
+
+  Across the 31-file public sample, 1,069 of the 2,918 edits a quarter longer
+  that were refused at the page edge on a tagged page are now accepted, and no
+  edit that was accepted before is refused now (597,062 verdicts compared one by
+  one).
+
+  **It only uses room that is already there.** Nothing below the paragraph
+  moves, so an edit whose paragraph sits right above the next one is refused,
+  and the refusal now says why: *"its lines would move onto what is below it"*.
+  That is 916 of those 2,918 edits. It is also refused when part of the
+  paragraph below the edit cannot be moved (a link, text tpdf keeps read-only),
+  or when a drawing or annotation covers the lines that would move — a rule
+  under a word, a highlight — since those would stay where they are while the
+  text left them.
+
+  **Tagged pages only, on purpose.** On an untagged page the only way to tell
+  one paragraph from the next is to guess from the layout, and measured against
+  pages whose tags give the answer, that guess joins two paragraphs into one
+  about once in six — the exact mistake that would push the next paragraph down
+  as if it belonged to the edited one. Untagged pages keep the refusal they had.
+  So does an edit with more text after it on the same line, which would need that
+  text to flow onto the new line.
+
 - **A redaction report now says which page a surviving word is on.** Until now
   it said *"4711-0815 is still in the file"* and stopped there, which a reader
   cannot act on: a removal that failed and a second copy on a page nobody marked
@@ -64,6 +94,13 @@ have the binary.)
   lands.
 
 ### Changed
+
+- **The outlines in the text editor follow the text an edit moved.** After an
+  edit pushed the rest of its line along, or wrapped and moved the rest of its
+  paragraph down, the editor went on outlining those runs where the source had
+  drawn them. After a wrap that is a line too high, over the new text rather than
+  the text it names. Each outline is now placed where the pending edits leave its
+  run, including after undo and redo.
 
 - **"Install update and restart" is now "Install update", because it does not
   restart.** On macOS it installs and stops; the restart is the separate command

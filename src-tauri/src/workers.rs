@@ -1932,14 +1932,15 @@ impl Engine for Workers {
         doc: u32,
         page: u32,
         changes: &[crate::textedit::Change],
+        outlines: bool,
     ) -> Result<crate::textedit::PageRuns, String> {
-        match self.ask(
-            doc,
-            &Request::TextRuns {
-                page,
-                changes: changes.to_vec(),
-            },
-        )? {
+        let changes = changes.to_vec();
+        let request = if outlines {
+            Request::TextOutlines { page, changes }
+        } else {
+            Request::TextRuns { page, changes }
+        };
+        match self.ask(doc, &request)? {
             Reply::TextRuns(runs) => Ok(runs),
             other => Err(mismatched("text runs", &other)),
         }

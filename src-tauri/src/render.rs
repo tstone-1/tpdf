@@ -469,6 +469,7 @@ pub(crate) enum Job {
         doc: u32,
         page: u32,
         changes: Vec<crate::textedit::Change>,
+        outlines: bool,
         reply: Reply<crate::textedit::PageRuns>,
     },
     Comments {
@@ -533,17 +534,22 @@ impl RenderService {
     }
 
     /// Reads baseline text operands and preflights a proposed pending batch in the worker.
+    ///
+    /// With `outlines`, the batch is the pending one and nothing is previewed:
+    /// the runs come back outlined where the batch leaves them.
     pub fn text_runs(
         &self,
         doc: u32,
         page: u32,
         changes: Vec<crate::textedit::Change>,
+        outlines: bool,
         reply: Reply<crate::textedit::PageRuns>,
     ) {
         let _ = self.tx.send(Job::TextRuns {
             doc,
             page,
             changes,
+            outlines,
             reply,
         });
     }
@@ -1186,6 +1192,7 @@ pub(crate) trait Engine {
         doc: u32,
         page: u32,
         changes: &[crate::textedit::Change],
+        outlines: bool,
     ) -> Result<crate::textedit::PageRuns, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
@@ -1263,8 +1270,9 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             doc,
             page,
             changes,
+            outlines,
             reply,
-        } => reply(engine.text_runs(doc, page, &changes)),
+        } => reply(engine.text_runs(doc, page, &changes, outlines)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
@@ -1507,10 +1515,11 @@ impl Engine for InProcess {
         doc: u32,
         page: u32,
         changes: &[crate::textedit::Change],
+        outlines: bool,
     ) -> Result<crate::textedit::PageRuns, String> {
         let docs = self.docs.borrow();
         let document = open_slot(&docs, doc)?;
-        text_edit_runs(self.bindings, document, page, changes)
+        text_edit_runs(self.bindings, document, page, changes, outlines)
     }
 
     fn comments(&self, doc: u32) -> Result<Comments, String> {
@@ -1701,13 +1710,32 @@ pub(crate) fn render_tile(
 }
 
 /// Preflight text edits and render a bounded crop for an uncommitted draft.
+///
+/// With `outlines`, `changes` is the batch already pending and there is no
+/// draft: the runs are moved to where that batch leaves them and returned
+/// without a preview.
 pub(crate) fn text_edit_runs(
     bindings: Bindings,
     document: &OpenDocument,
     page: u32,
     changes: &[crate::textedit::Change],
+    outlines: bool,
 ) -> Result<crate::textedit::PageRuns, String> {
     let mut runs = document.graph().text_runs(page)?;
+    if outlines {
+        // A batch the journal holds was preflighted when it was applied, so
+        // this does not fail in practice; if it did, the source's own outlines
+        // are still where the source drew its text, and the save that follows
+        // refuses the batch loudly. Outlines are not the place to report it.
+        if let Ok(placed) = crate::textedit::placements(document.graph().parsed()?, page, changes) {
+            for run in &mut runs.runs {
+                if let Some(rect) = placed.get(&run.operator) {
+                    run.display_rect = *rect;
+                }
+            }
+        }
+        return Ok(runs);
+    }
     document.with_text_view(changes, |view| {
         if let Some(change) = changes
             .iter()

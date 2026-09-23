@@ -869,6 +869,11 @@ fn annotation(
 pub(super) struct Tags {
     // One authored tag name per MCID. Empty means an ordinary untagged page.
     names: Vec<Vec<u8>>,
+    // The block element that owns each MCID: the paragraph, heading, list item
+    // or cell whose text it is, above any Span or NonStruct leaf that claims
+    // it. Two runs with the same entry are lines of one block, which is the
+    // one thing a wrap needs that geometry cannot say (`layout::wrap`).
+    blocks: Vec<Option<ObjectId>>,
     // MCIDs under an element whose authored ink bounds are kept on save, so
     // their text must stay where the bounds say it is (ISO 32000-1 Table 344).
     bounded: BTreeSet<usize>,
@@ -1052,7 +1057,14 @@ impl Tags {
             {
                 return Err("tagged parent content is empty or exceeds its limit".into());
             }
-            by_page.insert(owner, (entries, vec![Vec::new(); entries.len()]));
+            by_page.insert(
+                owner,
+                (
+                    entries,
+                    vec![Vec::new(); entries.len()],
+                    vec![None; entries.len()],
+                ),
+            );
         }
         if let Ok(next) = root.get(b"ParentTreeNextKey") {
             let next = integer(next)?;
@@ -1261,6 +1273,12 @@ impl Tags {
             }
             // The mapped role, so that text under a figure alias is refused
             // as figure text wherever a group's tag is read.
+            // The element whose content this is, before `produced` below
+            // shadows `id` with the leaf that claims each item. A link or a
+            // field set inside a paragraph is one of those leaves, so its text
+            // is the paragraph's too: read-only, it is text of the block a
+            // wrap cannot move rather than text it would leave behind.
+            let block = id;
             let paragraph = Group {
                 id,
                 page: paragraph_page,
@@ -1317,7 +1335,7 @@ impl Tags {
                         }
                         _ => return Err(INVALID.into()),
                     };
-                    let (entries, names) = by_page.get_mut(&owner).ok_or(INVALID)?;
+                    let (entries, names, blocks) = by_page.get_mut(&owner).ok_or(INVALID)?;
                     let mcid = usize::try_from(mcid).map_err(|_| INVALID)?;
                     if mcid >= names.len() || reference(&entries[mcid])? != id {
                         return Err("tagged content and parent tree disagree on ownership".into());
@@ -1333,6 +1351,7 @@ impl Tags {
                         return Err(INVALID.into());
                     }
                     names[mcid] = tag.to_vec();
+                    blocks[mcid] = Some(block);
                     if pinned {
                         bounded_slots.entry(owner).or_default().insert(mcid);
                     }
@@ -1347,7 +1366,7 @@ impl Tags {
         // or retagged as artifacts; nothing in the logical structure reaches
         // them. Their content is kept read-only under any tag. A reachable
         // element that fails to claim its slot is still inconsistent.
-        for (entries, names) in by_page.values_mut() {
+        for (entries, names, _) in by_page.values_mut() {
             for (slot, name) in entries.iter().zip(names.iter_mut()) {
                 if !name.is_empty() || matches!(slot, Object::Null) {
                     continue;
@@ -1362,12 +1381,13 @@ impl Tags {
         }
         // Every non-null slot is now claimed, orphaned or refused above, so no
         // separate claimed-versus-total comparison is needed (it could not fail).
-        let names = by_page
+        let (names, blocks) = by_page
             .remove(&page)
-            .map(|(_, names)| names)
+            .map(|(_, names, blocks)| (names, blocks))
             .unwrap_or_default();
         Ok(Self {
             names,
+            blocks,
             bounded: bounded_slots.remove(&page).unwrap_or_default(),
             ..Self::default()
         })
@@ -1518,6 +1538,15 @@ impl Tags {
             Some(None) => true,
             None => !self.names.is_empty(),
         }
+    }
+
+    /// The block element owning the marked content now open, where there is
+    /// one: `None` outside marked content, in an artifact, and on an untagged
+    /// page. An orphaned slot has no owner, and read-only text never asks.
+    pub(super) fn block(&self) -> Option<ObjectId> {
+        self.active
+            .flatten()
+            .and_then(|mcid| self.blocks.get(mcid).copied().flatten())
     }
 
     pub(super) fn finish(&self) -> Result<(), String> {

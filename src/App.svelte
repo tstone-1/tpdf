@@ -1328,7 +1328,9 @@
           if (!result) throw failure ?? new Error("Text editing is currently unavailable.");
           return result;
         }, () => { editor.destroy(); if (textEditor === editor) textEditor = null; },
-        (change) => call("document_text_runs", { doc: model.doc, page: page.id, change }));
+        (change) => call("document_text_runs", { doc: model.doc, page: page.id, change }),
+        // No draft: the runs as the pending edits leave them, for the outlines.
+        () => call("document_text_runs", { doc: model.doc, page: page.id }));
       textEditor = editor; editor.update(model.state); editor.setBusy(documentBusy);
     } catch (error) {
       if (generation === textEditorGeneration && edits === model) say(`Cannot edit this text: ${String(error)}`);
