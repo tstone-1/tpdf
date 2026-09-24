@@ -46,6 +46,24 @@ have the binary.)
   words that fit stay on the line and the rest start the next one, drawn from
   the document's own letters and spacing. No line starts with a space any more.
 
+- **A wrapped edit now moves the paragraphs below it down too.** On a tagged
+  page, an edit could wrap onto a new line only when there was an empty line
+  below its paragraph; with another paragraph directly underneath, it was
+  refused with *"its lines would move onto what is below it"*. Now that
+  paragraph moves down as well, and the one after it if it is in the way, as
+  far as the first gap deep enough to take the added lines. Text that cannot
+  move -- untagged text, a column beside the paragraph, text tpdf keeps
+  read-only -- still refuses the edit, and so does an underline or other
+  drawing that would be left behind.
+
+  Across the 31-file sample, edits a quarter longer are accepted 60.9% of the
+  time, up from 59.8%; 1,330 verdicts moved from refused to accepted and none
+  the other way.
+
+  **The gap that takes the added lines is often a paragraph break.** A moved
+  paragraph can end up directly on the next one, with no blank line between
+  them. Nothing overlaps, but the break is gone.
+
 - **A middle-click on a tab closes it**, and the tab's right-click menu has
   **Close all tabs**, which asks once when any open document has unsaved
   changes. Close all tabs is also in the File menu and the command palette.

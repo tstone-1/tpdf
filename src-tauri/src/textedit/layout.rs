@@ -1108,6 +1108,137 @@ fn left_behind(
     Ok(())
 }
 
+/// What `lay_out` made of one plan: the operations, how many lines, how far the
+/// widest reaches and where the last ends from the run's origin, and each
+/// line's ink on the displayed page.
+type Laid = (Vec<Operation>, usize, f64, f64, Vec<[f64; 4]>);
+
+/// `rect` moved `by`.
+fn shift(rect: [f64; 4], by: [f64; 2]) -> [f64; 4] {
+    [
+        rect[0] + by[0],
+        rect[1] + by[1],
+        rect[2] + by[0],
+        rect[3] + by[1],
+    ]
+}
+
+/// How close a moved rectangle may come to text that stays, and across which
+/// display axis the lines are stacked: `down` is one line pitch down the
+/// displayed page. Hit rectangles are em boxes, and at ordinary leading two
+/// lines of one paragraph overlap by a sliver; the tallest moved box less the
+/// pitch is that sliver, and a moved line may overlap what stays by as much.
+fn landing(moves: &[(u32, [f64; 4], [f64; 2])], down: [f64; 2]) -> ([f64; 2], usize) {
+    let cross = usize::from(down[1].abs() >= down[0].abs());
+    let height = moves
+        .iter()
+        .map(|(_, rect, _)| rect[cross + 2] - rect[cross])
+        .fold(0., f64::max);
+    let mut slack = [0.1; 2];
+    slack[cross] = (height - down[cross].abs()).max(0.) + 0.1;
+    (slack, cross)
+}
+
+/// Whether a rectangle that was at `old` and is now at `new` lands on `other`,
+/// which stays, by more than [`landing`] allows.
+///
+/// Lines are not evenly pitched, and that allowance is from the pitch to the
+/// line below: a line above set a little closer already overlaps the run's box
+/// by more than that in the source, and a run sliding along its own line would
+/// meet it. A sliver the source had -- less than half the shorter box, so not
+/// text on the same line -- is allowed again, and no more.
+fn lands(old: [f64; 4], new: [f64; 4], other: [f64; 4], (slack, cross): ([f64; 2], usize)) -> bool {
+    let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
+    let shorter = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
+    let sliver = if shared < shorter / 2. {
+        shared.max(0.)
+    } else {
+        0.
+    };
+    let mut allowed = slack;
+    allowed[cross] = allowed[cross].max(sliver + 0.001);
+    wrap::overlaps(new, other, allowed)
+}
+
+/// Whether ink shown at `shown` is over `other` by more than a tenth of a
+/// point each way, somewhere outside the edited run's own box `own`: text
+/// laid out over the line it replaces is not in the way of anything there.
+fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4]) -> bool {
+    let intersection = [
+        shown[0].max(other[0]),
+        shown[1].max(other[1]),
+        shown[2].min(other[2]),
+        shown[3].min(other[3]),
+    ];
+    intersection[2] > intersection[0] + 0.1
+        && intersection[3] > intersection[1] + 0.1
+        && (intersection[0] < own[0] - 0.1
+            || intersection[1] < own[1] - 0.1
+            || intersection[2] > own[2] + 0.1
+            || intersection[3] > own[3] + 0.1)
+}
+
+/// The most other blocks one wrap moves down with its own lines.
+const MAX_CASCADE: usize = 32;
+
+/// Which of the blocks a wrap may move ([`wrap::Plan::beneath`]) it does move,
+/// adding each moved run to `moves`; the answer is every show of those blocks.
+///
+/// A block moves when something already moving would land on it, or when the
+/// ink of one of the edit's own lines (`inks`, as `lay_out` measured it) is
+/// over it by `lay_out`'s own rule ([`strikes`], outside the run's box `own`):
+/// all of its runs
+/// go down `by`, the same distance as the paragraph's own lines, and then may
+/// land on the next block, which moves in turn. A block nothing lands on stays,
+/// so the first gap below that is deep enough takes the added lines and the
+/// blocks after it do not move. Nothing here decides whether the moves are
+/// allowed; [`wrap_room`] does, with the same rule ([`lands`]).
+fn cascade(
+    page: &Inspection,
+    beneath: &[Vec<u32>],
+    moves: &mut Vec<(u32, [f64; 4], [f64; 2])>,
+    (inks, own): (&[[f64; 4]], [f64; 4]),
+    (by, down): ([f64; 2], [f64; 2]),
+) -> BTreeSet<u32> {
+    let rects = |shows: &[u32]| -> Vec<(u32, [f64; 4])> {
+        page.runs
+            .runs
+            .iter()
+            .filter(|other| shows.contains(&other.operator) && !other.text.trim().is_empty())
+            .map(|other| (other.operator, other.display_rect.map(f64::from)))
+            .collect()
+    };
+    let mut moved = BTreeSet::new();
+    let mut taken = vec![false; beneath.len()];
+    let mut count = 0;
+    loop {
+        let rule = landing(moves, down);
+        let landed = beneath.iter().enumerate().find(|(index, shows)| {
+            !taken[*index]
+                && rects(shows).iter().any(|(_, other)| {
+                    moves
+                        .iter()
+                        .any(|(_, old, by)| lands(*old, shift(*old, *by), *other, rule))
+                        || inks.iter().any(|ink| strikes(*ink, *other, own))
+                })
+        });
+        let Some((index, shows)) = landed else {
+            return moved;
+        };
+        if count == MAX_CASCADE {
+            return moved;
+        }
+        count += 1;
+        taken[index] = true;
+        moved.extend(shows.iter().copied());
+        moves.extend(
+            rects(shows)
+                .into_iter()
+                .map(|(show, rect)| (show, rect, by)),
+        );
+    }
+}
+
 /// Whether the runs a wrap moves can go where it puts them, and where each of
 /// their hit rectangles ends up.
 ///
@@ -1142,16 +1273,7 @@ fn wrap_room(
     geometry: &crate::pagetree::DisplayedPage,
     display: &impl Fn([f64; 4]) -> [f32; 4],
 ) -> Result<Vec<(u32, [f32; 4])>, String> {
-    let cross = usize::from(down[1].abs() >= down[0].abs());
-    let pitch = down[cross].abs();
-    let shift = |rect: [f64; 4], by: [f64; 2]| {
-        [
-            rect[0] + by[0],
-            rect[1] + by[1],
-            rect[2] + by[0],
-            rect[3] + by[1],
-        ]
-    };
+    let (slack, cross) = landing(moves, down);
     let moving: Vec<_> = moves
         .iter()
         .map(|(operator, rect, by)| {
@@ -1165,12 +1287,6 @@ fn wrap_room(
             )
         })
         .collect();
-    let height = moving
-        .iter()
-        .map(|(_, rect, ..)| rect[cross + 2] - rect[cross])
-        .fold(0., f64::max);
-    let mut slack = [0.1; 2];
-    slack[cross] = (height - pitch).max(0.) + 0.1;
     let (width, depth) = (f64::from(geometry.width), f64::from(geometry.height));
     let mut placed = Vec::new();
     for (operator, old, by, clip) in &moving {
@@ -1181,26 +1297,10 @@ fn wrap_room(
         if clip.is_some_and(|clip| !wrap::holds(clip, new)) {
             return Err(wrap::NO_ROOM.into());
         }
-        // Lines are not evenly pitched, and the allowance above is from the
-        // pitch to the line below: a line above set a little closer already
-        // overlaps the run's box by more than that in the source, and a run
-        // sliding along its own line would meet it. A sliver the source had --
-        // less than half the shorter box, so not text on the same line -- is
-        // allowed again, and no more.
-        let sliver = |other: &[f64; 4]| {
-            let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
-            let shorter = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
-            if shared < shorter / 2. {
-                shared.max(0.)
-            } else {
-                0.
-            }
-        };
-        if hits.iter().any(|(other, moves)| {
-            let mut allowed = slack;
-            allowed[cross] = allowed[cross].max(sliver(other) + 0.001);
-            !*moves && wrap::overlaps(new, *other, allowed)
-        }) {
+        if hits
+            .iter()
+            .any(|(other, moves)| !*moves && lands(*old, new, *other, (slack, cross)))
+        {
             return Err(wrap::NO_ROOM.into());
         }
         // A run cut across two lines is outlined as one rectangle holding
@@ -1480,7 +1580,7 @@ pub(super) fn prepare(
                    shape: &Shape,
                    moving: bool,
                    hits: &[([f64; 4], bool)]|
-     -> Result<(Vec<Operation>, usize, f64, f64), String> {
+     -> Result<Laid, String> {
         // The widest the text itself turned out to be, measured from the
         // run's origin. The box reported back is this rather than the whole
         // ceiling, so a grown box is the size of what the reader typed and
@@ -1492,6 +1592,8 @@ pub(super) fn prepare(
         // there, as the push measures a line from `used`, so an overhanging
         // last glyph is not drawn into the run that follows it.
         let mut end = 0_f64;
+        // Each line's ink where it is shown, which a wrap asks what lands on.
+        let mut inks = Vec::new();
         let lines = if kept.is_some() {
             vec![change.replacement.clone()]
         } else {
@@ -1592,6 +1694,7 @@ pub(super) fn prepare(
                     region.contains(ink)?;
                 }
                 let shown = display(ink).map(f64::from);
+                inks.push(shown);
                 // A box keeps its lines inside itself, and the box is already
                 // held to the page; a wrap's lines are below the box, so each
                 // one is held to the page on its own.
@@ -1613,19 +1716,7 @@ pub(super) fn prepare(
                     if moving && *moves {
                         continue;
                     }
-                    let intersection = [
-                        shown[0].max(other[0]),
-                        shown[1].max(other[1]),
-                        shown[2].min(other[2]),
-                        shown[3].min(other[3]),
-                    ];
-                    if intersection[2] > intersection[0] + 0.1
-                        && intersection[3] > intersection[1] + 0.1
-                        && (intersection[0] < free.own[0] - 0.1
-                            || intersection[1] < free.own[1] - 0.1
-                            || intersection[2] > free.own[2] + 0.1
-                            || intersection[3] > free.own[3] + 0.1)
-                    {
+                    if strikes(shown, *other, free.own) {
                         return Err("Text would overlap another line. Reduce the font size or change the box dimensions.".into());
                     }
                 }
@@ -1647,7 +1738,7 @@ pub(super) fn prepare(
                 Operation::new("Tj", items)
             });
         }
-        Ok((operations, lines.len(), used, end))
+        Ok((operations, lines.len(), used, end, inks))
     };
     // Four writers, each a weaker claim than the one before it, and the last two
     // are the writer exactly as it was before the box could grow.
@@ -1736,15 +1827,23 @@ pub(super) fn prepare(
                 {
                     return Err(wrap::CONFLICT.into());
                 }
-                let hits: Vec<([f64; 4], bool)> = obstacles(page, run)
-                    .map(|other| match other {
-                        Around::Run(id, rect) => (
-                            rect.map(f64::from),
-                            shows_of(page, id).iter().any(|show| moving.contains(show)),
-                        ),
-                        other => (other.rect().map(f64::from), false),
-                    })
-                    .collect();
+                // The hit list with every run that moves flagged. The blocks
+                // below that may move with the paragraph are flagged too until
+                // the edit's lines are known, and only the ones something lands
+                // on are then (`cascade`).
+                let flag = |moves: &BTreeSet<u32>| -> Vec<([f64; 4], bool)> {
+                    obstacles(page, run)
+                        .map(|other| match other {
+                            Around::Run(id, rect) => (
+                                rect.map(f64::from),
+                                shows_of(page, id).iter().any(|show| moves.contains(show)),
+                            ),
+                            other => (other.rect().map(f64::from), false),
+                        })
+                        .collect()
+                };
+                let may: BTreeSet<u32> = plan.beneath.iter().flatten().copied().collect();
+                let hits = flag(&moving.union(&may).copied().collect());
                 // Only the lines below: the runs after the edit leave a line
                 // whose start stays, and what stays there is the block's own.
                 left_behind(page, &below, &hits)?;
@@ -1755,8 +1854,8 @@ pub(super) fn prepare(
                     wrap: true,
                     pitch: Some(plan.pitch),
                 };
-                let (operations, lines, used, end) =
-                    lay_out(None, &shape, true, &hits).map_err(|error| {
+                let (operations, lines, used, end, inks) = lay_out(None, &shape, true, &hits)
+                    .map_err(|error| {
                         if error.starts_with("Text would overlap another line") {
                             wrap::NO_ROOM.to_string()
                         } else {
@@ -1866,6 +1965,34 @@ pub(super) fn prepare(
                         .collect();
                     lowered.push((show, wrap::drawn(page, show, &pieces)?));
                 }
+                // The blocks below that the paragraph's moved lines, or the
+                // edit's own lines, would land on move down with it.
+                let carried = cascade(
+                    page,
+                    &plan.beneath,
+                    &mut moving,
+                    (&inks, free.own),
+                    (corner(0., -drop), corner(0., -plan.pitch)),
+                );
+                let hits = if carried.is_empty() {
+                    flag(&below.union(&flowing).copied().collect())
+                } else {
+                    if placement
+                        .edited
+                        .iter()
+                        .flat_map(|edited| shows_of(page, *edited))
+                        .any(|show| carried.contains(&show))
+                    {
+                        return Err(wrap::CONFLICT.into());
+                    }
+                    for show in &carried {
+                        lowered.push((*show, wrap::lowered(page, *show, along(0., -drop))?));
+                    }
+                    let lower: BTreeSet<u32> = below.union(&carried).copied().collect();
+                    let hits = flag(&lower.union(&flowing).copied().collect());
+                    left_behind(page, &lower, &hits)?;
+                    hits
+                };
                 let placed = wrap_room(
                     page,
                     &moving,
@@ -1902,7 +2029,7 @@ pub(super) fn prepare(
             (operations, lines, 0., Some((rect, lowered, moved)))
         }
         None => {
-            let (operations, lines, used, _) = outcome?;
+            let (operations, lines, used, ..) = outcome?;
             (operations, lines, used, None)
         }
     };

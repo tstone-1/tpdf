@@ -10,11 +10,15 @@
 //!
 //! The edit is laid out at the block's own measure and line pitch, its
 //! continuation lines start at the block's left edge, and every line of the
-//! block below it moves down by the lines the edit added. Nothing else moves:
-//! the next block has to have that much clear space already, and an edit whose
-//! block has none is refused with the reason. What is below a paragraph is
-//! another paragraph most of the time, and moving that too is a larger
-//! capability than this one.
+//! block below it moves down by the lines the edit added. What is below a
+//! paragraph is another paragraph most of the time, and when the moved lines
+//! would land on it, it moves down by the same distance, and so does whatever
+//! it would land on in turn (`layout::cascade`): the first gap below deep
+//! enough for the added lines takes them, and nothing after it moves. Only a
+//! whole block moves, and only one that is entirely below the edited line and
+//! that the writer can move ([`Plan::beneath`]); text that is not such a block
+//! -- untagged, read-only, beside the paragraph -- stays, and an edit whose
+//! lines would land on it is refused with the reason.
 //!
 //! Text of the block after the edit on its own line flows too, a run at a
 //! time: each run after the edit keeps its gap to the one before it and stays
@@ -63,6 +67,12 @@ pub(super) struct Plan {
     /// The block's runs after the edit on its own line, in the order they are
     /// read along it. Each flows after the edit (`flow`).
     pub after: Vec<Unit>,
+    /// Other blocks the wrap may move down with its own lines, each as all of
+    /// its shows: every one of their runs is below the edited line, set the
+    /// same way, and one the writer can move. Which of them do move is decided
+    /// once the edit's lines are known: the ones those lines, or a block moved
+    /// before, would land on (`layout::cascade`).
+    pub beneath: Vec<Vec<u32>>,
 }
 
 /// One run of the block after the edit on its line, which moves whole.
@@ -349,6 +359,7 @@ pub(super) fn plan(
     if !start.is_finite() || !rest.is_finite() || rest <= 0. || far <= 0. {
         return Err(Refused::NotApplicable);
     }
+    let beneath = beneath(page, run, &known, &leader);
     Ok(Plan {
         first: far,
         start,
@@ -356,7 +367,39 @@ pub(super) fn plan(
         pitch,
         below,
         after,
+        beneath,
     })
+}
+
+/// The blocks that could move down with the edited one, each as its shows in
+/// stream order: see [`Plan::beneath`]. A block with one show the writer
+/// cannot move, one run above the bottom of the edited line or one run turned
+/// against it is not offered, so text it would be in the way of stays where it
+/// is and refuses the wrap as before. The edited block is never offered: its
+/// own run is on the edited line.
+fn beneath(
+    page: &Inspection,
+    run: &Run,
+    known: &BTreeMap<u32, &Run>,
+    leader: &BTreeMap<u32, u32>,
+) -> Vec<Vec<u32>> {
+    let tolerance = SAME_LINE_EM * run.size;
+    let mut blocks: BTreeMap<ObjectId, Option<Vec<u32>>> = BTreeMap::new();
+    for (&show, &owner) in &page.blocks {
+        let entry = blocks.entry(owner).or_insert_with(|| Some(Vec::new()));
+        let movable = page.contexts.contains_key(&show)
+            && !page.actual_text.contains_key(&show)
+            && !page.compound_run_clips.contains_key(&show)
+            && known
+                .get(leader.get(&show).unwrap_or(&show))
+                .and_then(|other| span(run, other))
+                .is_some_and(|((_, y), _)| y < -tolerance);
+        match (entry.as_mut(), movable) {
+            (Some(shows), true) => shows.push(show),
+            _ => *entry = None,
+        }
+    }
+    blocks.into_values().flatten().collect()
 }
 
 /// The operations that draw one show `offset` further along its page than its

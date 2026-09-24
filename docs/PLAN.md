@@ -5069,7 +5069,8 @@ and the mutations.
   `Tm` and followed by the same replay of the line matrix and the cursor that a replacement
   ends with, so every show after it that does not move is drawn from exactly the state it
   was. Rewriting a `Td` would have moved every later line of the text object.
-- **Nothing below the paragraph moves.** A moved line must stay on the page and in its clip,
+- **Nothing below the paragraph moves** (until 2026-09-24; item 3 below now moves the blocks
+  it would land on). A moved line must stay on the page and in its clip,
   and may come as close to what is below as the paragraph's own lines come to each other; a
   drawing or annotation partly over the lines that move refuses it, one holding them all
   does not.
@@ -5129,8 +5130,14 @@ Ranked by what the measurement says is left, the next increments are:
    push moving runs past `reach`'s limit, and a frame around the text no longer stops it.
    +25% as typed went from 57.5% to 59.7%, 701 of the 995 new acceptances on untagged pages.
    `BUILD.md`, *The push finds a run set flush against the edit*.
-3. **Moving what is below the paragraph**, the 916. The larger capability named above, and
-   the one where what is below is usually another paragraph that would have to move too.
+3. ~~**Moving what is below the paragraph**, the 916. The larger capability named above, and
+   the one where what is below is usually another paragraph that would have to move too.~~
+   Built 2026-09-24: a block the moved lines would land on moves down with them, and so on
+   down the page, until a gap takes the added lines (`layout::cascade`). At +25% as typed the
+   refusals for what is below went from 1,342 to 515 and acceptance from 59.8% to 60.9%;
+   1,330 verdicts moved from refused to accepted, none the other way. The gap used is often a
+   paragraph break, which then disappears. `BUILD.md`, *The blocks below a wrapped paragraph
+   move down with it*.
 4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
    wrong about the case a wrap damages.
 

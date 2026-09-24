@@ -93,6 +93,19 @@ pub(super) fn paragraph(gap: f64) -> Document {
     tagged(&content(gap, ""), &[&[0, 1, 2], &[3]])
 }
 
+/// `content` with the next paragraph's line left untagged: on a tagged page that
+/// is text the editor keeps read-only, so nothing can move it out of the way.
+fn untagged_next(content: &str) -> String {
+    let tagged = format!("/P <</MCID 3>> BDC ({NEXT}) Tj EMC");
+    assert!(content.contains(&tagged));
+    content.replace(&tagged, &format!("({NEXT}) Tj"))
+}
+
+/// [`paragraph`] with [`untagged_next`].
+fn fixed_below(gap: f64) -> Document {
+    tagged(&untagged_next(&content(gap, "")), &[&[0, 1, 2]])
+}
+
 fn index_of(doc: &Document, text: &str) -> usize {
     scan(doc, 0)
         .unwrap()
@@ -195,15 +208,150 @@ fn an_edit_past_the_page_edge_wraps_and_moves_the_rest_of_its_paragraph_down() {
 // would move have nowhere to go.
 #[test]
 fn a_paragraph_with_no_room_below_is_refused_with_the_reason() {
-    // The next paragraph 14 pt below: it is the paragraph's own pitch, so the
-    // last line would land on it.
-    let error = refusal(&paragraph(14.), WIDEST, LONGER);
+    // Text 14 pt below that cannot move: it is the paragraph's own pitch, so
+    // the last line would land on it.
+    let error = refusal(&fixed_below(14.), WIDEST, LONGER);
     assert!(
         error.contains("its lines would move onto what is below it"),
         "{error}"
     );
     // 28 pt below leaves exactly one line of the paragraph's own pitch.
-    wrapped(&paragraph(28.), WIDEST, LONGER);
+    wrapped(&fixed_below(28.), WIDEST, LONGER);
+}
+
+// The next paragraph set one pitch below is in the way, and moves down with
+// the paragraph's lines by the line the edit added, keeping the gap it had.
+#[test]
+fn the_next_paragraph_moves_down_when_the_lines_would_land_on_it() {
+    let doc = paragraph(14.);
+    assert_eq!(at(&placed_runs(&doc), NEXT), (20., 158.));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
+    // The paragraph's last line wrapping: nothing of it moves, and its own
+    // new line is what lands on the next paragraph.
+    let runs = placed_runs(&wrapped(&doc, LAST, LONGER));
+    assert!(
+        near(at(&runs, "THEN FIRST AND SECOND"), (20., 158.)),
+        "{runs:?}"
+    );
+    assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
+}
+
+// A block that moves may land on the one after it, which moves too; the first
+// gap below deep enough for the added line takes it, and nothing after that
+// gap moves.
+#[test]
+fn blocks_below_move_as_far_as_the_first_gap_that_takes_the_added_line() {
+    let three = |gap: f64| {
+        tagged(
+            &content(14., &format!("0 -{gap} Td /P <</MCID 4>> BDC (BY) Tj EMC ")),
+            &[&[0, 1, 2], &[3], &[4]],
+        )
+    };
+    let runs = placed_runs(&wrapped(&three(14.), WIDEST, LONGER));
+    assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
+    assert!(near(at(&runs, "BY"), (20., 130.)), "{runs:?}");
+    let doc = three(40.);
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
+    assert_eq!(at(&runs, "BY"), at(&placed_runs(&doc), "BY"));
+}
+
+// The edit's first line may overlap the line under it by the sliver one line
+// pitch leaves, as the source did; that is not landing on it. Here a word of
+// another block sits under the end of the edited line, beyond where the edit's
+// new line reaches, and stays where it is.
+#[test]
+fn a_block_the_edited_line_only_grazes_stays() {
+    let doc = tagged(
+        &content(52., "155 55 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    assert_eq!(at(&placed_runs(&doc), "BY"), (175., 175.));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert_eq!(at(&runs, "BY"), (175., 175.));
+}
+
+// A block that would have to leave the page to make room refuses the wrap, as
+// the paragraph's own line at the foot of the page does.
+#[test]
+fn a_block_below_that_would_leave_the_page_refuses_the_wrap() {
+    let low = |start: f64| {
+        tagged(
+            &content(14., "").replace("20 200 Td", &format!("20 {start} Td")),
+            &[&[0, 1, 2], &[3]],
+        )
+    };
+    // The next paragraph's baseline at 26 goes to 12, whose box ends 9 above
+    // the foot of the page; at 12 it would go to -2.
+    wrapped(&low(68.), WIDEST, LONGER);
+    let error = refusal(&low(54.), WIDEST, LONGER);
+    assert!(error.contains("what is below it"), "{error}");
+}
+
+// A block with text above the edited line is not below the paragraph -- a
+// column beside it, a heading set in the margin -- and is not moved: the wrap
+// is refused as though it could not move at all.
+#[test]
+fn a_block_reaching_above_the_edited_line_is_not_moved() {
+    let doc = tagged(
+        &content(14., "200 62 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3, 4]],
+    );
+    assert_eq!(at(&placed_runs(&doc), "BY"), (220., 220.));
+    let error = refusal(&doc, WIDEST, LONGER);
+    assert!(error.contains("what is below it"), "{error}");
+}
+
+// A block the writer cannot move stays, and the wrap is refused as though it
+// were any other text: here its text is inside an ActualText span, and then a
+// second line of it is set on a skewed matrix, which the editor keeps
+// read-only -- the block's first line is what the moved lines land on.
+#[test]
+fn a_block_below_that_cannot_be_moved_refuses_the_wrap() {
+    for next in [
+        format!("/P <</MCID 3>> BDC /Span <</ActualText ({NEXT})>> BDC ({NEXT}) Tj EMC EMC"),
+        format!("/P <</MCID 3>> BDC ({NEXT}) Tj 1 0 0.2 1 20 100 Tm (BY) Tj EMC"),
+    ] {
+        let doc = tagged(
+            &content(14., "").replace(&format!("/P <</MCID 3>> BDC ({NEXT}) Tj EMC"), &next),
+            &[&[0, 1, 2], &[3]],
+        );
+        let error = refusal(&doc, WIDEST, LONGER);
+        assert!(error.contains("what is below it"), "{next}: {error}");
+    }
+    // Under a clip drawn as a path, which nothing checks a moved run against:
+    // moved, the line would leave its own clip and not be drawn at all.
+    let clipped = tagged(
+        &content(14., "").replace(
+            &format!("0 -14 Td /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET"),
+            &format!(
+                "ET q 0 150 m 300 150 l 300 175 l 0 175 l h W n BT /F1 12 Tf 20 158 Td \
+                 /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET Q"
+            ),
+        ),
+        &[&[0, 1, 2], &[3]],
+    );
+    let error = refusal(&clipped, WIDEST, LONGER);
+    assert!(error.contains("what is below it"), "{error}");
+}
+
+// A pending edit of a block the wrap moves down would be written where it was,
+// on the line the wrap has just filled.
+#[test]
+fn a_wrap_that_moves_the_next_paragraph_refuses_an_edit_of_it() {
+    for gap in [14., 52.] {
+        let doc = paragraph(gap);
+        let wrap = in_default_box(&doc, index_of(&doc, WIDEST), LONGER);
+        let next = in_default_box(&doc, index_of(&doc, NEXT), "SECOND BRAND");
+        let result = write(&mut doc.clone(), &[wrap, next]);
+        match gap {
+            14. => assert!(result.unwrap_err().contains("another pending edit")),
+            _ => assert!(result.is_ok(), "{result:?}"),
+        }
+    }
 }
 
 // An untagged page has no answer to which lines are one paragraph, so its
@@ -371,21 +519,20 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
     let runs = placed_runs(&saved);
     assert!(near(at(&runs, "ONCE  AND DONE"), (20., 158.)), "{runs:?}");
     // Two lines is more than 24 pt of room below leaves.
-    let error = refusal(
-        &split_line(38., ""),
-        "FIFTY NINE",
-        "FIFTY NINE THEN FIRST AND SECOND AND",
+    let fixed = tagged(
+        &untagged_next(&content(38., "")).replace(
+            &format!("({WIDEST}) Tj EMC"),
+            "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
+        ),
+        &[&[0, 1, 2]],
     );
+    let error = refusal(&fixed, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
     assert!(
         error.contains("its lines would move onto what is below it"),
         "{error}"
     );
     // One line fits in the same room.
-    wrapped(
-        &split_line(38., ""),
-        "FIFTY NINE",
-        "FIFTY NINE THEN FIRST AND SEC",
-    );
+    wrapped(&fixed, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SEC");
 }
 
 // Under a hanging indent the lines after the first start further right, so
@@ -882,7 +1029,7 @@ fn a_line_pushed_by_one_edit_and_moved_down_by_a_wrap_is_refused() {
 fn a_wrap_on_a_quarter_turned_page_moves_the_same_lines_the_same_way() {
     for turns in [90, 180, 270] {
         let turned = |gap: f64| {
-            let mut doc = paragraph(gap);
+            let mut doc = fixed_below(gap);
             let page = crate::pagetree::ordered_pages(&doc)[0];
             doc.get_dictionary_mut(page).unwrap().set("Rotate", turns);
             doc

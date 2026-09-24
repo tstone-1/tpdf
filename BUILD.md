@@ -10842,3 +10842,77 @@ re-aimed at the new code; `--only flow --only cut: --only wrap --only push:` ran
 survivors, each answered by a new test and re-run, and the two `wrap room` mutations touched last
 were run on the final tree.
 
+
+### The blocks below a wrapped paragraph move down with it — measured 2026-09-24
+
+Ranked next in `docs/PLAN.md` §7 (item 3). A wrap moved its own paragraph's lines down and
+refused when they would land on anything else, which below a paragraph is another paragraph
+most of the time: at +25% as typed, 1,342 edits were refused as *"its lines would move onto
+what is below it"*. Now the block they would land on moves down by the same distance, and so
+does whatever that block would land on in turn, until a gap below is deep enough for the added
+lines; nothing after that gap moves.
+
+`wrap::Plan::beneath` lists the candidates: every other structure-tree block whose runs are all
+below the edited line, set in its direction, and movable by the writer (a layout context, not
+inside an ActualText span, not under a clip drawn as a path). A block with one run above the
+line -- a column beside the paragraph, a heading in the margin -- is not offered, so it stays and
+refuses the wrap as before. `layout::cascade` decides which candidates move: a block moves when
+a run already moving would land on it by `wrap_room`'s own rule (`lands`, factored out of it), or
+when the ink of one of the edit's lines is over it by `lay_out`'s own rule (`strikes`, likewise
+factored out, which exempts the edited run's own box). A moved block's runs join the moving set,
+so the next block down is judged against where it went. At most 32 blocks move (`MAX_CASCADE`);
+the corpus never came near it, and no test reaches the bound. Each moved show is written with
+`wrap::lowered`, exactly as the paragraph's own lines are, and `wrap_room` checks the whole moving
+set against the page, clips, text that stays, and drawings or annotations over the area swept.
+
+`lay_out` runs once, with every candidate flagged as moving, and now also returns each line's
+ink on the displayed page. The first version seeded the cascade with a plain 0.1 pt overlap
+test instead, and the corpus caught it: on Arcadia pages 115 and 116 the edited line's ink
+overlapped the next paragraph's box by 0.7 pt inside the run's own box, which `lay_out` allows,
+so the cascade moved a paragraph that did not need to move, into an underline. Those two
+verdicts went from accepted to refused; with `strikes` shared they are accepted again and pass
+the round trip, and `a_block_the_edited_line_only_grazes_stays` pins it.
+
+Growth instrument, the release probe built from `HEAD` and one from this tree, 31 files, 44,282
+runs, `app` mode:
+
+| trial | before | after |
+|---|---:|---:|
+| unchanged | 43,838 | 43,838 |
+| same length | 37,449 | 37,456 |
+| +10% | 30,358 (68.56%) | 30,608 (69.12%) |
+| +25% | 26,473 (59.78%) | 26,953 (60.87%) |
+| +50% | 23,866 (53.90%) | 24,459 (55.23%) |
+
+`--compare`: **595,732 verdicts unchanged in kind, 1,330 refused before and accepted now, 0
+accepted before and refused now.** 9,309 worker-agreement checks, 0 disagreements. Every one of
+the 1,330 was refused before as *"its lines would move onto what is below it"*; at +25% they are
+Arcadia 309, Coatesville 121, Hugo 31, Illinois 18, Healdsburg 1 -- the five tagged files. At
++25% the refusals under that message went from 1,342 to 515, and *"a drawing or an annotation is
+placed over the lines that would move"* from 54 to 401: moving more of the page sweeps more of
+it. Rendered, the pages with the most of those (Arcadia 76, Coatesville 10) underline their
+headings and item titles, and moving the text would leave the underline behind. Two verdicts
+refused before and still refused now give a new reason, *"edited page exceeds the text operator
+limit"*: each moved show costs at least four operators, and a dense page has less room for many.
+
+**What it does to the page: a moved block may use up a paragraph break.** The gap that takes the
+added lines is usually the space between two paragraphs further down, and a moved line may come
+as close to what stays as a paragraph's own lines are to each other -- the rule the wrap has had
+for its own lines since *Wrapping onto a new line of the paragraph*. So on Coatesville page 14
+the paragraph below the edit moves down a line and then sits directly on the one after it, with
+no blank line between them. Nothing overlaps, and the glyph check passes; the break is gone.
+
+**Round trips**: two grow25 flips per file with seed 7, nine edits (Healdsburg has one).
+All nine pass the probe (preview and save agree, adjacent pixels unchanged), `qpdf --check` and
+`text_wrap_check.py --compare`, which requires every glyph to stay or move straight down by one
+distance shared by all.
+
+Tests: `wrap_tests` gained seven (the next paragraph moving under a moved line and under the
+edit's own new line, a chain stopped by the first deep gap, a block leaving the page, a block
+reaching above the line, an unmovable block below in three forms, a pending edit of a moved
+block, and the grazed block); three existing ones used a movable paragraph as the thing below
+and now use an untagged line, which nothing can move. The mutation table gained eleven under
+`cascade:` and `beneath:`, and six existing ones were re-aimed at `landing`, `lands` and
+`strikes`. Two survived their first run: one showed a missing test (a block mixing an editable
+line with a read-only one), and the other was a check that could never fire (skipping the edited
+block, which its own run already excludes), and was deleted.
