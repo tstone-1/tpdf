@@ -423,22 +423,23 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** On a tagged page, an edit that reaches the
-          edge of the page now wraps onto a new line of its own paragraph, and
-          the rest of the paragraph moves down to make room; where there is no
-          room below the paragraph, the refusal says so. Editing a line no longer
-          moves text on the line below it, which the previous release's line
-          push could do. A redaction report now says which page a word it could
-          not remove is on. And an applied update finishes from inside tpdf:
-          *Restart to finish update* relaunches it, asking first about unsaved
-          work.
+          **New in this release.** An edit that reaches the edge of the page
+          now wraps on pages without tags too: tpdf works the paragraphs out
+          from the lines themselves, and is more careful there than on a tagged
+          page --- a line on its own does not wrap, and an edit that would move a
+          line away from text set beside it is refused. A wrap now moves the
+          paragraphs below it down, keeps a blank line in every paragraph break,
+          and splits the text after the edit between words. Text set right
+          against the edit is pushed along, and no edit can push text off the
+          page or onto other text. A tab closes with a middle-click, *Close all
+          tabs* closes every one, and the tab labels' size is a setting.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
           papers, and documents made with XeLaTeX, LuaTeX and Typst. Math
           symbols, slide backgrounds and page stamps stay read-only.
           Edits must fit their chosen box, clips and surrounding content; a box
-          you have not sized grows with the text, and on tagged pages wraps.
+          you have not sized grows with the text, and wraps within its paragraph.
           Unsupported pages and glyphs are refused; automatic table resizing,
           flow across pages and complex-script shaping remain unbuilt.
           Save text edits before marking redactions.
