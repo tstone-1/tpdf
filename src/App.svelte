@@ -4,6 +4,7 @@
   import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DocumentTabs, DocumentTasks, type DocumentTab } from "./lib/documenttabs";
+  import { TabLabelSize } from "./lib/tablabels";
   import { PLAIN_SEARCH } from "./lib/search";
   import Toolbar from "./Toolbar.svelte";
   import { toolbarState } from "./lib/toolbar";
@@ -146,6 +147,8 @@
   });
   const tabs = new DocumentTabs<DocumentTab>();
   let tabRows = $state<{ id: number; path: string; dirty: boolean }[]>([]);
+  const tabLabelSize = new TabLabelSize();
+  let tabLabelPx = $state(tabLabelSize.px);
   let activeTab = $state(-1);
   const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
   let committingPopup = false;
@@ -227,6 +230,46 @@
       } catch (e) { say(String(e)); }
       finally { opening = false; refreshMenu(); }
     }));
+  }
+
+  /**
+   * Closes every tab, asking once when any of them has unsaved work -- the
+   * same settle-then-read the update's unsaved check does, since reading
+   * `dirty` before a pending edit lands reports work as saved.
+   */
+  function closeAllTabs(): Promise<void> {
+    return documentTasks.idle().then(() => opens.run(async () => {
+      if (!tabs.all.length) return;
+      opening = true;
+      try {
+        await settleDocument();
+        const unsaved = tabs.all.filter((tab) => tab.edits.state.dirty).map((tab) => basename(tab.path));
+        if (unsaved.length && !await confirmDialog(
+          unsaved.length === 1
+            ? `Discard unsaved changes to ${unsaved[0]}?`
+            : `Discard unsaved changes in ${unsaved.length} documents?`,
+          { title: "Close all tabs", kind: "warning", okLabel: "Discard changes", cancelLabel: "Keep open" },
+        )) return;
+        const ids = tabs.all.map((tab) => tab.doc.id);
+        clearActiveDocument();
+        for (const id of ids) tabs.remove(id);
+        refreshTabs();
+        for (const id of ids) {
+          // A teardown refusal must not keep the other handles open.
+          await call("close_document", { doc: id }).catch((e) => {
+            console.warn(`could not release document ${id}: ${e}`);
+          });
+        }
+      } catch (e) { say(String(e)); }
+      finally { opening = false; refreshMenu(); }
+    }));
+  }
+
+  /** Middle-click on a tab closes it, as in a browser. */
+  function tabAuxClick(event: MouseEvent, id: number): void {
+    if (event.button !== 1) return;
+    event.preventDefault();
+    if (!opening && !documentBusy) void closeTab(id);
   }
 
   function clearActiveDocument(): void {
@@ -596,6 +639,9 @@
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => reloadDocument(),
     closeDocument: () => void closeTab(openDoc),
+    closeAllDocuments: () => void closeAllTabs(),
+    tabLabels: () => tabLabelSize,
+    resizeTabLabels: (direction) => { tabLabelPx = tabLabelSize.step(direction); refreshMenu(); },
     nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.doc.id); },
     documentCount: () => tabRows.length,
     busyOpening: () => opening || rasterCopyBusy || documentBusy,
@@ -2172,7 +2218,7 @@
     event.stopPropagation();
     const tab = tabs.find(id);
     if (!tab) return;
-    contextMenu?.show(["tab.reveal", "tab.copyPath", "---", "tab.close"], { x: event.clientX, y: event.clientY }, [{
+    contextMenu?.show(["tab.reveal", "tab.copyPath", "---", "tab.close", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
       id: "tab.reveal",
       title: isMac() ? "Show in Finder" : "Show in Explorer",
       enabled: () => tabs.find(id) === tab,
@@ -3974,9 +4020,13 @@
   {/if}
 
   {#if tabRows.length}
-    <div class="document-tabs" role="tablist" aria-label="Open documents">
+    <div class="document-tabs" role="tablist" aria-label="Open documents"
+      style:--tab-label-size={`${tabLabelPx}px`}>
       {#each tabRows as tab, index (tab.id)}
-        <div class="document-tab" class:active={tab.id === activeTab}>
+        <!-- The middle button's mousedown would start autoscroll on Windows. -->
+        <div class="document-tab" class:active={tab.id === activeTab} role="presentation"
+          onmousedown={(event) => { if (event.button === 1) event.preventDefault(); }}
+          onauxclick={(event) => tabAuxClick(event, tab.id)}>
           <button id={`document-tab-${tab.id}`} role="tab"
             aria-selected={tab.id === activeTab} aria-controls="document-panel"
             tabindex={tab.id === activeTab ? 0 : -1}
@@ -4018,13 +4068,14 @@
 
 <style>
   .document-tabs { display:flex; flex-shrink:0; overflow-x:auto; gap:3px; padding:4px 8px 0; border-bottom:1px solid color-mix(in srgb, CanvasText 20%, transparent); }
-  .document-tab { display:flex; min-width:100px; max-width:240px; flex-shrink:0; border:1px solid transparent; border-radius:6px 6px 0 0; }
+  .document-tab { display:flex; min-width:100px; max-width:240px; flex-shrink:0; border:1px solid transparent; border-radius:6px 6px 0 0; font-size:var(--tab-label-size); }
+  .document-tab button { min-height:0; }
   .document-tab.active { background:color-mix(in srgb, Highlight 12%, Canvas); border-color:color-mix(in srgb, Highlight 50%, Canvas); border-bottom:2px solid Highlight; }
   .document-tab button { border:0; background:transparent; color:inherit; border-radius:4px; }
-  .document-tab [role="tab"] { display:flex; flex:1 1 auto; align-items:center; gap:6px; min-width:0; padding:6px 10px; }
+  .document-tab [role="tab"] { display:flex; flex:1 1 auto; align-items:center; gap:6px; min-width:0; padding:0.4em 0.8em; }
   .tab-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .document-tab [aria-label="Unsaved changes"] { flex:none; }
-  .document-tab .tab-close { padding:4px 8px; margin:3px; }
+  .document-tab .tab-close { padding:0.25em 0.6em; margin:3px; }
   .document-tab .tab-close:hover { background:color-mix(in srgb, CanvasText 14%, transparent); }
   .tab-open { align-self:center; flex-shrink:0; }
 

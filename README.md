@@ -92,9 +92,12 @@ the tpdf menu on macOS or command palette to remember an opt-out on this device.
   never be asked about again.
 - **Document tabs** keep several PDFs open with separate edits, reading positions,
   searches and sidebar choices. Ctrl+Tab / Ctrl+Shift+Tab switch tabs; Ctrl+W
-  (Cmd+W on macOS) closes one, checking for unsaved changes.
-  Right-click a tab to show its file in Explorer or Finder, copy its path, or close it.
-  <!-- built: file.close view.nextTab view.previousTab -->
+  (Cmd+W on macOS) closes one, checking for unsaved changes, and so does a middle-click
+  on the tab. Right-click a tab to show its file in Explorer or Finder, copy its path,
+  close it, or close all tabs, which asks once if any of them has unsaved changes.
+  The tab labels' size is adjustable: Larger, Smaller and Default tab labels, in the
+  View menu and the command palette; the choice is remembered.
+  <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault -->
 - Session restore: the most recent document, page, zoom and rotation you left on.
   The full tab list is not restored after restarting.
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for

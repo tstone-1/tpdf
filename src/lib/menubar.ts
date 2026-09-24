@@ -114,6 +114,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.open",
       "file.reload",
       "file.close",
+      "file.closeAll",
       SEPARATOR,
       "file.save",
       "file.saveCopy",
@@ -309,6 +310,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "view.showRedactions",
       SEPARATOR,
       "view.invertPages",
+      SEPARATOR,
+      "view.tabLabelsLarger",
+      "view.tabLabelsSmaller",
+      "view.tabLabelsDefault",
     ],
   },
   {

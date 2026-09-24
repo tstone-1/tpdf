@@ -93,6 +93,12 @@ export interface AppActions {
   openDocument(): void;
   /** Close the active document, checking for unsaved work. */
   closeDocument(): void;
+  /** Close every open document, asking once if any has unsaved work. */
+  closeAllDocuments(): void;
+  /** The document tabs' label size, read for the resize commands' guards. */
+  tabLabels(): { canGrow: boolean; canShrink: boolean; isDefault: boolean };
+  /** Make the tab labels a step larger (1), smaller (-1) or the default (0). */
+  resizeTabLabels(direction: -1 | 0 | 1): void;
   /** Move through the open document tabs. */
   nextDocument(delta: number): void;
   /** Number of open document tabs. */
@@ -519,6 +525,30 @@ export function registerAppCommands(
       keys: label("file.close"),
       enabled: withDocument,
       run: () => actions.closeDocument(),
+    },
+    {
+      id: "file.closeAll",
+      title: "Close all tabs",
+      enabled: withDocument,
+      run: () => actions.closeAllDocuments(),
+    },
+    {
+      id: "view.tabLabelsLarger",
+      title: "Larger tab labels",
+      enabled: () => withDocument() && actions.tabLabels().canGrow,
+      run: () => actions.resizeTabLabels(1),
+    },
+    {
+      id: "view.tabLabelsSmaller",
+      title: "Smaller tab labels",
+      enabled: () => withDocument() && actions.tabLabels().canShrink,
+      run: () => actions.resizeTabLabels(-1),
+    },
+    {
+      id: "view.tabLabelsDefault",
+      title: "Default tab label size",
+      enabled: () => withDocument() && !actions.tabLabels().isDefault,
+      run: () => actions.resizeTabLabels(0),
     },
     {
       id: "view.nextTab",

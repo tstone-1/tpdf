@@ -55,6 +55,8 @@ function registry(overrides: Record<string, () => unknown> = {}): CommandRegistr
     updateAvailable: () => false,
     updateReady: () => false,
     busyOpening: () => false,
+    // Tab labels at the default size, as a fresh install has them.
+    tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: true }),
     ...overrides,
   };
   const actions = new Proxy(
@@ -215,6 +217,8 @@ describe("buildMenu", () => {
     // command to the File menu edits this line, which is the point --- the
     // menu's shape is a decision, and a decision should not change silently.
     expect(file?.items.map((item) => item.kind)).toEqual([
+      // Open, Reload, Close tab, Close all tabs.
+      "command",
       "command",
       "command",
       "command",

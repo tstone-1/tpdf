@@ -5365,6 +5365,7 @@ TEST_FILES = [
     "src/lib/signature.test.ts",
     "src/lib/forms.test.ts",
     "src/lib/documenttabs.test.ts",
+    "src/lib/tablabels.test.ts",
     "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",
     "src/lib/text.test.ts",
@@ -7796,6 +7797,37 @@ MUTATIONS += [
         "    }\n",
         "",
         "holds the picked region until it is cleared or the model drops it",
+    ),
+]
+
+MUTATIONS += [
+    Mutation(
+        "tab labels: any saved number is a size",
+        "src/lib/tablabels.ts",
+        "      if (TAB_LABEL_SIZES.includes(saved)) this.#px = saved;",
+        "      if (saved > 0) this.#px = saved;",
+        "reads back a saved size and ignores one it does not offer",
+    ),
+    Mutation(
+        "tab labels: a step is not remembered",
+        "src/lib/tablabels.ts",
+        "    try { this.storage().setItem(KEY, String(next)); } catch { /* Kept for this session. */ }",
+        "",
+        "starts at the default and steps through the offered sizes, stopping at both ends",
+    ),
+    Mutation(
+        "tab labels: stepping runs off the ends",
+        "src/lib/tablabels.ts",
+        "      : TAB_LABEL_SIZES[Math.min(TAB_LABEL_SIZES.length - 1, Math.max(0, at + direction))]",
+        "      : TAB_LABEL_SIZES[at + direction]",
+        "starts at the default and steps through the offered sizes, stopping at both ends",
+    ),
+    Mutation(
+        "tab labels: a failed write loses the new size",
+        "src/lib/tablabels.ts",
+        "    this.#px = next;\n    try { this.storage().setItem(KEY, String(next)); } catch { /* Kept for this session. */ }",
+        "    try { this.storage().setItem(KEY, String(next)); this.#px = next; } catch { /* Kept for this session. */ }",
+        "keeps working when storage throws",
     ),
 ]
 

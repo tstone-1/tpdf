@@ -46,6 +46,15 @@ have the binary.)
   words that fit stay on the line and the rest start the next one, drawn from
   the document's own letters and spacing. No line starts with a space any more.
 
+- **A middle-click on a tab closes it**, and the tab's right-click menu has
+  **Close all tabs**, which asks once when any open document has unsaved
+  changes. Close all tabs is also in the File menu and the command palette.
+- **Tab labels are smaller, and their size is a setting.** They were set at the
+  body text's 13 px in 34 px tall buttons; they are now 11 px in a strip sized
+  to its text. *Larger tab labels*, *Smaller tab labels* and *Default tab label
+  size* in the View menu and the palette step between 9 and 16 px, and the
+  choice is remembered.
+
 ### Fixed
 
 - **Text set right against the edited text is now moved out of the way.**
