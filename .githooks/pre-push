@@ -1,0 +1,88 @@
+#!/bin/sh
+# pre-push hook for public repositories.
+# Blocks pushes that would leak internal-only content into GitHub.
+# Uses the PowerShell audit when available, with a POSIX fallback for macOS/Linux.
+#
+# Activate per-clone with: git config core.hooksPath .githooks
+# Skip a single push (rare, use with care): SKIP_AGENT_MEMORY_AUDIT=1 git push
+
+set -u
+
+if [ "${SKIP_AGENT_MEMORY_AUDIT:-}" = "1" ]; then
+    echo "[pre-push] SKIP_AGENT_MEMORY_AUDIT=1 -- skipping public-safe audit."
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+AUDIT=""
+
+# Search the canonical agent-memory clone locations.
+# Windows flat layout: $USERPROFILE/agent-memory/
+# macOS hierarchical:  $HOME/Developer/github.com/tstone-1/agent-memory/
+for candidate in \
+    "${USERPROFILE:-}/agent-memory/bin/audit-agent-memory.ps1" \
+    "$HOME/agent-memory/bin/audit-agent-memory.ps1" \
+    "$HOME/Developer/github.com/tstone-1/agent-memory/bin/audit-agent-memory.ps1"; do
+    case "$candidate" in /*|*:*) ;; *) continue ;; esac
+    if [ -f "$candidate" ]; then
+        AUDIT="$candidate"
+        break
+    fi
+done
+
+if [ -z "$AUDIT" ]; then
+    echo "[pre-push] ERROR: audit script not found in any known location."
+    echo "[pre-push] Looked for agent-memory/bin/audit-agent-memory.ps1 under:"
+    echo "[pre-push]   \$USERPROFILE, \$HOME, \$HOME/Developer/github.com/tstone-1"
+    echo "[pre-push] Push BLOCKED. Clone agent-memory or override with SKIP_AGENT_MEMORY_AUDIT=1."
+    exit 1
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "$AUDIT" -CheckPublicSafe -CheckRepoPath "$REPO_ROOT"
+    exit $?
+fi
+
+echo "[pre-push] pwsh not found; running POSIX public-safe fallback."
+echo "[pre-push] Scanning tracked text files for tokens that must not appear in a public repo..."
+
+PATTERNS_FILE="$(mktemp "${TMPDIR:-/tmp}/public-safe-patterns.XXXXXX")"
+trap 'rm -f "$PATTERNS_FILE"' EXIT HUP INT TERM
+
+awk "
+/^[[:space:]]*\\\$ForbiddenPatterns[[:space:]]*=[[:space:]]*@\\(/ { in_list=1; next }
+in_list && /^[[:space:]]*\\)/ { exit }
+in_list {
+    line = \$0
+    sub(/^[[:space:]]*/, \"\", line)
+    if (line ~ /^'/) {
+        sub(/^'/, \"\", line)
+        sub(/'[[:space:]]*,?[[:space:]]*(#.*)?$/, \"\", line)
+        gsub(/''/, \"'\", line)
+        print line
+    }
+}
+" "$AUDIT" > "$PATTERNS_FILE"
+
+if [ ! -s "$PATTERNS_FILE" ]; then
+    echo "[pre-push] ERROR: fallback could not read public-safe patterns from audit script."
+    exit 1
+fi
+
+git grep -n -I -i -E -f "$PATTERNS_FILE" -- .
+rc=$?
+
+if [ "$rc" -eq 0 ]; then
+    echo ""
+    echo "[pre-push] FAIL - forbidden tokens found."
+    echo "[pre-push] Remove/rephrase the content before pushing, or use SKIP_AGENT_MEMORY_AUDIT=1 only for a documented false positive."
+    exit 1
+fi
+
+if [ "$rc" -eq 1 ]; then
+    echo "[pre-push] OK - no forbidden tokens found."
+    exit 0
+fi
+
+echo "[pre-push] ERROR: fallback scan failed with exit code $rc."
+exit "$rc"
