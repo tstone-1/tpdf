@@ -1264,3 +1264,79 @@ fn textedit_type1_gapped_layout_matches_the_written_words() {
     );
     assert_eq!(metrics.items("AB CD", 999.).unwrap().len(), 1);
 }
+
+// A wrap cuts a show at its spaces, and in a font that writes none a space is
+// a word gap: the words keep their glyph bytes and the kerns inside them, the
+// gap before each is kept for joining two of them again, and the positions
+// are where the source draws them.
+#[test]
+fn textedit_type1_words_cut_at_word_gaps_and_keep_their_kerns() {
+    use crate::textedit::kerning;
+    let mut font = Font::new();
+    font.glyphs.retain(|(name, _)| name != "space");
+    let doc = page(
+        &font,
+        Object::Name(b"StandardEncoding".to_vec()),
+        None,
+        "BT /F1 10 Tf 40 180 Td (AB) Tj ET",
+    );
+    let metrics = embedded(&doc, doc.get_dictionary(font_id(&doc)).unwrap()).unwrap();
+    assert!(!metrics.writes_space());
+    let string = |text: &str| Object::string_literal(text);
+    let values = [
+        string("AB"),
+        Object::Integer(-250),
+        string("CD"),
+        Object::Integer(-30),
+        string("EF"),
+        Object::Integer(-300),
+        string("GH"),
+    ];
+    let words = kerning::words(&values, &metrics, (10., 0., 0.)).unwrap();
+    assert_eq!(words.len(), 3);
+    assert_eq!(words[0].items, [string("AB")]);
+    assert!(words[0].before.is_empty());
+    assert_eq!(
+        words[1].items,
+        [string("CD"), Object::Integer(-30), string("EF")]
+    );
+    assert_eq!(words[1].before, [Object::Integer(-250)]);
+    assert_eq!(words[2].before, [Object::Integer(-300)]);
+    assert_eq!(words[0].from, 0.);
+    assert!((words[1].from - words[0].to - 2.5).abs() < 1e-9);
+    assert!((words[2].from - words[1].to - 3.0).abs() < 1e-9);
+    assert_eq!(
+        kerning::joined(&words, 1..3),
+        [
+            string("CD"),
+            Object::Integer(-30),
+            string("EF"),
+            Object::Integer(-300),
+            string("GH")
+        ]
+    );
+    // Two gaps with nothing between them are not one space: moved whole.
+    let doubled = [
+        string("AB"),
+        Object::Integer(-250),
+        string(""),
+        Object::Integer(-250),
+        string("CD"),
+    ];
+    assert!(kerning::words(&doubled, &metrics, (10., 0., 0.)).is_none());
+    // In a font that writes a space, a kern beside the space glyph belongs to
+    // the space: the word before it ends at its last glyph.
+    let doc = page(
+        &Font::new(),
+        Object::Name(b"StandardEncoding".to_vec()),
+        None,
+        "BT /F1 10 Tf 40 180 Td (AB) Tj ET",
+    );
+    let metrics = embedded(&doc, doc.get_dictionary(font_id(&doc)).unwrap()).unwrap();
+    assert!(metrics.writes_space());
+    let values = [string("AB"), Object::Integer(30), string(" CD")];
+    let words = kerning::words(&values, &metrics, (10., 0., 0.)).unwrap();
+    assert_eq!(words[0].items, [string("AB")]);
+    assert_eq!(words[1].before, [Object::Integer(30), string(" ")]);
+    assert_eq!(words[1].items, [string("CD")]);
+}

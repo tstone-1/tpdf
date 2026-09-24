@@ -10776,3 +10776,69 @@ still leaves out. Four new mutations in `scripts/mutate_rust.py`; `--only push: 
 --only flow --only 'grown box' --only 'boxed edit' --only layout:` ran 112, one survivor
 re-aimed and re-run, then all caught.
 
+### A run after the edit is cut at a space — measured 2026-09-24
+
+Ranked next in `docs/PLAN.md` §7. Until now the text after a wrapped edit moved a run at a time,
+so a run too wide for what was left of a line moved down whole and the line ended right after
+the edit. Now such a run is cut at a space: the words that fit stay on the line, the rest start
+the next line at the paragraph's left edge, and the space at the break is written nowhere, which
+also ends the 1% of flowed runs that started a line with a space.
+
+`kerning::words` cuts a show's items at its spaces -- a space glyph, or a word gap in a font that
+writes none -- keeping each word's own glyph bytes and the kerns inside it, and the source's own
+items between two words (`Word::before`) so a piece of several words is joined exactly as the
+source drew it. `wrap::flow` places pieces rather than runs, and `wrap::drawn` writes one `Tm` and
+one `TJ` per piece, followed by the single line-and-cursor restoration a moved show always ends
+with. A piece's rectangle for the room check is the run's cut to the piece's own stretch along
+the line, and the editor outlines a cut run as one rectangle holding every piece. Only a run
+that is one plain `Tj` or `TJ` is cut; a grouped run, whose members each carry a position, and
+one that does not cut cleanly (two spaces in a row, a word opening with a displacement) moves
+whole as before.
+
+**The corpus found a false refusal the cut made more common, in `wrap_room`.** Words that stay
+on the edit's own line slide along it, and the room check compares a moved box with the lines
+around it, allowing the overlap one line pitch leaves. The pitch is the paragraph's to its *next*
+line, and lines are not evenly pitched: on Coatesville page 19 the line above is 13.2 pt away
+against a pitch of 13.4 below, so the two lines' boxes overlap by 1.3 pt in the source against
+an allowance of 1.2, and every slide along that line was refused as "would move onto what is
+below it". A moved box may now keep the overlap its source already had with a line, when that
+overlap is a sliver -- less than half the shorter box, so never text on the same line. The half
+that withholds it from text on the same line has no test that can reach it: `wrap::plan` refuses
+a line shared with another block's text before the room check runs.
+
+Growth instrument, the release probe built from `HEAD` and one from this tree, 31 files, 44,282
+runs, `app` mode:
+
+| trial | before | after |
+|---|---:|---:|
+| unchanged | 43,838 | 43,838 |
+| same length | 37,434 | 37,449 |
+| +10% | 30,327 (68.49%) | 30,358 (68.56%) |
+| +25% | 26,444 (59.72%) | 26,473 (59.78%) |
+| +50% | 23,836 (53.83%) | 23,866 (53.90%) |
+
+`--compare`: **596,957 verdicts unchanged in kind, 105 refused before and accepted now, 0
+accepted before and refused now.** 9,309 worker-agreement checks, 0 disagreements. The gains
+are small by design: a cut changes where flowed text lands, not whether the edit fits. Every one
+of the 105 was refused before as *"its lines would move onto what is below it"* (at +25%:
+Coatesville 19, Arcadia 7, Hugo 3); which of the two changes -- a line fewer, or the overlap
+allowance -- accepted each was not split out. A first run of this measurement, before the
+allowance, found 8 verdicts the other way, all that `wrap_room` refusal; they are accepted now.
+
+**Round trips**: the eleven flow edits of *The rest of the line flows after the edit* and two per
+file with flips (six), with seed 7. Sixteen pass the probe and `qpdf --check`; the seventeenth,
+Arcadia page 53 operator 131, is refused since *The push finds a run set flush against the edit*,
+which found its old output pushed a run into a picture. `text_wrap_check.py --compare` passes
+fourteen of the sixteen, overlapping pairs 0 -> 0 on all; the two Hugo page 5 edits fail it on a
+superscript `th` after `140`, which sits on its own baseline and which the checker counts as a
+second line -- in the output `140` and `th` both moved the same 7 pt.
+
+Tests: `wrap_tests` gained six (the cut, the leading space, a kern inside a cut word, the space a
+cut run ended with, a grouped run moving whole, both pieces outlined) and the uneven-pitch slide;
+three existing ones now pin the cut instead of a whole run moving down. `fonts/type1/tests.rs`
+tests `kerning::words` on word gaps, a kern beside a space glyph and two spaces in a row. The
+mutation table gained twelve under `flow:`, `cut:` and `wrap room:`, and eight existing ones were
+re-aimed at the new code; `--only flow --only cut: --only wrap --only push:` ran 107 with three
+survivors, each answered by a new test and re-run, and the two `wrap room` mutations touched last
+were run on the final tree.
+

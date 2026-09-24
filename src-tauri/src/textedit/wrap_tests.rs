@@ -225,10 +225,15 @@ fn an_untagged_page_keeps_the_page_edge_refusal() {
 /// placed by a displacement of one character from the cursor the first leaves:
 /// `FIFTY NINE` from x 20 to 92, and `ONCE AND DONE` from x 99.2 to 192.8.
 fn split_line(gap: f64, after: &str) -> Document {
+    split_line_with(gap, after, "ONCE AND DONE")
+}
+
+/// [`split_line`] with other text in the run after the edit.
+fn split_line_with(gap: f64, after: &str, rest: &str) -> Document {
     tagged(
         &content(gap, after).replace(
             &format!("({WIDEST}) Tj EMC"),
-            "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
+            &format!("(FIFTY NINE) Tj [-600 ({rest})] TJ EMC"),
         ),
         &[&[0, 1, 2], &[3]],
     )
@@ -328,19 +333,43 @@ fn text_after_the_edit_keeps_its_gap_from_an_overhanging_last_glyph() {
 }
 
 // When the text after the edit does not fit what is left of the edit's last
-// line, it starts a line of its own at the paragraph's left edge, with no gap
-// in front of it, and the lines below move down by both lines.
+// line, it is cut at a space: the words that fit stay on that line, the rest
+// start the next at the paragraph's left edge with no gap and no space in
+// front of them, and the lines below move down by both lines. Each piece is
+// drawn from the run's own glyph bytes, the space between two words kept and
+// the one at the break written nowhere.
 #[test]
-fn text_after_the_edit_that_does_not_fit_its_last_line_starts_the_next() {
+fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
     let doc = split_line(52., "");
-    // The second line is `AND SECOND AND`, 100.8 pt; the gap and
-    // `ONCE AND DONE` are another 100.8, and the measure is 172.8.
+    // The second line is `AND SECOND AND`, 20 to 120.8; after the gap of one
+    // character, `ONCE AND` reaches 185.6 of the measure's 192.8, and `DONE`
+    // would reach 228.8.
     let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
     let runs = placed_runs(&saved);
     assert!(near(at(&runs, "AND SECOND AND"), (20., 172.)), "{runs:?}");
-    assert!(near(at(&runs, "ONCE AND DONE"), (20., 158.)), "{runs:?}");
+    assert!(near(at(&runs, "ONCE AND"), (128., 172.)), "{runs:?}");
+    assert!(near(at(&runs, "DONE"), (20., 158.)), "{runs:?}");
     assert!(near(at(&runs, LAST), (20., 144.)), "{runs:?}");
     assert_eq!(at(&runs, NEXT), (20., 120.));
+    let saved_shows = shows(&saved);
+    for piece in ["ONCE AND", "DONE"] {
+        assert!(
+            saved_shows.contains(&Object::Array(vec![Object::string_literal(piece)])),
+            "{piece}: {saved_shows:?}"
+        );
+    }
+    // A run that does not cut cleanly -- two spaces in a row -- moves to the
+    // next line whole, with no gap in front of it.
+    // Its extra space widens the measure to 207.2; after `SECOND AND SECOND`
+    // at 142.4 it does not fit.
+    let whole = split_line_with(52., "", "ONCE  AND DONE");
+    let saved = wrapped(
+        &whole,
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST AND SECOND AND SECOND",
+    );
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "ONCE  AND DONE"), (20., 158.)), "{runs:?}");
     // Two lines is more than 24 pt of room below leaves.
     let error = refusal(
         &split_line(38., ""),
@@ -361,41 +390,215 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_starts_the_next() {
 
 // Under a hanging indent the lines after the first start further right, so
 // the text after a short first word can be wider than a whole continuation
-// line. It has nowhere to flow to, and the edit keeps the refusal it had
-// rather than setting that text past the paragraph's measure.
+// line. Cut at its spaces it fits; a word wider than a continuation line has
+// nowhere to flow to, and the edit keeps the refusal it had rather than
+// setting that word past the paragraph's measure.
 #[test]
-fn text_after_the_edit_wider_than_a_continuation_line_keeps_the_refusal() {
-    let hanging = |first: &str| {
+fn text_after_the_edit_wider_than_a_continuation_line_is_cut_or_refused() {
+    let hanging = |first: &str, rest: &str| {
         tagged(
             &format!(
                 "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC ({first}) Tj \
-                 ( NINE ONCE AND DONE THEN FIRST) Tj EMC \
+                 ({rest}) Tj EMC \
                  20 -14 Td /P <</MCID 1>> BDC ({LAST}) Tj EMC \
                  -20 -52 Td /P <</MCID 2>> BDC ({NEXT}) Tj EMC ET"
             ),
             &[&[0, 1], &[2]],
         )
     };
-    // `FI` ends at 34.4, before the continuation's 40: the 216 pt after it
-    // is wider than the 210.4 pt from 40 to the measure.
-    let error = refusal(&hanging("FI"), "FI", "FIFTY NINE");
+    // `FI` ends at 34.4, before the continuation's 40, and a word of 30
+    // characters set right against it ends the line at 250.4, so the measure
+    // is there: 216 pt of word against 210.4 of continuation line. Pushed
+    // along instead it would reach 308 on a 300 pt page.
+    let error = refusal(
+        &hanging("FI", "NINEONCEANDDONETHENFIRSTABCDEF"),
+        "FI",
+        "FIFTY NINE",
+    );
     assert!(error.contains("it reaches the edge of the page"), "{error}");
-    // After `FIFTY` it starts at 56 and fits a continuation line.
-    let saved = wrapped(&hanging("FIFTY"), "FIFTY", "FIFTY NINE ");
+    // The same width in words is cut: what fits after `FIFTY NINE` stays on
+    // the first line, the rest starts the continuation line at 40.
+    for first in ["FI", "FIF", "FIFTY"] {
+        let saved = wrapped(
+            &hanging(first, " NINE ONCE AND DONE THEN FIRST"),
+            first,
+            "FIFTY NINE ",
+        );
+        let runs = placed_runs(&saved);
+        let moved: Vec<&(String, f64, f64)> = runs
+            .iter()
+            .filter(|(text, ..)| !text.starts_with("FIFTY") && text != LAST && text != NEXT)
+            .collect();
+        // Two pieces, the words in order and none lost, and the second one
+        // at the continuation line's start.
+        let [(head, _, top), (tail, x, y)] = moved[..] else {
+            panic!("{first}: {runs:?}");
+        };
+        assert_eq!(
+            format!("{head} {tail}"),
+            "NINE ONCE AND DONE THEN FIRST",
+            "{first}: {runs:?}"
+        );
+        assert_eq!(*top, 200., "{first}: {runs:?}");
+        assert!(near((*x, *y), (40., 186.)), "{first}: {runs:?}");
+    }
+}
+
+// A run that starts a new line does not bring the space it opened with: the
+// flow put nothing of it on the edit's line, and a line of the paragraph does
+// not start indented by a space.
+#[test]
+fn text_after_the_edit_starts_its_new_line_without_its_leading_space() {
+    // The leading space makes the edited line, and so the measure, reach 200.
+    // The edit's second line is one word of 20 characters, ending at 164; a
+    // gap, a space and `ONCE` would end at 207.2, so nothing of the run fits.
+    let doc = split_line_with(52., "", " ONCE AND DONE");
+    let saved = wrapped(
+        &doc,
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST SECONDANDSECONDANDSE",
+    );
     let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "ONCE AND DONE"), (20., 158.)), "{runs:?}");
     assert!(
-        near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),
+        runs.iter().all(|(text, ..)| !text.starts_with(' ')),
         "{runs:?}"
     );
-    // After `FIF` it starts at 41.6. The box the editor opens is 21.6 pt
-    // rounded up, so the run after it starts inside the box, which `room`
-    // skips; the push along the line still finds it, and it flows the same.
-    let saved = wrapped(&hanging("FIF"), "FIF", "FIFTY NINE ");
+    assert!(
+        shows(&saved).contains(&Object::Array(vec![Object::string_literal(
+            "ONCE AND DONE"
+        )])),
+        "{:?}",
+        shows(&saved)
+    );
+}
+
+// A cut keeps the run's own kerning: the kern inside `ONCE` stays in the piece
+// that holds it, and the pieces sit where their words did relative to each
+// other.
+#[test]
+fn a_run_cut_at_a_space_keeps_the_kerns_inside_its_words() {
+    // Half a point of kern between N and C makes `ONCE AND` 57.0 pt.
+    let doc = split_line_with(52., "", "ON) 50 (CE AND DONE");
+    let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "ONCE AND"), (128., 172.)), "{runs:?}");
+    assert!(near(at(&runs, "DONE"), (20., 158.)), "{runs:?}");
+    assert!(
+        shows(&saved).contains(&Object::Array(vec![
+            Object::string_literal("ON"),
+            Object::Integer(50),
+            Object::string_literal("CE AND"),
+        ])),
+        "{:?}",
+        shows(&saved)
+    );
+}
+
+// A run cut across lines that ended with a space keeps it as the gap to the
+// run after it: `BY` follows `DONE` by that space, where measuring from the
+// end of the run's advance would have set it against the word.
+#[test]
+fn the_run_after_a_cut_one_keeps_the_space_it_ended_with() {
+    // `BY` widens the edited line, and so the measure, to 236. The edit's
+    // second line, `SECOND AND SECOND`, ends at 142.4.
+    let doc = split_line_with(52., "", "ONCE AND DONE )] TJ [(BY");
+    let saved = wrapped(
+        &doc,
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST AND SECOND AND SECOND",
+    );
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "ONCE AND"), (149.6, 172.)), "{runs:?}");
+    assert!(near(at(&runs, "DONE"), (20., 158.)), "{runs:?}");
+    // `DONE` is 28.8 pt and the space 7.2.
+    assert!(near(at(&runs, "BY"), (56., 158.)), "{runs:?}");
+}
+
+// A run built from separately positioned fragments is not cut: each member
+// carries a position of its own, which one piece's `Tm` would not replace. It
+// moves to the next line whole, every member with it.
+#[test]
+fn a_grouped_run_after_the_edit_moves_whole() {
+    let doc = tagged(
+        &format!(
+            "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC ({FIRST}) Tj EMC \
+             0 -14 Td /P <</MCID 1>> BDC (FIFTY NINE) Tj [-600 (ON)] TJ \
+             93.6 0 Td (CE AND DONE) Tj EMC \
+             -93.6 -14 Td /P <</MCID 2>> BDC ({LAST}) Tj EMC \
+             0 -52 Td /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET"
+        ),
+        &[&[0, 1, 2], &[3]],
+    );
+    assert!(
+        scan(&doc, 0)
+            .unwrap()
+            .runs
+            .iter()
+            .any(|run| run.text == "ONCE AND DONE"),
+        "{:?}",
+        placed_runs(&doc)
+    );
+    let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
+    // Each member is written with a position of its own, so the saved page
+    // reads them as two runs, 14.4 pt apart as in the source.
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "ON"), (20., 158.)), "{runs:?}");
+    assert!(near(at(&runs, "CE AND DONE"), (34.4, 158.)), "{runs:?}");
+}
+
+// Lines are not evenly pitched. Here the line above the edit is 13 pt away
+// and the one below 14, so the two lines' em boxes already overlap by 2 pt in
+// the source, more than the allowance the pitch below gives. The words that
+// stay on the edit's line slide along it past that overlap, which is the
+// source's own and no new collision.
+#[test]
+fn text_sliding_along_its_line_may_keep_the_overlap_the_line_above_had() {
+    let doc = tagged(
+        &format!(
+            "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC ({FIRST}) Tj EMC \
+             0 -13 Td /P <</MCID 1>> BDC (FIFTY NINE) Tj \
+             [-600 (ONCE AND DONE THEN FIRST A)] TJ EMC \
+             0 -14 Td /P <</MCID 2>> BDC ({LAST}) Tj EMC \
+             0 -52 Td /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET"
+        ),
+        &[&[0, 1, 2], &[3]],
+    );
+    // The line ends at 286.4 on a 300 pt page, so `ONE` cannot push it; laid
+    // out at the measure, `ONCE AND DONE THEN` stays on the line 28.8 pt
+    // further along and `FIRST A` starts the next.
+    let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE ONE");
     let runs = placed_runs(&saved);
     assert!(
-        near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),
+        near(at(&runs, "ONCE AND DONE THEN"), (128., 187.)),
         "{runs:?}"
     );
+    assert!(near(at(&runs, "FIRST A"), (20., 173.)), "{runs:?}");
+}
+
+// A run cut across two lines is outlined as one rectangle holding both
+// pieces: from `DONE` at the start of the third line to the end of `ONCE AND`
+// on the second, one and two lines below where the run was.
+#[test]
+fn placements_outline_both_pieces_of_a_cut_run() {
+    let doc = split_line(52., "");
+    let after = scan(&doc, 0).unwrap().runs[index_of(&doc, "ONCE AND DONE")].clone();
+    let placed = placements(
+        &doc,
+        0,
+        &[in_default_box(
+            &doc,
+            index_of(&doc, "FIFTY NINE"),
+            "FIFTY NINE THEN FIRST AND SECOND AND",
+        )],
+    )
+    .unwrap();
+    let rect = placed[&after.operator];
+    let source = after.display_rect;
+    assert!((rect[0] - 20.).abs() < 0.001, "{rect:?}");
+    assert!((rect[2] - 185.6).abs() < 0.001, "{rect:?}");
+    assert!((rect[1] - source[1] - 14.).abs() < 0.001, "{rect:?}");
+    assert!((rect[3] - source[3] - 28.).abs() < 0.001, "{rect:?}");
 }
 
 // A run kerned back into the edit by more than the push's tenth of a unit is
@@ -414,10 +617,14 @@ fn text_kerned_into_the_edit_flows_although_the_push_leaves_it() {
     );
     let saved = wrapped(&doc, "FIFTY", "FIFTY NINE ");
     let runs = placed_runs(&saved);
+    // It keeps its gap to the edit, a space less the kern: 72 + 6.6 from the
+    // origin at 20. `FIRST` does not fit the measure and starts the
+    // continuation line.
     assert!(
-        near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),
+        near(at(&runs, "NINE ONCE AND DONE THEN"), (98.6, 200.)),
         "{runs:?}"
     );
+    assert!(near(at(&runs, "FIRST"), (40., 186.)), "{runs:?}");
 }
 
 // Text after the edit that the writer cannot move -- here inside an

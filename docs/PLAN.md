@@ -5086,11 +5086,9 @@ and the mutations.
   writer cannot move (no layout context, inside an ActualText span, under a compound clip).
   A run wider than a whole continuation line, which only a hanging indent produces, is refused
   the same way. `BUILD.md`, *The rest of the line flows after the edit*.
-- **A run is not split**, so a line ends short of the measure wherever the next run is too
-  wide for what is left of it: nearly every run after an edit holds several words (1,164 of
-  1,268 distinct cases in the four files it applies to), and the typical result is a line
-  that breaks right after the edited text. A moved run that starts a line keeps a leading
-  space if it had one, indenting that line by a space; about 1% of runs that start a line.
+- **A run is cut at a space** when it does not fit what is left of a line (added 2026-09-24):
+  the words that fit stay, the rest start the next line, and no line starts with a space.
+  A grouped run, or one with two spaces in a row, still moves whole.
 - **One batch cannot wrap a paragraph and edit a line the wrap moves.** Every edit in a batch
   is addressed to the page as it was scanned; a replacement written where its source was
   would land on the line the wrap has just filled. The reader is told to save first.
@@ -5110,11 +5108,11 @@ Ranked by what the measurement says is left, the next increments are:
    *Which runs share a line*.
 2. ~~**The rest of the line after the edit**~~, which has to flow onto the new line. Built
    2026-09-24, a run at a time; `BUILD.md`, *The rest of the line flows after the edit*.
-   Next in the same line of work: **splitting a run after the edit at a space**, so the edit's
-   line is filled to the measure rather than ending where a whole run no longer fits. It
-   means writing part of another run's text again in that run's own font (`own_items`
-   already keeps a prefix or suffix of a run's source items), and leaves no leading space at
-   the start of a line.
+   ~~Next in the same line of work: **splitting a run after the edit at a space**, so the edit's
+   line is filled to the measure rather than ending where a whole run no longer fits.~~ Built
+   2026-09-24: a run is cut at its spaces from its own glyph bytes (`kerning::words`), and no
+   line starts with a space. 105 verdicts moved from refused to accepted, none the other way.
+   `BUILD.md`, *A run after the edit is cut at a space*.
 
    ~~**Ranked above that, found while building it: the push along the line does not see the
    run after the edit in about half of these lines.** Of 2,083 distinct cases where text
@@ -5130,7 +5128,7 @@ Ranked by what the measurement says is left, the next increments are:
    movable is in the way", while `room` had skipped the flush run. The same fix stopped the
    push moving runs past `reach`'s limit, and a frame around the text no longer stops it.
    +25% as typed went from 57.5% to 59.7%, 701 of the 995 new acceptances on untagged pages.
-   `BUILD.md`, *The push finds a run set flush against the edit*. Splitting a run is next.
+   `BUILD.md`, *The push finds a run set flush against the edit*.
 3. **Moving what is below the paragraph**, the 916. The larger capability named above, and
    the one where what is below is usually another paragraph that would have to move too.
 4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not

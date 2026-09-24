@@ -17,12 +17,14 @@
 //! capability than this one.
 //!
 //! Text of the block after the edit on its own line flows too, a run at a
-//! time: each run after the edit keeps its gap to the one before it, stays on
-//! the edit's last line while it fits the block's measure, and otherwise starts
-//! the next line at the block's left edge. A run is not split, so a line can
-//! end short of the measure where a run too wide for what is left of it moved
-//! down whole. Splitting one at a space means writing part of another run's
-//! text again in its own font, which is the next increment rather than this one.
+//! time: each run after the edit keeps its gap to the one before it and stays
+//! on the edit's last line while it fits the block's measure. One that does
+//! not fit is cut at a space: the words that fit stay, the rest start the next
+//! line at the block's left edge, and the space at the break is written
+//! nowhere, so no line starts with one. Each piece is drawn from the run's own
+//! glyph bytes and the kerns and spaces between its words (`kerning::words`),
+//! in the run's own font and state. A run that cannot be cut -- a grouped run,
+//! one with two spaces in a row -- moves to the next line whole.
 //!
 //! A moved show keeps its own bytes. It is placed with an explicit `Tm` and
 //! followed by the same bit-exact restoration of the line matrix and the text
@@ -74,39 +76,92 @@ pub(super) struct Unit {
     pub end: f64,
 }
 
-/// Where each unit goes: its line below the edit's first (0 is the edit's own
-/// line) and how far along the line it starts, in the edited run's text-space
-/// units. `None` when one of them is wider than a whole line of the block.
+/// Where one piece of a unit goes: its line below the edit's first (0 is the
+/// edit's own line) and how far along the line it starts, in the edited run's
+/// text-space units. `words` is `None` for the whole unit, drawn from its own
+/// show unchanged, and otherwise the range of its words (`kerning::words`) the
+/// piece holds.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Piece {
+    pub unit: usize,
+    pub line: usize,
+    pub at: f64,
+    pub words: Option<std::ops::Range<usize>>,
+}
+
+/// Where each unit goes, as pieces. `None` when something is wider than a whole
+/// line of the block: a unit that cannot be cut, or one word of one that can.
 /// Every line reaches the block's measure, `plan.first`, the first included:
 /// `rest` is that measure less where continuation lines start.
 ///
 /// `line` and `end` are where the replacement's own last line is and where it
 /// ends. A unit keeps the gap it had to whatever came before it on the line --
-/// the edited run for the first, the unit before it for the rest -- while it
-/// fits, and a unit that does not fit starts the next line at the block's left
-/// edge, with no gap in front of it.
+/// the edited run for the first, the unit before it for the rest -- and moves
+/// whole while it fits. One that does not fit is cut at a space when `words`
+/// has its words' spans (start and end along the line, in the same units as
+/// `Unit::start`): as many words as fit stay on the line, the rest start the
+/// next one at the block's left edge, and the space at the break is written
+/// nowhere. A unit that cannot be cut starts the next line whole, with no gap
+/// in front of it.
 pub(super) fn flow(
     plan: &Plan,
+    words: &[Vec<(f64, f64)>],
     run_advance: f64,
     (line, end): (usize, f64),
-) -> Option<Vec<(usize, f64)>> {
+) -> Option<Vec<Piece>> {
+    let fits = |at: f64, width: f64| at + width <= plan.first + 0.000_001;
     let (mut line, mut cursor, mut previous) = (line, end, run_advance);
-    let mut places = Vec::new();
-    for unit in &plan.after {
+    let mut pieces = Vec::new();
+    for (unit_index, unit) in plan.after.iter().enumerate() {
         let width = unit.end - unit.start;
-        if width > plan.rest + 0.000_001 {
-            return None;
+        let at = cursor + (unit.start - previous).max(0.);
+        let spans = words.get(unit_index).map_or(&[][..], Vec::as_slice);
+        if fits(at, width) || spans.is_empty() {
+            let at = if fits(at, width) {
+                at
+            } else if width > plan.rest + 0.000_001 {
+                return None;
+            } else {
+                line += 1;
+                plan.start
+            };
+            pieces.push(Piece {
+                unit: unit_index,
+                line,
+                at,
+                words: None,
+            });
+            cursor = at + width;
+            previous = unit.end;
+            continue;
         }
-        let mut at = cursor + (unit.start - previous).max(0.);
-        if at + width > plan.first + 0.000_001 {
-            line += 1;
-            at = plan.start;
+        let mut at = cursor + (spans[0].0 - previous).max(0.);
+        let (mut next, mut fresh) = (0, false);
+        while next < spans.len() {
+            let last = (next..spans.len())
+                .take_while(|&last| fits(at, spans[last].1 - spans[next].0))
+                .last();
+            match last {
+                Some(last) => {
+                    pieces.push(Piece {
+                        unit: unit_index,
+                        line,
+                        at,
+                        words: Some(next..last + 1),
+                    });
+                    cursor = at + spans[last].1 - spans[next].0;
+                    next = last + 1;
+                    if next < spans.len() {
+                        (line, at, fresh) = (line + 1, plan.start, true);
+                    }
+                }
+                None if fresh => return None,
+                None => (line, at, fresh) = (line + 1, plan.start, true),
+            }
         }
-        places.push((line, at));
-        cursor = at + width;
-        previous = unit.end;
+        previous = spans[spans.len() - 1].1;
     }
-    Some(places)
+    Some(pieces)
 }
 
 /// Why a wrap cannot be offered, split by whether the reader should hear about
@@ -316,6 +371,24 @@ pub(super) fn lowered(
     show: u32,
     offset: (f64, f64),
 ) -> Result<Vec<Operation>, String> {
+    drawn(page, show, &[(offset, None)])
+}
+
+/// One piece of a show [`drawn`] writes: how far from the show's source origin,
+/// and the items to draw there, `None` for the show's own operator.
+pub(super) type Drawn<'a> = ((f64, f64), Option<&'a [Object]>);
+
+/// [`lowered`] for a show drawn in pieces: each piece is its own `Tm`, placed
+/// `offset` from the show's source origin, and either the show's own operator
+/// (`None`) or a `TJ` of the items given, which are the show's own glyph bytes
+/// and kerns for some of its words (`kerning::words`). The state every piece
+/// is drawn in -- font, spacing, colour -- is the show's, since nothing between
+/// them sets any. One restoration follows the last piece.
+pub(super) fn drawn(
+    page: &Inspection,
+    show: u32,
+    pieces: &[Drawn<'_>],
+) -> Result<Vec<Operation>, String> {
     let context = page
         .contexts
         .get(&show)
@@ -327,25 +400,36 @@ pub(super) fn lowered(
         .ok_or("text run no longer exists")?;
     let [a, b, c, d, ..] = context.transform;
     let det = a * d - b * c;
-    let local = (
-        (d * offset.0 - c * offset.1) / det,
-        (a * offset.1 - b * offset.0) / det,
-    );
-    if !local.0.is_finite() || !local.1.is_finite() {
-        return Err("text position exceeds its limit".into());
-    }
-    let mut matrix = context.shown;
-    shift_position(&mut matrix, local.0, local.1)?;
-    let mut show_op = operation.clone();
-    // The shown matrix already stands after a leading TJ number, which says
-    // where the run starts; keeping it would move the run twice.
-    if page.leads.contains_key(&show) {
-        let Some(Object::Array(items)) = show_op.operands.first_mut() else {
-            return Err("invalid text patch".into());
+    let mut operations = Vec::new();
+    for (offset, items) in pieces {
+        let local = (
+            (d * offset.0 - c * offset.1) / det,
+            (a * offset.1 - b * offset.0) / det,
+        );
+        if !local.0.is_finite() || !local.1.is_finite() {
+            return Err("text position exceeds its limit".into());
+        }
+        let mut matrix = context.shown;
+        shift_position(&mut matrix, local.0, local.1)?;
+        let show_op = match items {
+            Some(items) => Operation::new("TJ", vec![Object::Array(items.to_vec())]),
+            None => {
+                let mut show_op = operation.clone();
+                // The shown matrix already stands after a leading TJ number,
+                // which says where the run starts; keeping it would move the
+                // run twice.
+                if page.leads.contains_key(&show) {
+                    let Some(Object::Array(items)) = show_op.operands.first_mut() else {
+                        return Err("invalid text patch".into());
+                    };
+                    items.remove(0);
+                }
+                show_op
+            }
         };
-        items.remove(0);
+        operations.push(numeric("Tm", &matrix));
+        operations.push(show_op);
     }
-    let mut operations = vec![numeric("Tm", &matrix), show_op];
     operations.extend(restore_line(
         &page.content.operations,
         context.line_origin,

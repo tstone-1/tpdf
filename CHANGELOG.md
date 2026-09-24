@@ -40,6 +40,12 @@ have the binary.)
   keeps its old refusal when another paragraph's text shares the line, or
   when the text after it is something tpdf cannot move.
 
+- **Text after a wrapped edit is now split between words.** When the next
+  piece of text on the line did not fit what was left of it, all of it moved to
+  the next line, so the edited line often ended right after the edit. Now the
+  words that fit stay on the line and the rest start the next one, drawn from
+  the document's own letters and spacing. No line starts with a space any more.
+
 ### Fixed
 
 - **Text set right against the edited text is now moved out of the way.**

@@ -172,3 +172,106 @@ pub(super) fn kept(
         array_text(&items, metrics, size, spacing, word_spacing).ok()?;
     (lead.is_none() && text == replacement).then_some((items, advance, bounds))
 }
+
+/// One word of a show, as the show's own items, and where it starts and ends
+/// along the show in its own text space (after any leading adjustment).
+#[derive(Clone, Debug)]
+pub(super) struct Word {
+    /// The source's own items between the previous word and this one: the
+    /// space and any kerns beside it. Empty for the first word.
+    pub before: Vec<Object>,
+    pub items: Vec<Object>,
+    pub from: f64,
+    pub to: f64,
+}
+
+/// A show's words, cut at its spaces, each keeping its source glyph bytes and
+/// the kerns inside it: what a wrap writes when it breaks a run across two
+/// lines. A space is a space glyph or, in a font that cannot write one, a word
+/// gap; the spaces themselves are not part of any word, so a line broken there
+/// neither ends nor starts with one. `None` when the show does not cut cleanly
+/// -- two spaces in a row, a word that opens with a displacement, a word whose
+/// items do not read back as its own text -- and the caller moves it whole.
+/// `values` is the source array after its leading adjustment.
+pub(super) fn words(
+    values: &[Object],
+    metrics: &fonts::Metrics,
+    (size, spacing, word_spacing): (f64, f64, f64),
+) -> Option<Vec<Word>> {
+    let atoms = atoms(values, metrics)?;
+    let space = |atom: &Atom<'_>| atom.text() == " ";
+    let advance = |end: usize| -> Option<f64> {
+        if end == 0 {
+            return Some(0.);
+        }
+        let mut items = Vec::new();
+        emit(&atoms[..end], &mut items);
+        Some(
+            array_text(&items, metrics, size, spacing, word_spacing)
+                .ok()?
+                .1,
+        )
+    };
+    let mut words = Vec::new();
+    let mut previous_last = None;
+    let mut index = 0;
+    while index < atoms.len() {
+        if space(&atoms[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < atoms.len() && !space(&atoms[index]) {
+            index += 1;
+        }
+        // A kern at either end of a word belongs to the space beside it.
+        let glyphs: Vec<usize> = (start..index)
+            .filter(|at| matches!(atoms[*at], Atom::Glyph(..)))
+            .collect();
+        let (&first, &last) = (glyphs.first()?, glyphs.last()?);
+        if index < atoms.len() && index + 1 < atoms.len() && space(&atoms[index + 1]) {
+            return None;
+        }
+        let mut before = Vec::new();
+        if let Some(previous) = previous_last {
+            emit(&atoms[previous + 1..first], &mut before);
+        }
+        previous_last = Some(last);
+        let mut items = Vec::new();
+        emit(&atoms[first..=last], &mut items);
+        let text: String = atoms[first..=last].iter().map(Atom::text).collect();
+        let read = array_text(&items, metrics, size, spacing, word_spacing).ok()?;
+        if read.0 != text || read.3.is_some() || read.5 || text.contains(' ') {
+            return None;
+        }
+        words.push(Word {
+            before,
+            items,
+            from: advance(first)?,
+            to: advance(last + 1)?,
+        });
+    }
+    (!words.is_empty()).then_some(words)
+}
+
+/// The items that draw words `range` of a show together, each word and the
+/// source's own space between two of them, with adjacent strings merged.
+pub(super) fn joined(words: &[Word], range: std::ops::Range<usize>) -> Vec<Object> {
+    let mut items: Vec<Object> = Vec::new();
+    for (position, word) in words[range].iter().enumerate() {
+        let before = if position > 0 {
+            &word.before[..]
+        } else {
+            &[][..]
+        };
+        for item in before.iter().chain(&word.items) {
+            match (items.last_mut(), item) {
+                (Some(Object::String(string, _)), Object::String(bytes, _)) => {
+                    string.extend_from_slice(bytes)
+                }
+                (_, item) => items.push(item.clone()),
+            }
+        }
+    }
+    items
+}
