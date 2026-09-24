@@ -480,8 +480,11 @@ fn a_wrap_that_moves_the_next_paragraph_refuses_an_edit_of_it() {
 
 // An untagged page has no answer to which lines are one paragraph, so its
 // refusal is the one it always had.
+// With no tags, the lines give the blocks (`blocks.rs`): the standard
+// paragraph is three lines at one pitch, font and left edge, and the next is
+// 52 pt below, past three ems. The wrap is the tagged one to the point.
 #[test]
-fn an_untagged_page_keeps_the_page_edge_refusal() {
+fn an_untagged_paragraph_wraps_by_the_blocks_its_lines_give() {
     let bare = content(52., "")
         .replace(" /P <</MCID 0>> BDC", "")
         .replace(" /P <</MCID 1>> BDC", "")
@@ -489,8 +492,64 @@ fn an_untagged_page_keeps_the_page_edge_refusal() {
         .replace(" /P <</MCID 3>> BDC", "")
         .replace(" EMC", "");
     let doc = super::layout_tests::synthetic(&bare);
+    let untagged = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    let tagged = placed_runs(&wrapped(&paragraph(52.), WIDEST, LONGER));
+    assert_eq!(untagged, tagged);
+    assert!(near(at(&untagged, LAST), (20., 158.)), "{untagged:?}");
+}
+
+// On a page without tags, text that stays beside a line the wrap moves would
+// come apart from it: a label and its entry, two cells of a row. Beside a line
+// that stays, it may. With tags, the tags say what belongs together.
+#[test]
+fn text_beside_a_line_that_moves_refuses_the_wrap_on_an_untagged_page() {
+    let beside = |baseline: f64| {
+        super::layout_tests::synthetic(
+            &content(52., &format!("200 {} Td (SIDE) Tj ", baseline - 120.))
+                .replace(" /P <</MCID 0>> BDC", "")
+                .replace(" /P <</MCID 1>> BDC", "")
+                .replace(" /P <</MCID 2>> BDC", "")
+                .replace(" /P <</MCID 3>> BDC", "")
+                .replace(" EMC", ""),
+        )
+    };
+    let doc = beside(172.);
+    assert_eq!(at(&placed_runs(&doc), "SIDE"), (220., 172.));
     let error = refusal(&doc, WIDEST, LONGER);
-    assert!(error.contains("it reaches the edge of the page"), "{error}");
+    assert!(
+        error.contains("out of line with the text beside them"),
+        "{error}"
+    );
+    let doc = beside(200.);
+    assert_eq!(at(&placed_runs(&doc), "SIDE"), (220., 200.));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, "SIDE"), (220., 200.)), "{runs:?}");
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    // A drawing beside the moved line, the rule a label is set against.
+    let ruled = |baseline: f64| {
+        super::layout_tests::synthetic(&format!(
+            "200 {} 60 1 re f {}",
+            baseline - 2.,
+            content(52., "")
+                .replace(" /P <</MCID 0>> BDC", "")
+                .replace(" /P <</MCID 1>> BDC", "")
+                .replace(" /P <</MCID 2>> BDC", "")
+                .replace(" /P <</MCID 3>> BDC", "")
+                .replace(" EMC", "")
+        ))
+    };
+    let error = refusal(&ruled(172.), WIDEST, LONGER);
+    assert!(
+        error.contains("out of line with the text beside them"),
+        "{error}"
+    );
+    wrapped(&ruled(200.), WIDEST, LONGER);
+    let tagged = tagged(
+        &content(52., "200 52 Td /P <</MCID 4>> BDC (SIDE) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    let runs = placed_runs(&wrapped(&tagged, WIDEST, LONGER));
+    assert!(near(at(&runs, "SIDE"), (220., 172.)), "{runs:?}");
 }
 
 /// The standard paragraph with its widest line set as two runs, the second

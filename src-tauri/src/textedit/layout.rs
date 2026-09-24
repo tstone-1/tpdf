@@ -509,7 +509,7 @@ fn pushable(page: &Inspection, run: &Run, other: u32) -> bool {
 
 /// A discovered run's own show and the shows grouped into it, which move
 /// together because each grouped member carries its own `Td`.
-fn shows_of(page: &Inspection, operator: u32) -> Vec<u32> {
+pub(super) fn shows_of(page: &Inspection, operator: u32) -> Vec<u32> {
     std::iter::once(operator)
         .chain(
             page.groups
@@ -1407,6 +1407,14 @@ fn cascade(
     Some((moved, paragraph))
 }
 
+/// Whether two hit rectangles are on one line: they share more than half of the
+/// shorter of the two heights, the rule the push along a line uses.
+fn level(rect: [f64; 4], other: [f64; 4]) -> bool {
+    let shared = rect[3].min(other[3]) - rect[1].max(other[1]);
+    let height = (rect[3] - rect[1]).min(other[3] - other[1]);
+    height > 0.1 && shared > height / 2.
+}
+
 /// Whether the runs a wrap moves can go where it puts them, and where each of
 /// their hit rectangles ends up.
 ///
@@ -1415,7 +1423,7 @@ fn cascade(
 /// page: the block's lines below the edit all go down by the lines it added,
 /// and each run after the edit on its line goes wherever it flowed to.
 /// `hits` is the page's hit list with each of those runs flagged, and `down` one
-/// of the block's line pitches down the displayed page. Two things refuse it
+/// of the block's line pitches down the displayed page. Three things refuse it
 /// here; [`left_behind`] has already been asked, before the text was laid out:
 ///
 /// - **The page, a clip, and text that stays.** A moved run must stay on the
@@ -1425,6 +1433,14 @@ fn cascade(
 ///   leading two lines of one paragraph overlap by a sliver. A moved line may
 ///   come as close to what is below as its own lines are to each other, and no
 ///   closer.
+/// - **Text beside the move, on a page without tags.** A moved run must be on
+///   one line with exactly the text that stays that it was on one line with
+///   before: a label and its entry, two cells of a row, the far end of a line
+///   set at a tab stop, and so must drawings: a form's signature line beside
+///   its label, the box of a cell. The geometry can split one of those into two blocks,
+///   and the text that stays would come apart from the lines that move, or
+///   meet other text on a line it was never on. A page's tags say which text
+///   belongs together, and are not second-guessed.
 /// - **Drawings and annotations over the move.** A rule under a word, a
 ///   highlight, a link's rectangle: anything partly over the area the moved
 ///   runs sweep would stay where it is while the text under it left. One that
@@ -1448,6 +1464,7 @@ fn wrap_room(
         paragraph,
     } = *moving;
     let rule = landing(moves, edge, down);
+    let geometric = blocks::geometric_page(page);
     if let Some((old, by)) = edge {
         if hits
             .iter()
@@ -1486,6 +1503,17 @@ fn wrap_room(
             .any(|(other, moves)| !*moves && lands((*old, new, *reach), *other, rule))
         {
             return Err(wrap::NO_ROOM.into());
+        }
+        if geometric
+            && (hits
+                .iter()
+                .any(|(other, moves)| !*moves && level(*old, *other) != level(new, *other))
+                || page.graphics.iter().any(|drawing| {
+                    let drawing = drawing.map(f64::from);
+                    level(*old, drawing) != level(new, drawing)
+                }))
+        {
+            return Err(wrap::BESIDE.into());
         }
         // A run cut across two lines is outlined as one rectangle holding
         // both pieces.

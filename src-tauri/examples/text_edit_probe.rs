@@ -15,6 +15,11 @@
 //! `--growth <source.pdf> [--agree-every=N]` measures which longer, shorter and
 //! same-length replacements each run accepts; see `src/probes/text_edit_growth.rs`,
 //! which also documents `--growth-request` for reproducing one trial.
+//! Two environment variables measure the block rule (`BUILD.md`, *Wrapping on
+//! pages without tags*): `TPDF_PROBE_GEOMETRIC=1` reads blocks off the geometry
+//! on tagged pages too, in this process and its worker, and
+//! `TPDF_PROBE_DIGESTS=1` adds `app_digest`, the SHA-256 of the page content an
+//! accepted `--growth` trial wrote, so two runs compare by output.
 //! `--blocks <source.pdf> [--agree-every=N]` measures what a paragraph model would have
 //! to work with: why a longer edit is still refused, what the structure tree states about
 //! which runs belong together, and what the page paints below each line. See
@@ -566,6 +571,11 @@ fn run() -> Result<(), String> {
 }
 
 fn main() {
+    // Measurement only: blocks read off the geometry on tagged pages too
+    // (`textedit::blocks::FORCE`), in this process and in its worker.
+    if std::env::var_os("TPDF_PROBE_GEOMETRIC").is_some() {
+        tpdf_lib::textedit::blocks::FORCE.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == worker::WORKER_ARGV) {
         worker_child::main(&args);

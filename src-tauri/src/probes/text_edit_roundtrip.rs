@@ -229,14 +229,23 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         let reopened = runs(&mut saved, change.page)?;
         // A wrapped layout -- one the reader asked for, or one the paragraph
         // gave a box that met the page edge -- splits the text over several
-        // runs, in reading order.
-        let found = if change.layout.is_some() {
-            reopened
-                .runs
-                .iter()
-                .map(|run| run.text.as_str())
+        // runs, in reading order. The space a line breaks at is written
+        // nowhere, and where the font has no space glyph the ones inside a
+        // line come back as positions, so whitespace is not compared.
+        let bare = |text: &str| {
+            text.chars()
+                .filter(|c| !c.is_whitespace())
                 .collect::<String>()
-                .contains(&change.replacement.replace('\n', ""))
+        };
+        let found = if change.layout.is_some() {
+            bare(
+                &reopened
+                    .runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>(),
+            )
+            .contains(&bare(&change.replacement))
         } else {
             reopened
                 .runs

@@ -8,6 +8,8 @@
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod actual;
+#[doc(hidden)]
+pub mod blocks;
 mod clipping;
 mod colors;
 mod filters;
@@ -1466,6 +1468,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         return Err("page contains only read-only text".into());
     }
     grouping::collect(&mut inspection);
+    if inspection.blocks.is_empty() || blocks::FORCE.load(std::sync::atomic::Ordering::Relaxed) {
+        inspection.blocks = blocks::geometric(&inspection, &sheet);
+    }
     Ok(inspection)
 }
 
@@ -1960,6 +1965,8 @@ mod layout_tests;
 #[cfg(test)]
 mod push_tests;
 
+#[cfg(test)]
+mod blocks_tests;
 #[cfg(test)]
 mod wrap_tests;
 

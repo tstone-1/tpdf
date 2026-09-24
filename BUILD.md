@@ -11043,3 +11043,112 @@ and `keep breaks:`, eleven were re-aimed, and two went: a duplicate, and one of 
 unreachable: a cap on a block's distance (it cannot exceed what moved above it), a branch moving a
 block the whole way when a line lands on it from beside (`lands` needs the extent the other
 branch already covers), and the ink widening of the bottom.
+
+### Wrapping on pages without tags — measured 2026-09-24
+
+`docs/PLAN.md` §7 item 4. Until now the wrap ran only where the structure tree names each run's
+paragraph, which is a quarter of the corpus. On a page without tags the blocks are now read off the
+lines (`textedit/blocks.rs`), and the wrap and the cascade below it run unchanged on them.
+
+**How the rule was judged.** *What a paragraph model would have to work with* counted line pairs:
+one pair in six that a geometric rule joined was two paragraphs, and on that count the rule was
+not safe. That count predates the cascade. Now that a wrap moves the blocks below its paragraph,
+a paragraph set solid under another moves the same distance whether or not it is part of the same
+block, so the pair count no longer says what a wrap does. The measure used here is the wrap itself:
+the rule forced onto the seven tagged files (`TPDF_PROBE_GEOMETRIC=1`), every trial's written page
+content hashed (`TPDF_PROBE_DIGESTS=1`), and each result compared against the tags' result for
+the same edit, then rendered where the bytes differ.
+
+```sh
+TPDF_PROBE_DIGESTS=1 python3 scripts/textedit_growth.py <probe> <tagged files> --agree-every 0 --records <tags>
+TPDF_PROBE_DIGESTS=1 TPDF_PROBE_GEOMETRIC=1 python3 scripts/textedit_growth.py <probe> <tagged files> --agree-every 0 --records <rule>
+```
+
+The first rule, the measured Python candidate ported as it was, looked fine by that measure:
+70% of its wraps on tagged pages were byte-identical to the tags', and with no wrap refused it took
++25% as typed across the corpus from 57.27% to 70.39%. Rendering what differed, and rounds of
+untagged samples through `--roundtrip`, `qpdf --check`, `text_wrap_check.py --compare` and a render,
+found what the numbers hid. Every change below was prompted by a render:
+
+- **A paragraph whose first line starts at a deep tab stop became two blocks side by side**
+  (Arcadia page 27). The wrap moved one and left the other, and two lines ended up on one line.
+  **Rows of a two-column résumé came apart the same way** (Illinois). Both are now refused
+  (`BESIDE`): on a page without tags, a moved line must be level with exactly the text that
+  stays that it was level with before. On a tagged page the tags say what belongs together,
+  and the check does not apply. **The same holds for drawings**, found on the forced run: on
+  Arcadia page 98 a wrap the tags refuse moved *By* four points below the signature line drawn
+  beside it.
+- **A block of one line wrapped into the margin**: with no second line there is no pitch and no
+  measure, and the room ran to the page edge (Arcadia page 33, a pdfTeX reference). On a page
+  without tags a one-line block does not wrap; a tagged one-line paragraph still does.
+- **A numbered item's continuation was read as the next item's indented first line** (Hugo
+  minutes), so an item's second line and the next item's first line became one block. A line
+  opening with a list label (`7.`, `(a)`, `iv)`, a bullet) now starts a block, and only its first
+  line may hang out to the left of the rest.
+- **One italic word split a paragraph**: fonts were compared run by run. Lines are now compared by
+  the font and size most of their characters are set in, and a tie compares as nothing.
+- **A table row set as one run, its columns aligned with spaces** (Union County budget, page 22), wrapped
+  at a space and put its last cells on a new line. A line holding three spaces in a row, or a
+  show with a displacement of an em or more after its first item (a table in the recent arXiv
+  paper), is a table row and joins nothing. This took the budget's gains from 1,045 to 56.
+- **Two columns a narrow gutter apart were read as one line** where a justified line reached the
+  gutter (the passport guidance, page 16), and the wrap flowed the other column's text. The gutter is now
+  one em, down from two: a word space is a third of one, and a tab stop is a boundary too.
+- **Something drawn between two lines is measured from the baselines**, a quarter em below the upper
+  one (an underline sits above that) to three quarters of an em above the lower one; lines set 14 pt
+  apart have overlapping glyph boxes and no gap between them to look in.
+
+**Against the tags, on their own pages.** Forced onto the seven tagged files, at +25% as typed the
+tags wrap 928 edits and the rule 699; 692 are wrapped by both and 566 of those write byte-identical
+page content. Of the 126 that differ, 106 render identically, and the other 20, all on Arcadia, were
+looked at one by one: the rule's result is sound in each and better in some (on page 47 the tags
+break *MorrowMo-* inside the word; on page 102 they move *By* below its line). The rule refuses 236
+edits the tags accept, which is the safeguards above doing what they are for, and wraps 7 that the
+tags refuse; on the build before the drawing check, all seven passed `--roundtrip` and
+`text_wrap_check.py --compare`.
+
+**Across the 31-file public sample**, 44,282 runs, against the records of *Spreading the added
+lines*, edits as typed:
+
+| trial | before | after |
+|---|---:|---:|
+| +10% | 67.43% | 69.85% |
+| +25% | 57.27% | 61.33% (+1,800) |
+| +50% | 50.80% | 55.20% |
+
+`--compare` over every trial: 4,909 verdicts moved from refused to accepted and none the other
+way, with 9,309 worker agreement checks and no disagreement. At +25% the gains are LuaTeX 616,
+ReportLab 604, xdvipdfmx (fontspec) 402, the two arXiv papers 106, Union County 56, Wellington 13
+and the SampleForms invoice 3.
+
+**The round trips found a writer defect that had nothing to do with the rule.** xdvipdfmx writes a
+show straight after the operator before it, `10.211 0 Td[<0035>...]TJ`, which is a boundary only
+because the array opens with a delimiter. A moved show is written starting with its `Tm`, a
+number, so the splice produced `Td1 0 0 1 ...`, and the saved page no longer parsed (*"couldn't
+parse input"*). `streams::rewrite_expanded` now puts a newline between the two when neither side is
+a delimiter. The tagged documents never showed it, because Word and Acrobat always write the space.
+The test for it reads the spliced page back through the scan: lopdf's own `decode_strict` accepts
+`Td1` without complaint, so a test that decoded the bytes passed with the fix removed.
+
+**The instruments needed two corrections for fonts without a space glyph.** Where the font has no
+space the writer sets word gaps as kerns, and the space a line breaks at is written nowhere. The
+round trip looked for the replacement in the reopened runs' concatenated text, and failed for that
+reason; it now compares without whitespace. `text_wrap_check.py --compare` still fails on such a
+glyph count, on text pushed along its line and on cascades that move many blocks by many different
+distances. Every one of those failures in these samples was rendered and was right on the page.
+
+**Samples**: three rounds of untagged wraps (seeds 11, 23 and 37), 89 edits across nine producers,
+all through `--roundtrip` and `qpdf --check` and every one rendered. The last round, on the final
+rule, passed 25 of 31 on `text_wrap_check.py`; the six others are the checker cases above.
+
+**What is left.** A line of a code listing wraps at a space like prose (ReportLab page 104): the
+layout holds, but a reader may prefer a refusal. Two-column pages lose most of their wraps to
+`BESIDE`, because each column's lines are level with the other's. Telling a column apart from a
+row beside it is the next refinement.
+
+Tests: `blocks_tests.rs` has eleven for the rule, one per signal and each with its boundary;
+`wrap_tests` replaced *an untagged page keeps the page edge refusal* with one that wraps an
+untagged paragraph exactly as the tagged one, and gained the `BESIDE` test with its tagged control;
+`streams` gained the splice test. The mutation table gained 32 under `geometric blocks:`,
+`labels:`, `wrap room:` and `splice:`, and two `wrap tags:` mutations were re-aimed: with the tags
+removed the geometry now gives the same blocks, so the test they named stayed green.

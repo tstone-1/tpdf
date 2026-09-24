@@ -5145,8 +5145,19 @@ Ranked by what the measurement says is left, the next increments are:
    nothing to spare. `BUILD.md`, *Spreading the added lines, and a break is between blocks*.
    What would let a full page wrap is a break giving up part of its blank line, which is a
    decision about how the page should look rather than an increment.
-4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
-   wrong about the case a wrap damages.
+4. ~~**Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
+   wrong about the case a wrap damages.~~ Built 2026-09-24: the blocks are read off the lines
+   (`textedit/blocks.rs`), judged by what a wrap writes rather than by line pairs, since the
+   cascade now moves a paragraph set solid under another the same distance either way. Forced
+   onto the tagged pages, 566 of the 699 wraps it makes are byte-identical to the tags', and the rest render the same or better. Every
+   refinement came from a render: list labels, the font most of a line is set in, table rows set
+   with spaces or displacements, a one-em gutter, no wrap for a block of one line, and a refusal
+   when a moved line would come apart from text or a drawing beside it. +25% as typed went from
+   57.27% to 61.33%, with nothing moved the other way. `BUILD.md`, *Wrapping on pages without tags*.
+
+   Next in this line of work: **two-column pages**, which lose most of their wraps to the
+   refusal for text beside a moved line, because each column's lines are level with the other's.
+   It needs a way to tell a column from a row beside it.
 
 ---
 

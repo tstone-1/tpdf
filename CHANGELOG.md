@@ -21,6 +21,24 @@ have the binary.)
 
 ### Added
 
+- **Text now wraps onto a new line on pages without tags too.** Until now a
+  longer edit wrapped only on a tagged page, where the document says which
+  lines are one paragraph; elsewhere it was refused with *"it reaches the edge
+  of the page"*. tpdf now works the paragraphs out from the lines themselves:
+  lines set one under the other, in the same font and size, starting at the
+  same place. The edit wraps, and the lines and paragraphs below move down, as
+  on a tagged page.
+
+  Across the 31-file public sample, edits a quarter longer are now accepted
+  61.3% of the time, up from 57.3%, and no edit that was accepted is refused.
+
+  **It is more careful than on a tagged page, because the lines can mislead.**
+  A line on its own does not wrap. Table rows, numbered lists and text in
+  another column are recognised as such. An edit is refused when it would move
+  a line away from text set beside it, such as a label or the other cells of a
+  row. On pages with two columns of text that refusal is common, which is the
+  next thing to improve.
+
 - **The rest of the line now flows with a wrapped edit, on a tagged page.** Until
   now an edit could wrap onto a new line of its paragraph only when it was the
   last text on its line; with more of the paragraph after it on the same line,

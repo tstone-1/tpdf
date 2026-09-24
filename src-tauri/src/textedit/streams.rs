@@ -177,16 +177,25 @@ pub(super) fn rewrite_expanded(
                 return Err("invalid text patch".into());
             }
             output.extend_from_slice(&bytes[copied..span.start]);
-            output.extend(
-                Content {
-                    operations: expansions
-                        .get(&index)
-                        .cloned()
-                        .unwrap_or_else(|| vec![next.clone()]),
-                }
-                .encode()
-                .map_err(|e| e.to_string())?,
-            );
+            let encoded = Content {
+                operations: expansions
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or_else(|| vec![next.clone()]),
+            }
+            .encode()
+            .map_err(|e| e.to_string())?;
+            // A show's operand may follow the operator before it with no
+            // space (`0 Td[(A)]TJ`, as xdvipdfmx writes), which is only a
+            // boundary because the operand opens with a delimiter. What
+            // replaces it may open with a number -- a moved show's `Tm` --
+            // and would then run into that operator.
+            if output.last().is_some_and(|&byte| !delimiter(byte))
+                && encoded.first().is_some_and(|&byte| !delimiter(byte))
+            {
+                output.push(b'\n');
+            }
+            output.extend(encoded);
             copied = span.end;
         } else if original.operations[0].operands != next.operands {
             return Err("untouched text operator changed".into());

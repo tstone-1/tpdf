@@ -163,11 +163,29 @@ struct Page {
     dictionary: Object,
 }
 
+thread_local! {
+    /// The page content an accepted trial wrote, hashed, when `TPDF_PROBE_DIGESTS`
+    /// is set: two probes' outputs can then be compared as well as their verdicts.
+    static LAST_DIGEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Run `textedit::write` and put the document back exactly as it was.
 fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Result<(), String> {
     let max_id = doc.max_id;
     let result = textedit::write(doc, &[change]);
     if result.is_ok() {
+        if std::env::var_os("TPDF_PROBE_DIGESTS").is_some() {
+            use sha2::Digest as _;
+            let content = doc.get_page_content(page.id);
+            LAST_DIGEST.with(|last| {
+                *last.borrow_mut() = Some(
+                    sha2::Sha256::digest(&content)
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect(),
+                )
+            });
+        }
         doc.objects.retain(|id, _| id.0 <= max_id);
         doc.objects.insert(page.id, page.dictionary.clone());
         doc.max_id = max_id;
@@ -324,6 +342,9 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
                     let outcome = trial(&mut doc, &page, edit.clone());
                     agreement.check(&mut worker, &edit, &outcome, label)?;
                     result.insert(mode.into(), verdict(&outcome));
+                    if let Some(digest) = LAST_DIGEST.with(|last| last.borrow_mut().take()) {
+                        result.insert(format!("{mode}_digest"), json!(digest));
+                    }
                 }
                 if let Some(growth) = growth {
                     let mut width = base.width * (1. + growth);

@@ -1,12 +1,15 @@
-//! Wrapping an edit onto new lines of its own paragraph, on a tagged page.
+//! Wrapping an edit onto new lines of its own paragraph.
 //!
 //! When the text a reader typed no longer fits the room on its line and the
-//! room ends at the page edge, a tagged page can say which runs are lines of the
-//! same block: the structure element that owns them. This module uses that
-//! answer and nothing geometric in its place. `docs/PLAN.md` §7, *What wrapping
-//! should be scoped to*, has the measurement that chose it: a rule read off the
-//! geometry joined one pair of paragraphs in six on pages whose tags gave the
-//! real answer, and the pair it got wrong is the one a wrap damages.
+//! room ends at the page edge, the wrap needs to know which runs are lines of
+//! the same block. A tagged page says so: the structure element that owns
+//! them. A page without tags has its blocks read off its lines (`blocks.rs`),
+//! and two things are held to more there, because the geometry can be wrong
+//! where the tags cannot: a block of one line does not wrap, having shown no
+//! pitch and no measure of its own, and text beside a line that moves refuses
+//! the wrap rather than coming apart from it (`layout::wrap_room`). `BUILD.md`,
+//! *Wrapping on pages without tags*, measured the rule by what it does to a
+//! wrap on pages whose tags give the answer.
 //!
 //! The edit is laid out at the block's own measure and line pitch, its
 //! continuation lines start at the block's left edge, and every line of the
@@ -185,6 +188,7 @@ pub(super) enum Refused {
 
 pub(super) const NO_ROOM: &str = "There is no room for more text on this line, and this paragraph cannot wrap: its lines would move onto what is below it. Shorten the text or reduce the font size.";
 pub(super) const UNMOVABLE: &str = "There is no room for more text on this line, and this paragraph cannot wrap: part of it below cannot be moved. Shorten the text or reduce the font size.";
+pub(super) const BESIDE: &str = "There is no room for more text on this line, and this paragraph cannot wrap: its lines would move out of line with the text beside them. Shorten the text or reduce the font size.";
 pub(super) const DRAWN: &str = "There is no room for more text on this line, and this paragraph cannot wrap: a drawing or an annotation is placed over the lines that would move. Shorten the text or reduce the font size.";
 /// Said to whichever of the two edits the reader is making, so it names both.
 pub(in crate::textedit) const CONFLICT: &str = "One edit in this paragraph wraps onto a new line and moves text that another pending edit changes. Save first, then make the second edit again.";
@@ -337,6 +341,11 @@ pub(super) fn plan(
         .map(|(y, ..)| *y)
         .fold(f64::NEG_INFINITY, f64::max);
     let several = lines.iter().any(|(y, ..)| (*y - top).abs() > tolerance);
+    // A block read off the geometry is a block because its lines agree with
+    // each other; one line has shown neither a pitch nor a measure.
+    if !several && blocks::geometric_page(page) {
+        return Err(Refused::NotApplicable);
+    }
     // The block's measure is the furthest any of its lines reaches; a block of
     // one line has none, and its first line keeps the room it had.
     let far = if several {

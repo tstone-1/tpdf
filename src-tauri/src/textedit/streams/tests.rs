@@ -134,3 +134,36 @@ fn textedit_stream_discovery_refuses_unpatchable_nesting() {
         }
     }
 }
+
+#[test]
+fn textedit_stream_patch_opening_with_a_number_is_kept_apart_from_the_operator_before() {
+    // xdvipdfmx writes a show's operand straight after the operator before it.
+    let bytes = b"BT /F1 12 Tf 10 0 Td[(A)]TJ ET";
+    let content = Content::decode_strict(bytes).unwrap();
+    let show = 3;
+    assert_eq!(content.operations[show].operator, "TJ");
+    let moved = vec![
+        lopdf::content::Operation::new(
+            "Tm",
+            [1, 0, 0, 1, 20, 30].into_iter().map(Object::from).collect(),
+        ),
+        content.operations[show].clone(),
+    ];
+    let saved = rewrite_expanded(
+        bytes,
+        &content,
+        &BTreeSet::from([show]),
+        &std::collections::BTreeMap::from([(show, moved)]),
+    )
+    .unwrap();
+    // Read back the way a reopened document is: by the scan.
+    let mut doc = textedit::tests::fixture();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let stream = doc.add_object(Stream::new(Dictionary::new(), saved));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let runs = textedit::scan(&doc, 0).unwrap().runs;
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].matrix[4..], [20., 30.]);
+}
