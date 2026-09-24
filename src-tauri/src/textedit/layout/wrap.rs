@@ -12,9 +12,10 @@
 //! continuation lines start at the block's left edge, and every line of the
 //! block below it moves down by the lines the edit added. What is below a
 //! paragraph is another paragraph most of the time, and when the moved lines
-//! would land on it, it moves down by the same distance, and so does whatever
-//! it would land on in turn (`layout::cascade`): the first gap below deep
-//! enough for the added lines takes them, and nothing after it moves. Only a
+//! would land on it, or close the paragraph break above it to less than a
+//! blank line, it moves down by the same distance, and so does whatever it
+//! would reach in turn (`layout::cascade`): the first gap below with a blank
+//! line to spare takes the added lines, and nothing after it moves. Only a
 //! whole block moves, and only one that is entirely below the edited line and
 //! that the writer can move ([`Plan::beneath`]); text that is not such a block
 //! -- untagged, read-only, beside the paragraph -- stays, and an edit whose

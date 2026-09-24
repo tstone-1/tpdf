@@ -5133,11 +5133,15 @@ Ranked by what the measurement says is left, the next increments are:
 3. ~~**Moving what is below the paragraph**, the 916. The larger capability named above, and
    the one where what is below is usually another paragraph that would have to move too.~~
    Built 2026-09-24: a block the moved lines would land on moves down with them, and so on
-   down the page, until a gap takes the added lines (`layout::cascade`). At +25% as typed the
-   refusals for what is below went from 1,342 to 515 and acceptance from 59.8% to 60.9%;
-   1,330 verdicts moved from refused to accepted, none the other way. The gap used is often a
-   paragraph break, which then disappears. `BUILD.md`, *The blocks below a wrapped paragraph
-   move down with it*.
+   down the page, until a gap takes the added lines (`layout::cascade`). That alone took +25%
+   as typed from 59.8% to 60.9%, by using up paragraph breaks; a wrap now keeps a blank line
+   in every break instead, which leaves 57.3%, because a page full to its footer has no other
+   space. `BUILD.md`, *The blocks below a wrapped paragraph move down with it* and *A wrap
+   keeps the paragraph breaks below it*.
+
+   Next in this line of work: **spreading the added lines over several breaks**, each giving
+   up part of its space, where today every moved block moves the whole distance. It is what
+   would let a full page wrap at all.
 4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
    wrong about the case a wrap damages.
 

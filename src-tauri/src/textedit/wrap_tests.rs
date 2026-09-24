@@ -215,8 +215,11 @@ fn a_paragraph_with_no_room_below_is_refused_with_the_reason() {
         error.contains("its lines would move onto what is below it"),
         "{error}"
     );
-    // 28 pt below leaves exactly one line of the paragraph's own pitch.
-    wrapped(&fixed_below(28.), WIDEST, LONGER);
+    // 28 pt below is one blank line, a paragraph break, which the wrap keeps;
+    // 42 pt below leaves room for a line and the break after it.
+    let error = refusal(&fixed_below(28.), WIDEST, LONGER);
+    assert!(error.contains("what is below it"), "{error}");
+    wrapped(&fixed_below(42.), WIDEST, LONGER);
 }
 
 // The next paragraph set one pitch below is in the way, and moves down with
@@ -236,11 +239,20 @@ fn the_next_paragraph_moves_down_when_the_lines_would_land_on_it() {
         "{runs:?}"
     );
     assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
+    // Another block's word beside the paragraph's short last line is where the
+    // edit's new line reaches, and moves down with the line it is beside.
+    let beside = tagged(
+        &content(52., "130 52 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    assert_eq!(at(&placed_runs(&beside), "BY"), (150., 172.));
+    let runs = placed_runs(&wrapped(&beside, WIDEST, LONGER));
+    assert!(near(at(&runs, "BY"), (150., 158.)), "{runs:?}");
 }
 
-// A block that moves may land on the one after it, which moves too; the first
-// gap below deep enough for the added line takes it, and nothing after that
-// gap moves.
+// A block that moves may land on the one after it, which moves too, and so may
+// one that would close up the paragraph break under it: a gap takes the added
+// line only when a blank line is left, and nothing after that gap moves.
 #[test]
 fn blocks_below_move_as_far_as_the_first_gap_that_takes_the_added_line() {
     let three = |gap: f64| {
@@ -252,7 +264,12 @@ fn blocks_below_move_as_far_as_the_first_gap_that_takes_the_added_line() {
     let runs = placed_runs(&wrapped(&three(14.), WIDEST, LONGER));
     assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
     assert!(near(at(&runs, "BY"), (20., 130.)), "{runs:?}");
-    let doc = three(40.);
+    // One blank line between the two is a paragraph break, and closing it moves
+    // the block after it too; with a line more of space, that space takes it.
+    let runs = placed_runs(&wrapped(&three(28.), WIDEST, LONGER));
+    assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
+    assert!(near(at(&runs, "BY"), (20., 116.)), "{runs:?}");
+    let doc = three(42.);
     let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
     assert!(near(at(&runs, NEXT), (20., 144.)), "{runs:?}");
     assert_eq!(at(&runs, "BY"), at(&placed_runs(&doc), "BY"));
@@ -272,6 +289,40 @@ fn a_block_the_edited_line_only_grazes_stays() {
     let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
     assert_eq!(at(&runs, "BY"), (175., 175.));
+    // Nor is text beside where a moved line goes: `BY` on the line `TEN`
+    // moves to, far to its right, has no gap above it to keep.
+    let beside = tagged(
+        &content(52., "155 38 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    let runs = placed_runs(&wrapped(&beside, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert_eq!(at(&runs, "BY"), (175., 158.));
+}
+
+// When the edited line is the paragraph's last, the edit's own new last line
+// is its bottom, and keeps the break below it like a moved line: the next
+// paragraph moves down with it, and text that cannot move refuses the wrap.
+#[test]
+fn the_edits_new_last_line_keeps_the_break_below_it() {
+    let runs = placed_runs(&wrapped(&paragraph(28.), LAST, LONGER));
+    assert!(
+        near(at(&runs, "THEN FIRST AND SECOND"), (20., 158.)),
+        "{runs:?}"
+    );
+    assert!(near(at(&runs, NEXT), (20., 130.)), "{runs:?}");
+    let error = refusal(&fixed_below(28.), LAST, LONGER);
+    assert!(error.contains("what is below it"), "{error}");
+    wrapped(&fixed_below(42.), LAST, LONGER);
+    // The bottom is as wide as the edit's lines, not as the run was: `BY` is
+    // right of `TEN` and under the new line, a blank line below.
+    let under = tagged(
+        &content(52., "130 24 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    assert_eq!(at(&placed_runs(&under), "BY"), (150., 144.));
+    let runs = placed_runs(&wrapped(&under, LAST, LONGER));
+    assert!(near(at(&runs, "BY"), (150., 130.)), "{runs:?}");
 }
 
 // A block that would have to leave the page to make room refuses the wrap, as
@@ -498,7 +549,9 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
     assert!(near(at(&runs, "ONCE AND"), (128., 172.)), "{runs:?}");
     assert!(near(at(&runs, "DONE"), (20., 158.)), "{runs:?}");
     assert!(near(at(&runs, LAST), (20., 144.)), "{runs:?}");
-    assert_eq!(at(&runs, NEXT), (20., 120.));
+    // Two lines would leave the next paragraph less than a blank line below
+    // the last one, so it moves down the same two lines and keeps its break.
+    assert!(near(at(&runs, NEXT), (20., 92.)), "{runs:?}");
     let saved_shows = shows(&saved);
     for piece in ["ONCE AND", "DONE"] {
         assert!(
@@ -518,9 +571,9 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
     );
     let runs = placed_runs(&saved);
     assert!(near(at(&runs, "ONCE  AND DONE"), (20., 158.)), "{runs:?}");
-    // Two lines is more than 24 pt of room below leaves.
+    // Two lines would leave less than a blank line above the text below.
     let fixed = tagged(
-        &untagged_next(&content(38., "")).replace(
+        &untagged_next(&content(52., "")).replace(
             &format!("({WIDEST}) Tj EMC"),
             "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
         ),
@@ -531,7 +584,7 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
         error.contains("its lines would move onto what is below it"),
         "{error}"
     );
-    // One line fits in the same room.
+    // One line leaves a blank line, the break the page had.
     wrapped(&fixed, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SEC");
 }
 

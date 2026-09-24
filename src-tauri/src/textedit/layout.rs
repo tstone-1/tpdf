@@ -1108,6 +1108,14 @@ fn left_behind(
     Ok(())
 }
 
+/// The bottom of a paragraph whose last line is the edited one: that line's
+/// box, as wide as the edit's lines, and how far the edit's new last line is
+/// below it. The paragraph's lines that move stand for its bottom otherwise.
+type Edge = ([f64; 4], [f64; 2]);
+
+/// One moved hit rectangle: its operator, where it was, and how far it goes.
+type Move = (u32, [f64; 4], [f64; 2]);
+
 /// What `lay_out` made of one plan: the operations, how many lines, how far the
 /// widest reaches and where the last ends from the run's origin, and each
 /// line's ink on the displayed page.
@@ -1126,18 +1134,25 @@ fn shift(rect: [f64; 4], by: [f64; 2]) -> [f64; 4] {
 /// How close a moved rectangle may come to text that stays, and across which
 /// display axis the lines are stacked: `down` is one line pitch down the
 /// displayed page. Hit rectangles are em boxes, and at ordinary leading two
-/// lines of one paragraph overlap by a sliver; the tallest moved box less the
-/// pitch is that sliver, and a moved line may overlap what stays by as much.
-fn landing(moves: &[(u32, [f64; 4], [f64; 2])], down: [f64; 2]) -> ([f64; 2], usize) {
+/// lines of one paragraph overlap by a sliver; the tallest moved box (or the
+/// paragraph's moved bottom, `edge`) less the pitch is that sliver, and a moved
+/// line may overlap what stays by as much.
+fn landing(moves: &[(u32, [f64; 4], [f64; 2])], edge: Option<Edge>, down: [f64; 2]) -> Landing {
     let cross = usize::from(down[1].abs() >= down[0].abs());
     let height = moves
         .iter()
-        .map(|(_, rect, _)| rect[cross + 2] - rect[cross])
+        .map(|(_, rect, _)| *rect)
+        .chain(edge.map(|(rect, _)| rect))
+        .map(|rect| rect[cross + 2] - rect[cross])
         .fold(0., f64::max);
     let mut slack = [0.1; 2];
     slack[cross] = (height - down[cross].abs()).max(0.) + 0.1;
-    (slack, cross)
+    (slack, cross, down[cross].abs())
 }
+
+/// [`landing`]'s answer: the overlap allowed each way, the display axis the
+/// lines are stacked across, and their pitch.
+type Landing = ([f64; 2], usize, f64);
 
 /// Whether a rectangle that was at `old` and is now at `new` lands on `other`,
 /// which stays, by more than [`landing`] allows.
@@ -1147,7 +1162,7 @@ fn landing(moves: &[(u32, [f64; 4], [f64; 2])], down: [f64; 2]) -> ([f64; 2], us
 /// by more than that in the source, and a run sliding along its own line would
 /// meet it. A sliver the source had -- less than half the shorter box, so not
 /// text on the same line -- is allowed again, and no more.
-fn lands(old: [f64; 4], new: [f64; 4], other: [f64; 4], (slack, cross): ([f64; 2], usize)) -> bool {
+fn lands(old: [f64; 4], new: [f64; 4], other: [f64; 4], (slack, cross, pitch): Landing) -> bool {
     let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
     let shorter = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
     let sliver = if shared < shorter / 2. {
@@ -1157,7 +1172,37 @@ fn lands(old: [f64; 4], new: [f64; 4], other: [f64; 4], (slack, cross): ([f64; 2
     };
     let mut allowed = slack;
     allowed[cross] = allowed[cross].max(sliver + 0.001);
-    wrap::overlaps(new, other, allowed)
+    if wrap::overlaps(new, other, allowed) {
+        return true;
+    }
+    // Moving towards text ahead of it -- below it, for a line moving down --
+    // a rectangle may close the gap between them, but not below one blank
+    // line of the paragraph (two pitches less a line's box): a paragraph
+    // break keeps its size, and only wider space gives up the lines a wrap
+    // adds. A move is whole pitches, so a gap already narrower than a blank
+    // line would only close further. Text clipped away entirely has a
+    // rectangle of no height and is not there.
+    let along = 1 - cross;
+    let towards = new[cross] - old[cross];
+    if towards.abs() < 1e-9
+        || other[cross + 2] - other[cross] <= 0.1
+        || new[along + 2].min(other[along + 2]) - new[along].max(other[along]) <= 0.1
+    {
+        return false;
+    }
+    let (ahead, after) = if towards > 0. {
+        (
+            other[cross] + other[cross + 2] > old[cross] + old[cross + 2],
+            other[cross] - new[cross + 2],
+        )
+    } else {
+        (
+            other[cross] + other[cross + 2] < old[cross] + old[cross + 2],
+            new[cross] - other[cross + 2],
+        )
+    };
+    let blank = pitch - (slack[cross] - 0.1);
+    ahead && after < blank - 0.1
 }
 
 /// Whether ink shown at `shown` is over `other` by more than a tenth of a
@@ -1197,7 +1242,7 @@ fn cascade(
     page: &Inspection,
     beneath: &[Vec<u32>],
     moves: &mut Vec<(u32, [f64; 4], [f64; 2])>,
-    (inks, own): (&[[f64; 4]], [f64; 4]),
+    (inks, own, edge): (&[[f64; 4]], [f64; 4], Option<Edge>),
     (by, down): ([f64; 2], [f64; 2]),
 ) -> BTreeSet<u32> {
     let rects = |shows: &[u32]| -> Vec<(u32, [f64; 4])> {
@@ -1212,7 +1257,7 @@ fn cascade(
     let mut taken = vec![false; beneath.len()];
     let mut count = 0;
     loop {
-        let rule = landing(moves, down);
+        let rule = landing(moves, edge, down);
         let landed = beneath.iter().enumerate().find(|(index, shows)| {
             !taken[*index]
                 && rects(shows).iter().any(|(_, other)| {
@@ -1220,6 +1265,7 @@ fn cascade(
                         .iter()
                         .any(|(_, old, by)| lands(*old, shift(*old, *by), *other, rule))
                         || inks.iter().any(|ink| strikes(*ink, *other, own))
+                        || edge.is_some_and(|(old, by)| lands(old, shift(old, by), *other, rule))
                 })
         });
         let Some((index, shows)) = landed else {
@@ -1267,13 +1313,21 @@ fn cascade(
 /// checked against nothing.
 fn wrap_room(
     page: &Inspection,
-    moves: &[(u32, [f64; 4], [f64; 2])],
+    (moves, edge): (&[Move], Option<Edge>),
     hits: &[([f64; 4], bool)],
     down: [f64; 2],
     geometry: &crate::pagetree::DisplayedPage,
     display: &impl Fn([f64; 4]) -> [f32; 4],
 ) -> Result<Vec<(u32, [f32; 4])>, String> {
-    let (slack, cross) = landing(moves, down);
+    let rule = landing(moves, edge, down);
+    if let Some((old, by)) = edge {
+        if hits
+            .iter()
+            .any(|(other, moves)| !*moves && lands(old, shift(old, by), *other, rule))
+        {
+            return Err(wrap::NO_ROOM.into());
+        }
+    }
     let moving: Vec<_> = moves
         .iter()
         .map(|(operator, rect, by)| {
@@ -1299,7 +1353,7 @@ fn wrap_room(
         }
         if hits
             .iter()
-            .any(|(other, moves)| !*moves && lands(*old, new, *other, (slack, cross)))
+            .any(|(other, moves)| !*moves && lands(*old, new, *other, rule))
         {
             return Err(wrap::NO_ROOM.into());
         }
@@ -1967,11 +2021,21 @@ pub(super) fn prepare(
                 }
                 // The blocks below that the paragraph's moved lines, or the
                 // edit's own lines, would land on move down with it.
+                // With no line of the paragraph below the edit, its bottom is
+                // the edited line, moved down to the edit's new last line.
+                let edge = (plan.below.is_empty() && drop > 0.).then(|| {
+                    let mut old = run.display_rect.map(f64::from);
+                    for ink in &inks {
+                        old[axis] = old[axis].min(ink[axis]);
+                        old[axis + 2] = old[axis + 2].max(ink[axis + 2]);
+                    }
+                    (old, corner(0., -drop))
+                });
                 let carried = cascade(
                     page,
                     &plan.beneath,
                     &mut moving,
-                    (&inks, free.own),
+                    (&inks, free.own, edge),
                     (corner(0., -drop), corner(0., -plan.pitch)),
                 );
                 let hits = if carried.is_empty() {
@@ -1995,7 +2059,7 @@ pub(super) fn prepare(
                 };
                 let placed = wrap_room(
                     page,
-                    &moving,
+                    (&moving, edge),
                     &hits,
                     corner(0., -plan.pitch),
                     &geometry,

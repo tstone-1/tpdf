@@ -10895,12 +10895,13 @@ headings and item titles, and moving the text would leave the underline behind. 
 refused before and still refused now give a new reason, *"edited page exceeds the text operator
 limit"*: each moved show costs at least four operators, and a dense page has less room for many.
 
-**What it does to the page: a moved block may use up a paragraph break.** The gap that takes the
-added lines is usually the space between two paragraphs further down, and a moved line may come
-as close to what stays as a paragraph's own lines are to each other -- the rule the wrap has had
-for its own lines since *Wrapping onto a new line of the paragraph*. So on Coatesville page 14
-the paragraph below the edit moves down a line and then sits directly on the one after it, with
-no blank line between them. Nothing overlaps, and the glyph check passes; the break is gone.
+**What it did to the page: a moved block could use up a paragraph break.** The gap that took
+the added lines was usually the space between two paragraphs further down, and a moved line
+could come as close to what stays as a paragraph's own lines are to each other -- the rule the
+wrap had for its own lines since *Wrapping onto a new line of the paragraph*. On Coatesville
+page 14 the paragraph below the edit moved down a line and then sat directly on the one after
+it. Nothing overlapped and the glyph check passed; the break was gone. The next section changes
+that.
 
 **Round trips**: two grow25 flips per file with seed 7, nine edits (Healdsburg has one).
 All nine pass the probe (preview and save agree, adjacent pixels unchanged), `qpdf --check` and
@@ -10916,3 +10917,60 @@ and now use an untagged line, which nothing can move. The mutation table gained 
 `strikes`. Two survived their first run: one showed a missing test (a block mixing an editable
 line with a read-only one), and the other was a check that could never fire (skipping the edited
 block, which its own run already excludes), and was deleted.
+
+### A wrap keeps the paragraph breaks below it — measured 2026-09-24
+
+Decided after the section above: a wrap may no longer close a paragraph break. `lands` gained a
+second test for a rectangle moving towards text ahead of it (below it, for a line moving down)
+that shares its extent along the line: the clear space between them may shrink, but not below
+one blank line of the paragraph, which is two pitches less a line's box (13 pt at 12 pt type
+and a 14 pt pitch). A move is whole pitches, so a gap already narrower than a blank line is not
+allowed to close at all. Text clipped away entirely has a hit rectangle of no height and is
+skipped, which `a_clip_over_the_paragraph_stops_the_lines_it_would_move` caught on the first run.
+
+The same test drives the cascade, so a block whose break would close moves down too, and the
+first gap with a blank line to spare takes the added lines. When the edited line is the
+paragraph's last, nothing of the paragraph moves, and the edit's new last line is its bottom:
+`Edge` is the edited line's box, as wide as the edit's lines, moved down by the lines added, and
+both `cascade` and `wrap_room` hold it to the same test. `landing` counts its height, which the
+first run missed (with nothing moving, a blank line came out a whole pitch).
+
+**It costs more than the cascade gained.** Same instrument, against the records of the two runs
+before it:
+
+| +25% as typed | before the cascade | cascade | cascade, breaks kept |
+|---|---:|---:|---:|
+| accepted | 26,473 (59.78%) | 26,953 (60.87%) | 25,360 (57.27%) |
+| refused: what is below it | 1,342 | 515 | 1,975 |
+| refused: a drawing or annotation | 54 | 401 | 533 |
+
+| trial | before the cascade | breaks kept |
+|---|---:|---:|
+| same length | 37,449 | 37,405 |
+| +10% | 30,358 | 29,852 |
+| +50% | 23,866 | 22,496 |
+
+`--compare` against the cascade: 4,366 verdicts accepted before and refused now, none the other
+way; against the state before the cascade, 906 refused before and accepted now, and 3,942 the
+other way. Those are edits the wrap accepted by closing a paragraph break, its own since
+2026-09-23 or, since the cascade, one further down: Coatesville 2,714, Arcadia 1,164, Hugo 469,
+Illinois 19. Coatesville's pages are full to the footer, so keeping every break runs the cascade
+into the footer, which is untagged, and nothing on those pages wraps: the page 14 edit above is
+refused now. What would win some of it back is spreading the added lines over several breaks,
+each giving up part of its space, where today every moved block moves the whole distance.
+
+**Round trips**: two per file of the edits refused before the cascade and accepted now, seed 7,
+nine edits. All nine pass the probe, `qpdf --check` and `text_wrap_check.py --compare`. Rendered,
+Arcadia page 101 gains a line in its fourth paragraph and every paragraph below it moves down
+one line with its blank line kept, down to the page number.
+
+Tests: the three fixtures that expected one blank line to be used up now expect a refusal, and
+wrap with 42 pt; the cut-at-a-space test's next paragraph moves down two lines with it; the
+cascade test gained a chain started by a closing break; a new test holds the edited last line
+to the break below it, including a word beyond the old run but under the new line; the grazed
+test gained a word beside where a moved line goes; and a word of another block beside the
+paragraph's short last line, where the edit's new line reaches, moves down (it keeps the ink
+seed of the cascade tested now that the edge covers the last-line case). Ten mutations under
+`keep breaks:`, one re-aimed; all caught, as are the cascade and room mutations beside them.
+`before.min(blank)` and a same-line skip were written first and deleted: neither could change a
+verdict, for the reasons given above and because text on the same line is never ahead.

@@ -56,13 +56,14 @@ have the binary.)
   read-only -- still refuses the edit, and so does an underline or other
   drawing that would be left behind.
 
-  Across the 31-file sample, edits a quarter longer are accepted 60.9% of the
-  time, up from 59.8%; 1,330 verdicts moved from refused to accepted and none
-  the other way.
-
-  **The gap that takes the added lines is often a paragraph break.** A moved
-  paragraph can end up directly on the next one, with no blank line between
-  them. Nothing overlaps, but the break is gone.
+  **A wrap no longer closes a paragraph break**, its own or one further down:
+  the space between two paragraphs keeps at least a blank line, and where it
+  would not, the paragraph below moves down too. On a page that is full down
+  to its footer, that leaves nowhere for an extra line, and the edit is
+  refused as before. This is stricter than the wrap was: edits a quarter
+  longer are accepted 57.3% of the time across the 31-file sample, down from
+  59.8%, because 3,942 edits that fitted only by closing a break are now
+  refused; 906 that did not fit before are accepted.
 
 - **A middle-click on a tab closes it**, and the tab's right-click menu has
   **Close all tabs**, which asks once when any open document has unsaved
