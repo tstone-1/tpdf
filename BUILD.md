@@ -5205,6 +5205,12 @@ unreadable and 5,011 not verified. Both installers built.
 the Windows installer upgrade and hidden-engine checks, and step 12's hand-applied update
 on either platform.
 
+Published 2026-09-24 from `11fc587`, after `ci.yml` passed both legs on that commit. The
+release run passed all five jobs, and the draft carried 8 assets under the tag. The published
+release is Latest. Fetched without an account, the `.dmg`, `.msi`, `-setup.exe` and
+`latest.json` answered 200, and `latest.json` offers 26.9.18 for `darwin-aarch64` and
+`windows-x86_64`.
+
 **The MacBook clone's tags were stale after the 2026-09-24 history rewrite, and any
 clone not made after it will be too.** `git fetch` does not overwrite an existing tag, so
 `v26.9.17` still named a commit with no merge base with `main`. Every `--since` run then stopped at *"git
@@ -5444,6 +5450,14 @@ starts at 0 and increments within the month.
    locked fuzz gate otherwise rejects a version bump.
 4. In `CHANGELOG.md`, replace `Unreleased` with the release date.
 5. `scripts/gates.py` — all gates pass.
+
+   **Once, on the final tree.** If only version files, lockfiles and prose change after that
+   run, step 3's `cargo check` plus `scripts/check_trap_index.py` and `scripts/check_dates.py`
+   cover what changed, and CI then runs the full list on both platforms on the release commit.
+   The 26.9.18 cycle ran the suite twice here, once on MOTHERSHIP and twice more in the cloud on
+   one commit. **Do not run `gates.py` on the Windows desktop as part of the window checks**:
+   CI's `windows-2025` leg runs the same gates on the same commit. The desktop is for what CI
+   cannot do: the window phases, `print-probe`, `redact-reach-probe` and the installers.
 
    On a Windows host with many cores, cap Cargo concurrency if linking exhausts
    memory: `$env:CARGO_BUILD_JOBS='2'`. The gate suite defaults to two jobs on
@@ -6346,6 +6360,9 @@ starts at 0 and increments within the month.
     # ... watch it, fix what it finds, delete the tag and the draft, repeat ...
     git tag v26.8.0     && git push origin v26.8.0         # the real one
     ```
+
+    **The `Release` run skips its own gates when CI already passed them on the tagged SHA**, so
+    tag only after `ci.yml` is green on both legs for that commit. A tag on a commit CI never saw runs the full gates, about 25 minutes longer on Windows.
 
     **Rehearse changes to build, signing, notarization or publication mechanics.**
     Release-note wording and dependency pins alone do not require a second build

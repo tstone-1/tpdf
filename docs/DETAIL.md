@@ -369,7 +369,10 @@ a Developer ID signature and the hardened runtime, so the dylib is signed in `ve
 the bundler copies it. Its verification step is written to fail rather than warn — a skipped
 notarization exits 0 and produces an app Gatekeeper rejects. The tag glob matches an `-rcN`
 suffix so a rehearsal is possible, and a failed run publishes nothing, since `release` needs
-`gates` and the release is created as a **draft**. It took four rehearsal tags to get there, each
+`gates` and the release is created as a **draft**. Since 26.9.18 its `gates` job is skipped when
+`ci.yml` has already passed both gate legs on the tagged SHA: the `proven` job asks the API, and
+`draft` accepts a skipped `gates` only with that answer. Any other answer, an API error included,
+runs the gates in full. It took four rehearsal tags to get there, each
 failing one step later than the last; `docs/RATIONALE.md` has the sequence and `BUILD.md`'s
 checklist has the habit as step 10.
 

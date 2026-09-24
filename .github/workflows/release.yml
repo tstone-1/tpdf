@@ -71,6 +71,48 @@ permissions:
   contents: write
 
 jobs:
+  # Did CI already pass the gates on the commit this tag names? CI runs the same
+  # `gates` job on every push to main (`check_workflow_parity.py` holds the two
+  # step for step), so running it again here tested the same commit twice and
+  # held every release about 25 minutes behind the Windows leg. Measured on
+  # 26.9.18: CI's gates 27.2 and 13.9 min on `11fc587`, then this workflow's
+  # 25.1 and 11.3 min on the same SHA.
+  #
+  # `passed` is 'true' only for a verified yes: a `push` run of `ci.yml` on
+  # exactly this SHA, concluded `success`, with exactly two `Gates (...)` jobs
+  # and both `success`. Anything else -- no run, a failed one, a pull-request
+  # run, an API error -- leaves it unset, and `gates` below runs in full. A
+  # failure of THIS job runs the gates too, because `gates` asks `!cancelled()`
+  # rather than for this job's success. The error path is the old behaviour,
+  # never a skip.
+  proven:
+    name: CI already passed this commit?
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      passed: ${{ steps.ci.outputs.passed }}
+    steps:
+      - name: Look for a green CI run on this SHA
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&status=success&per_page=10" \
+            --jq '.workflow_runs[].id') || { echo "::warning::could not list CI runs; running the gates"; exit 0; }
+          for id in $runs; do
+            gates=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=50" \
+              --jq '[.jobs[] | select(.name | startswith("Gates (")) | .conclusion] | "\(length) \(all(. == "success"))"') || continue
+            if [ "$gates" = "2 true" ]; then
+              echo "CI run $id passed both gate legs on $SHA; the gates below are skipped."
+              echo "passed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "No green two-leg CI run on $SHA; running the gates."
+
   # A tag on a broken commit must not produce artifacts. This runs
   # `scripts/gates.py` rather than restating its commands in YAML: that script
   # *is* the gate list, and AGENTS.md records that a hand-copied command quietly
@@ -78,6 +120,8 @@ jobs:
   # than the real gate. Ask the script, never a second copy.
   gates:
     name: Gates (${{ matrix.platform }})
+    needs: proven
+    if: ${{ !cancelled() && needs.proven.outputs.passed != 'true' }}
     # Narrower than the workflow's `contents: write`, which every job inherits
     # by default. This one only reads the tree and runs checks, and it installs
     # and executes third-party Python before the gates it exists to run --- so
@@ -362,7 +406,13 @@ jobs:
   # which is exactly how `26.8.2` ended with one 4,172-byte file naming both.
   draft:
     name: Draft release
-    needs: gates
+    needs: [proven, gates]
+    # Green gates here, or gates skipped because `proven` found them green in
+    # CI on this SHA. A skip for any other reason -- `gates` never ran because
+    # the run was cancelled -- is not a pass.
+    if: >-
+      ${{ !cancelled() && (needs.gates.result == 'success'
+      || (needs.gates.result == 'skipped' && needs.proven.outputs.passed == 'true')) }}
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.draft.outputs.id }}
@@ -665,6 +715,9 @@ jobs:
   release:
     name: ${{ matrix.label }}
     needs: [gates, draft]
+    # `draft` already refused unless the gates passed here or in CI; without
+    # this, a skipped `gates` would skip this job too.
+    if: ${{ !cancelled() && needs.draft.result == 'success' }}
     strategy:
       fail-fast: false
       # SERIAL. Both legs upload to one GitHub Release, and the second reads the
