@@ -5185,6 +5185,31 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.18 verification, macOS arm64 and Windows x64, 2026-09-24:** all 26 gates passed on
+macOS (1,928 Rust tests with three expected skips, 1,786 frontend) and on Windows,
+and `check_windows.py` type-checked the Windows tree. Every mutation selected `--since
+v26.9.17` ran and was caught: 56 frontend, 373 Rust and 13 window mutations. The window
+phases passed on both platforms: viewer sweeps 315 text-heavy on both and 220 vector-heavy
+on macOS, 217 on Windows; `textedit` 23/23, `textedit-grow` 26/26, `textedit-push` 6/6,
+`import` 28/28 and `textedit-wrapped` 28/28. That last phase was the gap 26.9.17 recorded,
+and on Windows it passes on the macOS LibreOffice export only (see *Naturally wrapped
+paragraphs and end indents*). `textedit-push` first failed 5/6 on both platforms: the
+untagged wrap made its 1,000-character draft a wrap refusal, *"this paragraph cannot wrap:
+its lines would move onto what is below it"*, where the check expected *"edge of the
+page"*. That expectation was stale and was corrected; the draft was still refused with no
+preview. On Windows, `print-probe` passed 10/10. `redact-reach-probe` opened 156
+documents: of 8,846 regions read back, zero still read as text, 3,835 were shown
+unreadable and 5,011 not verified. Both installers built.
+
+**Not run before the tag:** the external smoke test of the normal macOS bundle (step 8),
+the Windows installer upgrade and hidden-engine checks, and step 12's hand-applied update
+on either platform.
+
+**The MacBook clone's tags were stale after the 2026-09-24 history rewrite, and any
+clone not made after it will be too.** `git fetch` does not overwrite an existing tag, so
+`v26.9.17` still named a commit with no merge base with `main`. Every `--since` run then stopped at *"git
+could not diff against 'v26.9.17'"*. `git fetch origin --tags --force` once per clone fixes it.
+
 **26.9.17 verification, macOS arm64, 2026-09-23:** all 26 gates passed on the release tree
 (1,886 Rust tests with three expected skips, 1,782 frontend) and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--since v26.9.16` ran and was caught:
@@ -7456,7 +7481,18 @@ pages. On 2026-09-13 LibreOffice 26.2.3.2 produced the single-page input SHA-256
 and page-spanning input
 `311d3189bbdca04890c243111d122ce46a956f9e05fc88c52e8bf7ff2f2d85f6`.
 The native phase is `textedit-wrapped`; it edits page two and checks the journal's
-literal source space as well as the existing multi-page workflow. The independent
+literal source space as well as the existing multi-page workflow.
+
+**The phase needs an export that keeps the trailing space inside its line's show, and
+not every LibreOffice writes one.** Measured 2026-09-24: a fresh export from LibreOffice
+26.2.3.2 on macOS (SHA-256 `f8818e08…`, which differs from the hash above only by its
+metadata) keeps the space inside the `TJ` and passes 28/28. LibreOffice 26.8.0.3 on
+Windows writes the space as a text object of its own (`BT 146.1 180.759 Td /F1 12 Tf<09>Tj
+ET`), which becomes a separate run labelled `Edit:  `. The phase then finds no
+`SYNTHETIC FIRST ` target and fails at *fresh editable text targets did not appear*.
+That is a difference in the fixture, not a product defect: the same Windows build passed
+28/28 on the macOS export copied across. On Windows, run the phase against a copy of the
+macOS export. The independent
 corruption controls now also remove EndIndent and require that to fail, even
 though no rendered pixel changes.
 

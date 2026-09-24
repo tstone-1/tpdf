@@ -731,9 +731,15 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
           status().startsWith("Preview:") && preview()?.hidden === false);
         // Far past what the line can make room for even with the rest of it
         // moved: the page ends at 400 and SECOND COLUMN has 93 pt behind it.
+        // Since 26.9.18 an untagged page wraps, and this line with SYNTHETIC
+        // SECOND under it reads as one paragraph, so the refusal is the wrap's:
+        // the lines it would add run off the page. It said "edge of the page"
+        // while untagged text could not wrap at all.
         await type("S".repeat(1000));
-        check("a draft past what the line can make room for says the page stopped it",
-          status().includes("no room for more text on this line") && status().includes("edge of the page"));
+        check("a draft past what the line and its paragraph can make room for says it cannot wrap",
+          status().includes("no room for more text on this line")
+            && status().includes("cannot wrap: its lines would move onto what is below it")
+            && preview()?.hidden !== false);
         await type(longer);
         document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
         await host.idle();
