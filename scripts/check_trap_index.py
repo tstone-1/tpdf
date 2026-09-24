@@ -107,10 +107,13 @@ ALLOWED_PARENTHETICAL = {
     ),
 }
 
-# The whole of AGENTS.md, in characters. The harness stops loading the file at
-# 150,000, so this fires with room to move a section out rather than at the
-# moment the file has already stopped being read.
-SIZE_CEILING = 130_000
+# The whole of AGENTS.md, in characters. Claude Code warns once everything it
+# loads passes 150,000, and that total includes the global instruction files,
+# which agent-memory's bin/check-docs-index.py caps at 110,000 and holds the
+# whole session to 140,000 -- so a repo is sure of 30,000. This was 130,000 until
+# 2026-09-24, when the file stood at 58.9k and the session total at 220k with
+# this gate green; it was cut to 29.5k by moving paragraphs to docs/DETAIL.md.
+SIZE_CEILING = 30_000
 
 
 def read(path: Path) -> "list[str]":
@@ -282,10 +285,16 @@ def main() -> int:
         if group not in set(toc_groups):
             problems.append(f"group named in {AGENTS.name}, not in the {TRAPS.name} table of contents: {group}")
 
-    if size > SIZE_CEILING:
-        problems.append(
-            f"{AGENTS.name} is {size:,} chars, over the {SIZE_CEILING:,} ceiling -- "
-            "move a section out to a file the index points at"
+    # The ceiling is reported on its own, first. It used to be one more line under
+    # the index-difference banner and its advice about adding a trap, so a file
+    # that had merely grown was diagnosed as a trap missing from the index.
+    oversize = size > SIZE_CEILING
+    if oversize:
+        print(
+            f"[FAIL] {AGENTS.name} is {size:,} chars, over the {SIZE_CEILING:,} ceiling.\n"
+            "       Move paragraphs out to a docs/ file it points at (docs/DETAIL.md holds\n"
+            "       the long form of its sections), leaving a one-line pointer behind.",
+            file=sys.stderr,
         )
 
     if problems:
@@ -303,6 +312,7 @@ def main() -> int:
         )
         for problem in problems:
             print(f"       {problem}", file=sys.stderr)
+    if problems or oversize:
         return 1
 
     print(
