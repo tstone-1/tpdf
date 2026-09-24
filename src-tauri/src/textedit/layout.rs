@@ -1109,12 +1109,25 @@ fn left_behind(
 }
 
 /// The bottom of a paragraph whose last line is the edited one: that line's
-/// box, as wide as the edit's lines, and how far the edit's new last line is
-/// below it. The paragraph's lines that move stand for its bottom otherwise.
+/// box and how far the edit's new last line is below it. How far along the
+/// line it extends is the paragraph's (`Moving::paragraph`), which the edit's
+/// lines are part of. The paragraph's lines that move stand for its bottom
+/// otherwise.
 type Edge = ([f64; 4], [f64; 2]);
 
 /// One moved hit rectangle: its operator, where it was, and how far it goes.
 type Move = (u32, [f64; 4], [f64; 2]);
+
+/// Everything a wrap moves, for [`wrap_room`]: each moved rectangle with how
+/// far the block it belongs to extends along the line (`reach`, one per move),
+/// and the paragraph's bottom when nothing of the paragraph moves (`edge`),
+/// which extends as far as the paragraph (`paragraph`).
+struct Moving<'a> {
+    moves: &'a [Move],
+    reach: &'a [[f64; 2]],
+    edge: Option<Edge>,
+    paragraph: [f64; 2],
+}
 
 /// What `lay_out` made of one plan: the operations, how many lines, how far the
 /// widest reaches and where the last ends from the run's origin, and each
@@ -1155,14 +1168,19 @@ fn landing(moves: &[(u32, [f64; 4], [f64; 2])], edge: Option<Edge>, down: [f64; 
 type Landing = ([f64; 2], usize, f64);
 
 /// Whether a rectangle that was at `old` and is now at `new` lands on `other`,
-/// which stays, by more than [`landing`] allows.
+/// which stays, by more than [`landing`] allows; `reach` is how far the block
+/// it belongs to extends along the line.
 ///
 /// Lines are not evenly pitched, and that allowance is from the pitch to the
 /// line below: a line above set a little closer already overlaps the run's box
 /// by more than that in the source, and a run sliding along its own line would
 /// meet it. A sliver the source had -- less than half the shorter box, so not
 /// text on the same line -- is allowed again, and no more.
-fn lands(old: [f64; 4], new: [f64; 4], other: [f64; 4], (slack, cross, pitch): Landing) -> bool {
+fn lands(
+    (old, new, reach): ([f64; 4], [f64; 4], [f64; 2]),
+    other: [f64; 4],
+    (slack, cross, pitch): Landing,
+) -> bool {
     let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
     let shorter = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
     let sliver = if shared < shorter / 2. {
@@ -1181,12 +1199,16 @@ fn lands(old: [f64; 4], new: [f64; 4], other: [f64; 4], (slack, cross, pitch): L
     // break keeps its size, and only wider space gives up the lines a wrap
     // adds. A move is whole pitches, so a gap already narrower than a blank
     // line would only close further. Text clipped away entirely has a
-    // rectangle of no height and is not there.
+    // rectangle of no height and is not there. Whether the two are one above
+    // the other is a question about the moving block, `reach` along the line,
+    // not about this one line of it: a paragraph's short last line is above
+    // the next paragraph's indented first one although the two lines share
+    // nothing along the line.
     let along = 1 - cross;
     let towards = new[cross] - old[cross];
     if towards.abs() < 1e-9
         || other[cross + 2] - other[cross] <= 0.1
-        || new[along + 2].min(other[along + 2]) - new[along].max(other[along]) <= 0.1
+        || reach[1].min(other[along + 2]) - reach[0].max(other[along]) <= 0.1
     {
         return false;
     }
@@ -1223,66 +1245,166 @@ fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4]) -> bool {
             || intersection[3] > own[3] + 0.1)
 }
 
+/// The least distance, in points, a wrap moves a block below its paragraph.
+const NO_MOVE: f64 = 0.01;
+
 /// The most other blocks one wrap moves down with its own lines.
 const MAX_CASCADE: usize = 32;
 
 /// Which of the blocks a wrap may move ([`wrap::Plan::beneath`]) it does move,
-/// adding each moved run to `moves`; the answer is every show of those blocks.
+/// and how far: each show of those blocks with the fraction of `by` it goes.
+/// Every moved run is added to `moves`. `None` when the answer does not settle.
 ///
-/// A block moves when something already moving would land on it, or when the
-/// ink of one of the edit's own lines (`inks`, as `lay_out` measured it) is
-/// over it by `lay_out`'s own rule ([`strikes`], outside the run's box `own`):
-/// all of its runs
-/// go down `by`, the same distance as the paragraph's own lines, and then may
-/// land on the next block, which moves in turn. A block nothing lands on stays,
-/// so the first gap below that is deep enough takes the added lines and the
-/// blocks after it do not move. Nothing here decides whether the moves are
-/// allowed; [`wrap_room`] does, with the same rule ([`lands`]).
+/// A block moves when something moving towards it would leave less than a
+/// blank line between them ([`lands`]), and it moves only as far as that takes:
+/// the distance the thing above it moved, less what the break between them has
+/// beyond a blank line. A break of a blank line or less passes the whole
+/// distance on, and a wider one gives up its excess, so the lines a wrap adds
+/// are spread over the breaks below it and the first block that need not move
+/// ends the cascade. What moves a block down the whole of `by` is the ink of one
+/// of the edit's own lines (`inks`, as `lay_out` measured it) over it by
+/// `lay_out`'s own rule ([`strikes`], outside the run's box `own`). Nothing here
+/// decides whether the moves are allowed; [`wrap_room`] does, with the same
+/// rule.
 fn cascade(
     page: &Inspection,
     beneath: &[Vec<u32>],
-    moves: &mut Vec<(u32, [f64; 4], [f64; 2])>,
+    (moves, reach): (&mut Vec<Move>, &mut Vec<[f64; 2]>),
     (inks, own, edge): (&[[f64; 4]], [f64; 4], Option<Edge>),
     (by, down): ([f64; 2], [f64; 2]),
-) -> BTreeSet<u32> {
-    let rects = |shows: &[u32]| -> Vec<(u32, [f64; 4])> {
-        page.runs
-            .runs
-            .iter()
-            .filter(|other| shows.contains(&other.operator) && !other.text.trim().is_empty())
-            .map(|other| (other.operator, other.display_rect.map(f64::from)))
-            .collect()
+) -> Option<(BTreeMap<u32, f64>, [f64; 2])> {
+    let (slack, cross, pitch) = landing(moves, edge, down);
+    let along = 1 - cross;
+    // How far along the line a set of rectangles extends.
+    let extent = |rects: &mut dyn Iterator<Item = [f64; 4]>| {
+        rects.fold([f64::INFINITY, f64::NEG_INFINITY], |[low, high], rect| {
+            [low.min(rect[along]), high.max(rect[along + 2])]
+        })
     };
-    let mut moved = BTreeSet::new();
-    let mut taken = vec![false; beneath.len()];
-    let mut count = 0;
-    loop {
-        let rule = landing(moves, edge, down);
-        let landed = beneath.iter().enumerate().find(|(index, shows)| {
-            !taken[*index]
-                && rects(shows).iter().any(|(_, other)| {
-                    moves
-                        .iter()
-                        .any(|(_, old, by)| lands(*old, shift(*old, *by), *other, rule))
-                        || inks.iter().any(|ink| strikes(*ink, *other, own))
-                        || edge.is_some_and(|(old, by)| lands(old, shift(old, by), *other, rule))
-                })
-        });
-        let Some((index, shows)) = landed else {
-            return moved;
-        };
-        if count == MAX_CASCADE {
-            return moved;
-        }
-        count += 1;
-        taken[index] = true;
-        moved.extend(shows.iter().copied());
-        moves.extend(
-            rects(shows)
-                .into_iter()
-                .map(|(show, rect)| (show, rect, by)),
-        );
+    // The paragraph extends as far as its moved lines, before and after the
+    // move, the edit's own lines and its bottom.
+    let paragraph = extent(
+        &mut moves
+            .iter()
+            .flat_map(|(_, old, by)| [*old, shift(*old, *by)])
+            .chain(inks.iter().copied())
+            .chain(edge.into_iter().flat_map(|(old, by)| [old, shift(old, by)])),
+    );
+    reach.clear();
+    reach.extend(moves.iter().map(|_| paragraph));
+    let full = by[cross].abs();
+    if full < 1e-9 {
+        return Some((BTreeMap::new(), paragraph));
     }
+    let sign = by[cross].signum();
+    let blank = pitch - (slack[cross] - 0.1);
+    // Positions along the direction of the move, so that "further" is larger.
+    let start = |rect: [f64; 4]| {
+        if sign > 0. {
+            rect[cross]
+        } else {
+            -rect[cross + 2]
+        }
+    };
+    let end = |rect: [f64; 4]| {
+        if sign > 0. {
+            rect[cross + 2]
+        } else {
+            -rect[cross]
+        }
+    };
+    let blocks: Vec<Vec<(u32, [f64; 4])>> = beneath
+        .iter()
+        .map(|shows| {
+            page.runs
+                .runs
+                .iter()
+                .filter(|other| shows.contains(&other.operator) && !other.text.trim().is_empty())
+                .map(|other| (other.operator, other.display_rect.map(f64::from)))
+                .collect()
+        })
+        .collect();
+    let reaches: Vec<[f64; 2]> = blocks
+        .iter()
+        .map(|rects| extent(&mut rects.iter().map(|(_, rect)| *rect)))
+        .collect();
+    // How far `other` has to go, as a distance along the move, for a rectangle
+    // that was at `old` and went `gone` further: as far, less what the space
+    // between them has beyond a blank line, when the blocks they belong to
+    // (`reach` and `beside`, along the line) are one above the other. A block
+    // beside it is not in its way, nor one level with it or above it, which
+    // the line moves away from; text clipped away entirely has a rectangle of
+    // no height and is not there.
+    let need = |old: [f64; 4], gone: f64, reach: [f64; 2], other: [f64; 4], beside: [f64; 2]| {
+        let shared = reach[1].min(beside[1]) - reach[0].max(beside[0]);
+        let ahead = start(other) + end(other) > start(old) + end(old);
+        if ahead && shared > 0.1 && other[cross + 2] - other[cross] > 0.1 {
+            let spare = (start(other) - end(old) - blank).max(0.);
+            (gone - spare).max(0.)
+        } else {
+            0.
+        }
+    };
+    let fixed: Vec<([f64; 4], f64)> = moves
+        .iter()
+        .map(|(_, old, by)| (*old, by[cross] * sign))
+        .chain(edge.map(|(old, by)| (old, by[cross] * sign)))
+        .collect();
+    let mut gone: BTreeMap<usize, f64> = BTreeMap::new();
+    let mut settled = false;
+    for _ in 0..4 * (blocks.len() + 1) {
+        let mut changed = false;
+        for (index, rects) in blocks.iter().enumerate() {
+            let mut far = 0_f64;
+            for (_, other) in rects {
+                if inks.iter().any(|ink| strikes(*ink, *other, own)) {
+                    far = full;
+                }
+                for (old, went) in &fixed {
+                    far = far.max(need(*old, *went, paragraph, *other, reaches[index]));
+                }
+                for (moved, went) in &gone {
+                    if *moved != index {
+                        for (_, old) in &blocks[*moved] {
+                            far =
+                                far.max(need(*old, *went, reaches[*moved], *other, reaches[index]));
+                        }
+                    }
+                }
+            }
+            // A need of a hundredth of a point is what is left of subtracting a
+            // break's spare from the distance it absorbs exactly, and moving a
+            // block by it only brings it closer to what is below.
+            if far > gone.get(&index).copied().unwrap_or(0.) + NO_MOVE {
+                if !gone.contains_key(&index) && gone.len() == MAX_CASCADE {
+                    continue;
+                }
+                gone.insert(index, far);
+                changed = true;
+            }
+        }
+        if !changed {
+            settled = true;
+            break;
+        }
+    }
+    if !settled {
+        return None;
+    }
+    let mut moved = BTreeMap::new();
+    for (index, went) in gone {
+        let part = went / full;
+        for show in &beneath[index] {
+            moved.insert(*show, part);
+        }
+        moves.extend(
+            blocks[index]
+                .iter()
+                .map(|(show, rect)| (*show, *rect, [by[0] * part, by[1] * part])),
+        );
+        reach.extend(blocks[index].iter().map(|_| reaches[index]));
+    }
+    Some((moved, paragraph))
 }
 
 /// Whether the runs a wrap moves can go where it puts them, and where each of
@@ -1313,28 +1435,36 @@ fn cascade(
 /// checked against nothing.
 fn wrap_room(
     page: &Inspection,
-    (moves, edge): (&[Move], Option<Edge>),
+    moving: &Moving<'_>,
     hits: &[([f64; 4], bool)],
     down: [f64; 2],
     geometry: &crate::pagetree::DisplayedPage,
     display: &impl Fn([f64; 4]) -> [f32; 4],
 ) -> Result<Vec<(u32, [f32; 4])>, String> {
+    let Moving {
+        moves,
+        reach,
+        edge,
+        paragraph,
+    } = *moving;
     let rule = landing(moves, edge, down);
     if let Some((old, by)) = edge {
         if hits
             .iter()
-            .any(|(other, moves)| !*moves && lands(old, shift(old, by), *other, rule))
+            .any(|(other, moves)| !*moves && lands((old, shift(old, by), paragraph), *other, rule))
         {
             return Err(wrap::NO_ROOM.into());
         }
     }
     let moving: Vec<_> = moves
         .iter()
-        .map(|(operator, rect, by)| {
+        .zip(reach)
+        .map(|((operator, rect, by), reach)| {
             (
                 *operator,
                 *rect,
                 *by,
+                *reach,
                 page.contexts[operator]
                     .clip
                     .map(|clip| display(clip).map(f64::from)),
@@ -1343,7 +1473,7 @@ fn wrap_room(
         .collect();
     let (width, depth) = (f64::from(geometry.width), f64::from(geometry.height));
     let mut placed = Vec::new();
-    for (operator, old, by, clip) in &moving {
+    for (operator, old, by, reach, clip) in &moving {
         let new = shift(*old, *by);
         if new[0] < -0.001 || new[1] < -0.001 || new[2] > width + 0.001 || new[3] > depth + 0.001 {
             return Err(wrap::NO_ROOM.into());
@@ -1353,7 +1483,7 @@ fn wrap_room(
         }
         if hits
             .iter()
-            .any(|(other, moves)| !*moves && lands(*old, new, *other, rule))
+            .any(|(other, moves)| !*moves && lands((*old, new, *reach), *other, rule))
         {
             return Err(wrap::NO_ROOM.into());
         }
@@ -1374,7 +1504,7 @@ fn wrap_room(
     }
     let swept: Vec<[f64; 4]> = moving
         .iter()
-        .map(|(_, old, by, _)| {
+        .map(|(_, old, by, _, _)| {
             let new = shift(*old, *by);
             [
                 old[0].min(new[0]),
@@ -2023,21 +2153,17 @@ pub(super) fn prepare(
                 // edit's own lines, would land on move down with it.
                 // With no line of the paragraph below the edit, its bottom is
                 // the edited line, moved down to the edit's new last line.
-                let edge = (plan.below.is_empty() && drop > 0.).then(|| {
-                    let mut old = run.display_rect.map(f64::from);
-                    for ink in &inks {
-                        old[axis] = old[axis].min(ink[axis]);
-                        old[axis + 2] = old[axis + 2].max(ink[axis + 2]);
-                    }
-                    (old, corner(0., -drop))
-                });
-                let carried = cascade(
+                let edge = (plan.below.is_empty() && drop > 0.)
+                    .then(|| (run.display_rect.map(f64::from), corner(0., -drop)));
+                let mut reach = Vec::new();
+                let (carried, paragraph) = cascade(
                     page,
                     &plan.beneath,
-                    &mut moving,
+                    (&mut moving, &mut reach),
                     (&inks, free.own, edge),
                     (corner(0., -drop), corner(0., -plan.pitch)),
-                );
+                )
+                .ok_or(wrap::NO_ROOM)?;
                 let hits = if carried.is_empty() {
                     flag(&below.union(&flowing).copied().collect())
                 } else {
@@ -2045,13 +2171,14 @@ pub(super) fn prepare(
                         .edited
                         .iter()
                         .flat_map(|edited| shows_of(page, *edited))
-                        .any(|show| carried.contains(&show))
+                        .any(|show| carried.contains_key(&show))
                     {
                         return Err(wrap::CONFLICT.into());
                     }
-                    for show in &carried {
-                        lowered.push((*show, wrap::lowered(page, *show, along(0., -drop))?));
+                    for (show, part) in &carried {
+                        lowered.push((*show, wrap::lowered(page, *show, along(0., -drop * part))?));
                     }
+                    let carried: BTreeSet<u32> = carried.keys().copied().collect();
                     let lower: BTreeSet<u32> = below.union(&carried).copied().collect();
                     let hits = flag(&lower.union(&flowing).copied().collect());
                     left_behind(page, &lower, &hits)?;
@@ -2059,7 +2186,12 @@ pub(super) fn prepare(
                 };
                 let placed = wrap_room(
                     page,
-                    (&moving, edge),
+                    &Moving {
+                        moves: &moving,
+                        reach: &reach,
+                        edge,
+                        paragraph,
+                    },
                     &hits,
                     corner(0., -plan.pitch),
                     &geometry,

@@ -63,7 +63,10 @@ have the binary.)
   refused as before. This is stricter than the wrap was: edits a quarter
   longer are accepted 57.3% of the time across the 31-file sample, down from
   59.8%, because 3,942 edits that fitted only by closing a break are now
-  refused; 906 that did not fit before are accepted.
+  refused; 906 that did not fit before are accepted. The paragraphs below move
+  only as far as each needs to keep its blank line, so wider spaces further
+  down give up what they can spare, and a paragraph whose short last line sits
+  above an indented next paragraph keeps that break too.
 
 - **A middle-click on a tab closes it**, and the tab's right-click menu has
   **Close all tabs**, which asks once when any open document has unsaved

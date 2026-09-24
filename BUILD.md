@@ -10974,3 +10974,72 @@ seed of the cascade tested now that the edge covers the last-line case). Ten mut
 `keep breaks:`, one re-aimed; all caught, as are the cascade and room mutations beside them.
 `before.min(blank)` and a same-line skip were written first and deleted: neither could change a
 verdict, for the reasons given above and because text on the same line is never ahead.
+
+### Spreading the added lines, and a break is between blocks — measured 2026-09-24
+
+Ranked next after *A wrap keeps the paragraph breaks below it*: every block the cascade moved went
+the whole distance, so one break had to take all of it. Now each block moves only as far as it
+needs to (`layout::cascade`, `need`): the distance the block above it moved, less what the break
+between them has beyond a blank line. A break of a blank line or less passes the whole distance
+on; the first block that need not move ends the cascade, and `wrap::lowered` writes each block
+at its own distance. A need under a hundredth of a point (`NO_MOVE`) is no move: the corpus found
+it on Arcadia page 101, where subtracting a break's spare from the distance it took exactly left
+0.00003 pt, and moving a paragraph by that toward the page number under it refused 21 edits.
+
+The measurement predicted little, and got it: Coatesville's breaks are exactly one blank line, so
+they have nothing to spare. Alone, spreading moved 87 verdicts from refused to accepted and none
+the other way.
+
+**Its round trips found that the break rule was measured between the wrong things.** On Arcadia
+page 66 a paragraph's short last line (*therefrom.*, 72 to about 120) sits above the next
+paragraph's first line, indented to 184. The break rule compared lines that share extent along
+the line, so it measured from the wide line above *therefrom.*, found 12 pt to spare, moved the
+next paragraph 1.4 pt, and the break was gone -- and the version before spreading had the same
+hole, hidden only because every block moved the whole distance. A break is between two blocks,
+so the rule now compares blocks: each moved rectangle carries its block's extent along the line
+(`Moving::reach`; the paragraph's is its moved lines, the edit's lines and its bottom, and a
+carried block's is its own lines), and both `need` and `lands` ask whether those extents overlap.
+A block level with a moving line or above it is not ahead of it and is not moved by it. The ink
+widening of the paragraph's bottom (`Edge`) is gone with it: the paragraph's reach covers it, and
+its mutation survived.
+
+Against the records of *A wrap keeps the paragraph breaks below it*, 31 files, 44,282 runs:
+
+| trial | before | after |
+|---|---:|---:|
+| same length | 37,405 | 37,408 |
+| +10% | 29,852 | 29,860 |
+| +25% | 25,360 (57.27%) | 25,360 (57.27%) |
+| +50% | 22,496 | 22,495 |
+
+`--compare`: 76 refused before and accepted now, **66 accepted before and refused now**, all on
+Arcadia. 57 are *"its lines would move onto what is below it"*: six of them round-tripped with the
+previous probe and five had closed a paragraph break on page 101 (a gap wider than 1.5 pitches in
+pdfplumber's line tops: 8 before, 7 after) -- that page's render in the previous section showed
+the lines moving and missed that one break closed. The sixth, and the other 9, are *"part of it
+below cannot be moved"* on page 100, a notary form: the blocks below now count as below the
+paragraph, and one shares its line with the form's read-only text.
+
+**`text_wrap_check.py --compare` had a hole of its own**, older than today. It took whatever
+source glyphs were left over on one line for the edited line, so a whole line of other text moved
+sideways, moved up, or split between two distances passed, and the count check still added up.
+The left-over glyphs must now sit on a line that holds the original's characters. It also
+accepts several downward distances, a whole line at a time, each supported by at least three
+glyphs (`SUPPORT`). `--self-test` runs six synthetic controls, both ways; without the new
+assertion three of them fail. It does not count paragraph breaks; the break counts above were
+taken by hand.
+
+**Round trips**: four newly accepted edits (two per file with flips, seed 7) pass the probe,
+`qpdf --check`, `text_wrap_check.py --compare`, and keep every break (6 -> 6 and 1 -> 1). Both
+Arcadia page 66 edits are refused now.
+
+Tests: `wrap_tests` gained three (the lines spread over two breaks, a block left a few
+thousandths to go, a short last line above an indented paragraph) and three changed: the cut
+test's next paragraph moves 4 pt rather than two lines; the grazed test's word under the
+paragraph's end moves to keep its break, and it gained a tagged and an untagged column beside the
+paragraph; and a clipped-away paragraph stays. The mutation table gained eleven under `spread:`
+and `keep breaks:`, eleven were re-aimed, and two went: a duplicate, and one of deleted code. All
+40 under `spread:`, `cascade:`, `keep breaks:`, `wrap room:` and `beneath:` are caught. Three conditions were written and deleted as
+unreachable: a cap on a block's distance (it cannot exceed what moved above it), a branch moving a
+block the whole way when a line lands on it from beside (`lands` needs the extent the other
+branch already covers), and the ink widening of the bottom.

@@ -5139,9 +5139,12 @@ Ranked by what the measurement says is left, the next increments are:
    space. `BUILD.md`, *The blocks below a wrapped paragraph move down with it* and *A wrap
    keeps the paragraph breaks below it*.
 
-   Next in this line of work: **spreading the added lines over several breaks**, each giving
-   up part of its space, where today every moved block moves the whole distance. It is what
-   would let a full page wrap at all.
+   ~~Next in this line of work: **spreading the added lines over several breaks**~~, built
+   2026-09-24, with the break rule corrected to compare blocks rather than lines; +25% as typed
+   is unchanged at 57.27%, because Coatesville's breaks are exactly one blank line and have
+   nothing to spare. `BUILD.md`, *Spreading the added lines, and a break is between blocks*.
+   What would let a full page wrap is a break giving up part of its blank line, which is a
+   decision about how the page should look rather than an increment.
 4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
    wrong about the case a wrap damages.
 

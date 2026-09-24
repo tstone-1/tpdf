@@ -6,11 +6,14 @@ uv run --with pypdf scripts/text_wrap_check.py --generate <new directory>
 <text-edit-probe> --roundtrip <dir>/source.pdf <dir>/requests.json <new result directory>
 uv run --with pypdf scripts/text_wrap_check.py --check <dir>/source.pdf <result>/edited.pdf
 uv run --with pypdf --with pdfplumber scripts/text_wrap_check.py --compare <source.pdf> <edited.pdf> <page> [<requests.json>]
+uv run --with pypdf --with pdfplumber scripts/text_wrap_check.py --self-test
 
 `--compare` is for a document the script did not write, where it cannot know which
 lines should move. It pairs every glyph on the page before and after the save, as
 pdfplumber reads them: a glyph must be where it was, or moved straight down the
-page by one distance that every moved glyph shares. What is left over from the
+page with the rest of its line, by one of the distances at least three glyphs
+agree on (the paragraphs below a wrap move only as far as each needs to keep a
+blank line above it, so there may be several). What is left over from the
 source must lie on one line, the edited one, and what is left over on the saved
 page is the replacement. Nothing is printed of the text itself.
 
@@ -27,6 +30,7 @@ replacement adds to the original, so a flowed glyph that went missing or was dra
 twice fails, and so does one that the replacement's own count would hide.
 """
 import argparse
+from collections import Counter
 import json
 from pathlib import Path
 
@@ -158,6 +162,8 @@ def overlaps(chars):
 # in the untouched source, while both agree on the saved file, where the same
 # show has a Tm of its own. Twice that, and far below any real move.
 TOLERANCE = 0.05
+# Glyphs that must agree on a distance before a line may move by it.
+SUPPORT = 3
 
 
 class Pool:
@@ -190,8 +196,14 @@ def visible(text):
 
 def compare(source, saved, page, request=None):
     """The glyphs of `saved` against `source`: unchanged, moved straight down
-    by one shared distance, or the edited line's own. Counts only; no text is
-    printed.
+    by one of the distances the page shows, a whole line at a time, or the
+    edited line's own. Counts only; no text is printed.
+
+    Several distances, because the blocks below a wrap move only as far as
+    each needs to keep a blank line above it (`layout::cascade`), so the lines
+    of one paragraph move one distance and the next paragraph may move less. A
+    distance counts only where at least `SUPPORT` glyphs agree on it, so a
+    coincidental pairing cannot supply one.
 
     Glyphs rather than shows, because a moved show is drawn from a `Tm` of its
     own and a reader groups text into chunks at every one of them, so the same
@@ -210,26 +222,27 @@ def compare(source, saved, page, request=None):
             if abs(c[1] - x) <= TOLERANCE and c[2] > top + 1:
                 distance = round(c[2] - top, 1)
                 distances[distance] = distances.get(distance, 0) + 1
-    drop = max(distances, key=distances.get) if distances else None
-    # Each source line is unchanged or moved as a whole, whichever accounts for
-    # more of its glyphs against the untouched saved page; moved lines claim
-    # their places first, since those are the places another line vacated.
+    drops = sorted(d for d, n in distances.items() if n >= SUPPORT)
+    # Each source line is unchanged or moved as a whole by one distance,
+    # whichever accounts for most of its glyphs against the untouched saved
+    # page; moved lines claim their places first, since those are the places
+    # another line vacated.
     lines = {}
     for c in before:
         lines.setdefault(c[2], []).append(c)
     fresh = Pool(after)
-    moving = set()
-    if drop is not None:
-        for top, line in lines.items():
-            down = sum(1 for c in line if fresh.find(c[0], c[1], top + drop))
-            here = sum(1 for c in line if fresh.find(c[0], c[1], top))
-            if down > here:
-                moving.add(top)
+    moving = {}
+    for top, line in lines.items():
+        here = sum(1 for c in line if fresh.find(c[0], c[1], top))
+        best = max(drops, default=None,
+                   key=lambda d: sum(1 for c in line if fresh.find(c[0], c[1], top + d)))
+        if best is not None and sum(1 for c in line if fresh.find(c[0], c[1], top + best)) > here:
+            moving[top] = best
     left = Pool(after)
     unchanged, moved, gone = 0, 0, []
     for top in sorted(lines, key=lambda top: top not in moving):
         for c in lines[top]:
-            if top in moving and left.take(c[0], c[1], top + drop) is not None:
+            if top in moving and left.take(c[0], c[1], top + moving[top]) is not None:
                 moved += 1
             elif left.take(c[0], c[1], top) is not None:
                 unchanged += 1
@@ -237,13 +250,25 @@ def compare(source, saved, page, request=None):
                 gone.append(c)
     tops = sorted({c[2] for c in gone})
     assert not gone or tops[-1] - tops[0] < 1, (
-        f"{len(gone)} source glyphs neither stayed nor moved by the shared {drop} pt, "
+        f"{len(gone)} source glyphs neither stayed nor moved down by one of {drops} pt, "
         f"on {len(tops)} lines rather than the edited one")
     new = left.rest()
     assert new, "the replacement is not on the saved page"
     counted = ""
     if request is not None:
         edit, = json.loads(Path(request).read_text())
+        # What is left over from the source is on the edited line, which holds
+        # the original. A line of other text that moved sideways, up, or split
+        # between two distances is left over too, on one line, and adds up in
+        # the count below; that the line does not hold the original is what
+        # gives it away. (Text after the edit on its line is left over as well,
+        # pushed or flowed, so the left-overs themselves may be more than the
+        # original.)
+        if gone:
+            held = Counter("".join(c[0] for c in before if abs(c[2] - tops[0]) < 1))
+            held.subtract(ch for ch in edit["original"] if not ch.isspace())
+            assert all(n >= 0 for n in held.values()), (
+                "the source glyphs left over are on a line that does not hold the edited run")
         added = visible(edit["replacement"]) - visible(edit["original"])
         assert len(new) - len(gone) == added, (
             f"the saved page gained {len(new) - len(gone)} glyphs over the source's "
@@ -252,20 +277,73 @@ def compare(source, saved, page, request=None):
     crowded = overlaps(before), overlaps(after)
     assert crowded[1] <= crowded[0], (
         f"{crowded[1]} pairs of glyphs overlap on the saved page, {crowded[0]} on the source")
-    print(f"[PASS] {unchanged} glyphs unchanged, {moved} moved down {drop} pt, "
+    used = sorted(set(moving.values()))
+    print(f"[PASS] {unchanged} glyphs unchanged, {moved} moved down by {used} pt, "
           f"{len(gone)} replaced on one line, {len(new)} new on "
           f"{len({round(c[2], 1) for c in new})} lines{counted}; "
           f"overlapping pairs {crowded[0]} -> {crowded[1]}")
 
 
+def self_test():
+    """`compare` against synthetic glyphs whose answer is known, both ways.
+
+    Written when `compare` learned several distances, and it found that the
+    single-distance version already passed a whole line of other text moved
+    sideways, moved up, or split between two distances: the left-over glyphs
+    sat on one line and were taken for the edited one, and the count still
+    added up."""
+    import tempfile
+
+    def line(top, x0=10, text="abcdefgh", dx=0):
+        return [(ch, x0 + 7 * i + dx, top, 5) for i, ch in enumerate(text)]
+
+    source = line(10) + line(30) + line(90, text="xyz")
+    edited = line(90, text="xyzQ")
+    cases = [
+        ("two distances, whole lines", line(22) + line(36) + edited, True),
+        ("one line split across two",
+         line(22) + line(42, text="abcd") + line(36, x0=38, text="efgh") + edited, False),
+        ("a line moved sideways", line(22, dx=5) + line(36) + edited, False),
+        ("a line moved up", line(4) + line(36) + edited, False),
+        ("the edit replaced a glyph", line(22) + line(36) + line(90, text="xzQQ"), True),
+        ("a glyph lost from a moved line", line(22, text="abcdefg") + line(36) + edited, False),
+    ]
+    global glyphs, overlaps
+    real = glyphs, overlaps
+    failed = 0
+    with tempfile.TemporaryDirectory() as directory:
+        request = Path(directory) / 'requests.json'
+        request.write_text(json.dumps([{"original": "xyz", "replacement": "xyzQ"}]))
+        try:
+            for name, after, expect in cases:
+                glyphs = lambda path, page, after=after: source if path == 'source' else after
+                overlaps = lambda chars: 0
+                try:
+                    compare('source', 'saved', 0, request)
+                    passed = True
+                except AssertionError:
+                    passed = False
+                failed += passed != expect
+                print(f"[{'OK' if passed == expect else 'FAIL'}] {name}: "
+                      f"{'passes' if passed else 'refused'}")
+        finally:
+            glyphs, overlaps = real
+    if failed:
+        raise SystemExit(f'[FAIL] {failed} of {len(cases)} controls')
+    print(f'[OK] all {len(cases)} controls')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--generate', type=Path)
+    parser.add_argument('--self-test', action='store_true')
     parser.add_argument('--check', nargs=2, type=Path)
     parser.add_argument('--compare', nargs='+', metavar='ARG',
                         help='<source.pdf> <edited.pdf> <page> [<requests.json>]')
     args = parser.parse_args()
-    if args.generate:
+    if args.self_test:
+        self_test()
+    elif args.generate:
         generate(args.generate)
     elif args.check:
         check(*args.check)
@@ -275,7 +353,7 @@ def main():
         source, saved, page, *request = args.compare
         compare(Path(source), Path(saved), int(page), *request)
     else:
-        parser.error('--generate, --check or --compare')
+        parser.error('--generate, --check, --compare or --self-test')
 
 
 if __name__ == '__main__':

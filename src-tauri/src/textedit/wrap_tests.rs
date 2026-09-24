@@ -289,15 +289,29 @@ fn a_block_the_edited_line_only_grazes_stays() {
     let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
     assert_eq!(at(&runs, "BY"), (175., 175.));
-    // Nor is text beside where a moved line goes: `BY` on the line `TEN`
-    // moves to, far to its right, has no gap above it to keep.
-    let beside = tagged(
+    // A word under the paragraph's end one line below its last line is below
+    // the paragraph, although not below `TEN`: `TEN` moving down beside it
+    // would close the break between them, so it moves down the same line.
+    let under = tagged(
         &content(52., "155 38 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
         &[&[0, 1, 2], &[3], &[4]],
     );
-    let runs = placed_runs(&wrapped(&beside, WIDEST, LONGER));
+    let runs = placed_runs(&wrapped(&under, WIDEST, LONGER));
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
-    assert_eq!(at(&runs, "BY"), (175., 158.));
+    assert!(near(at(&runs, "BY"), (175., 144.)), "{runs:?}");
+    // Text in a column beside the paragraph is not below it, and nothing
+    // keeps a break from it: untagged, at (250, 160), it could not move, and
+    // the wrap stands.
+    let column = tagged(&content(52., "230 40 Td (BY) Tj "), &[&[0, 1, 2], &[3]]);
+    let runs = placed_runs(&wrapped(&column, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    // Tagged, it could move, and stays where it is.
+    let column = tagged(
+        &content(52., "230 40 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    let runs = placed_runs(&wrapped(&column, WIDEST, LONGER));
+    assert_eq!(at(&runs, "BY"), (250., 160.));
 }
 
 // When the edited line is the paragraph's last, the edit's own new last line
@@ -323,6 +337,65 @@ fn the_edits_new_last_line_keeps_the_break_below_it() {
     assert_eq!(at(&placed_runs(&under), "BY"), (150., 144.));
     let runs = placed_runs(&wrapped(&under, LAST, LONGER));
     assert!(near(at(&runs, "BY"), (150., 130.)), "{runs:?}");
+}
+
+// The added line is spread over the breaks below: each block moves as far as
+// the one above it did, less what its break has beyond a blank line (13 pt
+// here), and the first that need not move ends it. Breaks of 20 pt give 7 each,
+// so the line of 14 pt takes two of them: the next paragraph moves 7, and the
+// block after it not at all.
+#[test]
+fn the_added_lines_are_spread_over_the_breaks_below() {
+    let doc = tagged(
+        &content(
+            35.,
+            "0 -35 Td /P <</MCID 4>> BDC (BY) Tj EMC 0 -35 Td /P <</MCID 5>> BDC (ONE) Tj EMC ",
+        ),
+        &[&[0, 1, 2], &[3], &[4], &[5]],
+    );
+    let before = placed_runs(&doc);
+    assert_eq!(at(&before, NEXT), (20., 137.));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert!(near(at(&runs, NEXT), (20., 130.)), "{runs:?}");
+    assert!(near(at(&runs, "BY"), (20., 102.)), "{runs:?}");
+    assert_eq!(at(&runs, "ONE"), at(&before, "ONE"));
+}
+
+// A break that absorbs the added line all but exactly leaves the block below it
+// a few thousandths of a point to go, which is no move at all: here moving the
+// next paragraph by it would bring it closer to the untagged line set one pitch
+// under it, which nothing can move, and refuse the wrap for nothing.
+#[test]
+fn a_block_left_a_few_thousandths_to_go_stays() {
+    let doc = tagged(&content(41.995, "0 -14 Td (BY) Tj "), &[&[0, 1, 2], &[3]]);
+    let before = placed_runs(&doc);
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert_eq!(at(&runs, NEXT), at(&before, NEXT));
+}
+
+// A paragraph break is between two blocks, not between two lines that share
+// extent along the line: `TEN`, the paragraph's short last line, ends at 41.6,
+// and the next paragraph's first line is indented to 100. Measured from the
+// wide line above `TEN` there would be room to spare; from `TEN` a 20 pt break
+// has 7 pt over a blank line, so the next paragraph moves 7, and text below
+// that cannot move refuses the wrap.
+#[test]
+fn a_short_last_line_keeps_the_break_above_an_indented_paragraph() {
+    let indented =
+        |gap: f64| content(gap, "").replace(&format!("0 -{gap} Td"), &format!("80 -{gap} Td"));
+    let doc = tagged(&indented(35.), &[&[0, 1, 2], &[3]]);
+    assert_eq!(at(&placed_runs(&doc), NEXT), (100., 137.));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert!(near(at(&runs, NEXT), (100., 130.)), "{runs:?}");
+    let error = refusal(
+        &tagged(&untagged_next(&indented(35.)), &[&[0, 1, 2]]),
+        WIDEST,
+        LONGER,
+    );
+    assert!(error.contains("what is below it"), "{error}");
 }
 
 // A block that would have to leave the page to make room refuses the wrap, as
@@ -550,8 +623,8 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
     assert!(near(at(&runs, "DONE"), (20., 158.)), "{runs:?}");
     assert!(near(at(&runs, LAST), (20., 144.)), "{runs:?}");
     // Two lines would leave the next paragraph less than a blank line below
-    // the last one, so it moves down the same two lines and keeps its break.
-    assert!(near(at(&runs, NEXT), (20., 92.)), "{runs:?}");
+    // the last one, so it moves down the 4 pt that keep one.
+    assert!(near(at(&runs, NEXT), (20., 116.)), "{runs:?}");
     let saved_shows = shows(&saved);
     for piece in ["ONCE AND", "DONE"] {
         assert!(
@@ -1427,7 +1500,10 @@ fn a_clip_over_the_paragraph_stops_the_lines_it_would_move() {
     };
     let error = refusal(&clipped(160.), WIDEST, LONGER);
     assert!(error.contains("what is below it"), "{error}");
-    wrapped(&clipped(150.), WIDEST, LONGER);
+    // The next paragraph is clipped away entirely, so nothing keeps a break
+    // above it and it does not move.
+    let runs = placed_runs(&wrapped(&clipped(150.), WIDEST, LONGER));
+    assert_eq!(at(&runs, NEXT), (20., 120.));
 }
 
 // The preview crop has to show every pixel the wrap changes, and a moved line
