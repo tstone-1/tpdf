@@ -10623,7 +10623,9 @@ Three things in those numbers are not what the feature's name suggests:
   the editor opens (the rounding `Free::from` describes). These edits were refused before
   because the replacement was laid out over that run; now the run moves. 345 of the 2,083 add
   no line at all, and 5 of the 11 round trips below are such edits. Untagged pages still refuse
-  them, which is why `docs/PLAN.md` ranks fixing the push above splitting runs.
+  them, which is why `docs/PLAN.md` ranks fixing the push above splitting runs. **Fixed the same
+  day; the cause was not the suspect named in `docs/PLAN.md`** -- see *The push finds a run set
+  flush against the edit*.
 - **155 same-length edits and 5 unchanged ones are accepted now**, 139 and 4 of them in
   Coatesville. Laid out again from glyph widths their own text is wider than the line has, so
   they wrap: the reader gets a changed line break for an edit that added nothing. It is the
@@ -10684,3 +10686,93 @@ overhanging last glyph. The old `text_after_the_run_on_its_line_keeps_the_page_e
 pinned the refusal this removes and was replaced. The mutations are under `wrap` and `flow:`
 in `scripts/mutate_rust.py`, one per decision: `mutate_rust.py --only wrap --only flow: --only
 'grown box: measure'` ran 66, all caught by the test named for each, on the final tree.
+
+### The push finds a run set flush against the edit — measured 2026-09-24
+
+Ranked above splitting runs in `docs/PLAN.md` §7: in about half the lines whose rest flowed
+after a wrap, the push along the line had moved nothing. `docs/PLAN.md` suspected
+`free_width`'s `near + 0.1 < own_far`, a tenth of a text-space unit. **It is not that.** A
+temporary print over the five tagged files recorded, for every flow with an empty push, which
+condition dropped the run after the edit: all 804 distinct cases (448 edited runs) left through
+one early return, `if free >= hard { return nothing(stop) }`, and in every one the run after the
+edit started at the box's edge or up to 0.1 units inside it.
+
+The mechanism: `room` skips a run starting inside the box, because the box may never shrink,
+and the box is the run's advance rounded up, so a run set flush against the edited one is always
+skipped. With nothing movable after that run, the box's limit with every run counted (`free`)
+and with only the fixed ones (`hard`) are the same page edge, and the early return read
+agreement as "nothing movable is in the way". `Free::from` already handled the flush run when a
+third run made the walk reachable (`the_push_is_measured_from_the_run_it_moves_not_from_the_room`);
+without one it was never reached. The early return is gone, and the walk decides.
+
+Removing it exposed a second defect in the same place. The ceiling was `(from + shift).max(free)`,
+a floor meant to keep a replacement that fitted the old room accepted. With the flush run
+skipped, `free` runs past it to the next obstacle and the floor replaces `reach`'s limit: the
+push moved runs further than `reach` allowed. It is `(from + shift).max(free.min(from))` now.
+The trap index has the general form.
+
+Tightening that exposed a third, which the loose floor had been hiding: `reach` counted any
+drawing overlapping a pushed run as leaving it no room, so a page border or background around
+the whole text block (Word's, on the Illinois résumés and the Healdsburg slides) refused every
+push on the page. A drawing that starts behind the run now holds it, and the run may move as far
+as the drawing's far edge; one that starts partway along the run still stops it. The wrap
+already asked the same of the lines it moves.
+
+Growth instrument, the release probe built from `HEAD` (`5b85103`) and one from this tree, 31
+files, 44,282 runs, `app` mode, as typed:
+
+| trial | before | after |
+|---|---:|---:|
+| unchanged | 43,838 | 43,838 |
+| same length | 37,422 | 37,434 |
+| +10% | 29,313 (66.2%) | **30,327 (68.5%)** |
+| +25% | 25,469 (57.5%) | **26,444 (59.7%)** |
+| +50% | 22,932 (51.8%) | **23,836 (53.8%)** |
+
+`--compare`: **594,041 verdicts unchanged in kind, 2,963 refused before and accepted now, 58
+accepted before and refused now.** 9,309 worker-agreement checks, 0 disagreements. At +25%, 995
+edits flipped to accepted: 701 on untagged pages (LuaTeX manual 239, fontspec 104, arXiv 101 and
+98, ReportLab guide 87, the SampleForms invoice 42, the research paper 27, Wellington 3) and 294
+in the five tagged files (Arcadia 207, Illinois 59, Hugo 14, Healdsburg 11, Coatesville 3).
+
+**The 58 were rendered from the old probe's output, one per refusal message**, since each is an
+edit the old code accepted:
+
+| refusal now | cases | what the old code wrote |
+|---|---:|---|
+| other text follows it | 21 | Typst: `𝜎` pushed 2.6 pt onto its own superscript `2`, which stayed |
+| the text after it cannot be moved | 15 | arXiv: a line of the right-hand column pushed 4.5 pt along with the left one |
+| this paragraph cannot wrap | 7 | Arcadia: `ONE MILLION, FIFTY-SEVEN` pushed to x 620.1 on a 612 pt page |
+| a picture or a drawing follows it | 12 | Arcadia p.53: a run pushed 18 pt into a picture starting 0.6 pt after it |
+| it reaches the edge of the page | 3 | ReportLab: a line pushed to x 598.8 on a 595.3 pt page |
+
+One of the twelve drawing cases is a same-length edit on an underlined line (Arcadia p.93): the
+underline ends 0.002 pt past the text, so the text has no room, and the old code moved it a
+fraction of a point off its underline. That refusal is a real, small loss; it is the push's
+existing rule for any drawing after a run. `--roundtrip` passed every one of the old outputs,
+because the damage is inside the edit's own envelope.
+
+**Round trips, two per file with flips** (fourteen), each a +25% edit refused before and accepted
+now, chosen with seed 7 from the flipped verdicts; the LuaTeX and ReportLab pages were first
+extracted with `qpdf --empty --pages <file> <n> --`, since `--roundtrip` refuses their page count.
+All fourteen pass the probe (preview and save agree, nothing outside the envelope changes) and
+`qpdf --check`. `text_wrap_check.py --compare` passes twelve; the two arXiv picks (page 8,
+operators 1711 and 1975) are edits inside a displayed formula, where the glyphs sit on five
+baselines and the checker's one-line model reports *"source glyphs neither stayed nor moved by
+the shared None pt, on 6 lines"*. Rendered, `{A, B, C}` became `{A,, B, C}` with the rest of the
+formula moved along intact.
+
+⚠ Found while reading those, and older than this change: poppler reports *"Syntax Error: Invalid
+XRef entry 0"* on every arXiv 2003 output, including one written by the `HEAD` probe, and on no
+other file. `qpdf --check` is clean on all of them. Not investigated.
+
+Tests: `push_tests` gained `a_flush_neighbour_with_nothing_after_it_is_still_pushed` (the move,
+and the page limit past the skipped run) and
+`a_drawing_holding_the_run_that_moves_allows_it_to_its_far_edge` (a frame, and a drawing
+starting inside the run); `wrap_tests` gained
+`text_kerned_into_the_edit_flows_although_the_push_leaves_it`, because the mutation `wrap: flow
+text only the push saw` survived once the push found the flush run and needed a run the push
+still leaves out. Four new mutations in `scripts/mutate_rust.py`; `--only push: --only wrap
+--only flow --only 'grown box' --only 'boxed edit' --only layout:` ran 112, one survivor
+re-aimed and re-run, then all caught.
+

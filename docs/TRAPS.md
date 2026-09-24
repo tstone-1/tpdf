@@ -515,6 +515,7 @@ hop through the index.
 - A pixel envelope that covers where text went and where it was passes an edit that moved nothing
 - Two em boxes overlapping is not two runs on one line
 - A bounding rectangle covers every place text left only while all of it moves one way
+- A floor under a limit is a second limit, and it took over wherever the first measurement skipped something
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24254,3 +24255,29 @@ The general form: a claim that one rectangle bounds a set of movements is a clai
 directions. When a change adds a movement in a new direction, re-read every comment that argued
 from geometry, and run the check that measures pixels rather than the ones that measure
 positions.
+
+### A floor under a limit is a second limit, and it took over wherever the first measurement skipped something
+
+The push along a line had two limits on the box: how far the runs it moves can go (`from +
+shift`, from `reach`), and `free`, the room the box had without pushing anything, written as a
+floor -- `(from + shift).max(free)` -- so that a replacement fitting the old room kept being
+accepted. That is only a floor while `free` is measured up to the first thing in the way.
+`room` skips a run that starts inside the box, and the box is the run's advance rounded up, so a
+run set flush against the edited one is skipped every time and `free` runs on past it to the
+next obstacle. There the floor was larger than the limit and silently replaced it: the push
+moved runs further than `reach` had allowed. Measured on the public sample, that pushed a line
+to x 620 on a 612 pt page, a line of the other column 4.5 pt sideways, and a Typst `𝜎` onto its
+own superscript. The same skipping also made the two limits agree when nothing movable followed
+the flush run, and an early return read agreement as "nothing movable is in the way", so the
+run was never pushed at all -- half of all lines whose rest flowed after a wrap.
+
+Nothing caught either. The unit tests put neighbours well clear of the box or behind a third
+run. `text-edit-probe --roundtrip` passed all three damaged edits, because it requires changed
+pixels to lie inside the edit's reported envelope, and a push that goes too far changes pixels
+inside it. The growth comparison found them only after the fix, as 82 verdicts that moved from
+accepted to refused, each of which had to be rendered to tell damage from a new false refusal.
+
+The general form: a fallback written as `max` or `min` over a bound is a second bound, and it
+wins wherever the fallback's own measurement is larger than intended. Ask what the fallback
+measures past, not only what it measures. And a pixel check scoped to the edit cannot see the
+edit going wrong inside its own scope; for anything that moves text, compare glyph positions.

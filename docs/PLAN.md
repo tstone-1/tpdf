@@ -5116,7 +5116,7 @@ Ranked by what the measurement says is left, the next increments are:
    already keeps a prefix or suffix of a run's source items), and leaves no leading space at
    the start of a line.
 
-   **Ranked above that, found while building it: the push along the line does not see the
+   ~~**Ranked above that, found while building it: the push along the line does not see the
    run after the edit in about half of these lines.** Of 2,083 distinct cases where text
    flowed, 1,022 had nothing in the push's line. 235 are a neighbour starting inside the box
    the editor opens, which is a rounding up of the run's own advance (`Free::from` describes
@@ -5125,7 +5125,12 @@ Ranked by what the measurement says is left, the next increments are:
    tenth of a point. Suspected, not measured. On a tagged page the flow now moves such a run
    whatever the push thought; on an untagged page the edit is still laid out over it and
    refused. Fixing the push is a correctness fix to an existing feature on every page,
-   which is why it comes first.
+   which is why it comes first.~~ **Fixed 2026-09-24, and the suspect was wrong:** every miss
+   left through an early return in `free_width` that read the two limits agreeing as "nothing
+   movable is in the way", while `room` had skipped the flush run. The same fix stopped the
+   push moving runs past `reach`'s limit, and a frame around the text no longer stops it.
+   +25% as typed went from 57.5% to 59.7%, 701 of the 995 new acceptances on untagged pages.
+   `BUILD.md`, *The push finds a run set flush against the edit*. Splitting a run is next.
 3. **Moving what is below the paragraph**, the 916. The larger capability named above, and
    the one where what is below is usually another paragraph that would have to move too.
 4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not

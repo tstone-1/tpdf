@@ -40,6 +40,31 @@ have the binary.)
   keeps its old refusal when another paragraph's text shares the line, or
   when the text after it is something tpdf cannot move.
 
+### Fixed
+
+- **Text set right against the edited text is now moved out of the way.**
+  Where the next piece of text on a line starts exactly where the edited one
+  ends, tpdf did not see it when making room, and a longer edit was refused with
+  *"it reaches the edge of the page"* although the line had space. It is now
+  pushed along like any other text, on every page, tagged or not.
+- **A longer edit can no longer push text off the page or onto other text.**
+  In the same situation, when the line was followed by more text further on,
+  tpdf could push that text further than it had room for: past the right edge
+  of the page, onto a superscript, or into the neighbouring column. Such an edit
+  is now refused, or wrapped where the paragraph allows.
+- **A frame or background drawn around the text no longer stops it moving.**
+  A page border or a shaded box that contains the whole line counted as a
+  drawing in the way, and refused every edit that needed to push text along.
+  Text may now move as far as the drawing still contains it.
+
+  Together, across the 31-file sample, edits a quarter longer are accepted
+  59.7% of the time, up from 57.5%: 2,963 verdicts moved from refused to
+  accepted, 701 of the 995 at +25% on pages without tags. 58 moved the other
+  way, under five different refusals. One case of each was rendered, and every
+  one had pushed text off the page, onto other text or into a picture. One of
+  the 58 is a same-length edit on an underlined line, where the underline ends
+  at the text and leaves it no room to move; that refusal is new.
+
 ## [26.9.17] - 2026-09-23
 
 ### Added

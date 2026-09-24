@@ -168,6 +168,39 @@ fn a_drawing_after_the_run_that_moves_stops_the_push_but_not_the_box() {
     assert_eq!(find(&grown, &"F".repeat(26)).matrix[4], 40.);
 }
 
+// A drawing that already holds the run -- a frame, a background -- lets it
+// move as far as it still holds it; one that starts partway along the run
+// stops it dead. Word draws a page border around the whole text block, and
+// counting that as "a drawing follows it" refused every push on the page.
+#[test]
+fn a_drawing_holding_the_run_that_moves_allows_it_to_its_far_edge() {
+    // The frame spans 30..280; the next run is at 200..236, so it may move 44
+    // pt, and the first run has 160 pt of room: 204 in all.
+    let framed = synthetic(
+        "0 g 30 170 250 30 re f BT /F1 12 Tf 40 180 Td (FIRST) Tj ET \
+         BT /F1 12 Tf 200 180 Td (FIRST) Tj ET",
+    );
+    let mut fits = framed.clone();
+    write(&mut fits, &[in_default_box(&framed, 0, &"F".repeat(28))]).unwrap();
+    assert!((find(&fits, "FIRST").matrix[4] - 241.6).abs() < 0.0001);
+    let error = refusal(&framed, 0, &"F".repeat(29));
+    assert!(
+        error.contains("a picture or a drawing follows it"),
+        "{error}"
+    );
+    // Starting at 210, inside the run at 200..236, it holds nothing and the
+    // run cannot move at all.
+    let over = synthetic(
+        "0 g 210 170 70 30 re f BT /F1 12 Tf 40 180 Td (FIRST) Tj ET \
+         BT /F1 12 Tf 200 180 Td (FIRST) Tj ET",
+    );
+    let error = refusal(&over, 0, &"F".repeat(23));
+    assert!(
+        error.contains("a picture or a drawing follows it"),
+        "{error}"
+    );
+}
+
 // An unpainted rectangle is a clip or a nothing, never a drawing, so it must not
 // stop a push the way the filled one above does.
 #[test]
@@ -620,6 +653,39 @@ fn the_push_is_measured_from_the_run_it_moves_not_from_the_room() {
     assert!((xs[1] - 106.6).abs() < 0.01, "{xs:?}");
     // The run behind it keeps the gap it had: 140 - 73.3 = 66.7 pt.
     assert!((xs[2] - xs[1] - 66.7).abs() < 0.01, "{xs:?}");
+}
+
+// The same flush neighbour with nothing after it on the line. `room` skips it,
+// so the box's own limit and the limit with every movable run gone are the same
+// page edge, and the push used to conclude from that alone that nothing movable
+// was in the way -- leaving the run where it was, under the new text. Across the
+// public sample that was half of every line whose rest flowed after a wrap.
+#[test]
+fn a_flush_neighbour_with_nothing_after_it_is_still_pushed() {
+    let doc = synthetic(
+        "BT /F1 11.1 Tf 40 180 Td (FIRST) Tj ET BT /F1 11.1 Tf 73.3 180 Td (FIRST) Tj ET",
+    );
+    assert_eq!(scan(&doc, 0).unwrap().runs.len(), 2);
+    let mut pushed = doc.clone();
+    write(&mut pushed, &[in_default_box(&doc, 0, "FIRSTFIRST")]).unwrap();
+    let mut xs: Vec<f64> = scan(&pushed, 0)
+        .unwrap()
+        .runs
+        .iter()
+        .filter(|run| !run.text.is_empty())
+        .map(|run| run.matrix[4])
+        .collect();
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs.len(), 2);
+    assert_eq!(xs[0], 40.);
+    assert!((xs[1] - 106.6).abs() < 0.01, "{xs:?}");
+    // The run can go as far as the page's 300: 193.4 pt, so the box holds
+    // 33.3 + 193.4 = 226.7 pt, thirty-four glyphs of 6.66 and not thirty-five.
+    // The page edge `room` saw past the skipped run is not the box's limit.
+    let mut fits = doc.clone();
+    write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(34))]).unwrap();
+    let error = refusal(&doc, 0, &"F".repeat(35));
+    assert!(error.contains("reaches the edge of the page"), "{error}");
 }
 
 // A push may be as long as the text grew and no longer.

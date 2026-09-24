@@ -388,9 +388,31 @@ fn text_after_the_edit_wider_than_a_continuation_line_keeps_the_refusal() {
         "{runs:?}"
     );
     // After `FIF` it starts at 41.6. The box the editor opens is 21.6 pt
-    // rounded up, so the run after it starts inside the box, and the push
-    // along the line skips it (`Free::from`); it flows all the same.
+    // rounded up, so the run after it starts inside the box, which `room`
+    // skips; the push along the line still finds it, and it flows the same.
     let saved = wrapped(&hanging("FIF"), "FIF", "FIFTY NINE ");
+    let runs = placed_runs(&saved);
+    assert!(
+        near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),
+        "{runs:?}"
+    );
+}
+
+// A run kerned back into the edit by more than the push's tenth of a unit is
+// not on the push's line -- the source already overlaps there -- but it is the
+// paragraph's, and movable, so it flows like any other.
+#[test]
+fn text_kerned_into_the_edit_flows_although_the_push_leaves_it() {
+    let doc = tagged(
+        &format!(
+            "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC (FIFTY) Tj \
+             [50 ( NINE ONCE AND DONE THEN FIRST)] TJ EMC \
+             20 -14 Td /P <</MCID 1>> BDC ({LAST}) Tj EMC \
+             -20 -52 Td /P <</MCID 2>> BDC ({NEXT}) Tj EMC ET"
+        ),
+        &[&[0, 1], &[2]],
+    );
+    let saved = wrapped(&doc, "FIFTY", "FIFTY NINE ");
     let runs = placed_runs(&saved);
     assert!(
         near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),

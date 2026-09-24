@@ -389,7 +389,9 @@ impl Axis {
 /// along it may be taller, may sit under a tighter clip, and certainly has
 /// different things in front of it. Anything already behind a run's leading edge
 /// is skipped rather than counted as no room at all, because a rectangle behind
-/// it is one the push moves away from; one that overlaps it stops it dead.
+/// it is one the push moves away from; one that overlaps it stops it dead,
+/// unless it is a drawing that starts behind the run and so holds it, which
+/// allows as far as its own far edge.
 fn reach(
     axis: &Axis,
     page: [f64; 2],
@@ -408,7 +410,16 @@ fn reach(
             if !axis.beside(span, *other) || axis.at(axis.edge(*other, true)) <= far {
                 continue;
             }
-            let room = (axis.at(axis.edge(*other, false)) - far).max(0.);
+            // A drawing that starts behind the run holds it -- a frame, a
+            // background -- and the run may move as far as it still does; the
+            // wrap asks the same of the lines it moves. Anything else that
+            // overlaps the run leaves it no room.
+            let near = axis.at(axis.edge(*other, false));
+            let room = if *kind == Room::Drawn && near <= axis.at(axis.edge(*rect, false)) {
+                axis.at(axis.edge(*other, true)) - far
+            } else {
+                (near - far).max(0.)
+            };
             if room < best.0 {
                 best = (room, *kind);
             }
@@ -519,7 +530,9 @@ fn shows_of(page: &Inspection, operator: u32) -> Vec<u32> {
 /// Those two are a partition of one list rather than two opinions about it, and
 /// the gap between the answers is the whole question -- if the nearer one is
 /// the answer that counted everything, then the first thing in the way is
-/// something the writer may push along, and [`reach`] says how far.
+/// something the writer may push along, and [`reach`] says how far. Equal
+/// answers do not prove the opposite: `room` skips a run starting inside the
+/// box, so the walk over the line decides.
 ///
 /// The push stops at the first thing that cannot move: something fixed between
 /// two runs separates them, and the run beyond it never has to give way.
@@ -647,10 +660,13 @@ fn free_width(
             .map(|(rect, _)| *rect),
         width,
     );
-    if free >= hard {
-        // Nothing the writer may move is the first thing in the way.
-        return nothing(stop);
-    }
+    // `free` reaching `hard` does not mean nothing movable is in the way:
+    // `room` skips a run that starts inside the box, and a run set flush
+    // against this one does (see `Free::from`). With nothing movable after it
+    // the two limits agree, and stopping here refused the edit at the page edge
+    // with that run as the thing in the way: half of all lines whose rest
+    // flowed after a wrap, and every such line on an untagged page. The walk
+    // below finds it either way, and finds nothing when there is nothing.
     let band = axis.band(edges.0, own);
     // Stream order alone does not say which side of the run a show is drawn on.
     let own_far = axis.at(axis.edge(own, true));
@@ -733,7 +749,10 @@ fn free_width(
     // less the runs that leave. Drawings are no more in the box's way here than
     // they are anywhere else (see `obstacles`).
     boxed(
-        (from + shift).max(free),
+        // `free` past `from` is `room` having skipped a run that starts inside
+        // the box: text reaching it would land on that run, which only the push
+        // moves, so the box that stands without pushing ends at `from`.
+        (from + shift).max(free.min(from)),
         pushed_stop,
         line,
         carry,
