@@ -5074,10 +5074,23 @@ and the mutations.
   drawing or annotation partly over the lines that move refuses it, one holding them all
   does not.
 - **Deliberately not triggered:** at a size other than the run's own, after an earlier edit
-  pushed the run along its line, with the paragraph's text after the run on its line, and
-  when a clip rather than the page ends the line. The last matters more than its count: every
+  pushed the run along its line, and when a clip rather than the page ends the line. The last matters more than its count: every
   Edge export in the test fixtures clips its page, so no browser document wraps. It is 265
   runs of 44,282 in the public sample, against 12,201 at the page edge.
+- **The rest of the edited line flows after the edit — added 2026-09-24.** The paragraph's
+  runs after the edit on its line keep their bytes and move whole, one at a time: each keeps
+  its gap to what came before it, stays on the edit's last line while it fits the measure,
+  and otherwise starts the next line at the paragraph's left edge. The line is the edit's up
+  to where the push along it would have stopped. Two things refuse it and leave the edit's
+  old refusal in place: another block's text among what the push would move, and a run the
+  writer cannot move (no layout context, inside an ActualText span, under a compound clip).
+  A run wider than a whole continuation line, which only a hanging indent produces, is refused
+  the same way. `BUILD.md`, *The rest of the line flows after the edit*.
+- **A run is not split**, so a line ends short of the measure wherever the next run is too
+  wide for what is left of it: nearly every run after an edit holds several words (1,164 of
+  1,268 distinct cases in the four files it applies to), and the typical result is a line
+  that breaks right after the edited text. A moved run that starts a line keeps a leading
+  space if it had one, indenting that line by a space; about 1% of runs that start a line.
 - **One batch cannot wrap a paragraph and edit a line the wrap moves.** Every edit in a batch
   is addressed to the page as it was scanned; a replacement written where its source was
   would land on the line the wrap has just filled. The reader is told to save first.
@@ -5095,8 +5108,24 @@ Ranked by what the measurement says is left, the next increments are:
    sample, +10/+25/+50% as typed go from 59.0/50.3/44.3% to 63.6/54.7/48.5%; the 622 edits
    now refused had all, where sampled, shifted part of another line sideways. `BUILD.md`,
    *Which runs share a line*.
-2. **The rest of the line after the edit**, which has to flow onto the new line — reflow of
-   the line's remainder: 904 of the 909 still refused at the page edge.
+2. ~~**The rest of the line after the edit**~~, which has to flow onto the new line. Built
+   2026-09-24, a run at a time; `BUILD.md`, *The rest of the line flows after the edit*.
+   Next in the same line of work: **splitting a run after the edit at a space**, so the edit's
+   line is filled to the measure rather than ending where a whole run no longer fits. It
+   means writing part of another run's text again in that run's own font (`own_items`
+   already keeps a prefix or suffix of a run's source items), and leaves no leading space at
+   the start of a line.
+
+   **Ranked above that, found while building it: the push along the line does not see the
+   run after the edit in about half of these lines.** Of 2,083 distinct cases where text
+   flowed, 1,022 had nothing in the push's line. 235 are a neighbour starting inside the box
+   the editor opens, which is a rounding up of the run's own advance (`Free::from` describes
+   it); for the rest the suspect is `free_width`'s `near + 0.1 < own_far`, a tenth of a
+   *text-space* unit, which at `Tf 1` under a large matrix is a tenth of an em rather than a
+   tenth of a point. Suspected, not measured. On a tagged page the flow now moves such a run
+   whatever the push thought; on an untagged page the edit is still laid out over it and
+   refused. Fixing the push is a correctness fix to an existing feature on every page,
+   which is why it comes first.
 3. **Moving what is below the paragraph**, the 916. The larger capability named above, and
    the one where what is below is usually another paragraph that would have to move too.
 4. **Untagged pages**, three quarters of the corpus, waiting on a block rule that is not

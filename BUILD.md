@@ -10577,3 +10577,110 @@ to the new boundary: 7.5 pt of a 15 pt box is off the line, 7.6 pt on it. Six mu
 `same line:`, one per call site restoring the old rule plus the boundary itself, all caught;
 the box's own call site is caught by the `room` unit tests rather than the push test, because
 a box stopped at the next line is rescued by the push path around it.
+
+### The rest of the line flows after the edit — measured 2026-09-24
+
+The second wrapping increment, ranked second in `docs/PLAN.md` §7. Until now a wrap was not
+offered when the paragraph had more text after the edit on the same line. Now that text flows
+after the edit, a run at a time: each run keeps its bytes and its gap to what came before it,
+stays on the edit's last line while it fits the paragraph's measure, and otherwise starts the
+next line at the paragraph's left edge. `wrap::flow` places the runs, `layout::prepare` moves
+them with `wrap::lowered`, and `wrap_room` checks where each one lands, now with an offset of
+its own per run. The gap is measured from the farther of the replacement's advance and its ink,
+as the push measures a line.
+
+Refused, keeping the refusal the edit already had: another block's text among what the push
+along the line would move; a run the writer cannot move (no layout context, inside an
+ActualText span, under a compound clip); and a run wider than a whole continuation line, which
+only a hanging indent produces.
+
+Growth instrument, the release probe built from `HEAD` (`1ae9089` code) and one built from this
+tree, 31 files, 44,282 runs, `app` mode, as typed. The baseline reproduces the figures of
+*Which runs share a line* exactly:
+
+| trial | before | after |
+|---|---:|---:|
+| unchanged | 43,833 (99.0%) | 43,838 (99.0%) |
+| same length | 37,267 (97.8%) | 37,422 (98.2%) |
+| +10% | 28,153 (63.6%) | **29,313 (66.2%)** |
+| +25% | 24,216 (54.7%) | **25,469 (57.5%)** |
+| +50% | 21,466 (48.5%) | **22,932 (51.8%)** |
+
+`--compare`: **593,023 verdicts unchanged in kind, 4,039 refused before and accepted now, 0
+accepted before and refused now.** 9,309 worker-agreement checks, 0 disagreements.
+
+At +25%, of the 16,270 edits refused at the page edge before (every page, tagged or not), 1,253
+are accepted, 569 now say *"its lines would move onto what is below it"*, 51 name a drawing or
+an annotation over the lines that would move, and 14,397 are still at the page edge. The
+accepted ones are in five files: Coatesville 562, the Arcadia agenda 446, Hugo 237, Illinois 4
+and the Healdsburg slides 4.
+
+Three things in those numbers are not what the feature's name suggests:
+
+- **About half the flows move a run the push along the line never saw.** Counted with a
+  temporary print over the five files: of 2,083 distinct cases where text flowed, 1,022 had
+  nothing in the push's line, 235 of them because the run after the edit starts inside the box
+  the editor opens (the rounding `Free::from` describes). These edits were refused before
+  because the replacement was laid out over that run; now the run moves. 345 of the 2,083 add
+  no line at all, and 5 of the 11 round trips below are such edits. Untagged pages still refuse
+  them, which is why `docs/PLAN.md` ranks fixing the push above splitting runs.
+- **155 same-length edits and 5 unchanged ones are accepted now**, 139 and 4 of them in
+  Coatesville. Laid out again from glyph widths their own text is wider than the line has, so
+  they wrap: the reader gets a changed line break for an edit that added nothing. It is the
+  same case *Wrapping onto a new line of the paragraph* found 29 of, better than a refusal and
+  still not what a same-length edit looks like.
+- **A run is not split.** Across the four files it applies to, 1,164 of 1,268 distinct cases
+  had a run after the edit holding several words, so the usual result is a line that ends right
+  after the edit and a new line holding the rest. A flowed run that starts a line keeps a
+  leading space if it had one; that is 28 of 2,415 placements (1%).
+
+**Round trips, three per file** (one in Illinois and in Healdsburg), each a +25% edit refused
+before and accepted now, chosen at random with seed 7 from the flipped verdicts:
+
+```sh
+<probe> --growth-request <file> <page> <operator> grow25 app grow > <req.json>
+<probe> --roundtrip <file> <req.json> <new directory>
+qpdf --check <dir>/edited.pdf
+uv run --with pypdf --with pdfplumber scripts/text_wrap_check.py --compare <file> <dir>/edited.pdf <page> <req.json>
+```
+
+| Producer | page | lines added | moved down | probe | `qpdf` | `--compare` |
+|---|---:|---:|---:|---|---|---|
+| Acrobat 25 (Arcadia agenda) | 53 | 1 | 222 glyphs, 16.3 pt | pass | clean | pass |
+| Acrobat 25 | 1 | 1 | 366, 15.0 pt | pass | clean | pass |
+| Acrobat 25 | 59 | 0 | — | pass | clean | pass |
+| Word via PDFMaker 20 (Coatesville) | 16 | 1 | 925, 13.2 pt | pass | clean | pass |
+| Word via PDFMaker 20 | 2 | 1 | 17, 13.2 pt | pass | clean | pass |
+| Word via PDFMaker 20 | 0 | 0 | — | pass | clean | pass |
+| PowerPoint via PDFMaker 24 (Healdsburg) | 23 | 0 | — | pass | clean | pass |
+| Word via PDFMaker 26 (Hugo) | 6 | 1 | 79, 13.8 pt | pass | clean | pass |
+| Word via PDFMaker 26 | 4 | 0 | — | pass | clean | pass |
+| Word via PDFMaker 26 | 1 | 1 | 522, 13.8 pt | pass | clean | pass |
+| Word via PDFMaker 22 (Illinois) | 0 | 0 | — | pass | clean | pass |
+
+Overlapping glyph pairs were 0 -> 0 on all eleven.
+
+**`--compare` counts now, when it is given the request.** Pairing glyphs cannot tell a flowed
+run from the replacement: both are left over on the edited line in the source and turn up as
+new glyphs on the saved page. `--growth-request` now writes the run's `original` beside the
+replacement (`--roundtrip` ignores the key), and `--compare` asserts that the saved page gained
+exactly as many visible glyphs over the source's leftovers as the replacement adds to the
+original, so a flowed glyph lost or drawn twice fails. Control: the Hugo page 1 file with one
+character added to the request's `original` fails with *"gained 9 glyphs ... the replacement
+adds 8"*.
+
+⚠ **The first run of these round trips failed two of eleven, and the probe was right.** The
+preview's extent is one rectangle, the box together with where each moved run lands, and a run
+leaving the right end of the edit's line for the start of the next one leaves from outside
+both. `--roundtrip` requires every changed pixel inside the extent the editor reports, and
+said *"pixels changed outside edited text envelopes"*. The extent now includes each flowed
+run's source rectangle. The trap index has the entry.
+
+Tests: `wrap_tests` gained ten, among them `the_text_after_the_edit_on_its_line_flows_after_it`
+(positions to 0.0001 pt, the moved show's own bytes, and the next paragraph's line start to the
+bit), the new-line and hanging-indent cases, the in-box neighbour, an ActualText run that is
+refused, another block's text, a batch conflict, the outlines, the preview extent and an
+overhanging last glyph. The old `text_after_the_run_on_its_line_keeps_the_page_edge_refusal`
+pinned the refusal this removes and was replaced. The mutations are under `wrap` and `flow:`
+in `scripts/mutate_rust.py`, one per decision: `mutate_rust.py --only wrap --only flow: --only
+'grown box: measure'` ran 66, all caught by the test named for each, on the final tree.

@@ -221,23 +221,235 @@ fn an_untagged_page_keeps_the_page_edge_refusal() {
     assert!(error.contains("it reaches the edge of the page"), "{error}");
 }
 
-// Text after the run on its own line would have to flow onto the new line,
-// which is reflow; the edit keeps the refusal it had.
+/// The standard paragraph with its widest line set as two runs, the second
+/// placed by a displacement of one character from the cursor the first leaves:
+/// `FIFTY NINE` from x 20 to 92, and `ONCE AND DONE` from x 99.2 to 192.8.
+fn split_line(gap: f64, after: &str) -> Document {
+    tagged(
+        &content(gap, after).replace(
+            &format!("({WIDEST}) Tj EMC"),
+            "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
+        ),
+        &[&[0, 1, 2], &[3]],
+    )
+}
+
+/// Where every run with text is drawn, in reading order.
+fn placed_runs(doc: &Document) -> Vec<(String, f64, f64)> {
+    scan(doc, 0)
+        .unwrap()
+        .runs
+        .iter()
+        .filter(|run| !run.text.trim().is_empty())
+        .map(|run| (run.text.clone(), run.matrix[4], run.matrix[5]))
+        .collect()
+}
+
+fn at(runs: &[(String, f64, f64)], text: &str) -> (f64, f64) {
+    let (_, x, y) = runs
+        .iter()
+        .find(|(run, ..)| run.trim_end() == text)
+        .unwrap_or_else(|| panic!("no run {text} in {runs:?}"));
+    (*x, *y)
+}
+
+fn near((x, y): (f64, f64), (ex, ey): (f64, f64)) -> bool {
+    (x - ex).abs() < 0.0001 && (y - ey).abs() < 0.0001
+}
+
+// The rest of the edited line flows after the edit: here the edit wraps at
+// the paragraph's measure, 172.8 pt, and `ONCE AND DONE` follows its second
+// line with the gap it had, one character. Pushed along instead, the line
+// would need 43 characters of the 38 the page has. The line below moves down the one line that was added, and the next
+// paragraph stays where it was, down to the bits a reader places it from.
 #[test]
-fn text_after_the_run_on_its_line_keeps_the_page_edge_refusal() {
+fn the_text_after_the_edit_on_its_line_flows_after_it() {
+    let doc = split_line(52., "");
+    let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SEC");
+    let runs = placed_runs(&saved);
+    let texts: Vec<&str> = runs.iter().map(|(text, ..)| text.trim_end()).collect();
+    assert_eq!(
+        texts,
+        [
+            FIRST,
+            "FIFTY NINE THEN FIRST",
+            "AND SEC",
+            "ONCE AND DONE",
+            LAST,
+            NEXT
+        ]
+    );
+    assert!(near(at(&runs, "AND SEC"), (20., 172.)), "{runs:?}");
+    // One character after `AND SEC`, which is 7 characters long.
+    assert!(near(at(&runs, "ONCE AND DONE"), (77.6, 172.)), "{runs:?}");
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    assert_eq!(at(&runs, NEXT), (20., 120.));
+    // It is the source's own show, moved: its leading displacement, which
+    // said where it started, is what the move replaced.
+    assert!(
+        shows(&saved).contains(&Object::Array(vec![Object::string_literal(
+            "ONCE AND DONE"
+        )]))
+    );
+    let next = |starts: &[(Object, Option<[u32; 2]>)]| {
+        starts
+            .iter()
+            .find(|(show, _)| *show == Object::string_literal(NEXT))
+            .unwrap()
+            .1
+    };
+    assert_eq!(
+        next(&reader_line_starts(&saved)),
+        next(&reader_line_starts(&doc))
+    );
+}
+
+// The text after the edit follows the edit's last glyph where its ink ends,
+// when that is past its advance: here `D` is reshaped to reach 0.6 pt past
+// its own, and the gap of one character is kept from there rather than from
+// the advance, so the overhang is not drawn into the run that follows.
+#[test]
+fn text_after_the_edit_keeps_its_gap_from_an_overhanging_last_glyph() {
+    let mut doc = split_line(52., "");
+    let (_, _, _, program) = fonts::tests::fixture();
+    let stream = doc
+        .get_object_mut(program)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    stream.content = fonts::ink_tests::with_components(
+        stream.content.clone(),
+        [('B', 0, 0, 16384), ('D', 250, 0, 16384)],
+    );
+    let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SED");
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "AND SED"), (20., 172.)), "{runs:?}");
+    assert!(near(at(&runs, "ONCE AND DONE"), (78.2, 172.)), "{runs:?}");
+}
+
+// When the text after the edit does not fit what is left of the edit's last
+// line, it starts a line of its own at the paragraph's left edge, with no gap
+// in front of it, and the lines below move down by both lines.
+#[test]
+fn text_after_the_edit_that_does_not_fit_its_last_line_starts_the_next() {
+    let doc = split_line(52., "");
+    // The second line is `AND SECOND AND`, 100.8 pt; the gap and
+    // `ONCE AND DONE` are another 100.8, and the measure is 172.8.
+    let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, "AND SECOND AND"), (20., 172.)), "{runs:?}");
+    assert!(near(at(&runs, "ONCE AND DONE"), (20., 158.)), "{runs:?}");
+    assert!(near(at(&runs, LAST), (20., 144.)), "{runs:?}");
+    assert_eq!(at(&runs, NEXT), (20., 120.));
+    // Two lines is more than 24 pt of room below leaves.
+    let error = refusal(
+        &split_line(38., ""),
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST AND SECOND AND",
+    );
+    assert!(
+        error.contains("its lines would move onto what is below it"),
+        "{error}"
+    );
+    // One line fits in the same room.
+    wrapped(
+        &split_line(38., ""),
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST AND SEC",
+    );
+}
+
+// Under a hanging indent the lines after the first start further right, so
+// the text after a short first word can be wider than a whole continuation
+// line. It has nowhere to flow to, and the edit keeps the refusal it had
+// rather than setting that text past the paragraph's measure.
+#[test]
+fn text_after_the_edit_wider_than_a_continuation_line_keeps_the_refusal() {
+    let hanging = |first: &str| {
+        tagged(
+            &format!(
+                "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC ({first}) Tj \
+                 ( NINE ONCE AND DONE THEN FIRST) Tj EMC \
+                 20 -14 Td /P <</MCID 1>> BDC ({LAST}) Tj EMC \
+                 -20 -52 Td /P <</MCID 2>> BDC ({NEXT}) Tj EMC ET"
+            ),
+            &[&[0, 1], &[2]],
+        )
+    };
+    // `FI` ends at 34.4, before the continuation's 40: the 216 pt after it
+    // is wider than the 210.4 pt from 40 to the measure.
+    let error = refusal(&hanging("FI"), "FI", "FIFTY NINE");
+    assert!(error.contains("it reaches the edge of the page"), "{error}");
+    // After `FIFTY` it starts at 56 and fits a continuation line.
+    let saved = wrapped(&hanging("FIFTY"), "FIFTY", "FIFTY NINE ");
+    let runs = placed_runs(&saved);
+    assert!(
+        near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),
+        "{runs:?}"
+    );
+    // After `FIF` it starts at 41.6. The box the editor opens is 21.6 pt
+    // rounded up, so the run after it starts inside the box, and the push
+    // along the line skips it (`Free::from`); it flows all the same.
+    let saved = wrapped(&hanging("FIF"), "FIF", "FIFTY NINE ");
+    let runs = placed_runs(&saved);
+    assert!(
+        near(at(&runs, " NINE ONCE AND DONE THEN FIRST"), (40., 186.)),
+        "{runs:?}"
+    );
+}
+
+// Text after the edit that the writer cannot move -- here inside an
+// ActualText span, whose grammar the writer owns -- keeps the refusal the
+// edit had. The span starts inside the box, so the push along the line never
+// looked at it and only the flow's own check stands in the way.
+#[test]
+fn text_after_the_edit_that_cannot_be_moved_keeps_the_refusal() {
+    let doc = tagged(
+        &format!(
+            "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC (FIF) Tj \
+             /Span <</ActualText ( NINE ONCE AND DONE THEN FIRST)>> BDC \
+             ( NINE ONCE AND DONE THEN FIRST) Tj EMC EMC \
+             20 -14 Td /P <</MCID 1>> BDC ({LAST}) Tj EMC \
+             -20 -52 Td /P <</MCID 2>> BDC ({NEXT}) Tj EMC ET"
+        ),
+        &[&[0, 1], &[2]],
+    );
+    let error = refusal(&doc, "FIF", "FIFTY NINE ");
+    assert!(!error.contains("paragraph"), "{error}");
+}
+
+// Text of another block sharing the edited line -- a second column set close
+// to the first -- is not this paragraph's to move onto a new line, so the edit
+// keeps the refusal it had.
+#[test]
+fn another_blocks_text_after_the_edit_on_its_line_keeps_the_page_edge_refusal() {
     let doc = tagged(
         &content(52., "").replace(
             &format!("({WIDEST}) Tj EMC"),
-            &format!("(FIFTY) Tj ({WIDEST}) Tj EMC"),
+            "(FIFTY NINE) Tj ( ONCE) Tj EMC /P <</MCID 4>> BDC ( AND DONE) Tj EMC",
         ),
-        &[&[0, 1, 2], &[3]],
+        &[&[0, 1, 2], &[3], &[4]],
     );
-    let error = refusal(&doc, "FIFTY", LONGER);
-    assert!(
-        error.contains("no room for more text on this line"),
-        "{error}"
+    let error = refusal(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SEC");
+    assert!(error.contains("it reaches the edge of the page"), "{error}");
+}
+
+// A batch that wraps a line and also edits the text the wrap moves along it
+// is refused, in either order: the second edit is written where its source
+// was, which is where the wrapped edit now is.
+#[test]
+fn a_wrap_that_moves_the_text_after_it_refuses_an_edit_of_that_text() {
+    let doc = split_line(52., "");
+    let wrap = in_default_box(
+        &doc,
+        index_of(&doc, "FIFTY NINE"),
+        "FIFTY NINE THEN FIRST AND SEC",
     );
-    assert!(!error.contains("paragraph"), "{error}");
+    let other = in_default_box(&doc, index_of(&doc, "ONCE AND DONE"), "ONCE AND");
+    for batch in [[wrap.clone(), other.clone()], [other, wrap]] {
+        let error = write(&mut doc.clone(), &batch).unwrap_err();
+        assert!(error.contains("another pending edit"), "{error}");
+    }
 }
 
 // The last line of a paragraph wraps into the space below it and moves
@@ -502,6 +714,43 @@ fn placements_outline_the_wrapped_box_and_the_line_it_moved() {
     );
     // Nothing else moved.
     assert_eq!(placed.len(), 2, "{placed:?}");
+}
+
+// The run after the edit is outlined where it flowed to: one line down, and
+// from 20 + 50.4 + 7.2 along the displayed page, which runs downwards, so the
+// line below it moved down one pitch too.
+#[test]
+fn placements_outline_the_text_that_flowed_after_the_edit() {
+    let doc = split_line(52., "");
+    let source = scan(&doc, 0).unwrap();
+    let after = &source.runs[index_of(&doc, "ONCE AND DONE")];
+    let last = &source.runs[index_of(&doc, LAST)];
+    let placed = placements(
+        &doc,
+        0,
+        &[in_default_box(
+            &doc,
+            index_of(&doc, "FIFTY NINE"),
+            "FIFTY NINE THEN FIRST AND SEC",
+        )],
+    )
+    .unwrap();
+    let flowed = placed[&after.operator];
+    assert!((flowed[0] - 77.6).abs() < 0.001, "{flowed:?}");
+    assert!(
+        (flowed[1] - after.display_rect[1] - 14.).abs() < 0.001,
+        "{flowed:?}"
+    );
+    assert!(
+        (flowed[2] - flowed[0] - (after.display_rect[2] - after.display_rect[0])).abs() < 0.001,
+        "{flowed:?}"
+    );
+    let moved = placed[&last.operator];
+    assert!(
+        (moved[1] - last.display_rect[1] - 14.).abs() < 0.001,
+        "{moved:?}"
+    );
+    assert_eq!(placed.len(), 3, "{placed:?}");
 }
 
 // A link set in the paragraph's last line is the paragraph's text as far as a
@@ -776,6 +1025,29 @@ fn the_preview_covers_where_the_moved_lines_were_as_well_as_where_they_went() {
         preview_layout(&doc, &in_default_box(&doc, index_of(&doc, WIDEST), LONGER)).unwrap();
     // Where the fourth line was: 20..192.8 across, 67..82 down the page.
     let old = fourth.display_rect;
+    let extent = preview.extent;
+    assert!(
+        extent[0] <= old[0] && extent[1] <= old[1] && extent[2] >= old[2] && extent[3] >= old[3],
+        "{extent:?} does not cover {old:?}"
+    );
+}
+
+// A run that flows from the end of the edit's line to the start of the next
+// leaves a place right of the box and of where it lands, and the preview has
+// to show that place emptied too.
+#[test]
+fn the_preview_covers_where_the_text_that_flowed_was() {
+    let doc = split_line(52., "");
+    let old = scan(&doc, 0).unwrap().runs[index_of(&doc, "ONCE AND DONE")].display_rect;
+    let preview = preview_layout(
+        &doc,
+        &in_default_box(
+            &doc,
+            index_of(&doc, "FIFTY NINE"),
+            "FIFTY NINE THEN FIRST AND SECOND AND",
+        ),
+    )
+    .unwrap();
     let extent = preview.extent;
     assert!(
         extent[0] <= old[0] && extent[1] <= old[1] && extent[2] >= old[2] && extent[3] >= old[3],

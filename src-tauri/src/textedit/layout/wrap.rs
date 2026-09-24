@@ -16,6 +16,14 @@
 //! another paragraph most of the time, and moving that too is a larger
 //! capability than this one.
 //!
+//! Text of the block after the edit on its own line flows too, a run at a
+//! time: each run after the edit keeps its gap to the one before it, stays on
+//! the edit's last line while it fits the block's measure, and otherwise starts
+//! the next line at the block's left edge. A run is not split, so a line can
+//! end short of the measure where a run too wide for what is left of it moved
+//! down whole. Splitting one at a space means writing part of another run's
+//! text again in its own font, which is the next increment rather than this one.
+//!
 //! A moved show keeps its own bytes. It is placed with an explicit `Tm` and
 //! followed by the same bit-exact restoration of the line matrix and the text
 //! cursor a replacement ends with (`restore_line`), so every show after it that
@@ -50,6 +58,55 @@ pub(super) struct Plan {
     /// Every show of the block drawn below the edited line, in stream order.
     /// Each moves down by the lines the edit adds.
     pub below: Vec<u32>,
+    /// The block's runs after the edit on its own line, in the order they are
+    /// read along it. Each flows after the edit (`flow`).
+    pub after: Vec<Unit>,
+}
+
+/// One run of the block after the edit on its line, which moves whole.
+#[derive(Clone, Debug)]
+pub(super) struct Unit {
+    /// Its show and the shows grouped into it, which move together.
+    pub shows: Vec<u32>,
+    /// Where it starts and ends along the line, in the edited run's text-space
+    /// units from its origin.
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Where each unit goes: its line below the edit's first (0 is the edit's own
+/// line) and how far along the line it starts, in the edited run's text-space
+/// units. `None` when one of them is wider than a whole line of the block.
+/// Every line reaches the block's measure, `plan.first`, the first included:
+/// `rest` is that measure less where continuation lines start.
+///
+/// `line` and `end` are where the replacement's own last line is and where it
+/// ends. A unit keeps the gap it had to whatever came before it on the line --
+/// the edited run for the first, the unit before it for the rest -- while it
+/// fits, and a unit that does not fit starts the next line at the block's left
+/// edge, with no gap in front of it.
+pub(super) fn flow(
+    plan: &Plan,
+    run_advance: f64,
+    (line, end): (usize, f64),
+) -> Option<Vec<(usize, f64)>> {
+    let (mut line, mut cursor, mut previous) = (line, end, run_advance);
+    let mut places = Vec::new();
+    for unit in &plan.after {
+        let width = unit.end - unit.start;
+        if width > plan.rest + 0.000_001 {
+            return None;
+        }
+        let mut at = cursor + (unit.start - previous).max(0.);
+        if at + width > plan.first + 0.000_001 {
+            line += 1;
+            at = plan.start;
+        }
+        places.push((line, at));
+        cursor = at + width;
+        previous = unit.end;
+    }
+    Some(places)
 }
 
 /// Why a wrap cannot be offered, split by whether the reader should hear about
@@ -92,9 +149,20 @@ fn span(run: &Run, other: &Run) -> Option<((f64, f64), f64)> {
 
 /// The plan, or why there is none.
 ///
-/// `first` is how far the line itself allows, the ceiling the growing box
-/// already computed. The block's measure narrows it, never widens it.
-pub(super) fn plan(page: &Inspection, run: &Run, first: f64) -> Result<Plan, Refused> {
+/// `room` is how far the line allows with the text after the run where it is,
+/// and `whole` how far it allows with the text the push would move out of the
+/// way; `line` is every show that push would move. When the block has text
+/// after the run on its line, that text flows after the edit instead, so the
+/// line is the edit's as far as `whole`, and every show of the push has to be
+/// the block's: another block's text sharing the line is not this one's to
+/// move onto a new line. The block's measure narrows the answer, never widens
+/// it.
+pub(super) fn plan(
+    page: &Inspection,
+    run: &Run,
+    (room, whole): (f64, f64),
+    line: &BTreeSet<u32>,
+) -> Result<Plan, Refused> {
     let block = *page
         .blocks
         .get(&run.operator)
@@ -119,6 +187,7 @@ pub(super) fn plan(page: &Inspection, run: &Run, first: f64) -> Result<Plan, Ref
     // (baseline, start, end) of every run of the block with text, in the
     // edited run's text space; the run's own line is baseline zero.
     let mut lines: Vec<(f64, f64, f64)> = Vec::new();
+    let mut after: BTreeMap<u32, Unit> = BTreeMap::new();
     for (&show, &owner) in &page.blocks {
         if owner != block || own.contains(&show) {
             continue;
@@ -134,10 +203,22 @@ pub(super) fn plan(page: &Inspection, run: &Run, first: f64) -> Result<Plan, Ref
         };
         let ((x, y), end) = span(run, other).ok_or(Refused::NotApplicable)?;
         if y.abs() <= tolerance {
-            // On the edited line: text after the run would have to flow onto
-            // the new line, which is reflow, not a wrap.
+            // On the edited line: text after the run flows after the edit, as
+            // long as the writer can move it. The push along the line is not
+            // the judge of that: it skips a neighbour that starts a rounding
+            // inside the box (`Free::from`), which moves as well as any other.
             if x > 0. && !other.text.trim().is_empty() {
-                return Err(Refused::NotApplicable);
+                if !page.contexts.contains_key(&show)
+                    || page.actual_text.contains_key(&show)
+                    || page.compound_run_clips.contains_key(&show)
+                {
+                    return Err(Refused::NotApplicable);
+                }
+                after.entry(other.operator).or_insert_with(|| Unit {
+                    shows: shows_of(page, other.operator),
+                    start: x,
+                    end,
+                });
             }
         } else if y < 0. {
             if !page.contexts.contains_key(&show)
@@ -153,6 +234,16 @@ pub(super) fn plan(page: &Inspection, run: &Run, first: f64) -> Result<Plan, Ref
         }
     }
     lines.push((0., 0., run.advance));
+    if !after.is_empty()
+        && !line
+            .iter()
+            .all(|show| page.blocks.get(show) == Some(&block))
+    {
+        return Err(Refused::NotApplicable);
+    }
+    let first = if after.is_empty() { room } else { whole };
+    let mut after: Vec<Unit> = after.into_values().collect();
+    after.sort_by(|a, b| a.start.total_cmp(&b.start));
     // The pitch: to the next line down, else to the one above, else the
     // writer's own single-block default.
     let next = lines
@@ -209,6 +300,7 @@ pub(super) fn plan(page: &Inspection, run: &Run, first: f64) -> Result<Plan, Ref
         rest,
         pitch,
         below,
+        after,
     })
 }
 

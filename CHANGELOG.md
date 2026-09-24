@@ -17,6 +17,29 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.18] - Unreleased
+
+### Added
+
+- **The rest of the line now flows with a wrapped edit, on a tagged page.** Until
+  now an edit could wrap onto a new line of its paragraph only when it was the
+  last text on its line; with more of the paragraph after it on the same line,
+  it was refused with *"it reaches the edge of the page"*. Now that text moves
+  along with the edit: each piece keeps the gap it had, stays on the edit's
+  last line while it fits the paragraph's width, and otherwise starts the next
+  line at the paragraph's left edge. The lines below move down by the lines
+  this added, as before.
+
+  Across the 31-file public sample, edits a quarter longer are now accepted
+  57.5% of the time, up from 54.7%; 4,039 verdicts moved from refused to
+  accepted and none the other way (597,062 compared one by one).
+
+  **Text moves in the pieces the document already has; a piece is not split.**
+  When the next piece does not fit what is left of the line, all of it moves
+  to the next line, so the edited line can end right after the edit. The edit
+  keeps its old refusal when another paragraph's text shares the line, or
+  when the text after it is something tpdf cannot move.
+
 ## [26.9.17] - 2026-09-23
 
 ### Added

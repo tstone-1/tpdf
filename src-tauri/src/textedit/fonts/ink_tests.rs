@@ -13,7 +13,10 @@ pub(in crate::textedit) fn component_program(components: [(char, i16, i16, i16);
     with_components(include_bytes!("../synthetic.ttf").to_vec(), components)
 }
 
-fn with_components(mut bytes: Vec<u8>, components: [(char, i16, i16, i16); 2]) -> Vec<u8> {
+pub(in crate::textedit) fn with_components(
+    mut bytes: Vec<u8>,
+    components: [(char, i16, i16, i16); 2],
+) -> Vec<u8> {
     let table = |tag: &[u8]| {
         let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
         let record = bytes[12..12 + count * 16]

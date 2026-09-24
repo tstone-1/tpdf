@@ -402,8 +402,8 @@ outlined text run on the current page. Adjust the box width and height, font siz
 font and wrapping while a live preview shows the actual PDF rendering. Apply keeps
 the edit in the document; save writes it. Until you size the box yourself, longer text
 grows into the room after the line and moves the rest of the line along; on a tagged
-page, text that reaches the page edge wraps onto a new line of its own paragraph when
-there is room below that paragraph. The editor supports the Latin standard fonts
+page, text that reaches the page edge wraps onto a new line of its own paragraph, taking
+the rest of its line along, when there is room below that paragraph. The editor supports the Latin standard fonts
 (Helvetica, Times, Courier), fonts a document names without embedding them, and validated
 embedded TrueType, Type 1, CFF (including the CID-keyed CFF that XeLaTeX, LuaTeX and Typst
 embed) and uncolored Type 3 vector fonts, including supported ligatures, bounded spacing, quarter-turn text,

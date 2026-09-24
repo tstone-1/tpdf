@@ -5,7 +5,7 @@ uv run --with pypdf scripts/text_wrap_check.py --generate <new directory>
 <text-edit-probe> --growth-request <dir>/source.pdf 0 8 grow25 app grow > <dir>/requests.json
 <text-edit-probe> --roundtrip <dir>/source.pdf <dir>/requests.json <new result directory>
 uv run --with pypdf scripts/text_wrap_check.py --check <dir>/source.pdf <result>/edited.pdf
-uv run --with pypdf --with pdfplumber scripts/text_wrap_check.py --compare <source.pdf> <edited.pdf> <page>
+uv run --with pypdf --with pdfplumber scripts/text_wrap_check.py --compare <source.pdf> <edited.pdf> <page> [<requests.json>]
 
 `--compare` is for a document the script did not write, where it cannot know which
 lines should move. It pairs every glyph on the page before and after the save, as
@@ -17,6 +17,14 @@ page is the replacement. Nothing is printed of the text itself.
 Pairing alone passes a wrap that moved nothing -- every glyph is then "unchanged" --
 with the new line printed over the old one. So it also counts overlapping glyphs:
 the saved page may not have more pairs of them than the source had.
+
+Text after the edit on its own line flows after it, sideways and down, so its
+glyphs are left over on the edited line and turn up again among the new ones;
+pairing cannot tell them from the replacement. Given the request `--growth-request`
+wrote, which carries the run's original text as well as the replacement, it counts
+instead: what the saved page gained over what the source lost is exactly what the
+replacement adds to the original, so a flowed glyph that went missing or was drawn
+twice fails, and so does one that the replacement's own count would hide.
 """
 import argparse
 import json
@@ -176,7 +184,11 @@ class Pool:
         return [c for found in self.by_text.values() for c in found]
 
 
-def compare(source, saved, page):
+def visible(text):
+    return sum(1 for ch in text if not ch.isspace())
+
+
+def compare(source, saved, page, request=None):
     """The glyphs of `saved` against `source`: unchanged, moved straight down
     by one shared distance, or the edited line's own. Counts only; no text is
     printed.
@@ -229,27 +241,39 @@ def compare(source, saved, page):
         f"on {len(tops)} lines rather than the edited one")
     new = left.rest()
     assert new, "the replacement is not on the saved page"
+    counted = ""
+    if request is not None:
+        edit, = json.loads(Path(request).read_text())
+        added = visible(edit["replacement"]) - visible(edit["original"])
+        assert len(new) - len(gone) == added, (
+            f"the saved page gained {len(new) - len(gone)} glyphs over the source's "
+            f"leftovers, and the replacement adds {added} to the original")
+        counted = f", {added} added as the request says"
     crowded = overlaps(before), overlaps(after)
     assert crowded[1] <= crowded[0], (
         f"{crowded[1]} pairs of glyphs overlap on the saved page, {crowded[0]} on the source")
     print(f"[PASS] {unchanged} glyphs unchanged, {moved} moved down {drop} pt, "
           f"{len(gone)} replaced on one line, {len(new)} new on "
-          f"{len({round(c[2], 1) for c in new})} lines; overlapping pairs {crowded[0]} -> {crowded[1]}")
+          f"{len({round(c[2], 1) for c in new})} lines{counted}; "
+          f"overlapping pairs {crowded[0]} -> {crowded[1]}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--generate', type=Path)
     parser.add_argument('--check', nargs=2, type=Path)
-    parser.add_argument('--compare', nargs=3)
+    parser.add_argument('--compare', nargs='+', metavar='ARG',
+                        help='<source.pdf> <edited.pdf> <page> [<requests.json>]')
     args = parser.parse_args()
     if args.generate:
         generate(args.generate)
     elif args.check:
         check(*args.check)
     elif args.compare:
-        source, saved, page = args.compare
-        compare(Path(source), Path(saved), int(page))
+        if len(args.compare) not in (3, 4):
+            parser.error('--compare takes <source.pdf> <edited.pdf> <page> [<requests.json>]')
+        source, saved, page, *request = args.compare
+        compare(Path(source), Path(saved), int(page), *request)
     else:
         parser.error('--generate, --check or --compare')
 

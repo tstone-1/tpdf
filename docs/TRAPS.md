@@ -514,6 +514,7 @@ hop through the index.
 - A warning written for one consumer of a control is not attached to the control
 - A pixel envelope that covers where text went and where it was passes an edit that moved nothing
 - Two em boxes overlapping is not two runs on one line
+- A bounding rectangle covers every place text left only while all of it moves one way
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24231,3 +24232,25 @@ was the defect disappearing.
 The general form: overlap of boxes that are built to be generous says nothing about membership.
 Ask whether the two share *most* of something — here, more than half of the shorter height —
 and leave actual contact to the check that measures ink.
+
+### A bounding rectangle covers every place text left only while all of it moves one way
+
+The preview crop for a wrap is one rectangle: the edit's box together with where every moved
+run lands. Its comment said that covers where the moved lines were too, and for a wrap that only
+moves lines straight down it does — every place a line left lies between the box at the top and
+the lowest line at the bottom. Letting the rest of the edited line flow broke that without
+touching the comment: a run leaving the right end of the edit's line for the start of the next
+one leaves from a place right of the box and left of where it lands, so the crop never showed it
+emptied.
+
+Nothing in the unit tests could see it, because they pin positions in the saved file and the
+defect is in what the preview reports. `text-edit-probe --roundtrip` found it on the corpus,
+twice in eleven edits, as *"pixels changed outside edited text envelopes"*: the probe requires
+every changed pixel to lie inside the extent the editor reported, which is exactly the property
+the comment had asserted. The fix adds each flowed run's source rectangle to the extent, and
+`the_preview_covers_where_the_text_that_flowed_was` is red without it.
+
+The general form: a claim that one rectangle bounds a set of movements is a claim about their
+directions. When a change adds a movement in a new direction, re-read every comment that argued
+from geometry, and run the check that measures pixels rather than the ones that measure
+positions.

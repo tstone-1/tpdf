@@ -36,7 +36,9 @@
 //!
 //! `--growth-request <source.pdf> <page> <operator> <trial> <width|app> [grow]` prints the
 //! one-element request array `--roundtrip` takes for that trial, with the box at
-//! `width`; the array contains the replacement text, so write it to an ignored file.
+//! `width`; the array contains the replacement text and the run's own `original`,
+//! which `--roundtrip` ignores and `scripts/text_wrap_check.py --compare` counts
+//! glyphs with, so write it to an ignored file.
 //! A trailing `grow` sets the flag the editor sets for a box a reader has not sized,
 //! which is how a round trip exercises a box that follows the text.
 //!
@@ -443,7 +445,7 @@ pub(super) fn request(
     layout.grow = grow;
     println!(
         "{}",
-        json!([{"page": page, "operator": operator, "replacement": replacement, "layout": layout}])
+        json!([{"page": page, "operator": operator, "original": run.text, "replacement": replacement, "layout": layout}])
     );
     Ok(())
 }

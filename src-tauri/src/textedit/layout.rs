@@ -449,6 +449,11 @@ struct Free {
     /// was nowhere near. A push may be as long as the text grew and no longer;
     /// an overlap the document already had is the document's.
     from: f64,
+    /// How far the line allows with every run the push moves out of the way:
+    /// the page, the clip, and whatever the push stops at. A wrap flows those
+    /// runs after the edit instead of pushing them, which gives the edit the
+    /// line up to here. Without a push it is `ceiling`.
+    whole: f64,
     /// Every show the push rewrites -- the discovered runs on the line and
     /// their grouped members.
     line: BTreeSet<u32>,
@@ -572,21 +577,33 @@ fn free_width(
         })
         .collect();
     let own = shifted(&run.display_rect);
-    let boxed =
-        |ceiling: f64, stop: Room, line: BTreeSet<u32>, carry: BTreeSet<u32>, from: f64| Free {
-            ceiling,
-            stop,
-            from,
-            carry,
-            hits: hits
-                .iter()
-                .map(|(rect, id)| (*rect, id.is_some_and(|id| line.contains(&id))))
-                .collect(),
-            line,
-            own,
-        };
+    let boxed = |ceiling: f64,
+                 stop: Room,
+                 line: BTreeSet<u32>,
+                 carry: BTreeSet<u32>,
+                 from: f64,
+                 whole: f64| Free {
+        ceiling,
+        stop,
+        from,
+        whole,
+        carry,
+        hits: hits
+            .iter()
+            .map(|(rect, id)| (*rect, id.is_some_and(|id| line.contains(&id))))
+            .collect(),
+        line,
+        own,
+    };
     if !grow {
-        return boxed(width, Room::Page, BTreeSet::new(), BTreeSet::new(), width);
+        return boxed(
+            width,
+            Room::Page,
+            BTreeSet::new(),
+            BTreeSet::new(),
+            width,
+            width,
+        );
     }
     let (free, stop) = room(
         edges,
@@ -606,9 +623,16 @@ fn free_width(
             .iter()
             .any(|region| region.contains(shape(free)).is_err())
     {
-        return boxed(width, Room::Clip, BTreeSet::new(), BTreeSet::new(), width);
+        return boxed(
+            width,
+            Room::Clip,
+            BTreeSet::new(),
+            BTreeSet::new(),
+            width,
+            width,
+        );
     }
-    let nothing = |stop| boxed(free, stop, BTreeSet::new(), BTreeSet::new(), free);
+    let nothing = |stop| boxed(free, stop, BTreeSet::new(), BTreeSet::new(), free, free);
     let Some(axis) = Axis::of(edges, probe) else {
         return nothing(stop);
     };
@@ -703,7 +727,19 @@ fn free_width(
         .map(|(rect, _)| axis.at(axis.edge(*rect, false)))
         .fold(f64::INFINITY, f64::min)
         .max(width);
-    boxed((from + shift).max(free), pushed_stop, line, carry, from)
+    // The pushed runs are everything the writer may move between the run and
+    // the first thing it may not, so with them gone the box reaches that thing,
+    // the page or the clip: `hard`, the same rule `free` is, over the same list
+    // less the runs that leave. Drawings are no more in the box's way here than
+    // they are anywhere else (see `obstacles`).
+    boxed(
+        (from + shift).max(free),
+        pushed_stop,
+        line,
+        carry,
+        from,
+        hard.max(free),
+    )
 }
 
 /// Which of the shows after an edit have to be given a displacement of their
@@ -995,11 +1031,14 @@ fn left_behind(
     Ok(())
 }
 
-/// Whether the block's lines below a wrap can move `moved_by` down the displayed
-/// page, and where each of their runs ends up.
+/// Whether the runs a wrap moves can go where it puts them, and where each of
+/// their hit rectangles ends up.
 ///
-/// `hits` is the page's hit list with each run a wrap moves flagged, and
-/// `pitch` the block's line pitch in the displayed page. Two things refuse it
+/// `moves` is each moved run's own operator with how far it goes on the
+/// displayed page: the block's lines below the edit all go down by the lines it
+/// added, and each run after the edit on its line goes wherever it flowed to.
+/// `hits` is the page's hit list with each of those runs flagged, and `down` one
+/// of the block's line pitches down the displayed page. Two things refuse it
 /// here; [`left_behind`] has already been asked, before the text was laid out:
 ///
 /// - **The page, a clip, and text that stays.** A moved run must stay on the
@@ -1011,57 +1050,57 @@ fn left_behind(
 ///   closer.
 /// - **Drawings and annotations over the move.** A rule under a word, a
 ///   highlight, a link's rectangle: anything partly over the area the moved
-///   lines sweep would stay where it is while the text under it left. One that
+///   runs sweep would stay where it is while the text under it left. One that
 ///   holds the whole area -- a page background, a coloured box around the
 ///   paragraph -- still holds it afterwards.
 ///
 /// A blank run has a hit rectangle and no ink, so it moves with its line and is
 /// checked against nothing.
-#[allow(clippy::too_many_arguments)]
 fn wrap_room(
     page: &Inspection,
-    below: &BTreeSet<u32>,
+    moves: &BTreeMap<u32, [f64; 2]>,
     hits: &[([f64; 4], bool)],
-    moved_by: [f64; 2],
-    pitch: f64,
+    down: [f64; 2],
     geometry: &crate::pagetree::DisplayedPage,
     display: &impl Fn([f64; 4]) -> [f32; 4],
 ) -> Result<Vec<(u32, [f32; 4])>, String> {
-    let vertical = moved_by[1].abs() >= moved_by[0].abs();
-    let cross = usize::from(vertical);
-    let shift = |rect: [f64; 4]| {
+    let cross = usize::from(down[1].abs() >= down[0].abs());
+    let pitch = down[cross].abs();
+    let shift = |rect: [f64; 4], by: [f64; 2]| {
         [
-            rect[0] + moved_by[0],
-            rect[1] + moved_by[1],
-            rect[2] + moved_by[0],
-            rect[3] + moved_by[1],
+            rect[0] + by[0],
+            rect[1] + by[1],
+            rect[2] + by[0],
+            rect[3] + by[1],
         ]
     };
-    let moving: Vec<(u32, [f64; 4], Option<[f64; 4]>)> = page
+    let moving: Vec<_> = page
         .runs
         .runs
         .iter()
-        .filter(|other| below.contains(&other.operator) && !other.text.trim().is_empty())
-        .map(|other| {
-            (
+        .filter(|other| !other.text.trim().is_empty())
+        .filter_map(|other| {
+            let by = *moves.get(&other.operator)?;
+            Some((
                 other.operator,
                 other.display_rect.map(f64::from),
+                by,
                 page.contexts[&other.operator]
                     .clip
                     .map(|clip| display(clip).map(f64::from)),
-            )
+            ))
         })
         .collect();
     let height = moving
         .iter()
-        .map(|(_, rect, _)| rect[cross + 2] - rect[cross])
+        .map(|(_, rect, ..)| rect[cross + 2] - rect[cross])
         .fold(0., f64::max);
     let mut slack = [0.1; 2];
     slack[cross] = (height - pitch).max(0.) + 0.1;
     let (width, depth) = (f64::from(geometry.width), f64::from(geometry.height));
     let mut placed = Vec::new();
-    for (operator, old, clip) in &moving {
-        let new = shift(*old);
+    for (operator, old, by, clip) in &moving {
+        let new = shift(*old, *by);
         if new[0] < -0.001 || new[1] < -0.001 || new[2] > width + 0.001 || new[3] > depth + 0.001 {
             return Err(wrap::NO_ROOM.into());
         }
@@ -1078,8 +1117,8 @@ fn wrap_room(
     }
     let swept: Vec<[f64; 4]> = moving
         .iter()
-        .map(|(_, old, _)| {
-            let new = shift(*old);
+        .map(|(_, old, by, _)| {
+            let new = shift(*old, *by);
             [
                 old[0].min(new[0]),
                 old[1].min(new[1]),
@@ -1338,13 +1377,18 @@ pub(super) fn prepare(
                    shape: &Shape,
                    moving: bool,
                    hits: &[([f64; 4], bool)]|
-     -> Result<(Vec<Operation>, usize, f64), String> {
+     -> Result<(Vec<Operation>, usize, f64, f64), String> {
         // The widest the text itself turned out to be, measured from the
         // run's origin. The box reported back is this rather than the whole
         // ceiling, so a grown box is the size of what the reader typed and
         // the dashed outline they see follows their text instead of the room
         // it had.
         let mut used = 0_f64;
+        // Where the last line ends, from the same origin, at the farther of
+        // its advance and its ink: a wrap flows the text after the run on from
+        // there, as the push measures a line from `used`, so an overhanging
+        // last glyph is not drawn into the run that follows it.
+        let mut end = 0_f64;
         let lines = if kept.is_some() {
             vec![change.replacement.clone()]
         } else {
@@ -1404,6 +1448,7 @@ pub(super) fn prepare(
             // already held their ink to the box and the source's own ink.
             let (ink, inset) = if let Some((_, advance, ink, _)) = kept {
                 used = used.max(advance.max(ink[1]));
+                end = advance.max(ink[1]);
                 (*ink, 0.)
             } else {
                 let (advance, ink) = metrics.gapped_layout(
@@ -1418,6 +1463,7 @@ pub(super) fn prepare(
                     return Err(too_wide_ink.into());
                 }
                 used = used.max(start + advance.max(ink[1] + inset));
+                end = start + (inset + advance).max(ink[1] + inset);
                 (ink, inset)
             };
             let ink = text_bounds(
@@ -1498,7 +1544,7 @@ pub(super) fn prepare(
                 Operation::new("Tj", items)
             });
         }
-        Ok((operations, lines.len(), used))
+        Ok((operations, lines.len(), used, end))
     };
     // Four writers, each a weaker claim than the one before it, and the last two
     // are the writer exactly as it was before the box could grow.
@@ -1561,19 +1607,29 @@ pub(super) fn prepare(
         } else {
             free.from.min(ceiling)
         };
-        match wrap::plan(page, run, room.max(width)) {
+        // With the text after the run flowing onto the edit's lines instead of
+        // being pushed, the line is the edit's as far as the push could have
+        // gone, held to the widest box a request may name, like the ceiling.
+        let whole = free.whole.min((14400. / xscale).max(width)).max(width);
+        match wrap::plan(page, run, (room.max(width), whole), &free.line) {
             Err(wrap::Refused::NotApplicable) => {}
             Err(wrap::Refused::Blocked(reason)) => return Err(reason.into()),
             Ok(plan) => {
                 let below: BTreeSet<u32> = plan.below.iter().copied().collect();
+                let flowing: BTreeSet<u32> = plan
+                    .after
+                    .iter()
+                    .flat_map(|unit| unit.shows.iter().copied())
+                    .collect();
+                let moving: BTreeSet<u32> = below.union(&flowing).copied().collect();
                 // Every show of every edit in the batch, grouped members
                 // included: a replacement is written where its source was, so
-                // one this wrap moved down would land on the wrap's own line.
+                // one this wrap moved would land on the wrap's own lines.
                 if placement
                     .edited
                     .iter()
                     .flat_map(|edited| shows_of(page, *edited))
-                    .any(|show| below.contains(&show))
+                    .any(|show| moving.contains(&show))
                 {
                     return Err(wrap::CONFLICT.into());
                 }
@@ -1581,11 +1637,13 @@ pub(super) fn prepare(
                     .map(|other| match other {
                         Around::Run(id, rect) => (
                             rect.map(f64::from),
-                            shows_of(page, id).iter().any(|show| below.contains(show)),
+                            shows_of(page, id).iter().any(|show| moving.contains(show)),
                         ),
                         other => (other.rect().map(f64::from), false),
                     })
                     .collect();
+                // Only the lines below: the runs after the edit leave a line
+                // whose start stays, and what stays there is the block's own.
                 left_behind(page, &below, &hits)?;
                 let shape = Shape {
                     first: plan.first,
@@ -1594,7 +1652,7 @@ pub(super) fn prepare(
                     wrap: true,
                     pitch: Some(plan.pitch),
                 };
-                let (operations, lines, used) =
+                let (operations, lines, used, end) =
                     lay_out(None, &shape, true, &hits).map_err(|error| {
                         if error.starts_with("Text would overlap another line") {
                             wrap::NO_ROOM.to_string()
@@ -1602,47 +1660,87 @@ pub(super) fn prepare(
                             error
                         }
                     })?;
-                // How far the block's lines below go: the lines this edit
-                // added, at the block's own pitch, down the run's own text axis.
-                let drop = lines.saturating_sub(1) as f64 * plan.pitch;
-                let offset = (-drop * run.matrix[2], -drop * run.matrix[3]);
-                let corner = |y: f64| display(text_bounds(run.matrix, [0., y, 0., y]));
-                let (low, high) = (corner(-drop), corner(0.));
-                let moved_by = [
-                    f64::from(low[0]) - f64::from(high[0]),
-                    f64::from(low[1]) - f64::from(high[1]),
-                ];
-                let pitch = {
-                    let (low, high) = (corner(-plan.pitch), corner(0.));
-                    (f64::from(low[0]) - f64::from(high[0]))
-                        .abs()
-                        .max((f64::from(low[1]) - f64::from(high[1])).abs())
-                };
-                let placed = wrap_room(page, &below, &hits, moved_by, pitch, &geometry, &display)?;
-                let lowered = plan
-                    .below
+                // A run after the edit wider than a whole line of the block
+                // cannot flow anywhere, and the edit keeps the refusal it had.
+                let places = wrap::flow(&plan, run.advance, (lines.saturating_sub(1), end))
+                    .ok_or_else(|| Room::Page.refusal().to_string())?;
+                // How far the block's lines below go: the lines this edit and
+                // the text after it added, at the block's own pitch, down the
+                // run's own text axis.
+                let added = places
                     .iter()
-                    .map(|show| Ok((*show, wrap::lowered(page, *show, offset)?)))
-                    .collect::<Result<Vec<_>, String>>()?;
+                    .map(|(line, _)| *line)
+                    .fold(lines.saturating_sub(1), usize::max);
+                let drop = added as f64 * plan.pitch;
+                // A distance in the run's own text space, as the page-space
+                // vector `wrap::lowered` takes and as the displayed one the
+                // hit rectangles move by.
+                let along = |dx: f64, dy: f64| {
+                    (
+                        dx * run.matrix[0] + dy * run.matrix[2],
+                        dx * run.matrix[1] + dy * run.matrix[3],
+                    )
+                };
+                let corner = |dx: f64, dy: f64| {
+                    let (to, from) = (
+                        display(text_bounds(run.matrix, [dx, dy, dx, dy])),
+                        display(text_bounds(run.matrix, [0., 0., 0., 0.])),
+                    );
+                    [
+                        f64::from(to[0]) - f64::from(from[0]),
+                        f64::from(to[1]) - f64::from(from[1]),
+                    ]
+                };
+                let mut moves = BTreeMap::new();
+                let mut lowered = Vec::new();
+                for show in &plan.below {
+                    moves.insert(*show, corner(0., -drop));
+                    lowered.push((*show, wrap::lowered(page, *show, along(0., -drop))?));
+                }
+                for (unit, (line, at)) in plan.after.iter().zip(&places) {
+                    let (dx, dy) = (at - unit.start, -(*line as f64) * plan.pitch);
+                    for show in &unit.shows {
+                        moves.insert(*show, corner(dx, dy));
+                        lowered.push((*show, wrap::lowered(page, *show, along(dx, dy))?));
+                    }
+                }
+                let placed = wrap_room(
+                    page,
+                    &moves,
+                    &hits,
+                    corner(0., -plan.pitch),
+                    &geometry,
+                    &display,
+                )?;
                 let rect = display(text_bounds(
                     run.matrix,
                     [
                         plan.start.min(0.),
-                        run.size - height - drop,
+                        run.size - height - lines.saturating_sub(1) as f64 * plan.pitch,
                         used.max(width),
                         run.size,
                     ],
                 ));
-                wrapped = Some((operations, lines, rect, lowered, placed));
+                // Where the runs that flowed were: a run leaving the end of the
+                // edit's line for the start of the next is outside both the box
+                // and where it lands, so the preview names the place it left.
+                let vacated: Vec<[f32; 4]> = page
+                    .runs
+                    .runs
+                    .iter()
+                    .filter(|other| flowing.contains(&other.operator))
+                    .map(|other| other.display_rect)
+                    .collect();
+                wrapped = Some((operations, lines, rect, lowered, (placed, vacated)));
             }
         }
     }
     let (mut operations, line_count, used, wrap) = match wrapped {
-        Some((operations, lines, rect, lowered, placed)) => {
-            (operations, lines, 0., Some((rect, lowered, placed)))
+        Some((operations, lines, rect, lowered, moved)) => {
+            (operations, lines, 0., Some((rect, lowered, moved)))
         }
         None => {
-            let (operations, lines, used) = outcome?;
+            let (operations, lines, used, _) = outcome?;
             (operations, lines, used, None)
         }
     };
@@ -1706,9 +1804,9 @@ pub(super) fn prepare(
             }
         }
     }
-    let (lowered, down) = match wrap {
-        Some((_, lowered, down)) => (lowered, down),
-        None => (Vec::new(), Vec::new()),
+    let (lowered, (down, vacated)) = match wrap {
+        Some((_, lowered, moved)) => (lowered, moved),
+        None => (Vec::new(), (Vec::new(), Vec::new())),
     };
     placed.extend(down);
     // What the preview has to show: the box, and every run this edit moved,
@@ -1716,9 +1814,10 @@ pub(super) fn prepare(
     // text and the text it moved is half outside the picture. Where a wrapped
     // line was needs nothing of its own: the extent is one rectangle, from the
     // box down to the lowest line moved, and every place a line left is
-    // between the two.
+    // between the two. Where a run that flowed along the edit's line was does:
+    // it can be right of everything else.
     let mut extent = rect;
-    for (_, other) in &placed {
+    for other in placed.iter().map(|(_, other)| other).chain(&vacated) {
         extent = [
             extent[0].min(other[0]),
             extent[1].min(other[1]),
