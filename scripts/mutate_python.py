@@ -303,7 +303,7 @@ MUTATIONS = [
         "pdfium: a TAG the installed tree was not built from",
         "pdfium",
         "scripts/fetch_pdfium.py",
-        'TAG = "pdfium-8044-tpdf.1"',
+        'TAG = "pdfium-8066-tpdf.1"',
         'TAG = "chromium/9999"',
         red=True,
         says="chromium/9999",

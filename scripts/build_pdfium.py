@@ -309,7 +309,9 @@ def build(work, output, install_sdk):
     output.mkdir(parents=True, exist_ok=True)
     asset = output / f"pdfium-{key}.tgz"
     canonical_archive(stage, asset)
-    (output / (asset.name + ".sha256")).write_text(f"{digest(asset)}  {asset.name}\n", encoding="ascii")
+    # LF on every host: text mode on Windows writes CRLF, and `shasum -c` elsewhere then looks
+    # for a file named "pdfium-win-x64.tgz\r". Both sidecars of 8044-tpdf.1 and 8066-tpdf.1 did.
+    (output / (asset.name + ".sha256")).write_text(f"{digest(asset)}  {asset.name}\n", encoding="ascii", newline="\n")
     shutil.copy2(stage / "PROVENANCE.json", output / "PROVENANCE.json")
     for name in ("observed.json", "upstream.json", "pdfium-deps.txt"):
         shutil.copy2(work / name, output / name)

@@ -17,6 +17,20 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.19] - Unreleased
+
+### Changed
+
+- **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own
+  correction to PDFium 8044, which had started reading Arabic and Hebrew lines
+  in the wrong word order. PDFium has since fixed that itself, after our
+  report, so the correction is gone. Right-to-left text, search and copying
+  read as before, with one difference: in a line that starts or ends with an
+  English word among Hebrew words, copied text now keeps the Hebrew phrase in
+  order and puts the English word at the other end, where before it kept the
+  English word in place and reversed the Hebrew words. Both are wrong; the
+  new one keeps a Hebrew phrase in such a line searchable.
+
 ## [26.9.18] - 2026-09-24
 
 ### Added

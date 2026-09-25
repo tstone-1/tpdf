@@ -210,12 +210,12 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** — reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
 | Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** — reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building. PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
-The PDFium pin is `pdfium-8044-tpdf.1`, installed by `scripts/fetch_pdfium.py` and
-verified by digest. TPDF builds the 8044 source with `scripts/pdfium_rtl.patch`
-through `.github/workflows/pdfium.yml`; archives carry source/toolchain provenance,
-the patch and licensing notices. The correction restores seven ordinary RTL
-extraction regressions while preserving upstream ActualText behavior; two known
-mixed-direction limitations remain. The report is PDFium issue 561066233.
+The PDFium pin is `pdfium-8066-tpdf.1`, installed by `scripts/fetch_pdfium.py` and
+verified by digest. TPDF builds the unpatched 8066 source through
+`.github/workflows/pdfium.yml`; archives carry source/toolchain provenance and
+licensing notices. Our RTL report (PDFium issue 561066233) was fixed upstream by a
+revert, so 8044's patch went; `scripts/pdfium_verify.py` pins the two known
+mixed-direction limitations to upstream's exact output.
 Only mac-arm64 and win-x64 are published. Engine releases are prereleases with
 Latest disabled so they do not replace the application updater's release.
 Phase 0 measurements used `chromium/7881`; they remain historical evidence.

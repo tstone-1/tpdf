@@ -19,6 +19,38 @@ The build
 gate verifies both profiles and leaves normal assets ready for packaging. Smoke-test
 the normal bundle separately before release.
 
+**PDFium 8066-tpdf.1, unpatched (2026-09-25).** PDFium fixed our RTL report,
+[issue 561066233](https://issues.chromium.org/issues/561066233), by reverting the change
+that caused it: [158290](https://pdfium-review.googlesource.com/c/pdfium/+/158290) on
+`main`, backported to `chromium/8059`. It also added an `Arabic` regression test built
+from our sample. So `scripts/pdfium_rtl.patch` went, and the build compiles one unpatched
+engine where it compiled a control and a candidate. Before switching, bblanchon's
+unpatched 8066 was measured against our patched 8044. It matched on the nine ordinary RTL
+fixtures in text, indices, character boxes and pixels, and passed search on both corpora,
+multilingual 68/68 and encoding 23/23. Upstream's `ActualTextRtl` expectations are
+identical in 8044 and 8066 for every `/ActualText` case. The two known limitations are
+wrong the other way round: the patched build kept the Latin word in place and reversed the
+Hebrew words, and upstream keeps the Hebrew phrase and moves the Latin word to the far end.
+`scripts/pdfium_verify.py` pins that exact output, so a change in either direction fails
+the build. [Run 36098721810](https://github.com/tstone-1/tpdf/actions/runs/36098721810)
+at `2b9f2f0` built both platforms and passed 63 upstream text tests on macOS and 62 on
+Windows. On the installed macOS engine these all passed:
+
+- all 26 gates;
+- the probes above: `remove-probe c`, both search corpora, the engine scan with no V8
+  or XFA, and `progressive-probe` on vector-heavy and the form;
+- the form round trip, with PDFKit reading it back;
+- the signature pixels, 32/32 by pypdfium2;
+- the notices cross-check against the Windows archive, byte-identical.
+
+`signature_pdfkit_check.swift` reads the first signature's red as `[0.918, 0.2, 0.137]`
+and fails, identically on 8044. The PDFs are byte-identical under both engines, so it is
+not the engine. Why PDFKit returns that value is not established; colour management of
+device RGB is the first thing to check. Both published sidecars of 8044 and 8066 end in
+CRLF for Windows, so `shasum -c` fails elsewhere; the digests themselves are right, and
+`build_pdfium.py` writes LF from now on. The Windows window phases and Windows probes were
+not run on this engine; CI's `windows-2025` gates are the Windows evidence until they are.
+
 **26.9.8 pre-tag verification (2026-09-16).** All 25 quality gates passed on
 macOS (775.3 seconds; 1,559 Rust tests, three explicit ignores, and 1,687 frontend
 tests). Windows passed all 25 gates across the full run and focused reruns after
@@ -172,7 +204,7 @@ Verify an existing install without touching the network:
 scripts/fetch_pdfium.py --check
 ```
 
-The pin is `pdfium-8044-tpdf.1`; Phase 0 measurements in `AGENTS.md` and `docs/PLAN.md`
+The pin is `pdfium-8066-tpdf.1`; Phase 0 measurements in `AGENTS.md` and `docs/PLAN.md`
 used `chromium/7881`. Bumping it means editing `TAG` and the whole `PINS`
 table in `scripts/fetch_pdfium.py` together, then re-running the checks that a digest
 cannot stand in for:
