@@ -11342,3 +11342,51 @@ the same two cases as plain data, and three mutations of its pairing (the page's
 no limit, the limit on every pair) each turned it red. What is left: the page edge is still the
 largest refusal at 14.0%, now followed by *out of line with the text beside them* at 3.7%, which
 this change more than doubled and whose cause on these pages has not been looked at.
+
+
+### A column's headings and short lines — measured 2026-09-25
+
+After the section above, *its lines would move out of line with the text beside them* was 1,659
+edits (3.7%) at +25% as typed. A temporary `eprintln!` at that refusal, naming the text that came
+apart, over the five files that hold nearly all of it: most were **short blocks in the other
+column**. The column rule of *Two columns on pages without tags* exempts a block of at least three
+lines at least half as wide as the paragraph; a column's headings (*2 Background and Related
+work*, *3.3 A test corpus*), a paragraph's last line (*inputs.*) and a first line split off for
+an italic phrase are one or two lines, so a moved line coming level with one refused the wrap.
+Drawings were the other large source, LuaTeX's the largest share (361 of 858).
+
+**The change.** A column that lies wholly to one side of the paragraph owns every shorter block
+set within its measure, to `COLUMN_SLACK` (1 pt) past either edge. Those runs are exempt from the
+level check and end a line as the column does (`Room::Column`). A mark in the gutter is within no
+column; a block that spans the paragraph is to neither side of it, so a label under one still
+refuses. The slack matters: at 0 pt, over arxiv-recent, fontspec and ReportLab, 62 verdicts it
+accepts are refused and 15 it refuses are accepted.
+
+**Before and after, +25% as typed, the 31 files:** accepted 62.41% → 62.73% (+138). *Out of line*
+1,659 → 1,112. Most of those edits now reach the next check: *a drawing or an annotation is placed
+over the lines* 1,277 → 1,684, *onto what is below it* +91, *it reaches the next column* +76. The
+page edge fell by 119, to 6,099 (13.8%). Over every trial `--compare` moved 505 verdicts from
+refused to accepted and 134 the other way.
+
+**The 134.** Ten, two per file, replayed with the previous probe at `23af1c1`: all ten accepted
+there. Of the nine renders looked at, eight were a push into other text: a figure caption into the
+next caption (*(LefFigure 19*), a table cell into the next (*eColorlinesColor*), a reference line
+into the other column, a line into a heading, a LuaTeX option over its description, and fontspec
+feature names over their neighbours.
+**One was not damage**: in the LuaTeX manual a superscript footnote mark grew from *6* to *66* and
+pushed its table cell a few points along. It is now refused with *it reaches the next column*,
+because a table column of three lines or more is at least half as wide as a one-character
+paragraph. That is the column rule's width test meeting a paragraph that is a mark, and it is not
+fixed here.
+
+**The gains.** Twenty, through `--roundtrip` and `qpdf --check`, all passing; nine renders looked at,
+all sound: wraps in both arXiv columns and in a bulleted list, pushes inside ReportLab's code
+listings, and two wraps in fontspec's tables of language and script names. Those two moved one
+column of the table down a line and left the others, which looked like a table coming apart until
+the whole width was rendered: each is a list set in six or four independent columns, and fontspec
+wraps its own long entries in them the same way (*Malayalam Traditional*).
+
+Tests: `wrap_tests` gained one, a heading half a point outside a column's edge that no longer
+refuses the wrap, with three controls that still do (no column, a mark in the gutter, a block across
+the paragraph). The mutation table gained five under `columns:`. Next by size: *a drawing or an
+annotation is placed over the lines* at 3.8%, and the page edge, still first at 13.8%.

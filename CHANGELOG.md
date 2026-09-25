@@ -47,6 +47,17 @@ have the binary.)
   Some edits that were accepted in these documents are now refused: in the
   cases checked, they had pushed the rest of the line into the other column.
 
+- **A heading or a short line in the other column no longer stops a wrap.**
+  In a two-column document without tags, an edit whose wrap moved a line
+  level with a heading, or with the short last line of a paragraph, across
+  the gutter was refused with *"its lines would move out of line with the
+  text beside them"*. Text set within a column that lies to one side of the
+  paragraph now counts as that column's. A label beside its entry still
+  refuses the edit. Edits a quarter longer are accepted 62.7% of the time,
+  up from 62.4%. Some edits that were accepted are now refused: in all but one
+  of the cases checked, they had pushed text into its neighbour; the
+  exception is a footnote mark growing inside a table.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own

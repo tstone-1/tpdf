@@ -590,9 +590,9 @@ fn free_width(
     // pushable ids here, it is one of the limits `hard` is measured to, so the
     // push walk below never reaches it and asks nothing of its own.
     let columns: BTreeSet<u32> = match Axis::of((mapped(0.), mapped(probe)), probe) {
-        Some(axis) if blocks::geometric_page(page) => block_width(page, run.operator, axis.axis)
-            .map(|width| {
-                column_runs(page, width, axis.axis)
+        Some(axis) if blocks::geometric_page(page) => block_extent(page, run.operator, axis.axis)
+            .map(|paragraph| {
+                column_runs(page, paragraph, axis.axis)
                     .into_iter()
                     .map(|(operator, _)| operator)
                     .filter(|operator| page.blocks.get(operator) != page.blocks.get(&run.operator))
@@ -1453,16 +1453,24 @@ fn cascade(
     Some((moved, paragraph))
 }
 
-/// The runs of text in a column beside a paragraph `width` wide, on a page
-/// without tags, each with its hit rectangle; `along` is the displayed page's
-/// axis the lines run along.
+/// The runs of text in a column beside a paragraph, on a page without tags,
+/// each with its hit rectangle; `paragraph` is how far the paragraph reaches
+/// along `along`, the displayed page's axis the lines run along.
 ///
 /// Two columns of prose are level line for line by coincidence, and on one
 /// baseline grid (LaTeX's two-column layout) exactly. A column is told from a
 /// row by the block the text is in, as the geometry reads it: at least
 /// [`COLUMN_LINES`] lines, and at least half as wide as the paragraph. A label,
 /// a date beside an entry, or a line's far end at a tab stop is a line or two,
-/// or narrow. Two things read it:
+/// or narrow.
+///
+/// A column that lies wholly to one side of the paragraph also owns every
+/// shorter block set within its measure: its headings, a paragraph's last
+/// line, a first line the geometry split off for an italic phrase. On the
+/// arXiv papers those were most of what still refused a wrap as text beside
+/// it. A label in the gutter is within no column, and a block that spans the
+/// paragraph is to neither side of it, so what sits under one still refuses.
+/// Two things read the result:
 ///
 /// - [`wrap_room`] lets a wrap leave column text level with a different line
 ///   of the paragraph than before, where row text must stay level with the
@@ -1475,7 +1483,8 @@ fn cascade(
 /// - The line's room ([`Room::Column`]): a column's text is where a line of
 ///   the paragraph ends, as the page edge is, so it is never pushed along and
 ///   a line it fills may wrap.
-fn column_runs(page: &Inspection, width: f64, along: usize) -> Vec<(u32, [f64; 4])> {
+fn column_runs(page: &Inspection, paragraph: [f64; 2], along: usize) -> Vec<(u32, [f64; 4])> {
+    let width = paragraph[1] - paragraph[0];
     // Per block: each run's show and hit rectangle, and the lines it has.
     type Lines = (Vec<(u32, [f64; 4])>, BTreeSet<i64>);
     let mut blocks: BTreeMap<ObjectId, Lines> = BTreeMap::new();
@@ -1493,26 +1502,46 @@ fn column_runs(page: &Inspection, width: f64, along: usize) -> Vec<(u32, [f64; 4
         // Half-point bins: a line's runs share a baseline to [`blocks`]' tolerance.
         lines.insert((run.matrix[5] * 2.).round() as i64);
     }
-    blocks
-        .into_values()
-        .filter(|(rects, lines)| {
-            let low = rects
-                .iter()
-                .map(|(_, r)| r[along])
-                .fold(f64::INFINITY, f64::min);
-            let high = rects
-                .iter()
-                .map(|(_, r)| r[along + 2])
-                .fold(f64::NEG_INFINITY, f64::max);
+    let span = |rects: &[(u32, [f64; 4])]| {
+        rects
+            .iter()
+            .fold([f64::INFINITY, f64::NEG_INFINITY], |[low, high], (_, r)| {
+                [low.min(r[along]), high.max(r[along + 2])]
+            })
+    };
+    let (columns, rest): (Vec<Lines>, Vec<Lines>) =
+        blocks.into_values().partition(|(rects, lines)| {
+            let [low, high] = span(rects);
             lines.len() >= COLUMN_LINES && high - low >= width / 2.
-        })
+        });
+    // A column wholly to one side of the paragraph owns what is set within
+    // it, however short: its headings, and a paragraph's last line or its
+    // first where the geometry split those off. A label beside its entry is
+    // within no column of its own.
+    let beside: Vec<[f64; 2]> = columns
+        .iter()
+        .map(|(rects, _)| span(rects))
+        .filter(|[low, high]| *high <= paragraph[0] || *low >= paragraph[1])
+        .collect();
+    let within = |[low, high]: [f64; 2]| {
+        beside
+            .iter()
+            .any(|side| low >= side[0] - COLUMN_SLACK && high <= side[1] + COLUMN_SLACK)
+    };
+    let owned = rest
+        .into_iter()
+        .filter(|(rects, _)| within(span(rects)))
+        .flat_map(|(rects, _)| rects);
+    columns
+        .into_iter()
         .flat_map(|(rects, _)| rects)
+        .chain(owned)
         .collect()
 }
 
-/// How wide the block `operator` is a line of reaches along the line, on the
-/// displayed page, or `None` when the run is in no block.
-fn block_width(page: &Inspection, operator: u32, along: usize) -> Option<f64> {
+/// How far the block `operator` is a line of reaches along the line, low and
+/// high, on the displayed page, or `None` when the run is in no block.
+fn block_extent(page: &Inspection, operator: u32, along: usize) -> Option<[f64; 2]> {
     let block = page.blocks.get(&operator)?;
     let (low, high) = page
         .runs
@@ -1523,8 +1552,12 @@ fn block_width(page: &Inspection, operator: u32, along: usize) -> Option<f64> {
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), r| {
             (low.min(r[along]), high.max(r[along + 2]))
         });
-    (high > low).then_some(high - low)
+    (high > low).then_some([low, high])
 }
+
+/// How far, in points, a short block may reach past the column it is set in:
+/// a heading's or a last line's ink is not cut to the column's measure.
+const COLUMN_SLACK: f64 = 1.0;
 
 /// How many lines a block beside a paragraph needs to be read as a column.
 const COLUMN_LINES: usize = 3;
@@ -1590,7 +1623,7 @@ fn wrap_room(
     let rule = landing(moves, edge, down);
     let geometric = blocks::geometric_page(page);
     let columns: Vec<[f64; 4]> = if geometric {
-        column_runs(page, paragraph[1] - paragraph[0], 1 - rule.1)
+        column_runs(page, paragraph, 1 - rule.1)
             .into_iter()
             .map(|(_, rect)| rect)
             .collect()

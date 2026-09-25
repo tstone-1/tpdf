@@ -601,6 +601,73 @@ fn a_column_beside_the_paragraph_does_not_refuse_the_wrap_on_an_untagged_page() 
     }
 }
 
+// A column's headings, and a paragraph's last line where the geometry reads it
+// as a block of its own, are short: one line, often narrow. Set within a
+// column that lies wholly to one side of the paragraph, they are the column's,
+// and a wrap may move the paragraph's lines past them. The same text in the
+// gutter, or under a block that spans the paragraph, is a label beside an
+// entry and still refuses.
+#[test]
+fn a_short_line_within_a_column_beside_the_paragraph_does_not_refuse_the_wrap() {
+    // The paragraph at x 120 as above; `extra` goes before it.
+    let page = |extra: &str| {
+        super::layout_tests::synthetic(&format!(
+            "{extra}{}",
+            content(70., "")
+                .replacen("20 200 Td", "120 200 Td", 1)
+                .replace(" /P <</MCID 0>> BDC", "")
+                .replace(" /P <</MCID 1>> BDC", "")
+                .replace(" /P <</MCID 2>> BDC", "")
+                .replace(" /P <</MCID 3>> BDC", "")
+                .replace(" EMC", "")
+        ))
+    };
+    let lines = |x: usize, tops: &[usize], text: &str| {
+        tops.iter()
+            .map(|top| format!("BT /F1 12 Tf {x} {top} Td ({text}) Tj ET "))
+            .collect::<String>()
+    };
+    // The heading beside LAST, the line the wrap moves from 172 to 158, and
+    // three lines at x 6, 93.6 pt wide, 42 pt below it: over the three ems two
+    // lines of one block may be apart.
+    let column = lines(6, &[130, 116, 102], "BRANCH SECOND");
+    // Half a point left of the column's edge: headings and last lines are not
+    // cut to the column's measure (`COLUMN_SLACK`).
+    let heading = "BT /F1 12 Tf 5.5 172 Td (SIDE) Tj ET ".to_string();
+    let runs = placed_runs(&wrapped(
+        &page(&format!("{column}{heading}")),
+        WIDEST,
+        LONGER,
+    ));
+    assert!(near(at(&runs, LAST), (120., 158.)), "{runs:?}");
+    assert!(near(at(&runs, "SIDE"), (5.5, 172.)), "{runs:?}");
+    // Refused: with no column; in the gutter, past the column's 99.6 (at 6 pt,
+    // so that 14.4 pt are left before the paragraph, more than the one em that
+    // separates two blocks on a line); and under three lines that span the
+    // paragraph, from x 6 to past its 292.8.
+    let across = lines(6, &[272, 258, 244], "BRANCH SECOND BRANCH SECOND BRANCH");
+    for (name, extra) in [
+        ("alone", heading.clone()),
+        (
+            "gutter",
+            format!("{column}BT /F1 6 Tf 102 172 Td (I) Tj ET "),
+        ),
+        ("across", format!("{across}{heading}")),
+    ] {
+        let doc = page(&extra);
+        let result = write(
+            &mut doc.clone(),
+            &[in_default_box(&doc, index_of(&doc, WIDEST), LONGER)],
+        );
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.contains("out of line with the text beside them")),
+            "{name}: {result:?}"
+        );
+    }
+}
+
 // The paragraph as the left-hand column: its lines end where the column across
 // the gutter starts, not at the page edge. A column's text ends a line as the
 // page edge does, so the line wraps, and nothing in the column moves. Text there
