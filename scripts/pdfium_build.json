@@ -1,11 +1,15 @@
 {
-  "version": "8044-tpdf.1",
-  "pdfium": "f91ca5a72358bb0b00b4da9481b21fe668157614",
-  "builder": "5453f3afc4785cbad82c05f6ceb4dabea0cb81a0",
-  "depot_tools": "36a8df4ad006eaa0572fb446edb8145fe5403592",
+  "version": "8066-tpdf.1",
+  "pdfium": "fc46361ce75055cd549cb938fae5d6a3fe3a1a05",
+  "builder": "f2e9a1c45bb17b85b540abf1af30146ef65416ac",
+  "depot_tools": "56b8271b3f10e046bffac2cfc44b2f81162cd97e",
   "font_url": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2",
   "font_archive_sha256": "fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7",
   "windows_sdk_url": "https://go.microsoft.com/fwlink/?linkid=2370315",
   "windows_sdk_installer_sha256": "e9f1bde566381355e594e2f90daf4f714eb5c7ef2c45c501ce236afe2abea300",
-  "windows_sdk_version": "10.0.28000.0"
+  "windows_sdk_version": "10.0.28000.0",
+  "upstream_text_tests": {
+    "mac-arm64": 63,
+    "win-x64": 62
+  }
 }

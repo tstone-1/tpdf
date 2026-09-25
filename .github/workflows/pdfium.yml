@@ -61,7 +61,7 @@ jobs:
       - name: Select Xcode
         if: runner.os == 'macOS'
         run: echo "DEVELOPER_DIR=/Applications/Xcode_26.0.1.app/Contents/Developer" >> "$GITHUB_ENV"
-      - name: Build control and candidate, verify, package
+      - name: Build, verify, package
         shell: bash
         env:
           PDFIUM_WORK: ${{ runner.temp }}/pdfium-build

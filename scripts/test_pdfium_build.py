@@ -8,81 +8,76 @@ import tempfile
 import unittest
 
 from build_pdfium import canonical_archive, check_upstream_report, complete_licenses, digest, windows_bash
-from pdfium_verify import CONTROLS, LIMITATIONS, REGRESSIONS, verify
+from pdfium_verify import LIMITATIONS, ORDINARY, verify
 
 
-def observations():
-    names = sorted(CONTROLS | REGRESSIONS | LIMITATIONS)
+def observation():
+    """A manifest and an observation that verify: ordinary cases extract their
+    authored text, each limitation extracts exactly its pinned wrong text."""
+    names = sorted(ORDINARY | set(LIMITATIONS))
     manifest = {"cases": [{"file": name, "expected": "AB"} for name in names]}
-    a, b = [65, [0.0, 1.0, 0.0, 1.0]], [66, [1.0, 2.0, 0.0, 1.0]]
-    def record(wrong):
-        return {name: {"text": "BA" if name in wrong else "AB",
-                       "chars": deepcopy([b, a] if name in wrong else [a, b]),
-                       "pixels_sha256": "a" * 64} for name in names}
-    return manifest, record(REGRESSIONS | LIMITATIONS), record(LIMITATIONS)
+
+    def seen(text):
+        chars = [[ord(ch), [float(i), float(i + 1), 0.0, 1.0]] for i, ch in enumerate(text)]
+        return {"text": text, "chars": chars, "pixels_sha256": "a" * 64}
+    return manifest, {name: seen(LIMITATIONS.get(name, "AB")) for name in names}
 
 
-class DifferentialTests(unittest.TestCase):
-    def test_accepts_seven_fixes_and_two_unchanged_limitations(self):
-        self.assertEqual(verify(*observations())["regressions_restored"], 7)
+class ObservationTests(unittest.TestCase):
+    def test_accepts_nine_correct_and_two_pinned_limitations(self):
+        self.assertEqual(verify(*observation())["ordinary_correct"], 9)
 
-    def test_rejects_unpatched_candidate(self):
-        manifest, before, _ = observations()
-        with self.assertRaisesRegex(ValueError, "Candidate failed"):
-            verify(manifest, before, deepcopy(before))
-
-    def test_rejects_patched_control(self):
-        manifest, _, after = observations()
-        with self.assertRaisesRegex(ValueError, "Control failed"):
-            verify(manifest, deepcopy(after), after)
+    def test_rejects_an_ordinary_case_with_wrong_text(self):
+        manifest, seen = observation()
+        seen["arabic.pdf"]["text"] = "BA"
+        seen["arabic.pdf"]["chars"].reverse()
+        with self.assertRaisesRegex(ValueError, "differs from the authored text"):
+            verify(manifest, seen)
 
     def test_rejects_missing_and_duplicate_fixtures(self):
         for alteration in ("missing", "duplicate"):
             with self.subTest(alteration=alteration):
-                manifest, before, after = observations()
+                manifest, seen = observation()
                 if alteration == "missing":
-                    removed = manifest["cases"].pop()["file"]
-                    before.pop(removed)
-                    after.pop(removed)
+                    seen.pop(manifest["cases"].pop()["file"])
                 else:
                     manifest["cases"][1] = manifest["cases"][0]
                 with self.assertRaisesRegex(ValueError, "inventory"):
-                    verify(manifest, before, after)
+                    verify(manifest, seen)
 
     def test_rejects_missing_observation(self):
-        manifest, before, after = observations()
-        after.pop("latin.pdf")
+        manifest, seen = observation()
+        seen.pop("latin.pdf")
         with self.assertRaisesRegex(ValueError, "inventory"):
-            verify(manifest, before, after)
+            verify(manifest, seen)
 
-    def test_rejects_pixels_geometry_and_duplicate_character_changes(self):
-        for change in ("pixels", "box", "duplicate"):
-            with self.subTest(change=change):
-                manifest, before, after = observations()
-                entry = after["arabic.pdf"]
-                if change == "pixels":
-                    entry["pixels_sha256"] = "b" * 64
-                elif change == "box":
-                    entry["chars"][0][1][0] += 1
-                else:
-                    entry["chars"].append(deepcopy(entry["chars"][0]))
-                    entry["text"] += "A"
-                with self.assertRaisesRegex(ValueError, "pixels changed|geometry changed"):
-                    verify(manifest, before, after)
+    def test_rejects_empty_observation(self):
+        manifest, seen = observation()
+        seen["latin.pdf"] = {"text": "", "chars": [], "pixels_sha256": "a" * 64}
+        with self.assertRaisesRegex(ValueError, "empty observation"):
+            verify(manifest, seen)
 
     def test_rejects_character_text_disagreement(self):
-        manifest, before, after = observations()
-        after["arabic.pdf"]["chars"].reverse()
+        manifest, seen = observation()
+        seen["arabic.pdf"]["chars"].reverse()
         with self.assertRaisesRegex(ValueError, "indices disagree"):
-            verify(manifest, before, after)
+            verify(manifest, seen)
 
-    def test_rejects_new_behavior_in_known_limitation(self):
-        manifest, before, after = observations()
-        # Index-only changes must also be held to the current behavior.
-        after["latin-prefix.pdf"]["chars"].reverse()
-        after["latin-prefix.pdf"]["text"] = "AB"
+    def test_rejects_a_limitation_extracting_different_wrong_text(self):
+        manifest, seen = observation()
+        # The patched 8044 build's order for this case: Latin in place, Hebrew reversed.
+        text = "Hello \u05d4\u05d9\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd \u05e9\u05dc\u05d5\u05dd"
+        seen["latin-prefix.pdf"]["text"] = text
+        seen["latin-prefix.pdf"]["chars"] = [[ord(c), [0.0, 1.0, 0.0, 1.0]] for c in text]
         with self.assertRaisesRegex(ValueError, "known limitation changed"):
-            verify(manifest, before, after)
+            verify(manifest, seen)
+
+    def test_rejects_a_limitation_that_is_now_correct(self):
+        manifest, seen = observation()
+        seen["latin-suffix.pdf"]["text"] = "AB"
+        seen["latin-suffix.pdf"]["chars"] = [[65, [0.0, 1.0, 0.0, 1.0]], [66, [1.0, 2.0, 0.0, 1.0]]]
+        with self.assertRaisesRegex(ValueError, "now extracts correctly"):
+            verify(manifest, seen)
 
 
 class ArtifactTests(unittest.TestCase):

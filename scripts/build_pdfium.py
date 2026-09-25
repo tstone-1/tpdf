@@ -12,8 +12,10 @@ installer on a disposable CI runner; it is never implicit on a user's machine.
 Source, build patches and depot_tools are pinned; Clang/GN/Ninja follow DEPS.
 The host Xcode/Windows SDK and MSVC CRT are recorded, not hermetically bundled.
 This is a repeatable source build, not a claim of bit-identical compiler output.
-Only archives that pass both the control/candidate differential and upstream
-text tests are emitted. This script neither publishes nor changes vendor/pdfium.
+Only archives that pass the pinned RTL observation (pdfium_verify.py) and
+upstream's text tests are emitted. The source is built unpatched: until
+8066-tpdf.1 a control and a patched candidate were built and compared, and
+pdfium_verify.py says why that ended. This script neither publishes nor changes vendor/pdfium.
 """
 import argparse
 import gzip
@@ -33,7 +35,6 @@ from pdfium_verify import verify
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "scripts/pdfium_build.json"
-PATCH = ROOT / "scripts/pdfium_rtl.patch"
 
 
 def digest(path):
@@ -217,7 +218,7 @@ def build(work, output, install_sdk):
         applied[name] = digest(patch)
     if windows:
         resource = (builder / "patches/win/resources.rc").read_text(encoding="utf-8")
-        resource = resource.replace("$VERSION_CSV", "0,0,8044,1").replace("$VERSION", "0.0.8044.1")
+        resource = resource.replace("$VERSION_CSV", "0,0,8066,1").replace("$VERSION", "0.0.8066.1")
         resource = resource.replace("$YEAR", "2026").replace("compiled by github.com/bblanchon", "tpdf compatibility build")
         (source / "resources.rc").write_text(resource, encoding="utf-8")
     build_dir = source / "out/Release"
@@ -238,37 +239,31 @@ def build(work, output, install_sdk):
     (work / "pdfium-deps.txt").write_text(deps, encoding="utf-8")
     fixtures(work, pins, env)
     filename = "pdfium.dll" if windows else "libpdfium.dylib"
-    observations = {}
-    for label in ("control", "candidate"):
-        if label == "candidate":
-            run(["git", "apply", "--check", PATCH], source, env)
-            run(["git", "apply", PATCH], source, env)
-        run([ninja, "-C", "out/Release", "-j", "4", "pdfium", "pdfium_embeddertests"], source, env)
-        library_dir = work / label
-        library_dir.mkdir()
-        shutil.copy2(build_dir / filename, library_dir / filename)
-        test_report = work / f"{label}-upstream.json"
-        test_filter = "FPDFTextEmbedderTest.*"
-        if windows:
-            # This platform-specific test is disabled in the upstream source.
-            test_filter += "-FPDFTextEmbedderTest.DISABLED_TextSearchLatinExtended"
-        run([build_dir / ("pdfium_embeddertests.exe" if windows else "pdfium_embeddertests"),
-             f"--gtest_filter={test_filter}", f"--gtest_output=json:{test_report}"], source, env)
-        check_upstream_report(test_report, 61 if windows else 62)
-        record = work / f"{label}.json"
-        probe = subprocess.run([sys.executable, str(ROOT / "scripts/pdfium_rtl_check.py"),
-                                "--lib", str(library_dir / filename), "--fixtures", str(work / "fixtures"),
-                                "--record", str(record)], cwd=ROOT, env=env, timeout=120)
-        if probe.returncode != 1:
-            raise ValueError("Probe did not report the expected known limitations")
-        observations[label] = json.loads(record.read_text(encoding="utf-8"))
+    run([ninja, "-C", "out/Release", "-j", "4", "pdfium", "pdfium_embeddertests"], source, env)
+    library_dir = work / "built"
+    library_dir.mkdir()
+    shutil.copy2(build_dir / filename, library_dir / filename)
+    test_report = work / "upstream.json"
+    test_filter = "FPDFTextEmbedderTest.*"
+    if windows:
+        # This platform-specific test is disabled in the upstream source.
+        test_filter += "-FPDFTextEmbedderTest.DISABLED_TextSearchLatinExtended"
+    run([build_dir / ("pdfium_embeddertests.exe" if windows else "pdfium_embeddertests"),
+         f"--gtest_filter={test_filter}", f"--gtest_output=json:{test_report}"], source, env)
+    check_upstream_report(test_report, pins["upstream_text_tests"][key])
+    record = work / "observed.json"
+    probe = subprocess.run([sys.executable, str(ROOT / "scripts/pdfium_rtl_check.py"),
+                            "--lib", str(library_dir / filename), "--fixtures", str(work / "fixtures"),
+                            "--record", str(record)], cwd=ROOT, env=env, timeout=120)
+    if probe.returncode != 1:
+        raise ValueError("Probe did not report the expected known limitations")
     verdict = verify(json.loads((work / "fixtures/manifest.json").read_text(encoding="utf-8")),
-                     observations["control"], observations["candidate"])
+                     json.loads(record.read_text(encoding="utf-8")))
     stage = builder / "staging"
     stage.mkdir()
     libdir = stage / ("bin" if windows else "lib")
     libdir.mkdir()
-    shutil.copy2(work / "candidate" / filename, libdir / filename)
+    shutil.copy2(library_dir / filename, libdir / filename)
     if windows:
         (stage / "lib").mkdir()
         shutil.copy2(build_dir / "pdfium.dll.lib", stage / "lib/pdfium.dll.lib")
@@ -279,8 +274,8 @@ def build(work, output, install_sdk):
     # Explicit flags: invoking bash does not apply the script's shebang -eu.
     license_log = run([shell, "-eu", "steps/08-licenses.sh"], builder, license_env, capture=True)
     complete_licenses(source, stage, license_log)
-    # The engine archive is also distributed independently of the application.
-    # It must carry the licence for tpdf's patch as well as PDFium's notices.
+    # The engine archive is also distributed independently of the application,
+    # and its build scripts and packaging are tpdf's, under tpdf's licence.
     shutil.copy2(ROOT / "LICENSE", stage / "licenses/tpdf.txt")
     clang = source / "third_party/llvm-build/Release+Asserts/bin" / ("clang-cl.exe" if windows else "clang")
     sdk["clang"] = run([clang, "--version"], source, env, capture=True).splitlines()[0]
@@ -294,15 +289,15 @@ def build(work, output, install_sdk):
         sdk["msvc_crt"] = versions.pop()
     provenance = {"schema": 1, "version": pins["version"], "platform": key,
                   "pdfium": pins["pdfium"], "builder": pins["builder"], "depot_tools": pins["depot_tools"],
-                  "patch_sha256": digest(PATCH), "packaging_patches": applied, "toolchain": sdk,
+                  "packaging_patches": applied, "toolchain": sdk,
                   "inputs_sha256": {name: digest(ROOT / name) for name in (
                       "LICENSE", ".github/workflows/pdfium.yml", "scripts/build_pdfium.py",
                       "scripts/pdfium_build.json", "scripts/pdfium_verify.py",
                       "scripts/pdfium_rtl_check.py", "scripts/pdfium-fixture-tools.txt",
                       "testdata/make_rtl_pdf.py", "testdata/make_multilingual_pdf.py", "testdata/make_text_pdf.py")},
                   "gn_args": gn_args, "library_sha256": digest(libdir / filename),
-                  "control_library_sha256": digest(work / "control" / filename), "verification": verdict,
-                  "upstream_tests": 61 if windows else 62,
+                  "verification": verdict,
+                  "upstream_tests": pins["upstream_text_tests"][key],
                   "runner_image": os.environ.get("ImageVersion"),
                   "repository_commit": os.environ.get("GITHUB_SHA"),
                   "workflow_run": os.environ.get("GITHUB_RUN_ID")}
@@ -311,13 +306,12 @@ def build(work, output, install_sdk):
     if len(dependencies) < 10 or dependencies.get("pdfium", {}).get("rev") != pins["pdfium"]:
         raise ValueError("Dependency provenance is empty or has the wrong source revision")
     write_json(stage / "DEPENDENCIES.json", dependencies)
-    shutil.copy2(PATCH, stage / "tpdf-rtl.patch")
     output.mkdir(parents=True, exist_ok=True)
     asset = output / f"pdfium-{key}.tgz"
     canonical_archive(stage, asset)
     (output / (asset.name + ".sha256")).write_text(f"{digest(asset)}  {asset.name}\n", encoding="ascii")
     shutil.copy2(stage / "PROVENANCE.json", output / "PROVENANCE.json")
-    for name in ("control.json", "candidate.json", "control-upstream.json", "candidate-upstream.json", "pdfium-deps.txt"):
+    for name in ("observed.json", "upstream.json", "pdfium-deps.txt"):
         shutil.copy2(work / name, output / name)
     shutil.copytree(work / "fixtures", output / "fixtures")
     shutil.copy2(work / "DejaVu-LICENSE.txt", output / "DejaVu-LICENSE.txt")
