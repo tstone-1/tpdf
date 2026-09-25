@@ -516,6 +516,26 @@ fn a_lowered_run_on_an_untagged_line_flows_with_it() {
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
 }
 
+// Text flowing onto a new line below moves towards whatever is below its own
+// line, and may not close the gap to it to less than a blank line. A run set a
+// little below that line, before the edit, is on the line and not below it:
+// the lowered E of the TeX logo stays where it is, and the text after the
+// edit still flows past it onto the next line.
+#[test]
+fn a_lowered_run_before_the_edit_is_not_below_the_text_that_flows() {
+    let doc = super::layout_tests::synthetic(&format!(
+        "BT /F1 12 Tf 1 0 0 1 20 200 Tm ({FIRST}) Tj 1 0 0 1 20 184 Tm (E) Tj \
+         1 0 0 1 30 186 Tm ({WIDEST}) Tj 1 0 0 1 210 186 Tm (TIDE) Tj \
+         1 0 0 1 20 172 Tm ({LAST}) Tj 1 0 0 1 20 120 Tm ({NEXT}) Tj ET"
+    ));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, "E"), (20., 184.)), "{runs:?}");
+    // FIRST AND SECOND ends at 20 + 16 x 7.2 = 135.2, and TIDE follows it by
+    // the 7.2 pt it followed DONE by.
+    assert!(near(at(&runs, "TIDE"), (142.4, 172.)), "{runs:?}");
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+}
+
 // On a page without tags, text that stays beside a line the wrap moves would
 // come apart from it: a label and its entry, two cells of a row. Beside a line
 // that stays, it may. With tags, the tags say what belongs together.

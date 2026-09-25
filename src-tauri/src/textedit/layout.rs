@@ -1261,6 +1261,10 @@ fn lands(
     {
         return false;
     }
+    // Text on the rectangle's own line -- sharing half the shorter box, as
+    // above -- is not ahead of it, however far it is set off the line: the E
+    // of the TeX logo is lowered, not a line below.
+    let level = shared >= shorter / 2.;
     let (ahead, after) = if towards > 0. {
         (
             other[cross] + other[cross + 2] > old[cross] + old[cross + 2],
@@ -1273,7 +1277,7 @@ fn lands(
         )
     };
     let blank = pitch - (slack[cross] - 0.1);
-    ahead && after < blank - 0.1
+    ahead && !level && after < blank - 0.1
 }
 
 /// Whether ink shown at `shown` is over `other` by more than a tenth of a

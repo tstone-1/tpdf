@@ -11595,3 +11595,47 @@ reference list's lines; and continuation lines whose neighbour is mostly set in 
 list item whose first line is mostly primitive names in monospace. Wrapping the first two would
 need a pitch and a measure the block does not have, taken from the page's other paragraphs in
 its font; the face rule is what keeps table rows and entries apart. Neither is changed here.
+
+### What a wrap lands on below it — measured 2026-09-25
+
+*Its lines would move onto what is below it* was the largest refusal the wrap itself gives, 2,315
+of 44,282 edits at +25% as typed. A temporary `eprintln!` at each of the seven places that return
+it, naming what was landed on, over 150 of them drawn at random and replayed with
+`--growth-request` and `--roundtrip` (whole documents up to 128 pages, the page extracted with
+`qpdf --pages` beyond that):
+
+- **115 are a full page**, all in Arcadia and Coatesville: the moved lines would land on
+  something 42 to 52 pt above the page's bottom edge and 10 to 15 pt tall, the running footer.
+  Two renders looked at, one of each, have their last line of text directly above it. Those
+  refusals are right: the text has nowhere to go on the page, and flowing it onto the next one
+  is a feature, not a fix.
+- **34 are mid-page, in the LaTeX documents.** Replayed with the overlap measured, 11 land on
+  text that stays by 0.2 to 0.8 of the shorter box, 7 by 0.09 or less, 12 not at all: those are
+  refused by the rule that a moved line may not close the space to text below it to less than a
+  blank line. Three were the edit's own lines overlapping as laid out, and one the paragraph's
+  moved bottom landing.
+
+**The rule counted text on the moved run's own line as below it.** It asks whether the other
+text is ahead of the run by comparing their centres, and the lowered E of the TeX logo, on the
+edited line itself before the edit, has its centre a couple of points lower than the text after
+the edit. When that text flowed onto a new line it moved towards the E, closer than a blank line,
+and the wrap was refused. The fontspec page 11 case: the T of *XƎTEX* growing, the Ǝ before it
+2.3 pt below its line. Text sharing half the shorter box with the run, the rule `lands` already
+uses for a sliver the source had, is now on the run's line and never ahead of it. A second
+change, allowing a moved line the overlap the source's own moving lines had with the text that
+stays, gained one of the 34 more and was left out.
+
+**Before and after, +25% as typed, the 31 files:** accepted 78.96% → **79.30%** (+153). *Onto
+what is below it* fell by 196, to 2,119; 38 of those edits now reach the wrap's text-beside check
+and are refused by it, and 5 the drawing check. Over every trial `--compare` moved 491 verdicts
+from refused to accepted (fontspec 266, `luatex-manual` 224, Arcadia 1) and **none** the other
+way.
+
+**The gains:** fifteen, ten of the 34 samples and five from the corpus run, through `--roundtrip`
+and `qpdf --check`, all passing; seven renders looked at, all sound. In each the text after the
+edit flows onto a new line past the lowered E before it, and the lines below move down one.
+
+Tests: `wrap_tests` gained one, a lowered run before the edit and text after it that flows onto
+the next line; it fails without the change with the corpus's refusal. Two mutations under `keep
+breaks:`, and three there re-aimed at the changed line, all caught by the test named for them.
+What is left, at +25%: *onto what is below it* 4.8%, three quarters of it full pages.

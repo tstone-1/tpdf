@@ -87,6 +87,13 @@ have the binary.)
   seven cases, they had pushed text into the next table cell or column; the
   other is a superscript growing.
 
+- **Text after an edit wraps past a lowered letter on its line.** When an
+  edit wrapped the rest of its line onto a new line, a letter set a little
+  below the line before the edit, such as the E of the TeX logo, was taken
+  for text below it, and the edit was refused with *"its lines would move
+  onto what is below it"*. Edits a quarter longer are accepted 79.3% of the
+  time, up from 79.0%, and no edit that was accepted is refused.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own
