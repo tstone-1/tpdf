@@ -2,8 +2,9 @@
 //!
 //! A wrap (`layout::wrap`) needs to know which runs are lines of one block.
 //! A tagged page says so; on an untagged page this module answers from the
-//! lines themselves. Two consecutive lines are one block when they overlap
-//! along the line, their pitch is at most three ems, most of their text is
+//! lines themselves. A line and the nearest line below it that overlaps it
+//! along the line are one block when their pitch is at most three ems (two,
+//! with another line of the page between them), most of their text is
 //! set in one font at one size, their left edges agree (or the upper is a first line indented
 //! by up to four ems, or a list item's first line hanging by as much), and
 //! nothing is drawn between them; a line opening with a list label starts a
@@ -31,6 +32,10 @@ const LEFT_TOL: f64 = 1.0;
 const INDENT_MAX_EM: f64 = 4.0;
 /// The widest pitch that is still a line pitch, in ems.
 const PITCH_MAX_EM: f64 = 3.0;
+/// The widest pitch, in ems, of two lines with another line of the page
+/// between them: a column's own line pitch, where a wider one is the gap
+/// between two paragraphs (`BUILD.md`, *Two columns with staggered baselines*).
+const SKIP_PITCH_EM: f64 = 2.0;
 /// How far a block's pitch may step, in points, before the block ends.
 const LEAD_TOL: f64 = 0.5;
 /// How far below its baseline a line's own marks reach, underlines included,
@@ -156,15 +161,28 @@ pub(super) fn geometric(
         .chain(&page.form_text_bounds)
         .map(|rect| user(*rect))
         .collect();
-    // The next line down that a segment is joined to, with the pitch.
+    // The next line down that a segment is joined to, with the pitch. That is
+    // the nearest line below that overlaps along the line, not the page's next
+    // line: two columns whose baselines are staggered alternate on the page,
+    // so the page's next line of each is always the other column's. Across
+    // another line of the page the pitch is held to `SKIP_PITCH_EM`, since a
+    // wider one there is a gap between paragraphs.
     let mut joins: BTreeMap<usize, (usize, f64)> = BTreeMap::new();
     let mut taken = BTreeSet::new();
     for (index, before) in segments.iter().enumerate() {
+        let overlaps = |s: &Segment| before.right.min(s.right) - before.left.max(s.left) > 0.;
+        let Some(next) = segments
+            .iter()
+            .filter(|s| s.line > before.line && overlaps(s))
+            .map(|s| s.line)
+            .min()
+        else {
+            continue;
+        };
         let Some(after) = segments
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.line == before.line + 1)
-            .filter(|(_, s)| before.right.min(s.right) - before.left.max(s.left) > 0.)
+            .filter(|(_, s)| s.line == next && overlaps(s))
             .min_by(|(_, a), (_, b)| {
                 (a.left - before.left)
                     .abs()
@@ -174,6 +192,12 @@ pub(super) fn geometric(
         else {
             continue;
         };
+        let size = before.size.max(segments[after].size);
+        if next > before.line + 1
+            && before.baseline - segments[after].baseline > SKIP_PITCH_EM * size
+        {
+            continue;
+        }
         if !taken.contains(&after)
             && joined(before, &segments[after], !taken.contains(&index), &drawn)
         {

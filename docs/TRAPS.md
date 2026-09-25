@@ -332,6 +332,7 @@ hop through the index.
 - Process RSS is a high-water mark, so two oversized seeds look exactly like a leak
 - Four of the six modules that left the cycle were nowhere near the edit
 - A survey counts editable pages, so a rule that refuses nearly every edit passed it
+- A comparison against the tags scores only the pairs the rule's own pairing hands it
 
 ## Writing a check that can fail
 - A fixture with one of a thing cannot falsify a comparison of which thing
@@ -24308,3 +24309,32 @@ reads exactly `[1.0, 0.0, 0.0]`, so the conversion does not flatten colours into
 Any new PDFKit check that compares absolute colours needs the same treatment. A check that
 counts changed pixels between two renders on one machine does not, because both renders
 share the display's colour space.
+
+### A comparison against the tags scores only the pairs the rule's own pairing hands it
+
+The geometric block rule (`textedit/blocks.rs`) was measured on 2026-09-20 against the tagged
+pages, where the tags give the answer: 2,602 pairs joined and in one element, 577 joined across
+two, 508 split within one. Those numbers were honest, and they could not show that the rule
+left **every line of an arXiv two-column page in a block of its own**.
+
+Both the rule and its measurement (`scripts/textedit_blocks.py pairs`) paired a line with the
+page's *next* line that overlapped it. In ACM's two-column layout the columns' baselines are
+offset by about 2.7 pt, so on the page the lines alternate between the columns, and each line's
+next line is the other column's, which does not overlap it. No pair was formed, nothing was
+joined, and nothing was *split* either: the confusion table counts only pairs that exist, and
+the missing ones were in no cell. The driver's own docstring said this pairing was *"what keeps
+two columns from being paired across the gutter"*, which is true only while the columns share
+baselines.
+
+It surfaced as 17.1% of edits a quarter longer refused with *"it reaches the edge of the page"*.
+A temporary `eprintln!` at each of the seven places `wrap::plan` gives up without a stated
+reason counted 7,575 of the 7,692 at one of them, the one-line block on a page without tags,
+and a dump of the page's segments showed `join=None` all the way down both columns.
+
+The general form: a check that scores a rule's decisions against a known answer scores only
+the decisions the rule's front end offered it. When the instrument and the code share that
+front end, a population the front end never produces is invisible to both, and a count of
+misses reads zero because nothing was ever a candidate. Count the population from the answer's
+side too, here every pair of lines the tags put in one element, and compare it with the pairs
+offered.
+

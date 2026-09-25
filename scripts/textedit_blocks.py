@@ -88,6 +88,7 @@ GUTTER_EM = 2.0         # a horizontal gap this wide inside a line splits it
 LEFT_TOL = 1.0          # points; left edges of two lines of one block
 INDENT_MAX_EM = 4.0     # a first line may start this far right of the rest
 PITCH_MAX_EM = 3.0      # a plausible line pitch, as a multiple of the font size
+SKIP_PITCH_EM = 2.0     # the widest pitch of a pair with another line of the page between
 LEAD_TOL = 0.5          # points; how far a pitch may sit from the block's first
 
 
@@ -274,17 +275,25 @@ def joined(sign, indented_allowed):
 def pairs(rows):
     """Every (segment, following segment, signals) the rule is asked about.
 
-    A segment is paired with the nearest segment on the next line that overlaps it
-    horizontally, which is what keeps two columns from being paired across the gutter."""
+    A segment is paired with the segment on the nearest line below it that overlaps it
+    horizontally, the nearest in left edge where several do. Not the page's next line:
+    two columns whose baselines are staggered alternate on the page, so the next line of
+    each is always the other column's, and pairing there left every line of both columns
+    unpaired, which no count below could show. A pair with another line of the page
+    between is held to `SKIP_PITCH_EM`: a column's own lines are a line pitch apart, and
+    over the tagged pages a wider pitch across a skipped line was a paragraph gap."""
     out = []
-    for row, nxt in zip(rows, rows[1:]):
+    for at, row in enumerate(rows):
         for before in row:
-            candidates = [s for s in nxt
-                          if min(before.right, s.right) - max(before.left, s.left) > 0]
-            if not candidates:
-                continue
-            after = min(candidates, key=lambda s: abs(s.left - before.left))
-            out.append((before, after, signals(before, after)))
+            for skipped, nxt in enumerate(rows[at + 1:]):
+                candidates = [s for s in nxt
+                              if min(before.right, s.right) - max(before.left, s.left) > 0]
+                if candidates:
+                    after = min(candidates, key=lambda s: abs(s.left - before.left))
+                    sign = signals(before, after)
+                    if not skipped or sign['pitch_em'] <= SKIP_PITCH_EM:
+                        out.append((before, after, sign))
+                    break
     return out
 
 
@@ -769,7 +778,25 @@ def self_test(probe):
         assert sorted(len(c) for c, _ in blocks(tagged_rows, 'signals')) == [4], \
             blocks(tagged_rows, 'signals')
 
+        # Two columns whose baselines are staggered alternate on the page, so each line's
+        # next line of the page is the other column's. Pairing is by the nearest
+        # overlapping line below, and across another line only at a line pitch: at 12 pt,
+        # 12 pt apart pairs and 25 pt apart does not. Plain data, no probe: the question
+        # is the pairing, and a fixture drawn for it would test the drawing too.
+        def run(x, y):
+            return {'rect': [x, y - 12, x + 100, y + 3], 'size': 12, 'font': 'F',
+                    'axis_aligned': True, 'ink_below': 1, 'below_is_page_edge': False}
+        staggered = {'tried': [run(20, y) for y in (100, 112, 124)]
+                     + [run(200, y + 5) for y in (100, 112, 124)]}
+        paired = {(round(b.baseline), round(a.baseline)) for b, a, _ in pairs(lines(staggered))}
+        assert paired == {(100, 112), (112, 124), (105, 117), (117, 129)}, paired
+        gap = {'tried': [run(20, 100), run(200, 110), run(20, 125)]}
+        assert not pairs(lines(gap)), [(b.baseline, a.baseline) for b, a, _ in pairs(lines(gap))]
+        gap['tried'][2] = run(20, 112)
+        assert len(pairs(lines(gap))) == 1
+
         counts = {}
+        for rule in ('signals', 'all', 'none'):        counts = {}
         for rule in ('signals', 'all', 'none'):
             stats = empty()
             tally(record, stats, rule)

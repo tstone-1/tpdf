@@ -221,6 +221,37 @@ fn a_gutter_along_a_line_separates_two_blocks_side_by_side() {
 }
 
 #[test]
+fn two_columns_whose_baselines_are_staggered_are_two_blocks_of_their_own_lines() {
+    // The right column's lines sit 5 pt below the left's, so on the page the
+    // lines alternate between the columns.
+    let doc = page(
+        "1 0 0 1 20 200 Tm (L) Tj 1 0 0 1 200 195 Tm (R) Tj \
+         1 0 0 1 20 186 Tm (L) Tj 1 0 0 1 200 181 Tm (R) Tj \
+         1 0 0 1 20 172 Tm (L) Tj 1 0 0 1 200 167 Tm (R) Tj",
+    );
+    assert_eq!(
+        grouped(&doc),
+        strings(&[&["L", "L", "L"], &["R", "R", "R"]])
+    );
+}
+
+#[test]
+fn across_another_line_of_the_page_a_pitch_over_two_ems_is_a_paragraph_gap() {
+    // Two ems at 12 pt is 24 pt. The line at 200 - 12 is elsewhere on the page.
+    let across = |pitch: f64| {
+        page(&format!(
+            "1 0 0 1 20 200 Tm (A) Tj 1 0 0 1 200 188 Tm (B) Tj 1 0 0 1 20 {} Tm (A) Tj",
+            200. - pitch
+        ))
+    };
+    assert_eq!(grouped(&across(23.)), strings(&[&["A", "A"], &["B"]]));
+    assert_eq!(grouped(&across(25.)), strings(&[&["A"], &["B"], &["A"]]));
+    // With nothing between them the same pitch is still a line pitch.
+    let doc = page("1 0 0 1 20 200 Tm (A) Tj 1 0 0 1 20 175 Tm (A) Tj");
+    assert_eq!(grouped(&doc), strings(&[&["A", "A"]]));
+}
+
+#[test]
 fn the_label_rule_reads_numbers_letters_numerals_and_bullets() {
     for text in [
         "1. A",

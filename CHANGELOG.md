@@ -37,6 +37,16 @@ have the binary.)
   page edge or across the table's lines. It no longer moves another column's
   text along its line.
 
+- **Text wraps in two-column documents whose columns do not share
+  baselines**, as in many journal papers. tpdf read each line of such a page
+  as a paragraph of its own, so an edit that reached the edge of the page was
+  refused with *"it reaches the edge of the page"* instead of wrapping. It now
+  finds the next line of a paragraph in its own column. Across the 31-file
+  public sample, edits a quarter longer are accepted 62.4% of the time, up
+  from 62.1%, and the page-edge refusal falls from 17.1% of edits to 14.0%.
+  Some edits that were accepted in these documents are now refused: in the
+  cases checked, they had pushed the rest of the line into the other column.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own

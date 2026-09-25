@@ -11285,3 +11285,60 @@ Tests: `wrap_tests` gained one per half, each with row and label controls that s
 a push that carries the rest of a line into the column. The mutation table gained seven under
 `columns:`; the existing `wrap room: a drawing beside may come apart` was re-aimed at rustfmt's new
 line. What is left is the page-edge refusal above, which is four times the size of this one.
+
+
+### Two columns with staggered baselines — measured 2026-09-25
+
+The largest refusal left after the section above was *it reaches the edge of the page*: 7,567
+edits of 44,282 (17.1%) at +25% as typed. A temporary `eprintln!` at each of the seven places
+`wrap::plan` gives up without a stated reason, over the six files that hold nearly all of them,
+put **7,575 of 7,692 at one**: a one-line block on a page without tags, which has neither a pitch
+nor a measure to wrap to. The remaining 117 were a pitch outside `PITCH_EM`.
+
+**Why so many lines were blocks of one.** `blocks.rs` numbered the page's lines top down and
+paired each line with the page's *next* line that overlapped it. In ACM's two-column layout, both
+arXiv papers here, the columns' baselines are offset by about 2.7 pt, so on the page the lines
+alternate between the columns. Each line's next line was the other column's, which does not
+overlap it, so every line of both columns was a block of its own. The measurement driver,
+`scripts/textedit_blocks.py pairs`, paired the same way, and its comparison against the tags
+scores only the pairs it forms, so the section *What a paragraph model would have to work with*
+could not have shown it. The trap index has the entry.
+
+**The change.** A line is paired with the nearest line below it that overlaps it, in both the
+rule and the driver. Across another line of the page the pitch must be at most two ems
+(`SKIP_PITCH_EM`); a pair on the page's very next line keeps the three-em limit. The two ems are
+read off the driver's pitch distribution on tagged pages: 43 pairs between 1.5 and 2 ems, 883
+between 2 and 3, which is the gap between paragraphs. Without the limit, the nearest-line pairing
+added 11 false joins on tagged pages, ten of them a paragraph gap of 2.3 to 2.7 ems across a line
+set elsewhere on the page. With it, one (`mercer-minutes`, 1.2 ems apart with left edges 15 pt apart), not looked at further.
+
+**Against the tags**, the stored records of 2026-09-20 re-scored (`--report`): joined within one
+element 2,602 → 2,602, joined across two 577 → 578, split within one 508 → 512. Tagged pages
+hold almost no staggered columns, so this says the change costs nothing there; it is no evidence
+about the untagged two-column pages it is for.
+
+**Before and after, +25% as typed, the 31 files:** accepted 62.05% → 62.41% (+161). The page-edge
+refusal fell by 1,349, to 6,218. Most of those edits now reach the wrap and are refused by it:
+*out of line with the text beside them* +651 (to 1,659), *a drawing or an annotation is placed
+over the lines* +231, *onto what is below it* +152, *part of it below cannot be moved* +122,
+*it reaches the next column* +71. Over every trial `--compare` moved 609 verdicts from refused to
+accepted and 179 the other way. Of the 179, all but three are in the two arXiv papers and
+fontspec.
+
+**The 179 are the other column being pushed.** Twelve, two per refusal kind, were replayed with
+the previous probe from a worktree at `627c190`: all twelve were accepted there, and each of the
+seven renders looked at pushed the rest of a left-column line along into the right column's text
+(*aged bywhat we**somewhat***, *LNUM Numbers=UppercaseLNUM Number* over *Lining Figures*). With the
+columns now read as blocks of several lines, the column rule of the section above stops those
+pushes here too.
+
+**The gains:** ten, two per file, through `--roundtrip` and `qpdf --check`, all passing; four
+rendered, two of them wraps in arXiv's left and right columns, each moving the rest of its
+column down and leaving the other column alone.
+
+Tests: two in `blocks_tests`, staggered columns and the two-em limit with its no-skip control;
+four mutations under `geometric blocks:`, each red on its test. The driver's `--self-test` gained
+the same two cases as plain data, and three mutations of its pairing (the page's next line only,
+no limit, the limit on every pair) each turned it red. What is left: the page edge is still the
+largest refusal at 14.0%, now followed by *out of line with the text beside them* at 3.7%, which
+this change more than doubled and whose cause on these pages has not been looked at.
