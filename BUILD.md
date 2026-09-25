@@ -11238,3 +11238,50 @@ untagged paragraph exactly as the tagged one, and gained the `BESIDE` test with 
 `streams` gained the splice test. The mutation table gained 32 under `geometric blocks:`,
 `labels:`, `wrap room:` and `splice:`, and two `wrap tags:` mutations were re-aimed: with the tags
 removed the geometry now gives the same blocks, so the test they named stayed green.
+
+### Two columns on pages without tags — measured 2026-09-25
+
+The previous section ended on this: two-column pages lost most of their wraps. Measured first, on
+the same 31 files at +25% as typed, the refusal it named, *out of line with the text beside them*,
+was 1,374 edits (3.1%) and *other text follows it* 611 (1.4%), both concentrated on the two arXiv
+papers, ReportLab, LuaTeX and fontspec. The largest refusal is something else: *it reaches the
+edge of the page*, 7,709 (17.4%), of which 2,390 are the Union County budget's table rows, which do
+not wrap by design.
+
+**Two halves, one for each column.**
+
+- **The right-hand column.** Its lines end at the page edge, so the wrap ran, and every line it
+  moved came level with a different line of the other column. The check that keeps a label beside
+  its entry refused them all. Text in a column beside the paragraph is now exempt from that check
+  (`column_runs`): a geometric block of at least three lines and at least half as wide as the
+  paragraph. A label, a date beside an entry and a line's far end at a tab stop are a line or two,
+  or narrow, and still refuse.
+- **The left-hand column.** Its lines end where the column across the gutter starts: that was
+  *other text follows it*, which the wrap does not answer. A column's text now ends a line as the
+  page edge does, `Room::Column` (*it reaches the next column*), and is never pushed along its line.
+
+**Before and after, +25% as typed:** accepted 61.34% to 62.05% (+317). *Out of line* 1,374 to
+1,008; *next column* is new at 88. Over every trial, `--compare` moved 1,280 verdicts from refused to
+accepted and 302 the other way.
+
+**Of the 302, the four rendered were the old push damaging the other column.** They were rebuilt
+with the previous probe; the other 298 were not looked at. In two arXiv pages the edit had pushed the neighbouring column's line
+sideways, into the gutter and past the page edge, colliding with the edited line; in ReportLab it
+pushed a table cell's line across the rule between cells. The fourth, a LuaTeX table of contents,
+pushed an entry's title against its number (*10.7.1010in_name_ok*) and its page number a few points
+out of line: intact, and not good. All four round-tripped, so none of this was visible to
+`--roundtrip`; only the render showed it.
+
+**The gains were checked the same way:** twelve, two per file, through `--roundtrip` and
+`qpdf --check`, all passing, and five rendered, a wrap in each column among them. Each is sound.
+
+**A condition was removed because it could not be reached.** The first version also asked that the
+column lie wholly to one side of the paragraph. Removing it changed no outcome, including for a
+wide block beside the short last line: a block across the paragraph's width that is beside or below
+a line the wrap moves is moved down with it (`cascade`), so the text left level with a moved line is
+beside the paragraph already. The doc comment records why the condition is absent.
+
+Tests: `wrap_tests` gained one per half, each with row and label controls that still refuse, and
+a push that carries the rest of a line into the column. The mutation table gained seven under
+`columns:`; the existing `wrap room: a drawing beside may come apart` was re-aimed at rustfmt's new
+line. What is left is the page-edge refusal above, which is four times the size of this one.

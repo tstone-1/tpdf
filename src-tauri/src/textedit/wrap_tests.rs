@@ -552,6 +552,142 @@ fn text_beside_a_line_that_moves_refuses_the_wrap_on_an_untagged_page() {
     assert!(near(at(&runs, "SIDE"), (220., 172.)), "{runs:?}");
 }
 
+// A column of prose beside the paragraph is level with its lines by
+// coincidence: on one baseline grid, every line of it is. A wrap moves the
+// paragraph's lines level with other lines of the column, and that is not
+// text coming apart. A block beside it of two lines, or narrower than half the
+// paragraph, is a row's cells or a label, and still refuses the wrap.
+//
+// The paragraph is the right-hand column, whose lines end at the page edge:
+// that is the wrap's trigger. A left-hand column's lines end at the text across
+// the gutter instead, which does not trigger it (`Room::Line`).
+#[test]
+fn a_column_beside_the_paragraph_does_not_refuse_the_wrap_on_an_untagged_page() {
+    // The paragraph moved to x 120, so its widest line ends at 292.8 on the
+    // 300 pt page; the column's lines at x 6 on the paragraph's 14 pt grid.
+    let column = |x: usize, top: usize, lines: usize, text: &str| {
+        let mut body = String::new();
+        for line in 0..lines {
+            body.push_str(&format!(
+                "BT /F1 12 Tf {x} {} Td ({text}) Tj ET ",
+                top - 14 * line
+            ));
+        }
+        super::layout_tests::synthetic(&format!(
+            "{body}{}",
+            content(70., "")
+                .replacen("20 200 Td", "120 200 Td", 1)
+                .replace(" /P <</MCID 0>> BDC", "")
+                .replace(" /P <</MCID 1>> BDC", "")
+                .replace(" /P <</MCID 2>> BDC", "")
+                .replace(" /P <</MCID 3>> BDC", "")
+                .replace(" EMC", "")
+        ))
+    };
+    // Thirteen characters, 93.6 pt, ending at 99.6: over half the paragraph's
+    // 172.8, and a gutter of 20.4 pt, over the one em between two blocks.
+    let wide = "BRANCH SECOND";
+    let runs = placed_runs(&wrapped(&column(6, 200, 5, wide), WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (120., 158.)), "{runs:?}");
+    assert!(near(at(&runs, wide), (6., 200.)), "{runs:?}");
+    // Each beside TEN, the line the wrap moves: two lines at 186 and 172, and
+    // five narrow ones from 200.
+    for (x, top, lines, text) in [(6, 186, 2, wide), (6, 200, 5, "SIDE")] {
+        let error = refusal(&column(x, top, lines, text), WIDEST, LONGER);
+        assert!(
+            error.contains("out of line with the text beside them"),
+            "{x} {top} {lines} x {text}: {error}"
+        );
+    }
+}
+
+// The paragraph as the left-hand column: its lines end where the column across
+// the gutter starts, not at the page edge. A column's text ends a line as the
+// page edge does, so the line wraps, and nothing in the column moves. Text there
+// that is not a column, beside the line the wrap moves, still refuses it.
+#[test]
+fn a_line_that_reaches_the_next_column_wraps_on_an_untagged_page() {
+    // Lines at x 206: 13.2 pt of gutter after the widest line's 192.8, and a
+    // 13-character line ends at 299.6 on the 300 pt page.
+    let right = |top: usize, lines: usize, text: &str| {
+        let mut body = String::new();
+        for line in 0..lines {
+            body.push_str(&format!(
+                "BT /F1 12 Tf 206 {} Td ({text}) Tj ET ",
+                top - 14 * line
+            ));
+        }
+        super::layout_tests::synthetic(&format!(
+            "{} {body}",
+            content(52., "")
+                .replace(" /P <</MCID 0>> BDC", "")
+                .replace(" /P <</MCID 1>> BDC", "")
+                .replace(" /P <</MCID 2>> BDC", "")
+                .replace(" /P <</MCID 3>> BDC", "")
+                .replace(" EMC", "")
+        ))
+    };
+    let wide = "BRANCH SECOND";
+    let doc = right(200, 5, wide);
+    let before: Vec<_> = placed_runs(&doc)
+        .into_iter()
+        .filter(|(text, _, _)| text == wide)
+        .collect();
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    let after: Vec<_> = runs
+        .into_iter()
+        .filter(|(text, _, _)| text == wide)
+        .collect();
+    assert_eq!(after, before, "the column moved");
+    // The widest line as two runs, and the edit to the first: the push carries
+    // the second along the line until the column stops it, and the line wraps
+    // there as it does at the column's edge itself.
+    let split = |doc: &Document| {
+        let mut doc = doc.clone();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let contents = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Contents")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let stream = doc
+            .get_object_mut(contents)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap();
+        let body = String::from_utf8(stream.content.clone()).unwrap().replace(
+            &format!("({WIDEST}) Tj"),
+            "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ",
+        );
+        stream.set_content(body.into_bytes());
+        doc
+    };
+    let doc = split(&right(200, 5, wide));
+    let runs = placed_runs(&wrapped(
+        &doc,
+        "FIFTY NINE",
+        "FIFTY NINE THEN FIRST AND SECOND",
+    ));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    let after: Vec<_> = runs
+        .into_iter()
+        .filter(|(text, _, _)| text == wide)
+        .collect();
+    assert_eq!(after, before, "the column moved");
+    // Beside TEN, the line the wrap moves: two lines at 186 and 172, and five
+    // narrow ones from 200.
+    for (top, lines, text) in [(186, 2, wide), (200, 5, "SIDE")] {
+        let error = refusal(&right(top, lines, text), WIDEST, LONGER);
+        assert!(
+            error.contains("out of line with the text beside them"),
+            "{top} {lines} x {text}: {error}"
+        );
+    }
+}
+
 /// The standard paragraph with its widest line set as two runs, the second
 /// placed by a displacement of one character from the cursor the first leaves:
 /// `FIFTY NINE` from x 20 to 92, and `ONCE AND DONE` from x 99.2 to 192.8.

@@ -19,6 +19,24 @@ have the binary.)
 
 ## [26.9.19] - Unreleased
 
+### Added
+
+- **Text wraps on pages set in two columns without tags.** An edit that ran
+  into the next column was refused with *"other text follows it"*, and one in
+  the right-hand column with *"its lines would move out of line with the text
+  beside them"*, because every line it moved came level with a different line
+  of the other column. The next column now ends a line as the page edge does,
+  and a wrap may move lines past the other column's; a label, a date beside an
+  entry, or a table cell beside it still refuses the edit. Across the 31-file
+  public sample, edits a quarter longer are accepted 62.1% of the time, up from
+  61.3%.
+
+  **Some edits that were accepted are now refused.** To make room, tpdf used to
+  push the rest of the line along even when it was the other column's text, or
+  a table cell's. In the cases checked that pushed it into the gutter, past the
+  page edge or across the table's lines. It no longer moves another column's
+  text along its line.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own

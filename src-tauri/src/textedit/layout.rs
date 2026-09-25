@@ -147,6 +147,9 @@ pub(super) enum Room {
     Page,
     /// A clip the document has in force over the space after the run.
     Clip,
+    /// The next column of prose across a gutter, on a page without tags
+    /// ([`column_runs`]). The wrap treats it as it treats the page edge.
+    Column,
 }
 
 impl Room {
@@ -159,6 +162,7 @@ impl Room {
             Room::Drawn => "There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size.",
             Room::Page => "There is no room for more text on this line: it reaches the edge of the page. Shorten the text or reduce the font size.",
             Room::Clip => "There is no room for more text on this line: the document clips the space after it. Shorten the text or reduce the font size.",
+            Room::Column => "There is no room for more text on this line: it reaches the next column. Shorten the text or reduce the font size.",
         }
     }
 }
@@ -581,11 +585,29 @@ fn free_width(
             rect[3] + offset[1],
         ]
     };
+    // Text in a column beside the run's own paragraph, on a page without tags:
+    // where its line ends, never pushed along (`column_runs`). Left out of the
+    // pushable ids here, it is one of the limits `hard` is measured to, so the
+    // push walk below never reaches it and asks nothing of its own.
+    let columns: BTreeSet<u32> = match Axis::of((mapped(0.), mapped(probe)), probe) {
+        Some(axis) if blocks::geometric_page(page) => block_width(page, run.operator, axis.axis)
+            .map(|width| {
+                column_runs(page, width, axis.axis)
+                    .into_iter()
+                    .map(|(operator, _)| operator)
+                    .filter(|operator| page.blocks.get(operator) != page.blocks.get(&run.operator))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => BTreeSet::new(),
+    };
     // One walk of the one list: each rectangle where it is now, and the id of
     // the run at it when the writer could push that run along.
     let hits: Vec<([f64; 4], Option<u32>)> = obstacles(page, run)
         .map(|other| match other {
-            Around::Run(id, rect) if grow && pushable(page, run, id) => (shifted(rect), Some(id)),
+            Around::Run(id, rect) if grow && pushable(page, run, id) && !columns.contains(&id) => {
+                (shifted(rect), Some(id))
+            }
             other => (other.rect().map(f64::from), None),
         })
         .collect();
@@ -627,6 +649,29 @@ fn free_width(
         hits.iter().map(|(rect, _)| *rect),
         width,
     );
+    // Nearer than everything else on the line, the next column is where the
+    // line ends, as the page edge is: the wrap reads the two alike.
+    let stop = if stop == Room::Line && !columns.is_empty() {
+        let (beyond, _) = room(
+            edges,
+            probe,
+            sheet,
+            clip,
+            own,
+            obstacles(page, run)
+                .zip(&hits)
+                .filter(|(other, _)| !matches!(other, Around::Run(id, _) if columns.contains(id)))
+                .map(|(_, (rect, _))| *rect),
+            width,
+        );
+        if beyond > free + 1e-9 {
+            Room::Column
+        } else {
+            stop
+        }
+    } else {
+        stop
+    };
     // A compound clip is a set of rectangles with holes, not an edge, so the
     // box it would produce is handed to the region rather than reduced to one
     // coordinate: growth is given up whenever a region refuses that box.
@@ -714,6 +759,7 @@ fn free_width(
                 (
                     *rect,
                     match other {
+                        Around::Run(id, _) if columns.contains(&id) => Room::Column,
                         Around::Run(..) => Room::Line,
                         Around::Fixed(_) => Room::Fixed,
                     },
@@ -1407,6 +1453,82 @@ fn cascade(
     Some((moved, paragraph))
 }
 
+/// The runs of text in a column beside a paragraph `width` wide, on a page
+/// without tags, each with its hit rectangle; `along` is the displayed page's
+/// axis the lines run along.
+///
+/// Two columns of prose are level line for line by coincidence, and on one
+/// baseline grid (LaTeX's two-column layout) exactly. A column is told from a
+/// row by the block the text is in, as the geometry reads it: at least
+/// [`COLUMN_LINES`] lines, and at least half as wide as the paragraph. A label,
+/// a date beside an entry, or a line's far end at a tab stop is a line or two,
+/// or narrow. Two things read it:
+///
+/// - [`wrap_room`] lets a wrap leave column text level with a different line
+///   of the paragraph than before, where row text must stay level with the
+///   same one. Nothing asks there that the block lie to one side of the
+///   paragraph, and that is not an omission: a block across the paragraph's
+///   width, beside or below a line the wrap moves, is moved down with it
+///   ([`cascade`]), so text that stays level with a moved line is beside the
+///   paragraph already. The condition was written, and removing it changed no
+///   outcome, including for a block set beside the short last line.
+/// - The line's room ([`Room::Column`]): a column's text is where a line of
+///   the paragraph ends, as the page edge is, so it is never pushed along and
+///   a line it fills may wrap.
+fn column_runs(page: &Inspection, width: f64, along: usize) -> Vec<(u32, [f64; 4])> {
+    // Per block: each run's show and hit rectangle, and the lines it has.
+    type Lines = (Vec<(u32, [f64; 4])>, BTreeSet<i64>);
+    let mut blocks: BTreeMap<ObjectId, Lines> = BTreeMap::new();
+    for run in page
+        .runs
+        .runs
+        .iter()
+        .filter(|run| !run.text.trim().is_empty())
+    {
+        let Some(block) = page.blocks.get(&run.operator) else {
+            continue;
+        };
+        let (rects, lines) = blocks.entry(*block).or_default();
+        rects.push((run.operator, run.display_rect.map(f64::from)));
+        // Half-point bins: a line's runs share a baseline to [`blocks`]' tolerance.
+        lines.insert((run.matrix[5] * 2.).round() as i64);
+    }
+    blocks
+        .into_values()
+        .filter(|(rects, lines)| {
+            let low = rects
+                .iter()
+                .map(|(_, r)| r[along])
+                .fold(f64::INFINITY, f64::min);
+            let high = rects
+                .iter()
+                .map(|(_, r)| r[along + 2])
+                .fold(f64::NEG_INFINITY, f64::max);
+            lines.len() >= COLUMN_LINES && high - low >= width / 2.
+        })
+        .flat_map(|(rects, _)| rects)
+        .collect()
+}
+
+/// How wide the block `operator` is a line of reaches along the line, on the
+/// displayed page, or `None` when the run is in no block.
+fn block_width(page: &Inspection, operator: u32, along: usize) -> Option<f64> {
+    let block = page.blocks.get(&operator)?;
+    let (low, high) = page
+        .runs
+        .runs
+        .iter()
+        .filter(|run| page.blocks.get(&run.operator) == Some(block))
+        .map(|run| run.display_rect.map(f64::from))
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), r| {
+            (low.min(r[along]), high.max(r[along + 2]))
+        });
+    (high > low).then_some(high - low)
+}
+
+/// How many lines a block beside a paragraph needs to be read as a column.
+const COLUMN_LINES: usize = 3;
+
 /// Whether two hit rectangles are on one line: they share more than half of the
 /// shorter of the two heights, the rule the push along a line uses.
 fn level(rect: [f64; 4], other: [f64; 4]) -> bool {
@@ -1440,7 +1562,9 @@ fn level(rect: [f64; 4], other: [f64; 4]) -> bool {
 ///   its label, the box of a cell. The geometry can split one of those into two blocks,
 ///   and the text that stays would come apart from the lines that move, or
 ///   meet other text on a line it was never on. A page's tags say which text
-///   belongs together, and are not second-guessed.
+///   belongs together, and are not second-guessed. Text in a column beside the
+///   paragraph is exempt ([`column_runs`]): it is level with the paragraph's
+///   lines by coincidence, not because it belongs with them.
 /// - **Drawings and annotations over the move.** A rule under a word, a
 ///   highlight, a link's rectangle: anything partly over the area the moved
 ///   runs sweep would stay where it is while the text under it left. One that
@@ -1465,6 +1589,14 @@ fn wrap_room(
     } = *moving;
     let rule = landing(moves, edge, down);
     let geometric = blocks::geometric_page(page);
+    let columns: Vec<[f64; 4]> = if geometric {
+        column_runs(page, paragraph[1] - paragraph[0], 1 - rule.1)
+            .into_iter()
+            .map(|(_, rect)| rect)
+            .collect()
+    } else {
+        Vec::new()
+    };
     if let Some((old, by)) = edge {
         if hits
             .iter()
@@ -1505,13 +1637,12 @@ fn wrap_room(
             return Err(wrap::NO_ROOM.into());
         }
         if geometric
-            && (hits
-                .iter()
-                .any(|(other, moves)| !*moves && level(*old, *other) != level(new, *other))
-                || page.graphics.iter().any(|drawing| {
-                    let drawing = drawing.map(f64::from);
-                    level(*old, drawing) != level(new, drawing)
-                }))
+            && (hits.iter().any(|(other, moves)| {
+                !*moves && !columns.contains(other) && level(*old, *other) != level(new, *other)
+            }) || page.graphics.iter().any(|drawing| {
+                let drawing = drawing.map(f64::from);
+                level(*old, drawing) != level(new, drawing)
+            }))
         {
             return Err(wrap::BESIDE.into());
         }
@@ -2002,9 +2133,14 @@ pub(super) fn prepare(
     // sized is theirs. Only at the run's own size, which is the size the
     // paragraph's pitch belongs to, and only with nothing already pushing the
     // run along its line, whose geometry the plan does not carry.
-    let full = outcome
-        .as_ref()
-        .is_err_and(|error| error == Room::Page.refusal());
+    // The page edge, or the next column on a page without tags, which ends a
+    // line the same way; `had` is the refusal the edit keeps if it cannot wrap.
+    let had = match &outcome {
+        Err(error) if error == Room::Page.refusal() => Some(Room::Page),
+        Err(error) if error == Room::Column.refusal() => Some(Room::Column),
+        _ => None,
+    };
+    let full = had.is_some();
     let mut wrapped = None;
     if full && placement.inherited == 0. && size == run.size {
         // The room the line has without pushing anything along it.
@@ -2084,7 +2220,7 @@ pub(super) fn prepare(
                 let spans: Vec<Vec<(f64, f64)>> =
                     cuts.iter().map(|(spans, _)| spans.clone()).collect();
                 let places = wrap::flow(&plan, &spans, run.advance, (lines.saturating_sub(1), end))
-                    .ok_or_else(|| Room::Page.refusal().to_string())?;
+                    .ok_or_else(|| had.unwrap_or(Room::Page).refusal().to_string())?;
                 // How far the block's lines below go: the lines this edit and
                 // the text after it added, at the block's own pitch, down the
                 // run's own text axis.
