@@ -11571,3 +11571,27 @@ column; `wrap_tests` gained one, a lowered run that flows after the edit 2 pt be
 lands on. Eight mutations under `geometric blocks:`, all caught by the test named for them. What
 is left, at +25%: the page edge 7.3%, 5.4 of it the budget printout's rows, and *onto what is
 below it* 5.2%.
+
+**The line need not be the next baseline.** The first version looked for the line a group is set
+off only one baseline up and one down. Replaying the two sound regressions showed why that was
+too near: the fontspec footnote mark *8* had the raised A of the LaTeX logo between it and its
+line, and the arXiv superscript *m* had a line of the other column, whose baselines are staggered
+against its own. Any group within half an em may now keep it, the nearest by baseline. Against
+the first version, +25% as typed: accepted 78.93% → **78.96%** (+12), and over every trial 36
+verdicts from refused to accepted and none the other way. Against `da2e0fe` the two together move
+2,688 from refused to accepted and 18, in 7 runs, the other way: the six broken pushes above and
+the arXiv superscript, now refused because `wrap::plan` reads its line in the superscript's own
+size (half an em of 5.5 pt), so its own line, a few points below, is a line below it. The
+fontspec mark now wraps. `blocks_tests` gained both shapes and one mutation.
+
+**What the page edge and the next column still refuse.** A replay of 80 of the 817 page-edge
+refusals outside the budget printout, and of all 137 *it reaches the next column*, with the
+temporary `eprintln!` back in `wrap::plan`: 70 and 111 stop at the one-line-block check, 3 and 18
+at the pitch check (the superscript's own size, as above), 7 and 5 at a show on the line with no
+block. The one-line blocks, read off `blocks.rs` segment by segment on four pages, are:
+paragraphs that really are one line, with a table or a display after them (*All traditional
+TEX…* on LuaTeX page 27); list items of one line; table-of-contents entries and table rows; a
+reference list's lines; and continuation lines whose neighbour is mostly set in another font, a
+list item whose first line is mostly primitive names in monospace. Wrapping the first two would
+need a pitch and a measure the block does not have, taken from the page's other paragraphs in
+its font; the face rule is what keeps table rows and entries apart. Neither is changed here.

@@ -203,15 +203,17 @@ class Segment:
 
 
 def shifted(groups):
-    """The baseline groups with every group set off a neighbouring one merged into it,
+    """The baseline groups with every group set off another merged into it,
     top down, each as its runs and, for a group that kept another, the keeping group's
     baseline, which its segments take (`None` for any other, whose segments keep their
     own). A group that kept another has its runs in order along the line, which the
     gutter split reads; any other keeps the order it had.
 
-    A group is set off a neighbour when it has fewer characters, its baseline is within
-    `SHIFT_EM` of the neighbour's, and none of its runs is a gutter or more clear of the
-    neighbour's extent: a superscript, a footnote mark, the lowered E of the TeX logo.
+    A group is set off another when it has fewer characters, its baseline is within
+    `SHIFT_EM` of the other's, and none of its runs is a gutter or more clear of the
+    other's extent: a superscript, a footnote mark, the lowered E of the TeX logo. The
+    other need not be the next baseline: another mark, or a staggered column's line, can
+    lie between.
     The rule in `blocks.rs` counts characters other than spaces; the records carry only
     `chars`, spaces included."""
     counts = [sum(r['chars'] for r in g) for g in groups]
@@ -228,7 +230,7 @@ def shifted(groups):
 
     hosts = []
     for index in range(len(groups)):
-        near = [o for o in (index - 1, index + 1) if 0 <= o < len(groups) and fits(index, o)]
+        near = [o for o in range(len(groups)) if fits(index, o)]
         near.sort(key=lambda o: abs(baseline(groups[o][0]) - baseline(groups[index][0])))
         hosts.append(near[0] if near else None)
     merged = {}
@@ -850,6 +852,11 @@ def self_test(probe):
         assert [[round(s.baseline) for s in row] for row in rows] == [[100], [114]], rows
         assert {(round(b.baseline), round(a.baseline)) for b, a, _ in pairs(rows)} == {(100, 114)}
         assert len(lines(lowered(7))) == 3
+        # A second mark between the first and its line leaves both on the line.
+        marks = lowered(2)
+        marks['tried'].insert(1, {**run(128, 101), 'chars': 1})
+        marks['tried'][1]['rect'][2] = 134
+        assert [[round(s.baseline) for s in row] for row in lines(marks)] == [[100], [114]]
 
         counts = {}
         for rule in ('signals', 'all', 'none'):        counts = {}

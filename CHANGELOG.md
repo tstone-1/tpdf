@@ -82,10 +82,10 @@ have the binary.)
   its paragraph in two. An edit on that line was then refused with *"it
   reaches the edge of the page"* instead of wrapping. Such a letter is now
   read as part of its line, and it keeps its height above or below the line
-  when a wrap moves it. Edits a quarter longer are accepted 78.9% of the time,
+  when a wrap moves it. Edits a quarter longer are accepted 79.0% of the time,
   up from 77.0%. Some edits that were accepted are now refused: in six of the
-  eight cases, they had pushed text into the next table cell or column; the
-  other two are a superscript and a footnote mark growing.
+  seven cases, they had pushed text into the next table cell or column; the
+  other is a superscript growing.
 
 ### Changed
 

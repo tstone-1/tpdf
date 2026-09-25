@@ -257,12 +257,14 @@ pub(super) fn geometric(
 /// The baseline groups with every group set off another's baseline merged into
 /// it, each with the baseline of the group that keeps it, top down.
 ///
-/// A group is set off a neighbouring one when it has fewer characters, its
+/// A group is set off another when it has fewer characters, its
 /// baseline is within `SHIFT_EM` of that one's, and none of its runs is a
 /// gutter or more clear of that one's extent along the line. Without this
 /// a raised or lowered run is a line of its own between two lines of its
 /// paragraph, the one each of them is paired with, and the paragraph is cut in
-/// two there.
+/// two there. The other group need not be the next baseline up or down:
+/// another mark, or a line of a second column whose baselines are staggered
+/// against this one's, can lie between.
 fn shifted(pieces: &[Piece], groups: Vec<Vec<usize>>) -> Vec<(f64, Vec<usize>)> {
     let characters = |group: &[usize]| -> usize {
         group
@@ -278,10 +280,8 @@ fn shifted(pieces: &[Piece], groups: Vec<Vec<usize>>) -> Vec<(f64, Vec<usize>)> 
     };
     let counts: Vec<usize> = groups.iter().map(|group| characters(group)).collect();
     let host = |index: usize| -> Option<usize> {
-        [index.checked_sub(1), Some(index + 1)]
-            .into_iter()
-            .flatten()
-            .filter(|&other| other < groups.len() && counts[other] > counts[index])
+        (0..groups.len())
+            .filter(|&other| counts[other] > counts[index])
             .filter(|&other| {
                 let host = &groups[other];
                 let size = host.iter().map(|&i| pieces[i].size).fold(0., f64::max);

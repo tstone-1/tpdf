@@ -145,6 +145,26 @@ fn a_run_raised_or_lowered_within_half_an_em_is_on_the_line_it_sits_in() {
         "BT /F1 12 Tf 20 200 Td (FIRST) Tj 20 -5.5 Td (E) Tj -20 -4.5 Td /F2 12 Tf (SECOND) Tj ET",
     );
     assert_eq!(grouped(&doc), strings(&[&["FIRST"], &["E", "SECOND"]]));
+    // The line need not be the next baseline: here a second mark, the A of a
+    // logo, lies between the E and its line, and in two columns whose
+    // baselines are staggered the other column's line does.
+    let doc = page(
+        "20 200 Td (FIRST) Tj 40 3 Td (E) Tj 10 -1.5 Td (A) Tj 10 -1.5 Td (LINE) Tj \
+         -60 -14 Td (SECOND) Tj 0 -14 Td (THIRD) Tj",
+    );
+    assert_eq!(
+        grouped(&doc),
+        strings(&[&["FIRST", "E", "A", "LINE", "SECOND", "THIRD"]])
+    );
+    let doc = page(
+        "1 0 0 1 20 200 Tm (LLLL) Tj 1 0 0 1 200 197 Tm (RRRR) Tj 1 0 0 1 240 201 Tm (E) Tj \
+         1 0 0 1 20 186 Tm (LLLL) Tj 1 0 0 1 200 183 Tm (RRRR) Tj \
+         1 0 0 1 20 172 Tm (LLLL) Tj 1 0 0 1 200 169 Tm (RRRR) Tj",
+    );
+    assert_eq!(
+        grouped(&doc),
+        strings(&[&["LLLL", "LLLL", "LLLL"], &["RRRR", "E", "RRRR", "RRRR"]])
+    );
     // A column beside the paragraph is not set off its lines, however close
     // its baselines come: the right column's lines are 2 and 5 pt below the
     // left's first two, and their pitch is 17 pt, not the 14 pt that reading
