@@ -45,8 +45,9 @@ Windows. On the installed macOS engine these all passed:
 
 `signature_pdfkit_check.swift` reads the first signature's red as `[0.918, 0.2, 0.137]`
 and fails, identically on 8044. The PDFs are byte-identical under both engines, so it is
-not the engine. Why PDFKit returns that value is not established; colour management of
-device RGB is the first thing to check. Both published sidecars of 8044 and 8066 end in
+not the engine. The check read `PDFPage.thumbnail` bytes, which are in the main display's
+colour space: sRGB red in this MacBook's P3 profile. It now reads sRGB and passes 48/48; see
+the trap of that name. Both published sidecars of 8044 and 8066 end in
 CRLF for Windows, so `shasum -c` fails elsewhere; the digests themselves are right, and
 `build_pdfium.py` writes LF from now on. The Windows window phases and Windows probes were
 not run on this engine; CI's `windows-2025` gates are the Windows evidence until they are.

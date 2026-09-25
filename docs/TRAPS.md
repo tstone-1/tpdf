@@ -289,6 +289,7 @@ hop through the index.
 - Putting a guard in front of a parser disarms the parser's own guard, and the test still passes
 - macOS has no `setsid`, so a detached restart never starts
 - `matches!` is not exhaustive, and a comment beside one said a new variant would be a compile error
+- `PDFPage.thumbnail` pixels are the main display's colour space, not sRGB
 
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -24281,3 +24282,29 @@ The general form: a fallback written as `max` or `min` over a bound is a second 
 wins wherever the fallback's own measurement is larger than intended. Ask what the fallback
 measures past, not only what it measures. And a pixel check scoped to the edit cannot see the
 edit going wrong inside its own scope; for anything that moves text, compare glyph positions.
+
+### `PDFPage.thumbnail` pixels are the main display's colour space, not sRGB
+
+`scripts/signature_pdfkit_check.swift` failed on this MacBook with *"signature-0 at 60,60:
+[0.918, 0.2, 0.137], expected [1.0, 0.0, 0.0]"*, identically under PDFium 8044 and 8066, on
+PDFs that were byte-identical under both. PDFKit had rendered them correctly. The check read
+the wrong numbers.
+
+`PDFPage.thumbnail(of:for:)` rasterises into an image in the **main display's** colour space,
+and `tiffRepresentation` hands back that display's bytes. The built-in panel's profile is
+"Color LCD", a P3 space, and (0.918, 0.2, 0.137) is sRGB red expressed in Display P3. The
+check compared those bytes against sRGB values. Its pass or fail was therefore a fact about
+the screen of the Mac that ran it, which is why it could pass on one machine and fail on
+another with nothing in the repository changed.
+
+Two things first looked like the cause and were not. The PDFs were byte-identical across
+engines, which rules out the engine. CoreGraphics' *"PDF has logged an error"* on the same run
+is `invalid Contents: not a stream or array`: the fixture page has no `/Contents` at all,
+because the signature lives in an annotation. ISO 32000 allows that, and qpdf passes the file.
+
+The fix draws the thumbnail into an `NSBitmapImageRep` retagged sRGB, so AppKit converts the
+display values back: 48/48. Setting one expected colour to the wrong one still fails, and
+reads exactly `[1.0, 0.0, 0.0]`, so the conversion does not flatten colours into agreement.
+Any new PDFKit check that compares absolute colours needs the same treatment. A check that
+counts changed pixels between two renders on one machine does not, because both renders
+share the display's colour space.
