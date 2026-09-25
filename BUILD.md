@@ -11390,3 +11390,63 @@ Tests: `wrap_tests` gained one, a heading half a point outside a column's edge t
 refuses the wrap, with three controls that still do (no column, a mark in the gutter, a block across
 the paragraph). The mutation table gained five under `columns:`. Next by size: *a drawing or an
 annotation is placed over the lines* at 3.8%, and the page edge, still first at 13.8%.
+
+
+### Links over lines a wrap moves — measured 2026-09-25
+
+After the section above, *a drawing or an annotation is placed over the lines that would move*
+was 1,684 edits (3.8%) at +25% as typed. A temporary `eprintln!` at that refusal, over the seven
+files that hold nearly all of it, named what was in the way: across every trial, 3,244
+annotations, 1,174 rules under two points tall (underlines and fill-in lines in the Hugo and
+Arcadia minutes), 188 boxes and 23 small shapes. Every annotation on those pages is a `/Link`
+held by reference, with no `/AP` and no `/QuadPoints`: 1,288 of them over the five files, counted
+with `pypdf`. A link is a rectangle over words and nothing drawn, so moving the words and leaving
+the rectangle sends a reader who clicks them somewhere else.
+
+**The change.** A wrap moves such a link with the run it lies over: the run's hit rectangle holds
+the link to `LINK_SLACK` (2 pt) on every side, and the link's `/Rect` moves as far as the run on
+the displayed page, carried into the page's own space from the rectangle before and after
+(`textedit::prepare_batch`). A link with an appearance, with quadrilaterals, written into
+`/Annots` directly, over more than one run, or any other annotation, stays where it is and refuses
+the wrap as before. This is the first edit that changes an object the document already had: the
+save is the rewrite, which serialises the whole document, and comment edits already change
+annotation dictionaries there (`save::rewrite_note_edits`).
+
+The 2 pt is measured, as how far a link reached past the moved run's rectangle, logged at every
+check over arxiv-recent and ReportLab: not at all 1,107 and 1,384 times, by up to 1 pt 4,170 times
+(all arxiv-recent), by 1 to 2 pt 7 and 111 times, and by more 264 times, which stay refused.
+
+**A prototype that moved nothing first**, treating a link inside a moved run as absent, measured
+the ceiling on the five files with links: 901 more edits accepted at +25%, and every one of them
+reached *accepted*, not a later refusal.
+
+**The measurement then went wrong, and the instrument was the cause.** The first corpus run of the
+real change showed 236 edits newly accepted, 248 newly refused and a net of -13. `text-edit-probe
+--growth` undid each accepted trial by restoring the page dictionary and dropping new objects; a
+moved link is neither, so every later trial on the page met the links where the last one had left
+them. Its proof of the restore rescanned text runs, which a link is not. Both probes now restore
+the page's annotation objects and compare every object with a copy taken before the page's trials;
+with the annotation restore removed that comparison stops the run on the first page with a moved
+link. The trap index has the entry.
+
+**Before and after, +25% as typed, the 31 files:** accepted 62.73% → 64.79% (+914), the annotation
+refusal 1,684 → 770. Over every trial `--compare` moved 2,545 verdicts from refused to accepted
+and **none** the other way.
+
+**The gains:** twelve, two per file, through `--roundtrip` and `qpdf --check`, all passing. The
+round trip compares pixels, and a link draws none, so the saved links were checked separately: for
+each link whose `/Rect` changed, the words under the old rectangle in the original and under the
+new one in the saved file, read by `pdftotext`. All 23 moved links read the same words. As a
+control, the old rectangles read against the saved page gave different words for 4 of 6 on one
+ReportLab page, the other two being right-aligned page numbers that line up anyway. One fontspec
+gain moved no link at all: the words under all four of its links are unchanged, so the link was
+over text the wrap left in place, which the refusal had not told apart. Two renders showed the
+moved lines sound; one also shows the wrap's existing habit of leaving a hyphenated word part alone
+on the line it flowed to.
+
+Tests: two in `wrap_tests`, a link that moves with its line with five controls that refuse (a
+highlight in the same place, an appearance, quadrilaterals, a link written into the list, one
+reaching 2.5 pt past the line), and the same move on pages turned 90°, 180° and 270°. The mutation
+table gained nine under `wrap links:`, among them applying the displayed move to the page's own
+space unturned, which only the turned-page test catches. Next by size: the page edge at 13.8%,
+*onto what is below it* at 10.0%, and the rules under text in the minutes.

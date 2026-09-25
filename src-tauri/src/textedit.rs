@@ -598,7 +598,24 @@ struct Inspection {
     /// would leave a highlight or a link over the text that used to be there.
     /// `None` when the page's list could not be read, which refuses a wrap and
     /// nothing else: no other edit ever read annotations.
-    annotations: Option<Vec<[f32; 4]>>,
+    annotations: Option<Vec<Annotation>>,
+    /// The links the batch's wraps move with their text, each with its new
+    /// `/Rect` in default user space (`layout::Prepared::links`).
+    links: BTreeMap<ObjectId, [f64; 4]>,
+}
+
+/// One annotation as a wrap sees it: where it is on the displayed page, and,
+/// for the one kind a wrap may move with the text under it, which object it is
+/// and its rectangle in default user space.
+///
+/// That kind is a `/Link` held by reference, with no appearance stream and no
+/// `/QuadPoints`: a rectangle and nothing drawn, so moving the rectangle moves
+/// all of it. Every link on the pages that measured this has that shape
+/// (`BUILD.md`, *Links over lines a wrap moves*). Anything else stays where it
+/// is and refuses a wrap that moves text from under it.
+pub(super) struct Annotation {
+    pub rect: [f32; 4],
+    pub link: Option<(ObjectId, [f64; 4])>,
 }
 
 // TJ offsets are subtracted in thousandths of text space, before the text/page
@@ -1460,6 +1477,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         blocks,
         lowered: BTreeMap::new(),
         annotations: annotation_rects(doc, id).ok(),
+        links: BTreeMap::new(),
     };
     for span in actual_spans {
         span.finish(&mut inspection)?;
@@ -1481,7 +1499,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
 /// annotation whose rectangle cannot be read is one the editor cannot see, and
 /// a wrap that moved text under it would be moving it blind. The scan keeps
 /// the failure rather than raising it (`Inspection::annotations`).
-fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<[f32; 4]>, String> {
+fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<Annotation>, String> {
     const MAX_ANNOTATIONS: usize = 4096;
     let dict = doc.get_dictionary(page).map_err(|e| e.to_string())?;
     let Ok(list) = dict.get(b"Annots") else {
@@ -1530,12 +1548,29 @@ fn annotation_rects(doc: &Document, page: ObjectId) -> Result<Vec<[f32; 4]>, Str
         {
             return Err("page annotation rectangle exceeds its limit".into());
         }
-        rects.push(crate::text::to_device(
-            geometry.turns,
-            geometry.width,
-            geometry.height,
-            [a.min(c) - ox, b.min(d) - oy, a.max(c) - ox, b.max(d) - oy],
-        ));
+        let user = [a.min(c), b.min(d), a.max(c), b.max(d)];
+        let link = match entry {
+            Object::Reference(object)
+                if annotation
+                    .get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .is_ok_and(|kind| kind == b"Link")
+                    && !annotation.has(b"AP")
+                    && !annotation.has(b"QuadPoints") =>
+            {
+                Some((*object, user))
+            }
+            _ => None,
+        };
+        rects.push(Annotation {
+            rect: crate::text::to_device(
+                geometry.turns,
+                geometry.width,
+                geometry.height,
+                [user[0] - ox, user[1] - oy, user[2] - ox, user[3] - oy],
+            ),
+            link,
+        });
     }
     Ok(rects)
 }
@@ -1746,6 +1781,41 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                 page.lowered.insert(*show as usize, operations.clone());
                 page.patched.insert(*show as usize);
             }
+            if !replacement.links.is_empty() {
+                let geometry = crate::pagetree::displayed_page(doc, page.id);
+                let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
+                let user = |rect: [f32; 4]| {
+                    let [l, b, r, t] = crate::text::from_device(
+                        geometry.turns,
+                        geometry.width,
+                        geometry.height,
+                        rect,
+                    );
+                    [l + ox, b + oy, r + ox, t + oy]
+                };
+                for (link, by) in &replacement.links {
+                    let Some((rect, source)) = page.annotations.iter().flatten().find_map(|a| {
+                        a.link
+                            .filter(|(id, _)| id == link)
+                            .map(|(_, u)| (a.rect, u))
+                    }) else {
+                        return Err("missing link annotation".into());
+                    };
+                    // The move in user space, from the displayed rectangle
+                    // before and after, applied to the source's own numbers.
+                    let moved = rect.map(f64::from);
+                    let moved = [
+                        moved[0] + by[0],
+                        moved[1] + by[1],
+                        moved[2] + by[0],
+                        moved[3] + by[1],
+                    ]
+                    .map(|v| v as f32);
+                    let (was, now) = (user(rect), user(moved));
+                    let new = [0, 1, 2, 3].map(|i| source[i] + now[i] - was[i]);
+                    page.links.insert(*link, new);
+                }
+            }
             page.expanded.insert(change.operator as usize, replacement);
             page.patched.insert(change.operator as usize);
             let members = page
@@ -1902,6 +1972,7 @@ fn commit_batch(doc: &mut Document, prepared: BTreeMap<u32, Inspection>) -> Resu
                  patched,
                  expanded,
                  lowered,
+                 links,
                  ..
              }| {
                 let mut font_names = BTreeSet::new();
@@ -1924,12 +1995,17 @@ fn commit_batch(doc: &mut Document, prepared: BTreeMap<u32, Inspection>) -> Resu
                     .chain(lowered)
                     .collect();
                 streams::rewrite_expanded(&bytes, &content, &patched, &expansions)
-                    .map(|bytes| (id, bytes, expanded))
+                    .map(|bytes| (id, bytes, expanded, links))
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
     let mut programs = BTreeMap::new();
-    for (page, bytes, expanded) in ready {
+    for (page, bytes, expanded, links) in ready {
+        for (link, rect) in links {
+            doc.get_dictionary_mut(link)
+                .map_err(|e| e.to_string())?
+                .set("Rect", rect.map(|v| Object::Real(v as f32)).to_vec());
+        }
         if expanded.values().any(|value| value.fallback.is_some()) {
             let mut resources = resources(doc, page)?.clone();
             let mut fonts =

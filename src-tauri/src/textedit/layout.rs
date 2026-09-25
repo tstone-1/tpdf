@@ -59,6 +59,9 @@ pub(super) struct Prepared {
     /// paragraph, and its hit rectangle where it ends up, so that the editor
     /// can outline the text where the reader now sees it.
     pub placed: Vec<(u32, [f32; 4])>,
+    /// The links a wrap moves with the text under them, each with how far on
+    /// the displayed page (`wrap_room`). Empty unless this edit wraps.
+    pub links: Vec<(ObjectId, [f64; 2])>,
 }
 
 /// Where an edit sits by the time it is written, and who else is being written
@@ -1613,7 +1616,7 @@ fn wrap_room(
     down: [f64; 2],
     geometry: &crate::pagetree::DisplayedPage,
     display: &impl Fn([f64; 4]) -> [f32; 4],
-) -> Result<Vec<(u32, [f32; 4])>, String> {
+) -> Result<(Placed, Links), String> {
     let Moving {
         moves,
         reach,
@@ -1708,18 +1711,57 @@ fn wrap_room(
         .collect();
     // An annotation list the scan could not read may hold one over the lines.
     let annotations = page.annotations.as_deref().ok_or(wrap::DRAWN)?;
-    for thing in page.graphics.iter().chain(annotations) {
+    // A link over one moved run goes with it: the run's hit rectangle holds
+    // it, to `LINK_SLACK`, and it moves as far as the run does.
+    let mut links = Vec::new();
+    let things = page.graphics.iter().map(|rect| (*rect, None)).chain(
+        annotations
+            .iter()
+            .map(|a| (a.rect, a.link.map(|(id, _)| id))),
+    );
+    for (thing, link) in things {
         let thing = thing.map(f64::from);
-        if swept
+        if !swept
             .iter()
             .any(|rect| wrap::overlaps(*rect, thing, [0.1, 0.1]))
-            && !swept.iter().all(|rect| wrap::holds(thing, *rect))
+            || swept.iter().all(|rect| wrap::holds(thing, *rect))
         {
-            return Err(wrap::DRAWN.into());
+            continue;
+        }
+        let under = link.and_then(|link| {
+            moving
+                .iter()
+                .find(|(_, old, ..)| {
+                    wrap::holds(
+                        [
+                            old[0] - LINK_SLACK,
+                            old[1] - LINK_SLACK,
+                            old[2] + LINK_SLACK,
+                            old[3] + LINK_SLACK,
+                        ],
+                        thing,
+                    )
+                })
+                .map(|(_, _, by, ..)| (link, *by))
+        });
+        match under {
+            Some(moved) => links.push(moved),
+            None => return Err(wrap::DRAWN.into()),
         }
     }
-    Ok(placed)
+    Ok((placed, links))
 }
+
+/// Each run a wrap moves, with its hit rectangle where it ends up.
+type Placed = Vec<(u32, [f32; 4])>;
+/// The links a wrap moves, each with how far on the displayed page.
+type Links = Vec<(ObjectId, [f64; 2])>;
+
+/// How far a link may reach past the hit rectangle of the run it is over, in
+/// points, and still be that run's: a link's rectangle is its producer's box
+/// around the words, not the em box the editor measures (`BUILD.md`, *Links
+/// over lines a wrap moves*).
+const LINK_SLACK: f64 = 2.0;
 
 /// The lines a replacement is laid out in: how wide the first may be, where the
 /// ones after it start and how wide they may be, and their pitch. A box gives
@@ -2381,7 +2423,7 @@ pub(super) fn prepare(
                     left_behind(page, &lower, &hits)?;
                     hits
                 };
-                let placed = wrap_room(
+                let (placed, links) = wrap_room(
                     page,
                     &Moving {
                         moves: &moving,
@@ -2413,7 +2455,7 @@ pub(super) fn prepare(
                     .filter(|other| flowing.contains(&other.operator))
                     .map(|other| other.display_rect)
                     .collect();
-                wrapped = Some((operations, lines, rect, lowered, (placed, vacated)));
+                wrapped = Some((operations, lines, rect, lowered, (placed, vacated, links)));
             }
         }
     }
@@ -2486,9 +2528,9 @@ pub(super) fn prepare(
             }
         }
     }
-    let (lowered, (down, vacated)) = match wrap {
+    let (lowered, (down, vacated, links)) = match wrap {
         Some((_, lowered, moved)) => (lowered, moved),
-        None => (Vec::new(), (Vec::new(), Vec::new())),
+        None => (Vec::new(), (Vec::new(), Vec::new(), Vec::new())),
     };
     placed.extend(down);
     // What the preview has to show: the box, and every run this edit moved,
@@ -2550,5 +2592,6 @@ pub(super) fn prepare(
         extent,
         lowered,
         placed,
+        links,
     })
 }

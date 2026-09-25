@@ -1306,6 +1306,141 @@ fn an_annotation_over_the_moved_lines_refuses() {
     wrapped(&doc, WIDEST, LONGER);
 }
 
+// A link over a line the wrap moves goes with it: its rectangle moves as far
+// as the line, so it stays over the same words. Only a link that is a
+// rectangle and nothing else, over one line: a highlight in the same place,
+// or a link with an appearance of its own, with quadrilaterals, written into
+// the page's list rather than referred to, or reaching further past the line
+// than a producer's box does, stays where it is and refuses the wrap.
+#[test]
+fn a_link_over_a_line_the_wrap_moves_moves_with_it() {
+    let doc = paragraph(52.);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let height = f64::from(crate::pagetree::displayed_page(&doc, page).height);
+    // LAST's hit rectangle in user space, widened by `grow` on every side.
+    let last = run(&doc, LAST).display_rect.map(f64::from);
+    let around = |grow: f64| {
+        [
+            last[0] - grow,
+            height - last[3] - grow,
+            last[2] + grow,
+            height - last[1] + grow,
+        ]
+    };
+    let with = |link: Dictionary, direct: bool| {
+        let mut doc = doc.clone();
+        let entry = if direct {
+            Object::Dictionary(link)
+        } else {
+            Object::Reference(doc.add_object(link))
+        };
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Annots", vec![entry]);
+        doc
+    };
+    let link = |grow: f64| {
+        dictionary! {
+            "Type" => "Annot", "Subtype" => "Link",
+            "Rect" => around(grow).map(|v| Object::Real(v as f32)).to_vec(),
+        }
+    };
+    let saved = wrapped(&with(link(1.5), false), WIDEST, LONGER);
+    let annots = saved
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    let rect: Vec<f64> = saved
+        .get_dictionary(annots[0].as_reference().unwrap())
+        .unwrap()
+        .get(b"Rect")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| number(v).unwrap())
+        .collect();
+    // LAST moves from 172 to 158, and the link with it.
+    let expected = around(1.5);
+    for i in 0..4 {
+        let shift = if i % 2 == 1 { -14. } else { 0. };
+        assert!(
+            (rect[i] - expected[i] - shift).abs() < 0.001,
+            "{rect:?} against {expected:?}"
+        );
+    }
+    let mut drawn = link(1.5);
+    drawn.set("AP", dictionary! { "N" => Object::Null });
+    let mut quads = link(1.5);
+    quads.set("QuadPoints", vec![Object::Integer(0); 8]);
+    let mut highlight = link(1.5);
+    highlight.set("Subtype", "Highlight");
+    for (name, doc) in [
+        ("not a link", with(highlight, false)),
+        ("appearance", with(drawn, false)),
+        ("quadrilaterals", with(quads, false)),
+        ("direct", with(link(1.5), true)),
+        ("reaching past", with(link(2.5), false)),
+    ] {
+        let error = refusal(&doc, WIDEST, LONGER);
+        assert!(
+            error.contains("a drawing or an annotation"),
+            "{name}: {error}"
+        );
+    }
+}
+
+// The same on a turned page, where the displayed page and the page's own space
+// differ: the link must end up around the line where the line now is, in the
+// page's own space, whatever the turn.
+#[test]
+fn a_link_moves_with_its_line_on_a_turned_page() {
+    for turns in [1, 2, 3] {
+        let mut doc = paragraph(52.);
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Rotate", i64::from(turns) * 90);
+        let geometry = crate::pagetree::displayed_page(&doc, page);
+        // LAST's hit rectangle in the page's own space, one point wider.
+        let around = |doc: &Document| {
+            let r = run(doc, LAST).display_rect;
+            let [l, b, r, t] =
+                crate::text::from_device(geometry.turns, geometry.width, geometry.height, r);
+            [l - 1., b - 1., r + 1., t + 1.]
+        };
+        let link = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Link",
+            "Rect" => around(&doc).map(|v| Object::Real(v as f32)).to_vec(),
+        });
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Annots", vec![Object::Reference(link)]);
+        let saved = wrapped(&doc, WIDEST, LONGER);
+        let rect: Vec<f64> = saved
+            .get_dictionary(link)
+            .unwrap()
+            .get(b"Rect")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| number(v).unwrap())
+            .collect();
+        let expected = around(&saved);
+        assert_ne!(expected, around(&doc), "{turns}: LAST did not move");
+        for i in 0..4 {
+            assert!(
+                (rect[i] - expected[i]).abs() < 0.01,
+                "{turns}: {rect:?} against {expected:?}"
+            );
+        }
+    }
+}
+
 // Two edits in one batch that a wrap puts in each other's way are refused
 // whichever order the batch lists them in; an edit above the wrap is not in
 // its way.

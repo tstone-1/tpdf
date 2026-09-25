@@ -58,6 +58,14 @@ have the binary.)
   of the cases checked, they had pushed text into its neighbour; the
   exception is a footnote mark growing inside a table.
 
+- **Links move with the text a wrap moves.** An edit that wrapped and moved
+  lines with a link over them, such as a citation or a cross-reference, was
+  refused with *"a drawing or an annotation is placed over the lines that
+  would move"*. The link now moves with its line, so it stays over the same
+  words. A link with its own appearance, any other kind of annotation, and a
+  drawing still refuse the edit. Edits a quarter longer are accepted 64.8% of
+  the time, up from 62.7%, and no edit that was accepted is refused.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own

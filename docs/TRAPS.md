@@ -654,6 +654,7 @@ hop through the index.
 - A probe that spawns a worker is also the worker, and without that the boundary takes the blame for `main`
 - A probe that writes its own input can be told to write it over its own output
 - An anchor that still matches is not a mutation that still works
+- A probe that undoes a write by restoring what the writer used to touch measures noise once the writer touches more
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -24337,4 +24338,30 @@ front end, a population the front end never produces is invisible to both, and a
 misses reads zero because nothing was ever a candidate. Count the population from the answer's
 side too, here every pair of lines the tags put in one element, and compare it with the pairs
 offered.
+
+### A probe that undoes a write by restoring what the writer used to touch measures noise once the writer touches more
+
+`text-edit-probe --growth` and `--blocks` run tens of thousands of trial edits on one parsed
+document and undo each accepted one by restoring the page dictionary and dropping the objects the
+write added. That was complete while `textedit::write` changed nothing else. When wraps began
+moving a link's `/Rect` with the text under it (`BUILD.md`, *Links over lines a wrap moves*), each
+accepted wrap left its links moved for every later trial on the page, and the next wraps met them
+in the wrong place.
+
+It did not fail. The corpus run finished, and against the previous records it showed 236 edits
+newly accepted and 248 newly refused, all with the one refusal the change touched, and a net of
+-13, where a prototype of the same rule that wrote nothing had measured +901. Symmetric churn
+confined to the refusal a change touches reads like a rule with two sides to it. It was the
+instrument.
+
+The probe did prove its restore, by rescanning the page's text runs after its trials. A link's
+rectangle is not a run, so the proof could not see the one thing left behind. Both probes now
+snapshot the objects the page's `/Annots` refers to before each trial and put them back, and prove
+the restore by comparing **every object** with a copy taken before the page's trials. With the
+annotation restore removed, that comparison stops the run on the first page with a moved link
+(*page 1: a trial was not undone*).
+
+The general form: an undo written as "put back what the writer changes" is a list of the writer's
+effects, and it goes stale the day the writer gains one. Prove an undo against the whole state,
+not against the part the undo already restores.
 

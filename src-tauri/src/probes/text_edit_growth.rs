@@ -26,8 +26,10 @@
 //! Acceptance is decided by `textedit::write`, in this process, on the parsed document:
 //! the same function the worker's `TextRuns` request runs before it serialises and
 //! renders a preview. A refused write changes nothing; an accepted one is undone by
-//! restoring the page dictionary and dropping the objects it added, and each page's runs
-//! are rescanned afterwards to prove the restore. `--agree-every=N` sends every Nth
+//! restoring the page dictionary and the page's annotations, which a wrap moves links
+//! among, and dropping the objects it added. Each page's runs are rescanned afterwards
+//! and every object compared with the document before the page's trials, to prove the
+//! restore: a rescan alone cannot see an annotation left where a trial moved it. `--agree-every=N` sends every Nth
 //! trial through the contained worker as well and counts any verdict or message that
 //! differs, so the in-process shortcut is measured rather than assumed.
 //! Parsing the document in this process is acceptable for a measurement over files whose
@@ -172,6 +174,26 @@ thread_local! {
 /// Run `textedit::write` and put the document back exactly as it was.
 fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Result<(), String> {
     let max_id = doc.max_id;
+    // A wrap rewrites the rectangle of each link it moves, which is an object
+    // the document already had: dropping the new objects and restoring the
+    // page does not put those back, and the next trial would meet the links
+    // where the last accepted one left them.
+    let annotations: Vec<(ObjectId, Object)> = {
+        let list = doc
+            .get_dictionary(page.id)
+            .and_then(|dict| dict.get(b"Annots"));
+        let items = match list {
+            Ok(Object::Reference(id)) => doc.get_object(*id).and_then(Object::as_array),
+            Ok(list) => list.as_array(),
+            Err(error) => Err(error),
+        };
+        items
+            .map(|items| items.iter().filter_map(|e| e.as_reference().ok()).collect())
+            .unwrap_or_else(|_| Vec::new())
+            .into_iter()
+            .filter_map(|id| doc.get_object(id).ok().map(|object| (id, object.clone())))
+            .collect()
+    };
     let result = textedit::write(doc, &[change]);
     if result.is_ok() {
         if std::env::var_os("TPDF_PROBE_DIGESTS").is_some() {
@@ -188,6 +210,7 @@ fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Re
         }
         doc.objects.retain(|id, _| id.0 <= max_id);
         doc.objects.insert(page.id, page.dictionary.clone());
+        doc.objects.extend(annotations);
         doc.max_id = max_id;
     }
     result
@@ -273,6 +296,9 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
                 continue;
             }
         };
+        // Every object as it was before this page's trials, to prove afterwards
+        // that each accepted one was undone -- whatever it wrote to.
+        let objects = doc.objects.clone();
         // Discovery here must be the worker's, or the trials describe other runs.
         // Floats may differ in the last place: the reply crosses the worker's JSON
         // channel, whose parser does not round-trip every f64. Trials use the
@@ -410,7 +436,7 @@ pub(super) fn run(source: &Path, agree_every: usize) -> Result<(), String> {
         }
         // Every accepted trial was undone; prove the page is what was discovered.
         let after = textedit::scan(&doc, index)?;
-        if !same_runs(&after, &mapped) {
+        if !same_runs(&after, &mapped) || doc.objects != objects {
             return Err(format!("page {index}: a trial was not undone"));
         }
         pages.push(

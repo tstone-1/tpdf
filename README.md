@@ -407,7 +407,8 @@ the edit in the document; save writes it. Until you size the box yourself, longe
 grows into the room after the line and moves the rest of the line along. Text that
 reaches the page edge wraps onto a new line of its own paragraph, taking the rest of its
 line along, and the paragraphs below move down while each keeps its blank line of
-separation. On a page without tags, tpdf reads the paragraphs off the lines themselves and
+separation. A link over a line that moves goes with it; any other annotation or drawing
+over those lines keeps the edit from wrapping. On a page without tags, tpdf reads the paragraphs off the lines themselves and
 is more careful: a line on its own does not wrap, and an edit that would move a line away
 from text set beside it is refused. The editor supports the Latin standard fonts
 (Helvetica, Times, Courier), fonts a document names without embedding them, and validated
