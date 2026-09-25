@@ -1441,6 +1441,73 @@ fn a_link_moves_with_its_line_on_a_turned_page() {
     }
 }
 
+// Lines set closer than their boxes are tall overlap their neighbours by a
+// sliver, and a wrap's lines meet theirs the same way: the first line is the
+// edited line made longer, reaching under the line above past the edited run's
+// own box, and the next line sits one pitch below the edited line. Up to an
+// eighth of a line (`GRAZE`) that is two lines set close, not text on text.
+#[test]
+fn a_wrap_on_lines_closer_than_their_boxes_are_tall_wraps() {
+    // The widest line as two runs with the edit to the first, so that the
+    // rest of the line flows after it, at a pitch that overlaps each line's
+    // box with the next by `share` of its height.
+    let height = {
+        let r = run(&paragraph(52.), FIRST).display_rect;
+        f64::from(r[3] - r[1])
+    };
+    let close = |share: f64| {
+        let pitch = height * (1. - share);
+        tagged(
+            &format!(
+                "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC ({FIRST}) Tj EMC \
+                 0 -{pitch} Td /P <</MCID 1>> BDC (FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC \
+                 0 -{pitch} Td /P <</MCID 2>> BDC ({LAST}) Tj EMC \
+                 0 -40 Td /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET"
+            ),
+            &[&[0, 1, 2], &[3]],
+        )
+    };
+    let edit = |doc: &Document| {
+        let mut copy = doc.clone();
+        write(
+            &mut copy,
+            &[in_default_box(
+                doc,
+                index_of(doc, "FIFTY NINE"),
+                "FIFTY NINE THEN FIRST AND SECOND",
+            )],
+        )
+        .map(|()| placed_runs(&copy))
+    };
+    let runs = edit(&close(0.1)).unwrap();
+    let pitch = height * 0.9;
+    assert!(near(at(&runs, LAST), (20., 200. - 3. * pitch)), "{runs:?}");
+    // Past an eighth of a line it is text over text. What is measured is the
+    // new line's ink against the other line's box, and these lines are
+    // capitals, whose ink is well inside their 15 pt box: a box overlap of
+    // 30% still grazes, and 35% does not.
+    edit(&close(0.3)).unwrap();
+    let error = edit(&close(0.35)).unwrap_err();
+    assert!(error.contains("onto what is below it"), "{error}");
+    // Text that stays below the paragraph, where the wrap's next line reaches
+    // it, is still in the way: SIDE is in a block with a line at the top of
+    // the page, so the wrap cannot move it down, and the lines moving towards
+    // it land on it (`wrap_room`).
+    let doc = tagged(
+        &format!(
+            "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC ({FIRST}) Tj EMC \
+             0 -14 Td /P <</MCID 1>> BDC ({WIDEST}) Tj EMC \
+             0 -14 Td /P <</MCID 2>> BDC ({LAST}) Tj EMC \
+             0 -40 Td /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET \
+             BT /F1 12 Tf 100 230 Td /P <</MCID 4>> BDC (SIDE) Tj EMC ET \
+             BT /F1 12 Tf 100 162 Td /P <</MCID 5>> BDC (SIDE) Tj EMC ET"
+        ),
+        &[&[0, 1, 2], &[3], &[4, 5]],
+    );
+    let error = refusal(&doc, WIDEST, LONGER);
+    assert!(error.contains("onto what is below it"), "{error}");
+}
+
 // Two edits in one batch that a wrap puts in each other's way are refused
 // whichever order the batch lists them in; an edit above the wrap is not in
 // its way.

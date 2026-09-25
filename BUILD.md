@@ -11450,3 +11450,63 @@ reaching 2.5 pt past the line), and the same move on pages turned 90°, 180° an
 table gained nine under `wrap links:`, among them applying the displayed move to the page's own
 space unturned, which only the turned-page test catches. Next by size: the page edge at 13.8%,
 *onto what is below it* at 10.0%, and the rules under text in the minutes.
+
+
+### A wrap's lines against the lines beside them — measured 2026-09-25
+
+After the section above, *its lines would move onto what is below it* was 4,448 edits (10.0%) at
++25% as typed. It is one message for seven places a wrap gives up; a temporary `eprintln!` at each,
+over the five files that hold most of it, put two of them far ahead.
+
+- **Landing on text that stays, in the Coatesville minutes (2,841).** 2,826 of them land on the
+  page's running footer, *1 Minutes*, 21 pt below the last line. Those pages are full transcript:
+  every block below the edit moves down and the last line meets the footer. The refusal is right,
+  and the only remedy is flowing onto the next page, which the editor does not do.
+- **The laid-out text overlapping another line, in ReportLab (4,996) and LuaTeX (704).** Logged
+  with the rectangles: 4,548 were the wrap's *first* line and 448 its next, each overlapping a line
+  above or on the edited line by 0.5 pt (3,018) or 1.2 pt (1,291). ReportLab sets 10 pt text on a
+  12 pt pitch in boxes 12.5 pt tall, and its code listings 8 pt on 8.8 pt in boxes 10 pt tall, so
+  every line's box overlaps its neighbours' by that much. The edited run's own box overlaps them
+  the same way, and `strikes` excused only the part of an overlap inside that box. A wrap's first
+  line is the edited line made longer, and the part past the run was refused for the sliver the
+  run itself has.
+
+**The change.** An overlap between a laid-out line and another line's box is a graze, not a strike,
+when it is no deeper than `GRAZE`, an eighth of the shorter of the two heights. Logged on five
+files wherever only that allowance let an edit through: 37,211 overlaps at an eighth of a line or
+less, 2 between that and 0.14, 198 above, which stay refused. It holds for every laid-out line, a
+box the reader sized included, so a box may sit as close to its neighbours as the document's own
+lines do and no closer.
+
+**Two rules came before it, and both are recorded because the second one's failure is the point.**
+The first excused a graze only between two lines that are not level ([`level`], half a line) and
+only inside the edited line's own band. Three wrap tests could not make the band condition matter,
+because the landing check refuses or moves anything below the paragraph first, so it was removed
+as unreachable. The corpus run of that first rule, which still had the band, then showed 9,248 of
+the gains were **boxes the reader sized**, where nothing below moves: without the band, a box's
+second line would be free to overlap the text under it by up to half a line. That was read off the
+code, not measured, and it was enough: the condition was reachable, only not by a wrap. The depth
+limit replaced both, and a box and a wrap are held to the same thing.
+
+The test measures what `strikes` measures, the new line's ink against the other line's box. The
+fixture's lines are capitals, whose ink sits well inside a 15 pt box, so a box overlap of 30%
+still grazes and 35% does not.
+
+**Before and after, +25% as typed, the 31 files:** accepted 64.79% → **76.95%** (+5,383). Every
+*no room* refusal fell: *onto what is below it* 4,448 → 2,305, the page edge 6,099 → 4,238, *a
+drawing or an annotation* 770 → 447, *out of line with the text beside them* 1,112 → 635, *part of
+it below cannot be moved* 681 → 393, *a picture or a drawing follows it* 493 → 301. Over every
+trial `--compare` moved 24,039 verdicts from refused to accepted and **none** the other way;
+13,823 of them in ReportLab.
+
+**The gains:** twenty, sixteen as the editor opens the box across ten files and four at a width
+the reader chose, replayed on the probe's 5% ladder. All passed `--roundtrip` and `qpdf --check`.
+A tagged page does not survive extraction with `qpdf --pages`, empty base or not, so the five
+tagged documents were replayed whole. Thirteen renders looked at, all sound: each grown line or box
+meets the lines above and below as the lines beside it do, and in none does its ink reach another
+line's.
+
+Tests: `wrap_tests` gained one, a wrap on lines set at 90% of their box height, with a control at
+65% that refuses and one where text that stays below is reached; three mutations under `wrap
+graze:`. What is left, at +25%: the page edge 9.6%, *onto what is below it* 5.2%, and the running
+footers of full pages among it.

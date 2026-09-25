@@ -66,6 +66,16 @@ have the binary.)
   drawing still refuse the edit. Edits a quarter longer are accepted 64.8% of
   the time, up from 62.7%, and no edit that was accepted is refused.
 
+- **Longer text is accepted in documents whose lines are set close.** Many
+  documents set their lines slightly closer than the lines are tall, so each
+  line touches its neighbours by a sliver. An edit that made a line longer,
+  or wrapped it, was refused wherever the new text touched a neighbour in the
+  same way, usually with *"its lines would move onto what is below it"*. It
+  is now accepted when it touches its neighbours no more than the document's
+  own lines touch each other, an eighth of a line. Edits a quarter longer are
+  accepted 77.0% of the time, up from 64.8%, and no edit that was accepted is
+  refused.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own

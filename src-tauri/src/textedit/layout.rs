@@ -1279,6 +1279,14 @@ fn lands(
 /// Whether ink shown at `shown` is over `other` by more than a tenth of a
 /// point each way, somewhere outside the edited run's own box `own`: text
 /// laid out over the line it replaces is not in the way of anything there.
+///
+/// Nor is a line that only grazes another: overlapping it across the lines
+/// by no more than [`GRAZE`] of the shorter line's height, which is how
+/// closely lines of text set below one another already meet. A wrap's first
+/// line is the edited line made longer, and its next line sits one of the
+/// block's own pitches below, so each meets its neighbours exactly as the
+/// source's lines met theirs; a box's lines are held to the same
+/// (`BUILD.md`, *A wrap's lines against the lines beside them*).
 fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4]) -> bool {
     let intersection = [
         shown[0].max(other[0]),
@@ -1286,13 +1294,24 @@ fn strikes(shown: [f64; 4], other: [f64; 4], own: [f64; 4]) -> bool {
         shown[2].min(other[2]),
         shown[3].min(other[3]),
     ];
+    let graze =
+        intersection[3] - intersection[1] <= GRAZE * (shown[3] - shown[1]).min(other[3] - other[1]);
     intersection[2] > intersection[0] + 0.1
         && intersection[3] > intersection[1] + 0.1
+        && !graze
         && (intersection[0] < own[0] - 0.1
             || intersection[1] < own[1] - 0.1
             || intersection[2] > own[2] + 0.1
             || intersection[3] > own[3] + 0.1)
 }
+
+/// How deep a laid-out line may overlap another line's box, as a share of the
+/// shorter of the two, and still be two lines set close rather than text over
+/// text. Measured on five files of the sample where only this allowance let an
+/// edit through: 37,211 overlaps at an eighth of a line or less, 2 between that
+/// and 0.14, and 198 above (`BUILD.md`, *A wrap's lines against the lines
+/// beside them*).
+const GRAZE: f64 = 0.125;
 
 /// The least distance, in points, a wrap moves a block below its paragraph.
 const NO_MOVE: f64 = 0.01;
