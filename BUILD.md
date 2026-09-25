@@ -11510,3 +11510,64 @@ Tests: `wrap_tests` gained one, a wrap on lines set at 90% of their box height, 
 65% that refuses and one where text that stays below is reached; three mutations under `wrap
 graze:`. What is left, at +25%: the page edge 9.6%, *onto what is below it* 5.2%, and the running
 footers of full pages among it.
+
+### A run set off its line's baseline — measured 2026-09-25
+
+After the section above, *it reaches the edge of the page* was still the largest refusal at +25%
+as typed: 4,238 of 44,282 edits (9.6%). **2,390 of them are `unioncounty-budget` and correct**:
+a mainframe printout whose every row is one Courier line the width of the page, so a row a
+quarter longer has nowhere to go and wrapping it would break the table. Nearly all of the rest
+are in the LuaTeX manual (1,158) and fontspec (515), and most of those are one-character runs in
+the middle of a line: the lowered E of the TeX logo.
+
+**Why they did not wrap.** A temporary `eprintln!` at each place `wrap::plan` gives up without a
+stated reason, replayed on one of them (`luatex-manual` page 23, the E of *LuaTEX*), fired at the
+one-line-block check. Over seven files, in a run stopped part-way, it fired there and at the check
+that every show pushed along the line is the block's own, and at nowhere else but three pitches
+out of range. Both are one cause. `blocks.rs` made a line of every set of baselines within 0.5 pt,
+so the E, about 2 pt below its line, was a line of its own. The line above it then paired with the E
+as its nearest overlapping line below, not with its paragraph's next line, and the paragraph was
+cut in two there. Superscripts and footnote marks did the same.
+
+**The change.** A group of runs on one baseline is *set off* a neighbouring group when it has
+fewer characters, its baseline is within half an em of the neighbour's (`SHIFT_EM`, the same
+half em `wrap.rs` already reads a line by, `SAME_LINE_EM`), and none of its runs is a gutter or
+more clear of the neighbour's extent along the line. It is then on that line, and the line keeps
+the neighbour's baseline, so a mark opening a line does not change its pitch. The extent limit
+is what keeps a second column apart: its lines are close to the first column's baselines but a
+gutter away from them. The wrap already moves a flowed run by a translation, so the E keeps its
+drop on the line it lands on. `scripts/textedit_blocks.py` applies the same rule, with
+`chars`, spaces included, in place of the characters other than spaces the rule counts.
+
+**Against the tags**, the stored records of 2026-09-20 re-scored (`--report`): joined within one
+element 2,602 → 2,604, joined across two 578 → 581, split within one 512 → 483, split across two
+822 → 827. Most of the 29 fewer splits within one element are pairs that no longer exist, a line
+paired with a mark set off it.
+
+**Before and after, +25% as typed, the 31 files:** accepted 76.95% → **78.93%** (+879). The page
+edge fell by 1,018, to 3,220, and *it reaches the next column* by 51. Some of those edits now
+reach the wrap and are refused by it: *out of line with the text beside them* +109, *part of it
+below cannot be moved* +55, *a drawing or an annotation* +33. Over every trial `--compare` moved
+2,655 verdicts from refused to accepted (`luatex-manual` 2,073, fontspec 560, arXiv 2003 22)
+and 21 the other way.
+
+**The 21 are 8 runs**, replayed with the probe at `da2e0fe` on pages extracted with `qpdf --pages`:
+all eight were accepted there, and six of the renders were broken. Four pushed a cell's text into
+the next cell or column (*scriptcramb*, *dynCH₂*, *oaxisexact n*), one moved a *b* off its sub-
+and superscripts below a table's rule, one wrapped over the text beside it. The two sound ones
+are a mark growing, the arXiv superscript *m* → *mm* and a fontspec footnote mark *8* → *88*,
+both now refused with *it reaches the next column*: the same width test of the column rule as the
+LuaTeX footnote mark recorded in *A column's headings and short lines*.
+
+**The gains:** ten, two per file and four more from the LuaTeX manual, through `--roundtrip` and
+`qpdf --check`, all passing, and all ten renders looked at. Each grown logo, superscript or
+citation pushes the rest of its line along, the line's last word wraps onto a new line, and the
+lines below move down one; the lowered E keeps its drop wherever it lands.
+
+Tests: `blocks_tests` gained one, a run raised and lowered by 2 and 5.9 pt that is on its line,
+6.1 pt that is not, a mark opening a line, a run between two lines it could be set off that goes
+to the nearer, and a second column whose baselines are 2 and 5 pt off the first's, which stays a
+column; `wrap_tests` gained one, a lowered run that flows after the edit 2 pt below the line it
+lands on. Eight mutations under `geometric blocks:`, all caught by the test named for them. What
+is left, at +25%: the page edge 7.3%, 5.4 of it the budget printout's rows, and *onto what is
+below it* 5.2%.

@@ -107,6 +107,60 @@ fn a_run_a_fraction_of_a_point_off_the_baseline_is_on_its_line() {
 }
 
 #[test]
+fn a_run_raised_or_lowered_within_half_an_em_is_on_the_line_it_sits_in() {
+    // The E sits between FIRST and LINE, as the lowered E of the TeX logo or a
+    // superscript does, and the paragraph's next lines follow at 14 pt.
+    let shifted = |x: f64, rise: f64| {
+        page(&format!(
+            "20 200 Td (FIRST) Tj {x} {rise} Td (E) Tj {} {} Td (LINE) Tj \
+             {} -14 Td (SECOND) Tj 0 -14 Td (THIRD) Tj",
+            50. - x,
+            -rise,
+            -50.
+        ))
+    };
+    let whole = strings(&[&["FIRST", "E", "LINE", "SECOND", "THIRD"]]);
+    // Half an em at 12 pt is 6 pt.
+    for rise in [-2., 2., -5.9, 5.9] {
+        assert_eq!(grouped(&shifted(40., rise)), whole, "{rise}");
+    }
+    for rise in [-6.1, 6.1] {
+        assert_ne!(grouped(&shifted(40., rise)), whole, "{rise}");
+    }
+    // A mark opening a line, a footnote's, leaves the line its own baseline,
+    // and so its pitch to the lines either side.
+    let doc =
+        page("20 200 Td (FIRST) Tj 0 -12 Td (E) Tj 10 -2 Td (SECOND) Tj -10 -14 Td (THIRD) Tj");
+    assert_eq!(
+        grouped(&doc),
+        strings(&[&["FIRST", "E", "SECOND", "THIRD"]])
+    );
+    // Between two lines it could be set off, it is on the nearer: here 4.5 pt
+    // from FIRST and 5.5 pt from SECOND, a line in a font of its own.
+    let doc = two_fonts(
+        "BT /F1 12 Tf 20 200 Td (FIRST) Tj 20 -4.5 Td (E) Tj -20 -5.5 Td /F2 12 Tf (SECOND) Tj ET",
+    );
+    assert_eq!(grouped(&doc), strings(&[&["FIRST", "E"], &["SECOND"]]));
+    let doc = two_fonts(
+        "BT /F1 12 Tf 20 200 Td (FIRST) Tj 20 -5.5 Td (E) Tj -20 -4.5 Td /F2 12 Tf (SECOND) Tj ET",
+    );
+    assert_eq!(grouped(&doc), strings(&[&["FIRST"], &["E", "SECOND"]]));
+    // A column beside the paragraph is not set off its lines, however close
+    // its baselines come: the right column's lines are 2 and 5 pt below the
+    // left's first two, and their pitch is 17 pt, not the 14 pt that reading
+    // them on the left's lines would make of it, which then steps to 22.
+    let doc = page(
+        "1 0 0 1 20 200 Tm (LLLL) Tj 1 0 0 1 200 198 Tm (R) Tj \
+         1 0 0 1 20 186 Tm (LLLL) Tj 1 0 0 1 200 181 Tm (R) Tj \
+         1 0 0 1 20 172 Tm (LLLL) Tj 1 0 0 1 200 164 Tm (R) Tj",
+    );
+    assert_eq!(
+        grouped(&doc),
+        strings(&[&["LLLL", "LLLL", "LLLL"], &["R", "R", "R"]])
+    );
+}
+
+#[test]
 fn a_block_ends_where_its_pitch_steps() {
     let doc = page("20 200 Td (ONE) Tj 0 -14 Td (TWO) Tj 0 -14.6 Td (THREE) Tj");
     assert_eq!(grouped(&doc), strings(&[&["ONE", "TWO"], &["THREE"]]));

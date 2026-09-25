@@ -2,7 +2,9 @@
 //!
 //! A wrap (`layout::wrap`) needs to know which runs are lines of one block.
 //! A tagged page says so; on an untagged page this module answers from the
-//! lines themselves. A line and the nearest line below it that overlaps it
+//! lines themselves. A run raised or lowered by up to half an em beside a
+//! fuller line -- a superscript, a footnote mark -- is on that line, which
+//! keeps its own baseline. A line and the nearest line below it that overlaps it
 //! along the line are one block when their pitch is at most three ems (two,
 //! with another line of the page between them), most of their text is
 //! set in one font at one size, their left edges agree (or the upper is a first line indented
@@ -21,6 +23,10 @@ use super::*;
 
 /// Two runs are on one line when their baselines agree to this, in points.
 const BASELINE_TOL: f64 = 0.5;
+/// A run set off its line's baseline by up to this, in ems of that line --
+/// a superscript, a footnote mark, the lowered E of the TeX logo -- is on that
+/// line, as the wrap reads a line (`layout::wrap`, `SAME_LINE_EM`).
+const SHIFT_EM: f64 = 0.5;
 /// A gap this wide along a line, in ems, separates two blocks side by side.
 /// Words of prose are a space apart; a gutter between two columns can be under
 /// two ems where a justified line reaches it, and a tab stop is wider than a
@@ -127,16 +133,22 @@ pub(super) fn geometric(
             .total_cmp(&a.baseline)
             .then(a.left.total_cmp(&b.left))
     });
-    // Lines, top down, each split at its gutters.
-    let mut segments: Vec<Segment> = Vec::new();
+    // Baselines, top down.
+    let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut start = 0;
-    let mut line = 0;
     while start < pieces.len() {
         let mut end = start + 1;
         while end < pieces.len() && pieces[start].baseline - pieces[end].baseline <= BASELINE_TOL {
             end += 1;
         }
-        let mut order: Vec<usize> = (start..end).collect();
+        groups.push((start..end).collect());
+        start = end;
+    }
+    let groups = shifted(&pieces, groups);
+    // Lines, top down, each split at its gutters.
+    let mut segments: Vec<Segment> = Vec::new();
+    for (line, (baseline, group)) in groups.into_iter().enumerate() {
+        let mut order = group;
         order.sort_by(|&a, &b| pieces[a].left.total_cmp(&pieces[b].left));
         let mut current: Vec<usize> = Vec::new();
         for index in order {
@@ -146,14 +158,17 @@ pub(super) fn geometric(
                     .map(|&i| pieces[i].size)
                     .fold(pieces[index].size, f64::max);
                 if pieces[index].left - far > GUTTER_EM * size {
-                    segments.push(segment(&pieces, line, std::mem::take(&mut current)));
+                    segments.push(segment(
+                        &pieces,
+                        line,
+                        baseline,
+                        std::mem::take(&mut current),
+                    ));
                 }
             }
             current.push(index);
         }
-        segments.push(segment(&pieces, line, current));
-        start = end;
-        line += 1;
+        segments.push(segment(&pieces, line, baseline, current));
     }
     let drawn: Vec<[f64; 4]> = page
         .graphics
@@ -239,7 +254,84 @@ pub(super) fn geometric(
     blocks
 }
 
-fn segment<'a>(pieces: &[Piece<'a>], line: usize, members: Vec<usize>) -> Segment<'a> {
+/// The baseline groups with every group set off another's baseline merged into
+/// it, each with the baseline of the group that keeps it, top down.
+///
+/// A group is set off a neighbouring one when it has fewer characters, its
+/// baseline is within `SHIFT_EM` of that one's, and none of its runs is a
+/// gutter or more clear of that one's extent along the line. Without this
+/// a raised or lowered run is a line of its own between two lines of its
+/// paragraph, the one each of them is paired with, and the paragraph is cut in
+/// two there.
+fn shifted(pieces: &[Piece], groups: Vec<Vec<usize>>) -> Vec<(f64, Vec<usize>)> {
+    let characters = |group: &[usize]| -> usize {
+        group
+            .iter()
+            .map(|&i| {
+                pieces[i]
+                    .text
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .count()
+            })
+            .sum()
+    };
+    let counts: Vec<usize> = groups.iter().map(|group| characters(group)).collect();
+    let host = |index: usize| -> Option<usize> {
+        [index.checked_sub(1), Some(index + 1)]
+            .into_iter()
+            .flatten()
+            .filter(|&other| other < groups.len() && counts[other] > counts[index])
+            .filter(|&other| {
+                let host = &groups[other];
+                let size = host.iter().map(|&i| pieces[i].size).fold(0., f64::max);
+                let left = host
+                    .iter()
+                    .map(|&i| pieces[i].left)
+                    .fold(f64::INFINITY, f64::min);
+                let right = host
+                    .iter()
+                    .map(|&i| pieces[i].right)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let gutter = GUTTER_EM * size;
+                (pieces[host[0]].baseline - pieces[groups[index][0]].baseline).abs()
+                    <= SHIFT_EM * size
+                    && groups[index].iter().all(|&i| {
+                        pieces[i].left - right <= gutter && left - pieces[i].right <= gutter
+                    })
+            })
+            .min_by(|&a, &b| {
+                let off = |other: usize| {
+                    (pieces[groups[other][0]].baseline - pieces[groups[index][0]].baseline).abs()
+                };
+                off(a).total_cmp(&off(b))
+            })
+    };
+    // A host has more characters than the group it keeps, so following hosts
+    // ends.
+    let hosts: Vec<Option<usize>> = (0..groups.len()).map(host).collect();
+    let root = |mut index: usize| {
+        while let Some(next) = hosts[index] {
+            index = next;
+        }
+        index
+    };
+    let mut merged: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (index, group) in groups.iter().enumerate() {
+        merged.entry(root(index)).or_default().extend(group);
+    }
+    merged
+        .into_iter()
+        .map(|(index, group)| (pieces[groups[index][0]].baseline, group))
+        .collect()
+}
+
+fn segment<'a>(
+    pieces: &[Piece<'a>],
+    line: usize,
+    baseline: f64,
+    members: Vec<usize>,
+) -> Segment<'a> {
     let of = |f: fn(&Piece) -> f64| members.iter().map(move |&i| f(&pieces[i]));
     let mut faces: BTreeMap<(&str, i64), usize> = BTreeMap::new();
     // Columns aligned with runs of spaces make a table row of one run: prose
@@ -285,7 +377,7 @@ fn segment<'a>(pieces: &[Piece<'a>], line: usize, members: Vec<usize>) -> Segmen
     );
     Segment {
         line,
-        baseline: pieces[members[0]].baseline,
+        baseline,
         left: of(|p| p.left).fold(f64::INFINITY, f64::min),
         right: of(|p| p.right).fold(f64::NEG_INFINITY, f64::max),
         size,

@@ -498,6 +498,24 @@ fn an_untagged_paragraph_wraps_by_the_blocks_its_lines_give() {
     assert!(near(at(&untagged, LAST), (20., 158.)), "{untagged:?}");
 }
 
+// A run set a little below the line it is in -- the lowered E of the TeX
+// logo, a subscript -- is on that line: on a page without tags the paragraph
+// is still one block, and the run flows after the edit as the rest of the line
+// does, as far below the line it lands on as it was below its own.
+#[test]
+fn a_lowered_run_on_an_untagged_line_flows_with_it() {
+    let doc = super::layout_tests::synthetic(&format!(
+        "BT /F1 12 Tf 1 0 0 1 20 200 Tm ({FIRST}) Tj 1 0 0 1 20 186 Tm ({WIDEST}) Tj \
+         1 0 0 1 200 184 Tm (E) Tj 1 0 0 1 20 172 Tm ({LAST}) Tj \
+         1 0 0 1 20 120 Tm ({NEXT}) Tj ET"
+    ));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    // THEN FIRST AND SECOND ends at 20 + 21 x 7.2 = 171.2, and the E follows
+    // it by the 7.2 pt it followed DONE by.
+    assert!(near(at(&runs, "E"), (178.4, 170.)), "{runs:?}");
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+}
+
 // On a page without tags, text that stays beside a line the wrap moves would
 // come apart from it: a label and its entry, two cells of a row. Beside a line
 // that stays, it may. With tags, the tags say what belongs together.

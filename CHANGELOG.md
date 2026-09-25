@@ -76,6 +76,17 @@ have the binary.)
   accepted 77.0% of the time, up from 64.8%, and no edit that was accepted is
   refused.
 
+- **Text wraps around the TeX logo, superscripts and footnote marks.** In a
+  document without tags, a letter set a little above or below its line, such
+  as the lowered E of the TeX logo, was read as a line of its own, which cut
+  its paragraph in two. An edit on that line was then refused with *"it
+  reaches the edge of the page"* instead of wrapping. Such a letter is now
+  read as part of its line, and it keeps its height above or below the line
+  when a wrap moves it. Edits a quarter longer are accepted 78.9% of the time,
+  up from 77.0%. Some edits that were accepted are now refused: in six of the
+  eight cases, they had pushed text into the next table cell or column; the
+  other two are a superscript and a footnote mark growing.
+
 ### Changed
 
 - **The PDF engine is PDFium 8066, unmodified.** tpdf carried its own

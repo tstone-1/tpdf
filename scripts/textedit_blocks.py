@@ -85,6 +85,7 @@ INLINE_ROLES = {'Span', 'Quote', 'Note', 'Reference', 'BibEntry', 'Code', 'Link'
 # whether it is a good one.
 BASELINE_TOL = 0.5      # points; two runs are on one line when their baselines agree
 GUTTER_EM = 2.0         # a horizontal gap this wide inside a line splits it
+SHIFT_EM = 0.5          # a run this far off a fuller line's baseline is on that line
 LEFT_TOL = 1.0          # points; left edges of two lines of one block
 INDENT_MAX_EM = 4.0     # a first line may start this far right of the rest
 PITCH_MAX_EM = 3.0      # a plausible line pitch, as a multiple of the font size
@@ -201,6 +202,47 @@ class Segment:
         return Counter(classify(r[trial]) for r in self.runs)
 
 
+def shifted(groups):
+    """The baseline groups with every group set off a neighbouring one merged into it,
+    top down, each as its runs and, for a group that kept another, the keeping group's
+    baseline, which its segments take (`None` for any other, whose segments keep their
+    own). A group that kept another has its runs in order along the line, which the
+    gutter split reads; any other keeps the order it had.
+
+    A group is set off a neighbour when it has fewer characters, its baseline is within
+    `SHIFT_EM` of the neighbour's, and none of its runs is a gutter or more clear of the
+    neighbour's extent: a superscript, a footnote mark, the lowered E of the TeX logo.
+    The rule in `blocks.rs` counts characters other than spaces; the records carry only
+    `chars`, spaces included."""
+    counts = [sum(r['chars'] for r in g) for g in groups]
+
+    def fits(index, other):
+        host = groups[other]
+        size = max(r['size'] for r in host)
+        left, right = min(r['rect'][0] for r in host), max(r['rect'][2] for r in host)
+        gutter = GUTTER_EM * size
+        return (counts[other] > counts[index]
+                and abs(baseline(host[0]) - baseline(groups[index][0])) <= SHIFT_EM * size
+                and all(r['rect'][0] - right <= gutter and left - r['rect'][2] <= gutter
+                        for r in groups[index]))
+
+    hosts = []
+    for index in range(len(groups)):
+        near = [o for o in (index - 1, index + 1) if 0 <= o < len(groups) and fits(index, o)]
+        near.sort(key=lambda o: abs(baseline(groups[o][0]) - baseline(groups[index][0])))
+        hosts.append(near[0] if near else None)
+    merged = {}
+    for index in range(len(groups)):
+        root = index
+        while hosts[root] is not None:
+            root = hosts[root]
+        merged.setdefault(root, []).append(index)
+    return [(None, groups[root]) if len(members) == 1
+            else (baseline(groups[root][0]),
+                  sorted((r for m in members for r in groups[m]), key=lambda r: r['rect'][0]))
+            for root, members in sorted(merged.items())]
+
+
 def lines(page):
     """The page's axis-aligned runs as lines of segments, in reading order down the page.
 
@@ -220,7 +262,7 @@ def lines(page):
     if group:
         out.append(group)
     result, index = [], 0
-    for group in out:
+    for line_baseline, group in shifted(out):
         pieces, current = [], [group[0]]
         for run in group[1:]:
             gap = run['rect'][0] - max(r['rect'][2] for r in current)
@@ -231,7 +273,10 @@ def lines(page):
         pieces.append(current)
         row = []
         for piece in pieces:
-            row.append(Segment(index, piece, elements))
+            segment = Segment(index, piece, elements)
+            if line_baseline is not None:
+                segment.baseline = line_baseline
+            row.append(segment)
             index += 1
         result.append(row)
     return result
@@ -785,7 +830,8 @@ def self_test(probe):
         # is the pairing, and a fixture drawn for it would test the drawing too.
         def run(x, y):
             return {'rect': [x, y - 12, x + 100, y + 3], 'size': 12, 'font': 'F',
-                    'axis_aligned': True, 'ink_below': 1, 'below_is_page_edge': False}
+                    'axis_aligned': True, 'ink_below': 1, 'below_is_page_edge': False,
+                    'chars': 10}
         staggered = {'tried': [run(20, y) for y in (100, 112, 124)]
                      + [run(200, y + 5) for y in (100, 112, 124)]}
         paired = {(round(b.baseline), round(a.baseline)) for b, a, _ in pairs(lines(staggered))}
@@ -794,6 +840,16 @@ def self_test(probe):
         assert not pairs(lines(gap)), [(b.baseline, a.baseline) for b, a, _ in pairs(lines(gap))]
         gap['tried'][2] = run(20, 112)
         assert len(pairs(lines(gap))) == 1
+        # A run 2 pt below its line and next to it along it is on that line, and the
+        # line keeps its own baseline; 7 pt below, past half an em, it is not.
+        def lowered(drop):
+            mark = {**run(122, 100 + drop), 'chars': 1}
+            mark['rect'][2] = 128
+            return {'tried': [run(20, 100), mark, run(20, 114)]}
+        rows = lines(lowered(2))
+        assert [[round(s.baseline) for s in row] for row in rows] == [[100], [114]], rows
+        assert {(round(b.baseline), round(a.baseline)) for b, a, _ in pairs(rows)} == {(100, 114)}
+        assert len(lines(lowered(7))) == 3
 
         counts = {}
         for rule in ('signals', 'all', 'none'):        counts = {}
