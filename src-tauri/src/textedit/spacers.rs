@@ -60,8 +60,14 @@ impl Spacer {
     // One space per tab, as Word writes it, or fewer: InDesign shows a single
     // space for a run of tabs and places it with the matrix. Either way the
     // show is spacing only, which is what keeps it out of the editable text.
+    // In a font the editor keeps read-only (`fonts::read_only`) the glyph
+    // cannot be read, and needs not be: nothing in that font is editable.
     pub(super) fn text(&self, text: &str) -> Result<(), String> {
-        if !(1..=self.count).contains(&text.len()) || !text.bytes().all(|byte| byte == b' ') {
+        if !(1..=self.count).contains(&text.chars().count())
+            || !text
+                .chars()
+                .all(|character| character == ' ' || character == super::fonts::OPAQUE)
+        {
             return Err(INVALID.into());
         }
         Ok(())

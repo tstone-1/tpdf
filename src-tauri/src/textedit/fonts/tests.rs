@@ -1290,6 +1290,26 @@ fn textedit_a_font_that_forbids_editing_keeps_its_text_read_only() {
         written.contains("/F1 12 Tf 40 180 Td (FIRST) Tj"),
         "{written}"
     );
+    // A tab spacer set in that font is kept too: its glyph cannot be read,
+    // and nothing in that font is editable.
+    let (mut doc, _, _) = restricted();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let spaced = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td (FIRST) Tj /Span << /ActualText <09> >> BDC ( ) Tj EMC ET \
+          BT /F2 12 Tf 40 140 Td (SECOND) Tj ET"
+            .to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", spaced);
+    let offered: Vec<String> = textedit::scan(&doc, 0)
+        .unwrap()
+        .runs
+        .into_iter()
+        .map(|run| run.text)
+        .collect();
+    assert_eq!(offered, ["SECOND"]);
     // Only that font on the page: its reason, not a generic one.
     let (mut doc, _, _) = restricted();
     let page = crate::pagetree::ordered_pages(&doc)[0];
