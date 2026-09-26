@@ -5234,6 +5234,12 @@ window phases, `mutate_viewer.py`, Windows `print-probe` and `redact-reach-probe
 smoke test of the normal bundle (step 8) and the hand-applied update (step 12). CI's
 `windows-2025` gate leg is the Windows evidence for this release until those are run.
 
+Published 2026-09-26 from `bfa20f1`, after `ci.yml` passed both legs on that commit. The
+release run skipped its gates through `proven` and passed its other jobs, and the draft carried
+8 assets under the tag. The published release is Latest. Fetched without an account, the
+`.dmg`, `.msi`, `-setup.exe` and `latest.json` answered 200, and `latest.json` offers 26.9.20
+for `darwin-aarch64` and `windows-x86_64`.
+
 **26.9.19 verification, macOS arm64, 2026-09-26:** all 26 gates passed on the release tree
 (1,939 Rust tests with three expected skips, 1,786 frontend) and `check_windows.py`
 type-checked the Windows tree, after the Windows PDFium was fetched into `vendor/pdfium/bin/`.
