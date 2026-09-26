@@ -473,14 +473,15 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Text now wraps on pages set in two columns
-          without tags, including columns whose lines do not share baselines, and
-          past superscripts, footnote marks and the lowered E of the TeX logo. A
-          link over a line that a wrap moves goes with it, and edited lines may
-          sit as close to their neighbours as the document's own lines do. Across
-          a public sample of 31 documents, an edit a quarter longer than the text
-          it replaces is now accepted 79% of the time, up from 61%. PDFium is now
-          built without modifications of our own.
+          **New in this release.** Text in a font whose licence forbids editing
+          can now be replaced: the new text is set in the bundled Noto Sans, and
+          the preview says why. A page is no longer refused because one of its
+          fonts cannot be edited; text in that font stays exactly as it is and
+          the rest of the page can be edited. More of InDesign's and PowerPoint's
+          tagged output is read. In two-column documents, lengthening a line no
+          longer moves the other column or runs into the space between them, and
+          a word pushed along by an edit keeps its space before it. Across a
+          public sample of 31 documents, 22 now offer editable text, up from 19.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX

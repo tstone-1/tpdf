@@ -408,10 +408,11 @@ grows into the room after the line and moves the rest of the line along. Text th
 reaches the page edge wraps onto a new line of its own paragraph, taking the rest of its
 line along, and the paragraphs below move down while each keeps its blank line of
 separation. A link over a line that moves goes with it; any other annotation or drawing
-over those lines keeps the edit from wrapping. On a page without tags, tpdf reads the paragraphs off the lines themselves and
-is more careful: a line on its own does not wrap, and an edit that would move a line away
-from text set beside it is refused, unless that text is another column of the page, which
-ends a line as the page edge does. The editor supports the Latin standard fonts
+over those lines keeps the edit from wrapping. Another column of the page ends a line as
+the page edge does: its text is never moved along, and a line may use at most half the
+space between the columns. On a page without tags, tpdf reads the paragraphs off the lines
+themselves and is more careful: a line on its own does not wrap, and an edit that would
+move a line away from text set beside it, other than another column, is refused. The editor supports the Latin standard fonts
 (Helvetica, Times, Courier), fonts a document names without embedding them, and validated
 embedded TrueType, Type 1, CFF (including the CID-keyed CFF that XeLaTeX, LuaTeX and Typst
 embed) and uncolored Type 3 vector fonts, including supported ligatures, bounded spacing, quarter-turn text,
@@ -425,7 +426,8 @@ Acrobat, PowerPoint, pdfTeX, XeLaTeX, LuaTeX and Typst exports are included in t
 examples; this does not mean every export from those applications is editable. Text in
 math symbols, in slide background layers and in page stamps stays read-only.
 Auto font selection uses the original font when possible and bundled Noto Sans
-when new characters need it. Regular and bold Noto Sans CJK SC also cover Chinese,
+when new characters need it, or when the document's font does not permit editing, which
+the preview then says; text left in such a font keeps it. Regular and bold Noto Sans CJK SC also cover Chinese,
 Japanese and Korean characters, using Simplified Chinese glyph forms. CJK edits
 embed only the glyphs they use. Replacements must fit the chosen box without crossing
 clips or neighbouring content. Automatic table resizing, flow across pages and

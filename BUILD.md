@@ -5218,6 +5218,22 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.20 verification, macOS arm64, 2026-09-26:** all 26 gates passed on the code being
+released (`392d525`), and CI passed both legs on it; after the version bump, `traps`, `dates`,
+`docs`, `workflows` and `fixtures` passed, and `check_windows.py` type-checked the Windows
+tree. No npm or Cargo update was available. Every Rust mutation selected `--since v26.9.19`
+ran in a separate worktree, 679 of 1,781, and all were caught; no frontend source changed, so
+that table selected none. The text-edit changes were measured on the 31-file sample and checked
+by hand in *Replacing text set in a font that forbids editing* and *Columns on tagged pages,
+the gutter, and the space before a pushed word*. `release.yml` changed only in its notes, so
+no rehearsal tag was cut; the README's editing paragraph was corrected for columns on tagged
+pages and for Noto in place of a restricted font.
+
+**Not run before the tag:** everything that needs a window or the Windows desktop — the
+window phases, `mutate_viewer.py`, Windows `print-probe` and `redact-reach-probe`, the external
+smoke test of the normal bundle (step 8) and the hand-applied update (step 12). CI's
+`windows-2025` gate leg is the Windows evidence for this release until those are run.
+
 **26.9.19 verification, macOS arm64, 2026-09-26:** all 26 gates passed on the release tree
 (1,939 Rust tests with three expected skips, 1,786 frontend) and `check_windows.py`
 type-checked the Windows tree, after the Windows PDFium was fetched into `vendor/pdfium/bin/`.
