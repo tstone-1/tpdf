@@ -150,8 +150,9 @@ pub(super) enum Room {
     Page,
     /// A clip the document has in force over the space after the run.
     Clip,
-    /// The next column of prose across a gutter, on a page without tags
-    /// ([`column_runs`]). The wrap treats it as it treats the page edge.
+    /// The next column of prose across a gutter ([`column_runs`]), or the
+    /// gutter before it ([`gutter`]). The wrap treats it as it treats the page
+    /// edge.
     Column,
 }
 
@@ -332,6 +333,11 @@ impl Axis {
     /// A limit coordinate, as a box width.
     fn at(&self, limit: f64) -> f64 {
         self.sign * (limit - self.lead) / self.rate
+    }
+
+    /// A box width, as the coordinate it reaches: the inverse of [`Axis::at`].
+    fn point(&self, width: f64) -> f64 {
+        self.lead + self.sign * width * self.rate
     }
 
     fn cross(&self) -> usize {
@@ -588,12 +594,15 @@ fn free_width(
             rect[3] + offset[1],
         ]
     };
-    // Text in a column beside the run's own paragraph, on a page without tags:
-    // where its line ends, never pushed along (`column_runs`). Left out of the
-    // pushable ids here, it is one of the limits `hard` is measured to, so the
-    // push walk below never reaches it and asks nothing of its own.
+    // Text in a column beside the run's own paragraph: where its line ends,
+    // never pushed along (`column_runs`). Left out of the pushable ids here, it
+    // is one of the limits `hard` is measured to, so the push walk below never
+    // reaches it and asks nothing of its own. A tagged page's blocks are its
+    // structure elements, which tell a column from a row as well as the
+    // geometry does: on the IRS W-9 a left-column edit pushed the right-hand
+    // column's line when this was asked of untagged pages only.
     let columns: BTreeSet<u32> = match Axis::of((mapped(0.), mapped(probe)), probe) {
-        Some(axis) if blocks::geometric_page(page) => block_extent(page, run.operator, axis.axis)
+        Some(axis) => block_extent(page, run.operator, axis.axis)
             .map(|paragraph| {
                 column_runs(page, paragraph, axis.axis)
                     .into_iter()
@@ -602,10 +611,24 @@ fn free_width(
                     .collect()
             })
             .unwrap_or_default(),
-        _ => BTreeSet::new(),
+        None => BTreeSet::new(),
     };
+    // The space between the run's own column and the next one, which a line
+    // stops before as it stops at the column itself (`gutter`).
+    let gutter = Axis::of(edges, probe).and_then(|axis| {
+        gutter(
+            page,
+            &columns,
+            &axis,
+            axis.band(edges.0, shifted(&run.display_rect)),
+            shifted(&run.display_rect),
+            width,
+        )
+    });
     // One walk of the one list: each rectangle where it is now, and the id of
-    // the run at it when the writer could push that run along.
+    // the run at it when the writer could push that run along. The gutter is
+    // last, so every `zip` with `obstacles` below leaves it out, as it leaves
+    // out nothing else.
     let hits: Vec<([f64; 4], Option<u32>)> = obstacles(page, run)
         .map(|other| match other {
             Around::Run(id, rect) if grow && pushable(page, run, id) && !columns.contains(&id) => {
@@ -613,6 +636,7 @@ fn free_width(
             }
             other => (other.rect().map(f64::from), None),
         })
+        .chain(gutter.map(|rect| (rect, None)))
         .collect();
     let own = shifted(&run.display_rect);
     let boxed = |ceiling: f64,
@@ -653,7 +677,8 @@ fn free_width(
         width,
     );
     // Nearer than everything else on the line, the next column is where the
-    // line ends, as the page edge is: the wrap reads the two alike.
+    // line ends, as the page edge is: the wrap reads the two alike. The
+    // gutter, last in `hits`, is left out with the columns by the `zip`.
     let stop = if stop == Room::Line && !columns.is_empty() {
         let (beyond, _) = room(
             edges,
@@ -769,8 +794,14 @@ fn free_width(
                 )
             }),
     );
+    fixed.extend(gutter.map(|rect| (rect, Room::Column)));
     let (shift, pushed_stop) = reach(&axis, sheet, &pushed, &fixed);
-    if shift <= 0. {
+    // A line that already reaches its column's measure has no push left, but a
+    // wrap flows its runs to the lines below rather than pushing them, and
+    // still has the whole line: the column ends it as the page edge would.
+    // Returning nothing there handed the wrap the room before the next run as
+    // its measure, and a paragraph came back broken into lines of two words.
+    if shift <= 0. && pushed_stop != Room::Column {
         return nothing(pushed_stop);
     }
     // Measured from the nearest run the push moves, and bounded by how far that
@@ -787,11 +818,26 @@ fn free_width(
     // the bound here until then, and it is subsumed: a grown box is never
     // narrower than the advance it was opened from, and a box the reader sized
     // never grows at all.
-    let from = pushed
+    //
+    // The push keeps the space the source left before the nearest run it moves,
+    // up to one word space: a gap that wide is spent before anything moves, and
+    // the rest is kept. Measured from the run's near edge alone, the text filled
+    // the gap first and the neighbour moved on flush against it -- *emails
+    // CHANGEDwebsites* on the W-9 -- which is a missing space to every reader.
+    // A wider gap, a tab stop or a table's next cell, is still spent down to
+    // that space before the push starts.
+    let near = pushed
         .iter()
         .map(|(rect, _)| axis.at(axis.edge(*rect, false)))
-        .fold(f64::INFINITY, f64::min)
-        .max(width);
+        .fold(f64::INFINITY, f64::min);
+    let space = page
+        .gaps
+        .get(&run.operator)
+        .copied()
+        .unwrap_or(super::DEFAULT_GAP)
+        * run.size
+        / 1000.;
+    let from = (near - (near - own_far).clamp(0., space)).max(width);
     // The pushed runs are everything the writer may move between the run and
     // the first thing it may not, so with them gone the box reaches that thing,
     // the page or the clip: `hard`, the same rule `free` is, over the same list
@@ -1479,8 +1525,8 @@ fn cascade(
     Some((moved, paragraph))
 }
 
-/// The runs of text in a column beside a paragraph, on a page without tags,
-/// each with its hit rectangle; `paragraph` is how far the paragraph reaches
+/// The runs of text in a column beside a paragraph, each with its hit
+/// rectangle; `paragraph` is how far the paragraph reaches
 /// along `along`, the displayed page's axis the lines run along.
 ///
 /// Two columns of prose are level line for line by coincidence, and on one
@@ -1508,7 +1554,10 @@ fn cascade(
 ///   outcome, including for a block set beside the short last line.
 /// - The line's room ([`Room::Column`]): a column's text is where a line of
 ///   the paragraph ends, as the page edge is, so it is never pushed along and
-///   a line it fills may wrap.
+///   a line it fills may wrap. This one is asked on tagged pages too, whose
+///   blocks are their structure elements; the level check above is not,
+///   because a tagged page's structure already says which lines belong
+///   together.
 fn column_runs(page: &Inspection, paragraph: [f64; 2], along: usize) -> Vec<(u32, [f64; 4])> {
     let width = paragraph[1] - paragraph[0];
     // Per block: each run's show and hit rectangle, and the lines it has.
@@ -1564,6 +1613,81 @@ fn column_runs(page: &Inspection, paragraph: [f64; 2], along: usize) -> Vec<(u32
         .chain(owned)
         .collect()
 }
+
+/// The gutter before the next column along a run's line, as a rectangle
+/// across the line's `band`: from the far edge of the text on the run's side
+/// of that column -- the widest line level with the column, the run's own far
+/// edge or the box `width` if either is further -- to the column's near edge.
+///
+/// A line may reach [`GUTTER_SHARE`] of the way across and stops there as it
+/// stops at the column (`Room::Column`); a wrap then breaks it at its own
+/// column's measure. Stopped at the column's text
+/// instead, a line filled the gutter until it touched the next column: the IRS
+/// W-4's *Tax Withholding CHANGED*. The widest line on this side, and not the
+/// run's own paragraph, is the measure, so a heading or a one-line paragraph
+/// in a column may still grow to the column's width.
+fn gutter(
+    page: &Inspection,
+    columns: &BTreeSet<u32>,
+    axis: &Axis,
+    band: (f64, f64),
+    own: [f64; 4],
+    width: f64,
+) -> Option<[f64; 4]> {
+    let own_far = axis.at(axis.edge(own, true)).max(width);
+    let visible = || {
+        page.runs
+            .runs
+            .iter()
+            .filter(|run| !run.text.trim().is_empty())
+            .map(|run| (run.operator, run.display_rect.map(f64::from)))
+    };
+    let (block, near) = visible()
+        .filter(|(operator, rect)| {
+            columns.contains(operator)
+                && axis.beside(band, *rect)
+                && axis.at(axis.edge(*rect, false)) >= own_far
+        })
+        .map(|(operator, rect)| (page.blocks.get(&operator), axis.at(axis.edge(rect, false))))
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    let cross = axis.cross();
+    let [top, bottom] = visible()
+        .filter(|(operator, _)| page.blocks.get(operator) == block)
+        .fold(
+            [f64::INFINITY, f64::NEG_INFINITY],
+            |[low, high], (_, rect)| [low.min(rect[cross]), high.max(rect[cross + 2])],
+        );
+    let side = visible()
+        .filter(|(operator, rect)| {
+            !columns.contains(operator)
+                && rect[cross + 2] > top
+                && rect[cross] < bottom
+                && axis.at(axis.edge(*rect, true)) <= near
+        })
+        .map(|(_, rect)| axis.at(axis.edge(rect, true)))
+        .fold(own_far, f64::max);
+    if side >= near {
+        return None;
+    }
+    let side = side + (near - side) * GUTTER_SHARE;
+    let (from, to) = (axis.point(side), axis.point(near));
+    let mut rect = [0.; 4];
+    rect[axis.axis] = from.min(to);
+    rect[axis.axis + 2] = from.max(to);
+    rect[cross] = band.0;
+    rect[cross + 2] = band.1;
+    Some(rect)
+}
+
+/// How much of the gutter before the next column a line may take.
+///
+/// None of it keeps every column's measure, and refused 1,444 more edits at
+/// +25% on the 31-file sample than the push that ran lines into the next
+/// column: justified two-column papers have no line short of the measure, so
+/// every growing line has to wrap, and many of those wraps are refused for
+/// something else. Half keeps 1,050 of them, and the columns still never
+/// touch. Measured 2026-09-26.
+const GUTTER_SHARE: f64 = 0.5;
 
 /// How far the block `operator` is a line of reaches along the line, low and
 /// high, on the displayed page, or `None` when the run is in no block.

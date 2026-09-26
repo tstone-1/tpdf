@@ -48,6 +48,20 @@ have the binary.)
   and a 52-page insurance brochure editable, and all of the IRS W-4, where
   only one symbol was before.
 
+### Fixed
+
+- **Lengthening a line no longer disturbs the column beside it.** In a
+  two-column document with tags, such as the IRS forms, making a line in one
+  column longer pushed the level line of the other column sideways, or let the
+  text run across the space between the columns until it touched the other
+  column. The next column now ends the line, text may use at most half of the
+  space between the columns, and a line that needs more wraps within its own
+  column.
+- **A word pushed along by an edit keeps its space.** Text after the edit on
+  the same line used to move on only once the new text reached it, so it could
+  end up directly against the new text ("CHANGEDwebsites"). It now keeps the
+  space it had before, up to one word space.
+
 ## [26.9.19] - 2026-09-26
 
 ### Added

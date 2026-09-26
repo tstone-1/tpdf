@@ -50,43 +50,54 @@ fn refusal(doc: &Document, index: usize, replacement: &str) -> String {
 }
 
 // The text after the edit moves by exactly the distance the text ran past the
-// room it had, and by nothing at all while it still fits that room.
+// room it had, and by nothing at all while it still fits that room. The room
+// ends one word space before the next run, a quarter em: that space is kept,
+// or the pushed word would follow the new text with nothing between them.
 #[test]
 fn the_next_run_on_the_line_moves_by_what_the_text_ran_past_the_room() {
-    // FIRST occupies 40..76 and the next run starts at 100: 60 pt of room from
-    // the first run's own origin.
+    // FIRST occupies 40..76 and the next run starts at 100: 57 pt of room from
+    // the first run's own origin, and the 3 pt word space kept before the run.
     let doc = pair(100.);
     let source = shows(&doc);
-    // Eight of the run's own characters are 57.6 pt, inside that 60, so the box
-    // grows and nothing is pushed: the gap the producer left is spent first.
+    // Seven of the run's own characters are 50.4 pt, inside that 57, so the box
+    // grows and nothing is pushed: the gap the producer left is spent first,
+    // down to that space.
     let mut fits = doc.clone();
-    write(&mut fits, &[in_default_box(&doc, 0, "FIRSTFIR")]).unwrap();
+    write(&mut fits, &[in_default_box(&doc, 0, "FIRSTFI")]).unwrap();
     assert_eq!(
         shows(&fits).last(),
         source.last(),
         "an edit inside the room moved it"
     );
     assert_eq!(find(&fits, "FIRST").matrix[4], 100.);
-    // Eleven are 79.2 pt, which is 19.2 pt past the room, so the next run goes
-    // from 100 to 119.2.
+    // Eleven are 79.2 pt, which is 22.2 pt past the room, so the next run goes
+    // from 100 to 122.2, 3 pt after the new text as it was 24 pt after the old.
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, "FIRSTFIRSTF")]).unwrap();
     let moved = find(&pushed, "FIRST");
     assert!(
-        (moved.matrix[4] - 119.2).abs() < 0.0001,
+        (moved.matrix[4] - 122.2).abs() < 0.0001,
         "{}",
         moved.matrix[4]
     );
-    assert!((f64::from(moved.display_rect[0]) - 119.2).abs() < 0.0001);
+    assert!((f64::from(moved.display_rect[0]) - 122.2).abs() < 0.0001);
     assert_eq!(find(&pushed, "FIRSTFIRSTF").matrix[4], 40.);
     // It moved by being opened with a displacement, and by nothing else: its
     // own glyphs and its own Td are the bytes the source wrote.
     let saved = shows(&pushed);
-    assert_eq!(leading(saved.last().unwrap()), -1600.);
+    assert_eq!(leading(saved.last().unwrap()), -1850.);
     let Object::Array(items) = saved.last().unwrap() else {
         panic!()
     };
     assert_eq!(items[1..], [Object::string_literal("FIRST")]);
+    // A gap narrower than a word space is kept whole: set 2 pt after FIRST,
+    // the next run stays 2 pt after the new text. Measured from its near edge
+    // alone it followed flush, *emails CHANGEDwebsites* on the IRS W-9.
+    let tight = pair(78.);
+    let mut pushed = tight.clone();
+    write(&mut pushed, &[in_default_box(&tight, 0, "FIRSTFIRSTF")]).unwrap();
+    let moved = find(&pushed, "FIRST").matrix[4];
+    assert!((moved - 121.2).abs() < 0.0001, "{moved}");
 }
 
 // A run the editor may not rewrite does not move, and says so rather than
@@ -113,13 +124,14 @@ fn text_the_editor_cannot_move_stops_the_push_and_names_itself() {
 #[test]
 fn the_page_edge_stops_the_push_beyond_the_run_that_moves() {
     // The next run occupies 240..276 on a 300 pt page, so it has 24 pt to give;
-    // the first run has 200 pt of room, and 224 pt of text in all.
+    // the first run has 197 pt of room before the word space kept in front of
+    // it, and 221 pt of text in all.
     let doc = pair(240.);
-    // Thirty-one characters are 223.2 pt and fit; thirty-two are 230.4 and do not.
+    // Thirty characters are 216 pt and fit; thirty-one are 223.2 and do not.
     let mut fits = doc.clone();
-    write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(31))]).unwrap();
-    assert!((find(&fits, "FIRST").matrix[4] - 263.2).abs() < 0.0001);
-    let error = refusal(&doc, 0, &"F".repeat(32));
+    write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(30))]).unwrap();
+    assert!((find(&fits, "FIRST").matrix[4] - 259.).abs() < 0.0001);
+    let error = refusal(&doc, 0, &"F".repeat(31));
     assert!(error.contains("reaches the edge of the page"), "{error}");
 }
 
@@ -135,7 +147,8 @@ fn a_clip_over_the_run_that_moves_stops_the_push_there() {
     );
     let mut fits = doc.clone();
     write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(29))]).unwrap();
-    assert!((find(&fits, "FIRST").matrix[4] - 248.8).abs() < 0.0001);
+    // 208.8 pt of text ends at 248.8, and the run keeps 3 pt after it.
+    assert!((find(&fits, "FIRST").matrix[4] - 251.8).abs() < 0.0001);
     let error = refusal(&doc, 0, &"F".repeat(30));
     assert!(error.contains("clips the space after it"), "{error}");
 }
@@ -154,7 +167,7 @@ fn a_drawing_after_the_run_that_moves_stops_the_push_but_not_the_box() {
     );
     let mut fits = doc.clone();
     write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(25))]).unwrap();
-    assert!((find(&fits, "FIRST").matrix[4] - 220.).abs() < 0.0001);
+    assert!((find(&fits, "FIRST").matrix[4] - 223.).abs() < 0.0001);
     let error = refusal(&doc, 0, &"F".repeat(26));
     assert!(
         error.contains("a picture or a drawing follows it"),
@@ -175,15 +188,16 @@ fn a_drawing_after_the_run_that_moves_stops_the_push_but_not_the_box() {
 #[test]
 fn a_drawing_holding_the_run_that_moves_allows_it_to_its_far_edge() {
     // The frame spans 30..280; the next run is at 200..236, so it may move 44
-    // pt, and the first run has 160 pt of room: 204 in all.
+    // pt, and the first run has 157 pt of room before the word space kept in
+    // front of it: 201 in all.
     let framed = synthetic(
         "0 g 30 170 250 30 re f BT /F1 12 Tf 40 180 Td (FIRST) Tj ET \
          BT /F1 12 Tf 200 180 Td (FIRST) Tj ET",
     );
     let mut fits = framed.clone();
-    write(&mut fits, &[in_default_box(&framed, 0, &"F".repeat(28))]).unwrap();
-    assert!((find(&fits, "FIRST").matrix[4] - 241.6).abs() < 0.0001);
-    let error = refusal(&framed, 0, &"F".repeat(29));
+    write(&mut fits, &[in_default_box(&framed, 0, &"F".repeat(27))]).unwrap();
+    assert!((find(&fits, "FIRST").matrix[4] - 237.4).abs() < 0.0001);
+    let error = refusal(&framed, 0, &"F".repeat(28));
     assert!(
         error.contains("a picture or a drawing follows it"),
         "{error}"
@@ -211,7 +225,7 @@ fn a_path_that_paints_nothing_is_not_a_drawing() {
     );
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, &"F".repeat(26))]).unwrap();
-    assert!((find(&pushed, "FIRST").matrix[4] - 227.2).abs() < 0.0001);
+    assert!((find(&pushed, "FIRST").matrix[4] - 230.2).abs() < 0.0001);
 }
 
 // Everything after the edit on its own line moves; nothing on any other line
@@ -258,10 +272,10 @@ fn a_continued_show_is_carried_by_the_cursor_and_not_pushed_twice() {
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, "FIRSTFIRSTF")]).unwrap();
     let saved = shows(&pushed);
-    // 60 pt of room, 79.2 pt of text: 19.2 pt of push. The positioned show is
-    // opened with a displacement; the continued one is untouched, and both
-    // end up 19.2 pt further along.
-    assert_eq!(leading(&saved[2]), -1600.);
+    // 57 pt of room before the kept word space, 79.2 pt of text: 22.2 pt of
+    // push. The positioned show is opened with a displacement; the continued
+    // one is untouched, and both end up 22.2 pt further along.
+    assert_eq!(leading(&saved[2]), -1850.);
     assert_eq!(saved[3], source[2], "the continued show was rewritten");
     let runs = scan(&pushed, 0).unwrap().runs;
     let moved: Vec<f64> = runs
@@ -270,8 +284,8 @@ fn a_continued_show_is_carried_by_the_cursor_and_not_pushed_twice() {
         .map(|run| run.matrix[4])
         .collect();
     assert_eq!(moved.len(), 2);
-    assert!((moved[0] - 119.2).abs() < 0.0001, "{moved:?}");
-    assert!((moved[1] - 155.2).abs() < 0.0001, "{moved:?}");
+    assert!((moved[0] - 122.2).abs() < 0.0001, "{moved:?}");
+    assert!((moved[1] - 158.2).abs() < 0.0001, "{moved:?}");
 }
 
 // A read-only show continuing a pushed line would be dragged by that cursor
@@ -305,12 +319,12 @@ fn a_grouped_run_moves_with_every_show_it_was_built_from() {
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, "FIRSTFIRSTF")]).unwrap();
     let saved = shows(&pushed);
-    // 19.2 pt of push at 12 pt is 1600 thousandths of an em, on every one of
+    // 22.2 pt of push at 12 pt is 1850 thousandths of an em, on every one of
     // the three shows: a member left behind would tear the word in half.
     for index in [2_usize, 3, 4] {
-        assert_eq!(leading(&saved[index]), -1600., "show {index}");
+        assert_eq!(leading(&saved[index]), -1850., "show {index}");
     }
-    assert!((find(&pushed, "FIR").matrix[4] - 119.2).abs() < 0.0001);
+    assert!((find(&pushed, "FIR").matrix[4] - 122.2).abs() < 0.0001);
 }
 
 // Two edits on one line: the second is written where the first put it, and the
@@ -333,22 +347,22 @@ fn two_edits_on_one_line_compose() {
     reversed.reverse();
     let mut both = doc.clone();
     write(&mut both, &reversed).unwrap();
-    // The first edit is 79.2 pt against 60 of room, so it pushes everything
-    // after it by 19.2. The second is then written at 119.2 with 100 pt of room
-    // in front of it and 108 pt of text, so it pushes the third by another 8:
-    // 200 + 19.2 + 8.
+    // The first edit is 79.2 pt against 57 of room before the kept word space,
+    // so it pushes everything after it by 22.2. The second is then written at
+    // 122.2 with 97 pt of room in front of it and 108 pt of text, so it pushes
+    // the third by another 11: 200 + 22.2 + 11.
     assert_eq!(find(&both, "FIRSTFIRSTF").matrix[4], 40.);
     let second = find(&both, "FIRSTFIRSTFIRST").matrix[4];
-    assert!((second - 119.2).abs() < 0.0001, "{second}");
+    assert!((second - 122.2).abs() < 0.0001, "{second}");
     let third = find(&both, "FIRST").matrix[4];
-    assert!((third - 227.2).abs() < 0.0001, "{third}");
+    assert!((third - 233.2).abs() < 0.0001, "{third}");
     // One displacement each, measured from the source's own array rather than
     // added to the one the first edit wrote.
     let written = leading(shows(&both).last().unwrap());
     assert!(
-        (written + 27.2 * 1000. / 12.).abs() < 0.01,
+        (written + 33.2 * 1000. / 12.).abs() < 0.01,
         "{written} against {}",
-        -27.2 * 1000. / 12.
+        -33.2 * 1000. / 12.
     );
 }
 
@@ -395,19 +409,19 @@ fn a_box_the_reader_sized_pushes_nothing() {
 fn the_preview_extent_covers_the_run_the_draft_pushes() {
     let doc = pair(100.);
     let grown = preview_layout(&doc, &in_default_box(&doc, 0, "FIRSTFIRSTF")).unwrap();
-    // The box is the text, 40..119.2; the pushed run ends at 155.2.
+    // The box is the text, 40..119.2; the pushed run ends at 158.2.
     assert!(
         (f64::from(grown.rect[2]) - 119.2).abs() < 0.01,
         "{:?}",
         grown.rect
     );
     assert!(
-        (f64::from(grown.extent[2]) - 155.2).abs() < 0.01,
+        (f64::from(grown.extent[2]) - 158.2).abs() < 0.01,
         "{:?}",
         grown.extent
     );
     // A draft that pushes nothing reports the two the same.
-    let same = preview_layout(&doc, &in_default_box(&doc, 0, "FIRSTFIR")).unwrap();
+    let same = preview_layout(&doc, &in_default_box(&doc, 0, "FIRSTFI")).unwrap();
     assert_eq!(same.rect, same.extent);
 }
 
@@ -437,11 +451,12 @@ fn a_run_beyond_text_that_cannot_move_is_left_alone() {
     };
     assert_eq!(at(&doc), [40., 100., 220.]);
     // The run at 100 ends at 136 and the wall starts at 160: 24 pt of push, so
-    // the first run may reach 84 pt of text. Eleven characters are 79.2.
+    // the first run may reach 81 pt of text, keeping the word space before the
+    // run it pushes. Eleven characters are 79.2.
     let mut fits = doc.clone();
     write(&mut fits, &[in_default_box(&doc, 0, "FIRSTFIRSTF")]).unwrap();
     let moved = at(&fits);
-    assert!((moved[1] - 119.2).abs() < 0.0001, "{moved:?}");
+    assert!((moved[1] - 122.2).abs() < 0.0001, "{moved:?}");
     assert_eq!(moved[2], 220., "the run past the wall moved: {moved:?}");
     // Twelve are 86.4, which is more room than the wall leaves.
     let error = refusal(&doc, 0, "FIRSTFIRSTFI");
@@ -486,8 +501,9 @@ fn a_run_behind_the_edit_on_its_own_line_is_not_pushed() {
         .unwrap();
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, index, &"F".repeat(30))]).unwrap();
-    // Thirty characters are 216 pt against 60 of room: 156 pt of push.
-    assert!((find(&pushed, "FIRST").matrix[4] - 256.).abs() < 0.0001);
+    // Thirty characters are 216 pt against 57 of room before the kept word
+    // space: 159 pt of push.
+    assert!((find(&pushed, "FIRST").matrix[4] - 259.).abs() < 0.0001);
     assert_eq!(find(&pushed, "F").matrix[4], 10.);
     assert_eq!(
         find(&pushed, "F").display_rect,
@@ -518,10 +534,11 @@ fn a_neighbour_that_already_opens_with_a_displacement_keeps_it() {
     assert_eq!(at(&doc), 112.);
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, &"F".repeat(12))]).unwrap();
-    // Twelve characters are 86.4 pt against 72 of room: 14.4 pt of push, which
-    // is 1200 thousandths on top of the 1000 the source already wrote.
-    assert_eq!(leading(shows(&pushed).last().unwrap()), -2200.);
-    assert!((at(&pushed) - 126.4).abs() < 0.0001, "{}", at(&pushed));
+    // Twelve characters are 86.4 pt against 69 of room before the kept word
+    // space: 17.4 pt of push, which is 1450 thousandths on top of the 1000 the
+    // source already wrote.
+    assert_eq!(leading(shows(&pushed).last().unwrap()), -2450.);
+    assert!((at(&pushed) - 129.4).abs() < 0.0001, "{}", at(&pushed));
 }
 
 // A displacement large enough that a PDF number cannot carry it is refused
@@ -541,11 +558,12 @@ fn a_displacement_beyond_a_pdf_number_refuses_the_push() {
     // 120 / (0.1 / 1000) is 1.2 million.
     let error = refusal(&doc, 0, &"F".repeat(25));
     assert!(error.contains("PDF number precision"), "{error}");
-    // Sixteen characters are 115.2 pt, so 55.2 pt of push, and that number is
-    // inside the range and is written.
+    // Sixteen characters are 115.2 pt, so 58.2 pt of push with the word space
+    // kept at the edited run's 12 pt, and that number is inside the range and
+    // is written.
     let mut fits = doc.clone();
     write(&mut fits, &[in_default_box(&doc, 0, &"F".repeat(16))]).unwrap();
-    assert_eq!(leading(shows(&fits).last().unwrap()), -552000.);
+    assert_eq!(leading(shows(&fits).last().unwrap()), -582000.);
 }
 
 // A read-only show that draws nothing is in no hit list -- `reach` cannot stop
@@ -583,7 +601,7 @@ fn an_edit_in_the_middle_of_a_pushed_line_does_not_carry_the_push() {
     let page = scan(&doc, 0).unwrap();
     assert_eq!(page.runs.len(), 3);
     let changes = [
-        // Eleven characters are 79.2 pt against 60 of room: 19.2 pt of push.
+        // Eleven characters are 79.2 pt against 57 of room: 22.2 pt of push.
         in_default_box(&doc, 0, "FIRSTFIRSTF"),
         // The middle run keeps its own length, so it pushes nothing itself.
         in_default_box(&doc, 1, "FIRSTFIRSTF"),
@@ -602,11 +620,11 @@ fn an_edit_in_the_middle_of_a_pushed_line_does_not_carry_the_push() {
         .map(|run| run.matrix[4])
         .collect();
     xs.sort_by(f64::total_cmp);
-    // The edit, the same-length edit 19.2 on, and its continued show 19.2 on.
+    // The edit, the same-length edit 22.2 on, and its continued show 22.2 on.
     assert_eq!(xs.len(), 3);
     assert_eq!(xs[0], 40.);
-    assert!((xs[1] - 119.2).abs() < 0.0001, "{xs:?}");
-    assert!((xs[2] - 155.2).abs() < 0.0001, "{xs:?}");
+    assert!((xs[1] - 122.2).abs() < 0.0001, "{xs:?}");
+    assert!((xs[2] - 158.2).abs() < 0.0001, "{xs:?}");
 }
 
 // The push is measured from the nearest run it moves, which is not the room the
@@ -745,13 +763,13 @@ fn the_next_line_is_not_pushed_along_with_this_one() {
     let second = find(&saved, "SECOND");
     assert_eq!((second.matrix[4], second.matrix[5]), (100., 166.));
     assert_eq!(find(&saved, "THIRD").matrix[4], 200.);
-    // Twenty-three reach 205.6 and push THIRD, on this line, by 5.6 pt; SECOND
-    // still stays.
+    // Twenty-three reach 205.6 and push THIRD, on this line, by 8.6 pt, keeping
+    // a word space before it; SECOND still stays.
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, &"F".repeat(23))]).unwrap();
     let third = find(&pushed, "THIRD");
     assert!(
-        (third.matrix[4] - 205.6).abs() < 0.0001,
+        (third.matrix[4] - 208.6).abs() < 0.0001,
         "{}",
         third.matrix[4]
     );
@@ -770,14 +788,14 @@ fn text_on_the_next_line_does_not_stop_a_push() {
          BT /F1 12 Tf 150 166 Td [(FIRST) 3000 (F)] TJ ET",
     );
     assert_eq!(scan(&doc, 0).unwrap().runs.len(), 2);
-    // Twelve characters end at 126.4: THIRD goes to 126.4..162.4, over the
-    // read-only run's start at 150, but on its own line.
+    // Twelve characters end at 126.4: THIRD goes to 129.4..165.4, a word space
+    // on, over the read-only run's start at 150, but on its own line.
     let mut pushed = doc.clone();
     write(&mut pushed, &[in_default_box(&doc, 0, &"F".repeat(12))])
         .unwrap_or_else(|error| panic!("{error}"));
     let third = find(&pushed, "THIRD");
     assert!(
-        (third.matrix[4] - 126.4).abs() < 0.0001,
+        (third.matrix[4] - 129.4).abs() < 0.0001,
         "{}",
         third.matrix[4]
     );

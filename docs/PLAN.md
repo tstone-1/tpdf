@@ -4980,7 +4980,7 @@ still refused some runs their own unchanged text, and the fix for that costs a f
 points of acceptance. A number in prose is a measurement of whatever tree produced
 it, which is why the comparison is quoted run by run rather than as a total.)
 
-Three properties of it are decisions rather than consequences, and each is a
+Four properties of it are decisions rather than consequences, and each is a
 constraint on what comes next:
 
 - **Nothing but the edited line moves, down to the last bit.** The push rewrites each
@@ -4988,9 +4988,17 @@ constraint on what comes next:
   cursor; `Td`, `TD`, `T*` and `Tm` all move the line matrix, which every following
   line accumulates in single precision. Rewriting one of those would reintroduce the
   drift `restore_line` was written to remove.
-- **The gap the producer left is spent first.** The distance is measured from the
-  nearest run the push moves, so a replacement that still fits the room moves nothing
-  and is written exactly as it was before; the push begins where growth stopped.
+- **The gap the producer left is spent first, down to one word space.** The distance
+  is measured from a quarter em (the run's own word gap, where it has one) before the
+  nearest run the push moves, or from the run's own far edge where the gap is
+  narrower, so a replacement that still fits the room moves nothing and is written
+  exactly as it was before, and a pushed word never ends up flush against the new
+  text. Changed 2026-09-26: measured from the neighbour's near edge, the gap was spent
+  whole and the IRS W-9 read *emails CHANGEDwebsites*.
+- **A line ends before the next column's gutter.** The next column, on a tagged page
+  as on an untagged one, is never pushed along, and the space between the columns is
+  no room to grow into: a line stops at the widest line on its side (`layout::gutter`)
+  and wraps there, as at the page edge.
 - **A box the reader sized pushes nothing.** Typing a width says something about the
   box, not about anybody else's text on the line, so the push is tied to the same
   `Layout.grow` that growth is.

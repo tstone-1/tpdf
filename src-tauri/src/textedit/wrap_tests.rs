@@ -803,6 +803,135 @@ fn a_line_that_reaches_the_next_column_wraps_on_an_untagged_page() {
     }
 }
 
+/// The standard paragraph, tagged, with its widest line set as two runs and a
+/// second column of five tagged lines at x 206, one paragraph of its own.
+fn tagged_columns() -> Document {
+    tagged_columns_at(206.)
+}
+
+/// [`tagged_columns`] with the second column at `x`.
+fn tagged_columns_at(x: f64) -> Document {
+    let mut body = content(52., "").replace(
+        &format!("({WIDEST}) Tj"),
+        "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ",
+    );
+    for line in 0..5 {
+        body.push_str(&format!(
+            " BT /F1 12 Tf {x} {} Td /P <</MCID {}>> BDC (BRANCH SECOND) Tj EMC ET",
+            200 - 14 * line,
+            4 + line
+        ));
+    }
+    // A heading above both columns, reaching x 200: wider than the left
+    // column's measure, but beside none of the column's lines.
+    body.push_str(
+        " BT /F1 12 Tf 20 226 Td /H1 <</MCID 9>> BDC (FIRSTFIRSTFIRSTFIRSTFIRST) Tj EMC ET",
+    );
+    tagged(&body, &[&[0, 1, 2], &[3], &[4, 5, 6, 7, 8], &[9]])
+}
+
+fn column(doc: &Document) -> Vec<(String, f64, f64)> {
+    placed_runs(doc)
+        .into_iter()
+        .filter(|(text, _, _)| text == "BRANCH SECOND")
+        .collect()
+}
+
+// On a tagged page the next column is where a line ends, as on an untagged
+// one: the push stops at it and never moves its lines. On the IRS W-9 a
+// left-column edit pushed the right-hand column's level line along with its
+// own, because this was asked of untagged pages only.
+#[test]
+fn a_tagged_column_is_not_pushed_along_the_line_beside_it() {
+    // At 206 there is a gutter, which stops the line by itself (`gutter`); set
+    // flush at 192.8, where the widest line ends, there is none, and the
+    // column's own lines are what the push stops at.
+    for x in [206., 192.8] {
+        let doc = tagged_columns_at(x);
+        let before = column(&doc);
+        assert_eq!(before.len(), 5);
+        let saved = wrapped(&doc, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND");
+        assert_eq!(column(&saved), before, "the column at {x} moved");
+        let runs = placed_runs(&saved);
+        // Broken at the paragraph's measure, not at the room before the run
+        // the line would push: that was two words a line.
+        assert!(
+            runs.iter()
+                .any(|(text, _, _)| text.starts_with("FIFTY NINE THEN")),
+            "{x}: {runs:?}"
+        );
+        assert!(
+            at(&runs, LAST).1 < 172.,
+            "{x}: the paragraph did not wrap: {runs:?}"
+        );
+    }
+}
+
+// A line stops before the gutter, not at the next column's text: the widest
+// line on its side, level with the column, is the measure. Stopped at the
+// column, a line filled the gutter until it touched it (the IRS W-4). TEN is on
+// the paragraph's last line; twenty-five characters are 180 pt and would end at
+// 200, past the middle of the 192.8..206 gutter, so the line wraps at 192.8. The
+// heading above, which also reaches 200, is beside none of the column's lines
+// and is not the measure.
+#[test]
+fn a_line_stops_before_the_gutter_and_wraps_at_its_columns_measure() {
+    let doc = tagged_columns();
+    // Twenty-four characters end at 192.8, the measure itself: the short last
+    // line grows to it on its own line, and nothing below moves.
+    let fits = placed_runs(&wrapped(&doc, LAST, "TEN AND ONE SECOND THIRD"));
+    assert!(
+        near(at(&fits, "TEN AND ONE SECOND THIRD"), (20., 172.)),
+        "{fits:?}"
+    );
+    assert!(near(at(&fits, NEXT), (20., 120.)), "{fits:?}");
+    // One more character on the widest line's first run pushes its second 3 pt
+    // into the gutter, to 195.8, which half the gutter allows (199.4); two
+    // more would push it to 203, past the middle but short of the column, and
+    // the line wraps instead.
+    let pushed = placed_runs(&wrapped(&doc, "FIFTY NINE", "FIFTY NINES"));
+    assert!(
+        near(at(&pushed, "ONCE AND DONE"), (102.2, 186.)),
+        "{pushed:?}"
+    );
+    let pushed = wrapped(&doc, "FIFTY NINE", "FIFTY NINESS");
+    for run in scan(&pushed, 0).unwrap().runs {
+        if run.text != "BRANCH SECOND" && run.matrix[5] < 220. {
+            assert!(
+                run.display_rect[2] <= 199.41,
+                "{} ends at {}",
+                run.text,
+                run.display_rect[2]
+            );
+        }
+    }
+    // Half the gutter is room (`GUTTER_SHARE`): with the column at 210 a line
+    // may reach 201.4, so the same twenty-five characters end at 200 on their
+    // own line, and nothing below moves.
+    let wider = placed_runs(&wrapped(
+        &tagged_columns_at(210.),
+        LAST,
+        "TEN AND ONE SECOND THIRDS",
+    ));
+    assert!(
+        near(at(&wider, "TEN AND ONE SECOND THIRDS"), (20., 172.)),
+        "{wider:?}"
+    );
+    assert!(near(at(&wider, NEXT), (20., 120.)), "{wider:?}");
+    let saved = wrapped(&doc, LAST, "TEN AND ONE SECOND THIRDS");
+    for run in scan(&saved, 0).unwrap().runs {
+        if run.text != "BRANCH SECOND" && run.matrix[5] < 220. {
+            assert!(
+                run.display_rect[2] <= 192.81,
+                "{} ends at {}",
+                run.text,
+                run.display_rect[2]
+            );
+        }
+    }
+    assert_eq!(column(&saved), column(&doc), "the column moved");
+}
+
 /// The standard paragraph with its widest line set as two runs, the second
 /// placed by a displacement of one character from the cursor the first leaves:
 /// `FIFTY NINE` from x 20 to 92, and `ONCE AND DONE` from x 99.2 to 192.8.
@@ -1633,7 +1762,10 @@ fn beside(neighbour_first: bool) -> Document {
     } else {
         format!("{lines}{neighbour}{last}")
     };
-    tagged(&body, &[&[0, 1, 2], &[3], &[4]])
+    // The first line is a block of its own: a paragraph of three lines beside
+    // the neighbour is a column (`column_runs`), whose lines no run of another
+    // block pushes along, and this is about a push that happens.
+    tagged(&body, &[&[1, 2], &[3], &[4], &[0]])
 }
 
 // A run of another block, set just left of the paragraph's last line, grows and
@@ -2088,7 +2220,9 @@ fn a_show_riding_a_pushed_line_is_not_also_moved_down_by_a_wrap() {
              BT /F1 12 Tf 20 184 Td /P <</MCID 1>> BDC ({WIDEST}) Tj EMC ET \
              BT /F1 12 Tf 20 120 Td /P <</MCID 3>> BDC ({NEXT}) Tj EMC ET"
         ),
-        &[&[0, 1, 2], &[3], &[4, 5]],
+        // Two lines and a heading, so that the paragraph is no column beside
+        // the neighbour (see `beside`).
+        &[&[1, 2], &[3], &[4, 5], &[0]],
     );
     let push = in_default_box(&doc, index_of(&doc, "A"), "ABCDE");
     let wrap = in_default_box(&doc, index_of(&doc, WIDEST), LONGER);

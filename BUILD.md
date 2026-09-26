@@ -11762,3 +11762,60 @@ W-4 are tagged and set in two columns.
   same reason as the first: on a tagged page nothing ends a line at the next column.
 
 All three are 26.9.19 behaviour, now reachable in documents that were refused outright before.
+They are fixed in the next section.
+
+### Columns on tagged pages, the gutter, and the space before a pushed word — measured 2026-09-26
+
+The three push defects the previous section found, fixed together, since two share a cause.
+
+- **The other column was pushed.** `free_width` asked `column_runs` only on pages without
+  tags. A tagged page's blocks are its structure elements, which tell a column from a row as
+  well as the geometry does, so the question is now asked on every page: a column's lines are
+  never pushed and are where a line ends. The wrap's level check (`wrap_room`) stays untagged
+  only, because there a tagged page's structure already says which lines belong together.
+- **A line filled the gutter.** A column's text was the limit, so a line could grow across
+  the gutter until it touched the next column: the W-4. `layout::gutter` puts a limit in the
+  gutter, measured from the widest line on this side of the column that is level with it (a
+  heading above both columns does not count), and a line may take `GUTTER_SHARE` of it.
+- **The pushed word lost its space.** The push started only once the text reached the next
+  run's near edge, so the gap between them was spent first and the neighbour followed flush:
+  *emails CHANGEDwebsites*. It now keeps the smaller of the gap it had and one word space (the
+  run's own word gap, or a quarter em). A wider gap, a tab stop or the next cell, is still spent
+  down to that space. `docs/PLAN.md` §7 records the changed rule.
+
+**How much of the gutter, measured rather than chosen.** On the 31 files at +25% as typed:
+
+| rule | accepted |
+|---|---:|
+| before this section (lines ran into the next column) | 37,727 |
+| none of the gutter | 36,283 |
+| **half of the gutter** | **37,333** |
+
+With none of it, justified two-column papers (the arXiv pair, LuaTeX, fontspec) have no line
+short of the measure, so every growing line has to wrap, and many of those wraps are refused
+for something else (*part of it below cannot be moved*, *out of line with the text beside
+them*). Half keeps 1,050 of those 1,444 edits and still leaves space between the columns; two
+of them were rendered: an arXiv line running a few points past its column's edge with the gutter
+still clear, and a figure label *C* made *CC*, which touches its circle's outline: the box grows over a
+drawing by design (`obstacles`), so that is not the gutter's doing. The remaining 394 are lines that would take more than half
+the gutter, which is the defect.
+
+**A zero push at the column no longer shrinks the wrap.** With the gutter in the way, a run
+already at its column's measure has no push left; returning *nothing* there handed the wrap the
+room before that run as its measure, and a paragraph came back two words a line. A column stop
+now keeps the whole line for the wrap.
+
+**Checked by hand:** the nine edits of the previous section again, all through `--roundtrip` and
+`qpdf --check`, and the three that were damaged rendered: the W-9's *a CHANGED falsely* keeps
+its space and the right-hand column does not move, and the W-4's *Tax Withholding CHANGED*
+wraps inside its column. The wrap breaks only the edited line, so *established* sits alone on a
+line and the paragraph below it moves down one: correct, not typeset.
+
+**Tests:** `wrap_tests` gained a tagged two-column page (`tagged_columns_at`), with the column
+at a gutter and flush, a line stopping in the gutter, a push into its allowed half and past it;
+the first push test gained a gap narrower than a space. Seventeen push tests were re-measured
+for the kept space, each by hand before the run. Two wrap fixtures split a three-line paragraph,
+which is now a column beside a one-character label and so no longer pushed by it. Ten mutations
+were added under `columns:`, `gutter:` and `push:`; two older `columns:` ones were re-aimed at
+the flush-column case, where the column and not the gutter stops the push, and *push: measure
+the move from the room instead* at the new `from`.
