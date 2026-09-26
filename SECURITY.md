@@ -45,8 +45,9 @@ you do not need to have diagnosed it.
 - A redaction reported as **clean** that is not. A result of *not verified* is a correct
   answer, by design, and is not a vulnerability.
 - Document JavaScript or launch actions executing. Both are disabled by default.
-- Memory-safety defects in our Rust or PDFium modifications reachable from
-  document content.
+- Memory-safety defects in our Rust code, or in the PDFium build we ship, reachable
+  from document content. PDFium is built from its own source without modifications of
+  ours since 26.9.19.
 - Bypassing the font-program, text-mapping or resource bounds used when editing
   embedded text, including Type 1, CFF and CID-keyed CFF programs, Type 3 glyph
   programs and saved fallback font subsets.

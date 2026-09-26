@@ -473,16 +473,14 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** An edit that reaches the edge of the page
-          now wraps on pages without tags too: tpdf works the paragraphs out
-          from the lines themselves, and is more careful there than on a tagged
-          page --- a line on its own does not wrap, and an edit that would move a
-          line away from text set beside it is refused. A wrap now moves the
-          paragraphs below it down, keeps a blank line in every paragraph break,
-          and splits the text after the edit between words. Text set right
-          against the edit is pushed along, and no edit can push text off the
-          page or onto other text. A tab closes with a middle-click, *Close all
-          tabs* closes every one, and the tab labels' size is a setting.
+          **New in this release.** Text now wraps on pages set in two columns
+          without tags, including columns whose lines do not share baselines, and
+          past superscripts, footnote marks and the lowered E of the TeX logo. A
+          link over a line that a wrap moves goes with it, and edited lines may
+          sit as close to their neighbours as the document's own lines do. Across
+          a public sample of 31 documents, an edit a quarter longer than the text
+          it replaces is now accepted 79% of the time, up from 61%. PDFium is now
+          built without modifications of our own.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
