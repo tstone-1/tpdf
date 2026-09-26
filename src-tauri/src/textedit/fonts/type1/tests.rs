@@ -877,6 +877,10 @@ fn textedit_type1_to_unicode_narrows_but_never_contradicts_names() {
     );
 }
 
+// Rights that forbid editing keep the font out of every new text, and only
+// that: its runs are still read and offered, a replacement is set in Noto, and
+// a reader who asks for the original font, or an edit with no layout that
+// could only be written in it, is refused with the reason.
 #[test]
 fn textedit_type1_rights_restrict_editing() {
     for (rights, allowed) in [
@@ -892,9 +896,60 @@ fn textedit_type1_rights_restrict_editing() {
             &font,
             Object::Name(b"StandardEncoding".to_vec()),
             None,
-            "BT /F1 12 Tf 40 180 Td (ABC) Tj ET",
+            "BT /F1 12 Tf 40 180 Td (ABC) Tj ET BT /F1 12 Tf 40 60 Td (XYZ) Tj ET",
         );
-        assert_eq!(textedit::scan(&doc, 0).is_ok(), allowed, "{rights}");
+        let scan = textedit::scan(&doc, 0).unwrap();
+        assert_eq!(scan.runs[0].text, "ABC", "{rights}");
+        let change = |replacement: &str, font: Option<textedit::EditFont>| Change {
+            page: 0,
+            revision: scan.revision.clone(),
+            operator: scan.runs[0].operator,
+            original: "ABC".into(),
+            replacement: replacement.into(),
+            layout: font.map(|font| textedit::Layout {
+                width: 200.,
+                height: 16.,
+                size: 12.,
+                wrap: false,
+                font,
+                grow: false,
+            }),
+        };
+        let plain = textedit::write(&mut doc.clone(), &[change("CBA", None)]);
+        let original =
+            textedit::preview_layout(&doc, &change("CBA", Some(textedit::EditFont::Original)));
+        let auto = change("CBA", Some(textedit::EditFont::Auto));
+        let label = textedit::preview_layout(&doc, &auto).unwrap().font;
+        if allowed {
+            assert!(plain.is_ok(), "{rights}");
+            assert!(original.is_ok(), "{rights}");
+            assert_eq!(label, "TPDFSyntheticOne", "{rights}");
+            continue;
+        }
+        assert!(plain.unwrap_err().contains("does not permit"), "{rights}");
+        assert_eq!(
+            original.unwrap_err(),
+            "This text's font does not permit editing. Choose automatic fallback or a Noto font."
+        );
+        assert_eq!(
+            label,
+            "Noto Sans (the document's font does not permit editing)"
+        );
+        let mut written = doc.clone();
+        textedit::write(&mut written, &[auto]).unwrap();
+        let after = textedit::scan(&written, 0).unwrap();
+        let texts: Vec<_> = after.runs.iter().map(|run| run.text.as_str()).collect();
+        assert!(
+            texts.contains(&"CBA") && texts.contains(&"XYZ"),
+            "{texts:?}"
+        );
+        let moved = after.runs.iter().find(|run| run.text == "CBA").unwrap();
+        assert_ne!(moved.font, scan.runs[0].font, "{rights}");
+        let kept = after.runs.iter().find(|run| run.text == "XYZ").unwrap();
+        assert_eq!(kept.font, scan.runs[1].font);
+        // Deleting writes nothing in any font, so it needs no other one.
+        let mut deleted = doc.clone();
+        textedit::write(&mut deleted, &[change("", Some(textedit::EditFont::Auto))]).unwrap();
     }
 }
 

@@ -50,7 +50,14 @@ fn top(top: &Dict, strings: &[&[u8]]) -> Option<()> {
             1205 | 1208 | 1233 => values == &[0.],
             1206 => values == &[2.],
             1207 => values == &[0.001, 0., 0., 0.001, 0., 0.],
-            1221 => values.len() == 1 && permissions(string(strings, values[0])?).is_ok(),
+            1221 => {
+                // A CID-keyed program that forbids editing stays refused, and
+                // its text read-only, as before simple fonts learned to keep
+                // one for reading (`Metrics::restricted`).
+                values.len() == 1
+                    && permissions(string(strings, values[0])?)
+                        .is_ok_and(|rights| !super::super::restricts(rights))
+            }
             1230 => {
                 values.len() == 3
                     && string(strings, values[0])? == b"Adobe"

@@ -125,7 +125,18 @@ fn textedit_macroman_requires_matching_encoding_and_honours_present_rights() {
             .content;
         let offset = table_offset(b"OS/2") + 8;
         bytes[offset..offset + 2].copy_from_slice(&rights.to_be_bytes());
-        assert!(textedit::scan(&doc, 0)
+        // Read and offered, but never written in: rights restrict editing
+        // with the font, not the text set in it.
+        let scan = textedit::scan(&doc, 0).unwrap();
+        let change = textedit::Change {
+            page: 0,
+            revision: scan.revision.clone(),
+            operator: scan.runs[0].operator,
+            original: scan.runs[0].text.clone(),
+            replacement: "A".into(),
+            layout: None,
+        };
+        assert!(textedit::write(&mut doc, &[change])
             .unwrap_err()
             .contains("editable use"));
     }
@@ -319,7 +330,17 @@ fn textedit_embedded_refuses_restricted_missing_or_corrupt_programs() {
             .unwrap();
         let start = table_offset(b"OS/2") + 8;
         stream.content[start..start + 2].copy_from_slice(&rights.to_be_bytes());
-        assert!(textedit::scan(&doc, 0)
+        // Read and offered; only writing in the font is refused.
+        let scan = textedit::scan(&doc, 0).unwrap();
+        let change = Change {
+            layout: None,
+            page: 0,
+            operator: scan.runs[0].operator,
+            revision: scan.revision.clone(),
+            original: scan.runs[0].text.clone(),
+            replacement: "SYNTHETIC".into(),
+        };
+        assert!(textedit::write(&mut doc, &[change])
             .unwrap_err()
             .contains("editable use"));
     }
@@ -1232,22 +1253,23 @@ fn textedit_a_single_point_glyph_paints_nothing() {
     }
 }
 
-// A font the editor cannot write with keeps its text read-only when its own
-// widths and bounding box can measure it: the rest of the page edits, and the
-// text in that font is written back byte for byte. A page left with nothing
-// to edit is refused with the font's reason, and a font that cannot even be
-// measured refuses the page as before.
+// A font the editor cannot read -- here a program cut short -- keeps its text
+// read-only when its own widths and bounding box can measure it: the rest of
+// the page edits, and the text in that font is written back byte for byte. A
+// page left with nothing to edit is refused with the font's reason, and a
+// font that cannot even be measured refuses the page as before. (A font whose
+// rights forbid editing is read, and its text replaced in Noto:
+// `textedit_type1_rights_restrict_editing`.)
 #[test]
-fn textedit_a_font_that_forbids_editing_keeps_its_text_read_only() {
+fn textedit_a_font_tpdf_cannot_read_keeps_its_text_read_only() {
     let restricted = || {
         let (mut doc, font, descriptor, program) = fixture();
-        let start = table_offset(b"OS/2") + 8;
         doc.get_object_mut(program)
             .unwrap()
             .as_stream_mut()
             .unwrap()
-            .content[start..start + 2]
-            .copy_from_slice(&2_u16.to_be_bytes());
+            .content
+            .truncate(SYNTHETIC.len() / 2);
         let helvetica = doc.add_object(dictionary! {
             "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
         });
@@ -1318,9 +1340,10 @@ fn textedit_a_font_that_forbids_editing_keeps_its_text_read_only() {
         b"BT /F1 12 Tf 40 180 Td (FIRST) Tj ET".to_vec(),
     ));
     doc.get_dictionary_mut(page).unwrap().set("Contents", only);
-    assert!(textedit::scan(&doc, 0)
-        .unwrap_err()
-        .contains("editable use"));
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap_err(),
+        "unsupported embedded TrueType program"
+    );
     // Without widths, or with a box that bounds nothing, it cannot be measured.
     for broken in ["Widths", "FontBBox"] {
         let (mut doc, font, descriptor) = restricted();
@@ -1335,7 +1358,7 @@ fn textedit_a_font_that_forbids_editing_keeps_its_text_read_only() {
         assert!(
             textedit::scan(&doc, 0)
                 .unwrap_err()
-                .contains("editable use"),
+                .contains("unsupported embedded TrueType"),
             "{broken}"
         );
     }

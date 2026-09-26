@@ -223,6 +223,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             |cid| program.glyph(cid),
         )?;
         return Ok(Metrics {
+            restricted: false,
             opaque: None,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical_bounds),
@@ -232,7 +233,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         });
     }
     let bytes = super::program(doc, descriptor)?;
-    let face = super::face(&bytes, false)?;
+    let (face, restricted) = super::rights_face(&bytes, false)?;
     if let Some(mapping) = &glyph_mapping {
         let (unicode, vertical_bounds) = super::unicode::Metrics::with_glyphs(
             &face,
@@ -242,13 +243,15 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
             Some(mapping),
         )?;
         return Ok(Metrics {
+            restricted: false,
             opaque: None,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical_bounds),
             widths: Box::new([None; 256]),
             horizontal_overhangs: None,
             codes: None,
-        });
+        }
+        .restricted(restricted));
     }
     let codes = match mapping::parse_cid(stream) {
         Ok(codes) => codes,
@@ -260,13 +263,15 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
                 &widths,
             )?;
             return Ok(Metrics {
+                restricted: false,
                 opaque: None,
                 unicode: Some(unicode),
                 vertical_bounds: Some(vertical_bounds),
                 widths: Box::new([None; 256]),
                 horizontal_overhangs: None,
                 codes: None,
-            });
+            }
+            .restricted(restricted));
         }
     };
     let unit = 1000. / f64::from(face.units_per_em());
@@ -306,11 +311,13 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         result[ch as usize] = Some(width);
     }
     Ok(Metrics {
+        restricted: false,
         opaque: None,
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,
         horizontal_overhangs: Some(horizontal_overhangs),
         codes: Some(Codes::Double(codes)),
-    })
+    }
+    .restricted(restricted))
 }

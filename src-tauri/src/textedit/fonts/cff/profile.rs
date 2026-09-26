@@ -131,7 +131,7 @@ pub(super) fn top(bytes: &[u8]) -> Option<Dict> {
     dict(tops.first()?)
 }
 
-pub(super) fn validate(bytes: &[u8]) -> Result<(), String> {
+pub(super) fn validate(bytes: &[u8]) -> Result<Option<i64>, String> {
     if bytes.len() < 4
         || bytes[0] != 1
         || bytes[1] != 0
@@ -156,6 +156,7 @@ pub(super) fn validate(bytes: &[u8]) -> Result<(), String> {
     let mut pos = 0;
     let mut operands = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut rights = None;
     while pos < top.len() {
         if top[pos] >= 28 {
             operands.push(number(top, &mut pos).ok_or(INVALID)?);
@@ -187,7 +188,7 @@ pub(super) fn validate(bytes: &[u8]) -> Result<(), String> {
             1207 => operands == [0.001, 0., 0., 0.001, 0., 0.],
             1221 if operands.len() == 1 && operands[0] >= 391. && operands[0].fract() == 0. => {
                 let value = strings.get((operands[0] - 391.) as usize).ok_or(INVALID)?;
-                permissions(value)?;
+                rights = Some(permissions(value)?);
                 true
             }
             _ => false, // No synthetic bases, CID fonts, blends or unknown semantics.
@@ -200,10 +201,11 @@ pub(super) fn validate(bytes: &[u8]) -> Result<(), String> {
     if !operands.is_empty() {
         return Err(INVALID.into());
     }
-    Ok(())
+    Ok(rights)
 }
 
-pub(super) fn permissions(bytes: &[u8]) -> Result<(), String> {
+// A `/FSType N def` string's rights, which `fonts::restricts` reads.
+pub(super) fn permissions(bytes: &[u8]) -> Result<i64, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| INVALID)?;
     let tokens: Vec<_> = text.split_ascii_whitespace().collect();
     if !(tokens.len() == 3
@@ -217,10 +219,7 @@ pub(super) fn permissions(bytes: &[u8]) -> Result<(), String> {
         return Err(INVALID.into());
     }
     let rights: u16 = tokens[1].parse().map_err(|_| INVALID)?;
-    if rights & !0x108 != 0 {
-        return Err("embedded CFF font does not permit this editable use".into());
-    }
-    Ok(())
+    Ok(i64::from(rights))
 }
 
 #[cfg(test)]
@@ -283,19 +282,24 @@ mod tests {
 
     #[test]
     fn textedit_cff_metadata_only_accepts_editable_literal_permissions() {
-        for value in [
-            "/FSType 0 def",
-            "/FSType 8 def",
-            "/FSType 256 def",
-            "/FSType 264 def /OrigFontType /OpenType def",
-            "/FSType 8 def /OrigFontType /Type1 def",
+        for (value, restricted) in [
+            ("/FSType 0 def", false),
+            ("/FSType 8 def", false),
+            ("/FSType 256 def", false),
+            ("/FSType 264 def /OrigFontType /OpenType def", false),
+            ("/FSType 8 def /OrigFontType /Type1 def", false),
+            ("/FSType 2 def", true),
+            ("/FSType 4 def", true),
+            ("/FSType 512 def", true),
         ] {
-            assert!(permissions(value.as_bytes()).is_ok());
+            let rights = permissions(value.as_bytes()).unwrap();
+            assert_eq!(
+                super::super::super::restricts(rights),
+                restricted,
+                "{value}"
+            );
         }
         for value in [
-            "/FSType 2 def",
-            "/FSType 4 def",
-            "/FSType 512 def",
             "/FSType 65536 def",
             "/FSType -1 def",
             "/FSType 8.0 def",

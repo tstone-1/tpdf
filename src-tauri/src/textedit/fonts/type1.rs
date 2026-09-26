@@ -400,10 +400,6 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
     );
     let bytes = filters::decode(stream, super::super::MAX_CONTENT)?;
     let program = program::parse(&bytes, length1, length2, length3)?;
-    // The same embedding permissions as an OpenType OS/2 fsType, when present.
-    if program.rights.is_some_and(|rights| rights & !0x108 != 0) {
-        return Err("embedded font does not permit this editable use".into());
-    }
     measured(doc, font, &program)
 }
 
@@ -429,6 +425,8 @@ fn measured(
     font: &Dictionary,
     program: &program::Program,
 ) -> Result<Metrics, String> {
+    // The same embedding permissions as an OpenType OS/2 fsType, when present.
+    let restricted = program.rights.is_some_and(super::restricts);
     let names = names(doc, font, &program.encoding)?;
     let first = font
         .get(b"FirstChar")
@@ -555,11 +553,13 @@ fn measured(
         }
     }
     Ok(Metrics {
+        restricted: false,
         opaque: Some(opaque),
         unicode: None,
         widths: result,
         codes: Some(Codes::Single(codes)),
         vertical_bounds: Some(vertical_bounds),
         horizontal_overhangs: Some(overhangs),
-    })
+    }
+    .restricted(restricted))
 }

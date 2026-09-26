@@ -485,9 +485,22 @@ its PDF `Widths` over printable Latin-1, with the descriptor's `FontBBox` as the
 ink of every glyph so its text can be kept read-only. Readers substitute the
 shapes and position by those widths, as they do for standard Helvetica.
 
-A simple font the editor cannot write with -- a program it does not validate, a
-character map it cannot read, embedding rights that forbid editing -- no longer
-refuses the page when `fonts::read_only` can measure it: Type 1, MMType1 or
+A font whose embedding rights forbid editing with it -- anything beyond the
+editable (0x8) and no-subsetting (0x100) bits of an OS/2 `fsType`, a Type 1
+`FSType` or a CFF `/FSType` string, tested by `fonts::restricts` -- is read and
+measured like any other, and `Metrics::restricted` marks it. Its runs are
+offered, but no new text is encoded in it: `Metrics::encode` refuses anything
+but an empty show, so an edit without a layout is refused with *embedded font
+does not permit this editable use*, automatic layout sets the replacement in the
+bundled Noto Sans style matching the font's name, the preview names it as
+*Noto Sans (the document's font does not permit editing)*, and a layout that
+asks for the original font is refused with a message naming the two choices.
+Deleting the text writes nothing in the font and goes ahead; text left in it is
+kept byte for byte. A CID-keyed CFF program with such rights is still refused,
+and its text stays read-only.
+
+A simple font the editor cannot write with -- a program it does not validate or
+a character map it cannot read -- no longer refuses the page when `fonts::read_only` can measure it: Type 1, MMType1 or
 TrueType with `FirstChar`/`LastChar`/`Widths` and a descriptor whose `FontBBox`
 (`fonts::font_box`, shared with `unembedded`) is ordered and within 4000 units.
 Every code is then opaque, advanced by its `Widths` entry or `MissingWidth` and
@@ -570,7 +583,7 @@ program's built-in encoding in format 0 or 1 (`cff/encoding.rs::builtin`;
 Expert and supplements refused); a nonsymbolic one with an `/Encoding` keeps
 the WinAnsi CFF path. Typst's TrueType subsets carry no OS/2 table; `fonts::face`
 accepts a program without one as unrestricted, like a Type 1 or CFF program with no
-`FSType`, and a present table's restrictions still refuse (`docs/THREAT-MODEL.md`
+`FSType`, and a present table's restrictions mark the font restricted (`docs/THREAT-MODEL.md`
 residual risk 23).
 
 A `cm` inside a text block is accepted before the block's first show. ISO

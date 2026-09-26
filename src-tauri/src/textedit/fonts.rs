@@ -112,12 +112,39 @@ pub(super) struct Metrics {
     // PDF codes to metric slots. Each font path validates its offered repertoire.
     // None retains the WinAnsi/Latin-1 path.
     codes: Option<Codes>,
+    // The program's embedding rights forbid editing with it (`restricts`). Its
+    // text is still read and measured, so a run in it can be replaced, but no
+    // new text is ever encoded in it: `encode` refuses, and an automatic
+    // layout sets the replacement in the bundled Noto instead.
+    restricted: bool,
+}
+
+/// The message for a font whose embedding rights forbid editing with it.
+pub(super) const RESTRICTED: &str = "embedded font does not permit this editable use";
+
+/// Whether OS/2 `fsType` rights, or a Type 1 or CFF program's `FSType`, forbid
+/// editing with the font: anything beyond the editable-embedding bit (0x8) and
+/// the no-subsetting bit (0x100), which a preserved document font never needs.
+pub(super) fn restricts(rights: i64) -> bool {
+    rights & !0x108 != 0
 }
 
 pub(super) mod fallback;
 mod fallback_subset;
 
 impl Metrics {
+    /// The same metrics, marked as a font no new text may be encoded in when
+    /// `restricted`.
+    pub(super) fn restricted(mut self, restricted: bool) -> Self {
+        self.restricted = restricted;
+        self
+    }
+
+    /// Whether the font's embedding rights forbid encoding new text in it.
+    pub(super) fn is_restricted(&self) -> bool {
+        self.restricted
+    }
+
     fn text_slots(&self, text: &str) -> Result<Vec<u8>, String> {
         let bytes = super::encode_text(text)?;
         if !ligatures::GLYPHS
@@ -151,6 +178,7 @@ impl Metrics {
             ));
         }
         Self {
+            restricted: false,
             opaque: None,
             unicode: None,
             vertical_bounds: None,
@@ -320,7 +348,7 @@ impl Metrics {
     /// Whether a space can be written as a glyph. TeX fonts and some subsets
     /// have none; their producers show word gaps as TJ displacements instead.
     pub(super) fn writes_space(&self) -> bool {
-        self.encode(" ").is_ok()
+        self.codes_for(" ").is_ok()
     }
 
     /// The TJ items that show `text`: one string, or, in a font that cannot
@@ -378,6 +406,17 @@ impl Metrics {
     }
 
     pub(super) fn encode(&self, text: &str) -> Result<Vec<u8>, String> {
+        // An empty show paints no glyph, so it is no use of the font: a
+        // deletion, or a writer restoring the cursor after a replacement.
+        if self.restricted && !text.is_empty() {
+            return Err(RESTRICTED.into());
+        }
+        self.codes_for(text)
+    }
+
+    // The codes that would show `text`, whatever the font's rights: what the
+    // font can write, as `writes_space` asks, rather than what it may.
+    fn codes_for(&self, text: &str) -> Result<Vec<u8>, String> {
         if let Some(metrics) = &self.unicode {
             return metrics.encode(text);
         }
@@ -698,6 +737,7 @@ pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, S
         }
     }
     Ok(Metrics {
+        restricted: false,
         opaque: None,
         unicode: None,
         vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
@@ -779,6 +819,7 @@ pub(super) fn read_only(doc: &Document, font: &Dictionary) -> Option<Metrics> {
 /// held between `bottom` and `top` of the font's box.
 fn opaque_metrics(opaque: Box<[Option<Opaque>; 256]>, bottom: f64, top: f64) -> Metrics {
     Metrics {
+        restricted: false,
         opaque: Some(opaque),
         unicode: None,
         vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
@@ -884,7 +925,7 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         return Err(invalid());
     }
     let bytes = program(doc, descriptor)?;
-    let face = face(&bytes, mac_roman || custom)?;
+    let (face, restricted) = rights_face(&bytes, mac_roman || custom)?;
     let cmap = face.tables().cmap.ok_or_else(invalid)?;
     if cmap.subtables.len() > 8
         || cmap.subtables.into_iter().count() != usize::from(cmap.subtables.len())
@@ -1024,13 +1065,15 @@ pub(super) fn embedded(doc: &Document, font: &Dictionary) -> Result<Metrics, Str
         result[byte as usize] = Some(width);
     }
     Ok(Metrics {
+        restricted: false,
         opaque: None,
         unicode: None,
         vertical_bounds: Some(vertical_bounds),
         widths: result,
         horizontal_overhangs: Some(horizontal_overhangs),
         codes: codes.map(Codes::Single),
-    })
+    }
+    .restricted(restricted))
 }
 
 fn program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
@@ -1053,6 +1096,17 @@ fn program(doc: &Document, descriptor: &Dictionary) -> Result<Vec<u8>, String> {
 }
 
 fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
+    let (face, restricted) = rights_face(bytes, allow_apple)?;
+    if restricted {
+        return Err(RESTRICTED.into());
+    }
+    Ok(face)
+}
+
+// A validated program, and whether its OS/2 rights forbid editing with it.
+// A document font is read either way; `Metrics::restricted` keeps new text
+// out of one that forbids it.
+fn rights_face(bytes: &[u8], allow_apple: bool) -> Result<(Face<'_>, bool), String> {
     let invalid = || "unsupported embedded TrueType program".to_string();
     let apple_true = allow_apple && bytes.get(..4) == Some(b"true");
     if !apple_true && bytes.get(..4) != Some(&[0, 1, 0, 0]) {
@@ -1072,14 +1126,13 @@ fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
     // (ISO 32000-1 9.9 lists the tables a reader needs; Typst drops OS/2 from
     // every subset). A program that declares no rights is edited as one that
     // declares no restriction, as Type 1 and CFF programs without an FSType
-    // are; present restrictions still refuse (THREAT-MODEL residual risk 23).
+    // are; present restrictions mark the font restricted (THREAT-MODEL
+    // residual risk 23).
     // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
+    let mut restricted = false;
     if let Some(os2) = face.raw_face().table(Tag::from_bytes(b"OS/2")) {
         let rights = os2.get(8..10).ok_or_else(invalid)?;
-        let rights = u16::from_be_bytes([rights[0], rights[1]]);
-        if rights & !0x108 != 0 {
-            return Err("embedded font does not permit this editable use".into());
-        }
+        restricted = restricts(i64::from(u16::from_be_bytes([rights[0], rights[1]])));
     }
-    Ok(face)
+    Ok((face, restricted))
 }

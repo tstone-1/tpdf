@@ -174,17 +174,23 @@ fn textedit_cff_refuses_unvalidated_program_semantics_and_permissions() {
         include_bytes!("fixtures/matrix.cff").as_slice(),
         include_bytes!("fixtures/paint.cff"),
         include_bytes!("fixtures/charstring.cff"),
-        include_bytes!("fixtures/preview-only.cff"),
         include_bytes!("fixtures/unknown-postscript.cff"),
     ] {
         let (doc, font, _, _) = fixture(bytes);
         assert!(embedded(&doc, doc.get_dictionary(font).unwrap()).is_err());
     }
+    // A program whose rights forbid editing is read and measured, and never
+    // written in.
     let (doc, font, _, _) = fixture(include_bytes!("fixtures/preview-only.cff"));
-    assert!(embedded(&doc, doc.get_dictionary(font).unwrap())
-        .err()
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert!(metrics.is_restricted());
+    assert!(metrics.advance("A", 12.).is_ok());
+    assert!(metrics.writes_space());
+    assert!(metrics.encode("A").unwrap_err().contains("does not permit"));
+    let (doc, font, _, _) = fixture(NORMAL);
+    assert!(!embedded(&doc, doc.get_dictionary(font).unwrap())
         .unwrap()
-        .contains("does not permit"));
+        .is_restricted());
     for length in [0, 3, 8, NORMAL.len() / 2] {
         let (doc, font, _, _) = fixture(&NORMAL[..length]);
         assert!(embedded(&doc, doc.get_dictionary(font).unwrap()).is_err());

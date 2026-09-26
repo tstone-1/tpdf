@@ -485,10 +485,9 @@ fn textedit_composite_checks_embedding_rights_and_program_format() {
             .unwrap();
         let offset = u32::from_be_bytes(record[8..12].try_into().unwrap()) as usize;
         bytes[offset + 8..offset + 10].copy_from_slice(&rights.to_be_bytes());
-        assert_eq!(
-            embedded(&doc, doc.get_dictionary(font).unwrap()).is_ok(),
-            [0, 8, 0x108].contains(&rights)
-        );
+        let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+        assert_eq!(metrics.is_restricted(), ![0, 8, 0x108].contains(&rights));
+        assert_eq!(metrics.encode("A").is_ok(), [0, 8, 0x108].contains(&rights));
     }
     for remove_os2 in [false, true] {
         let (mut doc, [font, _, descriptor, _]) = fixture();

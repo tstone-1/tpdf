@@ -81,6 +81,8 @@ struct Spec {
     private: Vec<u8>,
     select: Option<Vec<u8>>,
     registry: &'static [u8],
+    // A third string, SID 393, for a Top DICT entry to name.
+    string: Option<&'static [u8]>,
 }
 
 impl Spec {
@@ -98,6 +100,7 @@ impl Spec {
             private: [int(500), vec![20], int(NOMINAL), vec![21]].concat(),
             select: None,
             registry: b"Adobe",
+            string: None,
         }
     }
 
@@ -118,7 +121,9 @@ impl Spec {
             let mut out = vec![1, 0, 4, 4];
             out.extend(index(&[b"TPDFCID"]));
             out.extend(index(&[&top]));
-            out.extend(index(&[self.registry, b"Identity"]));
+            let mut strings = vec![self.registry, b"Identity".as_slice()];
+            strings.extend(self.string);
+            out.extend(index(&strings));
             out.extend(index(&[]));
             let mut pos = [0; 5];
             pos[0] = out.len();
@@ -475,6 +480,23 @@ fn textedit_cid_programs_refuse_what_they_cannot_state() {
     let bytes = Spec::new().build();
     for len in 0..bytes.len() {
         assert!(parse(&bytes[..len]).is_err(), "prefix {len}");
+    }
+}
+
+// A CID-keyed program whose rights forbid editing is refused, so its text
+// stays read-only: only simple fonts are read for replacement in Noto.
+#[test]
+fn textedit_cid_cff_refuses_restricted_rights() {
+    for (rights, allowed) in [
+        (b"/FSType 8 def".as_slice(), true),
+        (b"/FSType 0 def", true),
+        (b"/FSType 4 def", false),
+        (b"/FSType 2 def", false),
+    ] {
+        let mut spec = Spec::new();
+        spec.string = Some(rights);
+        spec.top = [int(393), vec![12, 21]].concat();
+        assert_eq!(parse(&spec.build()).is_ok(), allowed, "{rights:?}");
     }
 }
 

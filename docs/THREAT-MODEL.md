@@ -3327,7 +3327,11 @@ which is what makes it evidence rather than a milestone.
     2026-09-18. Text editing reuses glyphs already embedded in the document and never
     extracts, installs or copies a font program elsewhere; where a program states its rights
     (a TrueType or OpenType OS/2 `fsType`, a Type 1 `FSType`, a CFF PostScript `/FSType`),
-    anything but installable or editable embedding refuses the edit. A program with no such
+    anything but installable or editable embedding keeps new text out of that font: since
+    2026-09-26 its text is still read and can be replaced or deleted, but a replacement is set
+    in the bundled OFL Noto Sans and a request to write it in the original font is refused,
+    so no glyph of a restricted program is ever used for text it did not already show. A
+    CID-keyed CFF program with such rights still refuses the edit. A program with no such
     declaration was accepted for Type 1, CFF and Apple TrueType, and since this date for
     OpenType-style TrueType too, because Typst drops OS/2 from every TrueType subset and ISO
     32000-1 does not require the table in an embedded program. The residue is a licence

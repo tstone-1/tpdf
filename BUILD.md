@@ -11691,8 +11691,10 @@ each of `tagging.rs`'s generic refusals, replayed on the InDesign letter and the
 sheet, named each blocker in turn: ActualText on a structure element (now pins, as Alt does), a
 language beside the MCID, a tab spacer showing one space for several tabs, an empty spacer or an
 empty paragraph between text objects, and a Span inside a Figure (pinned). Each is kept rather
-than refused, and what each describes stays read-only. The letter is then refused for its font's
-licence, and the fact sheet for text boxes inside table cells; neither is changed here.
+than refused, and what each describes stays read-only. The letter is then refused for artifact
+properties the editor does not read (corrected 2026-09-26: this said its font's licence, which the
+records of this very run do not show), and the fact sheet for text boxes inside table cells;
+neither is changed here.
 
 **Before and after, the 31 files:** editable pages 629 → **667**, runs offered 44,282 → 46,449,
 documents with editable text 19 → 20, and over every trial `--compare` found no verdict
@@ -11705,8 +11707,58 @@ and the ReportLab guide, through `--roundtrip` and `qpdf --check`, all passing; 
 looked at, each changing only the edited text, which the crop to every changed pixel shows.
 
 **What is left, and why.** 48 pages are text wholly in a licence-restricted CFF font (the
-Highmark brochure, the W-9, the W-4, the letter): editable only by setting new text in another
-font, the bundled Noto, which is a decision rather than a fix. The Canada Post invoice's table
+Highmark brochure, the W-9, the W-4): editable only by setting new text in another font, the
+bundled Noto, which is a decision rather than a fix (taken the same day, next section). The Canada Post invoice's table
 cells name a header no element carries, and stays refused as the broken structure it is. The
 rest are single documents: the passport guidance's Unicode map, the fact sheet's cells, the
 Latin-1 limit.
+
+### Replacing text set in a font that forbids editing — measured 2026-09-26
+
+The decision the previous section left open was taken: text in a font whose embedding rights
+forbid editing may be replaced, with the replacement set in the bundled Noto Sans, and the editor
+says so. The font is now read like any other, so its runs are offered, and `Metrics::restricted`
+keeps new text out of it: `encode` refuses anything but an empty show. Automatic layout, which
+the editor always sends, then chooses Noto by the font's name (bold, italic), and the preview line
+reads *Noto Sans (the document's font does not permit editing)*. Asking for the original font is
+refused with the two choices that work; an edit with no layout is refused with the licence
+reason; deleting the text writes nothing in the font and goes ahead. Text not edited stays in the
+original font byte for byte. The rights test is one function, `fonts::restricts`, used by the
+OS/2 `fsType`, Type 1 `FSType` and CFF `/FSType` readers alike. A CID-keyed CFF program with such
+rights is still refused (its text read-only), because nothing in the sample needs it.
+
+**Before and after, the 31 files:** documents with editable text 20 → **22** (the Highmark
+brochure and the W-9), pages 667 → **680**, runs offered 46,449 → 47,435, and at +25% as typed
+36,862 → **37,727** accepted. `--compare` found no verdict accepted before and refused now, 3
+refused before and accepted now, and 13,706 verdicts newly offered, 7,637 of them accepted. The
+W-4 went from one offered `▲` to 822 runs.
+
+**Fourteen unchanged edits are refused, and that is expected.** Retyping a run's own text in a
+restricted font sets it in Noto, which is wider, and on 14 lines of the W-4 and the brochure it
+does not fit. The editor submits nothing for unchanged text, so no reader meets this; it shows
+only in the probe's identity trial.
+
+**The next refusal in those documents** is not the font: 31 of the brochure's pages stop at
+*unsupported CFF glyph name*, and the IRS forms at *text contains an unmapped font code* (6
+pages). The letter was never refused for its font: its one page stops at *unsupported artifact
+properties*, as the previous section now says.
+
+**Checked by hand:** nine newly offered edits, three each in the W-9, the W-4 and the brochure,
+through `--roundtrip` and `qpdf --check`, all passing, and all nine renders looked at. Five are
+right: the replacement is Noto Sans at the run's size and colour and nothing else moved. One of
+them shows the style rule's limit: a run in PlantinMTPro-Semibold is set in Noto Sans Bold,
+because the style is read from the font's name and *Semibold* contains *bold*.
+
+**Three exposed older defects in the push, not this change.** Page 6 of the W-9 and page 2 of the
+W-4 are tagged and set in two columns.
+
+- In two W-9 edits, growing a line in the left column pushed the level line of the right-hand
+  column along by the same distance. The column exemption of *Two columns on pages without tags*
+  applies only to untagged pages, so on a tagged page every run level with the line is pushed.
+- In the same two, the edited run's neighbour lost the space before it (*emails CHANGEDwebsites*).
+  The push starts only once the text passes the next run's near edge (`from` in `free_width`), so
+  the gap between them is used up first, whatever the page.
+- In the W-4, a line grew across the gutter until it touched the next column's text, for the
+  same reason as the first: on a tagged page nothing ends a line at the next column.
+
+All three are 26.9.19 behaviour, now reachable in documents that were refused outright before.

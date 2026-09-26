@@ -120,7 +120,7 @@ pub(super) const ASCII_NAMES: [&str; 95] = [
 // A glyph whose outline does not validate is left out, as the Type 1 reader
 // leaves out a charstring it cannot interpret.
 pub(super) fn named(bytes: &[u8]) -> Result<Program, String> {
-    profile::validate(bytes)?;
+    let rights = profile::validate(bytes)?;
     let face = Table::parse(bytes).ok_or(INVALID)?;
     let matrix = face.matrix();
     if [
@@ -155,8 +155,7 @@ pub(super) fn named(bytes: &[u8]) -> Result<Program, String> {
     }
     Ok(Program {
         glyphs,
-        // `validate` has already refused a program that restricts editing.
-        rights: None,
+        rights,
         encoding: encoding::builtin(bytes, &face)?,
     })
 }
@@ -203,7 +202,7 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         return Err(INVALID.into());
     }
     let bytes = filters::decode(stream, super::super::MAX_CONTENT)?;
-    profile::validate(&bytes)?;
+    let restricted = profile::validate(&bytes)?.is_some_and(super::restricts);
     let face = Table::parse(&bytes).ok_or(INVALID)?;
     let matrix = face.matrix();
     if [
@@ -283,11 +282,13 @@ pub(in crate::textedit) fn embedded(doc: &Document, font: &Dictionary) -> Result
         codes[code] = Some(slot as u8);
     }
     Ok(Metrics {
+        restricted: false,
         opaque: None,
         unicode: None,
         widths: result,
         codes: Some(Codes::Single(codes)),
         vertical_bounds: Some(vertical_bounds),
         horizontal_overhangs: Some(overhangs),
-    })
+    }
+    .restricted(restricted))
 }

@@ -92,6 +92,7 @@ impl Font {
             Some(&font.glyphs),
         )?;
         let metrics = super::Metrics {
+            restricted: false,
             opaque: None,
             unicode: Some(unicode),
             vertical_bounds: Some(vertical),

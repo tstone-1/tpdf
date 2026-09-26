@@ -1812,6 +1812,9 @@ impl Shape {
     }
 }
 
+const RESTRICTED_ORIGINAL: &str =
+    "This text's font does not permit editing. Choose automatic fallback or a Noto font.";
+
 pub(super) fn prepare(
     doc: &Document,
     page: &Inspection,
@@ -1887,9 +1890,14 @@ pub(super) fn prepare(
         .replacement
         .split('\n')
         .all(|line| original_metrics.items(line, gap).is_ok());
+    // A font whose embedding rights forbid editing is read but never written
+    // in: automatic layout sets the replacement in Noto, and the reader who
+    // asked for the original font is told which to choose instead.
+    let restricted = original_metrics.is_restricted();
     let chosen = match settings.font {
         _ if change.replacement.is_empty() => None,
         EditFont::Auto if encodable => None,
+        EditFont::Original if restricted => return Err(RESTRICTED_ORIGINAL.into()),
         EditFont::Original => None,
         EditFont::Auto => {
             let name = original_label.to_ascii_lowercase();
@@ -1919,7 +1927,14 @@ pub(super) fn prepare(
             Some(font),
             metrics,
             name,
-            fonts::fallback::label(style).to_owned(),
+            if restricted {
+                format!(
+                    "{} (the document's font does not permit editing)",
+                    fonts::fallback::label(style)
+                )
+            } else {
+                fonts::fallback::label(style).to_owned()
+            },
             0.,
             0.,
         )

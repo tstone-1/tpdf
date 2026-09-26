@@ -37,8 +37,16 @@ have the binary.)
   the text they describe is kept read-only and the rest of the page can be
   edited. In the 31-file public sample this makes one more page editable. The
   InDesign letter and the PowerPoint fact sheet are still refused, next for
-  the letter's font licence and for the fact sheet's text boxes inside table
-  cells.
+  the letter's artifact properties and for the fact sheet's text boxes inside
+  table cells.
+
+- **Text in a font whose licence forbids editing can be replaced.** The new
+  text is set in the bundled Noto Sans, in the matching weight and style, and
+  the preview says why the font changed. Text you do not edit keeps its
+  original font. Choosing "Original only" for such text explains that the font
+  does not permit editing. In the 31-file public sample this makes the IRS W-9
+  and a 52-page insurance brochure editable, and all of the IRS W-4, where
+  only one symbol was before.
 
 ## [26.9.19] - 2026-09-26
 
