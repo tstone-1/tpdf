@@ -215,8 +215,35 @@ def aggregate(records, manifest):
                       'agreement_disagreements': record['agreement']['disagreements'],
                       'all': stats, 'long': long_stats})
     return {'files': files, 'total': total, 'total_long': total_long,
+            'coverage': coverage(records),
             'agreement_checked': sum(f['agreement_checked'] for f in files),
             'agreement_disagreements': sum(len(f['agreement_disagreements']) for f in files)}
+
+
+def coverage(records):
+    """How much of each document the editor offers at all: the documents with any
+    editable text, the pages, and why each refused page is refused. The acceptance
+    figures cover offered text only, and a document with none adds nothing to them."""
+    reasons = {}
+    for record in records:
+        for page in record['pages']:
+            if page['status'] != 'editable':
+                count(reasons, page.get('reason', page['status']))
+    offered = [r for r in records
+               if any(p['status'] == 'editable' and p['tried'] for p in r['pages'])]
+    return {'documents': len(records), 'documents_editable': len(offered),
+            'not_editable': sorted(Path(r['source']).name for r in records if r not in offered),
+            'pages': sum(len(r['pages']) for r in records),
+            'pages_editable': sum(p['status'] == 'editable' for r in records for p in r['pages']),
+            'page_refusals': dict(sorted(reasons.items(), key=lambda item: -item[1]))}
+
+
+def headline(summary):
+    c = summary['coverage']
+    return (f"Editable documents: {c['documents_editable']} of {c['documents']} "
+            f"(pages {c['pages_editable']} of {c['pages']}). No editable text in: "
+            f"{', '.join(c['not_editable']) or 'none'}.\n"
+            f"Page refusals: {json.dumps(c['page_refusals'])}")
 
 
 def table(summary):
@@ -329,6 +356,31 @@ def self_test(probe):
         else:
             raise AssertionError('a missing trial was counted')
         assert classify('something new') == 'other'
+    # Coverage and the comparison, on plain records: one document with an editable
+    # page and a refused one, one with nothing editable. A page that becomes editable
+    # is counted as newly offered, and a run no longer offered is a regression.
+    def record(status):
+        run = {'operator': 7, 'chars': 3, **{t: None for t in TRIALS}, 'identity': {'app': 'ok'}}
+        return {'source': f'{status}.pdf', 'sha256': status,
+                'pages': [{'page': 0, 'status': 'editable', 'tried': [run]},
+                          {'page': 1, 'status': status, 'reason': 'a font forbids it',
+                           'tried': [run] if status == 'editable' else []}]}
+    plain = {'source': 'plain.pdf', 'sha256': 'x',
+             'pages': [{'page': 0, 'status': 'refused', 'reason': 'a font forbids it'}]}
+    c = coverage([record('refused'), plain])
+    assert (c['documents'], c['documents_editable'], c['pages'], c['pages_editable']) == (2, 1, 3, 1), c
+    assert c['not_editable'] == ['plain.pdf'] and c['page_refusals'] == {'a font forbids it': 2}, c
+    with tempfile.TemporaryDirectory() as directory:
+        before, after = Path(directory, 'before'), Path(directory, 'after')
+        before.mkdir()
+        after.mkdir()
+        old, new = record('refused'), record('refused')
+        new['pages'][1] = {'page': 1, 'status': 'editable', 'tried': [dict(old['pages'][0]['tried'][0])]}
+        (before / 'a.json').write_text(json.dumps(old), encoding='utf-8')
+        (after / 'a.json').write_text(json.dumps(new), encoding='utf-8')
+        assert compare(before, after) == 0
+        assert compare(after, before) == 1, 'a page no longer offered is a regression'
+
     print('[PASS] kerned run accepted unchanged and swapped in the default box, a box the editor opens grows into a free line and is refused at the page edge, '
           'a neighbour with room behind it is pushed along and one without it stops the edit at the page, patch refuses every longer edit, a box widened by hand '
           'reaches the same ceiling, worker agrees, missing trials refused')
@@ -355,22 +407,30 @@ def verdicts(record):
 
 
 def compare(before_dir, after_dir):
-    """Verdicts accepted before and not after, and the counts moved each way."""
+    """Verdicts accepted before and not after, and the counts moved each way.
+
+    A run offered on one side only -- a page that became editable, or text that is
+    no longer offered -- is counted rather than refused: one only in the second set is
+    newly offered, and one only in the first is a regression whatever its verdict was,
+    since the editor no longer lets anyone make that edit."""
     before_files = sorted(p.name for p in before_dir.glob('*.json'))
     after_files = sorted(p.name for p in after_dir.glob('*.json'))
     if not before_files or before_files != after_files:
         raise SystemExit(f'record sets differ: {before_files} against {after_files}')
-    regressions, gained, same = [], 0, 0
+    regressions, gained, same, offered, offered_ok = [], 0, 0, 0, 0
     for name in before_files:
         old = json.loads((before_dir / name).read_text(encoding='utf-8'))
         new = json.loads((after_dir / name).read_text(encoding='utf-8'))
         if old['sha256'] != new['sha256']:
             raise SystemExit(f'{name}: the records describe different source bytes')
         a, b = verdicts(old), verdicts(new)
-        if a.keys() != b.keys():
-            raise SystemExit(f'{name}: the records tried different runs or trials')
+        for key in b.keys() - a.keys():
+            offered += 1
+            offered_ok += b[key] == 'ok'
         for key, verdict in a.items():
-            if verdict == 'ok' and b[key] != 'ok':
+            if key not in b:
+                regressions.append((name, *key, 'no longer offered'))
+            elif verdict == 'ok' and b[key] != 'ok':
                 regressions.append((name, *key, b[key]))
             elif verdict != 'ok' and b[key] == 'ok':
                 gained += 1
@@ -379,7 +439,8 @@ def compare(before_dir, after_dir):
     for regression in regressions:
         print('[REGRESSION]', json.dumps(regression))
     print(f'[COMPARE] {len(before_files)} files, {same} verdicts unchanged in kind, '
-          f'{gained} refused before and accepted now, {len(regressions)} accepted before and refused now')
+          f'{gained} refused before and accepted now, {len(regressions)} accepted before and refused now '
+          f'or no longer offered, {offered} newly offered ({offered_ok} of them accepted)')
     return 1 if regressions else 0
 
 
@@ -419,6 +480,8 @@ def main():
     summary['wall_seconds'] = round(time.monotonic() - started, 1)
     summary['sources'] = [{'file': Path(r['source']).name, 'sha256': r['sha256']} for r in records]
     args.output.write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
+    print(headline(summary))
+    print()
     print(table(summary))
     print()
     print(breakdown(summary['total']))
