@@ -149,6 +149,42 @@ every mode it reads consumes input bits, so its work is bounded by the encoded l
 which `images/stencil.rs` caps like any encoded stream. Both lockfiles carry it: the fuzz
 package resolves the application by path.
 
+**Three more crates arrived with the text editor, and two of them read attacker-chosen bytes.**
+All three run in the document worker (`textedit.rs`'s header: "executed in the document
+worker"), and none of them is reached before the stream holding its input has
+been decoded under a stated bound.
+
+- **`ttf-parser` (MIT OR Apache-2.0), added 2026-09-13** in `f1d5e5f`, reads the embedded
+  TrueType (`/FontFile2`) and CFF (`/FontFile3`) programs of a document's fonts. The program is
+  decoded with `filters::decode` under `MAX_CONTENT`, 1 MiB (`textedit/fonts.rs:1096`,
+  `textedit/fonts/cff.rs:208`), from an encoded stream capped at twice that. Before a face is
+  accepted, `rights_face` refuses font collections and every sfnt flavour but `00 01 00 00`
+  (and Apple's `true` for a MacRoman or custom encoding), and refuses any face carrying `fvar`,
+  `COLR`, `CBDT`, `sbix` or `SVG `. The `glyph-names` feature is enabled for CFF, whose
+  glyphs are addressed by name (`textedit/fonts/cff.rs`). **RustSec declared it unmaintained
+  on 2026-06-28** (RUSTSEC-2026-0192; the author's statement is harfbuzz/ttf-parser#217), with
+  no patched version and `skrifa` named as the replacement. It is accepted, not ignored:
+  `.cargo/audit.toml` lists it with that reason, so a *vulnerability* reported against it
+  would still be a new advisory and a red `audit.yml` run. Moving to `skrifa` is the remedy
+  if one is.
+- **`zune-jpeg` and `zune-core` (MIT OR Apache-2.0 OR Zlib), added 2026-09-15** in `e2cbaca`,
+  and already in the tree through the image stack. They decode the DCT images a text edit
+  preserves, only to prove the JPEG is whole; no decoded pixel reaches the saved file
+  (`textedit/images/jpeg.rs`). The bounds, in the order they apply: the page's shared
+  `MAX_IMAGES` budget of 32 MiB of samples is charged before the decoder is reached
+  (`textedit/images.rs`); `jpeg::framing` walks the marker structure itself and refuses input
+  over 2 MiB or more than 64 scans; the decoder runs in strict mode with its maximum width and
+  height set to the image dictionary's, so a header claiming a larger image is refused before
+  any buffer is allocated; and the output buffer must be exactly `width × height × components`.
+- **`subsetter` (MIT OR Apache-2.0), added 2026-09-17** in `5dabd27`, reads no document bytes.
+  It subsets only the bundled Noto fallback programs (`textedit/fonts/fallback_subset.rs`),
+  and its output is parsed back with `ttf-parser` and held to `MAX_CONTENT` like any other
+  program.
+
+What checks these crates against the advisory databases is `.github/workflows/audit.yml`, on
+every push, every pull request and weekly, since 2026-09-26. Before that nothing did, which is
+how the `ttf-parser` notice sat unread for three months.
+
 Four plugins are linked. `tauri-plugin-dialog` (Apache-2.0 OR MIT) for the file-open and
 file-save dialogs, which pulls `tauri-plugin-fs` (Apache-2.0 OR MIT) and `rfd` (MIT) — the
 capability list in `src-tauri/capabilities/default.json` names `dialog:allow-open` and, since

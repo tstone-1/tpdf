@@ -52,6 +52,9 @@ use crate::docmodel::{
 };
 use crate::fingerprint::{Fingerprint, Opened};
 use std::num::NonZeroU64;
+// The modules the body reaches by path rather than by item, named so this block
+// is the whole of this file's coupling rather than the half imported by item.
+use crate::{annots, diag, failure, forms, imports, signature, textbox, textedit};
 
 /// One open document: the edit model, and what its file looked like at open.
 ///
@@ -242,7 +245,7 @@ pub struct MarkView {
     pub stamp: Option<StampName>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<std::sync::Arc<crate::signature::Image>>,
+    pub image: Option<std::sync::Arc<signature::Image>>,
     /// Red, green and blue in 0..=1.
     pub color: [f32; 3],
     /// How thick this mark's ink is, in points.
@@ -418,7 +421,7 @@ pub struct NewMark {
     pub stamp: Option<StampName>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<std::sync::Arc<crate::signature::Image>>,
+    pub image: Option<std::sync::Arc<signature::Image>>,
     /// The comment this one answers, as `[number, generation]`, when it is a
     /// reply.
     ///
@@ -531,10 +534,10 @@ pub struct EditState {
     /// changed --- each with the file its page number belongs to, since a page
     /// inserted from another document is numbered in *that* file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text_edits: Vec<crate::textedit::Edit>,
+    pub text_edits: Vec<textedit::Edit>,
     /// Pending form answers, shared by all widgets of each field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub forms: Vec<crate::forms::Change>,
+    pub forms: Vec<forms::Change>,
     /// The live pages, in reading order.
     pub pages: Vec<PageView>,
     pub can_undo: bool,
@@ -635,8 +638,9 @@ pub struct Edits {
     /// The last id [`Edits::prepare_import`] issued, across every document.
     ///
     /// Across documents rather than per document so that an id cannot be
-    /// right for a document it was not issued to: document numbers are reused,
-    /// and a per-document counter would start again at the same number.
+    /// right for a document it was not issued to: a per-document counter would
+    /// start every document at the same number, so an id alone could not say
+    /// which one it was issued for.
     last_pending: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -661,9 +665,7 @@ fn answered(take: impl FnOnce() -> Option<Fingerprint>) -> Option<Fingerprint> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(take)) {
         Ok(taken) => taken,
         Err(_) => {
-            crate::diag::note(
-                "[WARN] fingerprinting a document panicked, so Save is refused for it",
-            );
+            diag::note("[WARN] fingerprinting a document panicked, so Save is refused for it");
             None
         }
     }
@@ -672,7 +674,7 @@ fn answered(take: impl FnOnce() -> Option<Fingerprint>) -> Option<Fingerprint> {
 impl Edits {
     /// Pending text bodies for one open document, each naming the file its
     /// page number belongs to. This never waits for a file fingerprint.
-    pub fn text_changes(&self, doc: u32) -> Vec<crate::textedit::Edit> {
+    pub fn text_changes(&self, doc: u32) -> Vec<textedit::Edit> {
         self.docs
             .lock()
             .expect("edits lock")
@@ -698,7 +700,7 @@ impl Edits {
     /// source handle belongs to at most one open document: a second tab
     /// importing the same file opens it again (`page_import_prepare`), so
     /// there is no second model to ask.
-    pub fn render_changes(&self, handle: u32) -> Vec<crate::textedit::Change> {
+    pub fn render_changes(&self, handle: u32) -> Vec<textedit::Change> {
         let docs = self.docs.lock().expect("edits lock");
         if let Some(open) = docs.get(&handle) {
             return open
@@ -811,7 +813,7 @@ impl Edits {
                         // off for this document for the rest of the session and
                         // nothing else says why. The sink is a `OnceLock`, so
                         // this is safe from a detached thread.
-                        crate::diag::note(&format!(
+                        diag::note(&format!(
                             "[WARN] {} could not be fingerprinted, so Save is refused for it: {why}",
                             opened.what.display()
                         ));
@@ -1217,7 +1219,7 @@ impl Edits {
                 .take()
                 .expect("the id matched a waiting import")
         };
-        let held = crate::imports::Held::new(taken.handle, release.clone());
+        let held = imports::Held::new(taken.handle, release.clone());
         let imported = self.import(doc, after, taken.source, pages, held.id())?;
         let kept = held.keep();
         if let Some(spare) = imported.spare {
@@ -1563,8 +1565,7 @@ impl Edits {
         // that does not exist falls through to `model.renote`, which is the one
         // place that answers "that mark has already been removed" -- deciding it
         // here as well would be a second copy of that message.
-        if model.mark(id).is_some_and(|m| m.kind == MarkKind::TextBox)
-            && !crate::textbox::encodable(&note)
+        if model.mark(id).is_some_and(|m| m.kind == MarkKind::TextBox) && !textbox::encodable(&note)
         {
             return Err(
                 "a text box is written in Helvetica, which cannot draw every character in that text"
@@ -1782,7 +1783,7 @@ impl Edits {
         &self,
         doc: u32,
         page: u64,
-        change: crate::textedit::Change,
+        change: textedit::Change,
     ) -> Result<EditState, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
@@ -1799,7 +1800,7 @@ impl Edits {
         &self,
         doc: u32,
         object: (u32, u16),
-        value: crate::forms::Value,
+        value: forms::Value,
     ) -> Result<EditState, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
@@ -2121,7 +2122,7 @@ fn planned_notes(model: &Doc, pages: &[PageView]) -> Vec<PlannedNoteEdit> {
 /// what an imported page costs this filter: page 3 of the opened document and
 /// page 3 of a file inserted from are two pages, and a filter that compared
 /// only the number would put one file's replacement into the other's list.
-fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<crate::textedit::Edit> {
+fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<textedit::Edit> {
     model
         .text_changes()
         .into_iter()
@@ -2130,7 +2131,7 @@ fn planned_text(model: &Doc, pages: &[PageView]) -> Vec<crate::textedit::Edit> {
 }
 
 /// Whether a page draws the document and page number a replacement addresses.
-fn shows(source: PageSource, edit: &crate::textedit::Edit) -> bool {
+fn shows(source: PageSource, edit: &textedit::Edit) -> bool {
     match (edit.source, source) {
         (None, PageSource::Baseline(number)) => number == edit.change.page,
         (Some(file), PageSource::Imported { source, page }) => {
@@ -2208,10 +2209,10 @@ pub struct Plan {
     /// imported page could be edited reads back with every entry on the
     /// opened document, which is what it meant.
     #[serde(default)]
-    pub text_edits: Vec<crate::textedit::Edit>,
+    pub text_edits: Vec<textedit::Edit>,
     /// Answers to write with explicit appearances in the sandbox.
     #[serde(default)]
-    pub forms: Vec<crate::forms::Change>,
+    pub forms: Vec<forms::Change>,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -2489,7 +2490,7 @@ pub struct PlannedMark {
     pub stamp: Option<StampName>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<std::sync::Arc<crate::signature::Image>>,
+    pub image: Option<std::sync::Arc<signature::Image>>,
     /// The comment this one answers, as `[number, generation]`, for a reply.
     ///
     /// Carried to the writer for [`PlannedMark::stamp`]'s reason, and the model
@@ -2659,7 +2660,7 @@ impl Plan {
 /// the sending side, and no wording makes them something a reader does. What is
 /// left --- the last page, a mark covering nothing, a comment somebody's own
 /// reply answers --- is a thing they can change and try again.
-impl From<Refusal> for crate::failure::Failure {
+impl From<Refusal> for failure::Failure {
     fn from(why: Refusal) -> Self {
         let action = match why {
             // Nothing a reader did: an id the model never issued, an id it has
@@ -2677,7 +2678,7 @@ impl From<Refusal> for crate::failure::Failure {
             // A selection id nobody issued, and a foreign comment paired with a
             // page that cannot hold it: both are the sender's.
             | Refusal::NoSuchSelection(_)
-            | Refusal::ForeignCommentOnImportedPage(_) => crate::failure::Action::Report,
+            | Refusal::ForeignCommentOnImportedPage(_) => failure::Action::Report,
             // Something the reader can change: keep a page, drag a box with area
             // in it, take their own reply off first.
             Refusal::TextEdit(_)
@@ -2695,7 +2696,7 @@ impl From<Refusal> for crate::failure::Failure {
             | Refusal::ImportedTwice(_)
             | Refusal::TextOnRepeatedImport(_)
             | Refusal::ImportOfEditedPage(_)
-            | Refusal::RedactionOnImportedPage(_) => crate::failure::Action::Amend,
+            | Refusal::RedactionOnImportedPage(_) => failure::Action::Amend,
         };
         Self {
             message: describe(why),
@@ -2826,10 +2827,10 @@ pub(crate) fn describe(why: Refusal) -> String {
 /// The note is longer than the bound.
 fn too_long(note: &str) -> Result<(), String> {
     let chars = note.chars().count();
-    if chars > crate::textbox::MAX_NOTE_CHARS {
+    if chars > textbox::MAX_NOTE_CHARS {
         return Err(format!(
             "that note is {chars} characters, and a note holds at most {}",
-            crate::textbox::MAX_NOTE_CHARS
+            textbox::MAX_NOTE_CHARS
         ));
     }
     Ok(())
@@ -2928,10 +2929,11 @@ fn snapshot(model: &Doc) -> EditState {
                 // twice for a highlight would be a second copy of a string the
                 // frontend already has.
                 lines: if mark.kind == MarkKind::TextBox {
-                    let width = model.quads_of(id).first().map_or(0.0, |q| {
-                        f64::from(q.right - q.left) - crate::textbox::INSET * 2.0
-                    });
-                    crate::textbox::wrap(model.note_of(id), crate::textbox::SIZE, width.max(1.0))
+                    let width = model
+                        .quads_of(id)
+                        .first()
+                        .map_or(0.0, |q| f64::from(q.right - q.left) - textbox::INSET * 2.0);
+                    textbox::wrap(model.note_of(id), textbox::SIZE, width.max(1.0))
                 } else {
                     Vec::new()
                 },
@@ -2977,7 +2979,7 @@ fn snapshot(model: &Doc) -> EditState {
                 object: (object.number(), object.generation()),
                 page: page.get(),
                 body: edit.body.clone(),
-                shown: crate::annots::parse_date(edit.made.as_bytes()),
+                shown: annots::parse_date(edit.made.as_bytes()),
                 made: edit.made.clone(),
             }
         })

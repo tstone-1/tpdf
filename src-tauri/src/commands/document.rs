@@ -434,14 +434,15 @@ pub async fn release_documents(
     edits: tauri::State<'_, edits::Edits>,
     web: tauri::State<'_, webopen::Registry>,
 ) -> Result<usize, String> {
-    // Before the service call, for `close_document`'s reason and with the same
-    // consequence: document numbers are reused, so a model left behind under an
-    // id the service is about to hand to another file is one document's journal
-    // applied to another's pages.
+    // Before the service call, for `close_document`'s reason: the models go
+    // whether or not the service answers, so a failure below cannot leave a
+    // journal held under ids nothing will close again. Not because an id could
+    // name another file --- neither backend reuses one (`render.rs`'s
+    // `release_all` says why it leaves holes).
     let models = edits.release_all();
-    // The same argument, for the same reason, over the web addresses: a list
-    // surviving under a reused id would answer the next document's clicks with
-    // this one's links. Not counted into the line below --- a scan is not a
+    // The same argument over the web addresses: a list that outlived its
+    // document would still answer a late click on an id that is gone. Not
+    // counted into the line below --- a scan is not a
     // document, and two numbers that mean different things in one sentence read
     // as one number.
     web.forget_all();
@@ -483,10 +484,12 @@ pub async fn close_document(
     web: tauri::State<'_, webopen::Registry>,
     doc: u32,
 ) -> Result<(), String> {
-    // Before the service call rather than after, and not for tidiness: document
-    // numbers are reused, so a model left behind under a handle the service is
-    // about to hand to another file is one document's journal applied to
-    // another's pages.
+    // Before the service call rather than after, so the model goes even when the
+    // service refuses: an edit arriving late for this id then finds no journal
+    // to change, rather than one whose pages the service no longer holds.
+    // Document numbers are **not** reused --- both backends allocate
+    // `docs.len()` and leave a hole where a closed document was --- so this
+    // order protects this document's own state, not another file's.
     //
     // The files it imported from go with it, and first: they are documents of
     // the service like this one, and nothing else holds their handles. Undo
@@ -494,8 +497,8 @@ pub async fn close_document(
     let sources = edits.close(doc);
     // And every web address list, this document's and theirs, on the same
     // argument: a token is an index into a list, so a list that outlived its
-    // document would answer the next one's clicks with somebody else's
-    // addresses. An imported file's list exists once its links were scanned.
+    // document would still open an address for a click on a document that is
+    // gone. An imported file's list exists once its links were scanned.
     web.forget(doc, &sources);
     release_sources(&service, sources);
     let (reply, rx) = reply_channel();

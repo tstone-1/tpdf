@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DocumentTabs, DocumentTasks } from "./documenttabs";
+import {
+  DocumentTabs, DocumentTasks, freshState, keepState, restoredState, type DocumentTab, type TabState,
+} from "./documenttabs";
+import { PLAIN_SEARCH } from "./search";
 import { handleWindowKey, registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { matches } from "./keys";
@@ -125,5 +128,51 @@ describe("tab commands", () => {
     handleWindowKey(key("w"), deps);
     expect(calls).toHaveLength(6);
     expect(matches("view.nextTab", { ...key("Tab"), ctrlKey: false, metaKey: true } as KeyboardEvent)).toBe(false);
+  });
+});
+
+describe("what a tab keeps across a switch", () => {
+  /** A value for every kept field, none of them a default. */
+  const touched = (): TabState => ({
+    edits: { journal: "edited" } as unknown as TabState["edits"],
+    place: { path: "/fixture/1.pdf", page: 4 } as unknown as TabState["place"],
+    covered: new Map([[3, "kept words"]]),
+    query: "needle",
+    findShown: true,
+    searchOptions: { ...PLAIN_SEARCH, matchCase: true },
+    searchScope: [{ from: 1, to: 2 }] as unknown as TabState["searchScope"],
+    sidebarTab: "comments",
+    error: "could not render page 2",
+    offers: [{ kind: "recover" }] as unknown as TabState["offers"],
+    notice: "saved",
+    redactedCopyPath: "/fixture/1-redacted.pdf",
+  });
+  const blank = () => ({ doc: { id: 1 }, path: "/fixture/1.pdf" }) as unknown as DocumentTab;
+
+  it("restores every field that was kept, and nothing from another tab", () => {
+    const tab = blank();
+    const state = touched();
+    keepState(tab, state);
+    const { edits: _edits, place: _place, ...restorable } = state;
+    expect(restoredState(tab)).toEqual(restorable);
+    expect(tab.edits).toBe(state.edits);
+    expect(tab.place).toBe(state.place);
+  });
+
+  it("restores the fresh state for a document that was never kept", () => {
+    expect(restoredState(undefined)).toEqual(freshState());
+    expect(freshState()).toMatchObject({
+      query: "", findShown: false, searchOptions: PLAIN_SEARCH, searchScope: null,
+      sidebarTab: "outline", error: null, offers: [], notice: null, redactedCopyPath: null,
+    });
+    expect(freshState().covered.size).toBe(0);
+  });
+
+  it("hands every fresh document its own containers", () => {
+    // Shared ones would put one tab's covered words on the next tab's rows.
+    const one = freshState();
+    const two = freshState();
+    expect(one.covered).not.toBe(two.covered);
+    expect(one.offers).not.toBe(two.offers);
   });
 });

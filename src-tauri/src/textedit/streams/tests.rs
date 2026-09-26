@@ -167,3 +167,49 @@ fn textedit_stream_patch_opening_with_a_number_is_kept_apart_from_the_operator_b
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].matrix[4..], [20., 30.]);
 }
+
+/// A painted path moved with its line is accepted only as `wrap::translated`
+/// writes it: a pure translation after a saved state, and every opening
+/// restored once before the next opens and before the page ends.
+#[test]
+fn a_moved_path_is_accepted_only_as_a_paired_pure_translation() {
+    use lopdf::content::Operation;
+    let bytes = b"0 g 20 170 21.6 0.8 re f 20 150 21.6 0.8 re f";
+    let content = Content::decode_strict(bytes).unwrap();
+    let op = |index: usize| content.operations[index].clone();
+    let cm =
+        |values: [f32; 6]| Operation::new("cm", values.into_iter().map(Object::Real).collect());
+    let open = |index: usize, transform: Operation| {
+        (
+            index,
+            vec![Operation::new("q", vec![]), transform, op(index)],
+        )
+    };
+    let close = |index: usize| (index, vec![op(index), Operation::new("Q", vec![])]);
+    let down = cm([1., 0., 0., 1., 0., -14.]);
+    let apply = |moves: Vec<(usize, Vec<Operation>)>| {
+        let edits: BTreeSet<usize> = moves.iter().map(|(index, _)| *index).collect();
+        rewrite_expanded(bytes, &content, &edits, &moves.into_iter().collect())
+    };
+    // The control: both paths moved, each bracket closed before the next.
+    let saved = apply(vec![
+        open(1, down.clone()),
+        close(2),
+        open(3, down.clone()),
+        close(4),
+    ])
+    .unwrap();
+    assert_eq!(Content::decode_strict(&saved).unwrap().operations.len(), 11);
+    // A transform that scales or turns the path is not a move.
+    for turned in [[2., 0., 0., 2., 0., -14.], [0., 1., -1., 0., 0., -14.]] {
+        assert!(
+            apply(vec![open(1, cm(turned)), close(2)]).is_err(),
+            "{turned:?}"
+        );
+    }
+    // An opening with no restore, a restore with no opening, and a second
+    // opening inside the first.
+    assert!(apply(vec![open(1, down.clone())]).is_err());
+    assert!(apply(vec![close(2)]).is_err());
+    assert!(apply(vec![open(1, down.clone()), open(3, down.clone()), close(4)]).is_err());
+}

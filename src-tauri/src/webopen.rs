@@ -141,10 +141,11 @@ impl Registry {
     ///
     /// The counterpart of `edits::Edits::release_all`, and it exists for the
     /// same reason `release_documents` calls that one: a reloaded webview holds
-    /// no document id, so everything here is unreachable, and **document
-    /// numbers are reused** --- a list left behind under an id the service is
-    /// about to hand to another file is one document's addresses answering
-    /// another document's clicks.
+    /// no document id, so everything here is unreachable. Document numbers are
+    /// **not** reused --- both backends allocate `docs.len()` and leave a hole
+    /// where a closed document was --- so what this prevents is lists held for
+    /// the rest of the process under ids nothing will close again, not one
+    /// document's addresses answering another's clicks.
     ///
     /// Returns how many scans were dropped, so the caller can say whether
     /// anything was being held rather than reporting a silent zero.

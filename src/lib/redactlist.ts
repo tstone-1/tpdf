@@ -50,7 +50,10 @@
 
 import { placeholder } from "./panelrow";
 import { flatten } from "./rowline";
-import type { RedactionRow, RegionPlan } from "./pages";
+import { pairPlans } from "./pages";
+import type { FilePage, PageId, RedactionRow, RedactionView, RegionPlan } from "./pages";
+import { touchedText } from "./reading";
+import type { PageText } from "./text";
 
 /** Side of the swatch standing for the region, in CSS pixels. */
 const SWATCH = 9;
@@ -158,6 +161,90 @@ export function nextUnreadRegion<T extends { id: number }>(
   words: ReadonlyMap<number, string | null>,
 ): T | undefined {
   return regions.find((region) => !words.has(region.id));
+}
+
+/**
+ * What {@link fillRedactionRegions} needs from the document it walks.
+ *
+ * Every page lookup is a call rather than a value, and that is the point of
+ * the shape: a reader's edit replaces the page order *in place* while a round
+ * is waiting on the worker, and a slot read before the wait names whatever
+ * page sits there afterwards.
+ */
+export interface RedactionWalk {
+  /** Whether the document the walk started on is still the open one. */
+  current(): boolean;
+  /** The pending regions, as the model has them now. */
+  regions(): readonly RedactionView[];
+  /** The slot a page id is in now, or `undefined` once it is gone. */
+  slotOf(page: PageId): number | undefined;
+  /** The page of the opened file in a slot now, or `undefined` for a made page. */
+  sourceOf(slot: number): FilePage | undefined;
+  /** The page's text as the viewer has it, unturned. */
+  text(slot: number): Promise<PageText | null>;
+  /** What a removal of each area would take from a page of the file. */
+  plans(page: FilePage, areas: RedactionView["area"][]): Promise<RegionPlan[]>;
+  /** The words each region covers; see {@link nextUnreadRegion}. */
+  words: Map<number, string | null>;
+  /** What a removal would take from each region, by redaction id. */
+  planned: Map<number, RegionPlan>;
+  /** Called after each page's answers are recorded. */
+  answered(): void;
+  /** Called when the plans could not be read; the rows then say nothing. */
+  failed(error: unknown): void;
+}
+
+/**
+ * Fills in the words and the removal plan for every pending region, one page
+ * per round, until each region has an answer.
+ *
+ * **The slot is resolved again after each wait**, and a round whose page has
+ * moved is thrown away and asked again. The text is requested by slot and the
+ * plan by file page, and between the two the reader may delete or move a page
+ * above this one: `sourceOf(slot)` then names a different page of the file,
+ * and the plan for this region's rectangles is computed against somebody
+ * else's content. Nothing asks again once a region has words --- see
+ * {@link nextUnreadRegion} --- so a wrong plan stored here stays on the row for
+ * the session. `fillCommentWords` re-slots every round for the same reason.
+ *
+ * A page that could not be read is still answered, as `null` for each of its
+ * regions. A region whose page is in no slot is answered the same way; the
+ * model cannot produce one, and a row with no entry says *reading* for ever.
+ */
+export async function fillRedactionRegions(walk: RedactionWalk): Promise<void> {
+  for (;;) {
+    if (!walk.current()) return;
+    const next = nextUnreadRegion(walk.regions(), walk.words);
+    if (!next) return;
+    const slot = walk.slotOf(next.page);
+    const text = slot === undefined ? null : ((await walk.text(slot)) ?? null);
+    if (!walk.current()) return;
+    // Moved or deleted while its text was read: ask again from the top.
+    if (walk.slotOf(next.page) !== slot) continue;
+    const asked = walk.regions().filter((region) => region.page === next.page);
+    for (const region of asked)
+      walk.words.set(region.id, text === null ? null : touchedText(text, region.area));
+    // The page of the *file*, which is what the backend means by a page
+    // number: a deletion above this page makes it differ from `slot`.
+    const source = slot === undefined ? undefined : walk.sourceOf(slot);
+    if (source !== undefined) {
+      try {
+        const plans = await walk.plans(source, asked.map((region) => region.area));
+        if (!walk.current()) return;
+        // A file page does not move when another page does, so this differs
+        // only when this region's page itself was deleted or replaced.
+        const now = walk.slotOf(next.page);
+        if (now === undefined || walk.sourceOf(now) !== source) {
+          for (const region of asked) walk.words.delete(region.id);
+          continue;
+        }
+        for (const [id, plan] of pairPlans(asked, plans)) walk.planned.set(id, plan);
+      } catch (e) {
+        walk.failed(e);
+      }
+    }
+    walk.answered();
+  }
 }
 
 /** What a redaction row needs from whoever owns the document. */

@@ -3,9 +3,10 @@
   import { FormLayer } from "./lib/forms";
   import { tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { DocumentTabs, DocumentTasks, type DocumentTab } from "./lib/documenttabs";
+  import {
+    DocumentTabs, DocumentTasks, freshState, keepState, restoredState, type DocumentTab,
+  } from "./lib/documenttabs";
   import { TabLabelSize } from "./lib/tablabels";
-  import { PLAIN_SEARCH } from "./lib/search";
   import Toolbar from "./Toolbar.svelte";
   import { toolbarState } from "./lib/toolbar";
   import { listen } from "@tauri-apps/api/event";
@@ -83,8 +84,7 @@
     wordsForPage,
     type Comments,
   } from "./lib/comments";
-  import { touchedText } from "./lib/reading";
-  import { nextUnreadRegion } from "./lib/redactlist";
+  import { fillRedactionRegions } from "./lib/redactlist";
   import { noticeFor as linkNotice, type Link } from "./lib/links";
   import { ImportedLinks } from "./lib/importedlinks";
   import type { Outline, WebTarget } from "./lib/outline";
@@ -95,7 +95,6 @@
     markRows,
     NO_PAGES,
     outlineIn,
-    pairPlans,
     pageId,
     redactionRows,
     slotOfIdIn,
@@ -189,7 +188,7 @@
   function keepActiveTab(): void {
     const tab = tabs.find(openDoc);
     if (!tab || !viewer || !edits) return;
-    Object.assign(tab, {
+    keepState(tab, {
       edits, place: currentPlace(false), covered: new Map(covered), query,
       findShown, searchOptions: viewer.searchOptionsNow,
       searchScope: viewer.searchScopeRanges, sidebarTab: sidebar?.tab ?? "outline",
@@ -1603,10 +1602,14 @@
    * `null` instead, which is a state the row draws as what it is.
    *
    * **What has been answered is counted by region and not by page.** See
-   * {@link nextUnreadRegion}: a page set is the obvious bookkeeping here, since
+   * `nextUnreadRegion` in `redactlist.ts`: a page set is the obvious bookkeeping here, since
    * the extraction is per page, and it is wrong in one direction --- a region
    * drawn on a page already read is never selected, so its row says *reading*
    * for the session and no plan is ever computed for it.
+   *
+   * **Why the walk re-reads the slot after every wait.** See
+   * `fillRedactionRegions`: a page deleted above this one mid-walk turned the
+   * slot into a different file page, and the plan was stored for the wrong page.
    */
   async function fillRedactionWords(): Promise<void> {
     if (fillingRedactionWords) return;
@@ -1614,54 +1617,28 @@
     if (!model || !viewer) return;
     fillingRedactionWords = true;
     try {
-      for (;;) {
-        // The model that was open when this round started. A second document
+      // The walk is `redactlist.ts`, where a test can reach it; what stays here
+      // is the wiring. Every lookup reads `model.map` at the moment it is asked,
+      // because an edit replaces the page order in place during a wait.
+      await fillRedactionRegions({
+        // The model that was open when this walk started. A second document
         // replaces `edits` mid-walk, and writing this one's words onto its rows
         // is the same failure `fillCommentWords` guards against.
-        if (edits !== model) return;
-        const next = nextUnreadRegion(model.state.redactions, redactionWords);
-        if (!next) return;
-        const slot = model.map.slotOfId(next.page);
-        // A region whose page is in no slot. Unreachable from the model as it
-        // stands --- see `RedactionRow.page` --- and answered rather than
-        // skipped, because a row left with no entry says "reading" for ever.
-        const text =
-          slot === undefined ? null : ((await viewer?.unturnedText(slot)) ?? null);
-        if (edits !== model) return;
-        const asked = model.state.redactions.filter(
-          (region) => region.page === next.page,
-        );
-        for (const region of asked) {
-          redactionWords.set(
-            region.id,
-            text === null ? null : touchedText(text, region.area),
-          );
-        }
-        // The page of the *file*, which is what the backend means by a page
-        // number: `slot` is a position in the document as the reader has it,
-        // and a deletion above this page makes the two different numbers.
-        const source = slot === undefined ? undefined : model.map.sourceOf(slot);
-        if (source !== undefined) {
-          try {
-            const plans = await call("redaction_plans", {
-              doc: model.doc,
-              page: source,
-              regions: asked.map((region) => region.area),
-            });
-            if (edits !== model) return;
-            for (const [id, plan] of pairPlans(asked, plans)) {
-              redactionPlans.set(id, plan);
-            }
-          } catch (e) {
-            // Not raised to the reader. The rows keep saying what they said,
-            // which is nothing about what a removal would take --- and the
-            // command that actually redacts asks again and reports its own
-            // failures, so a reader is never left acting on this silence.
-            console.warn(`could not read what a removal would take: ${e}`);
-          }
-        }
-        sidebar?.setRedactionWords();
-      }
+        current: () => edits === model,
+        regions: () => model.state.redactions,
+        slotOf: (page) => model.map.slotOfId(page),
+        sourceOf: (slot) => model.map.sourceOf(slot),
+        text: async (slot) => (await viewer?.unturnedText(slot)) ?? null,
+        plans: (page, regions) => call("redaction_plans", { doc: model.doc, page, regions }),
+        words: redactionWords,
+        planned: redactionPlans,
+        answered: () => sidebar?.setRedactionWords(),
+        // Not raised to the reader. The rows keep saying what they said,
+        // which is nothing about what a removal would take --- and the
+        // command that actually redacts asks again and reports its own
+        // failures, so a reader is never left acting on this silence.
+        failed: (e) => console.warn(`could not read what a removal would take: ${e}`),
+      });
     } finally {
       fillingRedactionWords = false;
     }
@@ -3288,11 +3265,13 @@
       await new Promise(requestAnimationFrame);
       if (!surface || !sidebarHost) throw new Error("no surface to mount into");
 
-      query = retained?.query ?? "";
-      findShown = retained?.findShown ?? false;
-      say(retained?.error ?? null, retained?.offers ?? []);
-      notice = retained?.notice ?? null;
-      redactedCopyPath = retained?.redactedCopyPath ?? null;
+      // One record for every restore below, fresh for a document never kept.
+      const kept = restoredState(retained);
+      query = kept.query;
+      findShown = kept.findShown;
+      say(kept.error, kept.offers);
+      notice = kept.notice;
+      redactedCopyPath = kept.redactedCopyPath;
       // Before the panels are built, so nothing carries over from the document
       // that was open a moment ago --- these are answers about a file, and the
       // file has changed.
@@ -3441,12 +3420,8 @@
       // Mark ids start again with the model, so an entry kept from the last
       // document would put its words on this one's first highlight.
       covered.clear();
-      for (const [id, words] of retained?.covered ?? []) covered.set(id, words);
-      tabs.keep(retained ?? {
-        doc, path, edits: opening, place: resume, covered: new Map(), query: "",
-        findShown: false, searchOptions: PLAIN_SEARCH, searchScope: null,
-        sidebarTab: "outline", error: null, offers: [], notice: null, redactedCopyPath: null,
-      }, replaceId);
+      for (const [id, words] of kept.covered) covered.set(id, words);
+      tabs.keep(retained ?? { doc, path, edits: opening, place: resume, ...freshState() }, replaceId);
       refreshTabs();
       if (replaceId !== undefined && replaceId !== doc.id)
         void call("close_document", { doc: replaceId }).catch(console.warn);
@@ -3653,8 +3628,8 @@
       sidebar.thumbnails?.setPages(opening.state.pages.length);
       if (resume) viewer.restore(resume);
       if (retained) {
-        viewer.restoreSearch(retained.query, retained.searchOptions, retained.searchScope);
-        sidebar.selectTab(retained.sidebarTab);
+        viewer.restoreSearch(kept.query, kept.searchOptions, kept.searchScope);
+        sidebar.selectTab(kept.sidebarTab);
       }
       viewer.setNib(markNib.pt);
       // After `restore`, which does not touch the colours, and before `focus`,

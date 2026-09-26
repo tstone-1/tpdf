@@ -229,10 +229,9 @@ where
     // being taken apart, and the honest thing to report is that they have to
     // open the file again rather than a message that reads like a refusal.
     //
-    // The model first, for the reason `close_document` gives --- document
-    // numbers are reused, and a journal left under a handle the service is free
-    // to hand to another file is one document's edits applied to another's
-    // pages.
+    // The model first, for the reason `close_document` gives --- it goes even
+    // when the service refuses, so an edit arriving late for this id finds no
+    // journal rather than one whose pages the service no longer holds.
     saving.close_model();
     let closed = saving.close_document().await;
 
@@ -585,9 +584,9 @@ mod tests {
     /// Prepare, then close the model, then close the document, then land. Each
     /// adjacency is a rule with a reason: preparing first is what lets a refusal
     /// arrive while the reader still has their document, the model goes before
-    /// the service because document numbers are reused, and the landing goes
-    /// after the close because a rename over a mapped file succeeds on macOS and
-    /// serves the old inode for ever.
+    /// the service so a refused close cannot leave a journal behind, and the
+    /// landing goes after the close because a rename over a mapped file succeeds
+    /// on macOS and serves the old inode for ever.
     #[test]
     fn the_document_is_closed_after_the_save_is_prepared_and_before_it_lands() {
         let log: Log = Arc::default();

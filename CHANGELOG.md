@@ -41,6 +41,51 @@ have the binary.)
   of +25% are accepted, most of them above underlined headings in council
   agendas and minutes.
 
+### Fixed
+
+- **Redacting a form field that appears in several places now removes its
+  answer everywhere.** A form that repeats a name or an ID on every page shows
+  one field through several widgets. Redacting over one of them removed that
+  widget only: the answer stayed in the file, the other widgets went on
+  showing it, and the redaction still reported itself as verified. The field
+  now goes with all its widgets, and the answers under the redacted areas are
+  searched for in the written file, so a copy that survives is reported as
+  not verified.
+- **Redacting over a form field you had filled no longer fails after the
+  words are removed.** The step that draws the black boxes wrote your form
+  answers a second time, found the field the redaction had just removed, and
+  failed, leaving a copy without its black boxes and without its
+  verification result.
+- **Two paragraph wraps saved at once can no longer write text on top of
+  text.** When two edited columns both wrapped and both moved the same
+  paragraph below them, the second move replaced the first, and the
+  paragraph was saved on the line one column had just added. Such a pair is
+  now refused; save between the two edits.
+- **The redaction list no longer describes the wrong page.** Deleting or
+  moving a page while the list was still reading one could attach that
+  page's removal plan to the page that took its place, for the rest of the
+  session. The redaction itself was always computed afresh.
+- **A signature saved after you cancelled is no longer lost without a
+  word.** If saving the signature to the device finished after the dialog
+  had moved on, it was stored but never placed, silently. It is still kept
+  on the device, and an open dialog now says it was not placed.
+- **Editing a page with many underlines and a long wrap is faster.** Deciding
+  which underlines move with a wrapped line took about 0.3 s on a page with
+  300 rules and 2,000 moved lines, on every keystroke of a preview; it now
+  takes about 4 ms.
+
+### Internal
+
+- **Dependency advisories are checked on every push and weekly** by
+  `.github/workflows/audit.yml` (`cargo audit` with warnings denied except the
+  eight listed in `.cargo/audit.toml`, and `npm audit --omit=dev`). A release
+  now needs that run green at its commit. `ttf-parser`, which reads fonts
+  embedded in documents, is marked unmaintained upstream; `docs/DETAIL.md`
+  records what bounds it and the other two new parsers.
+- **Every workflow's checkout is now checked for `persist-credentials:
+  false`,** not only `ci.yml`'s and `release.yml`'s; the three others set it
+  and nothing enforced that they kept it.
+
 ## [26.9.20] - 2026-09-26
 
 ### Added

@@ -19,9 +19,10 @@ use crate::print_win;
 
 /// Builds a print job and opens the platform print dialog for it.
 ///
-/// `async` keeps the build off the thread the webview draws on: `print::build`
-/// parses the whole document, and on a 337 MB scan that is not something to do
-/// there. Only the panel is dispatched back.
+/// `async` keeps the build off the thread the webview draws on: a job waits on a
+/// worker that parses the whole document, and reads the job back, and on a
+/// 337 MB scan that is not something to do there. Only the panel is dispatched
+/// back.
 ///
 /// **The build runs on the blocking pool, and that is not the choice the seven
 /// render-service commands made.** Being `async` puts this on the runtime rather
@@ -111,9 +112,11 @@ pub async fn print_document(
         None => None,
     };
     // **Who parses the reader's document**, chosen the same way every other
-    // writer is. Only the `Working` route reaches it --- the passthrough hands
-    // the file over byte for byte and parses nothing, and `print::build` still
-    // parses a range here (`docs/THREAT-MODEL.md` residual risk 18).
+    // writer is. The `Working` route and the range both reach it --- a range goes
+    // through `save::print_range_bytes` to `Rewriter::write_range`, so it is parsed
+    // where a save is and not here --- and the passthrough hands the file over
+    // byte for byte and parses nothing. `docs/THREAT-MODEL.md` residual risk 18
+    // is where the parses that left this process are recorded.
     let writing = outside_of(&app, service.backend());
     let build = move || {
         print_job(

@@ -46,6 +46,13 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
     // makes this the belt rather than the braces.
     result.sources.clear();
     result.text_edits.clear();
+    // **The form answers go for the same reason as the text edits**: the
+    // removal pass already wrote them. Left here, `forms::write` runs again on a
+    // file the removal changed --- and when the region covered a field the
+    // reader had filled, that field is gone, so the fill refuses with *the form
+    // field is no longer in this document*, after the words have gone and with
+    // the verification's answer discarded. Nothing in the fill writes a field.
+    result.forms.clear();
     for (slot, page) in original.pages.iter().enumerate() {
         for redaction in &original.redactions {
             if page.source == PageSource::Baseline(redaction.source) {
@@ -248,6 +255,22 @@ mod tests {
                 redactions: vec![region(0, [30.0, 40.0, 60.0, 70.0])],
             }
         }
+    }
+
+    /// The fill pass writes no form answer: the removal pass wrote them.
+    ///
+    /// A region over a field the reader filled takes the field, so a second
+    /// `forms::write` finds nothing to write into and refuses the fill.
+    #[test]
+    fn the_fill_pass_writes_no_form_answer_a_second_time() {
+        let mut source = PlannedSourceForTest::plan();
+        source.forms = vec![crate::forms::Change {
+            object: (12, 0),
+            value: crate::forms::Value::Text("an answer".into()),
+        }];
+        let mapped = output_plan(&source).unwrap();
+        assert!(mapped.forms.is_empty(), "the removal pass already wrote it");
+        assert_eq!(mapped.redactions.len(), 1, "the region still travels");
     }
 
     #[test]

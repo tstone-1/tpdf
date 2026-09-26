@@ -49,6 +49,11 @@ use crate::search::PageMatches;
 use crate::startup::{mark, since_process_start_ms};
 use crate::text::PageText;
 use crate::worker::{Reply, Request, Response, Shm, WarmWorker, Worker, WorkerSender};
+// The modules the body reaches by path rather than by item, named so this block
+// is the whole of the pool's coupling rather than the half imported by item.
+#[cfg(windows)]
+use crate::sandbox_win;
+use crate::{diag, docinfo, edits, encoding, forms, redact, save, textedit, textview};
 
 /// How many workers one document may have, unless `TPDF_POOL` says otherwise.
 ///
@@ -546,7 +551,7 @@ struct Held {
 /// while the others do the same. Everything here is short critical sections ---
 /// no lock is ever held across a render.
 pub(crate) struct Workers {
-    pub(crate) views: crate::textview::Source,
+    pub(crate) views: textview::Source,
     library_dir: PathBuf,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
@@ -604,7 +609,7 @@ impl Workers {
         deadline: Duration,
     ) -> Self {
         Self {
-            views: crate::textview::Source::default(),
+            views: textview::Source::default(),
             spare: Spare::default(),
             adopted: std::sync::atomic::AtomicU64::new(0),
             library_dir,
@@ -795,7 +800,7 @@ impl Workers {
                 // reason is said out loud because a spare that dies every time
                 // would otherwise show up only as the saving quietly vanishing.
                 Err(e) => {
-                    crate::diag::note(&format!(
+                    diag::note(&format!(
                         "[render] a pre-spawned worker could not take the document: {e}"
                     ));
                 }
@@ -897,7 +902,7 @@ impl Workers {
         // --- a sentence that contradicts itself and sends the next reader
         // looking for a second failure. The deadline branch below omits one for
         // the same reason. The diagnosis is about the file, and names the file.
-        crate::diag::note(&format!(
+        diag::note(&format!(
             "[render] document {doc}: {reason} No replacement can serve it, so further \
              requests are refused rather than retried."
         ));
@@ -1212,7 +1217,7 @@ impl Workers {
             // answering" and would otherwise have no way to tell a deadline kill
             // from a crash --- and those are opposite diagnoses: one is a
             // document doing too much, the other is PDFium falling over.
-            crate::diag::note(&format!(
+            diag::note(&format!(
                 "[render] worker {pid}: no reply in {:.0} s; killing it",
                 self.deadline.as_secs_f64()
             ));
@@ -1320,7 +1325,7 @@ impl Workers {
             // running` here for the reason above --- and said out loud, because
             // the error the caller receives is about a pipe rather than about a
             // request that took too long.
-            crate::diag::note(&format!(
+            diag::note(&format!(
                 "[render] document {doc}: worker killed for exceeding its deadline"
             ));
             self.discard(doc, worker);
@@ -1330,7 +1335,7 @@ impl Workers {
         // Said out loud, once, because a successful retry makes the death
         // invisible to the caller and a worker that dies quietly is the hardest
         // thing in this design to diagnose.
-        crate::diag::note(&format!(
+        diag::note(&format!(
             "[render] document {doc}: worker {}; starting a replacement",
             worker.epitaph()
         ));
@@ -1529,7 +1534,7 @@ fn settled<T>(
         // Said out loud: a machine where this fires every time has spares that
         // never arrive, and the only other symptom is opens that are quietly
         // 14 ms slower than they should be.
-        crate::diag::note(&format!(
+        diag::note(&format!(
             "[render] a pre-spawned worker did not warm within {:.0} s; ending it",
             within.as_secs_f64()
         ));
@@ -1619,7 +1624,7 @@ pub fn kill_pid(pid: u32) {
         return;
     }
     // SAFETY: a live handle opened with PROCESS_TERMINATE, closed on the next line.
-    unsafe { TerminateProcess(handle, crate::sandbox_win::KILLED_EXIT) };
+    unsafe { TerminateProcess(handle, sandbox_win::KILLED_EXIT) };
     // SAFETY: opened above, closed exactly once, not used again.
     unsafe { CloseHandle(handle) };
 }
@@ -1782,7 +1787,7 @@ impl Engine for Workers {
                 // does not have. Until this line the log of a session in which no
                 // document could be opened at all was empty --- which is what a
                 // session with nothing wrong looks like, and it cost a diagnosis.
-                crate::diag::note(&format!("[render] opening {}: {e}", path.display()));
+                diag::note(&format!("[render] opening {}: {e}", path.display()));
                 return Err(e.into());
             }
         };
@@ -1907,7 +1912,7 @@ impl Engine for Workers {
         doc: u32,
         page: u32,
         regions: &[[f32; 4]],
-    ) -> Result<Vec<crate::redact::RegionPlan>, String> {
+    ) -> Result<Vec<redact::RegionPlan>, String> {
         match self.ask(
             doc,
             &Request::RedactPlans {
@@ -1931,9 +1936,9 @@ impl Engine for Workers {
         &self,
         doc: u32,
         page: u32,
-        changes: &[crate::textedit::Change],
+        changes: &[textedit::Change],
         outlines: bool,
-    ) -> Result<crate::textedit::PageRuns, String> {
+    ) -> Result<textedit::PageRuns, String> {
         let changes = changes.to_vec();
         let request = if outlines {
             Request::TextOutlines { page, changes }
@@ -1946,7 +1951,7 @@ impl Engine for Workers {
         }
     }
 
-    fn form(&self, doc: u32) -> Result<crate::forms::Form, String> {
+    fn form(&self, doc: u32) -> Result<forms::Form, String> {
         match self.ask(doc, &Request::Form)? {
             Reply::Form(form) => Ok(form),
             other => Err(mismatched("form", &other)),
@@ -1967,21 +1972,21 @@ impl Engine for Workers {
         }
     }
 
-    fn mapping(&self, doc: u32) -> Result<Vec<crate::encoding::PageMapping>, String> {
+    fn mapping(&self, doc: u32) -> Result<Vec<encoding::PageMapping>, String> {
         match self.ask(doc, &Request::Mapping)? {
             Reply::Mapping(mapping) => Ok(mapping),
             other => Err(mismatched("mapping", &other)),
         }
     }
 
-    fn properties(&self, doc: u32) -> Result<crate::docinfo::Properties, String> {
+    fn properties(&self, doc: u32) -> Result<docinfo::Properties, String> {
         match self.ask(doc, &Request::Properties)? {
             Reply::Properties(properties) => Ok(*properties),
             other => Err(mismatched("properties", &other)),
         }
     }
 
-    fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
+    fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String> {
         match self.ask(doc, &Request::Append { plan: plan.clone() })? {
             Reply::Append(update) => Ok(update),
             other => Err(mismatched("append", &other)),
@@ -2191,9 +2196,7 @@ pub(crate) fn watch_calls(engine: &Arc<Workers>, deadline: Duration) {
             engine.kill_overdue();
         });
     if spawned.is_err() {
-        crate::diag::note(
-            "[render] no deadline supervisor: a request that hangs will hold its thread",
-        );
+        diag::note("[render] no deadline supervisor: a request that hangs will hold its thread");
     }
 }
 

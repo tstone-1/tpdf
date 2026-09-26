@@ -159,8 +159,10 @@ x509-cert = { version = "0.2", default-features = false }
 # expands nothing without a resolver, which this never supplies.
 quick-xml = "0.42"
 
-# MIT OR Apache-2.0. Worker-only validation of embedded TrueType subsets.
-# Layout/shaping, variations and glyph-name fallback are intentionally excluded.
+# MIT OR Apache-2.0. Worker-only validation of embedded TrueType and CFF
+# programs. Layout/shaping and variations are intentionally excluded;
+# `glyph-names` is on because CFF glyphs are addressed by name
+# (`textedit/fonts/cff.rs`). Unmaintained since 2026-06-28: `.cargo/audit.toml`.
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "glyph-names"] }
 # MIT OR Apache-2.0. Subset only the bundled static CJK fallback programs.
 subsetter = { version = "0.2.6", default-features = false }

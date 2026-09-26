@@ -235,6 +235,36 @@ async fn ask_redactions(
     }
 
     let mut plan = edits.plan(doc)?;
+
+    // **The form answers under the regions, as needles.** A widget's answer is
+    // drawn by its appearance stream rather than the page, so no plan above
+    // reports it and the scan would never look for it --- which is how a field
+    // with a second widget outside the region once kept its answer while the
+    // redaction reported itself verified. The writer now takes such a field
+    // (`redact::covered_fields`); these needles are what would notice if any
+    // copy of the answer survived anyway. One form read for the whole document,
+    // in a worker like every other parse of it.
+    //
+    // A form that cannot be read is a reason, not a refusal: the answers under
+    // the regions are then unknown, and an unknown is *not verified*.
+    let (reply, rx) = reply_channel();
+    service.form(doc, reply);
+    match await_reply("form", rx).await {
+        Ok(form) => {
+            for redaction in &planned {
+                needles.extend(redact::covered_answers(
+                    &form,
+                    redaction.source,
+                    &redaction.areas,
+                    &plan.forms,
+                ));
+            }
+        }
+        Err(why) => concerns.push(format!(
+            "the form fields could not be read, so an answer under a marked area \
+             cannot be checked: {why}"
+        )),
+    }
     plan.redactions = planned;
     // **After the plan, because the plan is what says where each page lands.**
     // Everything above addresses the file the reader opened; the gate reopens
@@ -567,9 +597,10 @@ pub async fn redact_document(
     // reason: the reader's document is being taken apart, and the honest thing
     // to report is that they have to open the file again.
     //
-    // The model first --- document numbers are reused, and a journal left under a
-    // handle the service is free to hand to another file is one document's edits
-    // applied to another's pages. Here that close is also the truncation.
+    // The model first, for `close_document`'s reason: it goes even when the
+    // service refuses, so an edit arriving late for this id finds no journal
+    // rather than one whose pages the service no longer holds. Here that close
+    // is also the truncation.
     //
     // ⚠ **These two calls were written against a document that could not hold
     // an inserted page, and both said so**: *"empty today --- a redaction is

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   RedactList,
+  fillRedactionRegions,
   nextUnreadRegion,
   noticeFor,
   rowLineFor,
@@ -14,6 +15,7 @@ import {
   pairPlans,
   redactionRows,
   unedited,
+  type FilePage,
   type RedactionView,
   type RegionPlan,
 } from "./pages";
@@ -650,5 +652,100 @@ describe("RedactList", () => {
       target: removeControl(list, 5),
     });
     expect(picked).toEqual([]);
+  });
+});
+
+describe("the redaction walk, when the page order changes while it waits", () => {
+  /** A plan whose only field that matters is which file page it was asked for. */
+  function planFor(page: FilePage): RegionPlan {
+    return { taking: `file page ${page}` } as unknown as RegionPlan;
+  }
+
+  /**
+   * Three pages, a region on the third, and a reader who deletes the first
+   * while the walk is waiting on `wait`. Returns what the walk stored and which
+   * file pages it asked about.
+   */
+  async function walkWithDeletion(wait: "text" | "plans") {
+    let map = unedited(3);
+    const regions = [region({ id: 7, page: pageId(3) })];
+    const asked: number[] = [];
+    const words = new Map<number, string | null>();
+    const planned = new Map<number, RegionPlan>();
+    const deleteFirst = () => {
+      map = new PageMap([
+        { id: pageId(2), source: { baseline: 1 }, turns: 0 },
+        { id: pageId(3), source: { baseline: 2 }, turns: 0 },
+      ]);
+    };
+    await fillRedactionRegions({
+      current: () => true,
+      regions: () => regions,
+      slotOf: (page) => map.slotOfId(page),
+      sourceOf: (slot) => map.sourceOf(slot),
+      text: async () => {
+        if (wait === "text" && asked.length === 0) deleteFirst();
+        return null;
+      },
+      plans: async (page, areas) => {
+        asked.push(page);
+        if (wait === "plans" && asked.length === 1) deleteFirst();
+        return areas.map(() => planFor(page));
+      },
+      words,
+      planned,
+      answered: () => {},
+      failed: (e) => { throw e; },
+    });
+    return { asked, words, planned };
+  }
+
+  it("a plan asked before a deletion above is not stored for the shifted page", async () => {
+    // The region is on the third page of the file, file page 2. Deleting the
+    // first page while its text is read puts page id 3 in slot 1, and the slot
+    // read before the wait would ask for file page 2's neighbour.
+    const { asked, words, planned } = await walkWithDeletion("text");
+    expect(asked).toEqual([2]);
+    expect(planned.get(7)).toEqual(planFor(2 as FilePage));
+    expect(words.get(7)).toBeNull();
+  });
+
+  it("keeps a plan when a page above is deleted while the plan is computed", async () => {
+    // A file page does not move when another page is deleted, so the plan
+    // that came back is still this region's, and asking again would be waste.
+    const { asked, planned } = await walkWithDeletion("plans");
+    expect(asked).toEqual([2]);
+    expect(planned.get(7)).toEqual(planFor(2 as FilePage));
+  });
+
+  it("asks again when the region's own page was replaced while its plan was computed", async () => {
+    let map = unedited(2);
+    const regions = [region({ id: 7, page: pageId(2) })];
+    const asked: number[] = [];
+    const planned = new Map<number, RegionPlan>();
+    await fillRedactionRegions({
+      current: () => true,
+      regions: () => regions,
+      slotOf: (page) => map.slotOfId(page),
+      sourceOf: (slot) => map.sourceOf(slot),
+      text: async () => null,
+      plans: async (page, areas) => {
+        asked.push(page);
+        // The same page id now standing for a different page of the file ---
+        // not something the model does, and the one case this check is for.
+        if (asked.length === 1)
+          map = new PageMap([
+            { id: pageId(1), source: { baseline: 0 }, turns: 0 },
+            { id: pageId(2), source: { baseline: 0 }, turns: 0 },
+          ]);
+        return areas.map(() => planFor(page));
+      },
+      words: new Map(),
+      planned,
+      answered: () => {},
+      failed: (e) => { throw e; },
+    });
+    expect(asked).toEqual([1, 0]);
+    expect(planned.get(7)).toEqual(planFor(0 as FilePage));
   });
 });

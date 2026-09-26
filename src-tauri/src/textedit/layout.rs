@@ -1942,13 +1942,12 @@ fn wrap_room(
 /// lines*).
 fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Carried {
     let height = |rect: [f64; 4]| rect[cross + 2] - rect[cross];
-    let mut carried = BTreeMap::new();
-    for (index, drawing) in page.graphics.iter().enumerate() {
-        if !page.paths.contains_key(&index) {
-            continue;
-        }
-        let drawing = drawing.map(f64::from);
-        for (_, old, by) in moves {
+    // Each move's line, built once. It depends on the moves alone and not on
+    // the drawing, so building it inside the drawing loop made this
+    // paths × moves² on a page with one show per glyph --- on the preview path.
+    let lines: Vec<([f64; 4], [f64; 2])> = moves
+        .iter()
+        .map(|(_, old, by)| {
             let line = moves
                 .iter()
                 .filter(|(_, other, went)| {
@@ -1964,13 +1963,23 @@ fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Carried {
                         line[3].max(other[3]),
                     ]
                 });
+            (line, *by)
+        })
+        .collect();
+    let mut carried = BTreeMap::new();
+    for (index, drawing) in page.graphics.iter().enumerate() {
+        if !page.paths.contains_key(&index) {
+            continue;
+        }
+        let drawing = drawing.map(f64::from);
+        for (line, by) in &lines {
             let slack = [
                 line[0] - LINK_SLACK,
                 line[1] - LINK_SLACK,
                 line[2] + LINK_SLACK,
                 line[3] + LINK_SLACK,
             ];
-            if height(drawing) <= UNDERLINE * height(line) && wrap::holds(slack, drawing) {
+            if height(drawing) <= UNDERLINE * height(*line) && wrap::holds(slack, drawing) {
                 carried.insert(index, *by);
                 break;
             }

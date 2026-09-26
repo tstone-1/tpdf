@@ -1,0 +1,78 @@
+name: Audit
+
+# Checks every dependency against the RustSec and npm advisory databases.
+#
+# WHY IT IS A WORKFLOW AND NOT A GATE. `scripts/gates.py` must pass offline on a
+# fresh checkout, and an advisory audit is a question about the world rather
+# than about the commit: a lockfile that passed on Monday fails on Tuesday when
+# an advisory is published, with no change to the repository. The weekly
+# schedule is what catches that case; the push and pull-request triggers catch a
+# dependency change that brings an advisory in with it.
+#
+# Until 2026-09-26 nothing ran an audit at all, and a direct dependency that
+# parses fonts out of attacker-supplied documents (`ttf-parser`) was declared
+# unmaintained on 2026-06-28 without anyone noticing. `.cargo/audit.toml` now
+# denies every warning and lists, one reason each, the advisories this project
+# has looked at and accepted -- so a new one is a red run, not a line in a log.
+#
+# FORK THREAT MODEL, as in `ci.yml`: `pull_request` and never
+# `pull_request_target`, `permissions: contents: read`, no secrets referenced,
+# and a checkout that does not persist its credential. Actions are pinned by
+# commit SHA with the tag beside it; see `ci.yml` for how to bump one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays 06:17 UTC, off the hour so it is not queued behind every other
+    # scheduled workflow on GitHub.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Dependency audit
+    # Linux, because the audit reads lockfiles and builds nothing for a target;
+    # the advisories it reports are the same on every runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5 (v5.1.0)
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5 (v5.0.0)
+        with:
+          node-version: 24
+
+      # `rustup show` for the reason `ci.yml` gives: it installs what
+      # `rust-toolchain.toml` names instead of setting RUSTUP_TOOLCHAIN.
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+
+      # Pinned to a version, and `--locked` so its own dependencies are the
+      # ones its release was built with. Bump it deliberately, like the toolchain.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      # From the repository root, because cargo-audit reads `.cargo/audit.toml`
+      # under the directory it runs in; `--file` names each lockfile. The fuzz
+      # package has its own lockfile and resolves the application by path, so it
+      # can hold a version the application's lockfile does not.
+      - name: cargo audit (application)
+        run: cargo audit --file src-tauri/Cargo.lock
+
+      - name: cargo audit (fuzz package)
+        run: cargo audit --file src-tauri/fuzz/Cargo.lock
+
+      # The lockfile is enough; nothing needs installing. `--omit=dev` because
+      # the development tree never reaches the shipped webview bundle.
+      - name: npm audit
+        run: npm audit --omit=dev

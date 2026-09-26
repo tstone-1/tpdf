@@ -2,7 +2,7 @@ import type { DocumentInfo } from "./ipc";
 import type { Edits } from "./edits";
 import type { Place } from "./session";
 import type { Tab } from "./sidebar";
-import type { SearchOptions, ScopeRange } from "./search";
+import { PLAIN_SEARCH, type SearchOptions, type ScopeRange } from "./search";
 import type { Offer } from "./recovery";
 
 /** State kept while a document has no mounted viewer. Backend handles stay open. */
@@ -21,6 +21,69 @@ export interface DocumentTab {
   offers: Offer[];
   notice: string | null;
   redactedCopyPath: string | null;
+}
+
+/**
+ * Everything a tab keeps beyond which file it is: what {@link keepState}
+ * writes when the reader switches away and what `openDocument` reads back.
+ *
+ * **Typed here so a field cannot be kept on one side only.** Both halves used
+ * to be written out in `App.svelte`, the one file no gate reaches: an
+ * `Object.assign` of a literal on the way out, and nine `retained?.x ?? default`
+ * reads spread through `openDocument` on the way back. A field added to
+ * {@link DocumentTab} and to one of them compiled, and leaked across tabs.
+ * Now `keepState` takes a whole {@link TabState} and {@link freshState} is a
+ * whole {@link FreshState}, so a new field is a compile error in both until it
+ * is written in both.
+ */
+export type TabState = Omit<DocumentTab, "doc" | "path">;
+
+/**
+ * The part of a tab that has a value before the reader has done anything.
+ *
+ * `edits` and `place` are not in it: the first is a model built for the file
+ * and the second is the remembered or clamped place, and both are computed by
+ * the opener rather than defaulted.
+ */
+export type FreshState = Omit<TabState, "edits" | "place">;
+
+/** The state of a document nobody has touched yet. A new `Map` and array each call. */
+export function freshState(): FreshState {
+  return {
+    covered: new Map(),
+    query: "",
+    findShown: false,
+    searchOptions: PLAIN_SEARCH,
+    searchScope: null,
+    sidebarTab: "outline",
+    error: null,
+    offers: [],
+    notice: null,
+    redactedCopyPath: null,
+  };
+}
+
+/** Records what the reader leaves behind when they switch away from `tab`. */
+export function keepState(tab: DocumentTab, state: TabState): void {
+  Object.assign(tab, state);
+}
+
+/**
+ * What a tab being reopened restores, or {@link freshState} for a document
+ * that was never kept.
+ *
+ * Read at three points of `openDocument` rather than applied at one, because
+ * the order is load-bearing there: the status line before the viewer mounts,
+ * the covered words beside the model, the search and sidebar tab after the
+ * panels exist. What this owns is that every one of them comes from the same
+ * record.
+ */
+export function restoredState(tab: DocumentTab | undefined): FreshState {
+  if (!tab) return freshState();
+  const { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,
+    redactedCopyPath } = tab;
+  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,
+    redactedCopyPath };
 }
 
 /** Ordered ownership of open handles. Only removal permits backend release. */

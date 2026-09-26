@@ -1,10 +1,9 @@
 //! Conservative content-stream text editing, executed in the document worker.
 //!
-//! Supported text uses Helvetica with WinAnsi/default encoding or validated
-//! embedded TrueType/CFF glyphs. Continued shows retain their original advances.
-//! Font/leading setup may precede a text block.
-//! Complete painted rectangles, straight-line strokes and bounded opaque images are preserved, and
-//! bounded character spacing is retained. Other graphics and custom text state are refused.
+//! What a page may hold and still be edited --- which fonts, which graphics,
+//! which text state --- is `docs/TEXTEDIT.md`, and anything it does not admit is
+//! refused rather than guessed at. That list lives there and not here because it
+//! grows with nearly every change to this module, and a copy here went stale.
 //! Addresses refer to decoded operators, never PDFium's text-object ordinals.
 
 mod actual;
@@ -1839,13 +1838,30 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
             // A wrap moves each of these down; an earlier edit on the same
             // visual line -- another block's run set before this paragraph --
             // may already have pushed one along, and the two are written from
-            // separate copies of its bytes. Every show belongs to one block, so
-            // two wraps never move the same one.
+            // separate copies of its bytes.
+            //
+            // **And two wraps can move the same one.** Each is laid out against
+            // the page as it was loaded, so two columns wrapping over one
+            // paragraph set across both each carry it down by their own drop,
+            // and neither knows the other did. Measured before this check: the
+            // second wrap's entry replaced the first's, the paragraph went down
+            // by the smaller drop, and it was written onto the longer column's
+            // last new line with no refusal. Refused rather than resolved,
+            // because the larger drop is right only if nothing the smaller one
+            // carried depends on where the paragraph lands --- and saving
+            // between the two edits gets it right with no guess. The same map
+            // holds the underlines a wrap moves, which is the same collision.
             for (show, operations) in &replacement.lowered {
                 if shifts.contains_key(&(change.page, *show)) {
                     return Err(layout::WRAP_CONFLICT.into());
                 }
-                page.lowered.insert(*show as usize, operations.clone());
+                if page
+                    .lowered
+                    .insert(*show as usize, operations.clone())
+                    .is_some()
+                {
+                    return Err(layout::WRAP_CONFLICT.into());
+                }
                 page.patched.insert(*show as usize);
             }
             if !replacement.links.is_empty() {
@@ -1880,6 +1896,9 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                     .map(|v| v as f32);
                     let (was, now) = (user(rect), user(moved));
                     let new = [0, 1, 2, 3].map(|i| source[i] + now[i] - was[i]);
+                    // Not checked for a second wrap's entry: a link moves only
+                    // with a line this wrap lowers, so two wraps moving one
+                    // link have already been refused on that line above.
                     page.links.insert(*link, new);
                 }
             }

@@ -657,7 +657,7 @@ MUTATIONS = [
     # second. Remove both for this end-to-end completion property; the stream
     # patch mutations separately exercise the writer's boundary checks.
     Mutation("textedit: bypass both content completion checks", "src/textedit.rs", '    let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;\n    if content.operations.len() > MAX_OPERATIONS {\n        return Err("text operator count exceeds its limit".into());\n    }\n    // Discovery promises that deletion can use the byte-preserving writer too.\n    streams::rewrite(&bytes, &content, &BTreeSet::new())?;\n', '    let content = Content::decode(&bytes).map_err(|e| e.to_string())?;\n    if content.operations.len() > MAX_OPERATIONS {\n        return Err("text operator count exceeds its limit".into());\n    }\n    // Discovery promises that deletion can use the byte-preserving writer too.\n', "textedit_rejects_partial_or_undecodable_content"),
-    Mutation("textedit: omit the writer call", "src/save.rs", "    crate::textedit::write(&mut doc, &split.base)?;", "    // text replacement omitted", "textedit_reaches_save_copy_print_and_forbids_append"),
+    Mutation("textedit: omit the writer call", "src/save.rs", "    textedit::write(&mut doc, &split.base)?;", "    // text replacement omitted", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("textedit: keep unreachable old content", "src/save.rs", "        || !plan.text_edits.is_empty()", "        || false", "textedit_sweeps_old_streams_and_rejects_stale_or_redaction_plans"),
     Mutation("textedit: accept a stale content revision", "src/textedit.rs", "change.revision != runs.revision || change.original != run.text", "change.original != run.text", "textedit_rejects_invalid_batches_without_mutating_the_document"),
 
@@ -1016,14 +1016,19 @@ MUTATIONS = [
     Mutation("spread: a break's spare is measured to a full pitch", 'src/textedit/layout.rs', '    let (_, cross, blank) = landing(moves, edge, down, give);', '    let (slack, cross, blank) = landing(moves, edge, down, give);\n    let blank = blank + slack[cross] - 0.1;', 'the_added_lines_are_spread_over_the_breaks_below'),
     Mutation('underline: an image is moved like a path', 'src/textedit/layout.rs', '        if !page.paths.contains_key(&index) {\n            continue;\n        }\n        let drawing = drawing.map(f64::from);', '        let drawing = drawing.map(f64::from);', 'an_underline_moves_with_its_line'),
     Mutation('underline: stays behind its line', 'src/textedit/layout.rs', 'let carried = underlines(page, moves, rule.1);', 'let carried = Carried::new();', 'an_underline_moves_with_its_line'),
-    Mutation('underline: any depth is an underline', 'src/textedit/layout.rs', 'if height(drawing) <= UNDERLINE * height(line) && wrap::holds(slack, drawing) {', 'if wrap::holds(slack, drawing) {', 'an_underline_moves_with_its_line'),
-    Mutation('underline: past the line is under it', 'src/textedit/layout.rs', 'if height(drawing) <= UNDERLINE * height(line) && wrap::holds(slack, drawing) {', 'if height(drawing) <= UNDERLINE * height(line) {', 'an_underline_moves_with_its_line'),
+    Mutation('underline: any depth is an underline', 'src/textedit/layout.rs', 'if height(drawing) <= UNDERLINE * height(*line) && wrap::holds(slack, drawing) {', 'if wrap::holds(slack, drawing) {', 'an_underline_moves_with_its_line'),
+    Mutation('underline: past the line is under it', 'src/textedit/layout.rs', 'if height(drawing) <= UNDERLINE * height(*line) && wrap::holds(slack, drawing) {', 'if height(drawing) <= UNDERLINE * height(*line) {', 'an_underline_moves_with_its_line'),
     Mutation('underline: a line is one run', 'src/textedit/layout.rs', '                    went == by && shared > height(*old).min(height(*other)) / 2.', '                    went == by && shared > height(*old).min(height(*other)) / 2. && other == old', 'an_underline_moves_with_its_line'),
     Mutation('underline: pieces going apart are one line', 'src/textedit/layout.rs', '                    went == by && shared > height(*old).min(height(*other)) / 2.', '                    shared > height(*old).min(height(*other)) / 2.', 'an_underline_moves_with_its_line'),
     Mutation('underline: text beside still counts it', 'src/textedit/layout.rs', '!carried.contains_key(&index) && level(*old, drawing) != level(new, drawing)', 'level(*old, drawing) != level(new, drawing)', 'an_underline_moves_with_its_line'),
     Mutation('underline: never written lower', 'src/textedit/layout.rs', '                    for (index, by) in carried {', '                    for (index, by) in carried.into_iter().filter(|_| false) {', 'an_underline_moves_with_its_line'),
     Mutation('underline: moved the other way', 'src/textedit/layout.rs', '(to[0] - from[0], to[1] - from[1]),', '(from[0] - to[0], from[1] - to[1]),', 'an_underline_moves_with_its_line'),
     Mutation('underline: the writer refuses a moved path', 'src/textedit/streams.rs', '                && !moved_path', '', 'an_underline_moves_with_its_line'),
+    Mutation("wrap: a second wrap's move replaces the first's", 'src/textedit.rs', '                if page\n                    .lowered\n                    .insert(*show as usize, operations.clone())\n                    .is_some()\n                {\n                    return Err(layout::WRAP_CONFLICT.into());\n                }', '                page.lowered.insert(*show as usize, operations.clone());', 'two_wraps_that_both_move_one_paragraph_are_refused'),
+    Mutation('moved path: any transform is a move', 'src/textedit/streams.rs', '        && [a, b, c, d] == [1., 0., 0., 1.]\n', '', 'a_moved_path_is_accepted_only_as_a_paired_pure_translation'),
+    Mutation('moved path: an opening is never restored', 'src/textedit/streams.rs', '    if open_path.is_some() {\n        return Err("invalid text patch".into());\n    }\n', '', 'a_moved_path_is_accepted_only_as_a_paired_pure_translation'),
+    Mutation('moved path: a restore with no opening', 'src/textedit/streams.rs', 'Some(false) if open_path.take().is_some() => {}', 'Some(false) if { open_path.take(); true } => {}', 'a_moved_path_is_accepted_only_as_a_paired_pure_translation'),
+    Mutation('moved path: an opening inside another', 'src/textedit/streams.rs', 'Some(true) if open_path.replace(index).is_none() => {}', 'Some(true) => { open_path = Some(index); }', 'a_moved_path_is_accepted_only_as_a_paired_pure_translation'),
     Mutation('half breaks: a full page keeps every break whole', 'src/textedit/layout.rs', 'const BREAK_GIVE: f64 = 0.5;', 'const BREAK_GIVE: f64 = 0.;', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
     Mutation('half breaks: breaks give up half before the page is full', 'src/textedit/layout.rs', '                let (placed, links, lowered) = match settle(0.) {', '                let (placed, links, lowered) = match settle(BREAK_GIVE) {', 'text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space'),
     Mutation('half breaks: the blocks below still move the whole way', 'src/textedit/layout.rs', '(corner(0., -drop), corner(0., -plan.pitch), give),', '(corner(0., -drop), corner(0., -plan.pitch), 0.),', 'a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks'),
@@ -1317,7 +1322,7 @@ MUTATIONS = [
     Mutation("choices: retarget radio answers when pages move", "src/forms.rs", "        group.sort_by_key(|i| result.widgets[*i].widget);", "        // keep page order", "radio_answers_survive_page_moves_and_support_duplicate_states"),
     Mutation("choices: draw export values instead of labels", "src/forms.rs", "                .map(|i| options[*i].label.as_str())", "                .map(|i| options[*i].export.as_str())", "choices_and_radio_round_trip_exports_indices_and_appearances"),
     Mutation("choices: ignore the selected radio sibling", "src/forms.rs", "                            selected == index || (*unison && states[*selected] == states[*index])", "                            selected == index || (!*unison && states[*selected] != states[*index])", "choices_and_radio_round_trip_exports_indices_and_appearances"),
-    Mutation("forms: skip answers in the save pipeline", "src/save.rs", "    crate::forms::write(&mut doc, &plan.forms)?;", "    // form answers omitted", "form_answers_force_a_rewrite_and_reach_the_saved_file"),
+    Mutation("forms: skip answers in the save pipeline", "src/save.rs", "    forms::write(&mut doc, &plan.forms)?;", "    // form answers omitted", "form_answers_force_a_rewrite_and_reach_the_saved_file"),
     Mutation("forms: write no appearances or values", "src/forms.rs", "    if changes.is_empty() {", "    if true {", "forms_round_trip_values_and_every_shared_widget_appearance"),
     Mutation("forms: lose current answers on replay", "src/docmodel.rs", "                self.forms.insert(object, version);", "                let _ = (object, version);", "forms_journal_undo_redo_and_redo_branch_are_independent_of_comments"),
     Mutation(
@@ -2566,7 +2571,7 @@ MUTATIONS = [
         # a structure element, a reader that walks the tree still finds it.
         "save: remove a redacted annotation without dropping the references to it",
         "src/save.rs",
-        "            crate::pagetree::forget(doc, &taken).map_err(Refusal::from)?;",
+        "            pagetree::forget(doc, &taken).map_err(Refusal::from)?;",
         "            for id in \u0026taken {\n                doc.objects.remove(id);\n            }",
         "a_redacted_annotation_loses_the_references_that_are_not_on_the_page",
     ),
@@ -2576,7 +2581,7 @@ MUTATIONS = [
         # out, and still carrying the comment about the words.
         "save: unlink a redacted annotation without removing the object",
         "src/save.rs",
-        "            crate::pagetree::forget(doc, &taken).map_err(Refusal::from)?;",
+        "            pagetree::forget(doc, &taken).map_err(Refusal::from)?;",
         "            let _ = &taken;",
         "an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not",
     ),
@@ -2712,7 +2717,7 @@ MUTATIONS = [
         # nothing a reader could not recover.
         "redact: redact an XFA field form rather than refusing it",
         "src/save.rs",
-        "    if !redactions.is_empty() && crate::redact::has_xfa(doc) {",
+        "    if !redactions.is_empty() && redact::has_xfa(doc) {",
         "    if !redactions.is_empty() && false {",
         "a_redaction_of_an_xfa_form_is_refused_rather_than_half_done",
     ),
@@ -2723,8 +2728,8 @@ MUTATIONS = [
         # document for a promise it is not making.
         "redact: refuse a field form's copy as well as its redaction",
         "src/save.rs",
-        "    if !redactions.is_empty() && crate::redact::has_xfa(doc) {",
-        "    if crate::redact::has_xfa(doc) {",
+        "    if !redactions.is_empty() && redact::has_xfa(doc) {",
+        "    if redact::has_xfa(doc) {",
         "a_copy_of_an_xfa_form_is_not_refused",
     ),
     Mutation(
@@ -2733,8 +2738,8 @@ MUTATIONS = [
         # keeps /V, so nothing draws the value and every search finds it.
         "redact: keep a field whose widgets have all been removed",
         "src/redact.rs",
-        "        let orphaned =\n            field.has(b\"Kids\")",
-        "        let orphaned = false\n            \u0026\u0026 field.has(b\"Kids\")",
+        "        let orphaned = lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty());",
+        "        let orphaned = false && (lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty()));",
         "a_field_whose_widgets_all_went_does_not_keep_its_value",
     ),
     Mutation(
@@ -2743,9 +2748,52 @@ MUTATIONS = [
         # over-removal direction and empties the form.
         "redact: call a field with no kids at all an orphaned one",
         "src/redact.rs",
-        "        let orphaned =\n            field.has(b\"Kids\")",
-        "        let orphaned =\n            !field.has(b\"Kids\")",
+        "        let orphaned = lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty());",
+        "        let orphaned = lost.contains(&id) || (!field.has(b\"Kids\") && kids.is_empty());",
         "a_field_naming_nothing_that_went_survives_a_redaction",
+    ),
+    Mutation(
+        # Take a field only when every widget under it went, which is what
+        # this rule asked until 2026-09-26: a field with a second widget
+        # outside the region kept its /V, drew it through that widget, and the
+        # redaction reported itself verified. `split` is the only subject this
+        # decides alone -- its value is under the length guard.
+        "redact: take a field only when every widget under it went",
+        "src/redact.rs",
+        "        let orphaned = lost.contains(&id) || (field.has(b\"Kids\") && kids.is_empty());",
+        "        let orphaned = field.has(b\"Kids\") && kids.is_empty();",
+        "a_field_with_one_widget_covered_and_one_elsewhere_loses_its_value",
+    ),
+    Mutation(
+        # Match fields against the page text alone. A widget's answer is drawn
+        # by its appearance stream, never reported as page text, so a second
+        # copy of an answer the reader covered survives -- `away` is the only
+        # subject the removed widgets' answers decide.
+        "save: match form fields against the page text alone",
+        "src/save.rs",
+        "            answers.extend(redact::widget_answers(doc, &taken));",
+        "            let _ = &answers;",
+        "a_field_holding_what_went_goes_even_with_its_widget_elsewhere",
+    ),
+    Mutation(
+        # Name no covered form answer as a verification needle: a copy that
+        # survived the removal is then invisible to the scan, and the
+        # redaction reports itself verified.
+        "redact: name no covered form answer as a needle",
+        "src/redact.rs",
+        "            answers.push(answer.to_string());",
+        "            let _ = answer;",
+        "a_covered_answer_is_a_needle_and_a_surviving_copy_is_not_verified",
+    ),
+    Mutation(
+        # Let the fill pass write the form answers a second time. A region over
+        # a field the reader filled takes the field, so the second write finds
+        # no widget and refuses the fill after the words are gone.
+        "redaction_fill: write the form answers again in the fill pass",
+        "src/redaction_fill.rs",
+        "    result.forms.clear();",
+        "    // form answers kept",
+        "the_fill_pass_writes_no_form_answer_a_second_time",
     ),
     Mutation(
         # Match a field value against nothing, so a field holding what went
@@ -2786,15 +2834,15 @@ MUTATIONS = [
         # which is the same loop `covered_fields` itself runs. The edit is the
         # same one -- take the field and leave everything under it.
         "src/redact.rs",
-        """        crate::fields::descend(doc, &[id], &bounds, |node| {
+        """        fields::descend(doc, &[id], &bounds, |node| {
             let Some(at) = node.id else {
-                return crate::fields::Flow::Leaf;
+                return fields::Flow::Leaf;
             };
             if all.contains(&at) {
-                return crate::fields::Flow::Leaf;
+                return fields::Flow::Leaf;
             }
             all.push(at);
-            crate::fields::Flow::Descend
+            fields::Flow::Descend
         });""",
         "        if !all.contains(&id) {\n            all.push(id);\n        }",
         "a_matched_field_takes_the_widgets_under_it",
@@ -3126,8 +3174,8 @@ MUTATIONS = [
         # is covered once; each caller's wiring to it is covered where it is.
         "save: tell the page-tree writer that nothing was dropped",
         "src/save.rs",
-        "    crate::pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;",
-        "    crate::pagetree::materialise(&mut doc, &[], moved.then_some(order.as_slice()))?;",
+        "    pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;",
+        "    pagetree::materialise(&mut doc, &[], moved.then_some(order.as_slice()))?;",
         "deleting_a_page_drops_the_outline_and_keeping_them_all_does_not",
     ),
     Mutation(
@@ -8112,8 +8160,8 @@ MUTATIONS += [
         # the defect `redact-apply-probe` found by grepping pixels.
         "image: leave the unlinked picture for the writer to emit",
         "src/save.rs",
-        "        || redacted.images > 0\n        || discarded > 0\n        || !plan.text_edits.is_empty()\n    {\n        crate::sweep::collect(&mut doc)?;",
-        "        || discarded > 0\n        || !plan.text_edits.is_empty()\n    {\n        crate::sweep::collect(&mut doc)?;",
+        "        || redacted.images > 0\n        || discarded > 0\n        || !plan.text_edits.is_empty()\n    {\n        sweep::collect(&mut doc)?;",
+        "        || discarded > 0\n        || !plan.text_edits.is_empty()\n    {\n        sweep::collect(&mut doc)?;",
         "a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file",
     ),
     Mutation(
@@ -10039,8 +10087,8 @@ MUTATIONS += [
         # that acts hardest where it knows least.
         "redact: gate a page the plan does not place, at slot zero",
         "src/redact.rs",
-        "            let slot = pages\n                .iter()\n                .position(|page| page.source == crate::docmodel::PageSource::Baseline(one.page))?;",
-        "            let slot = pages\n                .iter()\n                .position(|page| page.source == crate::docmodel::PageSource::Baseline(one.page))\n                .unwrap_or(0);",
+        "            let slot = pages\n                .iter()\n                .position(|page| page.source == docmodel::PageSource::Baseline(one.page))?;",
+        "            let slot = pages\n                .iter()\n                .position(|page| page.source == docmodel::PageSource::Baseline(one.page))\n                .unwrap_or(0);",
         "a_gate_page_the_plan_does_not_place_is_dropped",
     ),
     Mutation(
@@ -10106,8 +10154,8 @@ MUTATIONS += [
         # would then be applied to whatever the opened file has at the number.
         "docmodel: import: forget which file a replacement is addressed in",
         "src/docmodel.rs",
-        "                    PageSource::Imported { source, .. } => {\n                        Some(crate::textedit::Edit::imported(source.get(), change))\n                    }",
-        "                    PageSource::Imported { .. } => Some(crate::textedit::Edit::opened(change)),",
+        "                    PageSource::Imported { source, .. } => {\n                        Some(textedit::Edit::imported(source.get(), change))\n                    }",
+        "                    PageSource::Imported { .. } => Some(textedit::Edit::opened(change)),",
         "a_replacement_on_an_imported_page_names_the_file_it_came_from",
     ),
     Mutation(
@@ -10266,7 +10314,7 @@ MUTATIONS += [
         # reports success and the reader's words are not in the file.
         "save: import: drop an inserted page's replacement",
         "src/save.rs",
-        "        crate::textedit::write(into, &changes)?;",
+        "        textedit::write(into, &changes)?;",
         "        let _ = (into, &changes);",
         "a_rewrite_writes_a_replacement_into_the_page_it_imports",
     ),
@@ -10409,8 +10457,8 @@ MUTATIONS += [
         # Take the file for a commit the model then refuses, and release nothing.
         "edits: pending: leak the file on a refused commit",
         "src/edits.rs",
-        "        let held = crate::imports::Held::new(taken.handle, release.clone());",
-        "        let held = crate::imports::Held::new(taken.handle, |_| {});",
+        "        let held = imports::Held::new(taken.handle, release.clone());",
+        "        let held = imports::Held::new(taken.handle, |_| {});",
         "a_refused_commit_releases_the_file",
     ),
     Mutation(

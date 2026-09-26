@@ -1525,9 +1525,14 @@ bookmark title *is* the heading it points at, measured at 163 of 165 verbatim pa
 against a 4% cross-document control, which is what licenses a string rule here where one was
 refused for metadata. Entry by entry rather than the whole outline, so one redacted heading
 does not cost a reader their table of contents. And the **form fields whose answer went** —
-by either of two rules, that every widget under the field has gone, or that its value or its
-`/DV` default is text that went, which is that row's *widgets outside the redacted rectangle*
-stated as a property rather than as a location.
+by either of two rules, that a widget under the field has gone, or that its value or its
+`/DV` default is text that went (page text, or the answer of a widget the region took),
+which is that row's *widgets outside the redacted rectangle* stated as a property rather
+than as a location. A field loses all its widgets with its answer, and the answers under the
+regions are verification needles, so a copy that survives is reported *not verified*.
+Until 2026-09-26 the first rule needed *every* widget gone and a widget's answer never reached
+the second: a field with a second widget outside the region kept its `/V`, drew it there, and
+the redaction reported itself verified.
 
 **An XFA form is refused rather than half redacted**, which is the one place this subsystem
 answers a carrier by declining the operation. An XFA packet is a complete XML copy of every
@@ -2043,11 +2048,16 @@ including the PDFium source, toolchain and resulting binary.
 **What stops it, and what does not yet.** The application ships through notarized
 macOS distribution and signed updater payloads. PDFium is built by the read-only
 `.github/workflows/pdfium.yml` from pinned source, dependency and packaging-patch
-revisions, with TPDF's RTL correction. Both platforms must pass the control/candidate
-differential and upstream text tests before an archive is emitted. Archives carry
-source/toolchain provenance and licences; `scripts/fetch_pdfium.py` pins their
-SHA-256 before extraction. The notices gate checks permissive licensing. Build
-artifacts do not publish themselves or update the production pin.
+revisions. Since `pdfium-8066-tpdf.1` (2026-09-25) the source is built unpatched: upstream
+fixed the RTL regression TPDF used to patch, so there is one engine per platform rather than
+a control and a candidate. Each must reproduce the exact RTL observation
+`scripts/pdfium_verify.py` pins — every ordinary fixture's authored text, and the two known
+limitations' exact wrong text — and pass upstream's text tests before an archive is emitted.
+Archives carry source/toolchain provenance and licences; `scripts/fetch_pdfium.py` pins their
+SHA-256 before extraction. The notices gate checks permissive licensing, and
+`.github/workflows/audit.yml` checks the Rust and npm dependency trees against the advisory
+databases on every push and weekly, failing on any advisory `.cargo/audit.toml` does not
+list with its reason. Build artifacts do not publish themselves or update the production pin.
 
 These checks do not establish that a compiler or dependency is uncompromised, nor
 prove general PDFium correctness. Host SDK/CRT versions are recorded rather than

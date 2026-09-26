@@ -91,6 +91,13 @@ use crate::text::{self, PageText};
 use crate::workers::{
     call_deadline, reap_idle, serve_pooled, service_threads, watch_calls, Workers,
 };
+// The modules the body reaches by path rather than by item: every feature a
+// render request can carry. Named here so the list above is the whole of this
+// file's coupling, not the half of it that happened to be imported by item.
+use crate::{
+    content, diag, edits, forms, invert, objects, print, raster_redact, save, textedit, textview,
+    verify,
+};
 
 /// The pool's knobs, re-exported on the path they have always had.
 ///
@@ -314,7 +321,7 @@ fn announce_uncontained() {
     static SAID: std::sync::Once = std::sync::Once::new();
     SAID.call_once(|| {
         mark(UNSANDBOXED_MARK);
-        crate::diag::note(
+        diag::note(
             "[WARN] documents are parsed in the app process, uncontained --- either \
              this platform has no sandbox or TPDF_BACKEND asked for it. See BUILD.md.",
         );
@@ -463,14 +470,14 @@ pub(crate) enum Job {
     },
     Form {
         doc: u32,
-        reply: Reply<crate::forms::Form>,
+        reply: Reply<forms::Form>,
     },
     TextRuns {
         doc: u32,
         page: u32,
-        changes: Vec<crate::textedit::Change>,
+        changes: Vec<textedit::Change>,
         outlines: bool,
-        reply: Reply<crate::textedit::PageRuns>,
+        reply: Reply<textedit::PageRuns>,
     },
     Comments {
         doc: u32,
@@ -490,8 +497,8 @@ pub(crate) enum Job {
         /// every job is sized like the largest: clippy's `large_enum_variant`
         /// went red when `Plan` gained the list of other documents an import
         /// needs, 308 bytes against the next variant's 103.
-        plan: Box<crate::edits::Plan>,
-        reply: Reply<crate::save::Update>,
+        plan: Box<edits::Plan>,
+        reply: Reply<save::Update>,
     },
     /// What password this document was opened with, for a caller that has to
     /// parse its bytes itself. See [`RenderService::password`].
@@ -515,7 +522,7 @@ pub(crate) enum Job {
 /// Handle to the render thread. Cheap to clone.
 #[derive(Clone)]
 pub struct RenderService {
-    views: crate::textview::Source,
+    views: textview::Source,
     tx: Sender<Job>,
     /// Which requests are outstanding and which have been withdrawn. See
     /// `queue.rs`, which is where that state machine lives and is tested.
@@ -529,7 +536,7 @@ pub struct RenderService {
 
 impl RenderService {
     /// Uses journaled text for rendering, selection and search, while retaining the source for saves.
-    pub fn follow_text_edits(&self, edits: &crate::edits::Edits) {
+    pub fn follow_text_edits(&self, edits: &edits::Edits) {
         self.views.follow(edits);
     }
 
@@ -541,9 +548,9 @@ impl RenderService {
         &self,
         doc: u32,
         page: u32,
-        changes: Vec<crate::textedit::Change>,
+        changes: Vec<textedit::Change>,
         outlines: bool,
-        reply: Reply<crate::textedit::PageRuns>,
+        reply: Reply<textedit::PageRuns>,
     ) {
         let _ = self.tx.send(Job::TextRuns {
             doc,
@@ -615,7 +622,7 @@ impl RenderService {
         let pool = pool.max(1);
         let (tx, rx) = channel::<Job>();
         let queue = SharedQueue::default();
-        let views = crate::textview::Source::default();
+        let views = textview::Source::default();
 
         let workers = match backend {
             Backend::InProcess => {
@@ -969,7 +976,7 @@ impl RenderService {
     }
 
     /// Reads form widgets after the first page is painted.
-    pub fn form(&self, doc: u32, reply: Reply<crate::forms::Form>) {
+    pub fn form(&self, doc: u32, reply: Reply<forms::Form>) {
         let _ = self.tx.send(Job::Form { doc, reply });
     }
 
@@ -1034,7 +1041,7 @@ impl RenderService {
     /// document to build it from afterwards. `save_document` in `lib.rs` already
     /// had that order, for the unrelated reason that a rename over a mapped file
     /// leaves the mapping serving the old inode.
-    pub fn append(&self, doc: u32, plan: crate::edits::Plan, reply: Reply<crate::save::Update>) {
+    pub fn append(&self, doc: u32, plan: edits::Plan, reply: Reply<save::Update>) {
         if self
             .tx
             .send(Job::Append {
@@ -1186,20 +1193,20 @@ pub(crate) trait Engine {
         regions: &[[f32; 4]],
     ) -> Result<Vec<redact::RegionPlan>, String>;
     fn outline(&self, doc: u32) -> Result<Outline, String>;
-    fn form(&self, doc: u32) -> Result<crate::forms::Form, String>;
+    fn form(&self, doc: u32) -> Result<forms::Form, String>;
     fn text_runs(
         &self,
         doc: u32,
         page: u32,
-        changes: &[crate::textedit::Change],
+        changes: &[textedit::Change],
         outlines: bool,
-    ) -> Result<crate::textedit::PageRuns, String>;
+    ) -> Result<textedit::PageRuns, String>;
     fn comments(&self, doc: u32) -> Result<Comments, String>;
 
     fn links(&self, doc: u32) -> Result<Links, String>;
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn properties(&self, doc: u32) -> Result<Properties, String>;
-    fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String>;
+    fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String>;
     fn password(&self, doc: u32) -> Result<Option<String>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 
@@ -1333,7 +1340,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
 /// here would suggest otherwise while never being contended. The worker backend
 /// is the one that gets a pool.
 struct InProcess {
-    views: crate::textview::Source,
+    views: textview::Source,
     bindings: Bindings,
     /// Indexed by document id, with a hole where one has been closed. See
     /// [`open_slot`].
@@ -1346,7 +1353,7 @@ impl InProcess {
     fn start(
         library_dir: &Path,
         queue: SharedQueue,
-        views: crate::textview::Source,
+        views: textview::Source,
     ) -> Result<Self, String> {
         let pdfium = bind_pdfium(library_dir)?;
         // Loading and binding the Pdfium dylib is a fixed cost paid before any
@@ -1507,16 +1514,16 @@ impl Engine for InProcess {
         Ok(run_outline(open_slot(&self.docs.borrow(), doc)?))
     }
 
-    fn form(&self, doc: u32) -> Result<crate::forms::Form, String> {
+    fn form(&self, doc: u32) -> Result<forms::Form, String> {
         open_slot(&self.docs.borrow(), doc)?.graph().form()
     }
     fn text_runs(
         &self,
         doc: u32,
         page: u32,
-        changes: &[crate::textedit::Change],
+        changes: &[textedit::Change],
         outlines: bool,
-    ) -> Result<crate::textedit::PageRuns, String> {
+    ) -> Result<textedit::PageRuns, String> {
         let docs = self.docs.borrow();
         let document = open_slot(&docs, doc)?;
         text_edit_runs(self.bindings, document, page, changes, outlines)
@@ -1534,7 +1541,7 @@ impl Engine for InProcess {
         run_properties(open_slot(&self.docs.borrow(), doc)?)
     }
 
-    fn append(&self, doc: u32, plan: &crate::edits::Plan) -> Result<crate::save::Update, String> {
+    fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String> {
         run_append(open_slot(&self.docs.borrow(), doc)?, plan)
     }
 
@@ -1662,7 +1669,7 @@ pub(crate) fn render_tile_into(
     // pixels, and after the cancellation check, so a tile that is about to be
     // dropped is not paid for.
     if req.invert {
-        crate::invert::invert_lightness(&mut pixels[..progressive::tile_bytes(spec)]);
+        invert::invert_lightness(&mut pixels[..progressive::tile_bytes(spec)]);
     }
 
     Ok(TileFill::Drawn { render_us })
@@ -1718,16 +1725,16 @@ pub(crate) fn text_edit_runs(
     bindings: Bindings,
     document: &OpenDocument,
     page: u32,
-    changes: &[crate::textedit::Change],
+    changes: &[textedit::Change],
     outlines: bool,
-) -> Result<crate::textedit::PageRuns, String> {
+) -> Result<textedit::PageRuns, String> {
     let mut runs = document.graph().text_runs(page)?;
     if outlines {
         // A batch the journal holds was preflighted when it was applied, so
         // this does not fail in practice; if it did, the source's own outlines
         // are still where the source drew its text, and the save that follows
         // refuses the batch loudly. Outlines are not the place to report it.
-        if let Ok(placed) = crate::textedit::placements(document.graph().parsed()?, page, changes) {
+        if let Ok(placed) = textedit::placements(document.graph().parsed()?, page, changes) {
             for run in &mut runs.runs {
                 if let Some(rect) = placed.get(&run.operator) {
                     run.display_rect = *rect;
@@ -1742,7 +1749,7 @@ pub(crate) fn text_edit_runs(
             .rev()
             .find(|change| change.page == page && change.layout.is_some())
         {
-            let mut preview = crate::textedit::preview_layout(document.graph().parsed()?, change)?;
+            let mut preview = textedit::preview_layout(document.graph().parsed()?, change)?;
             let original = runs
                 .runs
                 .iter()
@@ -1825,7 +1832,7 @@ pub(crate) fn run_content(
     page: u32,
     cancel: &CancelToken,
 ) -> Result<Option<[f64; 4]>, String> {
-    crate::content::content_box(bindings, &document.page(page)?, cancel)
+    content::content_box(bindings, &document.page(page)?, cancel)
 }
 
 /// Where a crop box lands inside the page the file describes, and how big it is.
@@ -2003,7 +2010,7 @@ pub fn redaction_plans_of(
 ) -> Result<Vec<redact::RegionPlan>, String> {
     let index = page;
     let page = document.page(page)?;
-    let objects = crate::objects::read(&page)?;
+    let objects = objects::read(&page)?;
     let turns = page.quarter_turns();
     let (width, height) = (page.width_pt(), page.height_pt());
     let file_box = page.crop_pt();
@@ -2293,8 +2300,8 @@ pub(crate) fn run_comments(document: &OpenDocument) -> Result<Comments, String> 
 /// `worker_proto::Request::Append` for why that belongs here anyway.
 pub(crate) fn run_append(
     document: &OpenDocument,
-    plan: &crate::edits::Plan,
-) -> Result<crate::save::Update, String> {
+    plan: &edits::Plan,
+) -> Result<save::Update, String> {
     document.graph().append(plan)
 }
 
@@ -2305,15 +2312,15 @@ pub(crate) fn run_append(
 /// rather than into a reply --- see `worker_proto::Request::Rewrite`.
 pub(crate) fn run_rewrite(
     document: &OpenDocument,
-    plan: &crate::edits::Plan,
-    job: crate::save::Job,
-    inputs: Option<crate::save::Inputs<'_>>,
-) -> Result<Vec<u8>, crate::save::Refusal> {
+    plan: &edits::Plan,
+    job: save::Job,
+    inputs: Option<save::Inputs<'_>>,
+) -> Result<Vec<u8>, save::Refusal> {
     // The image-only path renders every output page through this document's
     // own PDFium, which has no page of another file to render; it refuses a
     // plan that places one before anything is drawn.
-    if job == crate::save::Job::RasterRedact {
-        crate::raster_redact::rewrite(document, plan)
+    if job == save::Job::RasterRedact {
+        raster_redact::rewrite(document, plan)
     } else {
         document.graph().rewrite(plan, job, inputs)
     }
@@ -2325,9 +2332,9 @@ pub(crate) fn run_rewrite(
 /// `crate::worker_proto::Request::Merge`.
 pub(crate) fn run_merge(
     document: &OpenDocument,
-    plan: &crate::edits::Plan,
-    inputs: crate::save::Inputs<'_>,
-) -> Result<(Vec<u8>, u32), crate::save::Refusal> {
+    plan: &edits::Plan,
+    inputs: save::Inputs<'_>,
+) -> Result<(Vec<u8>, u32), save::Refusal> {
     document.graph().merge(plan, inputs)
 }
 
@@ -2337,7 +2344,7 @@ pub(crate) fn run_merge(
 /// `crate::worker_proto::Request::PrintRange`.
 pub(crate) fn run_print_range(
     document: &OpenDocument,
-    job: &crate::print::Job,
+    job: &print::Job,
 ) -> Result<Vec<u8>, String> {
     document.graph().print_range(job)
 }
@@ -2364,7 +2371,7 @@ pub(crate) fn run_reread(document: &OpenDocument) -> Result<usize, String> {
 pub(crate) fn run_verify(
     document: &OpenDocument,
     needles: &[String],
-) -> Result<crate::verify::Report, String> {
+) -> Result<verify::Report, String> {
     document.graph().verify(needles)
 }
 

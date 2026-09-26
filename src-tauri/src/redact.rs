@@ -66,6 +66,10 @@ use std::collections::HashSet;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
+// Every module this one reaches, named here rather than in the body, so the
+// top of the file is the whole of its coupling (`save_outside.rs`'s header).
+use crate::{annots, docmodel, edits, fields, forms, ocr_gate, pagetree, sweep, text, verify};
+
 /// The page-object vocabulary, re-exported from where the objects are read.
 ///
 /// [`crate::objects`] enumerates a page through PDFium and builds these;
@@ -1723,7 +1727,7 @@ fn references_to(doc: &Document, id: ObjectId) -> usize {
     doc.objects
         .iter()
         .filter(|(other, _)| **other != id)
-        .map(|(_, object)| count(object, id, crate::sweep::MAX_NESTING))
+        .map(|(_, object)| count(object, id, sweep::MAX_NESTING))
         .sum()
 }
 
@@ -1834,7 +1838,7 @@ pub fn covered_outline(doc: &Document, taken: &[String]) -> Vec<ObjectId> {
         let title = item
             .get(b"Title")
             .and_then(Object::as_str)
-            .map(crate::annots::decode_text_string)
+            .map(annots::decode_text_string)
             .unwrap_or_default();
         let title = fold(&title);
         if title.len() < MIN_OUTLINE_TITLE {
@@ -1990,7 +1994,7 @@ pub fn drop_outline_items(doc: &mut Document, doomed: &[ObjectId]) -> Result<usi
         }
     }
 
-    crate::pagetree::forget(doc, &doomed_set)?;
+    pagetree::forget(doc, &doomed_set)?;
     if let Some(root) = outline_root(doc) {
         // An outline whose every entry went is a `/Outlines` naming nothing.
         // Dropped rather than left: a root with no `/First` is legal and a
@@ -1998,7 +2002,7 @@ pub fn drop_outline_items(doc: &mut Document, doomed: &[ObjectId]) -> Result<usi
         // never had an outline. This one did, and saying so is not this
         // function's job --- the count it returns is.
         if first_child(doc, root).is_none() {
-            crate::pagetree::drop_outline(doc)?;
+            pagetree::drop_outline(doc)?;
         } else {
             recount(doc, root, 0);
         }
@@ -2137,7 +2141,7 @@ pub fn has_xfa(doc: &Document) -> bool {
 ///
 /// Two rules, and only the second is a string match:
 ///
-/// **A field whose widgets have all gone.** `covered_annots` already removes a
+/// **A field any of whose widgets has gone.** `covered_annots` already removes a
 /// widget over a region, because a widget *is* an annotation. What it leaves is
 /// the field dictionary above it, which is a separate object when the field has
 /// `/Kids` --- so the value stays in the file with nothing drawing it. Nothing
@@ -2146,11 +2150,26 @@ pub fn has_xfa(doc: &Document) -> bool {
 /// was written, on a fixture with a parent holding the value and one kid over
 /// the region: the kid went, the parent survived with its `/V`.
 ///
+/// **Any, not all, since 2026-09-26.** The rule asked whether *every* widget
+/// had gone, and a field with a second widget outside the region --- a name
+/// repeated in every page's header, which is what a multi-widget field is for
+/// --- kept its `/V`, went on drawing it through the widget that stayed, and
+/// the redaction reported itself verified: the value was never a verification
+/// needle and never page text, so nothing looked for it. The widget the reader
+/// covered *was* that answer, so the field goes whole, and every other widget
+/// showing it with it.
+///
 /// **A field whose value is text the removal took.** §6 names *widgets outside
 /// the redacted rectangle* explicitly, and this is what reaches them: the same
 /// answer typed into a second copy of the field, or a field whose widget sits on
 /// another page. `taken.contains(value)` for [`covered_outline`]'s reason ---
 /// route B removes a whole line and the field holds part of it.
+///
+/// **`taken` is more than page text.** A widget's answer is drawn by its
+/// appearance stream, which PDFium does not report as a page text object, so
+/// route B's `taking` never holds it. The caller adds [`widget_answers`] for the
+/// widgets the annotation pass removed; without them this rule reaches a second
+/// copy of an answer only when the same words were also printed on the page.
 ///
 /// `/DV` is read as well as `/V`. A default value is the same string in the same
 /// dictionary, put there by whoever built the form, and a redaction that took the
@@ -2162,11 +2181,14 @@ pub fn has_xfa(doc: &Document) -> bool {
 /// taken by the value rule; if its widget is over the region it goes as an
 /// annotation like anything else.
 ///
-/// `gone` is what the annotation pass removed, which is why this runs after it
-/// and not beside it: the first rule is *has everything under this field been
-/// taken*, and that is not answerable until it has.
+/// `lost` is the fields the annotation pass took a widget from, read by
+/// [`widget_fields`] **before** the widgets were forgotten --- which is why it
+/// is passed in rather than read here. `pagetree::forget` removes a widget from
+/// its parent's `/Kids`, so afterwards a field that lost one of two widgets
+/// looks exactly like a field that only ever had one; asking the document then
+/// was what made the first attempt at *any* in this rule a no-op.
 #[must_use]
-pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>) -> Vec<ObjectId> {
+pub fn covered_fields(doc: &Document, taken: &[String], lost: &HashSet<ObjectId>) -> Vec<ObjectId> {
     let folded: Vec<String> = taken.iter().map(|line| fold(line)).collect();
 
     // The traversal is `fields.rs`; the two rules below are what stays here.
@@ -2175,21 +2197,21 @@ pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>
     // field this walk declines to reach is a value left in a redacted document,
     // where a field the properties panel declines to reach is a line missing
     // from a list. The node budget bounds the work either way.
-    let bounds = crate::fields::Bounds {
+    let bounds = fields::Bounds {
         nodes: MAX_FIELD_NODES,
         depth: None,
         dedup: true,
         names: false,
-        order: crate::fields::Order::Queue,
+        order: fields::Order::Queue,
     };
 
     let mut doomed: Vec<ObjectId> = Vec::new();
-    crate::fields::walk(doc, &bounds, |node| {
+    fields::walk(doc, &bounds, |node| {
         // An entry written out in place rather than referenced cannot be
         // removed --- there is no object to forget --- so it is not walked
         // either, which is what this loop did before the traversal moved.
         let (Some(id), Some(field)) = (node.id, node.dict) else {
-            return crate::fields::Flow::Leaf;
+            return fields::Flow::Leaf;
         };
 
         let kids: Vec<ObjectId> = field
@@ -2207,9 +2229,9 @@ pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>
         // Rule one. `has(b"Kids")` rather than `!kids.is_empty()`: a field whose
         // array `forget` has emptied still has the key, and that emptiness is
         // precisely the signal. A merged field has no `/Kids` at all and was
-        // removed as an annotation, so it must not fall in here.
-        let orphaned =
-            field.has(b"Kids") && (kids.is_empty() || kids.iter().all(|kid| gone.contains(kid)));
+        // removed as an annotation, so it must not fall in here. `lost` is the
+        // *any*: a field that still has widgets but lost one to the region.
+        let orphaned = lost.contains(&id) || (field.has(b"Kids") && kids.is_empty());
 
         // Rule two.
         let carries = [b"V".as_slice(), b"DV".as_slice()].into_iter().any(|key| {
@@ -2223,14 +2245,14 @@ pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>
             let Ok(bytes) = value.as_str() else {
                 return false;
             };
-            let text = fold(&crate::annots::decode_text_string(bytes));
+            let text = fold(&annots::decode_text_string(bytes));
             text.len() >= MIN_FIELD_VALUE && folded.iter().any(|line| line.contains(&text))
         });
 
         if orphaned || carries {
             doomed.push(id);
         }
-        crate::fields::Flow::Descend
+        fields::Flow::Descend
     });
 
     // The subtrees, so a field taken by its value takes its widgets with it.
@@ -2241,18 +2263,143 @@ pub fn covered_fields(doc: &Document, taken: &[String], gone: &HashSet<ObjectId>
     // every root that reaches it.
     let mut all: Vec<ObjectId> = Vec::new();
     for id in doomed {
-        crate::fields::descend(doc, &[id], &bounds, |node| {
+        fields::descend(doc, &[id], &bounds, |node| {
             let Some(at) = node.id else {
-                return crate::fields::Flow::Leaf;
+                return fields::Flow::Leaf;
             };
             if all.contains(&at) {
-                return crate::fields::Flow::Leaf;
+                return fields::Flow::Leaf;
             }
             all.push(at);
-            crate::fields::Flow::Descend
+            fields::Flow::Descend
         });
     }
     all
+}
+
+/// The fields the given widgets belong to, read before they are removed.
+///
+/// A widget's field is its `/Parent`; a widget with none is a merged field and
+/// goes as the annotation it is. [`covered_fields`] takes every field named
+/// here, because the widget the reader covered was drawing that field's answer.
+#[must_use]
+pub fn widget_fields(doc: &Document, widgets: &HashSet<ObjectId>) -> HashSet<ObjectId> {
+    widgets
+        .iter()
+        .filter_map(|widget| {
+            doc.get_dictionary(*widget)
+                .ok()?
+                .get(b"Parent")
+                .and_then(Object::as_reference)
+                .ok()
+        })
+        .collect()
+}
+
+/// The answers the given widgets were drawing, read before they are removed.
+///
+/// A widget shows its field's `/V`, which is inherited: it may sit on the
+/// widget itself (a merged field), on its parent, or further up. So each chain
+/// is walked to the first `/V` and, separately, to the first `/DV` --- the value
+/// a reader of that widget would have seen and the one it would reset to.
+/// [`covered_fields`]'s value rule then takes every other field holding the
+/// same answer, which is the reach §6 names and the page text never gave it.
+///
+/// Strings only, for [`covered_fields`]'s reason: a checkbox's `/V` is a name.
+/// Bounded like `forms.rs`'s own walk up the same chain, at 32 levels with a
+/// cycle guard, because `/Parent` is the document's to point anywhere.
+///
+/// **Before `pagetree::forget`, not after**, which is why this takes the ids
+/// rather than asking the document what went: once the widget is forgotten
+/// there is no chain left to walk from.
+#[must_use]
+pub fn widget_answers(doc: &Document, widgets: &HashSet<ObjectId>) -> Vec<String> {
+    let mut ordered: Vec<ObjectId> = widgets.iter().copied().collect();
+    // A set's order is not the document's; sorted so the answers come out the
+    // same way on every run.
+    ordered.sort_unstable();
+    let mut answers: Vec<String> = Vec::new();
+    for widget in ordered {
+        for key in [b"V".as_slice(), b"DV".as_slice()] {
+            let Some(bytes) = first_inherited_string(doc, widget, key) else {
+                continue;
+            };
+            let answer = annots::decode_text_string(bytes);
+            if !answer.trim().is_empty() && !answers.contains(&answer) {
+                answers.push(answer);
+            }
+        }
+    }
+    answers
+}
+
+/// The first `key` on `start` or its `/Parent` chain, if it is a string.
+///
+/// A name or a number found first ends the walk with nothing: inheritance
+/// stops at the first entry of the key whatever its type, and a checkbox under
+/// a parent that happens to carry a string `/V` does not show that string.
+fn first_inherited_string<'a>(doc: &'a Document, start: ObjectId, key: &[u8]) -> Option<&'a [u8]> {
+    let mut at = start;
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    for _ in 0..32 {
+        if !seen.insert(at) {
+            return None;
+        }
+        let dict = doc.get_dictionary(at).ok()?;
+        if let Ok(value) = dict.get(key) {
+            let (_, value) = doc.dereference(value).ok()?;
+            return value.as_str().ok();
+        }
+        at = dict.get(b"Parent").and_then(Object::as_reference).ok()?;
+    }
+    None
+}
+
+/// The answers a redaction's regions cover, as verification needles.
+///
+/// [`widget_answers`] is the writer's half: it takes the fields. This is the
+/// verifier's, and it has to exist separately because the needles are fixed
+/// before the write, in the coordinator, from what the workers reported ---
+/// `forms::scan`'s widget list, whose `rect` is in the page's own space like
+/// the planned `areas`. A widget over any area contributes its answer: the one
+/// the reader typed this session when there is one, because that is what the
+/// writer puts in the file before it redacts, and the file's own otherwise.
+///
+/// **Text answers only, and the length guard applies.** A needle is searched
+/// for across the whole written file, so a short one --- `Yes`, an initial ---
+/// would find itself everywhere and make every redaction on a form *not
+/// verified*; [`MIN_FIELD_VALUE`] is the same judgement the removal makes. A
+/// choice is left out for a second reason: its answer is one of the options,
+/// and every other field offering the same list names it too.
+#[must_use]
+pub fn covered_answers(
+    form: &forms::Form,
+    page: u32,
+    areas: &[Rect],
+    pending: &[forms::Change],
+) -> Vec<String> {
+    let mut answers: Vec<String> = Vec::new();
+    for widget in form.widgets.iter().filter(|widget| widget.page == page) {
+        // `forms::scan` refuses a rectangle that is not finite or exceeds
+        // 100,000 points, so the narrowing cannot lose one that matters.
+        #[allow(clippy::cast_possible_truncation)]
+        let rect = widget.rect.map(|value| value as f32);
+        if !areas.iter().any(|area| overlaps(rect, *area)) {
+            continue;
+        }
+        let value = pending
+            .iter()
+            .find(|change| change.object == widget.object)
+            .map_or(&widget.value, |change| &change.value);
+        let forms::Value::Text(answer) = value else {
+            continue;
+        };
+        let answer = answer.trim();
+        if fold(answer).len() >= MIN_FIELD_VALUE && !answers.iter().any(|seen| seen == answer) {
+            answers.push(answer.to_string());
+        }
+    }
+    answers
 }
 
 /// How many field-tree nodes to walk before giving up.
@@ -2286,7 +2433,7 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
     if doomed.is_empty() {
         return Ok(0);
     }
-    crate::pagetree::forget(doc, &doomed.iter().copied().collect())?;
+    pagetree::forget(doc, &doomed.iter().copied().collect())?;
 
     // An `/AcroForm` with no fields left. Dropped whole rather than kept empty,
     // for the reason an emptied outline is: a form with no fields reads as a
@@ -2319,9 +2466,9 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
 #[derive(Debug)]
 pub struct PageAggregate {
     /// What the writer is asked to remove from this page.
-    pub planned: crate::edits::PlannedRedaction,
+    pub planned: edits::PlannedRedaction,
     /// What the OCR gate is asked to look at afterwards.
-    pub gate: crate::ocr_gate::GatePage,
+    pub gate: ocr_gate::GatePage,
     /// Objects the removal cannot take, one sentence each, page number included.
     pub concerns: Vec<String>,
     /// The strings the removal takes, for the whole-file verification.
@@ -2353,7 +2500,7 @@ pub fn aggregate(
     page: u32,
     displayed: Vec<[f32; 4]>,
     plans: Vec<RegionPlan>,
-    text: Option<&crate::text::PageText>,
+    text: Option<&text::PageText>,
 ) -> PageAggregate {
     let mut concerns: Vec<String> = Vec::new();
     let mut needles: Vec<String> = Vec::new();
@@ -2421,14 +2568,10 @@ pub fn aggregate(
     total += images.len();
 
     let (words, width_pt, height_pt) = match text {
-        Some(text) => (
-            crate::ocr_gate::words_from(text),
-            text.width_pt,
-            text.height_pt,
-        ),
+        Some(text) => (ocr_gate::words_from(text), text.width_pt, text.height_pt),
         None => (Vec::new(), 0.0, 0.0),
     };
-    let gate = crate::ocr_gate::GatePage {
+    let gate = ocr_gate::GatePage {
         page,
         regions: displayed,
         words,
@@ -2436,7 +2579,7 @@ pub fn aggregate(
         width_pt,
         height_pt,
     };
-    let planned = crate::edits::PlannedRedaction {
+    let planned = edits::PlannedRedaction {
         source: page,
         shows,
         text_objects,
@@ -2492,14 +2635,14 @@ pub fn aggregate(
 /// the same pixels; a second gate page would judge the same image twice.
 #[must_use]
 pub fn gate_at_output_slots(
-    pages: &[crate::edits::PageView],
-    gate: Vec<crate::ocr_gate::GatePage>,
-) -> Vec<crate::ocr_gate::GatePage> {
+    pages: &[edits::PageView],
+    gate: Vec<ocr_gate::GatePage>,
+) -> Vec<ocr_gate::GatePage> {
     gate.into_iter()
         .filter_map(|mut one| {
             let slot = pages
                 .iter()
-                .position(|page| page.source == crate::docmodel::PageSource::Baseline(one.page))?;
+                .position(|page| page.source == docmodel::PageSource::Baseline(one.page))?;
             one.page = u32::try_from(slot).ok()?;
             Some(one)
         })
@@ -2586,7 +2729,7 @@ pub fn inserted_pages_note(
 /// it) and nothing about the file, which still holds the word and is still
 /// reported *not verified* for it. `docs/PLAN.md` §6 forbids the other reading.
 #[must_use]
-pub fn marked_pages_note(report: &crate::verify::Report, marked: &[u32]) -> Option<String> {
+pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<String> {
     if !report.placed() {
         return None;
     }
@@ -2606,7 +2749,7 @@ pub fn marked_pages_note(report: &crate::verify::Report, marked: &[u32]) -> Opti
         return Some(format!(
             "a word reported above is still on {}, where regions were marked for removal, so \
              the removal did not take it there",
-            crate::verify::Placed::of(&hit).sentence()
+            verify::Placed::of(&hit).sentence()
         ));
     }
     Some(match marked.is_empty() {
@@ -2614,13 +2757,84 @@ pub fn marked_pages_note(report: &crate::verify::Report, marked: &[u32]) -> Opti
         false => format!(
             "every word reported above is on a page no region was marked on --- {} carried the \
              regions, and none of them carries any of those words",
-            crate::verify::Placed::of(&marked).sentence()
+            verify::Placed::of(&marked).sentence()
         ),
     })
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// A text widget on `page` at `rect`, for [`super::covered_answers`].
+    fn widget(
+        object: u32,
+        page: u32,
+        rect: [f64; 4],
+        value: crate::forms::Value,
+    ) -> crate::forms::Widget {
+        crate::forms::Widget {
+            object: (object, 0),
+            widget: (object, 0),
+            page,
+            rect,
+            display_rect: [0.0; 4],
+            name: String::new(),
+            value,
+            control: crate::forms::Control::Text,
+            multiline: false,
+            max_length: None,
+            reason: None,
+        }
+    }
+
+    /// The answer a region covers is a needle, and the scan finds a copy of it.
+    ///
+    /// The verifier's half of the multi-widget fix: before it, no needle ever
+    /// named a form answer, so a field that kept one was reported verified.
+    /// Each widget here exists so that one clause decides it --- far away, on
+    /// another page, too short, and one whose answer the reader replaced this
+    /// session, which is what the writer puts in the file before it redacts.
+    #[test]
+    fn a_covered_answer_is_a_needle_and_a_surviving_copy_is_not_verified() {
+        use crate::forms::{Change, Form, Value};
+        let text = |value: &str| Value::Text(value.to_string());
+        let form = Form {
+            widgets: vec![
+                widget(1, 0, [100.0, 100.0, 200.0, 120.0], text("COVERED-ANSWER")),
+                widget(2, 0, [400.0, 700.0, 500.0, 720.0], text("FAR-ANSWER")),
+                widget(3, 1, [100.0, 100.0, 200.0, 120.0], text("OTHER-PAGE")),
+                widget(4, 0, [100.0, 130.0, 200.0, 150.0], text("NO")),
+                widget(5, 0, [100.0, 155.0, 200.0, 170.0], text("FILE-VALUE")),
+            ],
+        };
+        let pending = vec![Change {
+            object: (5, 0),
+            value: text("TYPED-ANSWER"),
+        }];
+        let needles = super::covered_answers(&form, 0, &[[90.0, 90.0, 210.0, 175.0]], &pending);
+        assert_eq!(needles, vec!["COVERED-ANSWER", "TYPED-ANSWER"]);
+
+        // A written file in which one of them survived, as a field value.
+        let mut doc = lopdf::Document::with_version("1.7");
+        let field = doc.add_object(lopdf::dictionary! {
+            "FT" => "Tx", "V" => lopdf::Object::string_literal("COVERED-ANSWER"),
+        });
+        let form = doc.add_object(lopdf::dictionary! { "Fields" => vec![field.into()] });
+        let pages = doc.add_object(lopdf::dictionary! {
+            "Type" => "Pages", "Kids" => Vec::<lopdf::Object>::new(), "Count" => 0,
+        });
+        let catalog = doc.add_object(lopdf::dictionary! {
+            "Type" => "Catalog", "Pages" => pages, "AcroForm" => form,
+        });
+        doc.trailer.set("Root", catalog);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialise");
+        let report = crate::verify::scan(&bytes, &needles, None);
+        assert!(
+            !matches!(report.verdict(), crate::verify::Verdict::Verified),
+            "an answer still in the file is not a clean redaction"
+        );
+    }
 
     /// `aggregate`'s fixtures: one plan, with everything empty but what a test sets.
     fn plan_of(shows: &[usize], taking: &str) -> super::RegionPlan {

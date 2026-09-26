@@ -5358,6 +5358,79 @@ MUTATIONS += [
     ),
 ]
 
+MUTATIONS += [
+    Mutation(
+        "redaction walk: keep the slot read before the text wait",
+        "src/lib/redactlist.ts",
+        "    if (walk.slotOf(next.page) !== slot) continue;",
+        "    if (false) continue;",
+        "a plan asked before a deletion above is not stored for the shifted page",
+    ),
+    Mutation(
+        "redaction walk: store a plan for a page the region no longer names",
+        "src/lib/redactlist.ts",
+        "        if (now === undefined || walk.sourceOf(now) !== source) {",
+        "        if (false) {",
+        "asks again when the region's own page was replaced while its plan was computed",
+    ),
+    Mutation(
+        "tabs: restore a kept tab without one of its fields",
+        "src/lib/documenttabs.ts",
+        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers, notice,\n",
+        "  return { covered, query, findShown, searchOptions, searchScope, sidebarTab, error, offers,\n",
+        "restores every field that was kept, and nothing from another tab",
+    ),
+    Mutation(
+        "tabs: switching away keeps nothing",
+        "src/lib/documenttabs.ts",
+        "  Object.assign(tab, state);",
+        "  void tab; void state;",
+        "restores every field that was kept, and nothing from another tab",
+    ),
+    Mutation(
+        "tabs: a fresh document starts with a search already typed",
+        "src/lib/documenttabs.ts",
+        '    query: "",',
+        '    query: " ",',
+        "restores the fresh state for a document that was never kept",
+    ),
+    Mutation(
+        "signature dialog: place a signature whose save finished after the reader moved on",
+        "src/lib/signaturedialog.ts",
+        "    if (generation === this.generation && this.isOpen) { this.finish(image); return; }",
+        "    if (true) { this.finish(image); return; }",
+        "does not hand a late-remembered signature to the next time the dialog is asked",
+    ),
+    Mutation(
+        "signature dialog: say nothing when a late save kept a signature it did not place",
+        "src/lib/signaturedialog.ts",
+        "    if (remembering && this.isOpen)\n",
+        "    if (false)\n",
+        "says the earlier signature was kept when the reader drew again while it was being saved",
+    ),
+    Mutation(
+        "signature dialog: a saved signature replaces a stroke made while it loaded",
+        "src/lib/signaturedialog.ts",
+        "      const saved = await loadSignature();\n      if (generation !== this.generation || !this.isOpen) return;",
+        "      const saved = await loadSignature();\n      if (!this.isOpen) return;",
+        "ignores a saved signature that arrives after a new stroke",
+    ),
+    Mutation(
+        "signature dialog: report a failed import that a stroke replaced",
+        "src/lib/signaturedialog.ts",
+        "      if (generation === this.generation)\n        this.message.textContent = error instanceof Error",
+        "      if (true)\n        this.message.textContent = error instanceof Error",
+        "does not report a failed import that a new stroke replaced",
+    ),
+    Mutation(
+        "signature dialog: draw an import over a stroke made while it decoded",
+        "src/lib/signaturedialog.ts",
+        "      image = await decodeSignature(file);\n      if (generation !== this.generation || !this.isOpen) return;",
+        "      image = await decodeSignature(file);\n      if (!this.isOpen) return;",
+        "does not draw an imported image over a stroke made while it was decoding",
+    ),
+]
+
 TEST_FILES = [
     "src/lib/pendingimport.test.ts",
     "src/lib/palette.test.ts",
@@ -5365,6 +5438,7 @@ TEST_FILES = [
     "src/lib/signature.test.ts",
     "src/lib/forms.test.ts",
     "src/lib/documenttabs.test.ts",
+    "src/lib/signaturedialog.test.ts",
     "src/lib/tablabels.test.ts",
     "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",

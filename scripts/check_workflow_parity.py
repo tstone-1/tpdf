@@ -262,10 +262,38 @@ def authority(workflow: str, block: list[str], whole: str) -> list[str]:
     return wrong
 
 
+def other_workflows() -> list[str]:
+    """Every workflow file the parity pair does not already cover.
+
+    THE FOURTH INVARIANT, added 2026-09-26: property 2 over every workflow in
+    the directory, not only the two this script compares. `audit.yml`,
+    `pdfium.yml` and `signpath-onboarding.yml` all set the flag, and nothing
+    checked that they did --- a rule written for two named files covers two
+    named files, and the next workflow is written by copying one of the others.
+    Globbed rather than listed, so a new file is covered the day it lands.
+    """
+    directory = ROOT / ".github" / "workflows"
+    named = {ROOT / workflow for workflow in WORKFLOWS}
+    return sorted(
+        str(path.relative_to(ROOT))
+        for pattern in ("*.yml", "*.yaml")
+        for path in directory.glob(pattern)
+        if path not in named
+    )
+
+
 def main() -> int:
     """Compares the two jobs and reports the first difference."""
     found: dict[str, list[str]] = {}
     checked_out = 0
+    others = other_workflows()
+    for workflow in others:
+        leaks = credentials(workflow, (ROOT / workflow).read_text(encoding="utf-8"))
+        if leaks:
+            for line in leaks:
+                print(f"[FAIL] {line}")
+            return 1
+        checked_out += len(checkouts((ROOT / workflow).read_text(encoding="utf-8")))
     for workflow in WORKFLOWS:
         path = ROOT / workflow
         if not path.exists():
@@ -298,7 +326,10 @@ def main() -> int:
     if left == right:
         print(f"[OK]   both '{JOB}' jobs run the same {len(left)} steps, in the same order")
         print(f"[OK]   both read-only, both installing {PINNED_TOOLS}")
-        print(f"[OK]   all {checked_out} checkout(s) across both workflows persist no credential")
+        print(
+            f"[OK]   all {checked_out} checkout(s) across {len(WORKFLOWS) + len(others)} "
+            f"workflows persist no credential"
+        )
         return 0
 
     print(f"[FAIL] the '{JOB}' jobs have drifted")

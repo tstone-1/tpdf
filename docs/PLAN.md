@@ -2535,6 +2535,19 @@ redacted rectangle* stated as a property rather than a location. `/DV` is read b
 a default is the string the field was pre-filled from, in the same dictionary, so taking the
 answer and leaving the default removed nothing.
 
+**Corrected 2026-09-26: both rules as written above missed the commonest multi-widget
+shape, and the redaction reported itself verified.** A field with one widget over the region
+and a second elsewhere — a name repeated in every page's header — survived. The first rule
+asked whether *every* widget had gone, and the second compared the field's value against the
+text route B removed, which never holds a widget's answer: an appearance stream is not page
+text to PDFium. So the parent kept `/V`, the far widget went on drawing it, no verification
+needle named it, and `verify::scan` answered `Verified`. The test that should have caught it
+hand-wrote every fixture answer into `taking` with no show removed — the precondition the real
+path lacks. Now a field goes when **any** widget under it went, read before `forget` empties
+its `/Kids`; the removed widgets' answers join the page text for the value rule, which is what
+reaches a second copy on another page; and the answers under the regions, read from the form
+scan in a worker, are verification needles, so a copy that survives anyway is *not verified*.
+
 **A value is compared only when it is a string.** A checkbox's `/V` is a *name*, and
 `/MERGED-SECRET` as a name is a state token rather than an answer. `as_str` refuses it, which
 is one line and the reason a checkbox is never taken by what it says.
@@ -13478,7 +13491,8 @@ of the slot *before* asking the model, wraps the handle in a `Held`, and keeps i
 the model has recorded it. A refused commit therefore releases the file rather than leaving
 it waiting, and every answer but a stale id ends the wait --- which is what lets the webview
 forget the question the moment it answers. Ids come from one counter across documents,
-because document numbers are reused and a per-document counter would repeat.
+because a per-document counter would give every document the same ids. (Corrected
+2026-09-26: this said document numbers are reused; neither backend reuses one.)
 
 **The fingerprint is taken at prepare**, through the same descriptor the service mapped, for
 `open_document`'s reason. Taking it at the commit would mean keeping that descriptor open in

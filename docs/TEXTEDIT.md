@@ -41,7 +41,28 @@ focus can scroll an overflow-hidden overlay and displace every hit target.
 
 Explicit text layouts support width/height, font size and wrapping within one
 editing area. `textedit/layout.rs` restores the original font, spacing, line
-matrix and cursor after drawing each replacement; later text remains fixed.
+matrix and cursor after drawing each replacement. Later text stays where it was
+only when the replacement fits in the room its producer left; otherwise the editor moves
+it, and a move that would land on text staying where it is gets refused:
+
+- **Along the line.** A replacement that grows past the room before the next run pushes the
+  rest of the line along (`textedit/push_tests.rs`), and stops at the next column
+  (`BUILD.md`, *Columns on tagged pages, the gutter, and the space before a pushed word*).
+- **Down the page.** A wrapped replacement moves every block below it down by the lines it
+  added, cutting the next run at a space where only part of it fits (*The blocks below a
+  wrapped paragraph move down with it*; *A run after the edit is cut at a space*). A
+  paragraph break keeps its blank line unless the page has no other room: then each break
+  may give up half a pitch (`layout::BREAK_GIVE`; *Half a paragraph break when the page is
+  full*).
+- **With the line.** A link annotation over a moved line moves with it (*Links over lines a
+  wrap moves*), and so does a thin painted rule inside the line's box, such as the
+  rectangle Word draws for an underline, up to a quarter of the line's depth
+  (`layout::UNDERLINE`; *Underlines move with their lines*).
+- **Never twice.** Two wraps in one batch that would each move the same run or rule are
+  refused with the wrap-conflict message (`two_wraps_that_both_move_one_paragraph_are_refused`
+  in `textedit/wrap_tests.rs`); until 2026-09-26 the second move silently replaced the first
+  and the paragraph was saved on top of a column's new line. Save between the two edits.
+
 `vendor/fonts/manifest.json` pins four OFL Noto Sans styles and upright regular/
 bold Noto Sans CJK SC for automatic or explicit fallback. Automatic mode keeps
 the original font when it covers the replacement, then tries Noto Sans and CJK.

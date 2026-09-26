@@ -20,20 +20,37 @@ export class SignatureDialog {
     void prepareSignatureStorage().catch((error: unknown) => { this.message.textContent = String(error); });
     this.dialog.className = "signature-dialog";
     this.dialog.setAttribute("aria-label", "Place signature image");
-    this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
-    const heading = document.createElement("h2"); heading.textContent = "Place signature image"; heading.style.margin = "0 0 8px";
-    const help = document.createElement("p"); help.textContent = "Draw your signature or import a PNG or JPEG image.";
-    const notice = document.createElement("p"); notice.textContent = "Visual mark only. This does not verify your identity or create a certificate-based digital signature.";
+    this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;"
+      + "border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
+    const heading = document.createElement("h2");
+    heading.textContent = "Place signature image";
+    heading.style.margin = "0 0 8px";
+    const help = document.createElement("p");
+    help.textContent = "Draw your signature or import a PNG or JPEG image.";
+    const notice = document.createElement("p");
+    notice.textContent = "Visual mark only. This does not verify your identity or create a "
+      + "certificate-based digital signature.";
     this.canvas.width = 1024; this.canvas.height = 400;
-    this.canvas.style.cssText = "width:100%;height:auto;aspect-ratio:1024/400;display:block;background:white;border:1px solid #999;border-radius:6px;touch-action:none;cursor:crosshair";
+    this.canvas.style.cssText = "width:100%;height:auto;aspect-ratio:1024/400;display:block;"
+      + "background:white;border:1px solid #999;border-radius:6px;touch-action:none;cursor:crosshair";
     this.canvas.setAttribute("aria-label", "Draw your signature");
     const tools = document.createElement("div"); tools.style.cssText = "display:flex;gap:8px;margin:12px 0;flex-wrap:wrap";
     const file = document.createElement("input"); file.type = "file"; file.accept = "image/png,image/jpeg"; file.hidden = true;
     const load = this.button("Import image...", () => { file.value = ""; file.click(); });
     file.addEventListener("change", () => { const chosen = file.files?.[0]; if (chosen) void this.importFile(chosen); });
-    tools.append(load, this.button("Clear", () => this.clear()), this.button("Use saved signature", () => void this.loadSaved()), this.button("Forget saved signature", () => void this.forgetSaved()));
+    tools.append(
+      load,
+      this.button("Clear", () => this.clear()),
+      this.button("Use saved signature", () => void this.loadSaved()),
+      this.button("Forget saved signature", () => void this.forgetSaved()),
+    );
     const options = document.createElement("div"); options.style.cssText = "display:flex;gap:16px;flex-wrap:wrap";
-    const label = (input: HTMLInputElement, text: string) => { input.type = "checkbox"; const node = document.createElement("label"); node.append(input, ` ${text}`); return node; };
+    const label = (input: HTMLInputElement, text: string) => {
+      input.type = "checkbox";
+      const node = document.createElement("label");
+      node.append(input, ` ${text}`);
+      return node;
+    };
     options.append(label(this.white, "Remove white background"), label(this.remember, "Remember on this device"));
     this.white.checked = true;
     this.white.addEventListener("change", () => { if (this.source) this.render(); });
@@ -45,7 +62,13 @@ export class SignatureDialog {
     host.append(this.dialog);
     this.dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.finish(null); });
     this.dialog.addEventListener("keydown", (event) => event.stopPropagation());
-    const position = (e: PointerEvent) => { const r = this.canvas.getBoundingClientRect(); return { x: (e.clientX-r.left)*this.canvas.width/r.width, y: (e.clientY-r.top)*this.canvas.height/r.height }; };
+    const position = (e: PointerEvent) => {
+      const r = this.canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - r.left) * this.canvas.width / r.width,
+        y: (e.clientY - r.top) * this.canvas.height / r.height,
+      };
+    };
     this.canvas.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       this.source = null; this.generation++; this.point = position(e);
@@ -99,7 +122,10 @@ export class SignatureDialog {
       source.width = Math.max(1, Math.round(image.width*scale)); source.height = Math.max(1, Math.round(image.height*scale));
       source.getContext("2d")!.drawImage(image, 0, 0, source.width, source.height);
       this.source = source; this.render(); this.message.textContent = "";
-    } catch (error) { if (generation === this.generation) this.message.textContent = error instanceof Error ? error.message : "This image could not be opened."; }
+    } catch (error) {
+      if (generation === this.generation)
+        this.message.textContent = error instanceof Error ? error.message : "This image could not be opened.";
+    }
     finally { image?.close(); }
   }
   private render(): void {
@@ -122,17 +148,40 @@ export class SignatureDialog {
   private async accept(): Promise<void> {
     const generation = this.generation;
     const ctx = this.canvas.getContext("2d")!;
-    const trimmed = trimSignature(this.canvas.width, this.canvas.height, ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data);
+    const drawn = ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+    const trimmed = trimSignature(this.canvas.width, this.canvas.height, drawn);
     if (!trimmed) { this.message.textContent = "Draw or import a signature first."; return; }
     const scale = Math.min(1, 512/trimmed.width, 256/trimmed.height);
-    const canvas = document.createElement("canvas"); canvas.width = Math.max(1, Math.round(trimmed.width*scale)); canvas.height = Math.max(1, Math.round(trimmed.height*scale));
-    canvas.getContext("2d")!.drawImage(signatureCanvas(trimmed), 0, 0, canvas.width, canvas.height);
-    const image: SignatureImage = { width: canvas.width, height: canvas.height, rgba: [...canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data] };
-    if (this.remember.checked) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(trimmed.width*scale));
+    canvas.height = Math.max(1, Math.round(trimmed.height*scale));
+    const small = canvas.getContext("2d")!;
+    small.drawImage(signatureCanvas(trimmed), 0, 0, canvas.width, canvas.height);
+    const pixels = small.getImageData(0, 0, canvas.width, canvas.height).data;
+    const image: SignatureImage = { width: canvas.width, height: canvas.height, rgba: [...pixels] };
+    const remembering = this.remember.checked;
+    if (remembering) {
       try { this.place.disabled = true; await rememberSignature(image); }
-      catch { this.place.disabled = false; this.message.textContent = "The signature could not be remembered securely. Clear that option to place it without saving it locally."; return; }
+      catch {
+        this.place.disabled = false;
+        this.message.textContent = "The signature could not be remembered securely. "
+          + "Clear that option to place it without saving it locally.";
+        return;
+      }
     }
-    if (generation === this.generation && this.isOpen) this.finish(image);
+    if (generation === this.generation && this.isOpen) { this.finish(image); return; }
+    // **Superseded while the save was in flight.** Placing is "remember, then
+    // place", and the remember has finished: the device now holds this image
+    // because the reader asked for it with the box ticked. It is not undone,
+    // because the store holds one signature and forgetting it would also delete
+    // the one saved before. What must not happen is placing it --- the reader
+    // cancelled, or drew or loaded something else, after pressing Place --- or
+    // saying nothing: a dialog still showing is told what was kept, so the next
+    // "Use saved signature" is not a surprise. A closed dialog has nobody to
+    // tell, and there the cancel is the answer the reader gave.
+    if (remembering && this.isOpen)
+      this.message.textContent = "The earlier signature was saved on this device but not placed, "
+        + "because the signature changed. Place the current one when ready.";
   }
   private async loadSaved(): Promise<void> {
     const generation = ++this.generation;

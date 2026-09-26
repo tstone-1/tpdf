@@ -1,0 +1,41 @@
+# cargo-audit configuration, read from `.cargo/audit.toml` under the directory
+# `cargo audit` runs in -- so run it from the repository root and name the
+# lockfile with `--file` (`.github/workflows/audit.yml` does both).
+#
+# Every warning is denied below, so an advisory that is not listed here fails
+# the audit. Each entry is one the project has looked at and accepted, with the
+# reason. Recorded 2026-09-26 against both lockfiles (`src-tauri/Cargo.lock`
+# and `src-tauri/fuzz/Cargo.lock`), which carry the same eight.
+#
+# Remove an entry when its crate leaves the tree: the audit does not complain
+# about an ignore that matches nothing, so a stale entry is silent.
+
+[advisories]
+ignore = [
+    # ttf-parser: unmaintained (author statement, harfbuzz/ttf-parser#217); no
+    # patched version exists. A direct dependency that reads embedded font
+    # programs from documents, inside the worker only, after the program is
+    # decoded under a 1 MiB bound. docs/DETAIL.md *Stack* has the bounds and the
+    # replacement (`skrifa`) the advisory names.
+    "RUSTSEC-2026-0192",
+    # proc-macro-error: unmaintained. Under glib-macros -> glib -> gtk -> muda
+    # -> tauri, the Linux GTK stack: `cargo tree -i proc-macro-error --target
+    # aarch64-apple-darwin` and `--target x86_64-pc-windows-msvc` print nothing.
+    "RUSTSEC-2024-0370",
+    # glib 0.18: unsound `VariantStrIter`. The same Linux-only GTK path, absent
+    # from both shipped targets by the same command.
+    "RUSTSEC-2024-0429",
+    # unic-*: unmaintained. urlpattern -> tauri-utils, on both shipped
+    # platforms. The advisories report no defect, only that nobody maintains
+    # them, and which URL-pattern crate Tauri uses is Tauri's choice.
+    "RUSTSEC-2025-0075", # unic-char-range
+    "RUSTSEC-2025-0080", # unic-common
+    "RUSTSEC-2025-0081", # unic-char-property
+    "RUSTSEC-2025-0098", # unic-ucd-version
+    "RUSTSEC-2025-0100", # unic-ucd-ident
+]
+
+[output]
+# Unmaintained, unsound and yanked warnings fail the run, as vulnerabilities do.
+deny = ["warnings"]
+quiet = false

@@ -2374,3 +2374,61 @@ fn a_show_riding_a_pushed_line_is_not_also_moved_down_by_a_wrap() {
     let error = write(&mut doc.clone(), &[push, wrap]).unwrap_err();
     assert!(error.contains("another pending edit"), "{error}");
 }
+
+// Two columns over a paragraph set across both: each column's wrap carries the
+// paragraph down by its own drop, and each is laid out against the page as it
+// was loaded, so neither knows the other moved it. The pair is refused, in
+// either order and whichever column drops further. Before the refusal, the
+// later wrap's move replaced the earlier one's, and with the longer column
+// earlier in the stream the paragraph went down by the shorter drop, onto the
+// longer column's new last line.
+#[test]
+fn two_wraps_that_both_move_one_paragraph_are_refused() {
+    let doc = tagged(
+        "BT /F1 12 Tf 20 200 Td /P <</MCID 0>> BDC (ONE AND) Tj EMC \
+         0 -14 Td /P <</MCID 1>> BDC (DONE NINE) Tj EMC 0 -14 Td /P <</MCID 2>> BDC (TEN) Tj EMC ET \
+         BT /F1 12 Tf 170 200 Td /P <</MCID 3>> BDC (BRANCH ONE) Tj EMC \
+         0 -14 Td /P <</MCID 4>> BDC (BRANCH SIDE) Tj EMC 0 -14 Td /P <</MCID 5>> BDC (BRANCH TEN) Tj EMC ET \
+         BT /F1 12 Tf 20 158 Td /P <</MCID 6>> BDC (FIRST AND SECOND BRANCH ONCE AND DONE) Tj EMC ET",
+        &[&[0, 1, 2], &[3, 4, 5], &[6]],
+    );
+    let across = "FIRST AND SECOND BRANCH ONCE AND DONE";
+    // Left four lines down and right two, then left two and right three: the
+    // first is the pair the overwrite got wrong, the second the pair it got
+    // right only because the longer drop came last in the stream.
+    for (left, right, far) in [
+        (
+            "TEN AND DONE NINE SIDE ONE ONCE FIRST AND",
+            "BRANCH TEN AND DONE SIDE",
+            102.,
+        ),
+        (
+            "TEN AND DONE NINE SIDE ONE",
+            "BRANCH TEN AND DONE SIDE ONCE FIRST",
+            116.,
+        ),
+    ] {
+        let left = in_default_box(&doc, index_of(&doc, "TEN"), left);
+        let right = in_default_box(&doc, index_of(&doc, "BRANCH TEN"), right);
+        // Each alone is accepted and moves the paragraph; the one that drops
+        // further is where the pair would have had to put it.
+        let alone: Vec<f64> = [&left, &right]
+            .iter()
+            .map(|change| {
+                let mut copy = doc.clone();
+                write(&mut copy, std::slice::from_ref(*change))
+                    .unwrap_or_else(|error| panic!("{}: {error}", change.replacement));
+                at(&placed_runs(&copy), across).1
+            })
+            .collect();
+        assert!(alone.iter().all(|y| *y < 158.), "{alone:?}");
+        assert_eq!(alone.iter().copied().fold(f64::MAX, f64::min), far);
+        for batch in [[left.clone(), right.clone()], [right.clone(), left.clone()]] {
+            let mut copy = doc.clone();
+            let before = copy.objects.clone();
+            let error = write(&mut copy, &batch).unwrap_err();
+            assert!(error.contains("another pending edit"), "{error}");
+            assert_eq!(copy.objects, before);
+        }
+    }
+}

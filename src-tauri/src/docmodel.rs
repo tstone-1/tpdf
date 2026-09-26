@@ -96,9 +96,29 @@
 //! handling are §5's other halves and none of them are here. This module holds
 //! no file, no bytes and no `lopdf` object, and it is the better for it: it can
 //! be driven directly rather than through a document.
+//!
+//! ## What it depends on
+//!
+//! Four modules of the crate, all declared below, because a `use` block that
+//! names only `std` while the body reaches into the crate is the half-truth
+//! `save_outside.rs`'s header describes. None of the four opens a file here:
+//!
+//! * [`textedit`] for the text replacements the journal holds, their bounds
+//!   ([`textedit::MAX_TEXT`], [`textedit::MAX_CHANGES`]) and the edits the
+//!   writer is handed.
+//! * [`forms`] for a field's answer and the change the writer applies.
+//! * [`signature`] for a placed signature's picture and its size bound.
+//! * [`fingerprint`] for the identity of a file an imported page comes from.
+//!
+//! Each is a feature's wire type carried through the model rather than a
+//! behaviour the model calls, and that is the line to hold: a fifth edge that
+//! parses, renders or reads is the one that would end "it can be driven
+//! directly".
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU64;
+
+use crate::{fingerprint, forms, signature, textedit};
 
 /// How many commands may separate a snapshot from the next one.
 ///
@@ -902,7 +922,7 @@ pub struct Mark {
     /// property intact.
     pub stamp: Option<StampName>,
     /// Normalized signature pixels, shared by journal snapshots.
-    pub image: Option<std::sync::Arc<crate::signature::Image>>,
+    pub image: Option<std::sync::Arc<signature::Image>>,
     /// The comment this one answers, when it is a reply. `None` for a mark that
     /// answers nothing, which is every mark a reader places on the page.
     ///
@@ -1055,7 +1075,7 @@ pub struct SourceFile {
     /// Where the file was when the reader chose it.
     pub path: std::path::PathBuf,
     /// What its bytes were.
-    pub fingerprint: crate::fingerprint::Fingerprint,
+    pub fingerprint: fingerprint::Fingerprint,
     /// How many pages it had.
     pub pages: u32,
 }
@@ -2413,9 +2433,9 @@ struct Entry {
 /// A document being edited: baseline, working view, journal and cursor.
 #[derive(Clone, Debug)]
 pub struct Doc {
-    text_versions: HashMap<u32, crate::textedit::Change>,
+    text_versions: HashMap<u32, textedit::Change>,
     next_text_version: u32,
-    forms: HashMap<u32, crate::forms::Value>,
+    forms: HashMap<u32, forms::Value>,
     next_form: u32,
     baseline: u32,
     now: Working,
@@ -2543,11 +2563,7 @@ impl Doc {
     /// from --- the opened file for one of its own pages, and the other file
     /// for a page inserted from it, whose worker validated the replacement
     /// and addressed it by its page number *there*.
-    pub fn replace_text(
-        &mut self,
-        page: PageId,
-        change: crate::textedit::Change,
-    ) -> Result<(), Refusal> {
+    pub fn replace_text(&mut self, page: PageId, change: textedit::Change) -> Result<(), Refusal> {
         self.now.live(page)?;
         if !self.now.redactions.is_empty() {
             return Err(Refusal::TextEdit(
@@ -2585,16 +2601,8 @@ impl Doc {
             }
         }
         if change.revision.len() != 32
-            || change
-                .original
-                .chars()
-                .nth(crate::textedit::MAX_TEXT)
-                .is_some()
-            || change
-                .replacement
-                .chars()
-                .nth(crate::textedit::MAX_TEXT)
-                .is_some()
+            || change.original.chars().nth(textedit::MAX_TEXT).is_some()
+            || change.replacement.chars().nth(textedit::MAX_TEXT).is_some()
         {
             return Err(Refusal::TextEdit("text replacement exceeds its limit"));
         }
@@ -2619,7 +2627,7 @@ impl Doc {
             return Ok(());
         }
         if !self.now.text_edits.contains_key(&key)
-            && self.text_changes().len() >= crate::textedit::MAX_CHANGES
+            && self.text_changes().len() >= textedit::MAX_CHANGES
         {
             return Err(Refusal::TextEdit("too many text replacements"));
         }
@@ -2662,16 +2670,16 @@ impl Doc {
     /// in the document the page is drawn from, and that is the page's own
     /// answer. Nothing can move a page between files, so the pairing is as
     /// stable as the id.
-    pub fn text_changes(&self) -> Vec<crate::textedit::Edit> {
+    pub fn text_changes(&self) -> Vec<textedit::Edit> {
         self.now
             .text_edits
             .iter()
             .filter_map(|((page, _), version)| {
                 let change = self.text_versions[version].clone();
                 match self.now.pages.get(page)?.source {
-                    PageSource::Baseline(_) => Some(crate::textedit::Edit::opened(change)),
+                    PageSource::Baseline(_) => Some(textedit::Edit::opened(change)),
                     PageSource::Imported { source, .. } => {
-                        Some(crate::textedit::Edit::imported(source.get(), change))
+                        Some(textedit::Edit::imported(source.get(), change))
                     }
                     // **Unreachable, and the arm has to exist.** Nothing turns
                     // a page into one tpdf made --- an insert issues a new id
@@ -2686,7 +2694,7 @@ impl Doc {
     }
 
     /// Records one answer as one undoable edit.
-    pub fn fill(&mut self, object: ObjectId, value: crate::forms::Value) -> Result<(), Refusal> {
+    pub fn fill(&mut self, object: ObjectId, value: forms::Value) -> Result<(), Refusal> {
         let version = self.next_form;
         self.next_form += 1;
         self.forms.insert(version, value);
@@ -2694,11 +2702,11 @@ impl Doc {
     }
 
     /// Current shared-field answers, rebuilt by undo and redo.
-    pub fn form_changes(&self) -> Vec<crate::forms::Change> {
+    pub fn form_changes(&self) -> Vec<forms::Change> {
         self.now
             .forms
             .iter()
-            .map(|(id, version)| crate::forms::Change {
+            .map(|(id, version)| forms::Change {
                 object: (id.number(), id.generation()),
                 value: self.forms[version].clone(),
             })
@@ -3102,7 +3110,7 @@ impl Doc {
                         .filter_map(|m| m.image.as_ref())
                         .map(|i| i.rgba.len())
                         .sum::<usize>()
-                    > crate::signature::DOCUMENT_BYTES
+                    > signature::DOCUMENT_BYTES
             })
         {
             return Err(Refusal::ShapeMismatch(mark.kind));

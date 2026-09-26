@@ -112,9 +112,11 @@ Our failing fixture has no `/ActualText`; PDFKit independently reads its authore
 word order. The expected text was kept unchanged. The report and reproducer are
 [PDFium issue 561066233](https://issues.chromium.org/issues/561066233).
 
-`scripts/pdfium_rtl.patch`, against PDFium
-`f91ca5a72358bb0b00b4da9481b21fe668157614` (8044), preserves `/ActualText` behavior
-and restores ordinary predominantly RTL lines when their first and last strong
+*History: this paragraph and the two after it describe the 8044 engine. Since
+`pdfium-8066-tpdf.1` (2026-09-25, above) the patch is gone and the build compiles one
+unpatched engine.* `scripts/pdfium_rtl.patch`, against PDFium
+`f91ca5a72358bb0b00b4da9481b21fe668157614` (8044), preserved `/ActualText` behavior
+and restored ordinary predominantly RTL lines when their first and last strong
 segments are RTL. The complete 11-fixture comparison restores seven regressions
 with unchanged pixels and character geometry; two pre-existing Latin/Hebrew
 limitations remain unchanged. This is compatibility evidence, not general bidi
@@ -133,15 +135,17 @@ KERNEL32, ADVAPI32, GDI32 and USER32; it requires no separate MSVC runtime DLL.
 The [dependency release](https://github.com/tstone-1/tpdf/releases/tag/pdfium-8044-tpdf.1)
 holds both engine archives, SHA-256 sidecars and the complete verification evidence.
 It is a prerelease with Latest disabled, leaving the application updater on the
-normal release channel. `scripts/fetch_pdfium.py` downloads these exact archives
-and verifies their hashes; do not replace a vendored library manually.
+normal release channel. `scripts/fetch_pdfium.py` downloaded these archives while 8044
+was the pin; it now names `pdfium-8066-tpdf.1`. Either way it verifies the hashes of what it
+downloads, so do not replace a vendored library manually.
 
 The build is defined by `.github/workflows/pdfium.yml` and `scripts/build_pdfium.py`,
-with source/tool revisions in `scripts/pdfium_build.json`. It builds native
-mac-arm64 and win-x64 controls and candidates before emitting any archive.
+with source/tool revisions in `scripts/pdfium_build.json`. It builds one unpatched
+native engine each for mac-arm64 and win-x64, and emits an archive only after the engine
+passes the RTL observation `scripts/pdfium_verify.py` pins and upstream's text tests.
 The supplier's license collector omits Dragonbox and HarfBuzz; the wrapper adds
-their permissive notices from the pinned sources, includes TPDF's patch licence,
-and refuses any other unknown library. Windows selects Git Bash explicitly and
+their permissive notices from the pinned sources, includes the builder's own
+`LICENSE`, and refuses any other unknown library. Windows selects Git Bash explicitly and
 checks it before compiling: PATH can otherwise select the WSL launcher.
 Run its safeguards with `python3 -m unittest discover -s scripts -p test_pdfium_build.py`.
 Building locally needs full Xcode or VS with the pinned Windows SDK; use
@@ -198,6 +202,30 @@ scripts/fetch_pdfium.py
 **a fresh clone has no PDFium and every binary fails to bind at runtime until the fetch
 script has run.** The script downloads the pinned source-built archive, verifies its SHA256
 before extracting anything, and refuses a V8 asset.
+
+### A scratch copy or a second worktree
+
+`git archive` and `git worktree add` give the tracked files and nothing else, and two things
+`cargo test` needs are gitignored: `vendor/pdfium/` and the generated fixtures in `testdata/`.
+Both failures look like something else. Without the library the build stops at `resource
+path ../vendor/pdfium/lib/libpdfium.dylib doesn't exist`; without the fixtures the build
+succeeds and unrelated tests go red on a missing `testdata/*.pdf` --- nine of them in `save`,
+`print` and `docinfo` on 2026-09-26, in a review whose change touched none of the three. Set a
+copy up before its first build:
+
+```
+cp -R <checkout>/vendor/pdfium vendor/          # or scripts/fetch_pdfium.py
+python3 scripts/ci_fixtures.py --signed --hostile
+```
+
+`ci_fixtures.py` builds what CI builds, which is not every fixture a local run can use (its
+docstring lists what it leaves out); copying the generated files from a checkout that has
+them is the complete alternative. A red test that names a file under `testdata/` in a fresh
+copy is this setup, not a finding.
+
+A worktree an agent harness creates may start at the remote's default branch rather than at
+the checkout's `HEAD`, so commits not yet pushed are missing from it. Check
+`git rev-parse HEAD` in it before the first edit.
 
 Verify an existing install without touching the network:
 
@@ -6430,7 +6458,19 @@ starts at 0 and increments within the month.
    That is a source-level assertion and does not replace the A/B above; it is what tells you
    *why* the A/B failed when it does.
 
-9. Commit as `Release vYY.M.MICRO: <summary>` and push it.
+9. Commit as `Release vYY.M.MICRO: <summary>` and push it. Then confirm the `Audit`
+   workflow is green **at that commit** before tagging it:
+
+   ```
+   gh run list --workflow=audit.yml --commit "$(git rev-parse HEAD)" --json status,conclusion
+   ```
+
+   Exactly one run, `completed` and `success`. An empty list is not a pass: it means the
+   push has not triggered the run yet, or the filter matched nothing. A red run means an
+   advisory not listed in `.cargo/audit.toml` — read it and either update the dependency or
+   add it to that file with its reason; do not tag over it. The audit is not a gate because
+   its answer changes when an advisory is published, not when the code does
+   (`.github/workflows/audit.yml` says so at the top).
 
 10. **Rehearse changed release mechanics, then tag for real.** This list ended at step 9 until
     2026-08-03, which left the single riskiest action in the process written down nowhere

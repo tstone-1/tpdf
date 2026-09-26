@@ -7674,12 +7674,47 @@ fn a_field_whose_widgets_all_went_does_not_keep_its_value() {
     );
     assert!(
         doc.get_object(by("orphan field")).is_err(),
-        "and the field above it, though its value named nothing that went"
+        "and the field above it, though its value is too short to match"
     );
     assert!(doc.get_object(by("its widget")).is_err(), "the widget went");
     assert!(
         doc.get_object(by("parent field")).is_err(),
         "and so did the field holding its value"
+    );
+}
+
+/// A field with one widget over the region and one elsewhere goes whole.
+///
+/// The shape a form uses for a name in every page's header, and the one the
+/// first rule missed while it asked whether *all* the widgets had gone: the
+/// field kept its `/V`, the far widget went on drawing it, and the redaction
+/// reported itself verified. `split`'s value is under the length guard, so
+/// the value rule cannot take it and this is the first rule's *any* alone.
+#[test]
+fn a_field_with_one_widget_covered_and_one_elsewhere_loses_its_value() {
+    let (mut doc, page, ids) = formed_document();
+    let by = |want: &str| {
+        ids.iter()
+            .find(|(name, _)| *name == want)
+            .map(|(_, id)| *id)
+            .expect(want)
+    };
+    assert!(
+        doc.get_object(by("its far widget")).is_ok(),
+        "the control: the far widget is there to begin with"
+    );
+    apply_redactions(&mut doc, &[page], &over_the_widget(page)).expect("ok");
+    assert!(
+        doc.get_object(by("its covered widget")).is_err(),
+        "the widget over the region went"
+    );
+    assert!(
+        doc.get_object(by("split field")).is_err(),
+        "and the field it drew the answer of"
+    );
+    assert!(
+        doc.get_object(by("its far widget")).is_err(),
+        "and the widget that would have gone on drawing it"
     );
 }
 
@@ -7748,11 +7783,13 @@ fn a_field_value_too_short_to_be_distinctive_is_not_matched() {
     );
 }
 
-/// A field whose value is text that went goes, wherever its widget sits.
+/// A field holding an answer a covered widget drew goes, wherever it sits.
 ///
 /// §6 names *widgets outside the redacted rectangle* explicitly. The away
-/// widget is nowhere near the region and holds the same answer, which is
-/// what a second copy of a field on another page looks like.
+/// widget is nowhere near the region and holds the answer `parent`'s covered
+/// widget drew, which is what a second copy of a field on another page looks
+/// like. **The page text does not name it**: a widget's answer is drawn by
+/// its appearance stream, so only `redact::widget_answers` reaches it.
 #[test]
 fn a_field_holding_what_went_goes_even_with_its_widget_elsewhere() {
     let (mut doc, page, ids) = formed_document();
@@ -7968,18 +8005,20 @@ fn the_appearance_a_removed_widget_drew_its_value_with_is_collected() {
 /// ```text
 ///   merged      field and widget in one object, over the region
 ///   parent      holds the value; its one widget is over the region
-///   orphan      widget over the region, value naming nothing that went
+///   orphan      widget over the region, value under the length guard
+///   split       two widgets, one over the region; value under the guard
 ///   held        holds a value that went; its widget is nowhere near
 ///   defaulted   carries what went in /DV, with no /V at all
 ///   short       /V is two letters, and they occur inside what went
-///   away        holds the same answer, widget nowhere near the region
+///   away        holds the answer parent's covered widget drew, far away
 ///   unrelated   holds a different answer, widget nowhere near it
 ///   checkbox    /V is a NAME, over the region's page but not its rectangle
 /// ```
 ///
-/// `orphan` is the only one the first rule decides alone, `held` and
-/// `defaulted` the only ones the second decides alone, and `short` is the
-/// only one the length guard saves.
+/// `orphan` and `split` are the only ones the first rule decides alone ---
+/// `split` the only one its *any* decides --- `held` and `defaulted` the only
+/// ones the page text decides alone, `away` the only one the removed widgets'
+/// answers decide, and `short` the only one the length guard saves.
 fn formed_document() -> (
     Document,
     lopdf::ObjectId,
@@ -7988,7 +8027,12 @@ fn formed_document() -> (
     use lopdf::{dictionary, Stream};
 
     let mut doc = Document::with_version("1.7");
-    let content = doc.add_object(Stream::new(dictionary! {}, b"BT (page) Tj ET".to_vec()));
+    // The one line on the page, and the one show `over_the_widget` removes:
+    // what route B's `taking` really holds is the text of the shows it took.
+    let content = doc.add_object(Stream::new(
+        dictionary! {},
+        b"BT (DEFAULT-SECRET HELD-SECRET) Tj ET".to_vec(),
+    ));
     let pages_id = doc.new_object_id();
 
     // The copy that survives removing `/V`, and the reason the sweep matters.
@@ -8029,7 +8073,9 @@ fn formed_document() -> (
     let orphan = doc.add_object(dictionary! {
         "FT" => "Tx",
         "T" => Object::string_literal("orphan"),
-        "V" => Object::string_literal("UNSAID-ANSWER"),
+        // Under the length guard, so the value rule cannot take it even though
+        // its widget's answer is now one of the lines it matches against.
+        "V" => Object::string_literal("NO"),
         "Kids" => vec![orphan_kid.into()],
     });
     doc.objects.insert(
@@ -8038,6 +8084,35 @@ fn formed_document() -> (
             "Type" => "Annot", "Subtype" => "Widget",
             "Parent" => orphan,
             "Rect" => vec![100.into(), 95.into(), 200.into(), 115.into()],
+        }),
+    );
+
+    // Two widgets, one over the region and one far from it: a name repeated in
+    // every page's header. Its value is under the length guard, so only the
+    // first rule --- *any* widget gone --- can take it; with `all` it survived
+    // and went on drawing its answer through the widget that stayed.
+    let split_near = doc.new_object_id();
+    let split_far = doc.new_object_id();
+    let split = doc.add_object(dictionary! {
+        "FT" => "Tx",
+        "T" => Object::string_literal("split"),
+        "V" => Object::string_literal("ID"),
+        "Kids" => vec![split_near.into(), split_far.into()],
+    });
+    doc.objects.insert(
+        split_near,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget",
+            "Parent" => split,
+            "Rect" => vec![100.into(), 152.into(), 200.into(), 158.into()],
+        }),
+    );
+    doc.objects.insert(
+        split_far,
+        Object::Dictionary(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget",
+            "Parent" => split,
+            "Rect" => vec![400.into(), 750.into(), 500.into(), 770.into()],
         }),
     );
 
@@ -8078,7 +8153,9 @@ fn formed_document() -> (
     let away = doc.add_object(dictionary! {
         "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
         "T" => Object::string_literal("away"),
-        "V" => Object::string_literal("AWAY-SECRET"),
+        // The answer `parent`'s covered widget drew, and not page text: only the
+        // removed widgets' answers can reach it.
+        "V" => Object::string_literal("PARENT-SECRET"),
         "Rect" => vec![400.into(), 700.into(), 500.into(), 720.into()],
     });
     let unrelated = doc.add_object(dictionary! {
@@ -8098,9 +8175,9 @@ fn formed_document() -> (
         "Type" => "Page", "Parent" => pages_id, "Contents" => content,
         "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
         "Annots" => vec![
-            merged.into(), kid.into(), orphan_kid.into(), held_kid.into(),
-            defaulted.into(), short.into(), away.into(), unrelated.into(),
-            checkbox.into(),
+            merged.into(), kid.into(), orphan_kid.into(), split_near.into(),
+            split_far.into(), held_kid.into(), defaulted.into(), short.into(),
+            away.into(), unrelated.into(), checkbox.into(),
         ],
     });
     doc.objects.insert(
@@ -8111,9 +8188,9 @@ fn formed_document() -> (
     );
     let form = doc.add_object(dictionary! {
         "Fields" => vec![
-            merged.into(), parent.into(), orphan.into(), held.into(),
-            defaulted.into(), short.into(), away.into(), unrelated.into(),
-            checkbox.into(),
+            merged.into(), parent.into(), orphan.into(), split.into(),
+            held.into(), defaulted.into(), short.into(), away.into(),
+            unrelated.into(), checkbox.into(),
         ],
         "DA" => Object::string_literal("/Helv 0 Tf 0 g"),
     });
@@ -8131,6 +8208,9 @@ fn formed_document() -> (
             ("its widget", kid),
             ("orphan field", orphan),
             ("its orphan widget", orphan_kid),
+            ("split field", split),
+            ("its covered widget", split_near),
+            ("its far widget", split_far),
             ("held field", held),
             ("its held widget", held_kid),
             ("defaulted field", defaulted),
@@ -8143,20 +8223,22 @@ fn formed_document() -> (
     )
 }
 
-/// A region over the two widgets at the bottom left, and nothing else.
+/// A region over the widgets at the bottom left, and the page's one line.
 ///
-/// `taking` names all three secrets because route B removes a whole line and
-/// this fixture's answers are what that line held --- which is what makes
-/// `away` reachable by the value rule and `unrelated` not.
+/// **`taking` is only what route B could produce**: the text of the one show
+/// it removes, which is the page's line. Until 2026-09-26 it held every answer
+/// in the fixture, `MERGED-SECRET` and `PARENT-SECRET` included, with no show
+/// removed --- and a widget's answer is drawn by its appearance stream, which
+/// PDFium never reports as page text. That supplied the precondition the real
+/// path lacks, so the value rule looked as though it reached `away` when on a
+/// real document it could not.
 fn over_the_widget(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
         source: 0,
-        shows: Vec::new(),
+        shows: vec![0],
         text_objects: 1,
         areas: vec![[90.0, 90.0, 210.0, 160.0]],
-        taking: vec![
-            "MERGED-SECRET PARENT-SECRET AWAY-SECRET DEFAULT-SECRET HELD-SECRET".to_string(),
-        ],
+        taking: vec!["DEFAULT-SECRET HELD-SECRET".to_string()],
         form_shows: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),

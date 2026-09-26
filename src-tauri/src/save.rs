@@ -79,6 +79,10 @@ use crate::encoding::MAX_DECODE;
 use crate::fingerprint::{FileId, Fingerprint};
 use crate::pagetree::{agreed_turns, ordered_pages};
 use crate::worker_shm::Shm;
+use crate::{
+    diag, edits, failure, forms, merge, pagetree, print, redact, redaction_fill, sweep, textedit,
+    verify,
+};
 
 /// The middle of the name of the file bytes are written to before the rename.
 ///
@@ -169,16 +173,16 @@ impl Refusal {
 /// Reload, and it is *carried* rather than re-derived, because deciding it again
 /// at the far end would mean asking the same question twice and, worse, matching
 /// on the message to answer it.
-impl crate::failure::Failure {
+impl failure::Failure {
     /// Nothing was taken apart. The reader carries on with their document.
     #[must_use]
     pub(crate) fn refused_by(why: Refusal) -> Self {
         Self {
             message: why.message,
             action: if why.changed {
-                crate::failure::Action::Reload
+                failure::Action::Reload
             } else {
-                crate::failure::Action::Carry
+                failure::Action::Carry
             },
         }
     }
@@ -189,9 +193,9 @@ impl crate::failure::Failure {
         Self {
             message: why.message,
             action: if why.changed {
-                crate::failure::Action::ReopenChanged
+                failure::Action::ReopenChanged
             } else {
-                crate::failure::Action::Reopen
+                failure::Action::Reopen
             },
         }
     }
@@ -514,7 +518,7 @@ pub fn print_bytes(
 /// or anything [`crate::print::build_update`] refuses.
 pub fn print_range_bytes(
     source: &Path,
-    job: &crate::print::Job,
+    job: &print::Job,
     rewriter: &dyn Rewriter,
 ) -> Result<Vec<u8>, Refusal> {
     into_scratch(source, |reading, len, into| {
@@ -759,7 +763,7 @@ pub fn fill_redactions(
     password: Option<&str>,
     rewriter: &dyn Rewriter,
 ) -> Result<(), Refusal> {
-    let mut plan = crate::redaction_fill::output_plan(original_plan)?;
+    let mut plan = redaction_fill::output_plan(original_plan)?;
     plan.opened_as = Some(expected.clone());
     let (mut reading, len) = opened_to_rewrite(path)?;
     let actual = Fingerprint::of_open(&reading, path)?;
@@ -1456,7 +1460,7 @@ fn staged_range(
     source: &mut std::fs::File,
     len: usize,
     out: &mut std::fs::File,
-    job: &crate::print::Job,
+    job: &print::Job,
 ) -> Result<usize, Refusal> {
     let wrote = rewriter.write_range(source, len, out, job)?;
     landed_is(out, wrote)
@@ -2411,7 +2415,7 @@ pub trait Verifier: Send {
         len: usize,
         needles: &[String],
         password: Option<&str>,
-    ) -> Result<crate::verify::Report, String>;
+    ) -> Result<verify::Report, String>;
 }
 
 /// Re-reads in the coordinator, which is the process that just did the writing.
@@ -2445,9 +2449,9 @@ impl Verifier for Here {
         len: usize,
         needles: &[String],
         password: Option<&str>,
-    ) -> Result<crate::verify::Report, String> {
+    ) -> Result<verify::Report, String> {
         let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
-        Ok(crate::verify::scan(&bytes, needles, password))
+        Ok(verify::scan(&bytes, needles, password))
     }
 }
 
@@ -2581,7 +2585,7 @@ pub trait Rewriter: Send {
         source: &mut std::fs::File,
         len: usize,
         out: &mut std::fs::File,
-        job: &crate::print::Job,
+        job: &print::Job,
     ) -> Result<usize, Refusal>;
 
     /// Writes `source` under `plan`, with `inputs` appended, into `out`.
@@ -2658,12 +2662,12 @@ impl Rewriter for Here {
         source: &mut std::fs::File,
         len: usize,
         out: &mut std::fs::File,
-        job: &crate::print::Job,
+        job: &print::Job,
     ) -> Result<usize, Refusal> {
         use std::io::Write as _;
 
         let original = read_whole(source, len).map_err(|e| e.to_string())?;
-        let bytes = crate::print::build_update(&original, job)?;
+        let bytes = print::build_update(&original, job)?;
         out.write_all(&bytes)
             .and_then(|()| out.flush())
             .map_err(|e| format!("the print job could not be written: {e}"))?;
@@ -3213,7 +3217,7 @@ pub fn merge_update(
             )
             .into());
         }
-        crate::merge::append(&mut merged, &incoming)
+        merge::append(&mut merged, &incoming)
             .map_err(|why| format!("could not merge {label}: {why}"))?;
     }
 
@@ -3642,10 +3646,10 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         let into = incoming
             .get_mut(at)
             .ok_or("the edits change text in a document this save was not given")?;
-        crate::textedit::write(into, &changes)?;
+        textedit::write(into, &changes)?;
     }
-    crate::textedit::write(&mut doc, &split.base)?;
-    crate::forms::write(&mut doc, &plan.forms)?;
+    textedit::write(&mut doc, &split.base)?;
+    forms::write(&mut doc, &plan.forms)?;
     rewrite_note_edits(&mut doc, &plan.notes)?;
 
     // **Beside the note edits, and above `materialise` for their reason.** A
@@ -3693,7 +3697,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // see `pagetree::materialise`, which carries why the outline is dropped for
     // a deletion and kept for a move, and why turning pages is *not* part of it.
     let order: Vec<lopdf::ObjectId> = turns.iter().map(|(id, _)| *id).collect();
-    crate::pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
+    pagetree::materialise(&mut doc, &dropped, moved.then_some(order.as_slice()))?;
 
     // Before `apply_turns`, and the order is load-bearing rather than tidy: a
     // mark was made against the rotation the file had when it was opened, and
@@ -3751,7 +3755,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // touches a content stream, which is the property that makes the ordinals
     // still true here.
     let redacted = if job == Job::RedactionFill {
-        crate::redaction_fill::paint(&mut doc, &pages, &plan.redactions)?;
+        redaction_fill::paint(&mut doc, &pages, &plan.redactions)?;
         apply_redactions(&mut doc, &pages, &[])?
     } else {
         apply_redactions(&mut doc, &pages, &plan.redactions)?
@@ -3814,7 +3818,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         || discarded > 0
         || !plan.text_edits.is_empty()
     {
-        crate::sweep::collect(&mut doc)?;
+        sweep::collect(&mut doc)?;
     }
 
     // **Last, and after the sweep.** `Document::encrypt` walks every object in
@@ -3900,7 +3904,7 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
 fn apply_redactions(
     doc: &mut Document,
     pages: &[lopdf::ObjectId],
-    redactions: &[crate::edits::PlannedRedaction],
+    redactions: &[edits::PlannedRedaction],
 ) -> Result<Redacted, Refusal> {
     // **Every entry checked before any of them is acted on**, which is the half
     // that is about damage rather than about correctness. A refusal discovered
@@ -3908,7 +3912,7 @@ fn apply_redactions(
     // and this function's caller is about to serialise it --- so a plan that
     // cannot be carried out in full is refused before the first removal.
     let mut seen: Vec<u32> = Vec::new();
-    let mut targets: Vec<(lopdf::ObjectId, &crate::edits::PlannedRedaction)> = Vec::new();
+    let mut targets: Vec<(lopdf::ObjectId, &edits::PlannedRedaction)> = Vec::new();
     for redaction in redactions {
         if seen.contains(&redaction.source) {
             return Err(format!(
@@ -3942,7 +3946,7 @@ fn apply_redactions(
     // guarded on there being a redaction at all, like every other clause here:
     // an ordinary Save a copy of an XFA form is a serialisation and must go on
     // working.
-    if !redactions.is_empty() && crate::redact::has_xfa(doc) {
+    if !redactions.is_empty() && redact::has_xfa(doc) {
         return Err(Refusal::from(
             "this document carries an XFA form, which keeps its own copy of \
              every answer --- tpdf cannot redact one, and writing the file \
@@ -3952,12 +3956,16 @@ fn apply_redactions(
     }
 
     let mut done = Redacted::default();
-    // Every widget the annotation pass removed, across all pages. The field pass
-    // below asks whether everything under a field has gone, which is not
-    // answerable one page at a time: a field's widgets may sit on several.
-    let mut widgets: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
+    // Every field the annotation pass took a widget from, across all pages, and
+    // what those widgets were drawing. Both read before `forget`, which removes
+    // a widget from its parent's `/Kids` and takes the `/Parent` chain its
+    // answer is inherited through --- afterwards a field that lost one of two
+    // widgets looks like a field that only ever had one. See
+    // `redact::widget_fields` and `redact::widget_answers`.
+    let mut lost: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
+    let mut answers: Vec<String> = Vec::new();
     for (page, redaction) in targets {
-        let took = crate::redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
+        let took = redact::remove_shows(doc, page, &redaction.shows, redaction.text_objects)
             .map_err(Refusal::from)?;
         done.shows += took.removed;
 
@@ -3974,14 +3982,9 @@ fn apply_redactions(
             by_form.entry(*at).or_default().push(*ordinal);
         }
         for (at, ordinals) in by_form {
-            let took = crate::redact::remove_form_shows(
-                doc,
-                page,
-                &redaction.form_text_objects,
-                at,
-                &ordinals,
-            )
-            .map_err(Refusal::from)?;
+            let took =
+                redact::remove_form_shows(doc, page, &redaction.form_text_objects, at, &ordinals)
+                    .map_err(Refusal::from)?;
             done.shows += took.removed;
         }
 
@@ -3990,9 +3993,8 @@ fn apply_redactions(
         // redact. Removing the `Do` stops the page drawing it; dropping the
         // resource entry is what leaves the object unreachable, so the sweep
         // this rewrite already runs takes the bytes with it.
-        let took =
-            crate::redact::remove_images(doc, page, &redaction.images, redaction.image_objects)
-                .map_err(Refusal::from)?;
+        let took = redact::remove_images(doc, page, &redaction.images, redaction.image_objects)
+            .map_err(Refusal::from)?;
         done.images += took.removed;
 
         // **The annotations, and every reference to them.** An annotation over
@@ -4005,12 +4007,13 @@ fn apply_redactions(
         // one list a caller has in mind is what leaves the object alive: a
         // structure element's `/OBJR` or an AcroForm's `/Fields` names it too,
         // and an annotation still reachable is an annotation still written.
-        let taken = crate::redact::covered_annots(doc, page, &redaction.areas);
+        let taken = redact::covered_annots(doc, page, &redaction.areas);
         if !taken.is_empty() {
             done.annots += taken.len();
             let taken: std::collections::HashSet<lopdf::ObjectId> = taken.into_iter().collect();
-            widgets.extend(taken.iter().copied());
-            crate::pagetree::forget(doc, &taken).map_err(Refusal::from)?;
+            lost.extend(redact::widget_fields(doc, &taken));
+            answers.extend(redact::widget_answers(doc, &taken));
+            pagetree::forget(doc, &taken).map_err(Refusal::from)?;
         }
     }
 
@@ -4061,8 +4064,8 @@ fn apply_redactions(
             .iter()
             .flat_map(|redaction| redaction.taking.iter().cloned())
             .collect();
-        let entries = crate::redact::covered_outline(doc, &taken);
-        done.outline = crate::redact::drop_outline_items(doc, &entries).map_err(Refusal::from)?;
+        let entries = redact::covered_outline(doc, &taken);
+        done.outline = redact::drop_outline_items(doc, &entries).map_err(Refusal::from)?;
 
         // **The form fields, and this runs last because its first rule needs the
         // annotation pass to have finished.** A widget over a region is removed
@@ -4075,8 +4078,16 @@ fn apply_redactions(
         // The second rule is the value itself, which is what reaches §6's
         // *widgets outside the redacted rectangle*: the same answer in a second
         // copy of the field, or one whose widget is on another page.
-        let fields = crate::redact::covered_fields(doc, &taken, &widgets);
-        done.fields = crate::redact::drop_fields(doc, &fields).map_err(Refusal::from)?;
+        //
+        // **Against the removed widgets' answers as well as the page text.** A
+        // widget's answer is drawn by its appearance stream, not by the page, so
+        // route B's `taking` never holds it; before 2026-09-26 a second copy of
+        // an answer the reader covered survived unless the page also printed it.
+        // The outline is still asked about the page text alone: a bookmark
+        // titled with a form answer is not a shape anyone has measured.
+        let lines: Vec<String> = taken.iter().chain(&answers).cloned().collect();
+        let fields = redact::covered_fields(doc, &lines, &lost);
+        done.fields = redact::drop_fields(doc, &fields).map_err(Refusal::from)?;
     }
     Ok(done)
 }
@@ -4109,7 +4120,7 @@ fn strip_metadata(doc: &mut Document) -> Result<usize, Refusal> {
     }
     let found = doomed.len();
     if found > 0 {
-        crate::pagetree::forget(doc, &doomed).map_err(Refusal::from)?;
+        pagetree::forget(doc, &doomed).map_err(Refusal::from)?;
     }
     Ok(found)
 }
@@ -4165,7 +4176,7 @@ pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes)
         .map_err(|e| format!("could not serialise {what}: {e}"))?;
-    let wrong = crate::verify::structure(&bytes);
+    let wrong = verify::structure(&bytes);
     if wrong.is_empty() {
         return Ok(bytes);
     }
@@ -4197,7 +4208,7 @@ pub fn pdf_date(at: std::time::SystemTime) -> String {
     let seconds = at
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let (year, month, day) = crate::diag::civil_from_days(seconds / 86_400);
+    let (year, month, day) = diag::civil_from_days(seconds / 86_400);
     let rest = seconds % 86_400;
     format!(
         "D:{year:04}{month:02}{day:02}{:02}{:02}{:02}Z",
@@ -4346,8 +4357,8 @@ fn make_blank_pages(
 /// A replacement naming a file the plan does not list, a page of one that no
 /// slot shows, or a page of one that more than one slot shows.
 fn text_by_document(plan: &Plan, slots: &[(Slot, u8)]) -> Result<TextSplit, Refusal> {
-    let mut base: Vec<crate::textedit::Change> = Vec::new();
-    let mut by_file: Vec<(usize, Vec<crate::textedit::Change>)> = Vec::new();
+    let mut base: Vec<textedit::Change> = Vec::new();
+    let mut by_file: Vec<(usize, Vec<textedit::Change>)> = Vec::new();
     for edit in &plan.text_edits {
         let Some(file) = edit.source else {
             base.push(edit.change.clone());
@@ -4402,9 +4413,9 @@ fn text_by_document(plan: &Plan, slots: &[(Slot, u8)]) -> Result<TextSplit, Refu
 /// `incoming_documents` establishes and `checked` reads for a slot.
 struct TextSplit {
     /// Replacements on pages of the document the reader opened.
-    base: Vec<crate::textedit::Change>,
+    base: Vec<textedit::Change>,
     /// Replacements on pages of another file, that file's own page numbers.
-    by_file: Vec<(usize, Vec<crate::textedit::Change>)>,
+    by_file: Vec<(usize, Vec<textedit::Change>)>,
 }
 
 /// Imports every [`Slot::Imported`] page, and answers the object each became.
@@ -4457,7 +4468,7 @@ fn import_pages(
         }
         for round in rounds {
             let want: Vec<usize> = round.iter().map(|&(_, page)| page as usize).collect();
-            let ids = crate::merge::import(doc, other, &want).map_err(|why| {
+            let ids = merge::import(doc, other, &want).map_err(|why| {
                 format!("could not insert the pages from another document: {why}")
             })?;
             for (&(at, _), id) in round.iter().zip(ids) {

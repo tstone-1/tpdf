@@ -228,6 +228,12 @@ where it could not fire.
 
 > *`AGENTS.md` carries this decision in four lines; this is the argument.*
 
+> **Superseded 2026-09-12 (`d9688db`).** Normal builds no longer ship the harness:
+> `src/lib/harness.ts` guards its dynamic imports, `npm run build` removes them,
+> `npm run build:checks` keeps them, and the `bundleshare` gate refuses harness code in a
+> normal build. The current rule is `docs/DETAIL.md`, *Normal builds exclude the JavaScript
+> test harness*. What follows is the 2026-08-02 argument, kept as history.
+
 **The JavaScript harness does ship, and as of 2026-08-02 that is a decision rather than the
 unexamined half of the same hygiene.** `App.svelte` statically imports every webview entry
 point, so the functional checks and the benchmarks sit in the bundle that `frontendDist` embeds

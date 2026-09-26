@@ -146,6 +146,10 @@ pub(super) fn rewrite_expanded(
     }
     let mut output = Vec::new();
     let mut copied = 0;
+    // Where a moved path's saved state was opened and not yet restored. A `q`
+    // with no `Q` after it translates everything the page draws later, and a
+    // `Q` with no `q` before it pops a state somebody else saved.
+    let mut open_path: Option<usize> = None;
     for (index, span) in spans.into_iter().enumerate() {
         let original = Content::decode_strict(&bytes[span.clone()]).map_err(|e| e.to_string())?;
         let next = &changed.operations[index];
@@ -173,20 +177,42 @@ pub(super) fn rewrite_expanded(
                 && super::actual::Span::new(&next.operands[0], &next.operands[1], index).is_ok();
             // A painted path moved with the line it underlines
             // (`wrap::translated`): its first operator after a saved state and
-            // a translation, or its last before the restore, both unchanged.
-            let moved_path = original.operations[0].operands == next.operands
-                && expansions.get(&index).is_some_and(|operations| {
+            // a pure translation, or its last before the restore, both
+            // unchanged --- and the two halves in pairs, an opening before
+            // each restore and no second opening before it.
+            let moved_path = (original.operations[0].operands == next.operands)
+                .then(|| expansions.get(&index))
+                .flatten()
+                .and_then(|operations| {
                     let kept = |op: &lopdf::content::Operation| {
                         op.operator == next.operator && op.operands == next.operands
                     };
                     match operations.as_slice() {
-                        [save, translate, path] => {
-                            save.operator == "q" && translate.operator == "cm" && kept(path)
+                        [save, translate, path]
+                            if save.operator == "q"
+                                && save.operands.is_empty()
+                                && translation(translate)
+                                && kept(path) =>
+                        {
+                            Some(true)
                         }
-                        [path, restore] => restore.operator == "Q" && kept(path),
-                        _ => false,
+                        [path, restore]
+                            if restore.operator == "Q"
+                                && restore.operands.is_empty()
+                                && kept(path) =>
+                        {
+                            Some(false)
+                        }
+                        _ => None,
                     }
                 });
+            match moved_path {
+                Some(true) if open_path.replace(index).is_none() => {}
+                Some(false) if open_path.take().is_some() => {}
+                Some(_) => return Err("invalid text patch".into()),
+                None => {}
+            }
+            let moved_path = moved_path.is_some();
             if !actual_text
                 && !moved_path
                 && (!matches!(next.operator.as_str(), "Tj" | "TJ") || next.operands.len() != 1)
@@ -218,11 +244,32 @@ pub(super) fn rewrite_expanded(
             return Err("untouched text operator changed".into());
         }
     }
+    if open_path.is_some() {
+        return Err("invalid text patch".into());
+    }
     output.extend_from_slice(&bytes[copied..]);
     if output.len() > MAX_CONTENT {
         return Err("text page content exceeds its limit".into());
     }
     Ok(output)
+}
+
+/// `1 0 0 1 tx ty cm` with finite `tx` and `ty`: the only transform
+/// `wrap::translated` writes, and the only one a moved path may carry.
+fn translation(op: &lopdf::content::Operation) -> bool {
+    let values: Vec<f64> = op
+        .operands
+        .iter()
+        .filter_map(|operand| super::number(operand).ok())
+        .collect();
+    let [a, b, c, d, tx, ty] = values[..] else {
+        return false;
+    };
+    op.operator == "cm"
+        && op.operands.len() == 6
+        && [a, b, c, d] == [1., 0., 0., 1.]
+        && tx.is_finite()
+        && ty.is_finite()
 }
 
 #[cfg(test)]
