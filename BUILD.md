@@ -11841,3 +11841,33 @@ which is now a column beside a one-character label and so no longer pushed by it
 were added under `columns:`, `gutter:` and `push:`; two older `columns:` ones were re-aimed at
 the flush-column case, where the column and not the gutter stops the push, and *push: measure
 the move from the room instead* at the new `from`.
+
+### A letter outside Latin in a CFF font's encoding — measured 2026-09-26
+
+The Highmark brochure prints a Russian edition, and every one of its Type1C fonts names the
+Cyrillic letters in its `/Differences` (`uni0410` to `uni044F`). The WinAnsi CFF path writes only
+the Latin names it lists, and refused the font for any other one, *unsupported CFF glyph name*,
+which refused the page: 31 of the brochure's 52. Such a font is now read by glyph name, the Type 1
+rules `type1::compact` already applies to symbolic and unencoded Type1C fonts, where a letter the
+editor cannot write measures read-only text and the rest stays editable (`docs/TEXTEDIT.md`). The
+route is taken only on that one refusal (`cff::UNNAMED`), so no font the WinAnsi path accepted or
+refused for anything else changes.
+
+**Before and after, the 31 files,** against the 26.9.20 records: pages with editable text 680 →
+**711**, runs offered 47,435 → 48,292, and at +25% as typed 37,333 → **38,047** accepted.
+`--compare` found 640,308 verdicts unchanged in kind, none moved either way, and 11,780 newly
+offered, 7,003 of them accepted. Every one of the brochure's 31 pages opened; its remaining nine
+refusals are other causes (ActualText, painted paths, `MP`, a TrueType program).
+
+**Checked by hand:** two accepted +25% edits on newly opened pages (10 and 38) through
+`--roundtrip`, both passing, and page 10 rendered: the grown heading is set in Noto Sans, since
+the brochure's fonts forbid editing, and nothing else on the page moved.
+
+**Tests:** `textedit_cff_letter_outside_latin_keeps_its_text_read_only_and_the_page_editable`,
+over a new synthetic program with one Cyrillic glyph (`fixtures/cyrillic.cff`, from
+`testdata/make_textedit_cff.py`, which reproduces the other fourteen byte for byte): the WinAnsi
+path still refuses the font, the glyph-name path reads its Latin and marks the Cyrillic opaque,
+the Latin run is edited, the Cyrillic run is kept byte for byte, and a font refused for widths
+that disagree stays refused. Two mutations under `dispatch:`, both caught. `textedit_growth.py`
+now counts the licence refusal as `restricted` rather than unclassified; only its `patch` mode
+meets it.

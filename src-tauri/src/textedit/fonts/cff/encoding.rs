@@ -137,7 +137,7 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
                                         .map(|(_, text, slot)| (text, slot)),
                                 )
                                 .find(|(candidate, _)| candidate.as_bytes() == name)
-                                .ok_or("unsupported CFF glyph name")?;
+                                .ok_or(super::UNNAMED)?;
                             names[code] = glyph_name;
                             Some(slot)
                         };

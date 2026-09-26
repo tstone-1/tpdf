@@ -16,6 +16,10 @@ mod profile;
 mod tests;
 
 const INVALID: &str = "unsupported embedded CFF font";
+/// A PDF encoding naming a glyph outside the Latin set this path writes, such
+/// as a Cyrillic `uni0410`. `fonts::type1` reads such a font by glyph name
+/// instead (`type1::compact`), where the letter measures read-only text.
+pub(super) const UNNAMED: &str = "unsupported CFF glyph name";
 // Adobe glyph names for WinAnsi's printable ASCII range, ISO 32000-1 Annex D.
 pub(super) const ASCII_NAMES: [&str; 95] = [
     "space",

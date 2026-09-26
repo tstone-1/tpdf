@@ -581,7 +581,13 @@ xdvipdfmx's simple Type1C fonts that are symbolic or have no PDF `/Encoding` (Te
 math) go through the Type 1 rules (`type1::compact`, `cff::named`), reading the
 program's built-in encoding in format 0 or 1 (`cff/encoding.rs::builtin`;
 Expert and supplements refused); a nonsymbolic one with an `/Encoding` keeps
-the WinAnsi CFF path. Typst's TrueType subsets carry no OS/2 table; `fonts::face`
+the WinAnsi CFF path. That path writes only the Latin names it lists, and a
+`/Differences` entry naming any other glyph (`cff::UNNAMED`; the Highmark
+brochure names its Russian edition's Cyrillic as `uni0410` and so on in every
+font) sends the font to the Type 1 rules too, where that letter measures
+read-only text and the rest stays editable. Only a font the WinAnsi path refused
+takes that route, so no verdict it gave changes; any other refusal from it stands
+(`textedit_cff_letter_outside_latin_keeps_its_text_read_only_and_the_page_editable`). Typst's TrueType subsets carry no OS/2 table; `fonts::face`
 accepts a program without one as unrestricted, like a Type 1 or CFF program with no
 `FSType`, and a present table's restrictions mark the font restricted (`docs/THREAT-MODEL.md`
 residual risk 23).

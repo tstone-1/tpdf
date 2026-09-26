@@ -1001,3 +1001,66 @@ fn textedit_cff_builtin_encodings_name_glyphs_through_the_type1_rules() {
     doc.get_dictionary_mut(font).unwrap().remove(b"Encoding");
     assert!(textedit::scan(&doc, 0).is_err());
 }
+
+#[test]
+fn textedit_cff_letter_outside_latin_keeps_its_text_read_only_and_the_page_editable() {
+    // A Russian edition's Cyrillic, named in the Differences of a WinAnsi
+    // font. The WinAnsi path cannot write it, and refused the page for it.
+    let (mut doc, font, _, _) = fixture(include_bytes!("fixtures/cyrillic.cff"));
+    let f = doc.get_dictionary_mut(font).unwrap();
+    f.set("LastChar", 128);
+    f.set("Widths", vec![Object::Integer(600); 97]);
+    f.set(
+        "Encoding",
+        dictionary! { "BaseEncoding" => "WinAnsiEncoding",
+        "Differences" => vec![128.into(), "uni0410".into()] },
+    );
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td (SYNTHETIC FIRST) Tj ET BT /F1 12 Tf 40 140 Td <418042> Tj ET"
+            .to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    let dictionary = doc.get_dictionary(font).unwrap();
+    assert_eq!(embedded(&doc, dictionary).err().unwrap(), UNNAMED);
+    let metrics = super::super::type1(&doc, dictionary).unwrap();
+    assert_eq!(metrics.encode("AB").unwrap(), b"AB");
+    assert_eq!(metrics.decode(&[0x41, 0x80, 0x42]).unwrap(), "A\u{FFFD}B");
+    assert!(metrics.encode("\u{410}").is_err());
+    let runs = textedit::scan(&doc, 0).unwrap();
+    let texts: Vec<_> = runs.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(texts, ["SYNTHETIC FIRST"]);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: runs.runs[0].text.clone(),
+            replacement: "EDITED FIRST".into(),
+        }],
+    )
+    .unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, "EDITED FIRST");
+    let content = doc.get_page_content(page);
+    // The Cyrillic run is kept byte for byte, hex string and all.
+    assert!(content.ends_with(b"BT /F1 12 Tf 40 140 Td <418042> Tj ET\n\n"));
+    // Only that refusal changes route. The glyph-name path would keep a glyph
+    // whose widths disagree read-only; the WinAnsi path refuses the font.
+    let (mut doc, font, _, _) = fixture(NORMAL);
+    doc.get_dictionary_mut(font)
+        .unwrap()
+        .get_mut(b"Widths")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()[33] = 598.into();
+    assert!(super::super::type1(&doc, doc.get_dictionary(font).unwrap())
+        .err()
+        .unwrap()
+        .contains("widths disagree"));
+}

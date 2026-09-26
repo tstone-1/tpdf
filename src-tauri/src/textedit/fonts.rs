@@ -70,7 +70,14 @@ pub(super) fn type1(doc: &Document, font: &Dictionary) -> Result<Metrics, String
         .is_ok_and(|flags| flags & 4 != 0);
     match program.dict.get(b"Subtype").and_then(Object::as_name).ok() {
         Some(b"Type1C") if symbolic || !font.has(b"Encoding") => type1::compact(doc, font),
-        Some(b"Type1C") => cff::embedded(doc, font),
+        // A glyph name outside that path's Latin set refuses nothing but the
+        // path: the same font read by glyph name keeps the letter read-only
+        // and its Latin text editable. Only a font the WinAnsi path refused
+        // takes this route, so no verdict it gave changes.
+        Some(b"Type1C") => match cff::embedded(doc, font) {
+            Err(error) if error == cff::UNNAMED => type1::compact(doc, font),
+            result => result,
+        },
         Some(b"OpenType") => Err("OpenType programs in Type1 fonts are not editable yet".into()),
         _ => Err("unsupported embedded program subtype in Type1 font".into()),
     }

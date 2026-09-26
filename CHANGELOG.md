@@ -17,6 +17,18 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.21] - Unreleased
+
+### Added
+
+- **A page with a letter outside Latin in its fonts can now be edited.** A
+  document that names Cyrillic or other non-Latin letters in the encoding of
+  its fonts, as a brochure with a Russian edition does, used to be refused on
+  every such page. Those letters are now kept exactly as they are, and the
+  Latin text around them can be edited. In the 31-file public sample, 31 more
+  pages can be edited and about 700 more edits of +25% are accepted; no edit
+  that was accepted before is refused.
+
 ## [26.9.20] - 2026-09-26
 
 ### Added

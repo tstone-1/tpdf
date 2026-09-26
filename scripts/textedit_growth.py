@@ -53,6 +53,10 @@ CATEGORIES = [
     ('precision', ('annot preserve',)),
     ('glyph', ('no validated glyph', 'unmapped font code', 'several glyphs',
                'shows spaces as gaps')),
+    # The font's embedding rights forbid writing in it. Only the `patch` mode,
+    # which keeps the run's own font, meets it: the application's layout sets
+    # such a replacement in Noto Sans instead.
+    ('restricted', ('does not permit this editable use',)),
 ]
 # The `widened` mode clears `grow`, so `line_full` cannot appear in a widened
 # cell; it is listed here because it is the same shortage under another name.

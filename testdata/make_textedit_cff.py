@@ -28,6 +28,10 @@ def program(mode="normal"):
         names += ["f_l", "f_f", "f_i", "f_f_i"]
     if mode == "unicode":
         names += ["minus", "uni00A0", "quoteleft", "quoteright", "endash", "sterling"]
+    if mode == "cyrillic":
+        # A letter outside Latin-1 under its AGL uniXXXX name, as a brochure
+        # with a Russian edition names its Cyrillic in every font's Differences.
+        names += ["uni0410"]
     chars = {}
     for name in names:
         pen = T2CharStringPen(600, None)
@@ -228,6 +232,7 @@ def main():
         "overhang",
         "unicode",
         "ligatures",
+        "cyrillic",
     ]
     for mode in modes:
         data = program(mode)
