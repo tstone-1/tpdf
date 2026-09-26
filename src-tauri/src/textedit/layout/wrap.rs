@@ -429,6 +429,61 @@ pub(super) fn lowered(
     drawn(page, show, &[(offset, None)])
 }
 
+/// A painted path drawn `offset` further along its page, in the page's
+/// original user space: its first operator preceded by a saved state and a
+/// translation, its last one followed by the restore. The path's own operators
+/// are kept byte for byte, and nothing after it sees the translation. The
+/// offset is taken through the inverse of the path's `transform`, as a show's
+/// is in [`drawn`].
+pub(super) fn translated(
+    page: &Inspection,
+    (first, last): (usize, usize),
+    transform: [f64; 6],
+    offset: (f64, f64),
+) -> Result<Vec<(u32, Vec<Operation>)>, String> {
+    let operation = |index: usize| {
+        page.content
+            .operations
+            .get(index)
+            .cloned()
+            .ok_or_else(|| "painted path no longer exists".to_string())
+    };
+    let [a, b, c, d, ..] = transform;
+    let det = a * d - b * c;
+    if det.abs() < 1e-12 || first >= last {
+        return Err("painted path cannot be moved".into());
+    }
+    let local = (
+        (d * offset.0 - c * offset.1) / det,
+        (a * offset.1 - b * offset.0) / det,
+    );
+    let number = |value: f64| Object::Real(value as f32);
+    Ok(vec![
+        (
+            u32::try_from(first).map_err(|_| "painted path no longer exists")?,
+            vec![
+                Operation::new("q", vec![]),
+                Operation::new(
+                    "cm",
+                    vec![
+                        number(1.),
+                        number(0.),
+                        number(0.),
+                        number(1.),
+                        number(local.0),
+                        number(local.1),
+                    ],
+                ),
+                operation(first)?,
+            ],
+        ),
+        (
+            u32::try_from(last).map_err(|_| "painted path no longer exists")?,
+            vec![operation(last)?, Operation::new("Q", vec![])],
+        ),
+    ])
+}
+
 /// One piece of a show [`drawn`] writes: how far from the show's source origin,
 /// and the items to draw there, `None` for the show's own operator.
 pub(super) type Drawn<'a> = ((f64, f64), Option<&'a [Object]>);

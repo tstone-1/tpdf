@@ -1773,7 +1773,8 @@ fn level(rect: [f64; 4], other: [f64; 4]) -> bool {
 ///   highlight, a link's rectangle: anything partly over the area the moved
 ///   runs sweep would stay where it is while the text under it left. One that
 ///   holds the whole area -- a page background, a coloured box around the
-///   paragraph -- still holds it afterwards.
+///   paragraph -- still holds it afterwards. A link over one moved run, and an
+///   underline within one moved line ([`underlines`]), go with it instead.
 ///
 /// A blank run has a hit rectangle and no ink, so it moves with its line and is
 /// checked against nothing.
@@ -1784,7 +1785,7 @@ fn wrap_room(
     down: [f64; 2],
     geometry: &crate::pagetree::DisplayedPage,
     display: &impl Fn([f64; 4]) -> [f32; 4],
-) -> Result<(Placed, Links), String> {
+) -> Result<(Placed, Links, Carried), String> {
     let Moving {
         moves,
         reach,
@@ -1793,6 +1794,7 @@ fn wrap_room(
         give,
     } = *moving;
     let rule = landing(moves, edge, down, give);
+    let carried = underlines(page, moves, rule.1);
     let geometric = blocks::geometric_page(page);
     let columns: Vec<[f64; 4]> = if geometric {
         column_runs(page, paragraph, 1 - rule.1)
@@ -1844,9 +1846,9 @@ fn wrap_room(
         if geometric
             && (hits.iter().any(|(other, moves)| {
                 !*moves && !columns.contains(other) && level(*old, *other) != level(new, *other)
-            }) || page.graphics.iter().any(|drawing| {
+            }) || page.graphics.iter().enumerate().any(|(index, drawing)| {
                 let drawing = drawing.map(f64::from);
-                level(*old, drawing) != level(new, drawing)
+                !carried.contains_key(&index) && level(*old, drawing) != level(new, drawing)
             }))
         {
             return Err(wrap::BESIDE.into());
@@ -1883,11 +1885,17 @@ fn wrap_room(
     // A link over one moved run goes with it: the run's hit rectangle holds
     // it, to `LINK_SLACK`, and it moves as far as the run does.
     let mut links = Vec::new();
-    let things = page.graphics.iter().map(|rect| (*rect, None)).chain(
-        annotations
-            .iter()
-            .map(|a| (a.rect, a.link.map(|(id, _)| id))),
-    );
+    let things = page
+        .graphics
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !carried.contains_key(index))
+        .map(|(_, rect)| (*rect, None))
+        .chain(
+            annotations
+                .iter()
+                .map(|a| (a.rect, a.link.map(|(id, _)| id))),
+        );
     for (thing, link) in things {
         let thing = thing.map(f64::from);
         if !swept
@@ -1918,8 +1926,66 @@ fn wrap_room(
             None => return Err(wrap::DRAWN.into()),
         }
     }
-    Ok((placed, links))
+    Ok((placed, links, carried))
 }
+
+/// The underlines a wrap moves with their lines, by index into the page's
+/// drawings, each with how far on the displayed page: a painted path the
+/// writer can move ([`Inspection::paths`]), no deeper across the lines than
+/// [`UNDERLINE`] of the line it is under, and within that line's hit
+/// rectangles to [`LINK_SLACK`]. A line is the moved runs that go the same
+/// distance and share more than half the shorter of their heights, so a rule
+/// under several runs of one line goes with them. Word draws an underline as
+/// a filled rectangle of its own, apart from the text; left where it was, it
+/// was the first drawing in the way of 1,809 of the 2,668 wraps a drawing
+/// refused on six files of the sample (`BUILD.md`, *Underlines move with their
+/// lines*).
+fn underlines(page: &Inspection, moves: &[Move], cross: usize) -> Carried {
+    let height = |rect: [f64; 4]| rect[cross + 2] - rect[cross];
+    let mut carried = BTreeMap::new();
+    for (index, drawing) in page.graphics.iter().enumerate() {
+        if !page.paths.contains_key(&index) {
+            continue;
+        }
+        let drawing = drawing.map(f64::from);
+        for (_, old, by) in moves {
+            let line = moves
+                .iter()
+                .filter(|(_, other, went)| {
+                    let shared =
+                        old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
+                    went == by && shared > height(*old).min(height(*other)) / 2.
+                })
+                .fold(*old, |line, (_, other, _)| {
+                    [
+                        line[0].min(other[0]),
+                        line[1].min(other[1]),
+                        line[2].max(other[2]),
+                        line[3].max(other[3]),
+                    ]
+                });
+            let slack = [
+                line[0] - LINK_SLACK,
+                line[1] - LINK_SLACK,
+                line[2] + LINK_SLACK,
+                line[3] + LINK_SLACK,
+            ];
+            if height(drawing) <= UNDERLINE * height(line) && wrap::holds(slack, drawing) {
+                carried.insert(index, *by);
+                break;
+            }
+        }
+    }
+    carried
+}
+
+/// The underlines a wrap moves ([`underlines`]).
+type Carried = BTreeMap<usize, [f64; 2]>;
+
+/// How deep across the lines an underline may be, as a share of its line's
+/// hit rectangle: Word's rules on the sample are under a point at 11 pt, an
+/// eighth of the line; a quarter still keeps out a highlight or a box.
+const UNDERLINE: f64 = 0.25;
 
 /// Each run a wrap moves, with its hit rectangle where it ends up.
 type Placed = Vec<(u32, [f32; 4])>;
@@ -2616,7 +2682,7 @@ pub(super) fn prepare(
                         left_behind(page, &lower, &hits)?;
                         hits
                     };
-                    let (placed, links) = wrap_room(
+                    let (placed, links, carried) = wrap_room(
                         page,
                         &Moving {
                             moves: &moving,
@@ -2630,6 +2696,30 @@ pub(super) fn prepare(
                         &geometry,
                         &display,
                     )?;
+                    // An underline goes with its line: its path is drawn
+                    // under a translation that moves it as far.
+                    for (index, by) in carried {
+                        let path = page.paths[&index];
+                        let rect = page.graphics[index];
+                        let from = crate::text::from_device(
+                            geometry.turns,
+                            geometry.width,
+                            geometry.height,
+                            rect,
+                        );
+                        let to = crate::text::from_device(
+                            geometry.turns,
+                            geometry.width,
+                            geometry.height,
+                            shift(rect.map(f64::from), by).map(|value| value as f32),
+                        );
+                        lowered.extend(wrap::translated(
+                            page,
+                            path.operations,
+                            path.transform,
+                            (to[0] - from[0], to[1] - from[1]),
+                        )?);
+                    }
                     Ok((placed, links, lowered))
                 };
                 let (placed, links, lowered) = match settle(0.) {

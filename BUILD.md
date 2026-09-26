@@ -11905,3 +11905,42 @@ case at exactly half a break, or with nothing below to refuse the move, and catc
 Five mutations under `half breaks:`; two older ones re-aimed at `landing` and `cascade`, where
 the blank line is now computed. All 167 mutations of the wrap path (wrap, columns, flow,
 cascade, cut, beneath, gutter, room) are caught.
+
+### Underlines move with their lines — measured 2026-09-26
+
+After *Half a paragraph break when the page is full*, the largest refusal left at +25% that the
+editor can do something about was *a drawing or an annotation is placed over the lines that
+would move*: 1,087, of which Arcadia 692 and Coatesville 113. Measured before building: a
+temporary log of the first drawing in the way, on the six files with the most of them and over
+every trial, found 2,668 refusals, **1,809 of them a thin horizontal path inside a moving line's
+box** -- an underline, which Word draws as a filled rectangle of its own under the words --, 296
+more thin rules not inside any single run, 382 annotations (arXiv, LuaTeX) and 181 boxes.
+
+The scan now remembers, for each painted rectangle or path outside a text object, its operators
+from the first construction operator to the painting one and the transform they are drawn under
+(`Inspection::paths`). A wrap moves such a path with a moving line when it is no deeper across
+the lines than a quarter of the line (`UNDERLINE`) and lies within the line's hit rectangles to
+`LINK_SLACK`, a line being the moved runs that go the same distance and share their height, so a
+rule under several runs goes with all of them (`layout::underlines`). It is written under a
+translation, `q 1 0 0 1 dx dy cm` before its first operator and `Q` after its last, both kept
+byte for byte (`wrap::translated`); the rewrite accepts exactly that bracket around an unchanged
+path operator and nothing else (`streams::rewrite_expanded`). A path cannot contain a clip, so
+the bracket changes nothing after it. An underline under text the wrap cuts into pieces that go
+different distances is not moved, and still refuses; so do an image in the same place, a box as
+deep as a highlight, and a rule running past the line.
+
+**Before and after, the 31 files,** against the records of the previous section: accepted as
+typed at +10/+25/+50% went 42,066/38,905/36,168 → **42,095/39,683/37,351**. `--compare`
+found 1,990 verdicts refused before and accepted now and none the other way. The drawing
+refusal at +25% went from 1,087 to 309; what is left is mostly annotations in LuaTeX and the
+arXiv papers (a citation link not over one moved run) and Arcadia's boxes.
+
+**Checked by hand:** nine newly accepted +25% edits, five in Arcadia and two each in Coatesville
+and Hugo, all through `--roundtrip` and six through `qpdf --check`, all passing, and three
+rendered: Arcadia's *Cyber Liability Insurance.*, a two-line underlined heading in Hugo and a
+justified one in Coatesville each move down with their underline under the same words.
+
+**Tests:** `an_underline_moves_with_its_line`: the underline moves 14 pt with its line on a
+tagged page and on one without tags, and with two runs of one line; the deep box, the rule past
+the line, the underline under cut text and the image still refuse. Ten mutations under
+`underline:`, all caught; two older `wrap room:` ones re-aimed at the reshaped loops.

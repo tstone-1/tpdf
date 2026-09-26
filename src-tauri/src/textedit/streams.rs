@@ -171,7 +171,24 @@ pub(super) fn rewrite_expanded(
                 )
                 .is_ok()
                 && super::actual::Span::new(&next.operands[0], &next.operands[1], index).is_ok();
+            // A painted path moved with the line it underlines
+            // (`wrap::translated`): its first operator after a saved state and
+            // a translation, or its last before the restore, both unchanged.
+            let moved_path = original.operations[0].operands == next.operands
+                && expansions.get(&index).is_some_and(|operations| {
+                    let kept = |op: &lopdf::content::Operation| {
+                        op.operator == next.operator && op.operands == next.operands
+                    };
+                    match operations.as_slice() {
+                        [save, translate, path] => {
+                            save.operator == "q" && translate.operator == "cm" && kept(path)
+                        }
+                        [path, restore] => restore.operator == "Q" && kept(path),
+                        _ => false,
+                    }
+                });
             if !actual_text
+                && !moved_path
                 && (!matches!(next.operator.as_str(), "Tj" | "TJ") || next.operands.len() != 1)
             {
                 return Err("invalid text patch".into());

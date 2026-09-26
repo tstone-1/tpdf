@@ -574,6 +574,11 @@ struct Inspection {
     /// annotation's rectangle is not in it, because the editor never reads the
     /// page's /Annots -- which is why it can only ever refuse a push.
     graphics: Vec<[f32; 4]>,
+    /// Which of `graphics` are painted paths the writer can move whole, by
+    /// index: the operators from the first construction operator to the
+    /// painting one, and the transform they are drawn under. A wrap moves an
+    /// underline with its line (`layout::wrap_room`).
+    paths: BTreeMap<usize, DrawnPath>,
     actual_text: BTreeMap<u32, usize>,
     // The active Tf can precede a restored state, not just the last Tf in the
     // stream. Keep its address privately; display font names can be lossy UTF-8.
@@ -813,6 +818,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut preserved = Vec::new();
     let mut form_text_bounds = Vec::new();
     let mut graphics: Vec<[f32; 4]> = Vec::new();
+    let mut paths = BTreeMap::new();
     // What each named XObject paints, in its own space: the unit square for an
     // image (ISO 32000-1 8.9.5.2 maps every image onto it) and the BBox for a
     // preserved form. A name is checked once and drawn many times, each time
@@ -968,6 +974,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                         rectangles_consumed,
                         page_transform,
                     )? {
+                        paths.insert(
+                            graphics.len(),
+                            DrawnPath {
+                                operations: (index, index + rectangles_consumed - 1),
+                                transform: page_transform,
+                            },
+                        );
                         graphics.push(to_display(bounds));
                     }
                     path_until = index + rectangles_consumed;
@@ -1009,6 +1022,13 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                 if let Some(bounds) =
                     clipping::drawn(&content.operations[index..], consumed, page_transform)?
                 {
+                    paths.insert(
+                        graphics.len(),
+                        DrawnPath {
+                            operations: (index, index + consumed - 1),
+                            transform: page_transform,
+                        },
+                    );
                     graphics.push(to_display(bounds));
                 }
                 path_until = index + consumed;
@@ -1509,6 +1529,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         preserved,
         form_text_bounds,
         graphics,
+        paths,
         actual_text: BTreeMap::new(),
         font_operators,
         horizontal_bounds,
@@ -2003,6 +2024,14 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         )?;
     }
     Ok(prepared)
+}
+
+/// A painted path outside any text object, as `Inspection::paths` records it:
+/// the first and last of its operators, and the transform in force at them.
+#[derive(Clone, Copy, Debug)]
+struct DrawnPath {
+    operations: (usize, usize),
+    transform: [f64; 6],
 }
 
 /// Writes a prepared batch into the document: one new content stream per page,

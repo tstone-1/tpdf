@@ -1506,6 +1506,103 @@ fn a_drawing_partly_over_the_moved_lines_refuses_and_one_holding_them_does_not()
     wrapped(&background, WIDEST, LONGER);
 }
 
+// Word draws an underline as a filled rectangle of its own, apart from the
+// text. Under a line the wrap moves, it goes with the line, drawn under a
+// translation as far as the line goes; under two runs of one line it goes with
+// both. A box as deep as a highlight in the same place still refuses, and so
+// does a rule under the line and past its end.
+#[test]
+fn an_underline_moves_with_its_line() {
+    // `TEN` is 20 to 41.6 at 172; the wrap moves it to 158.
+    let underlined = |rule: &str, line: &str| {
+        tagged(
+            &format!(
+                "0 g {rule} {}",
+                content(52., "").replace(&format!("({LAST}) Tj"), line)
+            ),
+            &[&[0, 1, 2], &[3]],
+        )
+    };
+    let drawings = |doc: &Document| inspect(doc, 0).unwrap().graphics;
+    let doc = underlined("20 170 21.6 0.8 re f", &format!("({LAST}) Tj"));
+    let before = drawings(&doc);
+    let saved = wrapped(&doc, WIDEST, LONGER);
+    let runs = placed_runs(&saved);
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    let after = drawings(&saved);
+    assert_eq!(after.len(), 1);
+    // Down the displayed page, which runs the other way.
+    assert!(
+        (after[0][1] - before[0][1] - 14.).abs() < 0.01,
+        "{before:?} {after:?}"
+    );
+    assert!(
+        (after[0][0] - before[0][0]).abs() < 0.01,
+        "{before:?} {after:?}"
+    );
+    // Under two runs of the line, 20 to 91.6.
+    let two = underlined(
+        "20 170 71.6 0.8 re f",
+        &format!("({LAST}) Tj 50 0 Td (ONE) Tj -50 0 Td"),
+    );
+    let saved = wrapped(&two, WIDEST, LONGER);
+    assert!((drawings(&saved)[0][1] - drawings(&two)[0][1] - 14.).abs() < 0.01);
+    // The line's page need not be tagged.
+    let untagged = super::layout_tests::synthetic(&format!(
+        "0 g 20 170 21.6 0.8 re f {}",
+        content(52., "")
+            .replace(" /P <</MCID 0>> BDC", "")
+            .replace(" /P <</MCID 1>> BDC", "")
+            .replace(" /P <</MCID 2>> BDC", "")
+            .replace(" /P <</MCID 3>> BDC", "")
+            .replace(" EMC", "")
+    ));
+    let saved = wrapped(&untagged, WIDEST, LONGER);
+    assert!((drawings(&saved)[0][1] - drawings(&untagged)[0][1] - 14.).abs() < 0.01);
+    // As deep as a highlight, or past the line's end.
+    for rule in ["20 171 21.6 6 re f", "20 170 60 0.8 re f"] {
+        let error = refusal(&underlined(rule, &format!("({LAST}) Tj")), WIDEST, LONGER);
+        assert!(
+            error.contains("a drawing or an annotation"),
+            "{rule}: {error}"
+        );
+    }
+    // Under text the wrap cuts, `ONCE AND` to the end of the edit's line and
+    // `DONE` to the next (99.2 to 192.8 at 186): the pieces go different
+    // distances, and no one distance is the underline's.
+    let cut = tagged(
+        &format!(
+            "0 g 99.2 184 93.6 0.8 re f {}",
+            content(52., "").replace(
+                &format!("({WIDEST}) Tj EMC"),
+                "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
+            )
+        ),
+        &[&[0, 1, 2], &[3]],
+    );
+    let error = refusal(&cut, "FIFTY NINE", "FIFTY NINE THEN FIRST AND SECOND AND");
+    assert!(error.contains("a drawing or an annotation"), "{error}");
+    // Only a painted path is moved: an image stretched to the same rule is
+    // not one the writer can move, and still refuses.
+    let mut image = underlined("q 21.6 0 0 0.8 20 170 cm /Im Do Q", &format!("({LAST}) Tj"));
+    let page = crate::pagetree::ordered_pages(&image)[0];
+    let pixel = image.add_object(Stream::new(
+        dictionary! {
+            "Subtype" => "Image", "Width" => 1, "Height" => 1,
+            "BitsPerComponent" => 8, "ColorSpace" => "DeviceGray",
+        },
+        vec![0],
+    ));
+    let mut resources = super::resources(&image, page).unwrap().clone();
+    resources.set("XObject", dictionary! { "Im" => pixel });
+    image
+        .get_dictionary_mut(page)
+        .unwrap()
+        .set("Resources", resources);
+    let error = refusal(&image, WIDEST, LONGER);
+    assert!(error.contains("a drawing or an annotation"), "{error}");
+}
+
 // A highlight over the line that would move stays where it is too.
 #[test]
 fn an_annotation_over_the_moved_lines_refuses() {

@@ -34,6 +34,12 @@ have the binary.)
   refused. When that happens now, the breaks below give up half of their
   blank line each instead. Pages with room to spare look exactly as before.
   In the 31-file public sample about 860 more edits of +25% are accepted.
+- **Underlined text can move when a paragraph wraps.** Word draws an
+  underline as a separate line under the words, and a wrap refused to move a
+  line with one, since the underline would have stayed behind. The underline
+  now moves with its line. In the 31-file public sample about 780 more edits
+  of +25% are accepted, most of them above underlined headings in council
+  agendas and minutes.
 
 ## [26.9.20] - 2026-09-26
 

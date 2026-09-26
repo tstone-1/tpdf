@@ -407,8 +407,9 @@ the edit in the document; save writes it. Until you size the box yourself, longe
 grows into the room after the line and moves the rest of the line along. Text that
 reaches the page edge wraps onto a new line of its own paragraph, taking the rest of its
 line along, and the paragraphs below move down while each keeps its blank line of
-separation; on a page full to its foot, each break may give up half of it instead. A link over a line that moves goes with it; any other annotation or drawing
-over those lines keeps the edit from wrapping. Another column of the page ends a line as
+separation; on a page full to its foot, each break may give up half of it instead. A link over a line that moves goes with it, and so does an
+underline drawn under it; any other annotation or drawing over those lines keeps the edit
+from wrapping. Another column of the page ends a line as
 the page edge does: its text is never moved along, and a line may use at most half the
 space between the columns. On a page without tags, tpdf reads the paragraphs off the lines
 themselves and is more careful: a line on its own does not wrap, and an edit that would
