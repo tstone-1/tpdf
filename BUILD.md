@@ -11666,3 +11666,47 @@ Tests: `wrap_tests` gained one, a lowered run before the edit and text after it 
 the next line; it fails without the change with the corpus's refusal. Two mutations under `keep
 breaks:`, and three there re-aimed at the changed line, all caught by the test named for them.
 What is left, at +25%: *onto what is below it* 4.8%, three quarters of it full pages.
+
+### Documents the editor offers nothing in — measured 2026-09-26
+
+The +25% acceptance rate the sections above report counts only text the editor offers. Counted
+per document it hid the larger gap: **12 of the 31 files offered no editable text at all**, among
+them the letter, all three invoices, both brochures and both IRS forms, and 174 of 803 pages were
+refused outright. `scripts/textedit_growth.py` now prints that first (*Editable documents: N of
+31*, the pages, and every page refusal by reason), and `--compare` counts text that becomes
+offered, rather than stopping at records that tried different runs; a run no longer offered is a
+regression whatever its verdict was.
+
+**Most refused pages were refused over one font.** 120 of the 174 named a font: a program
+the editor does not validate, a character map it cannot read, or embedding rights that forbid
+editing. Any one such font refused the whole page. Now a simple font with `Widths` and a bounded
+`FontBBox` is measured by those alone (`fonts::read_only`): every code opaque, its ink held to the
+box, the program never read. Its text is kept byte for byte and the rest of the page edits; a page
+left with nothing to edit is refused with the font's own reason. Symbol and ZapfDingbats named
+without a program, ReportLab's bullets, are measured from generated Adobe widths
+(`fonts::symbolic`).
+
+**The tagged output of InDesign and PowerPoint, one shape at a time.** A temporary `eprintln!` at
+each of `tagging.rs`'s generic refusals, replayed on the InDesign letter and the PowerPoint fact
+sheet, named each blocker in turn: ActualText on a structure element (now pins, as Alt does), a
+language beside the MCID, a tab spacer showing one space for several tabs, an empty spacer or an
+empty paragraph between text objects, and a Span inside a Figure (pinned). Each is kept rather
+than refused, and what each describes stays read-only. The letter is then refused for its font's
+licence, and the fact sheet for text boxes inside table cells; neither is changed here.
+
+**Before and after, the 31 files:** editable pages 629 → **667**, runs offered 44,282 → 46,449,
+documents with editable text 19 → 20, and over every trial `--compare` found no verdict
+accepted before and refused now. The twentieth document is the IRS W-4, and only for one `▲`
+glyph: its words are all in a font whose licence forbids editing. At +25% as typed, 36,862 edits
+are accepted, where 35,117 were.
+
+**Checked by hand:** twelve newly offered edits, in the Healdsburg slides, the research paper
+and the ReportLab guide, through `--roundtrip` and `qpdf --check`, all passing; six renders
+looked at, each changing only the edited text, which the crop to every changed pixel shows.
+
+**What is left, and why.** 48 pages are text wholly in a licence-restricted CFF font (the
+Highmark brochure, the W-9, the W-4, the letter): editable only by setting new text in another
+font, the bundled Noto, which is a decision rather than a fix. The Canada Post invoice's table
+cells name a header no element carries, and stays refused as the broken structure it is. The
+rest are single documents: the passport guidance's Unicode map, the fact sheet's cells, the
+Latin-1 limit.
