@@ -5218,6 +5218,33 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.19 verification, macOS arm64, 2026-09-26:** all 26 gates passed on the release tree
+(1,939 Rust tests with three expected skips, 1,786 frontend) and `check_windows.py`
+type-checked the Windows tree, after the Windows PDFium was fetched into `vendor/pdfium/bin/`.
+Compatible npm and Cargo updates were applied first, Tauri 2.11.6 and the updater plugin 2.12
+among them. Every mutation selected `--since v26.9.18` ran: 9 frontend, all caught, and 370
+Rust in 20 minutes in a separate worktree, 369 caught. The one that survived, *cascade: the
+edit's own box is no exemption*, had lost its test to this cycle's graze rule, which lets the
+fixture's word through before the exemption is reached; a case with the word inside the
+edited line's box by more than a graze was added (`7a303fc`) and catches it, on the release
+tree. `release.yml` changed this cycle (the `proven` job that skips the release's gates when
+CI passed them on the tagged commit), so it was rehearsed as `v26.9.19-rc1`: `proven`
+passed, the gates were skipped, and the draft carried all 8 assets; draft and tag were deleted
+by id. The release notes still described 26.9.18 and were corrected on the draft before
+publishing, and on `main`.
+
+**Not run before the tag:** everything that needs a window or the Windows desktop. The
+release was cut unattended overnight: no window phases or `mutate_viewer.py` (it selected
+none), no Windows window phases, `print-probe` or `redact-reach-probe`, no external smoke test
+of the normal bundle (step 8) and no hand-applied update (step 12). CI's `windows-2025` gate
+leg is the Windows evidence for this release until those are run.
+
+Published 2026-09-26 from `7a303fc`, after `ci.yml` passed both legs on that commit. The
+release run skipped its gates through `proven` and passed its other jobs, and the draft carried
+8 assets under the tag. The published release is Latest. Fetched without an account, the
+`.dmg`, `.msi`, `-setup.exe` and `latest.json` answered 200, and `latest.json` offers 26.9.19
+for `darwin-aarch64` and `windows-x86_64`.
+
 **26.9.18 verification, macOS arm64 and Windows x64, 2026-09-24:** all 26 gates passed on
 macOS (1,928 Rust tests with three expected skips, 1,786 frontend) and on Windows,
 and `check_windows.py` type-checked the Windows tree. Every mutation selected `--since
