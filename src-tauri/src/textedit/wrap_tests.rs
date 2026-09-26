@@ -289,6 +289,16 @@ fn a_block_the_edited_line_only_grazes_stays() {
     let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
     assert_eq!(at(&runs, "BY"), (175., 175.));
+    // Deeper than a graze, inside the box of the line the edit replaces: the
+    // source already set the two over each other there, and the edit's ink
+    // over it is the edited line's own, not a landing.
+    let inside = tagged(
+        &content(52., "155 58 Td /P <</MCID 4>> BDC (BY) Tj EMC "),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    assert_eq!(at(&placed_runs(&inside), "BY"), (175., 178.));
+    let runs = placed_runs(&wrapped(&inside, WIDEST, LONGER));
+    assert_eq!(at(&runs, "BY"), (175., 178.));
     // A word under the paragraph's end one line below its last line is below
     // the paragraph, although not below `TEN`: `TEN` moving down beside it
     // would close the break between them, so it moves down the same line.
