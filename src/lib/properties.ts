@@ -16,22 +16,26 @@
  * ## Nothing here may say a signature is valid
  *
  * `docs/TRAPS.md` is explicit, and the reason is worth restating where the words
- * are actually chosen. tpdf now *parses* certificates --- it reads the subject,
- * the issuer, the serial and the validity dates out of the PKCS#7 blob --- and
- * that is a smaller thing than it sounds. It has **no trust store**, does not
- * build a chain, does not check a revocation list, and never tests the signature
- * against the bytes it covers. So it knows what the document claims, what the
- * certificate claims, and two structural facts it checked itself.
+ * are actually chosen. tpdf *parses* certificates --- it reads the subject, the
+ * issuer, the serial and the validity dates out of the PKCS#7 blob --- and since
+ * 2026-09-26 it also tests each signature against the bytes it covers, in the
+ * worker, with the answer in `integrity.ts`. That is still a smaller thing than
+ * "valid". It has **no trust store**, does not build a chain and does not check
+ * a revocation list, so it knows whether the bytes are the ones signed and
+ * whether the certificate's key made the signature --- and nothing about who
+ * holds that key.
  *
- * Reading a certificate is not verifying one, and the gap between those is
- * exactly where a reader would be misled. The vocabulary carries it: a signer's
- * name, reason, location and date are introduced as claimed, and so is
- * everything the certificate says. The only unhedged sentences in the section
- * are the byte-range one and `self_issued`, which are the two things measured.
- * [`NOT_CHECKED`] is shown whenever a signature is, and
+ * The vocabulary carries it: a signer's name, reason, location and date are
+ * introduced as claimed, and so is everything the certificate says. The
+ * unhedged sentences in the section are the byte-range one, `self_issued`, and
+ * the integrity row, which are the things measured --- and the integrity row
+ * says, every time it could be read as more, that the key's owner was not
+ * checked. [`NOT_CHECKED`] is shown whenever a signature is, and
  * `properties.test.ts` asserts that no rendered line ever uses a word that would
- * read as a verdict.
+ * read as a verdict about the signer.
  */
+
+import { integrityRow, type Integrity } from "./integrity";
 
 /** One `/Info` entry, as `docinfo.rs` reports it. */
 export interface Field {
@@ -88,6 +92,8 @@ export interface Signature {
   certification: number;
   certificate: Certificate | null;
   timestamp: Timestamp | null;
+  /** Whether it still covers what it was made over; `null` when unsigned. */
+  integrity: Integrity | null;
 }
 
 /**
@@ -195,14 +201,14 @@ export interface Section {
  * it is needed while staying in another.
  */
 export const NOT_CHECKED =
-  "tpdf reads what the signature and its certificate say. It does not check " +
-  "the signature against the bytes it covers, build a chain to an issuer it " +
-  "trusts, look for a revocation, or ask whether the certificate was in date " +
-  "when it was used. What a certificate states its key is for is the issuer's " +
-  "own word, unchecked for the same reason. Nor is a timestamp checked: its " +
-  "own signature, the authority behind it, and whether it covers this " +
-  "signature at all are all unexamined. Nothing here means the signature is " +
-  "valid.";
+  "tpdf checks that the bytes a signature covers are unchanged and that the " +
+  "signature matches the key in its certificate. It does not build a chain to " +
+  "an issuer it trusts, look for a revocation, or ask whether the certificate " +
+  "was in date when it was used, so it cannot say who holds that key. What a " +
+  "certificate states its key is for is the issuer's own word, unchecked for " +
+  "the same reason. Nor is a timestamp checked: its own signature, the " +
+  "authority behind it, and whether it covers this signature at all are all " +
+  "unexamined. Nothing here means the signature is valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -578,6 +584,12 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   const claimed = (name: string, value: string): void => {
     if (value) rows.push({ name, value });
   };
+
+  // The answer first, because it is what a reader opening this about a signed
+  // document came to ask: has it been changed. Everything below is who the
+  // signature says signed it, which only matters once this is known.
+  const verdict = integrityRow(signature.integrity, signature.appended_bytes);
+  if (verdict) rows.push(verdict);
 
   // The certificate goes above what the signer typed, because a reader opening
   // this asks who signed it and these are two different answers to that. Which

@@ -220,6 +220,15 @@ fn samples() -> BTreeMap<&'static str, String> {
                     when: "2026-01-02T03:04:06Z".into(),
                     authority: Some(certificate()),
                 }),
+                // `Unchecked` with a reason, so the sample carries every key the
+                // mirror has --- `why` is `null` on every other verdict, and a
+                // `null` sample cannot tell the mirror's enum from a typo.
+                integrity: Some(crate::integrity::Integrity {
+                    verdict: crate::integrity::Verdict::Unchecked,
+                    why: Some(crate::integrity::Why::Budget),
+                    digest: "SHA-256".into(),
+                    method: "ECDSA P-256".into(),
+                }),
             }],
             tagged: Some(true),
             language: "en-GB".into(),

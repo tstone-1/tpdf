@@ -518,6 +518,7 @@ hop through the index.
 - Two em boxes overlapping is not two runs on one line
 - A bounding rectangle covers every place text left only while all of it moves one way
 - A floor under a limit is a second limit, and it took over wherever the first measurement skipped something
+- An oracle that cannot open an encrypted document has no answer for the commonest certified one
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -762,6 +763,7 @@ hop through the index.
 - Two correct rules deciding every subject make each other unfalsifiable
 - The guard the type checker asked for made the loop bound untestable
 - A fixture cannot put tagged and untagged text on one page, and the untagged half simply is not there
+- A fixture rewritten to reach one parser leaves the standard, and every other reader then judges it differently
 
 ## Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -24364,4 +24366,48 @@ annotation restore removed, that comparison stops the run on the first page with
 The general form: an undo written as "put back what the writer changes" is a list of the writer's
 effects, and it goes stale the day the writer gains one. Prove an undo against the whole state,
 not against the part the undo already restores.
+
+### A fixture rewritten to reach one parser leaves the standard, and every other reader then judges it differently
+
+2026-09-26, checking signatures. `incr-ber.pdf` is `incr-signed.pdf` with every constructed
+value in its signature blob rewritten in BER's indefinite form, built that way because pyHanko
+writes only DER and `ber.rs` needed a fixture. It did its job for `ber.rs`. For the integrity
+verdict it has no agreeing oracle at all: pyHanko refuses it (*Indefinite-length recursion limit
+exceeded*), OpenSSL `cms -verify` calls its signature bad, and tpdf calls it intact.
+
+The reason is the rewrite, not any of the three readers. It converted *every* value, including
+the ones inside the signed attributes, and RFC 5652 §5.4 requires the signed attributes to be
+DER, because the signature is over their encoding. So the fixture is a document no conforming
+signer writes. OpenSSL accepts `incr-signed.pdf` and refuses `incr-ber.pdf`, which differ in
+nothing but the length form, so its answer turns on that alone; tpdf hashes the definite form
+`ber.rs` hands back, which for this blob is exactly what the signer signed. The real BER
+contract that `ber.rs` was written for keeps its signed attributes readable to all three, and
+all three call it intact.
+
+A fixture built by transforming another one to reach a particular parser is a fixture for
+that parser. Before a second feature leans on it, ask whether the transformation took the
+document outside the standard the second feature reads. If it did, the disagreement between
+readers is about the fixture, and a differential run over it tests nothing but that; the case
+needs either a real document or a transformation scoped to the part the first parser was for.
+`signature-probe --mode integrity` refuses the file by name rather than skipping it, and
+`docs/PLAN.md` Phase 6 records it as the one fixture with no oracle.
+
+### An oracle that cannot open an encrypted document has no answer for the commonest certified one
+
+2026-09-26, same work. `testdata/check_signature.py` is the pyHanko oracle for the integrity
+verdict. On the three real signed documents to hand, it answered two and returned
+`PdfKeyNotAvailableError` for the third: an Acrobat Sign certified declaration, encrypted with
+an empty user password, as permission-restricted documents usually are. Every reader opens such
+a document without asking, tpdf included, and the oracle simply had not been told to try. So
+the one document class where a certification signature is most common was the one the
+differential could not reach, and it said so only as *unreadable*.
+
+The fix was two lines: when the reader reports the file encrypted, `decrypt("")` before looking
+at the signatures, which is what tpdf's own loader does. With them the certified document
+reads as intact in both.
+
+When an oracle is built for one question, list how the subject opens documents and check that
+the oracle opens them the same way: the empty password, a repaired cross-reference, a
+non-strict parse. A step the subject performs and the oracle skips makes the oracle stricter on
+the wrong axis, and its refusals look like findings about the document.
 

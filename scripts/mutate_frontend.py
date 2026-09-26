@@ -5358,6 +5358,74 @@ MUTATIONS += [
     ),
 ]
 
+
+# --- the signature integrity row -------------------------------------------
+#
+# `integrity.ts`, 2026-09-26: the one verdict the properties dialog gives, so
+# each mutation is a way it could say more than was checked.
+MUTATIONS += [
+    Mutation(
+        # Drop the sentence that stops "intact" meaning "trustworthy".
+        "integrity: call a signature intact without saying trust was not checked",
+        "src/lib/integrity.ts",
+        "under the key in its certificate${how(integrity)}.${later} ${TRUST_NOT_CHECKED}`,",
+        "under the key in its certificate${how(integrity)}.${later}`,",
+        "says after every answer that could mean trust that trust was not checked",
+    ),
+    Mutation(
+        # Call a SHA-1 match intact.
+        "integrity: render a weak match as intact",
+        "src/lib/integrity.ts",
+        "`unchanged under SHA-1 only — the digest and the signature match` +",
+        "`intact — the digest and the signature match` +",
+        "never calls a SHA-1 match intact",
+    ),
+    Mutation(
+        # An altered signature shown without the warning mark.
+        "integrity: leave an altered signature unmarked",
+        "src/lib/integrity.ts",
+        """          `changed is the document.`,
+        warn: true,""",
+        """          `changed is the document.`,""",
+        "marks everything but an intact signature for a reader's attention",
+    ),
+    Mutation(
+        # An unchecked signature shown without the warning mark --- the
+        # reassuring branch, reached by not looking.
+        "integrity: leave an unchecked signature unmarked",
+        "src/lib/integrity.ts",
+        """          `This says nothing either way about whether the document changed.`,
+        warn: true,""",
+        """          `This says nothing either way about whether the document changed.`,""",
+        "marks everything but an intact signature for a reader's attention",
+    ),
+    Mutation(
+        # Say nothing about what was appended after an intact signature.
+        "integrity: call a signature intact without mentioning what was appended",
+        "src/lib/integrity.ts",
+        "        appended > 0\n",
+        "        false\n",
+        "says an intact signature does not cover what was appended after it",
+    ),
+    Mutation(
+        # Leave the reason out of an unchecked row.
+        "integrity: refuse without the reason",
+        "src/lib/integrity.ts",
+        '`not checked — ${integrity.why ? WHY[integrity.why] : "no reason was given"}. ` +',
+        '`not checked — no reason was given. ` +',
+        "gives each reason its own sentence, and says an unchecked one means nothing",
+    ),
+    Mutation(
+        # Build the verdict row and never show it: the shape a whole feature
+        # shipped inert once, which is why `check_viewer_wiring.py` exists.
+        "properties: build the integrity row and never show it",
+        "src/lib/properties.ts",
+        "  if (verdict) rows.push(verdict);",
+        "",
+        "comes first, above who the signature says signed it",
+    ),
+]
+
 MUTATIONS += [
     Mutation(
         "redaction walk: keep the slot read before the text wait",
@@ -5520,6 +5588,9 @@ TEST_FILES = [
     # second. All ten mutations named tests the harness could not see, and it
     # refused all ten rather than reporting them survived.
     "src/lib/properties.test.ts",
+    # Added 2026-09-26 with the signature integrity row, in the same edit as
+    # its mutations, which is the order the notes above keep asking for.
+    "src/lib/integrity.test.ts",
     # Added 2026-08-17 with extract. The guard fired a fourth time, for five
     # mutations at once: every one named a `pageranges.test.ts` test and the
     # harness could not see the file, so it refused to start rather than

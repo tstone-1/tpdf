@@ -150,6 +150,27 @@ cms = { version = "0.2.3", default-features = false }
 der = { version = "0.7", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
 
+# Whether a signature still covers the bytes it was made over: `integrity.rs`.
+# RustCrypto, on the same generation as `cms`/`x509-cert`/`spki`/`der` above,
+# because the signer's key arrives as an `spki` 0.7 structure and these are the
+# releases that read it. `rsa` for PKCS#1 v1.5 and PSS, `p256`/`p384` through
+# `ecdsa` for the two NIST curves, and the digest-0.10 hashes they verify with.
+# `sha2` 0.10 is the package already in the tree through `tauri-codegen`, renamed
+# here because the direct `sha2` above is 0.11; `sha1` 0.10 is new, and SHA-1 is
+# computed so that a match under it can be reported as the weak thing it is.
+#
+# Every package `Apache-2.0 OR MIT` --- checked with `cargo metadata` over the
+# whole tree, the standing rule for anything the licensing constraint touches.
+# **Verification only, and only in the worker**: no private key exists anywhere
+# in tpdf, which is why RUSTSEC-2023-0071 (a timing leak in `rsa`'s private-key
+# operations) is accepted in `.cargo/audit.toml` with that reason.
+rsa = { version = "0.9", default-features = false, features = ["std", "u64_digit"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+ecdsa = { version = "0.16", default-features = false, features = ["der", "verifying", "std"] }
+sha1 = { version = "0.10", default-features = false, features = ["oid"] }
+sha2_10 = { package = "sha2", version = "0.10", default-features = false, features = ["oid"] }
+
 # The catalog's `/Metadata` packet, for conformance claims. MIT, and it adds
 # **no package**: it was already in the tree through Tauri's `plist`, checked
 # with `cargo metadata` before and after rather than assumed. What it does add

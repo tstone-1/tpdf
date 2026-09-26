@@ -23,10 +23,27 @@ disallowed, and the interesting question is always *what* --- the same verdict
 covers "you rewrote a signed page dictionary" and "this validator does not
 implement the permission level you are relying on".
 
+With `--json` it prints one JSON object per signature instead, for
+`signature-probe --mode integrity`, which holds tpdf's integrity verdict
+against it:
+
+    {"field": "Signature1", "intact": true, "valid": true,
+     "coverage": "ENTIRE_FILE", "md": "sha256", "mechanism": "sha256_rsa",
+     "crypto_constraints": false}
+
+`intact` and `valid` are pyhanko's two halves of what tpdf calls intact: the
+digest over the byte range, and the signature over the signed attributes.
+`crypto_constraints` is pyhanko's `CRYPTO_CONSTRAINTS_FAILURE` --- an algorithm
+its policy disallows, which for these fixtures is SHA-1. A file pyhanko cannot
+read prints `{"unreadable": "<reason>"}` and nothing else, so the probe can say
+it has no oracle for that file rather than reading silence as agreement.
+
 Usage:
     uv run --with pyhanko testdata/check_signature.py FILE
+    uv run --with pyhanko testdata/check_signature.py --json FILE
 """
 
+import json
 import logging
 import sys
 
@@ -88,10 +105,57 @@ def describe(path: str) -> "list[str]":
         return lines
 
 
+def verdicts(path: str) -> "list[dict[str, object]]":
+    """What pyhanko concludes about each signature, as data for the probe.
+
+    No trust roots, for the reason `describe` gives: the question is the bytes
+    and the signature value, never whether a throwaway key chains to anything.
+    """
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign.validation import validate_pdf_signature
+
+    with open(path, "rb") as handle:
+        reader = PdfFileReader(handle, strict=False)
+        # A permission-restricted document opens on the empty user password in
+        # every reader, tpdf included, so the oracle must open it the same way
+        # or it has no answer for the commonest certified document there is.
+        if reader.encrypted:
+            reader.decrypt("")
+        out = []
+        for sig in reader.embedded_signatures:
+            status = validate_pdf_signature(sig)
+            indicator = getattr(status, "trust_problem_indic", None)
+            out.append(
+                {
+                    "field": sig.field_name,
+                    "intact": bool(status.intact),
+                    "valid": bool(status.valid),
+                    "coverage": getattr(status.coverage, "name", str(status.coverage)),
+                    "md": str(status.md_algorithm),
+                    "mechanism": str(status.pkcs7_signature_mechanism),
+                    "crypto_constraints": getattr(indicator, "name", "")
+                    == "CRYPTO_CONSTRAINTS_FAILURE",
+                }
+            )
+        return out
+
+
 def main(argv: "list[str]") -> int:
     """Prints the summary for the file named on the command line."""
+    if len(argv) == 3 and argv[1] == "--json":
+        # pyhanko logs every self-signed certificate as a validation error with
+        # a traceback; that is the trust question, which is out of scope here.
+        logging.disable(logging.CRITICAL)
+        try:
+            found = verdicts(argv[2])
+        except Exception as error:  # noqa: BLE001 - the message is the result
+            print(json.dumps({"unreadable": f"{type(error).__name__}: {error}"}))
+            return 0
+        for entry in found:
+            print(json.dumps(entry, sort_keys=True))
+        return 0
     if len(argv) != 2:
-        print("usage: check_signature.py FILE", file=sys.stderr)
+        print("usage: check_signature.py [--json] FILE", file=sys.stderr)
         return 2
     collected = Collect()
     logging.getLogger("pyhanko.sign.diff_analysis").addHandler(collected)

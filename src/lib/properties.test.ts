@@ -62,6 +62,7 @@ function signed(): Signature {
     certification: 0,
     certificate: null,
     timestamp: null,
+    integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
   };
 }
 

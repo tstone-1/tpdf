@@ -46,19 +46,21 @@
 //!
 //! ## Nothing here says a signature is valid
 //!
-//! This parses certificates but has no verification stack or trust store, so it
-//! cannot say whether a signature verifies, whether the certificate chains to
-//! anything, or whether it was revoked. `docs/TRAPS.md` is explicit that the UI
-//! must never imply otherwise, and the shape of this module is what enforces it:
-//! there is no field here that could carry a verdict.
+//! This has no trust store, so it cannot say whether the certificate chains to
+//! anybody, whether it was revoked, or whether it was in date when used.
+//! `docs/TRAPS.md` is explicit that the UI must never imply otherwise.
 //!
-//! What it reports instead is what the document *claims* --- the signer's name,
-//! reason and date are strings the signer wrote, and are labelled as claimed ---
-//! plus exactly one fact that is checkable without cryptography and is the one
-//! that catches the common real failure: [`Signature::covers_whole_file`], which
-//! is whether the signed byte range reaches the file's last byte. A document
-//! signed and then appended to fails that, and no certificate is needed to say
-//! so.
+//! What it reports is what the document *claims* --- the signer's name, reason
+//! and date are strings the signer wrote, and are labelled as claimed --- plus
+//! two things it checked. [`Signature::covers_whole_file`] needs no
+//! cryptography and catches the common real failure: a document signed and
+//! then appended to. [`Signature::integrity`], since 2026-09-26, is the one
+//! field that is a verdict, and it is confined to its own type in
+//! [`crate::integrity`], whose module note says exactly what each answer does
+//! and does not claim --- above all, that "intact" is about the bytes and the
+//! key, never about who holds the key. Every other field stays a claim, and
+//! `no_signature_field_may_carry_a_verdict` is still the compile error that
+//! makes adding one a decision rather than a drift.
 
 use lopdf::{Dictionary, Document, LoadOptions, Object};
 
@@ -296,6 +298,12 @@ pub struct Signature {
     /// and would not parse is counted in [`Limits::timestamps_unread`] rather
     /// than reported as absent.
     pub timestamp: Option<Timestamp>,
+    /// Whether the signature still covers the bytes it was made over.
+    ///
+    /// **The one verdict in this struct**, and a narrow one: see
+    /// [`crate::integrity`] for exactly what each answer claims. `None` for a
+    /// field nobody has signed, which has nothing to check.
+    pub integrity: Option<crate::integrity::Integrity>,
 }
 
 /// What the signing certificate says, as against what the signer typed.
@@ -578,7 +586,14 @@ pub fn scan_from(
         Vec::new()
     };
     let mut signatures = if readable {
-        read_signatures(document, bytes.len() as u64, &mut limits)
+        let mut budget = crate::integrity::MAX_HASHED;
+        read_signatures(
+            document,
+            bytes.len() as u64,
+            bytes,
+            &mut limits,
+            &mut budget,
+        )
     } else {
         Vec::new()
     };
@@ -1076,7 +1091,19 @@ fn count_attachments(document: &Document) -> usize {
 /// other two bounds touches. Depth is bounded at eight, emitted signatures at
 /// [`MAX_SIGNATURES`], and popped entries at [`MAX_FIELD_NODES`]. All three
 /// report through [`Limits`].
-fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<Signature> {
+///
+/// `size` is the file's length and `bytes` the file itself. They are separate
+/// because the byte-range tests state a size with no file behind it; with
+/// `bytes` empty every range fails [`crate::integrity::covered`], so what those
+/// tests assert about coverage cannot be disturbed by the verdict. `budget` is
+/// what remains of [`crate::integrity::MAX_HASHED`] for the whole document.
+fn read_signatures(
+    document: &Document,
+    size: u64,
+    bytes: &[u8],
+    limits: &mut Limits,
+    budget: &mut u64,
+) -> Vec<Signature> {
     // The traversal is `fields.rs`; what stays here is what to do with a node.
     // The two are separated because the same tree is walked by `redact.rs` with
     // different bounds and a different question, and one bounded loop between
@@ -1107,7 +1134,9 @@ fn read_signatures(document: &Document, size: u64, limits: &mut Limits) -> Vec<S
         // at once is legal and means a field that also has widget children, so
         // this reads the field *and* descends.
         if name_of(document, field, b"FT") == "Sig" {
-            out.push(read_signature(document, field, node.name, size, limits));
+            out.push(read_signature(
+                document, field, node.name, size, bytes, limits, budget,
+            ));
         }
         fields::Flow::Descend
     });
@@ -1127,7 +1156,9 @@ fn read_signature(
     field: &Dictionary,
     name: String,
     size: u64,
+    bytes: &[u8],
     limits: &mut Limits,
+    budget: &mut u64,
 ) -> Signature {
     let text = |dict: &Dictionary, key: &[u8]| -> String { text_of(document, dict, key) };
     let mut out = Signature {
@@ -1155,6 +1186,10 @@ fn read_signature(
     out.location = text(sig, b"Location");
     out.when = format_date(&text(sig, b"M"));
 
+    // Every entry an integer, or nothing: the verdict must not be computed over
+    // a range from which a non-integer was quietly dropped, which shifts every
+    // pair after it. The coverage rows below keep their older, lenient reading.
+    let mut strict: Vec<i64> = Vec::new();
     if let Some(range) = sig
         .get(b"ByteRange")
         .ok()
@@ -1164,6 +1199,9 @@ fn read_signature(
             .iter()
             .filter_map(|o| resolve(document, o).as_i64().ok())
             .collect();
+        if numbers.len() == range.len() {
+            strict.clone_from(&numbers);
+        }
         // Pairs of (offset, length). An odd count is malformed, and the last
         // half-pair is dropped rather than read as an offset with no length.
         // **Saturating, because these are the document's numbers and nothing
@@ -1193,6 +1231,9 @@ fn read_signature(
 
     out.certification = certification_of(document, sig);
     out.certificate = read_certificate(document, sig, limits);
+    out.integrity = Some(integrity_of(
+        document, sig, bytes, &strict, &out.kind, budget,
+    ));
 
     // A *document* timestamp is a signature whose `/Contents` is the token
     // itself rather than a CMS carrying one as an attribute --- PDF 2.0
@@ -1216,6 +1257,30 @@ fn read_signature(
         };
     }
     out
+}
+
+/// Whether the signature still covers the bytes it was made over.
+///
+/// The blob goes through the same [`signature_contents`] the certificate
+/// reader uses, bounded the same way, so the verdict and the certificate rows
+/// are read from one preparation of one blob. Its refusals are not counted
+/// here: the certificate reader has already counted the same blob, and the
+/// verdict states its own refusal as [`crate::integrity::Why::Unreadable`].
+fn integrity_of(
+    document: &Document,
+    sig: &Dictionary,
+    bytes: &[u8],
+    range: &[i64],
+    kind: &str,
+    budget: &mut u64,
+) -> crate::integrity::Integrity {
+    let raw = sig
+        .get(b"Contents")
+        .ok()
+        .and_then(|o| resolve(document, o).as_str().ok())
+        .unwrap_or_default();
+    let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut 0);
+    crate::integrity::check(bytes, range, raw, blob.as_deref(), kind, budget)
 }
 
 /// Reads the signer's certificate out of the `/Contents` blob.
@@ -1361,24 +1426,74 @@ fn signature_contents(
 /// tests can make, and the failure it guards against --- picking a different
 /// signature's blob, and so showing the wrong signer --- is the worst one here.
 pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
-    use cms::cert::CertificateChoices;
     use cms::content_info::ContentInfo;
-    use cms::signed_data::{SignedData, SignerIdentifier};
+    use cms::signed_data::SignedData;
     use der::{Decode, Encode};
 
     let info = ContentInfo::from_der(der_bytes).ok()?;
     let signed: SignedData = info.content.decode_as().ok()?;
-    let set = signed.certificates.as_ref()?;
+    let chain = certificates_of(&signed).len();
+    let chain = u32::try_from(chain).unwrap_or(u32::MAX);
+    let (certificate, matched_signer) = signer_certificate(&signed)?;
 
-    let certificates: Vec<&x509_cert::Certificate> = set
-        .0
-        .iter()
-        .filter_map(|choice| match choice {
-            CertificateChoices::Certificate(certificate) => Some(certificate),
-            CertificateChoices::Other(_) => None,
+    let tbs = &certificate.tbs_certificate;
+    let subject = distinguished_name(&tbs.subject);
+    let issuer = distinguished_name(&tbs.issuer);
+    let extensions = tbs.extensions.as_deref().unwrap_or(&[]);
+    let mut unread = 0u32;
+    Some(Certificate {
+        subject_cn: common_name(&tbs.subject),
+        issuer_cn: common_name(&tbs.issuer),
+        self_issued: tbs.subject.to_der().ok() == tbs.issuer.to_der().ok(),
+        subject,
+        issuer,
+        serial: hex_of(tbs.serial_number.as_bytes()),
+        from: certificate_date(&tbs.validity.not_before),
+        until: certificate_date(&tbs.validity.not_after),
+        key_usage: key_usage(extensions, &mut unread),
+        extended_usage: extended_usage(extensions, &mut unread),
+        authority: authority(extensions, &mut unread),
+        chain,
+        matched_signer,
+        extensions_unread: unread,
+    })
+}
+
+/// Every X.509 certificate in a `SignedData`'s `certificates` set.
+fn certificates_of(signed: &cms::signed_data::SignedData) -> Vec<&x509_cert::Certificate> {
+    use cms::cert::CertificateChoices;
+
+    signed
+        .certificates
+        .as_ref()
+        .map(|set| {
+            set.0
+                .iter()
+                .filter_map(|choice| match choice {
+                    CertificateChoices::Certificate(certificate) => Some(certificate),
+                    CertificateChoices::Other(_) => None,
+                })
+                .collect()
         })
-        .collect();
-    let chain = u32::try_from(certificates.len()).unwrap_or(u32::MAX);
+        .unwrap_or_default()
+}
+
+/// The signer's certificate, and whether `SignerInfo.sid` identified it.
+///
+/// **One implementation for the two readers of it** --- the certificate rows
+/// and [`crate::integrity`], which verifies under this certificate's key. Two
+/// copies of the match would be two answers to "who signed", and the one the
+/// verdict used could then differ from the one the dialog names.
+///
+/// `(certificate, false)` is the set-of-one case: reported for reading, and
+/// refused by the verdict, which needs the key the signature *names*.
+pub(crate) fn signer_certificate(
+    signed: &cms::signed_data::SignedData,
+) -> Option<(&x509_cert::Certificate, bool)> {
+    use cms::signed_data::SignerIdentifier;
+    use der::Encode;
+
+    let certificates = certificates_of(signed);
     if certificates.is_empty() {
         return None;
     }
@@ -1405,33 +1520,11 @@ pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
     // not match it is a disagreement about naming rather than an ambiguity ---
     // report the certificate and say the match failed. Several with no match is
     // a genuine ambiguity and reports nothing.
-    let (certificate, matched_signer) = match (matched, certificates.as_slice()) {
-        (Some(certificate), _) => (certificate, true),
-        (None, [only]) => (*only, false),
-        (None, _) => return None,
-    };
-
-    let tbs = &certificate.tbs_certificate;
-    let subject = distinguished_name(&tbs.subject);
-    let issuer = distinguished_name(&tbs.issuer);
-    let extensions = tbs.extensions.as_deref().unwrap_or(&[]);
-    let mut unread = 0u32;
-    Some(Certificate {
-        subject_cn: common_name(&tbs.subject),
-        issuer_cn: common_name(&tbs.issuer),
-        self_issued: tbs.subject.to_der().ok() == tbs.issuer.to_der().ok(),
-        subject,
-        issuer,
-        serial: hex_of(tbs.serial_number.as_bytes()),
-        from: certificate_date(&tbs.validity.not_before),
-        until: certificate_date(&tbs.validity.not_after),
-        key_usage: key_usage(extensions, &mut unread),
-        extended_usage: extended_usage(extensions, &mut unread),
-        authority: authority(extensions, &mut unread),
-        chain,
-        matched_signer,
-        extensions_unread: unread,
-    })
+    match (matched, certificates.as_slice()) {
+        (Some(certificate), _) => Some((certificate, true)),
+        (None, [only]) => Some((*only, false)),
+        (None, _) => None,
+    }
 }
 
 /// One extension's octets, by OID, and whether it was there at all.
@@ -2763,11 +2856,11 @@ mod tests {
         // Read against a size the range does reach, and then against one it does
         // not --- the same document, so the only thing that moved is the file
         // length the range is compared with.
-        let covering = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let covering = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert!(covering[0].covers_whole_file);
         assert_eq!(covering[0].covered_bytes, 140);
 
-        let short = read_signatures(&parse(&bytes), 900, &mut Limits::default());
+        let short = read_signatures(&parse(&bytes), 900, &[], &mut Limits::default(), &mut 0);
         assert!(!short[0].covers_whole_file, "560 bytes lie past the range");
         assert_eq!(
             short[0].covered_bytes, 140,
@@ -2796,7 +2889,7 @@ mod tests {
             "Contents" => Object::string_literal("junk"),
         });
 
-        let appended = read_signatures(&parse(&bytes), 900, &mut Limits::default());
+        let appended = read_signatures(&parse(&bytes), 900, &[], &mut Limits::default(), &mut 0);
         assert_eq!(appended[0].appended_bytes, 560, "900 - (300 + 40)");
         assert_eq!(
             900 - appended[0].covered_bytes - appended[0].appended_bytes,
@@ -2804,7 +2897,7 @@ mod tests {
             "the rest is the container gap, 100 to 300"
         );
 
-        let whole = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let whole = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert_eq!(
             whole[0].appended_bytes, 0,
             "the range ends at the last byte, so nothing followed it"
@@ -2828,7 +2921,7 @@ mod tests {
             "Type" => "Sig",
             "ByteRange" => vec![0.into(), 100.into(), 300.into(), 40.into()],
         });
-        let read = read_signatures(&parse(&bytes), 200, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 200, &[], &mut Limits::default(), &mut 0);
         assert_eq!(read[0].appended_bytes, 0);
         assert!(!read[0].covers_whole_file);
     }
@@ -2841,7 +2934,7 @@ mod tests {
     #[test]
     fn a_signature_with_no_byte_range_reports_no_append() {
         let bytes = document_signed(dictionary! { "Type" => "Sig" });
-        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert_eq!(read[0].appended_bytes, 0);
     }
 
@@ -2855,7 +2948,7 @@ mod tests {
             "Type" => "Sig",
             "ByteRange" => vec![8.into(), 92.into(), 300.into(), 40.into()],
         });
-        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert!(
             !read[0].covers_whole_file,
             "the first eight bytes are outside it"
@@ -2866,7 +2959,7 @@ mod tests {
     #[test]
     fn a_signature_with_no_byte_range_reports_nothing_covered() {
         let bytes = document_signed(dictionary! { "Type" => "Sig" });
-        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert_eq!(read[0].covered_bytes, 0);
         assert!(!read[0].covers_whole_file);
     }
@@ -2893,7 +2986,7 @@ mod tests {
                 i64::MAX.into(),
             ],
         });
-        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert_eq!(
             read[0].covered_bytes,
             u64::MAX,
@@ -2912,7 +3005,7 @@ mod tests {
             "Type" => "Sig",
             "ByteRange" => vec![0.into(), 100.into(), 300.into()],
         });
-        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         // 300 is an offset, never a length. Summing every number would give 400.
         assert_eq!(read[0].covered_bytes, 100);
     }
@@ -2941,7 +3034,7 @@ mod tests {
                 }),
             ],
         });
-        let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
         assert_eq!(
             read[0].certification, 1,
             "the DocMDP entry, not the first one"
@@ -2959,7 +3052,7 @@ mod tests {
                     "TransformParams" => dictionary! { "P" => level },
                 })],
             });
-            let read = read_signatures(&parse(&bytes), 340, &mut Limits::default());
+            let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
             assert_eq!(
                 read[0].certification, 0,
                 "level {level} is not one of the three"
@@ -3071,6 +3164,79 @@ mod tests {
     /// it is the stronger one --- adding a `valid: bool` here would be a
     /// compile error rather than a red test, because every field is matched.
     #[test]
+    fn the_hashing_budget_is_shared_by_every_signature_of_a_document() {
+        // Enough for the first signature's range and not for the second's:
+        // the second is refused as over budget rather than hashed, and the
+        // first is unaffected. Without the one shared budget, a document with
+        // thirty-two signatures over a large file costs thirty-two hashes of it.
+        let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata/incr-two-signers.pdf"))
+        else {
+            println!("[SKIP] incr-two-signers.pdf: not generated");
+            return;
+        };
+        let whole = scan(&bytes, 1, None).expect("parses");
+        let first = whole.signatures[0].covered_bytes;
+        let mut budget = first;
+        let read = read_signatures(
+            &parse(&bytes),
+            bytes.len() as u64,
+            &bytes,
+            &mut Limits::default(),
+            &mut budget,
+        );
+        let verdicts: Vec<_> = read
+            .iter()
+            .map(|s| s.integrity.clone().expect("signed"))
+            .collect();
+        assert_eq!(verdicts[0].verdict, crate::integrity::Verdict::Intact);
+        assert_eq!(verdicts[1].verdict, crate::integrity::Verdict::Unchecked);
+        assert_eq!(verdicts[1].why, Some(crate::integrity::Why::Budget));
+        assert_eq!(budget, 0);
+    }
+
+    #[test]
+    fn a_byte_range_with_a_non_integer_in_it_is_not_checked() {
+        // `[0 a b c 1.5]`: four integers survive the lenient reading the
+        // coverage rows use, and they are the right four. The verdict must not
+        // be computed over an array a non-integer was dropped from --- which
+        // with the element anywhere else shifts every pair after it.
+        let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata/incr-signed.pdf")) else {
+            println!("[SKIP] incr-signed.pdf: not generated");
+            return;
+        };
+        let at = bytes
+            .windows(11)
+            .position(|w| w == b"/ByteRange ")
+            .expect("a range");
+        let close = at + bytes[at..].iter().position(|b| *b == b']').expect("]");
+        // pyHanko pads the array with spaces after `]`; spend four of them.
+        assert_eq!(&bytes[close + 1..close + 5], b"    ", "reserved padding");
+        let mut edited = bytes.clone();
+        edited[close..close + 5].copy_from_slice(b" 1.5]");
+        let read = scan(&edited, 1, None).expect("parses");
+        let verdict = read.signatures[0].integrity.clone().expect("signed");
+        assert_eq!(verdict.verdict, crate::integrity::Verdict::Unchecked);
+        assert_eq!(verdict.why, Some(crate::integrity::Why::Range));
+    }
+
+    #[test]
+    fn a_signature_dictionary_with_nothing_to_check_is_refused_rather_than_passed() {
+        // `/V` present and empty: signed, in the sense that somebody put a
+        // signature dictionary there, and with no subfilter, range or blob.
+        // It must carry a verdict --- a signed field with none reads as a
+        // pass nobody computed --- and that verdict must be a refusal.
+        let read = read(&document_signed(Dictionary::new()));
+        let signature = &read.signatures[0];
+        assert!(signature.signed);
+        let verdict = signature
+            .integrity
+            .clone()
+            .expect("a signed field carries a verdict");
+        assert_eq!(verdict.verdict, crate::integrity::Verdict::Unchecked);
+        assert!(verdict.why.is_some());
+    }
+
+    #[test]
     fn no_signature_field_may_carry_a_verdict() {
         let signature = Signature::default();
         let Signature {
@@ -3097,6 +3263,12 @@ mod tests {
             // an append contains, never whether the append was legitimate --
             // which is the distinction `Appendix`'s own note is about.
             appendix: _,
+            // **The one verdict, on purpose, since 2026-09-26.** It is a type of
+            // its own in `integrity.rs`, which states what each answer claims,
+            // defaults to `Unchecked`, and has its own guards:
+            // `an_unchecked_verdict_always_says_why` and the fixture tests that
+            // pin each answer. This line is where adding it was decided.
+            integrity: _,
         } = signature;
     }
 

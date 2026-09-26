@@ -204,6 +204,10 @@ FILTERS = [
     # private module is not a filter. Tenth entry; the eight notes above are all
     # the same incident.
     "fields::",
+    # Added 2026-09-26 with the signature integrity verdict, in the same edit
+    # as its mutations. Eleventh entry. `tests::` would match today for the
+    # reason the note above gives, and that is not a reason to rely on it.
+    "integrity::",
 ]
 
 
@@ -6402,12 +6406,12 @@ MUTATIONS += [
         # `matched_signer` assertion and not the name.
         "docinfo: take the first certificate rather than the signer's",
         "src/docinfo.rs",
-        """    let (certificate, matched_signer) = match (matched, certificates.as_slice()) {
-        (Some(certificate), _) => (certificate, true),
-        (None, [only]) => (*only, false),
-        (None, _) => return None,
-    };""",
-        """    let (certificate, matched_signer) = (certificates[0], false);""",
+        """    match (matched, certificates.as_slice()) {
+        (Some(certificate), _) => Some((certificate, true)),
+        (None, [only]) => Some((*only, false)),
+        (None, _) => None,
+    }""",
+        """    Some((certificates[0], false))""",
         "each_signed_fixture_carries_its_own_certificate",
     ),
     Mutation(
@@ -10471,6 +10475,213 @@ MUTATIONS += [
     ),
 ]
 
+
+# --- whether a signature still covers what it was made over ----------------
+#
+# `integrity.rs`, 2026-09-26. Each mutation removes one check the verdict
+# rests on, and names the test built so that only that check can fail it ---
+# the fixtures are rewritten one field at a time for exactly that reason.
+MUTATIONS += [
+    Mutation(
+        # Never test the signature value. Every fixture whose signature holds
+        # still passes; `signed-broken.pdf`, whose one flipped bit is in the
+        # value, reads as intact --- the forgery case, reported as the good one.
+        "integrity: skip the signature mathematics",
+        "src/integrity.rs",
+        "        if !verify(&key, method, hash, &to_verify, &self.signature) {",
+        "        if false {",
+        "a_flipped_bit_in_the_signature_value_is_broken",
+    ),
+    Mutation(
+        # Never compare the digest. The tampered-document case: a byte inside
+        # the signed range changed and the signature still reports intact.
+        "integrity: skip the digest comparison",
+        "src/integrity.rs",
+        "        if !digest_matches {",
+        "        if false {",
+        "a_changed_byte_in_the_signed_range_is_altered",
+    ),
+    Mutation(
+        # Believe the digest before the signature. A document both altered and
+        # carrying a broken value then reads as merely altered --- trusting a
+        # digest nothing vouches for.
+        "integrity: judge the digest before the signature",
+        "src/integrity.rs",
+        """        if !verify(&key, method, hash, &to_verify, &self.signature) {
+            return named(Verdict::Broken);
+        }
+        if !digest_matches {
+            return named(Verdict::Altered);
+        }""",
+        """        if !digest_matches {
+            return named(Verdict::Altered);
+        }
+        if !verify(&key, method, hash, &to_verify, &self.signature) {
+            return named(Verdict::Broken);
+        }""",
+        "a_broken_signature_is_broken_even_when_the_bytes_also_changed",
+    ),
+    Mutation(
+        # Call a SHA-1 match intact.
+        "integrity: treat SHA-1 as strong",
+        "src/integrity.rs",
+        "        if hash == Hash::Sha1 {",
+        "        if false {",
+        "a_sha1_match_is_weak_and_never_intact",
+    ),
+    Mutation(
+        # Verify under the only certificate even when the signature names
+        # another. The dialog's reading keeps that certificate for a set of
+        # one; the verdict must not.
+        "integrity: verify under a certificate the signature does not name",
+        "src/integrity.rs",
+        "            .filter(|(_, matched)| *matched)",
+        "            .filter(|_| true)",
+        "a_signer_the_signature_does_not_name_is_not_used_to_check_it",
+    ),
+    Mutation(
+        # Accept any hex string in the hole. The signature-wrapping shape: the
+        # range leaves some other value uncovered and the digest still matches.
+        "integrity: accept a hole that is not this signature's value",
+        "src/integrity.rs",
+        "    if decode_hex(inner)? != contents {",
+        "    if decode_hex(inner).is_none() {",
+        "a_range_whose_hole_holds_anything_but_this_signature_is_refused",
+    ),
+    Mutation(
+        # Accept a range that skips the head of the file.
+        "integrity: accept a range that does not start at zero",
+        "src/integrity.rs",
+        "    if start != 0 || first == 0 || second <= first || end > size {",
+        "    if first == 0 || second <= first || end > size {",
+        "a_range_not_starting_at_zero_or_not_in_two_pieces_is_refused",
+    ),
+    Mutation(
+        # Accept a range reaching past the end of the file --- which then
+        # panics on the slice, inside the worker.
+        "integrity: accept a range past the end of the file",
+        "src/integrity.rs",
+        "    if start != 0 || first == 0 || second <= first || end > size {",
+        "    if start != 0 || first == 0 || second <= first {",
+        "a_range_the_file_cannot_hold_is_refused_without_arithmetic_overflow",
+    ),
+    Mutation(
+        # Hash whatever the document asks for.
+        "integrity: ignore the hashing budget",
+        "src/integrity.rs",
+        "        if cost > *budget {",
+        "        if false {",
+        "a_budget_smaller_than_the_range_refuses_before_hashing",
+    ),
+    Mutation(
+        # Never charge the budget, so it bounds each signature and not the
+        # document: thirty-two signatures over a large file hash it 32 times.
+        "integrity: never spend the budget",
+        "src/integrity.rs",
+        "        *budget -= cost;",
+        "",
+        "a_budget_smaller_than_the_range_refuses_before_hashing",
+    ),
+    Mutation(
+        # Check every subfilter with the detached computation.
+        "integrity: check a subfilter it does not implement",
+        "src/integrity.rs",
+        '    if !matches!(kind, "adbe.pkcs7.detached" | "ETSI.CAdES.detached") {',
+        "    if kind.is_empty() && false {",
+        "a_subfilter_this_does_not_check_is_not_checked",
+    ),
+    Mutation(
+        # Ignore the content-type attribute. The signature and the digest
+        # both still hold on the relabelled fixture, which is why only this
+        # comparison can refuse it.
+        "integrity: ignore the content type the attributes state",
+        "src/integrity.rs",
+        "    if &stated_type != content_type {",
+        "    if false {",
+        "a_content_type_the_attributes_disagree_with_is_not_checked",
+    ),
+    Mutation(
+        # Check the first of several signers.
+        "integrity: attribute a two-signer blob to its first signer",
+        "src/integrity.rs",
+        "        let [info] = infos else {",
+        "        let [info, ..] = infos else {",
+        "a_blob_with_two_signers_is_not_attributed_to_either",
+    ),
+    Mutation(
+        # Let a signature algorithm name a different hash from the digest.
+        "integrity: accept a signature algorithm naming another hash",
+        "src/integrity.rs",
+        "        if named == hash {",
+        "        if named == hash || true {",
+        "a_signature_algorithm_naming_another_hash_is_not_checked",
+    ),
+    Mutation(
+        # Ignore the salt length PSS states and assume the default of 20.
+        # pyHanko salts with the digest's own length, so the mathematics fails.
+        "integrity: assume PSS's default salt length",
+        "src/integrity.rs",
+        "        salt: usize::from(params.salt_len),",
+        "        salt: 20,",
+        "each_signature_scheme_is_checked_by_its_own_mathematics",
+    ),
+    Mutation(
+        # Hash the signed attributes under their `[0]` tag, as written. RFC
+        # 5652 says SET OF; every real signature then reads as broken.
+        "integrity: hash the signed attributes under their implicit tag",
+        "src/integrity.rs",
+        "            *encoded.first_mut()? = 0x31;",
+        "",
+        "an_untouched_signature_is_intact",
+    ),
+    Mutation(
+        # An unchecked verdict with no reason.
+        "integrity: refuse without saying why",
+        "src/integrity.rs",
+        "            why: Some(why),",
+        "            why: None,",
+        "an_unchecked_verdict_always_says_why",
+    ),
+    Mutation(
+        # Compute the verdict and never attach it. Every assertion inside
+        # `integrity.rs` about a fixture reads it back through `docinfo::scan`,
+        # which is the path the dialog takes --- so this is caught there.
+        "docinfo: compute the integrity verdict and drop it",
+        "src/docinfo.rs",
+        """    out.integrity = Some(integrity_of(
+        document, sig, bytes, &strict, &out.kind, budget,
+    ));""",
+        "",
+        "an_untouched_signature_is_intact",
+    ),
+    Mutation(
+        # Hand the verdict the lenient range, from which a non-integer was
+        # silently dropped.
+        "docinfo: check a byte range a non-integer was dropped from",
+        "src/docinfo.rs",
+        "        if numbers.len() == range.len() {",
+        "        if !numbers.is_empty() {",
+        "a_byte_range_with_a_non_integer_in_it_is_not_checked",
+    ),
+    Mutation(
+        # A fresh budget per signature rather than one per document.
+        "docinfo: give each signature its own hashing budget",
+        "src/docinfo.rs",
+        """            out.push(read_signature(
+                document, field, node.name, size, bytes, limits, budget,
+            ));""",
+        """            out.push(read_signature(
+                document,
+                field,
+                node.name,
+                size,
+                bytes,
+                limits,
+                &mut budget.clone(),
+            ));""",
+        "the_hashing_budget_is_shared_by_every_signature_of_a_document",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -230,7 +230,7 @@ the process lifetime; this does not make PDFium calls safe to run concurrently.
 Same shell as `screenpick`, chosen because the muscle memory transfers and Rust does the
 heavy work while the webview does the UI.
 
-**Dependencies beyond the table** — the two search crates, the certificate and XMP readers,
+**Dependencies beyond the table** — the two search crates, the certificate and XMP readers, the signature checkers,
 `fax`, and the four Tauri plugins — are listed with their licences and package costs in
 [`docs/DETAIL.md`](docs/DETAIL.md) *Stack*. `tauri-plugin-updater` is the application's only
 network authority (`docs/THREAT-MODEL.md` §T9). Check every new dependency against the

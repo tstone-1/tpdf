@@ -142,6 +142,28 @@ as it arrives: `src-tauri/src/ber.rs` — about 150 lines, no dependency at all 
 first and hands the parsers a definite-length value, because RFC 5652 requires DER and real
 signers emit the indefinite form that `der` refuses outright.
 
+**Six crates check signatures, added 2026-09-26, and none of them holds a key.** `rsa` 0.9
+(PKCS#1 v1.5 and PSS), `p256` and `p384` 0.13 through `ecdsa` 0.16 (ECDSA over the two NIST
+curves), `sha1` 0.10, and `sha2` 0.10 --- the package already in the tree through
+`tauri-codegen`, declared as `sha2_10` because the direct `sha2` is 0.11. They are the
+RustCrypto generation `cms`, `x509-cert`, `spki` and `der` already use, which is what lets the
+signer's `SubjectPublicKeyInfo` reach them without a conversion. Twenty-nine packages between
+them, every one `Apache-2.0 OR MIT` (`ff`, `group`, `num-bigint-dig` spell it with a slash),
+bar `libm` and `spin` (MIT) and `zerocopy` (`BSD-2-Clause OR Apache-2.0 OR MIT`): swept with
+`cargo metadata`, and the tree's only copyleft string is still `r-efi`'s. `rand` 0.8 comes in
+through `rsa`, which uses it only to generate keys --- never called here.
+
+What they read is the document's: the covered bytes, the signed attributes, the signature
+value and the public key in the signer's certificate. **They run in the worker only**, from
+`integrity.rs` through `docinfo::scan_from`, and `docs/THREAT-MODEL.md` §T6.8 records the
+bounds --- the range validated before hashing, one gigabyte of hashing per document, RSA
+moduli up to 8,192 bits. **`rsa` carries RUSTSEC-2023-0071**, the Marvin timing side channel
+in private-key operations, with no fixed release. Verification is a public-key operation and
+tpdf holds no private key, so `.cargo/audit.toml` accepts it with that reason, proved both
+ways: `cargo audit --file src-tauri/Cargo.lock` exits 0 with the entry and 1 without. The
+entry becomes wrong the day anything here signs with `rsa`; Phase 6 step 2 signs inside the
+OS key store instead, which is part of why.
+
 **`fax` (MIT, pdf-rs project) was added 2026-09-18 and brings exactly one package** — its
 derive crate is behind a feature that is not enabled. It decodes the CCITT Group 4 stencil
 masks of scanned pages inside the worker, as one more parser of attacker-chosen bytes;

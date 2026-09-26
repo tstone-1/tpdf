@@ -25,7 +25,13 @@ Before any save/copy writing command, the application reads digital-signature
 metadata from the worker and asks for consent if signatures/certification exist
 or enumeration was incomplete. DocMDP permission to fill forms does not bypass
 the warning: the current rewrite cannot preserve that cryptographic history.
-Cancellation reaches no writing IPC. This is a warning, not signature validation.
+Cancellation reaches no writing IPC. The warning does not consult the integrity
+verdict the same read now carries (`integrity.rs`, 2026-09-26): saving can break
+an intact signature and cannot repair an altered one, so it is shown for every
+signed document alike. The verdict is shown in the properties dialog, where it
+says what it checked and that the key's owner was not. The read that feeds this
+warning therefore also hashes each signature's range, under the per-document
+`integrity::MAX_HASHED` budget, once per document.
 
 AcroForm filling uses `forms.rs` inside the document worker, with shared field
 answers in the edit journal and `Plan.forms`. Every save carrying answers takes

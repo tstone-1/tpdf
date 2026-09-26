@@ -166,7 +166,13 @@ Protected signature storage can be exercised with synthetic maximum-size pixels:
 It creates and removes its own OS storage entry; it needs an unlocked desktop.
 The regular gates compile it but do not contact Keychain/DPAPI.
 Run `uv run scripts/signed_save_check.py <checks-executable> testdata/incr-certified-2.pdf`
-to exercise warning text, initial Cancel focus, cancellation and accepted saving.
+to exercise warning text, initial Cancel focus, cancellation and accepted saving, and ---
+since 2026-09-26 --- that the packaged app's sandboxed worker reports the fixture's
+signature `intact`, the one place the integrity verdict is computed out of process. First
+run 2026-09-26 on macOS arm64 against the release checks bundle: 6/6 in both launches, the
+worker answering `intact` / `SHA-256` / `RSA`. Each launch also prints `[worker] could not
+reply: Broken pipe` a few times as the app exits under a worker still answering; that line
+predates the integrity check and is shutdown noise, not a failure.
 The driver verifies unchanged file bytes after cancellation and changed bytes
 after acceptance; the application drives its own modal without Accessibility.
 
@@ -771,6 +777,46 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-pro
 #   signed-nested-field --mode nested   3/3
 cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
     testdata/signed-nested-field.pdf --mode nested
+
+# --mode integrity holds the INTEGRITY VERDICT (integrity.rs, 2026-09-26) against
+# pyHanko, through `testdata/check_signature.py --json` run by `uv`. PDFium
+# verifies nothing, so no other mode reaches the verdict. pyHanko's answer is
+# mapped onto tpdf's words: a coverage other than the whole file or a whole
+# revision -> unchecked/range; valid=no -> broken (the signature is judged
+# before the digest); intact=no -> altered; CRYPTO_CONSTRAINTS_FAILURE -> weak
+# (SHA-1); otherwise intact, with the digest names compared too. Needs `uv`; the
+# oracle not running is [FAIL], never a pass. macOS arm64, 2026-09-26, 14/14
+# files green:
+#   incr-signed, incr-certified-{1,2,3,3-indirect}, incr-timestamped,
+#   signed-p256, -p384, -pss                      3/3 each   intact
+#   incr-two-signers                              5/5        intact, intact
+#   signed-sha1                                   3/3        weak
+#   signed-altered                                3/3        altered
+#   signed-broken                                 3/3        broken
+#   signed-nested-field                           2/2        unchecked, range
+# plus three real signed documents to hand (an Acrobat Sign certification, a
+# SHA-1 supplier certificate, a BER CAdES contract): intact, weak, intact, all
+# agreeing. incr-ber.pdf is left OUT on purpose and exits 1 if run: pyHanko
+# refuses its indefinite lengths, and OpenSSL disagrees with tpdf about it for a
+# reason that is the fixture's -- see the trap "A fixture rewritten to reach one
+# parser leaves the standard".
+#
+# Proved able to fail by mutating integrity.rs, rebuilding, and restoring it
+# byte-identical (digest checked before and after):
+#   never test the signature value   -> signed-broken 2/3 (tpdf intact)
+#   report every match as altered    -> incr-signed, signed-p256 2/3, sha1 2/3
+#   treat SHA-1 as strong            -> signed-sha1 2/3 (tpdf intact)
+#   skip the hole-is-this-value rule -> SURVIVED on signed-nested-field, because
+#                                       its invented range fails the `<`...`>`
+#                                       framing first; only the unit test
+#                                       reaches that rule
+for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
+         incr-certified-3-indirect incr-timestamped incr-two-signers \
+         signed-p256 signed-p384 signed-pss signed-sha1 signed-altered \
+         signed-broken signed-nested-field; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+      "testdata/$f.pdf" --mode integrity
+done
 
 # Marks: does a highlight a reader makes land on the words they made it from?
 # Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not
@@ -1609,7 +1655,9 @@ the entry.
 **Its signed fixtures did not exist on a hosted runner until 2026-08-21**, so CI tested none
 of the signature reader. Both workflows now install pyhanko and call
 `scripts/ci_fixtures.py --signed`, which builds the nine of them — eleven since the two
-encrypted fixtures joined the group on 2026-08-23. Two things had to change for
+encrypted fixtures joined the group on 2026-08-23, and seventeen since the six fixtures of
+the signature integrity verdict (`signed-p256`, `-p384`, `-pss`, `-sha1`, `-altered`,
+`-broken`) joined on 2026-09-26. `SIGNED` in that script is the list; these counts are history. Two things had to change for
 that to be possible, and the first is why it had never worked: `make_incremental_pdf.py` called
 **qpdf** with `check=True` and nothing else, so a machine without qpdf died there with a
 `FileNotFoundError` naming a program rather than a fixture — and died *before* every signed

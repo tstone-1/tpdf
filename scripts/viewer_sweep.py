@@ -177,6 +177,14 @@ NOT_WINDOW: list[tuple[str, str]] = [
         "depends on where in the field tree a signature sits",
     ),
     (
+        "signed-*",
+        "the integrity verdict's corpus (one signature scheme each, and the "
+        "altered and broken rewrites), read by integrity.rs's tests and "
+        "signature-probe --mode integrity; the verdict is one text row, which "
+        "integrity.test.ts covers, and a 1-page 8 KB document does not meet "
+        "the sample points the other checks pin",
+    ),
+    (
         "text-base14",
         "a backend-probe fixture: font coverage, measured through the worker",
     ),

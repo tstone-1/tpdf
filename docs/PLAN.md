@@ -14869,6 +14869,112 @@ A separate subsystem, not an extension of Phase 4: trust stores, certificate sel
 timestamping, revocation, long-term validation, and DocMDP enforcement. PDFium's signature
 API is read-only, so this needs its own crypto stack.
 
+**Three steps, in this order, decided 2026-09-26.** Each one is a claim the next depends on,
+and the order is the order in which a claim can be made honestly.
+
+1. **Is the signature intact?** Done 2026-09-26, below.
+2. **Sign with a certificate the reader already has** --- from the macOS keychain or the
+   Windows certificate store, **with the key never leaving the OS**. The worker prepares the
+   document: the signature dictionary with a reserved `/Contents`, the `/ByteRange`, and the
+   digest over it. The app process asks the OS to sign that digest (`SecKeyCreateSignature`;
+   `NCryptSignHash` through the CNG key a certificate-store entry names) and splices the CMS
+   blob into the reserved span at its fixed offset. Nothing in the app process parses the
+   document, and nothing in the worker holds a key. Smart cards and hardware tokens then
+   work through the OS's own drivers, and tpdf never sees a PIN.
+3. **Timestamps and long-term validation.** An RFC 3161 request to a timestamp authority,
+   and a `/DSS` of certificates and revocation data appended afterwards. Both need the
+   **network**, which the application today reaches for exactly one thing --- the updater
+   (`docs/THREAT-MODEL.md` §T9) --- so this step adds a network authority and is decided
+   on its own.
+
+#### Is the signature intact --- done 2026-09-26
+
+`integrity.rs` answers, per signature, one question with arithmetic: **are the bytes the
+signature covers the bytes it was made over, and was it made by the key in the certificate
+it names?** The answer rides in the existing `Properties` reply as
+`Signature::integrity` and is the first row of each signature in the properties dialog.
+It is computed in the **worker**, inside `docinfo::scan_from`, because the CMS blob, the
+certificate and the signature value are all attacker-chosen bytes.
+
+| Verdict | What it claims |
+|---|---|
+| `intact` | The range is exactly the file minus this signature's value; the covered bytes hash to the `messageDigest` the signer signed; the signature over the signed attributes checks out under the key in the certificate `SignerInfo.sid` names. |
+| `weak` | All of that, under **SHA-1**, which no longer proves the bytes are the ones signed. |
+| `altered` | The signature checks out and the covered bytes no longer hash to what it signed. |
+| `broken` | The signature does not check out, so nothing it states --- including the digest --- stands. |
+| `unchecked` | Nothing concluded, and why: an unsupported `/SubFilter` or algorithm, a range this cannot vouch for, an unreadable blob, a certificate the signature does not name, malformed signed attributes, or the hashing budget. |
+
+**What none of them claims is who holds the key.** No chain, no trust store, no revocation,
+no validity-at-signing-time. The dialog says so after every answer that could be read as
+trust, and `NOT_CHECKED` says so under every signature. A certificate somebody made on their
+own laptop five minutes ago is `intact` exactly as a notary's is.
+
+Four decisions worth knowing before changing it:
+
+- **The signature is tested before the digest is believed.** `messageDigest` is a signed
+  attribute, so until the signature verifies it is only the blob's own word. A document both
+  altered and carrying a broken value is `broken`, not `altered`.
+- **SHA-1 is `weak`, not `intact` and not refused.** A chosen-prefix collision (SHAttered,
+  2017; Shambles, 2020) lets whoever prepared a document hold a second one with the same
+  hash, so a SHA-1 match proves less than it says. A SHA-1 *mismatch* still proves
+  alteration, which refusing SHA-1 outright would throw away. One of three real signed
+  documents to hand is SHA-1 --- a supplier's certificate of conformance --- so this is the
+  common case of the weak branch, not a curiosity.
+- **The range is vouched for before anything is hashed.** Exactly two pieces, starting at
+  zero, inside the file, and between them a hex string that decodes to **this** signature's
+  `/Contents`. A range that leaves anything else uncovered is how the published
+  signature-wrapping attacks work, so it is `unchecked` with its reason rather than a
+  verdict about bytes the signature does not protect. `signed-nested-field.pdf`, whose blob
+  is borrowed and whose range is invented, is this case; pyHanko calls its coverage
+  `UNCLEAR`.
+- **One hashing budget per document, one gigabyte, charged before hashing.** A range is
+  nearly the whole file, and thirty-two signatures over a 300 MB scan would otherwise be ten
+  gigabytes of SHA-256 inside a worker with a thirty-second deadline.
+
+**The oracle is pyHanko, and it agrees on every fixture it can read.** `signature-probe
+--mode integrity` maps pyHanko's `intact`/`valid`/coverage/crypto-constraints onto tpdf's
+verdict and compares. Fourteen fixtures, all agreeing: seven untouched (`intact`), ECDSA
+P-256 and P-384 and RSA-PSS (`intact`), SHA-1 (`weak`, pyHanko's
+`CRYPTO_CONSTRAINTS_FAILURE`), `signed-altered` (`altered`), `signed-broken` (`broken`), and
+the nested field (`unchecked`, range). And the three real signed documents to hand --- an
+Acrobat Sign certified declaration, the SHA-1 supplier certificate and a CAdES contract in
+BER --- agree as well: `intact`, `weak`, `intact`.
+
+**`incr-ber.pdf` has no agreeing oracle, and the reason is the fixture.** pyHanko refuses it
+(*"Indefinite-length recursion limit exceeded"*) and OpenSSL `cms -verify` calls its
+signature bad. tpdf calls it `intact`. What is measured: OpenSSL accepts `incr-signed.pdf`
+and refuses `incr-ber.pdf`, and the two differ in nothing but the length form, so its answer
+turns on that alone. The fixture rewrites *every* constructed value in indefinite form,
+including inside the signed attributes, which RFC 5652 §5.4 requires to be DER --- a
+document no conforming signer writes. tpdf hashes the definite form `ber.rs` produces, which
+for this blob is byte for byte what the signer signed; *where* inside OpenSSL the indefinite
+form reaches the hash was not established. The real BER contract is read identically by all
+three --- OpenSSL `cms -verify` accepts it too, as it does the SHA-1 document --- so the
+disagreement is confined to the shape only a rewriting generator produces.
+`docs/TRAPS.md` has it.
+
+**Not done, and deliberately.** `adbe.pkcs7.sha1`, `adbe.x509.rsa_sha1` and a document
+timestamp (`ETSI.RFC3161`) are `unchecked`, format: each signs something other than the
+range's bytes directly, and checking one with the detached computation would be checking it
+wrongly. No fixture here writes any of them. Ed25519 and curves other than P-256 and P-384
+are `unchecked`, algorithm. A PSS signature whose mask hash differs from its message hash is
+refused rather than verified, because `rsa` uses one hash for both.
+
+**Open questions for steps 2 and 3.**
+
+- **Trust, when it comes: the OS's store or Adobe's list?** `SecTrustEvaluateWithError` and
+  `CertGetCertificateChain` build a chain to what the machine trusts, which is what the
+  reader's mail client trusts, and costs no maintenance. Adobe's Approved Trust List is what
+  most signed PDFs are *made* against, and a signature that chains only to AATL reads as
+  untrusted under the OS store. Neither is obviously right, and a verdict built on either
+  must say which.
+- **Timestamps need the network**, both to make one (step 3) and to check revocation at the
+  time one attests. That is a second network authority beside the updater and is the one
+  real change to the threat model this phase makes.
+- **Step 2's splice** writes into a reserved span whose size must be chosen before the
+  signature exists. An OS signature plus the chain the store returns is a few kilobytes; a
+  timestamp token adds several more. Reserving for step 3 in step 2 avoids a second format.
+
 ### Cross-cutting
 
 OCR (feeding search, selection and redaction verification) has interfaces defined in

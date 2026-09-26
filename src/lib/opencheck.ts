@@ -607,6 +607,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const original = host.edits()!.doc;
       const properties = await call("document_properties", {doc:original});
       report.check("the fixture has a digital signature", properties.signatures.some((s)=>s.signed), "signed save");
+      // The integrity verdict as the packaged app computes it: in a sandboxed
+      // worker, through the same reply the dialog renders. The unit tests and
+      // `signature-probe --mode integrity` compute it in-process.
+      report.check("the worker reports the signature intact",
+        properties.signatures.some((s)=>s.integrity?.verdict === "intact"),
+        JSON.stringify(properties.signatures.map((s)=>s.integrity)));
       host.run("edit.rotatePageClockwise"); await host.idle();
       report.check("the signed document has pending edits", host.edits()!.dirty, "signed save");
       host.run("file.save");

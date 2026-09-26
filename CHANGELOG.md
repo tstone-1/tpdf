@@ -40,6 +40,15 @@ have the binary.)
   now moves with its line. In the 31-file public sample about 780 more edits
   of +25% are accepted, most of them above underlined headings in council
   agendas and minutes.
+- **Document properties now say whether each digital signature is intact.**
+  tpdf checks that the bytes a signature covers have not changed since it was
+  made, and that the signature matches the key in its certificate. Each
+  signature reads *intact*, *altered*, *broken*, *unchanged under SHA-1 only*
+  (SHA-1 no longer proves a document is the one signed), or *not checked*,
+  with the reason. It does not check who holds the key: a certificate anybody
+  can make for themselves passes the same check, and the dialog says so
+  beside every answer. RSA, RSA-PSS and ECDSA over P-256 and P-384 are
+  checked.
 
 ### Fixed
 

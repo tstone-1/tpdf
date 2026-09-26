@@ -27,6 +27,7 @@ pub mod fingerprint;
 pub mod forms;
 pub mod images;
 pub mod imports;
+pub mod integrity;
 pub mod invert;
 #[cfg(target_os = "macos")]
 pub mod keylayout;

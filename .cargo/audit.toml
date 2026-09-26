@@ -5,13 +5,23 @@
 # Every warning is denied below, so an advisory that is not listed here fails
 # the audit. Each entry is one the project has looked at and accepted, with the
 # reason. Recorded 2026-09-26 against both lockfiles (`src-tauri/Cargo.lock`
-# and `src-tauri/fuzz/Cargo.lock`), which carry the same eight.
+# and `src-tauri/fuzz/Cargo.lock`), which carry the same set: the fuzz crate
+# depends on `tpdf` by path, so every runtime dependency reaches both.
 #
 # Remove an entry when its crate leaves the tree: the audit does not complain
 # about an ignore that matches nothing, so a stale entry is silent.
 
 [advisories]
 ignore = [
+    # rsa 0.9: the Marvin attack, a timing side channel in *private-key*
+    # operations (decryption and signing), with no fixed release. tpdf holds no
+    # RSA private key anywhere: `integrity.rs` only verifies, in the worker,
+    # which is a public-key operation the advisory does not cover. Revisit
+    # before Phase 6 step 2 (signing), where the key stays in the OS key store
+    # and signs there rather than in this crate -- if that design ever changes
+    # to sign with `rsa`, this entry is wrong. Recorded 2026-09-26, against both
+    # lockfiles: the fuzz crate reaches `rsa` through its path dependency.
+    "RUSTSEC-2023-0071",
     # ttf-parser: unmaintained (author statement, harfbuzz/ttf-parser#217); no
     # patched version exists. A direct dependency that reads embedded font
     # programs from documents, inside the worker only, after the program is

@@ -42,6 +42,13 @@ lives inside an object stream, or a signed document at all.
                 take opposite branches in every guard that asks about
                 encryption, and a guard tested only against the first looks
                 right while letting the second through.
+  signed-p256, signed-p384, signed-pss, signed-sha1
+                One signature each by a scheme the integrity verdict has to
+                implement beyond RSA PKCS#1 v1.5 over SHA-256 (see VARIANTS).
+  signed-altered, signed-broken
+                incr-signed.pdf rewritten after pyhanko signed it: one covered
+                byte changed, or one bit of the signature value flipped. The
+                two refusals the verdict has to tell apart, from one source.
 
 The signed fixtures need `pyhanko`, which is a *test oracle*, not a dependency
 of tpdf -- it both writes the signatures and is the only implementation here
@@ -533,6 +540,162 @@ def sign_with_timestamp(source: bytes, out_path: str) -> bool:
     return True
 
 
+# The signers that exercise each branch of `integrity.rs`, one fixture apiece.
+#
+# `integrity.rs` implements three signature schemes over five digests, and
+# every other signed fixture here is RSA PKCS#1 v1.5 over SHA-256 --- so a
+# verifier that handled only that one pair would pass every one of them. Each
+# entry is the one thing it varies: `(file, key, pss, digest, role)`.
+VARIANTS = (
+    ("signed-p256.pdf", "p256", False, "sha256", "ECDSA over P-256, SHA-256"),
+    ("signed-p384.pdf", "p384", False, "sha384", "ECDSA over P-384, SHA-384"),
+    ("signed-pss.pdf", "rsa", True, "sha256", "RSASSA-PSS, SHA-256"),
+    (
+        "signed-sha1.pdf",
+        "rsa",
+        False,
+        "sha1",
+        "RSA PKCS#1 v1.5 over SHA-1 -- reported as weak, never as intact",
+    ),
+)
+
+
+def sign_variant(source: bytes, out_path: str, key_kind: str, pss: bool, md: str) -> bool:
+    """Signs `source` with a throwaway key of `key_kind`, under `md`.
+
+    `key_kind` is `rsa`, `p256` or `p384`; `pss` asks pyhanko for RSASSA-PSS
+    rather than PKCS#1 v1.5. Returns False when pyhanko is not installed.
+
+    SHA-1 is written on purpose. pyhanko signs with it when asked, and its
+    validator reports the signature intact and cryptographically sound while
+    flagging `CRYPTO_CONSTRAINTS_FAILURE` --- the algorithm is disallowed by its
+    policy. tpdf reports the same signature as weak. `signature-probe --mode
+    integrity` maps the one onto the other, so the two readers are held to
+    agreeing about the weakness as well as about the bytes.
+    """
+    try:
+        import io
+
+        from pyhanko.sign import fields, signers
+    except ImportError:
+        return False
+
+    from datetime import datetime, timedelta, timezone
+
+    from asn1crypto import keys as asn1_keys
+    from asn1crypto import x509 as asn1_x509
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    if key_kind == "rsa":
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    else:
+        key = ec.generate_private_key(ec.SECP256R1() if key_kind == "p256" else ec.SECP384R1())
+    name = x509.Name(
+        [x509.NameAttribute(x509.NameOID.COMMON_NAME, f"tpdf {key_kind} test signer")]
+    )
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=3650))
+        .sign(key, hashes.SHA256())
+    )
+    signer = signers.SimpleSigner(
+        signing_cert=asn1_x509.Certificate.load(cert.public_bytes(serialization.Encoding.DER)),
+        signing_key=asn1_keys.PrivateKeyInfo.load(
+            key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        ),
+        cert_registry=None,
+        prefer_pss=pss,
+    )
+    writer = IncrementalPdfFileWriter(io.BytesIO(source))
+    fields.append_signature_field(
+        writer,
+        fields.SigFieldSpec(sig_field_name="Signature1", on_page=0, box=(60, 60, 260, 120)),
+    )
+    meta = signers.PdfSignatureMetadata(field_name="Signature1", md_algorithm=md)
+    with open(out_path, "wb") as handle:
+        signers.sign_pdf(writer, meta, signer=signer, output=handle)
+    return True
+
+
+def build_altered(source_path: str, out_path: str) -> bool:
+    """`incr-signed.pdf` with one byte inside the signed range changed.
+
+    The byte is the last digit of the first page's `/MediaBox` height, so the
+    change is one a reader could see --- the page is a point shorter --- and
+    the file still parses, with every offset and the xref unchanged. Nothing
+    else moves, so the signature itself is exactly as the signer made it:
+    it verifies, and the covered bytes no longer hash to what it signed. That
+    is the altered case and only that.
+    """
+    import re
+
+    try:
+        with open(source_path, "rb") as handle:
+            raw = bytearray(handle.read())
+    except OSError:
+        return False
+    found = re.search(rb"/MediaBox \[0 0 \d+ (\d+)\]", raw)
+    if found is None:
+        return False
+    at = found.end(1) - 1
+    raw[at] = ord("1") if raw[at] != ord("1") else ord("2")
+    with open(out_path, "wb") as handle:
+        handle.write(bytes(raw))
+    return True
+
+
+def build_broken(source_path: str, out_path: str) -> bool:
+    """`incr-signed.pdf` with one bit of its signature value flipped.
+
+    The covered bytes are untouched, so the digest still matches; what no
+    longer holds is the signature over the signed attributes. Located by
+    parsing the blob rather than by offset, and rewritten in place at the same
+    length, so `/ByteRange` and the xref stay correct.
+    """
+    import re
+
+    from asn1crypto import cms
+
+    try:
+        with open(source_path, "rb") as handle:
+            raw = handle.read()
+    except OSError:
+        return False
+    found = re.search(rb"/Contents\s*<([0-9A-Fa-f]+)>", raw)
+    if found is None:
+        return False
+    digits = found.group(1)
+    blob = bytearray(bytes.fromhex(digits.decode("ascii")))
+    value = cms.ContentInfo.load(bytes(blob), strict=False)["content"]["signer_infos"][0][
+        "signature"
+    ].native
+    at = bytes(blob).find(value)
+    if at < 0 or bytes(blob).find(value, at + 1) >= 0:
+        return False
+    blob[at + len(value) - 1] ^= 0x01
+    encoded = blob.hex()
+    if any(byte in b"ABCDEF" for byte in digits):
+        encoded = encoded.upper()
+    encoded = encoded.encode("ascii")
+    assert len(encoded) == len(digits), "the reserved span must not move"
+    with open(out_path, "wb") as handle:
+        handle.write(raw[: found.start(1)] + encoded + raw[found.end(1) :])
+    return True
+
+
 def build_nested_field(blob: bytes) -> bytes:
     """A document whose signature field hangs two levels down an `/AcroForm` tree.
 
@@ -884,6 +1047,51 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[OK] incr-ber.pdf ({os.path.getsize(ber_path)} bytes)")
     else:
         print("[SKIP] incr-ber.pdf: incr-signed.pdf has no blob to rewrite")
+
+    for name, key_kind, pss, md, role in VARIANTS:
+        path = os.path.join(args.outdir, name)
+        if not sign_variant(inline, path, key_kind, pss, md):
+            print(f"[SKIP] {name}: pyhanko not installed")
+            continue
+        manifest[name] = {
+            "role": role,
+            "pages": 2,
+            "bytes": os.path.getsize(path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 1,
+        }
+        print(f"[OK] {name} ({os.path.getsize(path)} bytes)")
+
+    for name, build, role in (
+        (
+            "signed-altered.pdf",
+            build_altered,
+            "incr-signed.pdf with one byte inside the signed range changed (the "
+            "first page's /MediaBox height); the signature itself untouched, so "
+            "it verifies and the digest does not match",
+        ),
+        (
+            "signed-broken.pdf",
+            build_broken,
+            "incr-signed.pdf with one bit of the signature value flipped; the "
+            "covered bytes untouched, so the digest matches and the signature "
+            "does not verify",
+        ),
+    ):
+        path = os.path.join(args.outdir, name)
+        if not build(os.path.join(args.outdir, "incr-signed.pdf"), path):
+            print(f"[SKIP] {name}: incr-signed.pdf is absent or has no blob")
+            continue
+        manifest[name] = {
+            "role": role,
+            "pages": 2,
+            "bytes": os.path.getsize(path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 1,
+        }
+        print(f"[OK] {name} ({os.path.getsize(path)} bytes)")
 
     nested_path = os.path.join(args.outdir, "signed-nested-field.pdf")
     blob = signature_blob(os.path.join(args.outdir, "incr-signed.pdf"))

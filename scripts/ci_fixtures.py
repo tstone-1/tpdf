@@ -53,9 +53,11 @@ half a second. ("The three" until 2026-08-21, which had been wrong since
 `make_links_pdf.py` joined them --- a count in prose with nothing asserting it.)
 
 `--signed` adds a fifth group, and it is the one that needs something installed:
-`make_incremental_pdf.py` and pyhanko, for the nine fixtures carrying a real
-signature and the two carrying real encryption. Without that flag nothing here needs anything but the standard
-library, which is what the paragraph above promises. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
+`make_incremental_pdf.py` and pyhanko, for the fixtures carrying a real
+signature and the two carrying real encryption --- `SIGNED` below is the list,
+and no count is written here because the last one written ("nine") went stale
+the day six more joined. Without that flag nothing here needs anything but the
+standard library, which is what the paragraph above promises. `make_comments_pdf.py` imports `make_text_pdf.py` for its PDF writer and
 is still dependency-free: that module reaches for fonttools inside the function
 that embeds a font, which nothing here calls. `make_links_pdf.py` imports it
 for the same writer and is dependency-free for the same reason.
@@ -165,6 +167,15 @@ SIGNED: list[tuple[str, list[str]]] = [
         "incr-two-signers",
         "incr-ber",
         "signed-nested-field",
+        # The integrity verdict's corpus, 2026-09-26: one fixture per signature
+        # scheme `integrity.rs` implements beyond RSA PKCS#1 v1.5 over SHA-256,
+        # and the two rewrites that make its refusals discriminate.
+        "signed-p256",
+        "signed-p384",
+        "signed-pss",
+        "signed-sha1",
+        "signed-altered",
+        "signed-broken",
     )
 ]
 

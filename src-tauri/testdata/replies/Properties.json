@@ -93,6 +93,12 @@
           "authority": false,
           "extensions_unread": 1
         }
+      },
+      "integrity": {
+        "verdict": "unchecked",
+        "why": "budget",
+        "digest": "SHA-256",
+        "method": "ECDSA P-256"
       }
     }
   ],

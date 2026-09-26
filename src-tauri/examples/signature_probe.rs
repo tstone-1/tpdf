@@ -75,14 +75,44 @@
 //! without it, a probe whose PDFium half was silently broken would report full
 //! agreement on every unsigned file in the corpus and look like coverage.
 //!
+//! ## `--mode integrity` holds the verdict against pyHanko
+//!
+//! PDFium verifies nothing, so the modes above cannot reach
+//! `docinfo::Signature::integrity` at all. This one asks pyHanko ---
+//! `testdata/check_signature.py --json`, run through `uv` --- what it makes of
+//! each signature, maps its answer onto tpdf's words, and compares:
+//!
+//! * a coverage pyHanko cannot classify as the whole file or a whole revision
+//!   is `Unchecked(Range)` here --- the signature does not protect what it
+//!   seems to, and neither reader may call it intact;
+//! * pyHanko's `valid=no` is `Broken`, whatever its `intact` says, because
+//!   `integrity.rs` does not believe a digest the signature does not vouch for;
+//! * `valid=yes, intact=no` is `Altered`;
+//! * both yes with pyHanko's `CRYPTO_CONSTRAINTS_FAILURE` is `Weak` --- its
+//!   policy disallows SHA-1 and tpdf calls a SHA-1 match weak, so the two agree
+//!   about the weakness as well as about the bytes;
+//! * both yes otherwise is `Intact`, and the digest names must agree too.
+//!
+//! **A different implementation, which is what makes it an oracle**: pyHanko
+//! is Python over `asn1crypto` and `cryptography`, and shares no code with
+//! `integrity.rs`. It is also the writer of every fixture, so on its own it
+//! would be *a writer and its own reader* --- which is why `signed-altered` and
+//! `signed-broken` are rewritten after pyHanko signed them, by the generator
+//! rather than by pyHanko, and why the three verdicts they and the intact
+//! fixtures produce have to be three different words.
+//!
+//! A file pyHanko cannot read --- `incr-ber.pdf`, whose indefinite lengths it
+//! refuses --- exits 1 naming that, rather than passing with nothing compared.
+//!
 //! Usage:
-//!   signature-probe <file.pdf> [--mode read|agree|nested|clean] [--lib DIR]
+//!   signature-probe <file.pdf> [--mode read|agree|nested|clean|integrity] [--lib DIR]
 
 use std::path::{Path, PathBuf};
 use tpdf_lib::document::OpenDocument;
 
 use pdfium_render::prelude::{FPDF_DOCUMENT, FPDF_SIGNATURE};
 use tpdf_lib::docinfo::{self, Properties};
+use tpdf_lib::integrity::{Verdict, Why};
 use tpdf_lib::progressive::{self, Bindings};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,6 +121,7 @@ enum Mode {
     Agree,
     Clean,
     Nested,
+    Integrity,
 }
 
 struct Args {
@@ -118,6 +149,7 @@ fn parse_args() -> Result<Args, String> {
                     "agree" => Mode::Agree,
                     "clean" => Mode::Clean,
                     "nested" => Mode::Nested,
+                    "integrity" => Mode::Integrity,
                     other => return Err(format!("unknown mode: {other}")),
                 }
             }
@@ -160,6 +192,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Agree => Ok(agree(&ours, &theirs)),
         Mode::Clean => Ok(clean(&ours, &theirs)),
         Mode::Nested => Ok(nested(&ours, &theirs)),
+        Mode::Integrity => Ok(integrity(&ours, &args.file)),
     }
 }
 
@@ -339,6 +372,14 @@ fn read(ours: &Properties, theirs: &[Theirs]) {
                 listed(&certificate.extended_usage),
                 certificate.authority,
                 certificate.extensions_unread
+            );
+        }
+        // PDFium verifies nothing, so this is print-only here; `--mode
+        // integrity` is where the verdict meets an oracle.
+        if let Some(integrity) = &signature.integrity {
+            println!(
+                "    integrity: {:?} why={:?} digest={:?} method={:?}",
+                integrity.verdict, integrity.why, integrity.digest, integrity.method
             );
         }
         // No PDFium accessor reaches a timestamp either, so this is print-only
@@ -569,4 +610,111 @@ fn clean(ours: &Properties, theirs: &[Theirs]) -> bool {
     );
     println!("\n{} passed, {} failed", report.passed, report.failed);
     report.failed == 0
+}
+
+/// What pyHanko concludes about each signature in `file`, one JSON value each.
+fn pyhanko(file: &Path) -> Result<Vec<serde_json::Value>, String> {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/check_signature.py");
+    let out = std::process::Command::new("uv")
+        .args(["run", "--with", "pyhanko", "--quiet", "python3"])
+        .arg(&script)
+        .arg("--json")
+        .arg(file)
+        .output()
+        .map_err(|e| format!("uv run: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(|e| format!("{e}: {line}")))
+        .collect()
+}
+
+/// The verdict tpdf must give, in tpdf's words, for what pyHanko found.
+fn expected(theirs: &serde_json::Value) -> (Verdict, Option<Why>) {
+    let flag = |key: &str| theirs.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+    let coverage = theirs
+        .get("coverage")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if !matches!(coverage, "ENTIRE_FILE" | "ENTIRE_REVISION") {
+        (Verdict::Unchecked, Some(Why::Range))
+    } else if !flag("valid") {
+        (Verdict::Broken, None)
+    } else if !flag("intact") {
+        (Verdict::Altered, None)
+    } else if flag("crypto_constraints") {
+        (Verdict::Weak, None)
+    } else {
+        (Verdict::Intact, None)
+    }
+}
+
+fn integrity(ours: &Properties, file: &Path) -> bool {
+    let mut report = Report {
+        passed: 0,
+        failed: 0,
+    };
+    let signed: Vec<_> = ours.signatures.iter().filter(|s| s.signed).collect();
+    if signed.is_empty() {
+        println!("[FAIL] this document has no signature; --mode integrity needs one");
+        return false;
+    }
+    let theirs = match pyhanko(file) {
+        Ok(theirs) => theirs,
+        Err(e) => {
+            println!("[FAIL] the oracle did not run, so nothing was compared: {e}");
+            return false;
+        }
+    };
+    if let Some(reason) = theirs.iter().find_map(|v| v.get("unreadable")) {
+        println!("[FAIL] pyHanko cannot read this file ({reason}), so there is no oracle for it");
+        return false;
+    }
+
+    report.check(
+        "both readers find the same number of signatures",
+        signed.len() == theirs.len(),
+        &format!("tpdf {}, pyHanko {}", signed.len(), theirs.len()),
+    );
+    for ours in &signed {
+        let at = |what: &str| format!("{}: {what}", ours.field);
+        let Some(entry) = theirs.iter().find(|v| {
+            v.get("field").and_then(serde_json::Value::as_str) == Some(ours.field.as_str())
+        }) else {
+            report.check(
+                &at("pyHanko reports this field"),
+                false,
+                "no entry by that name",
+            );
+            continue;
+        };
+        let (verdict, why) = expected(entry);
+        let got = ours.integrity.clone().unwrap_or_default();
+        report.check(
+            &at("the verdict pyHanko's answer maps to"),
+            got.verdict == verdict && got.why == why,
+            &format!(
+                "tpdf {:?}/{:?}, expected {:?}/{:?} from pyHanko {}",
+                got.verdict, got.why, verdict, why, entry
+            ),
+        );
+        // The digest names only where tpdf got far enough to choose one.
+        if !got.digest.is_empty() {
+            let md = entry
+                .get("md")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let named = got.digest.to_ascii_lowercase().replace('-', "");
+            report.check(
+                &at("the same digest algorithm"),
+                named == md,
+                &format!("tpdf {:?}, pyHanko {md:?}", got.digest),
+            );
+        }
+    }
+    println!("\n{} passed, {} failed", report.passed, report.failed);
+    report.failed == 0 && report.passed > 0
 }

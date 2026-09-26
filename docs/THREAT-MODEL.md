@@ -1084,9 +1084,10 @@ bound reports through, because to a reader they are one event: this scan stopped
 what it says about signatures is incomplete.
 
 **And the honest limit, which is the part a reader would get wrong.** Parsing a certificate is
-not verifying one. tpdf builds no chain, holds no trust store, consults no revocation list, and
-never checks the signature against the bytes it covers — so a document can name itself
-anything and tpdf will show it. What the certificate buys is a second, differently-sourced
+not verifying one. tpdf builds no chain, holds no trust store and consults no revocation list
+— so a document can name itself anything and tpdf will show it. Since 2026-09-26 it does check
+the signature against the bytes it covers (below, *checking a signature*), and that check says
+whether the certificate's key made the signature, never whose key it is. What the certificate buys is a second, differently-sourced
 claim about who signed, next to the `/Name` the signer typed; `properties.ts` shows both and
 says when they disagree. `NOT_CHECKED` states all four omissions and is shown wherever a
 signature is, and `no_certificate_field_may_carry_a_verdict` makes adding a field to
@@ -1160,6 +1161,45 @@ parser however many padding bytes preceded the last non-zero one, and the new on
 exactly one value. A blob that will not walk is counted through `certificates_unread` — by its
 own mechanism, with its own test, because it and the parser's counter can produce the same
 number and one input reaches only one of them.
+
+**Checking a signature, 2026-09-26: the first cryptography run on attacker-supplied bytes.**
+`integrity::check` recomputes the digest over the `/ByteRange`, compares it with the signed
+`messageDigest`, and verifies the signature over the signed attributes under the signer's
+public key --- RSA PKCS#1 v1.5 and PSS through `rsa`, ECDSA over P-256 and P-384 through
+`p256`/`p384`. Every input is the document's: the range, the blob, the certificate, the key,
+the signature value. What bounds it:
+
+- **The worker, again.** It is called from `docinfo::scan_from`, so it runs where every other
+  parser does and needed no new mechanism. No key material other than the document's own
+  public keys exists anywhere in tpdf; `rsa`'s RUSTSEC-2023-0071 is a timing leak in
+  private-key operations, which this never performs, and is accepted in `.cargo/audit.toml`
+  on that ground.
+- **The blob is the one `signature_contents` already prepared**, under `MAX_SIG_BLOB` and the
+  BER walk's bounds, so no new byte reaches a decoder the certificate reader did not already
+  reach. The signed attributes are located by walking the same, already-decoded structure.
+- **The range is validated before a byte is hashed**: exactly two pieces from zero, within the
+  file, and a hole that is `<`, hex and `>` decoding to this signature's own `/Contents`. The
+  numbers are the document's and are converted, never cast; their sum cannot overflow a `u64`
+  because each is under 2^63. A range failing any of it gets no verdict, because a digest over
+  a range that leaves something else uncovered is the signature-wrapping attack's success
+  condition, not a check.
+- **Hashing is budgeted per document**: `MAX_HASHED`, one gigabyte across all signatures,
+  charged before the bytes are read. A range is nearly the whole file and there may be
+  thirty-two signatures, so without it a document chooses how many times the worker hashes
+  itself inside its thirty-second deadline.
+- **Key sizes are capped**: an RSA modulus over 8,192 bits is refused, and `rsa` refuses an
+  exponent over 2^33 on its own, so a document cannot make one public-key operation expensive.
+
+**What a verdict claims, stated as the threat model needs it.** `intact` means the covered bytes
+are the ones signed and the key in the certificate the signature names made the signature. It
+does not mean the signer is who the certificate says, that the certificate chains to anything,
+was unrevoked, or was in date, and it says nothing about revisions appended after the signed
+range --- a later revision can change every page a reader sees while an earlier signature stays
+`intact`, which is why the dialog states the appendix beside the verdict. A signature tpdf
+cannot fully check is `unchecked` with its reason and is never shown as `intact`; a SHA-1 match
+is `weak`, because a chosen-prefix collision makes it forgeable by whoever prepared the
+document. The attacker this does not stop is the one with their own key: anybody can make a
+certificate naming anybody, sign, and be `intact`. Chain building is Phase 6 step 3's question.
 
 **A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
 `/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.
