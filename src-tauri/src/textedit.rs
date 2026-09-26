@@ -248,10 +248,11 @@ fn optional_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
 }
 
 // The font named `name` measured for read-only text only, if it is a simple
-// font with the widths and bounding box that takes.
+// font with the widths and bounding box that takes, or Symbol or ZapfDingbats.
 fn read_only_font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Option<fonts::Metrics> {
     let fonts = dictionary(doc, resources.get(b"Font").ok()?).ok()?;
-    fonts::read_only(doc, dictionary(doc, fonts.get(name).ok()?).ok()?)
+    let font = dictionary(doc, fonts.get(name).ok()?).ok()?;
+    fonts::read_only(doc, font).or_else(|| fonts::symbolic(font))
 }
 
 // The FontBBox named by a font's BaseFont, if it is a Latin standard font's.

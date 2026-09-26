@@ -495,6 +495,13 @@ inked to the box, so its text is read-only with that ink reserved and the other
 text on the page edits. The program is never read. A page left with nothing to
 edit is refused with the first such font's own reason, not *page contains only
 read-only text*. Composite and Type 3 fonts keep their own refusals.
+Symbol and ZapfDingbats named with no program and no key but `Type`, `Subtype`,
+`BaseFont` and `Name`, as ReportLab sets bullets, are measured the same way by
+`fonts::symbolic` from `standard::SYMBOLIC`: each code of the built-in encoding with
+Adobe's width, and a code the encoding leaves empty refuses as unmapped.
+`scripts/standard_font_widths.py` generates that table only when ReportLab's width
+and encoding tables and matplotlib's AFM files name the same glyph with the same
+width for every encoded code.
 
 Every one of the twelve Latin standard fonts (Helvetica, Times, Courier, each in
 four styles) is edited the way Helvetica always was: no descriptor, WinAnsi or

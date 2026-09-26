@@ -772,14 +772,56 @@ pub(super) fn read_only(doc: &Document, font: &Dictionary) -> Option<Metrics> {
             overhang: [left.min(0.), (right - width).max(0.)],
         });
     }
-    Some(Metrics {
+    Some(opaque_metrics(opaque, bottom, top))
+}
+
+/// Metrics for read-only text only: every code opaque, none offered, the ink
+/// held between `bottom` and `top` of the font's box.
+fn opaque_metrics(opaque: Box<[Option<Opaque>; 256]>, bottom: f64, top: f64) -> Metrics {
+    Metrics {
         opaque: Some(opaque),
         unicode: None,
         vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
         widths: Box::new([None; 256]),
         horizontal_overhangs: None,
         codes: Some(Codes::Single(Box::new([None; 256]))),
-    })
+    }
+}
+
+/// Symbol or ZapfDingbats named without a program, as ReportLab sets bullets:
+/// measured for read-only text only, like [`read_only`], from Adobe's widths
+/// for each code of the font's built-in encoding and its box
+/// (`standard::SYMBOLIC`). Only the plain standard font, with no key that
+/// could change what a code shows.
+pub(super) fn symbolic(font: &Dictionary) -> Option<Metrics> {
+    if font.get(b"Subtype").and_then(Object::as_name).ok()? != b"Type1"
+        || font
+            .iter()
+            .any(|(key, _)| !matches!(key.as_slice(), b"Type" | b"Subtype" | b"BaseFont" | b"Name"))
+    {
+        return None;
+    }
+    let base = font.get(b"BaseFont").and_then(Object::as_name).ok()?;
+    let (_, widths, [left, bottom, right, top]) = standard::SYMBOLIC
+        .iter()
+        .find(|(name, _, _)| *name == base)?;
+    let (left, bottom, right, top) = (
+        f64::from(*left),
+        f64::from(*bottom),
+        f64::from(*right),
+        f64::from(*top),
+    );
+    let mut opaque = Box::new([None; 256]);
+    for (code, width) in widths.iter().enumerate() {
+        if *width > 0 {
+            let width = f64::from(*width);
+            opaque[code] = Some(Opaque {
+                width,
+                overhang: [left.min(0.), (right - width).max(0.)],
+            });
+        }
+    }
+    Some(opaque_metrics(opaque, bottom, top))
 }
 
 /// Whether a simple font's descriptor names no embedded program.

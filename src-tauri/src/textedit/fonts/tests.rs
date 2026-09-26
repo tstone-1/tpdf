@@ -1340,3 +1340,71 @@ fn textedit_a_font_that_forbids_editing_keeps_its_text_read_only() {
         );
     }
 }
+
+// ZapfDingbats and Symbol, named without a program as ReportLab sets bullets,
+// keep their text read-only from Adobe's widths for their built-in encodings,
+// and the rest of the page edits. An encoding of the document's own, or a
+// code the built-in encoding leaves empty, still refuses the page.
+#[test]
+fn textedit_symbol_and_dingbats_keep_their_text_read_only() {
+    let with = |extra: lopdf::Dictionary, content: &[u8]| {
+        let mut doc = textedit::tests::fixture();
+        let helvetica = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let mut dingbats = dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "ZapfDingbats"
+        };
+        for (key, value) in extra {
+            dingbats.set(key, value);
+        }
+        let dingbats = doc.add_object(dingbats);
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.get_dictionary_mut(page).unwrap().set(
+            "Resources",
+            dictionary! { "Font" => dictionary! { "F1" => helvetica, "F2" => dingbats } },
+        );
+        let stream = doc.add_object(Stream::new(Dictionary::new(), content.to_vec()));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", stream);
+        doc
+    };
+    let bullet = b"BT /F2 10 Tf 30 180 Td (l) Tj ET BT /F1 12 Tf 40 180 Td (FIRST) Tj ET";
+    let mut doc = with(Dictionary::new(), bullet);
+    let scan = textedit::scan(&doc, 0).unwrap();
+    let offered: Vec<&str> = scan.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(offered, ["FIRST"]);
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            operator: scan.runs[0].operator,
+            revision: scan.revision.clone(),
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let written = String::from_utf8(doc.get_page_content(page)).unwrap();
+    assert!(written.contains("/F2 10 Tf 30 180 Td (l) Tj"), "{written}");
+    assert!(textedit::scan(
+        &with(dictionary! { "Encoding" => "WinAnsiEncoding" }, bullet),
+        0
+    )
+    .is_err());
+    // Code 0 names no glyph in ZapfDingbats' built-in encoding.
+    assert_eq!(
+        textedit::scan(
+            &with(
+                Dictionary::new(),
+                b"BT /F2 10 Tf 30 180 Td <00> Tj ET BT /F1 12 Tf 40 180 Td (FIRST) Tj ET"
+            ),
+            0
+        )
+        .unwrap_err(),
+        "text contains an unmapped font code"
+    );
+}

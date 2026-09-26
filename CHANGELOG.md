@@ -25,8 +25,10 @@ have the binary.)
   whole.** A font whose licence forbids editing, or whose program or character
   map tpdf does not support, used to make the entire page uneditable. Text in
   such a font is now kept exactly as it is, and the rest of the page can be
-  edited. In the 31-file public sample, 21 more pages can be edited and about
-  1,000 more runs of text are offered; no edit that was accepted is refused.
+  edited. The same holds for bullets and symbols set in the standard Symbol
+  and ZapfDingbats fonts. In the 31-file public sample, 37 more pages can be
+  edited and about 2,000 more runs of text are offered; no edit that was
+  accepted is refused.
 
 - **More of InDesign's and PowerPoint's tagged output is read correctly.**
   Replacement text on a tagged element, a language on a marked paragraph, tab

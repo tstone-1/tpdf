@@ -1,7 +1,8 @@
 """Generate src-tauri/src/textedit/fonts/standard.rs: advance widths of the
 twelve Latin standard PDF fonts (ISO 32000-1 9.6.2.2) for printable WinAnsi
 codes, the domain the text editor offers for standard Helvetica, and each
-font's FontBBox.
+font's FontBBox; and for Symbol and ZapfDingbats, the widths of every code of
+their built-in encodings and their boxes, which keep text in them read-only.
 
 Widths come from two independent transcriptions of Adobe's Core 14 AFM
 metrics that must agree on every value, or nothing is written: ReportLab's
@@ -66,6 +67,35 @@ def widths(font):
     return result
 
 
+SYMBOLIC = [("Symbol", "SymbolEncoding"), ("ZapfDingbats", "ZapfDingbatsEncoding")]
+
+
+def symbolic_widths(font, encoding):
+    """Every code of the font's built-in encoding, 0 where it names no glyph.
+
+    ReportLab's encoding and width tables against the glyph name and width the
+    AFM file gives each code: both must name the same glyph with the same width
+    for every code either encodes, or nothing is written."""
+    names = _fontdata.encodings[encoding]
+    by_glyph = _fontdata.widthsByFontGlyph[font]
+    afm = {}
+    for line in (AFM / f"{font}.afm").read_text(encoding="latin-1").splitlines():
+        if line.startswith("C "):
+            fields = dict(part.strip().split(" ", 1) for part in line.split(";") if part.strip())
+            if int(fields["C"]) >= 0:
+                afm[int(fields["C"])] = (fields["N"], int(fields["WX"]))
+    result = []
+    for code in range(256):
+        name = names[code]
+        if name is None and code not in afm:
+            result.append(0)
+            continue
+        if name is None or code not in afm or afm[code] != (name, by_glyph[name]):
+            sys.exit(f"[FAIL] {font} code {code}: ReportLab {name}, AFM {afm.get(code)}")
+        result.append(by_glyph[name])
+    return result
+
+
 def box(font):
     a = [int(v) for v in FONT_METRICS[font][0]["FontBBox"]]
     lines = (AFM / f"{font}.afm").read_text(encoding="latin-1").splitlines()
@@ -109,6 +139,19 @@ def render():
     for font in FONTS:
         lines.append(f'    (b"{font}", [{", ".join(str(v) for v in box(font))}]),')
     lines.append("];")
+    lines.append("")
+    lines.append("// Symbol and ZapfDingbats in their built-in encodings: each code's width")
+    lines.append("// (0 where the encoding names no glyph) and the font's box. Text in them is")
+    lines.append("// only ever kept read-only.")
+    lines.append("pub(super) const SYMBOLIC: [(&[u8], [u16; 256], [i16; 4]); 2] = [")
+    for font, encoding in SYMBOLIC:
+        values = symbolic_widths(font, encoding)
+        lines.append(f'    (b"{font}", [')
+        for start in range(0, len(values), 16):
+            chunk = ", ".join(str(v) for v in values[start:start + 16])
+            lines.append(f"        {chunk},")
+        lines.append(f"    ], [{', '.join(str(v) for v in box(font))}]),")
+    lines.append("];")
     source = "\n".join(lines) + "\n"
     formatted = subprocess.run(
         ["rustfmt", "--edition", "2021", "--emit", "stdout"],
@@ -127,7 +170,8 @@ def main():
         print(f"[OK] {OUT.name} matches both sources")
         return
     OUT.write_text(text, encoding="utf-8", newline="\n")
-    print(f"[OK] wrote {OUT.name}: {len(FONTS)} fonts x {len(CODES)} codes and boxes")
+    print(f"[OK] wrote {OUT.name}: {len(FONTS)} fonts x {len(CODES)} codes and boxes, "
+          f"{len(SYMBOLIC)} symbolic fonts x 256 codes")
 
 
 main()
