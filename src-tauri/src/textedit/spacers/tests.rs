@@ -6,6 +6,8 @@ fn textedit_inline_separators_preserve_bytes_and_positions_without_edit_targets(
         ("<09>", "( ) Tj"),
         ("<FEFF0007>", "( ) Tj"),
         ("<FEFF00090009>", "[( ) -125 ( )] TJ"),
+        // InDesign: one space for a run of tabs, placed by the matrix.
+        ("<FEFF0009000900090009>", "( ) Tj"),
     ] {
         for position in ["", "40 140 Td", "0 1 -1 0 100 100 Tm"] {
             let span = format!("/Span << /ActualText {actual} >> BDC {position} {show} EMC");
@@ -91,6 +93,54 @@ fn textedit_inline_separators_refuse_semantics_nesting_and_unbounded_sequences()
         assert_eq!(
             textedit::scan(&with_content(source.as_bytes()), 0).is_ok(),
             count == 32
+        );
+    }
+}
+
+// InDesign writes a tab stop as an empty span between text objects. Nothing
+// can be shown there, so it is kept as it is and the text around it stays
+// editable; the same span holding anything, or naming other text, is not a
+// spacer.
+#[test]
+fn textedit_an_empty_separator_between_text_objects_is_kept() {
+    let span = "/Span << /ActualText <FEFF000900090009> >> BDC EMC";
+    let source = format!(
+        "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {span} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET"
+    );
+    let mut doc = with_content(source.as_bytes());
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(
+        before
+            .runs
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>(),
+        ["FIRST", "SECOND"]
+    );
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: before.revision.clone(),
+            operator: before.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "FI".into(),
+        }],
+    )
+    .unwrap();
+    let bytes = textedit::page_content(&doc, crate::pagetree::ordered_pages(&doc)[0]).unwrap();
+    assert!(String::from_utf8(bytes).unwrap().contains(span));
+    for span in [
+        "/Span << /ActualText <FEFF000900090009> >> BDC q Q EMC",
+        "/Span << /ActualText (WORDS) >> BDC EMC",
+    ] {
+        let source = format!(
+            "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET {span} BT /F1 12 Tf 40 140 Td (SECOND) Tj ET"
+        );
+        assert!(
+            textedit::scan(&with_content(source.as_bytes()), 0).is_err(),
+            "{span}"
         );
     }
 }

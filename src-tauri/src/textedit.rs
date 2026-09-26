@@ -767,6 +767,8 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     // leading then in effect: a layout restores the line by replaying from here.
     let mut line_origin = (0_usize, 0.0_f64);
     let mut spacer: Option<spacers::Spacer> = None;
+    // An empty spacer outside a text object: open until its EMC.
+    let mut empty_spacer = false;
     let mut actual: Option<actual::Span> = None;
     // Inside an optional-content (layer) sequence: its text may be hidden.
     let mut layer = false;
@@ -821,6 +823,14 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         )
     };
     let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    // Whether the marked-content sequence opened at `index` closes at once,
+    // with no operator inside it.
+    let closes = |index: usize| {
+        content
+            .operations
+            .get(index + 1)
+            .is_some_and(|next| next.operator == "EMC" && next.operands.is_empty())
+    };
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
             continue;
@@ -858,11 +868,18 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("BDC", [tag, properties])
                 if !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
             {
-                if let Some(value) = spacers::Spacer::new(tag, properties)
-                    .ok()
-                    .filter(|_| inside)
-                {
-                    spacer = Some(value);
+                let separator = spacers::Spacer::new(tag, properties).ok();
+                // InDesign writes a tab stop as an empty span of this kind
+                // between text objects, where nothing can be shown: it holds
+                // only its ActualText, and there is nothing in it to edit or
+                // move.
+                let empty = !inside && closes(index);
+                if let Some(value) = separator.filter(|_| inside || empty) {
+                    if inside {
+                        spacer = Some(value);
+                    } else {
+                        empty_spacer = true;
+                    }
                 } else {
                     actual = Some(actual::Span::new(tag, properties, index)?);
                 }
@@ -876,12 +893,18 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
             ("EMC", []) if inside && spacer.is_some() => {
                 spacer = None;
             }
+            ("EMC", []) if empty_spacer => empty_spacer = false,
             // An artifact needs no properties, inside a text object or out:
             // LibreOffice marks table-of-contents dot leaders `/Artifact BMC`.
             ("BMC", [tag]) if !inside || tag.as_name().ok() == Some(b"Artifact") => {
                 tags.begin(tag, None)?
             }
-            ("BDC", [tag, properties]) => tags.begin(tag, Some(properties))?,
+            ("BDC", [tag, properties]) => {
+                tags.begin(tag, Some(properties))?;
+                if closes(index) {
+                    tags.empty();
+                }
+            }
             ("EMC", []) => tags.end()?,
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
             // Only accept saves outside BT/ET. Preserve every accepted state

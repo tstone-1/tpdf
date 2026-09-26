@@ -51,6 +51,11 @@ fn textedit_figure_ownership_preserves_paragraph_markers_without_admitting_text(
 
 #[test]
 fn textedit_figure_cannot_expose_text_through_a_span_child() {
+    // SECOND's show, read before the figure takes it: the stream below only
+    // renames its tag, so the operator stays where it is.
+    let unowned = textedit::scan(&fixture(CONTENT).0, 0).unwrap();
+    assert_eq!(unowned.runs[1].text, "SECOND");
+    let second = unowned.runs[1].operator;
     let (mut doc, ids) = fixture(CONTENT);
     let span =
         doc.add_object(dictionary! { "S" => "Span", "P" => ids[4], "Pg" => ids[0], "K" => 1 });
@@ -72,7 +77,24 @@ fn textedit_figure_cannot_expose_text_through_a_span_child() {
     doc.get_dictionary_mut(ids[0])
         .unwrap()
         .set("Contents", stream);
-    assert!(textedit::scan(&doc, 0).is_err());
+    // The figure's words are kept, pinned: never offered, and an edit aimed at
+    // them is refused without a change. The paragraph beside it edits.
+    let scan = textedit::scan(&doc, 0).unwrap();
+    let offered: Vec<&str> = scan.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(offered, ["FIRST"]);
+    let change = |operator: u32, original: &str| textedit::Change {
+        layout: None,
+        page: 0,
+        revision: scan.revision.clone(),
+        operator,
+        original: original.into(),
+        replacement: "IN".into(),
+    };
+    let before = doc.objects.clone();
+    assert!(textedit::write(&mut doc, &[change(second, "SECOND")]).is_err());
+    assert_eq!(doc.objects, before);
+    textedit::write(&mut doc, &[change(scan.runs[0].operator, "FIRST")]).unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
 }
 
 #[test]

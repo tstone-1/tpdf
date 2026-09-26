@@ -184,11 +184,7 @@ fn textedit_tagged_refusals_identify_metadata_without_echoing_document_data() {
             "ClassMap",
             "unsupported ClassMap metadata in tagged element",
         ),
-        (
-            3,
-            "ActualText",
-            "unsupported ActualText metadata in tagged element",
-        ),
+        (3, "E", "unsupported E metadata in tagged element"),
         (
             3,
             "SYNTHETIC_SECRET\n",
@@ -348,4 +344,42 @@ fn textedit_tagged_refusals_distinguish_marked_content_context() {
         textedit::scan(&fixture(CONTENT).0, 0).unwrap().runs.len(),
         2
     );
+}
+
+// A marked-content sequence may name its language beside its MCID, as
+// InDesign writes every paragraph; the edit is accepted and the saved stream
+// keeps the language. A value that is not a language tag is still refused.
+#[test]
+fn textedit_marked_content_may_name_its_language() {
+    let source = std::str::from_utf8(CONTENT).unwrap();
+    let tagged = source.replace("/MCID 0", "/Lang (en-US) /MCID 0");
+    let (mut doc, _) = fixture(tagged.as_bytes());
+    let scan = textedit::scan(&doc, 0).unwrap();
+    let first = scan.runs.iter().find(|run| run.text == "FIRST").unwrap();
+    textedit::write(
+        &mut doc,
+        &[textedit::Change {
+            layout: None,
+            page: 0,
+            revision: scan.revision.clone(),
+            operator: first.operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc.get_page_content(page);
+    let written = String::from_utf8_lossy(&content);
+    assert!(written.contains("/Lang (en-US)"), "{written}");
+    assert!(written.contains("(IN)"), "{written}");
+    for value in ["()", "(en--US)", "(-en)", "/en"] {
+        let bad = source.replace("/MCID 0", &format!("/Lang {value} /MCID 0"));
+        let (doc, _) = fixture(bad.as_bytes());
+        assert_eq!(
+            textedit::scan(&doc, 0).unwrap_err(),
+            "unsupported or inconsistent tagged text structure",
+            "{value}"
+        );
+    }
 }

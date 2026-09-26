@@ -158,6 +158,22 @@ fn keys(dict: &Dictionary, allowed: &[&[u8]], context: &str) -> Result<(), Strin
     Ok(())
 }
 
+/// A `Lang` value: a language tag of letters and digits in parts of up to
+/// eight, joined by hyphens (ISO 32000-1 14.9.2.2).
+fn language(value: &Object) -> Result<(), String> {
+    let bytes = value.as_str().map_err(|_| INVALID)?;
+    if bytes.is_empty()
+        || bytes.len() > 63
+        || !bytes[0].is_ascii_alphabetic()
+        || bytes.split(|&b| b == b'-').any(|part| {
+            part.is_empty() || part.len() > 8 || !part.iter().all(u8::is_ascii_alphanumeric)
+        })
+    {
+        return Err(INVALID.into());
+    }
+    Ok(())
+}
+
 fn get<'a>(dict: &'a Dictionary, key: &[u8]) -> Result<&'a Object, String> {
     dict.get(key).map_err(|_| INVALID.into())
 }
@@ -326,18 +342,21 @@ fn element(
     // those of that type (PowerPoint maps Diagram and Chart to Figure).
     role: &[u8],
 ) -> Result<(Option<ObjectId>, bool), String> {
-    // In particular: no ActualText, E or attribute revision. ActualText and E
-    // replace the text an edit would produce, so they are refused outright.
-    // Alt text replaces an element's content for assistive technology and a
-    // non-empty title often repeats it; both are kept, and an element with
-    // editable text that carries either is pinned rather than refused, so an
-    // edit can never leave them describing the old wording.
+    // In particular: no E or attribute revision. E replaces the text an edit
+    // would produce, so it is refused outright. Alt text replaces an element's
+    // content for assistive technology, ActualText replaces its text for
+    // extraction and search, and a non-empty title often repeats it; all are
+    // kept, and an element with editable text that carries one is pinned
+    // rather than refused, so an edit can never leave them describing the old
+    // wording. InDesign sets ActualText on the Span of a forced line break, and
+    // refusing it refused the whole page.
     let tag = name(get(dict, b"S")?)?;
     let mut allowed: Vec<&[u8]> = vec![b"Type", b"S", b"P", b"Pg", b"K", b"A", b"Lang", b"T"];
     if tag == b"TH" {
         allowed.push(b"ID");
     }
     allowed.push(b"Alt");
+    allowed.push(b"ActualText");
     if scope.classes.is_some() && !matches!(tag, b"TD" | b"TH") {
         allowed.push(b"C");
     }
@@ -348,9 +367,14 @@ fn element(
             return Err("unsupported NS metadata in tagged element".into());
         }
     }
-    // ISO 32000-1 Table 323: T is a human-readable title and Alt an alternate
-    // description. Both are text strings; bound what is retained.
-    for (key, limit) in [(b"T".as_slice(), 4096), (b"Alt", 65536)] {
+    // ISO 32000-1 Table 323: T is a human-readable title, Alt an alternate
+    // description and ActualText a replacement for the element's text. All
+    // are text strings; bound what is retained.
+    for (key, limit) in [
+        (b"T".as_slice(), 4096),
+        (b"Alt", 65536),
+        (b"ActualText", 65536),
+    ] {
         if dict
             .get(key)
             .is_ok_and(|value| !value.as_str().is_ok_and(|text| text.len() <= limit))
@@ -358,26 +382,18 @@ fn element(
             return Err(INVALID.into());
         }
     }
-    // Alt stands in for everything the element contains, so it pins a
-    // grouping element's descendants too. A container's title names the
-    // section rather than repeating its text.
+    // Alt and ActualText stand in for everything the element contains, so
+    // they pin a grouping element's descendants too. A container's title
+    // names the section rather than repeating its text.
     let mut pins = dict.has(b"Alt")
+        || dict.has(b"ActualText")
         || (owns_text
             && dict
                 .get(b"T")
                 .is_ok_and(|value| value.as_str().is_ok_and(|text| !text.is_empty())));
     let page = dict.get(b"Pg").ok().map(reference).transpose()?;
-    if let Ok(language) = dict.get(b"Lang") {
-        let bytes = language.as_str().map_err(|_| INVALID)?;
-        if bytes.is_empty()
-            || bytes.len() > 63
-            || !bytes[0].is_ascii_alphabetic()
-            || bytes.split(|&b| b == b'-').any(|part| {
-                part.is_empty() || part.len() > 8 || !part.iter().all(u8::is_ascii_alphanumeric)
-            })
-        {
-            return Err(INVALID.into());
-        }
+    if let Ok(value) = dict.get(b"Lang") {
+        language(value)?;
     }
     // ISO 32000-1 Table 323: Type is optional, but a supplied value must agree.
     if dict
@@ -723,8 +739,11 @@ fn groups<'a>(
                 name(get(child, b"S")?)?,
             )?;
             let tag = name(get(child, b"S")?)?;
-            if plain.tag == b"Figure"
-                || annotation_owner(plain.tag)
+            // PowerPoint tags the text of a shape as a Span inside the
+            // shape's Figure. The words belong to the drawing, so they are
+            // kept, pinned, and the rest of the page stays editable.
+            let in_figure = plain.tag == b"Figure";
+            if annotation_owner(plain.tag)
                 || (!matches!(tag, b"NonStruct" | b"Span")
                     && !annotation_owner(tag)
                     && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
@@ -744,7 +763,7 @@ fn groups<'a>(
                 page,
                 tag,
                 items: items.iter().collect(),
-                pinned: plain.pinned || pins,
+                pinned: plain.pinned || pins || in_figure,
             };
             // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
             // branch recurses, so this adds one bounded level, not arbitrary trees.
@@ -1461,7 +1480,12 @@ impl Tags {
         let tag = name(tag)?;
         let mcid = if let Some(properties) = properties {
             let properties = properties.as_dict().map_err(|_| INVALID)?;
-            keys(properties, &[b"MCID"], "marked-content properties")?;
+            // A sequence may name its own language, as InDesign's paragraphs
+            // do beside the MCID; the text an edit writes keeps it.
+            keys(properties, &[b"MCID", b"Lang"], "marked-content properties")?;
+            if let Ok(value) = properties.get(b"Lang") {
+                language(value)?;
+            }
             let mcid = usize::try_from(integer(get(properties, b"MCID")?)?).map_err(|_| INVALID)?;
             // An empty name is a null parent-tree slot, owned by nothing.
             let owner = self
@@ -1495,6 +1519,13 @@ impl Tags {
         self.active = Some(mcid);
         self.has_content = false;
         Ok(())
+    }
+
+    /// The sequence just opened closes with nothing inside it: no operator at
+    /// all, so nothing the editor does not model. InDesign writes an empty
+    /// paragraph this way, and its element owns nothing to edit or move.
+    pub(super) fn empty(&mut self) {
+        self.has_content = true;
     }
 
     pub(super) fn end(&mut self) -> Result<(), String> {

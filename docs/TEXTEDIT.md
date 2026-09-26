@@ -84,7 +84,10 @@ without `--continued`; `textedit/leading_tests.rs` covers signed spacing,
 transformed axes, line resets and preserved positioning bytes.
 
 Inline `/Span` sequences carrying only `ActualText` tab or U+0007 separators
-are preserved, with one optional `Tm`/`Td` and one space-only `Tj`/`TJ`. They
+are preserved, with one optional `Tm`/`Td` and one space-only `Tj`/`TJ` of one to
+as many spaces as separators (InDesign shows a single space for a run of tabs). The
+same span with nothing inside it, between text objects, is kept as it is: InDesign
+writes a tab stop that way. They
 remain subject to normal font, coordinate and clipping validation; their shows
 are excluded from editable runs. Nested sequences, state changes, visible text,
 extra semantic properties and more than 32 separators are refused. The byte
@@ -182,7 +185,8 @@ the images those forms draw share a 32 MiB byte budget (`MAX_IMAGES`, checked
 before decoding; a screenshot with its soft mask is ~13 MB). An image inside a
 form was charged to the form's content bound until 2026-09-18, which refused a
 figure of 29 small rasters (12.3 MB decoded) that the page budget holds. Figure MCIDs may use P stream markers for preserved
-graphics; direct figure text remains refused. Artifacts and unmarked additions on
+graphics; direct figure text remains refused, and a Span inside a figure, PowerPoint's
+text in a shape, is pinned. Artifacts and unmarked additions on
 tagged pages keep their bytes and glyph collision bounds without becoming editable.
 Embedded fonts accept zero-width holes only when unused, half-em descenders,
 nonsymbolic Identity-H descriptors, indirect width arrays and verified empty
@@ -299,6 +303,9 @@ are accepted; unowned and orphaned content is read-only, and a reachable
 element that skips its slot is still refused. The owning element, not the
 content tag, supplies semantics, except that `/Artifact` on an owned MCID is
 refused; artifact property lists (Table 330 keys) work inside and outside BT,
+owned sequences may carry a validated `/Lang` beside the MCID (InDesign's paragraphs),
+an owned sequence with no operator at all is kept (InDesign's empty paragraph) while
+one holding only operators that paint nothing is refused,
 as does `/Artifact BMC` (LibreOffice's TOC dot leaders). An artifact without an
 MCID needs no structure tree, so an untagged page may carry one (Acrobat's page
 stamps on scans); its text is read-only there too (`Tags::read_only` answers
@@ -309,8 +316,10 @@ to both) are accepted. `tagging/producer_tests.rs`,
 `annotation_tests.rs` and `tree_tests.rs` hold the synthetic fixtures.
 
 An element *pins* its content (read-only, through `Tags::bounded`) when it keeps
-metadata describing that content as it stands: `/Alt` on any element (it
-covers every descendant), a non-empty `/T` on an element owning text, a
+metadata describing that content as it stands: `/Alt` or `/ActualText` on any
+element (each covers every descendant; InDesign sets ActualText on the Span of a
+forced line break), a non-empty `/T` on an element owning text, being a child of a
+Figure, a
 non-Start `TextAlign`, or a table `/BBox`. `element()` returns the pin with the
 page; the walk ORs it into `bounded` and `Group::pinned` carries it through
 `groups` and deferred sublists. Pinned text still needs bounded glyphs

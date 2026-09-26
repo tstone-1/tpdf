@@ -111,7 +111,7 @@ fn textedit_inline_tags_refuse_invalid_semantics_and_balance_atomically() {
         source.replacen("/MCID 1", "/MCID 0", 1),
         source.replacen("/Standard", "/Artifact", 1),
         source.replacen("(FIRST) Tj", &format!("{FIRST} (FIRST) Tj EMC"), 1),
-        source.replacen("(FIRST) Tj", "", 1),
+        source.replacen("(FIRST) Tj", "0 0 Td", 1),
         source.replacen("EMC", "", 1),
         format!("{source} EMC"),
         source.replace(" EMC ET", " ET"),

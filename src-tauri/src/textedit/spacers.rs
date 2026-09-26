@@ -57,8 +57,11 @@ impl Spacer {
         Ok(())
     }
 
+    // One space per tab, as Word writes it, or fewer: InDesign shows a single
+    // space for a run of tabs and places it with the matrix. Either way the
+    // show is spacing only, which is what keeps it out of the editable text.
     pub(super) fn text(&self, text: &str) -> Result<(), String> {
-        if text.len() != self.count || !text.bytes().all(|byte| byte == b' ') {
+        if !(1..=self.count).contains(&text.len()) || !text.bytes().all(|byte| byte == b' ') {
             return Err(INVALID.into());
         }
         Ok(())

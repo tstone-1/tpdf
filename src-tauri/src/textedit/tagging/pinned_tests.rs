@@ -1,5 +1,6 @@
 // Metadata that describes an element's content as it stands keeps that content
-// read-only instead of refusing the page: alternate text, a title, and an
+// read-only instead of refusing the page: alternate text, replacement text, a
+// title, and an
 // alignment an edit would falsify. Classes from the root's ClassMap are held to
 // the same rules as the element's own attributes, and a table of contents
 // groups ordinary blocks.
@@ -55,7 +56,7 @@ fn textedit_alternate_text_and_titles_pin_the_content_they_describe() {
     assert_eq!(offered(&doc), ["FIRST", "SECOND"]);
     // On a paragraph, only that paragraph is kept; the other stays editable,
     // and the edit leaves the pinned element's metadata untouched.
-    for key in ["Alt", "T"] {
+    for key in ["Alt", "T", "ActualText"] {
         let (mut doc, ids) = fixture(CONTENT);
         doc.get_dictionary_mut(ids[4])
             .unwrap()
@@ -70,33 +71,41 @@ fn textedit_alternate_text_and_titles_pin_the_content_they_describe() {
         assert!(edit(&mut doc, "SECOND").is_err());
         assert_eq!(doc.objects, before);
     }
-    // Alt stands in for everything a grouping element holds, so it pins every
-    // descendant. A grouping element's title names it and pins nothing.
-    let (mut doc, ids) = fixture(CONTENT);
-    doc.get_dictionary_mut(ids[2])
-        .unwrap()
-        .set("Alt", Object::string_literal("SYNTHETIC"));
-    assert_eq!(
-        textedit::scan(&doc, 0).unwrap_err(),
-        "page contains only read-only text"
-    );
+    // Alt and ActualText stand in for everything a grouping element holds, so
+    // each pins every descendant. A grouping element's title names it and pins
+    // nothing.
+    for key in ["Alt", "ActualText"] {
+        let (mut doc, ids) = fixture(CONTENT);
+        doc.get_dictionary_mut(ids[2])
+            .unwrap()
+            .set(key, Object::string_literal("SYNTHETIC"));
+        assert_eq!(
+            textedit::scan(&doc, 0).unwrap_err(),
+            "page contains only read-only text",
+            "{key}"
+        );
+    }
     let (mut doc, ids) = fixture(CONTENT);
     doc.get_dictionary_mut(ids[2])
         .unwrap()
         .set("T", Object::string_literal("SYNTHETIC"));
     assert_eq!(offered(&doc), ["FIRST", "SECOND"]);
     // An inline leaf pins only its own content.
-    let (mut doc, _, leaves) = nested(false);
-    doc.get_dictionary_mut(leaves[1])
-        .unwrap()
-        .set("Alt", Object::string_literal("SECOND"));
-    assert_eq!(offered(&doc), ["FIRST"]);
+    for key in ["Alt", "ActualText"] {
+        let (mut doc, _, leaves) = nested(false);
+        doc.get_dictionary_mut(leaves[1])
+            .unwrap()
+            .set(key, Object::string_literal("SECOND"));
+        assert_eq!(offered(&doc), ["FIRST"], "{key}");
+    }
     // Both are text strings with bounds.
     for (key, value) in [
         ("Alt", Object::Name(b"SECOND".to_vec())),
         ("T", Object::Integer(1)),
         ("T", Object::string_literal("x".repeat(4097))),
         ("Alt", Object::string_literal("x".repeat(65537))),
+        ("ActualText", Object::Integer(1)),
+        ("ActualText", Object::string_literal("x".repeat(65537))),
     ] {
         let (mut doc, ids) = fixture(CONTENT);
         doc.get_dictionary_mut(ids[4]).unwrap().set(key, value);

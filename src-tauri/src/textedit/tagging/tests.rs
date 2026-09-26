@@ -538,7 +538,7 @@ fn textedit_tagged_multi_page_parent_keys_and_owners_must_agree() {
             3 => doc
                 .get_dictionary_mut(ids[7])
                 .unwrap()
-                .set("ActualText", Object::string_literal("STALE")),
+                .set("E", Object::string_literal("STALE")),
             4 => doc.get_dictionary_mut(ids[5]).unwrap().set(
                 "Nums",
                 vec![
@@ -719,10 +719,10 @@ fn textedit_tagged_round_trip_preserves_structure_and_marked_content() {
 
 #[test]
 fn textedit_tagged_refuses_semantic_overrides_and_stale_layout_attributes() {
-    // Alt and a title are kept and pin their element instead; see
-    // pinned_tests. C needs a ClassMap, which this fixture does not have.
+    // Alt, ActualText and a title are kept and pin their element instead;
+    // see pinned_tests. C needs a ClassMap, which this fixture does not have.
     for index in [2, 3, 4] {
-        for key in ["ActualText", "E", "C"] {
+        for key in ["E", "C"] {
             let (mut doc, ids) = fixture(CONTENT);
             let before = textedit::scan(&doc, 0).unwrap();
             let edit = Change {
@@ -881,7 +881,7 @@ fn textedit_tagged_artifact_and_unmarked_text_remain_read_only() {
 }
 
 #[test]
-fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items() {
+fn textedit_tagged_painted_content_preserves_structure_and_refuses_items_that_paint_nothing() {
     for path in [
         "/Im Do",
         "0 0 20 20 re f",
@@ -906,8 +906,10 @@ fn textedit_tagged_painted_content_preserves_structure_and_refuses_empty_items()
                 | "0 0 20 20 re B*"
                 | "0 0 m 20 20 l S"
                 | "0 0 m 20 20 l h S"
-        );
-        // Paint outside the item must not make an empty marked item valid.
+        ) || path.is_empty();
+        // Paint outside the item must not make an item that paints nothing
+        // valid. An item with no operator at all -- InDesign's empty
+        // paragraph -- holds nothing the editor does not model, and is kept.
         let body = format!("0 0 20 20 re f /Standard << /MCID 0 >> BDC {path} EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC");
         let (mut doc, ids) = fixture(body.as_bytes());
         if path == "/Im Do" {

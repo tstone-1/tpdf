@@ -211,8 +211,9 @@ fn textedit_nested_ownership_cycles_and_extra_levels_are_refused_atomically() {
 #[test]
 fn textedit_nested_metadata_is_bounded_and_never_overrides_replacement_text() {
     for index in 0..3 {
-        // Alt and a non-empty title pin rather than refuse (pinned_tests).
-        for key in ["ActualText", "E", "C", "Unknown"] {
+        // Alt, ActualText and a non-empty title pin rather than refuse
+        // (pinned_tests).
+        for key in ["E", "C", "Unknown"] {
             let (mut doc, ids, leaves) = nested(false);
             let id = [ids[2], ids[3], leaves[0]][index];
             doc.get_dictionary_mut(id)

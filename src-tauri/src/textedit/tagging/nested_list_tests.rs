@@ -221,7 +221,7 @@ fn textedit_nested_lists_refuse_cycles_duplicate_owners_and_empty_items() {
             5 => {
                 doc.get_dictionary_mut(inner)
                     .unwrap()
-                    .set("ActualText", Object::string_literal("STALE"));
+                    .set("E", Object::string_literal("STALE"));
             }
             6 => {
                 doc.get_dictionary_mut(owners[3]).unwrap().remove(b"Pg");

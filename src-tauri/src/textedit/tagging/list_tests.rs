@@ -287,7 +287,7 @@ fn textedit_lists_refuse_wrong_roles_owners_cycles_and_semantic_overrides() {
             8 => {
                 doc.get_dictionary_mut(owners[1])
                     .unwrap()
-                    .set("ActualText", Object::string_literal("STALE"));
+                    .set("E", Object::string_literal("STALE"));
             }
             9 => {
                 doc.get_dictionary_mut(ids[1])

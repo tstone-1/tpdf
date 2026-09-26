@@ -17,6 +17,20 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.20] - Unreleased
+
+### Added
+
+- **More of InDesign's and PowerPoint's tagged output is read correctly.**
+  Replacement text on a tagged element, a language on a marked paragraph, tab
+  stops written as empty spans or as one space for several tabs, empty
+  paragraphs, and text inside a PowerPoint shape no longer refuse the page:
+  the text they describe is kept read-only and the rest of the page can be
+  edited. In the 31-file public sample this makes one more page editable. The
+  InDesign letter and the PowerPoint fact sheet are still refused, next for
+  the letter's font licence and for the fact sheet's text boxes inside table
+  cells.
+
 ## [26.9.19] - 2026-09-26
 
 ### Added
