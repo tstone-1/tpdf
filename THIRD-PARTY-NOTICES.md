@@ -2531,7 +2531,7 @@ SOFTWARE.
 
 ## Rust crates
 
-405 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+402 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2623,7 +2623,7 @@ SOFTWARE.
 | ecb | 0.2.1 | MIT OR Apache-2.0 |
 | either | 1.18.0 | MIT OR Apache-2.0 |
 | embed_plist | 1.2.2 | MIT OR Apache-2.0 |
-| encoding_rs | 0.8.41 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
+| encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | equivalent | 1.0.2 | Apache-2.0 OR MIT |
 | erased-serde | 0.4.10 | MIT OR Apache-2.0 |
 | errno | 0.3.14 | MIT OR Apache-2.0 |
@@ -2662,8 +2662,8 @@ SOFTWARE.
 | httparse | 1.10.1 | MIT OR Apache-2.0 |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
 | hyper | 1.11.1 | MIT |
-| hyper-rustls | 0.27.9 | Apache-2.0 OR ISC OR MIT |
-| hyper-util | 0.1.20 | MIT |
+| hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT |
+| hyper-util | 0.1.21 | MIT |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 |
 | ico | 0.5.0 | MIT |
 | icu_collections | 2.3.0 | Unicode-3.0 |
@@ -2708,8 +2708,6 @@ SOFTWARE.
 | mio | 1.2.3 | MIT |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
 | muda | 0.19.3 | Apache-2.0 OR MIT |
-| multiversion | 0.9.0 | MIT OR Apache-2.0 |
-| multiversion-macros | 0.9.0 | MIT OR Apache-2.0 |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT |
 | new_debug_unreachable | 1.0.6 | MIT |
 | nom | 8.0.0 | MIT |
@@ -2757,7 +2755,7 @@ SOFTWARE.
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 |
 | quick-xml | 0.42.0 | MIT |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
-| rand | 0.10.2 | MIT OR Apache-2.0 |
+| rand | 0.10.3 | MIT OR Apache-2.0 |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 |
 | rangemap | 1.8.0 | MIT/Apache-2.0 |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
@@ -2775,9 +2773,8 @@ SOFTWARE.
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 |
-| rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 |
+| rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 |
 | rustls-webpki | 0.103.15 | ISC |
-| rustversion | 1.0.23 | MIT OR Apache-2.0 |
 | same-file | 1.0.6 | Unlicense/MIT |
 | schemars | 0.8.22 | MIT |
 | schemars | 0.9.0 | MIT |
@@ -2805,9 +2802,9 @@ SOFTWARE.
 | sha2 | 0.11.0 | MIT OR Apache-2.0 |
 | simd-adler32 | 0.3.10 | MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
-| siphasher | 1.0.3 | MIT/Apache-2.0 |
+| siphasher | 1.0.4 | MIT OR Apache-2.0 |
 | slab | 0.4.12 | MIT |
-| smallvec | 1.16.1 | MIT OR Apache-2.0 |
+| smallvec | 1.16.2 | MIT OR Apache-2.0 |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 |
 | spki | 0.7.3 | Apache-2.0 OR MIT |
@@ -2826,23 +2823,23 @@ SOFTWARE.
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 |
 | tao | 0.35.3 | Apache-2.0 |
 | tar | 0.4.46 | MIT OR Apache-2.0 |
-| tauri | 2.11.5 | Apache-2.0 OR MIT |
+| tauri | 2.11.6 | Apache-2.0 OR MIT |
 | tauri-codegen | 2.6.3 | Apache-2.0 OR MIT |
 | tauri-macros | 2.6.3 | Apache-2.0 OR MIT |
 | tauri-plugin-dialog | 2.7.3 | Apache-2.0 OR MIT |
 | tauri-plugin-fs | 2.5.2 | Apache-2.0 OR MIT |
 | tauri-plugin-process | 2.3.1 | Apache-2.0 OR MIT |
-| tauri-plugin-single-instance | 2.4.4 | Apache-2.0 OR MIT |
-| tauri-plugin-updater | 2.11.0 | Apache-2.0 OR MIT |
+| tauri-plugin-single-instance | 2.4.5 | Apache-2.0 OR MIT |
+| tauri-plugin-updater | 2.12.0 | Apache-2.0 OR MIT |
 | tauri-runtime | 2.11.3 | Apache-2.0 OR MIT |
 | tauri-runtime-wry | 2.11.4 | Apache-2.0 OR MIT |
 | tauri-utils | 2.9.3 | Apache-2.0 OR MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | tendril | 0.5.1 | MIT OR Apache-2.0 |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 |
-| thiserror | 2.0.20 | MIT OR Apache-2.0 |
+| thiserror | 2.0.21 | MIT OR Apache-2.0 |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 |
-| thiserror-impl | 2.0.20 | MIT OR Apache-2.0 |
+| thiserror-impl | 2.0.21 | MIT OR Apache-2.0 |
 | time | 0.3.55 | MIT OR Apache-2.0 |
 | time-core | 0.1.9 | MIT OR Apache-2.0 |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 |
@@ -3138,7 +3135,6 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright 2017 http-rs authors
 - Copyright 2017 quininer kel
 - Copyright 2018 Developers of the Rand project
-- Copyright 2019 Caleb Zulawski
 - Copyright 2019 Jeffrey Parsons
 - Copyright 2019-2022 Jeff Parsons, and [contributors](https://github.com/jeffparsons/rangemap/contributors)
 - Copyright 2020 Andrew Straw
@@ -7163,6 +7159,18 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
+#### MIT OR Apache-2.0 — COPYING
+
+```
+Copyright 2012-2016 The Rust Project Developers.
+Copyright 2016-2026 Frank Denis.
+
+Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+option.
+```
+
 #### MIT OR Apache-2.0 — LICENSE
 
 ```
@@ -9653,18 +9661,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### MIT/Apache-2.0 — COPYING
-
-```
-Copyright 2012-2016 The Rust Project Developers.
-Copyright 2016-2026 Frank Denis.
-
-Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-<LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-option.
-```
-
 #### MIT/Apache-2.0 — LICENSE
 
 ```
@@ -11219,8 +11215,8 @@ Packages whose code is compiled into `dist/`. This list is read from the build's
 | @tauri-apps/api | 2.11.1 | Apache-2.0 OR MIT |
 | @tauri-apps/plugin-dialog | 2.7.3 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-process | 2.3.1 | MIT OR Apache-2.0 |
-| @tauri-apps/plugin-updater | 2.11.0 | MIT OR Apache-2.0 |
-| svelte | 5.57.0 | MIT |
+| @tauri-apps/plugin-updater | 2.12.0 | MIT OR Apache-2.0 |
+| svelte | 5.57.1 | MIT |
 
 ### Copyright notices
 
