@@ -5151,8 +5151,12 @@ Ranked by what the measurement says is left, the next increments are:
    2026-09-24, with the break rule corrected to compare blocks rather than lines; +25% as typed
    is unchanged at 57.27%, because Coatesville's breaks are exactly one blank line and have
    nothing to spare. `BUILD.md`, *Spreading the added lines, and a break is between blocks*.
-   What would let a full page wrap is a break giving up part of its blank line, which is a
-   decision about how the page should look rather than an increment.
+   ~~What would let a full page wrap is a break giving up part of its blank line, which is a
+   decision about how the page should look rather than an increment.~~ Decided 2026-09-26, of
+   three options (keep the refusal, halve the breaks, use the bottom margin): **a break may give
+   up half its blank line**, and only when the wrap was refused with every break kept whole
+   (`layout::BREAK_GIVE`). +25% as typed went from 38,047 to 38,905 accepted, with nothing moved
+   the other way. `BUILD.md`, *Half a paragraph break when the page is full*.
 4. ~~**Untagged pages**, three quarters of the corpus, waiting on a block rule that is not
    wrong about the case a wrap damages.~~ Built 2026-09-24: the blocks are read off the lines
    (`textedit/blocks.rs`), judged by what a wrap writes rather than by line pairs, since the

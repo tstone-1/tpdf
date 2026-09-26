@@ -28,6 +28,12 @@ have the binary.)
   Latin text around them can be edited. In the 31-file public sample, 31 more
   pages can be edited and about 700 more edits of +25% are accepted; no edit
   that was accepted before is refused.
+- **A paragraph can wrap on a page that is full to its foot.** A wrap moves
+  the paragraphs below it down and keeps a blank line between each of them,
+  so on a full page there was nowhere for the new line to go and the edit was
+  refused. When that happens now, the breaks below give up half of their
+  blank line each instead. Pages with room to spare look exactly as before.
+  In the 31-file public sample about 860 more edits of +25% are accepted.
 
 ## [26.9.20] - 2026-09-26
 

@@ -1216,12 +1216,14 @@ type Move = (u32, [f64; 4], [f64; 2]);
 /// Everything a wrap moves, for [`wrap_room`]: each moved rectangle with how
 /// far the block it belongs to extends along the line (`reach`, one per move),
 /// and the paragraph's bottom when nothing of the paragraph moves (`edge`),
-/// which extends as far as the paragraph (`paragraph`).
+/// which extends as far as the paragraph (`paragraph`), and the share of a
+/// pitch each paragraph break may give up ([`landing`]'s `give`).
 struct Moving<'a> {
     moves: &'a [Move],
     reach: &'a [[f64; 2]],
     edge: Option<Edge>,
     paragraph: [f64; 2],
+    give: f64,
 }
 
 /// What `lay_out` made of one plan: the operations, how many lines, how far the
@@ -1245,7 +1247,16 @@ fn shift(rect: [f64; 4], by: [f64; 2]) -> [f64; 4] {
 /// lines of one paragraph overlap by a sliver; the tallest moved box (or the
 /// paragraph's moved bottom, `edge`) less the pitch is that sliver, and a moved
 /// line may overlap what stays by as much.
-fn landing(moves: &[(u32, [f64; 4], [f64; 2])], edge: Option<Edge>, down: [f64; 2]) -> Landing {
+///
+/// A paragraph break keeps a blank line: two pitches less that tallest box.
+/// `give` is the share of a pitch a break may give up below that, which is
+/// none unless the page has no other room ([`BREAK_GIVE`]).
+fn landing(
+    moves: &[(u32, [f64; 4], [f64; 2])],
+    edge: Option<Edge>,
+    down: [f64; 2],
+    give: f64,
+) -> Landing {
     let cross = usize::from(down[1].abs() >= down[0].abs());
     let height = moves
         .iter()
@@ -1255,12 +1266,23 @@ fn landing(moves: &[(u32, [f64; 4], [f64; 2])], edge: Option<Edge>, down: [f64; 
         .fold(0., f64::max);
     let mut slack = [0.1; 2];
     slack[cross] = (height - down[cross].abs()).max(0.) + 0.1;
-    (slack, cross, down[cross].abs())
+    let pitch = down[cross].abs();
+    let blank = pitch - (slack[cross] - 0.1) - give * pitch;
+    (slack, cross, blank)
 }
 
 /// [`landing`]'s answer: the overlap allowed each way, the display axis the
-/// lines are stacked across, and their pitch.
+/// lines are stacked across, and the least space a paragraph break keeps.
 type Landing = ([f64; 2], usize, f64);
+
+/// How much of its blank line a paragraph break may give up to a wrap, as a
+/// share of the line pitch, when every break below keeps a whole one and the
+/// page has no other room: a page full to its footer, whose breaks are one
+/// blank line each, then takes a wrap's added line in two of them. Tried only
+/// after the wrap was refused with each break kept whole, so an edit accepted
+/// before lays out exactly as it did. The owner's choice of the three offered
+/// on 2026-09-26: keep the refusal, halve the breaks, or use the bottom margin.
+const BREAK_GIVE: f64 = 0.5;
 
 /// Whether a rectangle that was at `old` and is now at `new` lands on `other`,
 /// which stays, by more than [`landing`] allows; `reach` is how far the block
@@ -1274,7 +1296,7 @@ type Landing = ([f64; 2], usize, f64);
 fn lands(
     (old, new, reach): ([f64; 4], [f64; 4], [f64; 2]),
     other: [f64; 4],
-    (slack, cross, pitch): Landing,
+    (slack, cross, blank): Landing,
 ) -> bool {
     let shared = old[cross + 2].min(other[cross + 2]) - old[cross].max(other[cross]);
     let shorter = (old[cross + 2] - old[cross]).min(other[cross + 2] - other[cross]);
@@ -1290,10 +1312,11 @@ fn lands(
     }
     // Moving towards text ahead of it -- below it, for a line moving down --
     // a rectangle may close the gap between them, but not below one blank
-    // line of the paragraph (two pitches less a line's box): a paragraph
-    // break keeps its size, and only wider space gives up the lines a wrap
-    // adds. A move is whole pitches, so a gap already narrower than a blank
-    // line would only close further. Text clipped away entirely has a
+    // line of the paragraph (two pitches less a line's box, less what
+    // `landing` lets a break give up): a paragraph break keeps its size, and
+    // only wider space gives up the lines a wrap adds. A move is whole
+    // pitches, so a gap already narrower than a blank line would only close
+    // further. Text clipped away entirely has a
     // rectangle of no height and is not there. Whether the two are one above
     // the other is a question about the moving block, `reach` along the line,
     // not about this one line of it: a paragraph's short last line is above
@@ -1322,7 +1345,6 @@ fn lands(
             new[cross] - other[cross + 2],
         )
     };
-    let blank = pitch - (slack[cross] - 0.1);
     ahead && !level && after < blank - 0.1
 }
 
@@ -1389,9 +1411,9 @@ fn cascade(
     beneath: &[Vec<u32>],
     (moves, reach): (&mut Vec<Move>, &mut Vec<[f64; 2]>),
     (inks, own, edge): (&[[f64; 4]], [f64; 4], Option<Edge>),
-    (by, down): ([f64; 2], [f64; 2]),
+    (by, down, give): ([f64; 2], [f64; 2], f64),
 ) -> Option<(BTreeMap<u32, f64>, [f64; 2])> {
-    let (slack, cross, pitch) = landing(moves, edge, down);
+    let (_, cross, blank) = landing(moves, edge, down, give);
     let along = 1 - cross;
     // How far along the line a set of rectangles extends.
     let extent = |rects: &mut dyn Iterator<Item = [f64; 4]>| {
@@ -1415,7 +1437,6 @@ fn cascade(
         return Some((BTreeMap::new(), paragraph));
     }
     let sign = by[cross].signum();
-    let blank = pitch - (slack[cross] - 0.1);
     // Positions along the direction of the move, so that "further" is larger.
     let start = |rect: [f64; 4]| {
         if sign > 0. {
@@ -1769,8 +1790,9 @@ fn wrap_room(
         reach,
         edge,
         paragraph,
+        give,
     } = *moving;
-    let rule = landing(moves, edge, down);
+    let rule = landing(moves, edge, down, give);
     let geometric = blocks::geometric_page(page);
     let columns: Vec<[f64; 4]> = if geometric {
         column_runs(page, paragraph, 1 - rule.1)
@@ -2556,48 +2578,64 @@ pub(super) fn prepare(
                 // the edited line, moved down to the edit's new last line.
                 let edge = (plan.below.is_empty() && drop > 0.)
                     .then(|| (run.display_rect.map(f64::from), corner(0., -drop)));
-                let mut reach = Vec::new();
-                let (carried, paragraph) = cascade(
-                    page,
-                    &plan.beneath,
-                    (&mut moving, &mut reach),
-                    (&inks, free.own, edge),
-                    (corner(0., -drop), corner(0., -plan.pitch)),
-                )
-                .ok_or(wrap::NO_ROOM)?;
-                let hits = if carried.is_empty() {
-                    flag(&below.union(&flowing).copied().collect())
-                } else {
-                    if placement
-                        .edited
-                        .iter()
-                        .flat_map(|edited| shows_of(page, *edited))
-                        .any(|show| carried.contains_key(&show))
-                    {
-                        return Err(wrap::CONFLICT.into());
-                    }
-                    for (show, part) in &carried {
-                        lowered.push((*show, wrap::lowered(page, *show, along(0., -drop * part))?));
-                    }
-                    let carried: BTreeSet<u32> = carried.keys().copied().collect();
-                    let lower: BTreeSet<u32> = below.union(&carried).copied().collect();
-                    let hits = flag(&lower.union(&flowing).copied().collect());
-                    left_behind(page, &lower, &hits)?;
-                    hits
+                // A page full to its footer has no break with a blank line to
+                // spare. Only when the wrap was refused with every break kept
+                // whole may each give up part of its blank line ([`BREAK_GIVE`]).
+                let settle = |give: f64| -> Result<(Placed, Links, Vec<_>), String> {
+                    let mut moving = moving.clone();
+                    let mut lowered = lowered.clone();
+                    let mut reach = Vec::new();
+                    let (carried, paragraph) = cascade(
+                        page,
+                        &plan.beneath,
+                        (&mut moving, &mut reach),
+                        (&inks, free.own, edge),
+                        (corner(0., -drop), corner(0., -plan.pitch), give),
+                    )
+                    .ok_or(wrap::NO_ROOM)?;
+                    let hits = if carried.is_empty() {
+                        flag(&below.union(&flowing).copied().collect())
+                    } else {
+                        if placement
+                            .edited
+                            .iter()
+                            .flat_map(|edited| shows_of(page, *edited))
+                            .any(|show| carried.contains_key(&show))
+                        {
+                            return Err(wrap::CONFLICT.into());
+                        }
+                        for (show, part) in &carried {
+                            lowered.push((
+                                *show,
+                                wrap::lowered(page, *show, along(0., -drop * part))?,
+                            ));
+                        }
+                        let carried: BTreeSet<u32> = carried.keys().copied().collect();
+                        let lower: BTreeSet<u32> = below.union(&carried).copied().collect();
+                        let hits = flag(&lower.union(&flowing).copied().collect());
+                        left_behind(page, &lower, &hits)?;
+                        hits
+                    };
+                    let (placed, links) = wrap_room(
+                        page,
+                        &Moving {
+                            moves: &moving,
+                            reach: &reach,
+                            edge,
+                            paragraph,
+                            give,
+                        },
+                        &hits,
+                        corner(0., -plan.pitch),
+                        &geometry,
+                        &display,
+                    )?;
+                    Ok((placed, links, lowered))
                 };
-                let (placed, links) = wrap_room(
-                    page,
-                    &Moving {
-                        moves: &moving,
-                        reach: &reach,
-                        edge,
-                        paragraph,
-                    },
-                    &hits,
-                    corner(0., -plan.pitch),
-                    &geometry,
-                    &display,
-                )?;
+                let (placed, links, lowered) = match settle(0.) {
+                    Err(error) if error == wrap::NO_ROOM => settle(BREAK_GIVE),
+                    settled => settled,
+                }?;
                 let rect = display(text_bounds(
                     run.matrix,
                     [

@@ -18,7 +18,9 @@
 //! would land on it, or close the paragraph break above it to less than a
 //! blank line, it moves down by the same distance, and so does whatever it
 //! would reach in turn (`layout::cascade`): the first gap below with a blank
-//! line to spare takes the added lines, and nothing after it moves. Only a
+//! line to spare takes the added lines, and nothing after it moves. On a page
+//! with no such gap, each break may give up half its blank line instead
+//! (`layout::BREAK_GIVE`), tried only once the whole-break layout is refused. Only a
 //! whole block moves, and only one that is entirely below the edited line and
 //! that the writer can move ([`Plan::beneath`]); text that is not such a block
 //! -- untagged, read-only, beside the paragraph -- stays, and an edit whose

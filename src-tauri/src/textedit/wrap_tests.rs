@@ -216,10 +216,13 @@ fn a_paragraph_with_no_room_below_is_refused_with_the_reason() {
         "{error}"
     );
     // 28 pt below is one blank line, a paragraph break, which the wrap keeps;
-    // 42 pt below leaves room for a line and the break after it.
+    // 42 pt below leaves room for a line and the break after it. 35 pt leaves
+    // 6 of the break's 13, which is the half a break gives up when the page
+    // has no other room (`BREAK_GIVE`), and no less.
     let error = refusal(&fixed_below(28.), WIDEST, LONGER);
     assert!(error.contains("what is below it"), "{error}");
     wrapped(&fixed_below(42.), WIDEST, LONGER);
+    wrapped(&fixed_below(35.), WIDEST, LONGER);
 }
 
 // The next paragraph set one pitch below is in the way, and moves down with
@@ -338,6 +341,8 @@ fn the_edits_new_last_line_keeps_the_break_below_it() {
     let error = refusal(&fixed_below(28.), LAST, LONGER);
     assert!(error.contains("what is below it"), "{error}");
     wrapped(&fixed_below(42.), LAST, LONGER);
+    // Half the break, measured from the bottom's own box as a whole one is.
+    wrapped(&fixed_below(35.), LAST, LONGER);
     // The bottom is as wide as the edit's lines, not as the run was: `BY` is
     // right of `TEN` and under the new line, a blank line below.
     let under = tagged(
@@ -383,14 +388,23 @@ fn a_block_left_a_few_thousandths_to_go_stays() {
     let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
     assert_eq!(at(&runs, NEXT), at(&before, NEXT));
+    // With nothing below it the move would not be refused, and it stays too.
+    // (Above, a refused move is taken by the break giving up half its blank
+    // line instead, which ends in the same place.)
+    let alone = tagged(&content(41.995, ""), &[&[0, 1, 2], &[3]]);
+    let before = placed_runs(&alone);
+    let runs = placed_runs(&wrapped(&alone, WIDEST, LONGER));
+    assert_eq!(at(&runs, NEXT), at(&before, NEXT));
 }
 
 // A paragraph break is between two blocks, not between two lines that share
 // extent along the line: `TEN`, the paragraph's short last line, ends at 41.6,
 // and the next paragraph's first line is indented to 100. Measured from the
 // wide line above `TEN` there would be room to spare; from `TEN` a 20 pt break
-// has 7 pt over a blank line, so the next paragraph moves 7, and text below
-// that cannot move refuses the wrap.
+// has 7 pt over a blank line, so the next paragraph moves 7. Text below that
+// cannot move takes the added line only by the break giving up half its blank
+// line, 6.5 of the 13 (`BREAK_GIVE`): 20 less the 14 of the line leaves 6, and
+// a 19 pt break leaves 5, which is less than half and refuses the wrap.
 #[test]
 fn a_short_last_line_keeps_the_break_above_an_indented_paragraph() {
     let indented =
@@ -400,11 +414,10 @@ fn a_short_last_line_keeps_the_break_above_an_indented_paragraph() {
     let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
     assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
     assert!(near(at(&runs, NEXT), (100., 130.)), "{runs:?}");
-    let error = refusal(
-        &tagged(&untagged_next(&indented(35.)), &[&[0, 1, 2]]),
-        WIDEST,
-        LONGER,
-    );
+    let fixed = |gap: f64| tagged(&untagged_next(&indented(gap)), &[&[0, 1, 2]]);
+    let runs = placed_runs(&wrapped(&fixed(35.), WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 158.)), "{runs:?}");
+    let error = refusal(&fixed(34.), WIDEST, LONGER);
     assert!(error.contains("what is below it"), "{error}");
 }
 
@@ -422,6 +435,35 @@ fn a_block_below_that_would_leave_the_page_refuses_the_wrap() {
     // the foot of the page; at 12 it would go to -2.
     wrapped(&low(68.), WIDEST, LONGER);
     let error = refusal(&low(54.), WIDEST, LONGER);
+    assert!(error.contains("what is below it"), "{error}");
+}
+
+// A page full to its foot: two paragraphs below the edit, each after a break
+// of one blank line, 13 pt, the last one 7 pt above the foot. Moving both the
+// 14 pt the added line needs would take the last off the page, so each break
+// gives up half its blank line (`BREAK_GIVE`) instead: the first 7 pt, which
+// moves the next paragraph 7, and the second the other 7, which moves nothing.
+#[test]
+fn a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks() {
+    let doc = tagged(
+        &content(28., "0 -28 Td /P <</MCID 4>> BDC (BY) Tj EMC ").replace("20 200 Td", "20 94 Td"),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    let before = placed_runs(&doc);
+    assert_eq!(at(&before, NEXT), (20., 38.));
+    assert_eq!(at(&before, "BY"), (20., 10.));
+    let runs = placed_runs(&wrapped(&doc, WIDEST, LONGER));
+    assert!(near(at(&runs, LAST), (20., 52.)), "{runs:?}");
+    assert!(near(at(&runs, NEXT), (20., 31.)), "{runs:?}");
+    assert_eq!(at(&runs, "BY"), (20., 10.));
+    // Half a blank line from each is all a break gives: with the second break
+    // 1 pt narrower the two give 13 of the 14, and the last paragraph, its box
+    // now on the foot of the page, would have to leave it for the other 1.
+    let tighter = tagged(
+        &content(28., "0 -27 Td /P <</MCID 4>> BDC (BY) Tj EMC ").replace("20 200 Td", "20 86 Td"),
+        &[&[0, 1, 2], &[3], &[4]],
+    );
+    let error = refusal(&tighter, WIDEST, LONGER);
     assert!(error.contains("what is below it"), "{error}");
 }
 
@@ -1083,9 +1125,11 @@ fn text_after_the_edit_that_does_not_fit_its_last_line_is_cut_at_a_space() {
     );
     let runs = placed_runs(&saved);
     assert!(near(at(&runs, "ONCE  AND DONE"), (20., 158.)), "{runs:?}");
-    // Two lines would leave less than a blank line above the text below.
+    // Two lines would leave 2 pt above the text below, less than half a
+    // blank line; one leaves 16, more than a whole one. At 52 two lines left
+    // 9, which is only a break that gave up half its blank line.
     let fixed = tagged(
-        &untagged_next(&content(52., "")).replace(
+        &untagged_next(&content(45., "")).replace(
             &format!("({WIDEST}) Tj EMC"),
             "(FIFTY NINE) Tj [-600 (ONCE AND DONE)] TJ EMC",
         ),

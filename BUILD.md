@@ -11871,3 +11871,37 @@ the Latin run is edited, the Cyrillic run is kept byte for byte, and a font refu
 that disagree stays refused. Two mutations under `dispatch:`, both caught. `textedit_growth.py`
 now counts the licence refusal as `restricted` rather than unclassified; only its `patch` mode
 meets it.
+
+### Half a paragraph break when the page is full — measured 2026-09-26
+
+The decision *Spreading the added lines* left open was taken: of keeping the refusal, halving the
+breaks, and letting text move into the bottom margin, **a break may give up half its blank
+line**. A wrap is laid out as before, every break kept whole; only when that is refused as
+*its lines would move onto what is below it* is it laid out again with each break allowed to
+give up `BREAK_GIVE` (half) of a pitch (`layout.rs`, the `settle` closure). The allowance is
+one number in `landing`'s answer, so `lands` (may a moved line come this close) and `cascade`
+(how far each block below moves) read the same rule. An edit accepted before is laid out
+exactly as it was, and a break given up is the nearest first: the cascade takes each break's
+spare in page order.
+
+**Before and after, the 31 files,** against the records of the previous section: accepted as
+typed at +10/+25/+50% went 41,865/38,047/35,013 → **42,066/38,905/36,168**. `--compare` found
+2,219 verdicts refused before and accepted now and none the other way. *Onto what is below it*
+at +25% went from 2,213 to 817, and Coatesville's 770 are gone: its breaks are exactly one blank
+line, which is why *Spreading the added lines* could not use them. What is left is mostly the
+Arcadia agenda (394), whose breaks sit above text the wrap cannot move.
+
+**Checked by hand:** four newly accepted +25% edits, two each in Coatesville and Arcadia,
+through `--roundtrip`, all passing, and all four rendered: the breaks below the edit are
+narrower and still read as breaks, and no line touches another.
+
+**Tests:** `a_full_page_takes_a_wrap_in_half_of_two_paragraph_breaks` (two breaks of one blank
+line each give 7 pt apiece to a 14 pt line; 1 pt less and the last paragraph would leave the
+page). Two tests that asserted a refusal next to text that cannot move now assert the edit is
+taken by half the break, and a refusal where even half is not enough. The retry can rescue a
+defect in the whole-break rule, and did for three older mutations (*a blank line is a whole
+pitch*, *the bottom has no height*, *a thousandth of a point is a move*); their tests gained a
+case at exactly half a break, or with nothing below to refuse the move, and catch them again.
+Five mutations under `half breaks:`; two older ones re-aimed at `landing` and `cascade`, where
+the blank line is now computed. All 167 mutations of the wrap path (wrap, columns, flow,
+cascade, cut, beneath, gutter, room) are caught.
