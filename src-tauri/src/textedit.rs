@@ -247,6 +247,13 @@ fn optional_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
     }
 }
 
+// The font named `name` measured for read-only text only, if it is a simple
+// font with the widths and bounding box that takes.
+fn read_only_font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Option<fonts::Metrics> {
+    let fonts = dictionary(doc, resources.get(b"Font").ok()?).ok()?;
+    fonts::read_only(doc, dictionary(doc, fonts.get(name).ok()?).ok()?)
+}
+
 // The FontBBox named by a font's BaseFont, if it is a Latin standard font's.
 // It is read only where the metrics carry no vertical bounds, which only the
 // standard-font dispatch at the end of `font` produces.
@@ -777,6 +784,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut selected_font = None;
     let mut font_metrics = BTreeMap::new();
     let mut font_boxes = BTreeMap::new();
+    // Why the first font the editor cannot write with was kept read-only: the
+    // refusal a page gets when that leaves it nothing to edit.
+    let mut unusable_font: Option<String> = None;
     let mut leading = 0.0;
     let mut spacing = 0.0;
     let mut word_spacing = 0.0;
@@ -1182,7 +1192,19 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     if font_metrics.len() >= 32 {
                         return Err("too many fonts on an editable page".into());
                     }
-                    font_metrics.insert(name.to_vec(), font(doc, resources, name)?);
+                    // A simple font the editor cannot write with keeps its
+                    // text read-only (`fonts::read_only`) rather than refusing
+                    // the page; when even that cannot measure it, the page is
+                    // refused with the font's own reason.
+                    let metrics = match font(doc, resources, name) {
+                        Ok(metrics) => metrics,
+                        Err(error) => {
+                            let metrics = read_only_font(doc, resources, name).ok_or(&error)?;
+                            unusable_font.get_or_insert(error);
+                            metrics
+                        }
+                    };
+                    font_metrics.insert(name.to_vec(), metrics);
                     if let Some(bounds) = standard_box(doc, resources, name) {
                         font_boxes.insert(name.to_vec(), bounds);
                     }
@@ -1468,7 +1490,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     tags.finish()?;
     if result.runs.is_empty() && !preserved.is_empty() {
         // Transformed, pattern-filled and tagged read-only text all land here.
-        return Err("page contains only read-only text".into());
+        return Err(unusable_font.unwrap_or_else(|| "page contains only read-only text".into()));
     }
     // Discovery promises that every offered run can be deleted. Check the
     // actual f32 TJ compensation before offering implicit-advance text.
@@ -1506,7 +1528,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         span.finish(&mut inspection)?;
     }
     if inspection.runs.runs.is_empty() && !inspection.preserved.is_empty() {
-        return Err("page contains only read-only text".into());
+        return Err(unusable_font.unwrap_or_else(|| "page contains only read-only text".into()));
     }
     grouping::collect(&mut inspection);
     if inspection.blocks.is_empty() || blocks::FORCE.load(std::sync::atomic::Ordering::Relaxed) {

@@ -1231,3 +1231,92 @@ fn textedit_a_single_point_glyph_paints_nothing() {
         );
     }
 }
+
+// A font the editor cannot write with keeps its text read-only when its own
+// widths and bounding box can measure it: the rest of the page edits, and the
+// text in that font is written back byte for byte. A page left with nothing
+// to edit is refused with the font's reason, and a font that cannot even be
+// measured refuses the page as before.
+#[test]
+fn textedit_a_font_that_forbids_editing_keeps_its_text_read_only() {
+    let restricted = || {
+        let (mut doc, font, descriptor, program) = fixture();
+        let start = table_offset(b"OS/2") + 8;
+        doc.get_object_mut(program)
+            .unwrap()
+            .as_stream_mut()
+            .unwrap()
+            .content[start..start + 2]
+            .copy_from_slice(&2_u16.to_be_bytes());
+        let helvetica = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"
+        });
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        doc.get_dictionary_mut(page).unwrap().set(
+            "Resources",
+            dictionary! { "Font" => dictionary! { "F1" => font, "F2" => helvetica } },
+        );
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F2 12 Tf 40 140 Td (SECOND) Tj ET".to_vec(),
+        ));
+        doc.get_dictionary_mut(page)
+            .unwrap()
+            .set("Contents", content);
+        (doc, font, descriptor)
+    };
+    let (mut doc, font, _) = restricted();
+    let scan = textedit::scan(&doc, 0).unwrap();
+    let offered: Vec<&str> = scan.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(offered, ["SECOND"]);
+    let kept = doc.objects[&font].clone();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            operator: scan.runs[0].operator,
+            revision: scan.revision.clone(),
+            original: "SECOND".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
+    assert_eq!(doc.objects[&font], kept);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let written = String::from_utf8(doc.get_page_content(page)).unwrap();
+    assert!(
+        written.contains("/F1 12 Tf 40 180 Td (FIRST) Tj"),
+        "{written}"
+    );
+    // Only that font on the page: its reason, not a generic one.
+    let (mut doc, _, _) = restricted();
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let only = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td (FIRST) Tj ET".to_vec(),
+    ));
+    doc.get_dictionary_mut(page).unwrap().set("Contents", only);
+    assert!(textedit::scan(&doc, 0)
+        .unwrap_err()
+        .contains("editable use"));
+    // Without widths, or with a box that bounds nothing, it cannot be measured.
+    for broken in ["Widths", "FontBBox"] {
+        let (mut doc, font, descriptor) = restricted();
+        if broken == "Widths" {
+            doc.get_dictionary_mut(font).unwrap().remove(b"Widths");
+        } else {
+            doc.get_dictionary_mut(descriptor).unwrap().set(
+                "FontBBox",
+                vec![0.into(), 0.into(), 400.into(), 5000.into()],
+            );
+        }
+        assert!(
+            textedit::scan(&doc, 0)
+                .unwrap_err()
+                .contains("editable use"),
+            "{broken}"
+        );
+    }
+}

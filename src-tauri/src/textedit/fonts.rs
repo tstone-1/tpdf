@@ -681,18 +681,7 @@ pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, S
     // FontBBox bounds every glyph the font has, so it stands in for the
     // outlines this font does not carry: text in it can then be kept read-only
     // with that box reserved, and nothing drawn is ever outside it.
-    let bbox = crate::encoding::resolve(doc, descriptor.get(b"FontBBox").map_err(|_| invalid())?)
-        .as_array()
-        .map_err(|_| invalid())?
-        .iter()
-        .map(number)
-        .collect::<Result<Vec<_>, _>>()?;
-    let [left, bottom, right, top] = bbox[..] else {
-        return Err(invalid());
-    };
-    if left > right || bottom > top || [left, bottom, right, top].iter().any(|v| v.abs() > 4000.) {
-        return Err(invalid());
-    }
+    let [left, bottom, right, top] = font_box(doc, descriptor).ok_or_else(invalid)?;
     let mut result = Box::new([None; 256]);
     let mut overhangs = Box::new([[0_f64; 2]; 256]);
     for code in (32..=126).chain(160..=255) {
@@ -715,6 +704,81 @@ pub(super) fn unembedded(doc: &Document, font: &Dictionary) -> Result<Metrics, S
         widths: result,
         horizontal_overhangs: Some(overhangs),
         codes: None,
+    })
+}
+
+/// A descriptor's `FontBBox`, ordered and within 4000 units each way. It
+/// bounds every glyph the font has, so it stands in for outlines the editor
+/// does not read.
+fn font_box(doc: &Document, descriptor: &Dictionary) -> Option<[f64; 4]> {
+    let bbox = crate::encoding::resolve(doc, descriptor.get(b"FontBBox").ok()?)
+        .as_array()
+        .ok()?
+        .iter()
+        .map(|value| number(value).ok())
+        .collect::<Option<Vec<_>>>()?;
+    let [left, bottom, right, top] = bbox[..] else {
+        return None;
+    };
+    if left > right || bottom > top || [left, bottom, right, top].iter().any(|v| v.abs() > 4000.) {
+        return None;
+    }
+    Some([left, bottom, right, top])
+}
+
+/// A simple font the editor cannot write with -- a program it does not
+/// validate, a character map it cannot read, rights that forbid editing --
+/// kept for measuring only. Every code is opaque: its advance is the font's
+/// own `/Widths` entry (or the descriptor's `/MissingWidth`), and its ink is
+/// held to the descriptor's `FontBBox`, which bounds every glyph. The program
+/// is never read, so nothing in it is trusted. Text in such a font stays
+/// read-only with that box reserved, instead of refusing the whole page.
+pub(super) fn read_only(doc: &Document, font: &Dictionary) -> Option<Metrics> {
+    if !matches!(
+        font.get(b"Subtype").and_then(Object::as_name).ok()?,
+        b"Type1" | b"MMType1" | b"TrueType"
+    ) {
+        return None;
+    }
+    let descriptor = dictionary(doc, font.get(b"FontDescriptor").ok()?).ok()?;
+    let first = font.get(b"FirstChar").and_then(Object::as_i64).ok()?;
+    let last = font.get(b"LastChar").and_then(Object::as_i64).ok()?;
+    if first < 0 || last > 255 || first > last {
+        return None;
+    }
+    let widths = crate::encoding::resolve(doc, font.get(b"Widths").ok()?)
+        .as_array()
+        .ok()?;
+    if widths.len() != (last - first + 1) as usize {
+        return None;
+    }
+    let [left, bottom, right, top] = font_box(doc, descriptor)?;
+    let missing = match descriptor.get(b"MissingWidth") {
+        Ok(value) => number(value).ok()?,
+        Err(_) => 0.,
+    };
+    let mut opaque = Box::new([None; 256]);
+    for code in 0..=255_i64 {
+        let width = if (first..=last).contains(&code) {
+            number(&widths[(code - first) as usize]).ok()?
+        } else {
+            missing
+        };
+        if !(0. ..=4000.).contains(&width) {
+            return None;
+        }
+        opaque[code as usize] = Some(Opaque {
+            width,
+            overhang: [left.min(0.), (right - width).max(0.)],
+        });
+    }
+    Some(Metrics {
+        opaque: Some(opaque),
+        unicode: None,
+        vertical_bounds: Some([bottom.min(0.), top.max(0.)]),
+        widths: Box::new([None; 256]),
+        horizontal_overhangs: None,
+        codes: Some(Codes::Single(Box::new([None; 256]))),
     })
 }
 

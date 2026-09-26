@@ -485,6 +485,17 @@ its PDF `Widths` over printable Latin-1, with the descriptor's `FontBBox` as the
 ink of every glyph so its text can be kept read-only. Readers substitute the
 shapes and position by those widths, as they do for standard Helvetica.
 
+A simple font the editor cannot write with -- a program it does not validate, a
+character map it cannot read, embedding rights that forbid editing -- no longer
+refuses the page when `fonts::read_only` can measure it: Type 1, MMType1 or
+TrueType with `FirstChar`/`LastChar`/`Widths` and a descriptor whose `FontBBox`
+(`fonts::font_box`, shared with `unembedded`) is ordered and within 4000 units.
+Every code is then opaque, advanced by its `Widths` entry or `MissingWidth` and
+inked to the box, so its text is read-only with that ink reserved and the other
+text on the page edits. The program is never read. A page left with nothing to
+edit is refused with the first such font's own reason, not *page contains only
+read-only text*. Composite and Type 3 fonts keep their own refusals.
+
 Every one of the twelve Latin standard fonts (Helvetica, Times, Courier, each in
 four styles) is edited the way Helvetica always was: no descriptor, WinAnsi or
 the built-in StandardEncoding, measured by Adobe's metrics from
