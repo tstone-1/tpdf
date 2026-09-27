@@ -294,10 +294,22 @@ impl InWorker {
 /// change, not a PDF --- has said something true about the document, and a
 /// worker that **failed** --- it died, it did not answer in time, it answered a
 /// different question --- has said nothing about it at all.
+///
+/// **`Locked` is a refusal of its own**, because it is the one a reader can
+/// answer. A worker holding a document no password has opened answers every
+/// request with `Response::locked` (`worker_child::unlock`), and until
+/// 2026-09-27 this type folded that into `Refused` --- so `tpdf verify`
+/// reported a password-protected file as `refused`, the kind its README keeps
+/// for a file that is not a document it can read, while the `locked` kind the
+/// same README documents was reached only by the rarer case of PDFium opening
+/// what `lopdf` could not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Declined {
     /// The worker answered, with a refusal.
     Refused(String),
+    /// The worker answered that the document needs a password it has not been
+    /// given, or that the one it was given did not open it.
+    Locked(String),
     /// No answer came, or not one to this question.
     Failed(String),
 }
@@ -307,7 +319,108 @@ impl Declined {
     #[must_use]
     pub fn message(&self) -> &str {
         match self {
-            Declined::Refused(why) | Declined::Failed(why) => why,
+            Declined::Refused(why) | Declined::Locked(why) | Declined::Failed(why) => why,
+        }
+    }
+}
+
+/// A worker holding one document, asked several questions in turn.
+///
+/// [`InWorker::properties`] asks one question and drops its worker; the
+/// command-line `info` and `text` ask several of the same document --- its
+/// page sizes, its form, every page's text --- and a worker per question would
+/// map and parse the document once per page.
+///
+/// **Every question has [`DEFAULT_DEADLINE`] of its own**, enforced as
+/// [`awaited`] enforces it: the exchange runs on a thread, and a worker that
+/// does not answer in time is killed, which ends the session. A deadline over
+/// the whole session would have to grow with the page count, and a bound that
+/// grows with the input is not a bound.
+///
+/// **The worker comes back to the session after each answer**, which is the
+/// ordering [`asked_on_a_thread`] exists to forbid, and the reason that is safe
+/// here is that nothing this session's caller does to the file waits on the
+/// mapping being released: it only reads. The file is never resized or
+/// renamed while a session holds it --- `tpdf text -o` refuses an output that
+/// names its input --- and the worker, and so the mapping, is dropped with the
+/// session.
+pub struct Session {
+    worker: Option<Worker>,
+    pid: u32,
+}
+
+impl InWorker {
+    /// Starts a worker holding `file`, and unlocks it with `password` first
+    /// when there is one.
+    ///
+    /// The password crosses as [`Request::Unlock`] does in the application ---
+    /// on the worker's stdin, never in its argv.
+    ///
+    /// # Errors
+    ///
+    /// The file could not be mapped or the worker started; or, with a
+    /// password, the worker refused it: [`Declined::Locked`] for a wrong one.
+    pub fn session(
+        &self,
+        file: &std::fs::File,
+        len: usize,
+        password: Option<&str>,
+    ) -> Result<Session, Declined> {
+        let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)
+            .map_err(Declined::Failed)?;
+        let pid = worker.pid();
+        let mut session = Session {
+            worker: Some(worker),
+            pid,
+        };
+        if let Some(password) = password {
+            match session.ask(Request::Unlock {
+                password: password.to_string(),
+            })? {
+                Reply::Unlocked => {}
+                other => {
+                    return Err(Declined::Failed(format!(
+                        "the worker answered a password with {other:?}"
+                    )))
+                }
+            }
+        }
+        Ok(session)
+    }
+}
+
+impl Session {
+    /// One question, answered within [`DEFAULT_DEADLINE`].
+    ///
+    /// # Errors
+    ///
+    /// The worker refused, is locked, died, or did not answer in time --- after
+    /// which it is gone and every later question fails.
+    pub fn ask(&mut self, request: Request) -> Result<Reply, Declined> {
+        let Some(worker) = self.worker.take() else {
+            return Err(Declined::Failed(
+                "the worker holding this document is gone".into(),
+            ));
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut worker = worker;
+            let answer = InWorker::asked(&mut worker, &request);
+            let _ = tx.send((worker, answer));
+        });
+        match rx.recv_timeout(DEFAULT_DEADLINE) {
+            Ok((worker, answer)) => {
+                self.worker = Some(worker);
+                answer
+            }
+            Err(_) => {
+                kill_pid(self.pid);
+                Err(Declined::Failed(format!(
+                    "the worker reading the document did not answer within {:.0} s",
+                    DEFAULT_DEADLINE.as_secs_f64()
+                )))
+            }
         }
     }
 }
@@ -381,6 +494,9 @@ impl InWorker {
     /// One request, with a refusal kept apart from a failure.
     fn asked(worker: &mut Worker, request: &Request) -> Result<Reply, Declined> {
         let answered = worker.call(request).map_err(Declined::Failed)?;
+        if answered.locked {
+            return Err(Declined::Locked(answered.error));
+        }
         if !answered.ok {
             return Err(Declined::Refused(answered.error));
         }

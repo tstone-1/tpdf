@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "command": "text",
+  "path": "report.pdf",
+  "pages": [
+    {
+      "page": 1,
+      "order": "tagged",
+      "encoding": "stated",
+      "text": "Quarterly review\nThe first paragraph."
+    },
+    {
+      "page": 2,
+      "order": "geometric",
+      "encoding": "guessed",
+      "text": "alpha one\nbeta one"
+    },
+    {
+      "page": 3,
+      "order": "none",
+      "encoding": "unknown",
+      "text": ""
+    }
+  ]
+}

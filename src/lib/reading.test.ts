@@ -169,6 +169,14 @@ describe("readingOrder", () => {
     expect([...order].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
+  it("keeps a first character that has no box", () => {
+    // Filed under the index before it, which for the first character is none:
+    // until 2026-09-27 it was dropped here, so the order was not a permutation.
+    const text = page([[" ", null], ...word("after", 72, 100)]);
+    const order = readingOrder(text);
+    expect([...order].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
   it("has nothing to say about a page with no text", () => {
     expect(readingOrder(page([]))).toEqual([]);
     expect(readingLines(page([]))).toEqual([]);

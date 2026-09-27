@@ -1,0 +1,180 @@
+{
+  "schema": 1,
+  "command": "info",
+  "files": [
+    {
+      "path": "contract.pdf",
+      "error": null,
+      "document": {
+        "version": "1.7",
+        "bytes": 19252,
+        "pages": 3,
+        "page_sizes": [
+          {
+            "width_pt": 595.28,
+            "height_pt": 841.89,
+            "count": 2
+          },
+          {
+            "width_pt": 841.89,
+            "height_pt": 595.28,
+            "count": 1
+          }
+        ],
+        "revisions": 3,
+        "metadata": [
+          {
+            "name": "Title",
+            "value": "Quarterly review",
+            "standard": true
+          },
+          {
+            "name": "Producer",
+            "value": "pyHanko 0.37.0",
+            "standard": true
+          },
+          {
+            "name": "Department",
+            "value": "Compliance",
+            "standard": false
+          }
+        ],
+        "language": "en-GB",
+        "encryption": {
+          "method": "AES-256",
+          "revision": 6,
+          "opened_without_password": true,
+          "permissions": [
+            {
+              "what": "print",
+              "allowed": true
+            },
+            {
+              "what": "modify",
+              "allowed": false
+            }
+          ]
+        },
+        "tagged": true,
+        "conformance": {
+          "claimed": [
+            "PDF/A-3B",
+            "PDF/UA-1"
+          ],
+          "unread": false
+        },
+        "attachments": 1,
+        "form": {
+          "readable": true,
+          "fields": 0,
+          "widgets": 0,
+          "xfa": false,
+          "why": null
+        },
+        "signatures": [
+          {
+            "field": "Signature1",
+            "signer": "First Signer",
+            "issuer": "tpdf test root CA",
+            "claimed_time": "2026-09-26 20:20:13 +02:00",
+            "covers_whole_file": false,
+            "appended_bytes": 9101,
+            "integrity": {
+              "verdict": "intact",
+              "why": null,
+              "digest": "SHA-256",
+              "method": "RSA",
+              "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA). It covers the document as it was when signed; what was appended afterwards is not part of it."
+            },
+            "trust": {
+              "standing": "untrusted",
+              "why": "root",
+              "store": "mac",
+              "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names."
+            }
+          }
+        ],
+        "unsigned_signature_fields": 1,
+        "limits": {
+          "locked": false,
+          "fields_dropped": 0,
+          "values_clipped": 0,
+          "timestamps_unread": 0,
+          "signatures_dropped": 0,
+          "unreadable": 0,
+          "certificates_unread": 0
+        }
+      }
+    },
+    {
+      "path": "xfa.pdf",
+      "error": null,
+      "document": {
+        "version": "1.7",
+        "bytes": 19252,
+        "pages": 3,
+        "page_sizes": [
+          {
+            "width_pt": 595.28,
+            "height_pt": 841.89,
+            "count": 2
+          },
+          {
+            "width_pt": 841.89,
+            "height_pt": 595.28,
+            "count": 1
+          }
+        ],
+        "revisions": 3,
+        "metadata": [
+          {
+            "name": "Title",
+            "value": "Quarterly review",
+            "standard": true
+          },
+          {
+            "name": "Producer",
+            "value": "pyHanko 0.37.0",
+            "standard": true
+          },
+          {
+            "name": "Department",
+            "value": "Compliance",
+            "standard": false
+          }
+        ],
+        "language": "en-GB",
+        "encryption": null,
+        "tagged": null,
+        "conformance": null,
+        "attachments": null,
+        "form": {
+          "readable": false,
+          "fields": 0,
+          "widgets": 0,
+          "xfa": true,
+          "why": "XFA forms are not supported"
+        },
+        "signatures": [],
+        "unsigned_signature_fields": 0,
+        "limits": {
+          "locked": false,
+          "fields_dropped": 0,
+          "values_clipped": 0,
+          "timestamps_unread": 0,
+          "signatures_dropped": 0,
+          "unreadable": 0,
+          "certificates_unread": 0
+        }
+      }
+    },
+    {
+      "path": "locked.pdf",
+      "error": {
+        "kind": "locked",
+        "message": "locked.pdf is encrypted with a password --- give it with --password-env to describe it"
+      },
+      "document": null
+    }
+  ]
+}

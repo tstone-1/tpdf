@@ -189,3 +189,149 @@ pub struct Signed {
     /// The signing panel's closing sentence, word for word.
     pub summary: String,
 }
+
+/// `tpdf info --json`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Info {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"info"`.
+    pub command: String,
+    /// One entry per document, in the order given.
+    pub files: Vec<Described>,
+}
+
+/// One document `info` was given.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Described {
+    /// The path as given on the command line.
+    pub path: String,
+    /// Why the document could not be described; `null` when it was. `locked`
+    /// is a document that needs a password it was not given, and is reported
+    /// rather than failed: `info` still exits 0 for it.
+    pub error: Option<FileError>,
+    /// What the document says about itself; `null` exactly when `error` is not.
+    pub document: Option<Document>,
+}
+
+/// What the properties dialog shows, as data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Document {
+    /// `1.7`: the header's, or the catalog's `/Version` where that is later.
+    pub version: String,
+    /// The file's length.
+    pub bytes: u64,
+    /// How many pages, as PDFium counts them.
+    pub pages: u32,
+    /// Each distinct displayed page size, in the order it first occurs.
+    pub page_sizes: Vec<PageSize>,
+    /// One, plus one per incremental update.
+    pub revisions: usize,
+    /// The `/Info` dictionary, the keys PDF defines first in their order, then
+    /// the document's own.
+    pub metadata: Vec<crate::docinfo::Field>,
+    /// `/Lang`, or empty.
+    pub language: String,
+    /// `null` for a document that is not encrypted.
+    pub encryption: Option<crate::docinfo::Encryption>,
+    /// Whether it has a structure tree; `null` when that could not be asked.
+    pub tagged: Option<bool>,
+    /// What its XMP metadata claims; `null` when it carries none.
+    pub conformance: Option<Conformance>,
+    /// Embedded files; `null` when they could not be counted.
+    pub attachments: Option<usize>,
+    /// Its interactive form.
+    pub form: Form,
+    /// Every signed signature field, in the document's order: the objects
+    /// `verify` prints.
+    pub signatures: Vec<Signature>,
+    /// Signature fields waiting for a signature.
+    pub unsigned_signature_fields: usize,
+    /// What could not be read, so nothing above is silently partial.
+    pub limits: crate::docinfo::Limits,
+}
+
+/// Pages of one displayed size.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageSize {
+    /// Width as displayed, points, to two decimals.
+    pub width_pt: f64,
+    /// Height as displayed, points, to two decimals.
+    pub height_pt: f64,
+    /// How many pages have it.
+    pub count: usize,
+}
+
+/// A conformance claim. Claimed, never checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Conformance {
+    /// `PDF/A-3B`, `PDF/UA-1`, sorted.
+    pub claimed: Vec<String>,
+    /// The XMP packet was there and could not all be read.
+    pub unread: bool,
+}
+
+/// The document's interactive form, as the application's form filling reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Form {
+    /// Whether tpdf could read the form; `false` with `why` when it refused.
+    pub readable: bool,
+    /// Fields with at least one widget on a page. `0` when there is no form.
+    pub fields: usize,
+    /// Widgets on pages; a field may have several.
+    pub widgets: usize,
+    /// Whether the form is XFA, which tpdf does not read.
+    pub xfa: bool,
+    /// Why the form could not be read; `null` when it could.
+    pub why: Option<String>,
+}
+
+/// `tpdf text --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Text {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"text"`.
+    pub command: String,
+    /// The document, as given.
+    pub path: String,
+    /// The pages asked for, in document order.
+    pub pages: Vec<PageText>,
+}
+
+/// One page's text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageText {
+    /// The page, counted from 1.
+    pub page: u32,
+    /// How the order was decided.
+    pub order: Order,
+    /// Whether the document says what its characters mean.
+    pub encoding: Encoding,
+    /// The page's lines in reading order, joined by `\n`.
+    pub text: String,
+}
+
+/// [`PageText::order`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Order {
+    /// The document's own tags, which cover every visible character.
+    Tagged,
+    /// Recovered from where the characters sit, as the viewer recovers it.
+    Geometric,
+    /// The page has no characters to order.
+    None,
+}
+
+/// [`PageText::encoding`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Encoding {
+    /// Every font on the page states what its characters mean.
+    Stated,
+    /// Some font does not, and PDFium guessed: some of the text may be noise.
+    Guessed,
+    /// The fonts could not all be examined.
+    Unknown,
+}

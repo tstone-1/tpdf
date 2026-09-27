@@ -26,6 +26,22 @@
 //! 4. **The workers the tool spawns are sandboxed** (macOS: `sandbox_check` on a
 //!    worker started by `Worker::spawn_shared`, the call `save::InWorker` makes,
 //!    against this process as the unsandboxed control).
+//! 5. **`info --json` is what the in-process reader says**, document for
+//!    document and key for key: the same `cli::info::document` built from
+//!    `DocumentGraph::properties`, PDFium's page sizes and `DocumentGraph::form`
+//!    in this process. Controls: the fixtures must between them be tagged,
+//!    encrypted, signed and carry a form, so a report that dropped any of those
+//!    cannot agree; a password-protected document is `locked` without its
+//!    password and described with it; and `verify` calls it `locked` too.
+//! 6. **`text --json` is what the in-process extraction says**, page for page,
+//!    ordered by `reading::read` --- and, independently of both, the lines each
+//!    fixture's manifest records. Control: `tagged.pdf`'s first page with its
+//!    tags taken away reads the margin note before the second heading, so a
+//!    tool that ignored the tags cannot agree with the manifest. `--pages`
+//!    selects, and refuses a page past the end (3) and a backwards range (2).
+//! 7. **Beside `pdftotext`**, when Poppler is installed: word overlap and word
+//!    order per fixture, printed, never counted. A second reader with its own
+//!    reading-order rules is expected to differ, most on a tagged page.
 //!
 //! Fixtures under `testdata/` are generated, not committed (`BUILD.md`); a
 //! check whose fixtures are absent says `[SKIP]` and names them, and is never
@@ -53,7 +69,9 @@ fn main() {
     if argv.get(1).map(String::as_str) == Some(worker::WORKER_ARGV) {
         worker_child::main(&argv);
     }
-    let checks: [Check; 4] = [
+    // The order is load-bearing: 3 asserts this process has not mapped PDFium,
+    // and 5 and 6 map it here to extract in-process, so they come after.
+    let checks: [Check; 7] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -61,6 +79,9 @@ fn main() {
         ),
         ("the tool's process never maps PDFium", never_maps_pdfium),
         ("the tool's workers are sandboxed", workers_are_sandboxed),
+        ("info agrees with the in-process reader", info_agrees),
+        ("text agrees with the in-process extraction", text_agrees),
+        ("text beside pdftotext, for information", beside_pdftotext),
     ];
     let mut report = Report::default();
     for (name, check) in checks {
@@ -674,6 +695,35 @@ fn never_maps_pdfium(report: &mut Report) {
         // The built binary, from outside: dyld names every image each process
         // loads, prefixed by its pid, and the workers inherit the variable.
         let (code, _, stderr) = tool(&["verify", &shown], &[("DYLD_PRINT_LIBRARIES", "1")]);
+        // `info` and `text` read the document through the same workers; each
+        // is held to the same rule, by the same parse of dyld's output.
+        for command in ["info", "text"] {
+            let (code, _, stderr) = tool(&[command, &shown], &[("DYLD_PRINT_LIBRARIES", "1")]);
+            let parents: std::collections::BTreeSet<String> = stderr
+                .lines()
+                .filter_map(|line| line.strip_prefix("dyld["))
+                .filter_map(|rest| rest.split_once("]: "))
+                .filter(|(_, image)| image.ends_with("/tpdf-cli"))
+                .map(|(pid, _)| pid.to_string())
+                .collect();
+            let mapped_by = |pid: &str| {
+                stderr
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("dyld["))
+                    .filter_map(|rest| rest.split_once("]: "))
+                    .filter(|(p, _)| *p == pid)
+                    .any(|(_, image)| image.to_ascii_lowercase().contains("pdfium"))
+            };
+            // The tool is the one process running tpdf-cli that maps no PDFium;
+            // every worker is tpdf-cli too, and maps it.
+            let clean = parents.iter().filter(|pid| !mapped_by(pid)).count();
+            let workers = parents.iter().filter(|pid| mapped_by(pid)).count();
+            report.check(
+                &format!("{command}: the tool's own process never loaded PDFium, and a worker did"),
+                code == 0 && clean == 1 && workers >= 1,
+                &format!("exit {code}, {clean} clean, {workers} with PDFium"),
+            );
+        }
         let mut by_pid: std::collections::BTreeMap<String, Vec<String>> = Default::default();
         for line in stderr.lines() {
             if let Some(rest) = line.strip_prefix("dyld[") {
@@ -741,11 +791,18 @@ fn never_maps_pdfium(report: &mut Report) {
         misdirected: false,
     };
     let (code, stdout, stderr) = signs(&strings(&["verify", &shown]), &store, now());
+    let (info_code, info_out, _) = signs(&strings(&["info", &shown]), &store, now());
+    let (text_code, _, _) = signs(&strings(&["text", &shown]), &store, now());
     let after = tpdf_lib::images::mapped();
     report.check(
         "cli::run read the document through a worker",
         code == 0 && stdout.contains("no signatures"),
         &format!("exit {code}: {stderr}"),
+    );
+    report.check(
+        "cli::run described it and read its text through workers too",
+        info_code == 0 && info_out.contains("1 page") && text_code == 0,
+        &format!("info exit {info_code}, text exit {text_code}"),
     );
     report.check(
         "no PDFium in this process after cli::run verified a document",
@@ -812,4 +869,498 @@ fn workers_are_sandboxed(report: &mut Report) {
         "sandbox_check",
         "a Windows worker is contained by its parent; `scripts/win_modules.py` is that platform's instrument",
     );
+}
+
+// --- 5 ----------------------------------------------------------------------
+
+/// PDFium, bound in this process: after check 3, which needs it not to be.
+fn bindings() -> Option<tpdf_lib::progressive::Bindings> {
+    tpdf_lib::progressive::bind(&library_dir())
+        .ok()
+        .map(tpdf_lib::progressive::bindings_of)
+}
+
+/// `cli::info::document` for `path`, built in this process.
+fn info_here(
+    bindings: tpdf_lib::progressive::Bindings,
+    path: &Path,
+    password: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let document = tpdf_lib::document::OpenDocument::open(bindings, path, password)
+        .map_err(|refusal| refusal.reason)?;
+    let count = document.page_count();
+    let properties = document.graph().properties(count)?;
+    let sizes = (0..count)
+        .map(|i| {
+            document.page(i).map(|page| tpdf_lib::render::PageSize {
+                width_pt: page.width_pt(),
+                height_pt: page.height_pt(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let form = document.graph().form();
+    serde_json::to_value(cli::info::document(&properties, &sizes, form)).map_err(|e| e.to_string())
+}
+
+/// The keys at which two JSON values differ, for a failure message.
+fn differing(a: &serde_json::Value, b: &serde_json::Value) -> Vec<String> {
+    match (a, b) {
+        (serde_json::Value::Object(x), serde_json::Value::Object(y)) => {
+            let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
+            keys.into_iter()
+                .filter(|k| x.get(*k) != y.get(*k))
+                .map(|k| format!("{k}: tool {:?} here {:?}", x.get(k), y.get(k)))
+                .collect()
+        }
+        _ if a == b => Vec::new(),
+        _ => vec![format!("tool {a} here {b}")],
+    }
+}
+
+const DESCRIBED: [&str; 9] = [
+    "incr-two-signers.pdf",
+    "incr-certified-1.pdf",
+    "incr-encrypted-open.pdf",
+    "signed-altered.pdf",
+    "form.pdf",
+    "tagged.pdf",
+    "columns.pdf",
+    "rotated.pdf",
+    "multilingual.pdf",
+];
+
+fn info_agrees(report: &mut Report) {
+    let Some(bindings) = bindings() else {
+        report.check("PDFium binds in this process", false, "no library");
+        return;
+    };
+    let present: Vec<PathBuf> = DESCRIBED.iter().filter_map(|n| fixture(n)).collect();
+    if present.is_empty() {
+        report.skip("info against the fixtures", "none generated");
+        return;
+    }
+    let shown: Vec<String> = present.iter().map(|p| p.display().to_string()).collect();
+    let mut args = vec!["info", "--json"];
+    args.extend(shown.iter().map(String::as_str));
+    let (code, stdout, stderr) = tool(&args, &[]);
+    report.check(
+        "info exits 0 when every document was read",
+        code == 0,
+        &stderr,
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    report.check(
+        "the document says schema 1 and command info, one entry per document",
+        json["schema"] == 1
+            && json["command"] == "info"
+            && json["files"].as_array().map(Vec::len) == Some(present.len()),
+        &stdout,
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for (at, path) in present.iter().enumerate() {
+        let theirs = &json["files"][at]["document"];
+        let ours = match info_here(bindings, path, None) {
+            Ok(ours) => ours,
+            Err(why) => {
+                report.check(&format!("{}: read here", path.display()), false, &why);
+                continue;
+            }
+        };
+        if theirs["tagged"] == true {
+            seen.insert("tagged");
+        }
+        if !theirs["encryption"].is_null() {
+            seen.insert("encrypted");
+        }
+        if theirs["signatures"]
+            .as_array()
+            .is_some_and(|s| !s.is_empty())
+        {
+            seen.insert("signed");
+        }
+        if theirs["form"]["fields"].as_u64().unwrap_or(0) > 0 {
+            seen.insert("form");
+        }
+        report.check(
+            &format!(
+                "{}: info says what the in-process reader says",
+                path.display()
+            ),
+            !theirs.is_null() && *theirs == ours,
+            &differing(theirs, &ours).join("\n       "),
+        );
+    }
+    if present.len() == DESCRIBED.len() {
+        report.check(
+            "control: the fixtures are between them tagged, encrypted, signed and carry a form",
+            seen.len() == 4,
+            &format!("{seen:?}"),
+        );
+    } else {
+        report.skip("the variety control", "not every fixture is generated");
+    }
+
+    // A document behind a real password.
+    let Some(locked) = fixture("incr-encrypted-pw.pdf") else {
+        report.skip(
+            "the password checks",
+            "incr-encrypted-pw.pdf is not generated",
+        );
+        return;
+    };
+    let at = locked.display().to_string();
+    let (code, stdout, stderr) = tool(&["info", "--json", &at], &[]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    report.check(
+        "a locked document is reported as locked, and info still exits 0",
+        code == 0
+            && json["files"][0]["error"]["kind"] == "locked"
+            && json["files"][0]["document"].is_null()
+            && stderr.contains("--password-env"),
+        &format!("exit {code}: {stdout}"),
+    );
+    let (code, stdout, _) = tool(
+        &["info", "--json", "--password-env", "TPDF_IT_PASSWORD", &at],
+        &[("TPDF_IT_PASSWORD", "swordfish")],
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    let theirs = &json["files"][0]["document"];
+    let ours = info_here(bindings, &locked, Some("swordfish")).unwrap_or_default();
+    report.check(
+        "with its password from the environment, it is described as the in-process reader describes it",
+        code == 0 && !theirs.is_null() && *theirs == ours,
+        &differing(theirs, &ours).join("\n       "),
+    );
+    report.check(
+        "the password never appears in what the tool prints",
+        !stdout.contains("swordfish"),
+        &stdout,
+    );
+    let (code, stdout, _) = tool(
+        &["info", "--json", "--password-env", "TPDF_IT_PASSWORD", &at],
+        &[("TPDF_IT_PASSWORD", "not the password")],
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    report.check(
+        "a wrong password leaves it locked",
+        code == 0 && json["files"][0]["error"]["kind"] == "locked",
+        &stdout,
+    );
+    let (code, stdout, _) = tool(&["verify", "--json", &at], &[]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    report.check(
+        "verify reports the same document as locked, not refused",
+        code == 3 && json["files"][0]["error"]["kind"] == "locked",
+        &stdout,
+    );
+}
+
+// --- 6 ----------------------------------------------------------------------
+
+/// Every page's `text` report for `path`, built in this process.
+fn text_here(
+    bindings: tpdf_lib::progressive::Bindings,
+    path: &Path,
+    password: Option<&str>,
+    strip_tags: bool,
+) -> Result<Vec<serde_json::Value>, String> {
+    let document = tpdf_lib::document::OpenDocument::open(bindings, path, password)
+        .map_err(|refusal| refusal.reason)?;
+    let count = document.page_count();
+    let mapping = document.graph().mapping(count as usize).to_vec();
+    (0..count)
+        .map(|i| {
+            let mut text = tpdf_lib::text::extract(&document.page(i)?)?;
+            if strip_tags {
+                text.runs.clear();
+            }
+            serde_json::to_value(cli::text::ordered(i + 1, &text, mapping.get(i as usize)))
+                .map_err(|e| e.to_string())
+        })
+        .collect()
+}
+
+const READ: [&str; 6] = [
+    "tagged.pdf",
+    "columns.pdf",
+    "multilingual.pdf",
+    "encodings.pdf",
+    "rotated.pdf",
+    "incr-two-signers.pdf",
+];
+
+/// The manifest's lines for each page, where it records them.
+fn manifest_lines(name: &str) -> Vec<(usize, Vec<String>)> {
+    let stem = name.trim_end_matches(".pdf");
+    let Ok(text) = std::fs::read_to_string(
+        root()
+            .join("testdata")
+            .join(format!("{stem}-manifest.json")),
+    ) else {
+        return Vec::new();
+    };
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    json["pages"]
+        .as_array()
+        .map(|pages| {
+            pages
+                .iter()
+                .filter_map(|p| {
+                    let lines = p["lines"].as_array()?;
+                    Some((
+                        usize::try_from(p["page"].as_u64()?).ok()?,
+                        lines
+                            .iter()
+                            .map(|l| l.as_str().unwrap_or_default().to_string())
+                            .collect(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[allow(clippy::too_many_lines)]
+fn text_agrees(report: &mut Report) {
+    let Some(bindings) = bindings() else {
+        report.check("PDFium binds in this process", false, "no library");
+        return;
+    };
+    let mut orders = std::collections::BTreeSet::new();
+    let mut encodings = std::collections::BTreeSet::new();
+    let mut manifest_pages = 0;
+    for name in READ {
+        let Some(path) = fixture(name) else {
+            report.skip(&format!("text of {name}"), "not generated");
+            continue;
+        };
+        let at = path.display().to_string();
+        let (code, stdout, stderr) = tool(&["text", "--json", &at], &[]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+        let theirs = json["pages"].as_array().cloned().unwrap_or_default();
+        let ours = text_here(bindings, &path, None, false).unwrap_or_default();
+        for page in &theirs {
+            orders.insert(page["order"].as_str().unwrap_or_default().to_string());
+            encodings.insert(page["encoding"].as_str().unwrap_or_default().to_string());
+        }
+        report.check(
+            &format!(
+                "{name}: every page's text, order and encoding is the in-process extraction's"
+            ),
+            code == 0 && !theirs.is_empty() && theirs == ours,
+            &format!("exit {code} {stderr}\n       tool {theirs:?}\n       here {ours:?}"),
+        );
+        for (page, lines) in manifest_lines(name) {
+            manifest_pages += 1;
+            let got: Vec<String> = theirs
+                .get(page)
+                .and_then(|p| p["text"].as_str())
+                .map(|t| t.split('\n').map(str::to_string).collect())
+                .unwrap_or_default();
+            report.check(
+                &format!("{name} page {}: the lines its manifest records", page + 1),
+                got == lines,
+                &format!("\n       want {lines:?}\n       got  {got:?}"),
+            );
+        }
+        // Plain output: every page ends with a form feed.
+        let (code, plain, _) = tool(&["text", &at], &[]);
+        report.check(
+            &format!(
+                "{name}: plain text ends each of its {} pages with a form feed",
+                theirs.len()
+            ),
+            code == 0 && plain.matches('\u{c}').count() == theirs.len() && plain.ends_with('\u{c}'),
+            &format!("exit {code}"),
+        );
+    }
+    let all = READ.iter().all(|n| fixture(n).is_some());
+    if all {
+        report.check(
+            "control: the pages read include tagged and geometric orders, stated and guessed encodings",
+            ["tagged", "geometric"].iter().all(|o| orders.contains(*o))
+                && ["stated", "guessed"].iter().all(|e| encodings.contains(*e))
+                && manifest_pages >= 10,
+            &format!("{orders:?} {encodings:?}, {manifest_pages} manifest pages"),
+        );
+    } else {
+        report.skip("the variety control", "not every fixture is generated");
+    }
+
+    // The tagged page, and the control that it is the tags that order it.
+    if let Some(tagged) = fixture("tagged.pdf") {
+        let with = text_here(bindings, &tagged, None, false).unwrap_or_default();
+        let without = text_here(bindings, &tagged, None, true).unwrap_or_default();
+        let text = |pages: &[serde_json::Value]| {
+            pages
+                .first()
+                .and_then(|p| p["text"].as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let (a, b) = (text(&with), text(&without));
+        let before = |t: &str, x: &str, y: &str| match (t.find(x), t.find(y)) {
+            (Some(i), Some(j)) => i < j,
+            _ => false,
+        };
+        report.check(
+            "tagged.pdf: the tags put the margin note last, and the geometry puts it before the second heading",
+            with.first().is_some_and(|p| p["order"] == "tagged")
+                && without.first().is_some_and(|p| p["order"] == "geometric")
+                && before(&a, "Second half", "Marginal")
+                && before(&b, "Marginal", "Second half"),
+            &format!("\n       tagged    {a:?}\n       geometric {b:?}"),
+        );
+    }
+
+    // --pages, and its refusals.
+    if let Some(columns) = fixture("columns.pdf") {
+        let at = columns.display().to_string();
+        let all = text_here(bindings, &columns, None, false).unwrap_or_default();
+        let (code, stdout, _) = tool(&["text", "--json", "--pages", "3,1", &at], &[]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+        let got = json["pages"].as_array().cloned().unwrap_or_default();
+        report.check(
+            "--pages 3,1 reads pages 1 and 3, in document order",
+            code == 0 && all.len() >= 3 && got == vec![all[0].clone(), all[2].clone()],
+            &format!("exit {code}: {got:?}"),
+        );
+        let beyond = (all.len() + 1).to_string();
+        let (code, stdout, stderr) = tool(&["text", "--pages", &beyond, &at], &[]);
+        report.check(
+            "a page past the end is refused, 3, and nothing is printed",
+            code == 3 && stdout.is_empty() && stderr.contains(&format!("no page {beyond}")),
+            &format!("exit {code}: {stderr}"),
+        );
+        let (code, _, stderr) = tool(&["text", "--pages", "2-1", &at], &[]);
+        report.check(
+            "a backwards range is refused, 2",
+            code == 2 && stderr.contains("backwards"),
+            &format!("exit {code}: {stderr}"),
+        );
+        let dir = scratch("text-out");
+        let out = dir.join("out.txt");
+        let (code, stdout, _) = tool(&["text", &at, "-o", &out.display().to_string()], &[]);
+        let (_, printed, _) = tool(&["text", &at], &[]);
+        report.check(
+            "-o writes exactly what stdout would carry, and stdout carries nothing",
+            code == 0 && stdout.is_empty() && std::fs::read_to_string(&out).ok() == Some(printed),
+            &format!("exit {code}"),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A document behind a password.
+    if let Some(locked) = fixture("incr-encrypted-pw.pdf") {
+        let at = locked.display().to_string();
+        let (code, stdout, stderr) = tool(&["text", &at], &[]);
+        report.check(
+            "text refuses a locked document, 3, and says how to give the password",
+            code == 3 && stdout.is_empty() && stderr.contains("--password-env"),
+            &format!("exit {code}: {stderr}"),
+        );
+        let (code, stdout, _) = tool(
+            &["text", "--json", "--password-env", "TPDF_IT_PASSWORD", &at],
+            &[("TPDF_IT_PASSWORD", "swordfish")],
+        );
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+        let ours = text_here(bindings, &locked, Some("swordfish"), false).unwrap_or_default();
+        report.check(
+            "with its password, text reads it as the in-process extraction does",
+            code == 0
+                && !ours.is_empty()
+                && json["pages"].as_array() == Some(&ours)
+                && ours[0]["text"].as_str().is_some_and(|t| !t.is_empty()),
+            &format!("exit {code}: {stdout}"),
+        );
+        let (code, _, stderr) = tool(
+            &["text", "--password-env", "TPDF_IT_PASSWORD", &at],
+            &[("TPDF_IT_PASSWORD", "not the password")],
+        );
+        report.check(
+            "a wrong password is refused, 3",
+            code == 3 && stderr.contains("did not open it"),
+            &format!("exit {code}: {stderr}"),
+        );
+    }
+}
+
+// --- 7 ----------------------------------------------------------------------
+
+fn words(text: &str) -> Vec<String> {
+    text.split_whitespace().map(str::to_string).collect()
+}
+
+/// Shared words over the larger count: 1.0 when the two hold the same words.
+fn overlap(a: &[String], b: &[String]) -> f64 {
+    let mut count: std::collections::HashMap<&str, i64> = std::collections::HashMap::new();
+    for w in a {
+        *count.entry(w).or_default() += 1;
+    }
+    let mut shared = 0;
+    for w in b {
+        if let Some(n) = count.get_mut(w.as_str()) {
+            if *n > 0 {
+                *n -= 1;
+                shared += 1;
+            }
+        }
+    }
+    shared as f64 / a.len().max(b.len()).max(1) as f64
+}
+
+/// Longest common subsequence of words over the larger count: word order.
+fn in_order(a: &[String], b: &[String]) -> f64 {
+    let mut row = vec![0usize; b.len() + 1];
+    for x in a {
+        let mut diagonal = 0;
+        for (j, y) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = if x == y {
+                diagonal + 1
+            } else {
+                above.max(row[j])
+            };
+            diagonal = above;
+        }
+    }
+    row[b.len()] as f64 / a.len().max(b.len()).max(1) as f64
+}
+
+fn beside_pdftotext(report: &mut Report) {
+    let available = Command::new("pdftotext").arg("-v").output().is_ok();
+    if !available {
+        report.skip(
+            "the pdftotext comparison",
+            "Poppler's pdftotext is not installed",
+        );
+        return;
+    }
+    for name in READ {
+        let Some(path) = fixture(name) else { continue };
+        let at = path.display().to_string();
+        let (_, ours, _) = tool(&["text", &at], &[]);
+        let theirs = Command::new("pdftotext")
+            .args([at.as_str(), "-"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        let pages = |t: &str| t.split('\u{c}').map(words).collect::<Vec<_>>();
+        let (a, b) = (pages(&ours), pages(&theirs));
+        let per_page: Vec<String> = a
+            .iter()
+            .zip(&b)
+            .filter(|(x, y)| !x.is_empty() || !y.is_empty())
+            .map(|(x, y)| format!("{:.2}/{:.2}", overlap(x, y), in_order(x, y)))
+            .collect();
+        let (x, y) = (words(&ours), words(&theirs));
+        println!(
+            "[INFO] {name}: words {:.3} shared, {:.3} in the same order ({} against {}); per page {}",
+            overlap(&x, &y),
+            in_order(&x, &y),
+            x.len(),
+            y.len(),
+            per_page.join(" ")
+        );
+    }
 }

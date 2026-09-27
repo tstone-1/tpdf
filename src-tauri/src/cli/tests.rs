@@ -196,6 +196,8 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("sign", "sign a.pdf -o b.pdf --identity A"),
         ("verify", "verify a.pdf"),
         ("identities", "identities --json"),
+        ("info", "info a.pdf --json"),
+        ("text", "text a.pdf --pages 2"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -214,7 +216,10 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         );
     }
     let why = refused("encrypt a.pdf");
-    assert!(why.contains("sign, verify, identities"), "{why}");
+    assert!(
+        why.contains("sign, verify, identities, info, text"),
+        "{why}"
+    );
 }
 
 // --- the identity -----------------------------------------------------------
@@ -849,10 +854,13 @@ fn samples() -> Vec<(&'static str, String)> {
         ("verify", pretty(&verify)),
         ("sign", pretty(&sign)),
         ("wording", pretty(&wording())),
+        ("info", pretty(&info_sample())),
+        ("text", pretty(&text_sample())),
+        ("reading", pretty(&reading_sample())),
     ]
 }
 
-/// `serde_json::to_string_pretty` over the four shapes, behind one call.
+/// `serde_json::to_string_pretty` over the shapes, behind one call.
 mod erased {
     pub trait Json {
         fn pretty(&self) -> String;
@@ -917,7 +925,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 4, "the sample table itself");
+    assert_eq!(want.len(), 7, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -950,7 +958,7 @@ fn every_json_key_is_described_in_the_readme() {
 
     let mut all = std::collections::BTreeSet::new();
     for (name, json) in samples() {
-        if name == "wording" {
+        if name == "wording" || name == "reading" {
             continue;
         }
         keys(
@@ -965,6 +973,9 @@ fn every_json_key_is_described_in_the_readme() {
         "sentence",
         "not_usable",
         "claimed_time",
+        "page_sizes",
+        "opened_without_password",
+        "encoding",
     ] {
         assert!(
             all.contains(known),
@@ -995,4 +1006,471 @@ fn the_identifier_is_the_applications() {
             .expect("tauri.conf.json");
     let config: serde_json::Value = serde_json::from_str(&config).expect("json");
     assert_eq!(config["identifier"].as_str(), Some(IDENTIFIER));
+}
+
+// --- info and text ------------------------------------------------------------
+
+/// `info` for one described document, one whose form is XFA, and one locked.
+fn info_sample() -> report::Info {
+    let form = super::info::form_report(Ok(crate::forms::Form::default()));
+    let document = report::Document {
+        version: "1.7".into(),
+        bytes: 19_252,
+        pages: 3,
+        page_sizes: super::info::page_sizes(&[
+            crate::render::PageSize {
+                width_pt: 595.2756,
+                height_pt: 841.8898,
+            },
+            crate::render::PageSize {
+                width_pt: 595.2756,
+                height_pt: 841.8898,
+            },
+            crate::render::PageSize {
+                width_pt: 841.8898,
+                height_pt: 595.2756,
+            },
+        ]),
+        revisions: 3,
+        metadata: vec![
+            crate::docinfo::Field {
+                name: "Title".into(),
+                value: "Quarterly review".into(),
+                standard: true,
+            },
+            crate::docinfo::Field {
+                name: "Producer".into(),
+                value: "pyHanko 0.37.0".into(),
+                standard: true,
+            },
+            crate::docinfo::Field {
+                name: "Department".into(),
+                value: "Compliance".into(),
+                standard: false,
+            },
+        ],
+        language: "en-GB".into(),
+        encryption: Some(crate::docinfo::Encryption {
+            method: "AES-256".into(),
+            revision: 6,
+            opened_without_password: true,
+            permissions: vec![
+                crate::docinfo::Permission {
+                    what: "print".into(),
+                    allowed: true,
+                },
+                crate::docinfo::Permission {
+                    what: "modify".into(),
+                    allowed: false,
+                },
+            ],
+        }),
+        tagged: Some(true),
+        conformance: Some(report::Conformance {
+            claimed: vec!["PDF/A-3B".into(), "PDF/UA-1".into()],
+            unread: false,
+        }),
+        attachments: Some(1),
+        form,
+        signatures: vec![full_signature()],
+        unsigned_signature_fields: 1,
+        limits: crate::docinfo::Limits::default(),
+    };
+    let xfa = report::Document {
+        tagged: None,
+        encryption: None,
+        conformance: None,
+        attachments: None,
+        signatures: Vec::new(),
+        unsigned_signature_fields: 0,
+        form: super::info::form_report(Err(crate::forms::XFA_REFUSAL.into())),
+        ..document.clone()
+    };
+    report::Info {
+        schema: report::SCHEMA,
+        command: "info".into(),
+        files: vec![
+            report::Described {
+                path: "contract.pdf".into(),
+                error: None,
+                document: Some(document),
+            },
+            report::Described {
+                path: "xfa.pdf".into(),
+                error: None,
+                document: Some(xfa),
+            },
+            report::Described {
+                path: "locked.pdf".into(),
+                error: Some(report::FileError {
+                    kind: ErrorKind::Locked,
+                    message: "locked.pdf is encrypted with a password --- give it with \
+                              --password-env to describe it"
+                        .into(),
+                }),
+                document: None,
+            },
+        ],
+    }
+}
+
+/// `text` over every `order` and every `encoding`.
+fn text_sample() -> report::Text {
+    let page = |page, order, encoding, text: &str| report::PageText {
+        page,
+        order,
+        encoding,
+        text: text.into(),
+    };
+    report::Text {
+        schema: report::SCHEMA,
+        command: "text".into(),
+        path: "report.pdf".into(),
+        pages: vec![
+            page(
+                1,
+                report::Order::Tagged,
+                report::Encoding::Stated,
+                "Quarterly review\nThe first paragraph.",
+            ),
+            page(
+                2,
+                report::Order::Geometric,
+                report::Encoding::Guessed,
+                "alpha one\nbeta one",
+            ),
+            page(3, report::Order::None, report::Encoding::Unknown, ""),
+        ],
+    }
+}
+
+/// Every reading-order case, with the order `reading.rs` gives it --- what
+/// `clireading.test.ts` asks `reading.ts` to agree with.
+fn reading_sample() -> serde_json::Value {
+    let cases: Vec<serde_json::Value> = crate::reading::tests::cases()
+        .into_iter()
+        .map(|case| {
+            let reading = crate::reading::read(&case.text);
+            let mut text = case.text;
+            text.extract_ms = 0.0;
+            // Through the serializer, as `commands::read::page_text` sends it to
+            // the webview, and not through `json!`: a `Value` widens each `f32`
+            // to the `f64` a cast gives, which is not the number the viewer
+            // holds --- `reading.rs`'s module note, and the `f32-tie` case.
+            let text: serde_json::Value =
+                serde_json::from_str(&serde_json::to_string(&text).expect("serialises"))
+                    .expect("parses");
+            serde_json::json!({
+                "name": case.name,
+                "text": text,
+                "route": reading.route,
+                "lines": reading.lines,
+                "order": reading.order(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "cases": cases })
+}
+
+fn text_line(line: &str) -> super::text::Text {
+    let args = argv(line);
+    assert!(
+        matches!(parse(&args), Ok(Line::Run(_))),
+        "`{line}` was not accepted"
+    );
+    super::text::parse(&args[1..]).unwrap_or_else(|why| panic!("`{line}`: {why}"))
+}
+
+#[test]
+fn a_page_list_is_read_as_the_palette_reads_one() {
+    assert_eq!(
+        super::text::page_list("1-3,7").expect("ok"),
+        vec![1, 2, 3, 7]
+    );
+    // Merged and in document order, whatever order it was typed in.
+    assert_eq!(
+        super::text::page_list("7, 2-3,1-2").expect("ok"),
+        vec![1, 2, 3, 7]
+    );
+    assert_eq!(text_line("text a.pdf --pages 4").pages, Some(vec![4]));
+    assert_eq!(text_line("text a.pdf").pages, None);
+    for (raw, says) in [
+        ("0", "count from 1"),
+        ("3-1", "runs backwards"),
+        ("1,,2", "empty part"),
+        ("1,", "empty part"),
+        ("two", "not a page number"),
+        ("1-", "not a page number"),
+        ("-2", "not a page number"),
+        ("1-2-3", "not a page number"),
+    ] {
+        let why = super::text::page_list(raw).expect_err(raw);
+        assert!(why.contains(says), "{raw}: {why}");
+    }
+}
+
+#[test]
+fn a_page_past_the_end_is_refused_by_number() {
+    assert_eq!(super::text::selected(None, 3).expect("all"), vec![1, 2, 3]);
+    assert_eq!(
+        super::text::selected(Some(&[1, 3]), 3).expect("ok"),
+        vec![1, 3]
+    );
+    let why = super::text::selected(Some(&[2, 4]), 3).expect_err("4 of 3");
+    assert!(
+        why.contains("no page 4") && why.contains("3 pages"),
+        "{why}"
+    );
+}
+
+#[test]
+fn every_malformed_text_or_info_line_is_refused_with_its_reason() {
+    for (line, says) in [
+        ("text", "needs the document"),
+        ("text a.pdf b.pdf", "second"),
+        ("text a.pdf -o a.pdf", "names the document being read"),
+        ("text a.pdf -o ./a.pdf", "names the document being read"),
+        ("text a.pdf --force", "there is no `-o`"),
+        ("text a.pdf --pages", "needs a value"),
+        ("text a.pdf --pages 0", "count from 1"),
+        ("text a.pdf --password swordfish", "no option `--password`"),
+        ("text a.pdf --password-env A=b", "cannot be one"),
+        ("info", "at least one document"),
+        ("info a.pdf --pages 1", "no option `--pages`"),
+        ("info a.pdf --password-env", "needs a value"),
+    ] {
+        let why = refused(line);
+        assert!(why.contains(says), "`{line}`: {why}");
+    }
+    let info = super::info::parse(&argv("a.pdf b.pdf --password-env PW --json")).expect("info");
+    assert_eq!(info.files.len(), 2);
+    assert_eq!(info.password_env.as_deref(), Some("PW"));
+    assert!(info.json);
+}
+
+#[test]
+fn a_password_variable_that_is_not_set_is_a_malformed_line() {
+    let name = "TPDF_CLI_TEST_A_VARIABLE_NOBODY_SETS";
+    assert!(
+        std::env::var_os(name).is_none(),
+        "the control: {name} is unset"
+    );
+    let failure = super::text::password(Some(name)).expect_err("unset");
+    assert_eq!(failure.exit, Exit::Usage);
+    assert!(failure.message.contains(name), "{}", failure.message);
+    assert_eq!(super::text::password(None).expect("none"), None);
+    // Run end to end, the refusal comes before any worker is asked for.
+    let store = Soft256(Vec::new());
+    for command in ["text", "info"] {
+        let (code, out, err) = ran(
+            &line(&[command, "missing.pdf", "--password-env", name]),
+            &store,
+        );
+        assert_eq!(code, 2, "{command}: {err}");
+        assert!(out.is_empty(), "{command}: {out}");
+    }
+}
+
+#[test]
+fn text_refusals_that_need_no_worker_exit_before_one_is_asked_for() {
+    // `library_dir` names nothing: a refusal that reached a worker would be 4.
+    let dir = scratch("text-refusals");
+    let input = dir.join("in.pdf");
+    std::fs::write(&input, crate::sign_cms::testkeys::plain_pdf()).expect("input");
+    let store = Soft256(Vec::new());
+    let s = |p: &Path| p.display().to_string();
+
+    let out = dir.join("out.txt");
+    std::fs::write(&out, b"keep me").expect("existing");
+    let (code, _, err) = ran(&line(&["text", &s(&input), "-o", &s(&out)]), &store);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("--force"), "{err}");
+    assert_eq!(std::fs::read(&out).expect("kept"), b"keep me");
+
+    let alias = dir.join("alias.pdf");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&input, &alias).expect("link");
+    #[cfg(windows)]
+    std::fs::hard_link(&input, &alias).expect("link");
+    let (code, _, err) = ran(
+        &line(&["text", &s(&input), "-o", &s(&alias), "--force"]),
+        &store,
+    );
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("under another name"), "{err}");
+    assert_eq!(
+        std::fs::read(&input).expect("input"),
+        crate::sign_cms::testkeys::plain_pdf()
+    );
+
+    let (code, _, err) = ran(&line(&["text", &s(&dir.join("missing.pdf"))]), &store);
+    assert_eq!(code, 3, "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_locked_document_is_reported_by_info_and_exits_0() {
+    let file = |kind: Option<ErrorKind>| report::Described {
+        path: "a.pdf".into(),
+        error: kind.map(|kind| report::FileError {
+            kind,
+            message: String::new(),
+        }),
+        document: None,
+    };
+    let info = |files| report::Info {
+        schema: report::SCHEMA,
+        command: "info".into(),
+        files,
+    };
+    use super::info::info_exit;
+    assert_eq!(info_exit(&info(vec![file(None)])), Exit::Ok);
+    assert_eq!(
+        info_exit(&info(vec![file(Some(ErrorKind::Locked))])),
+        Exit::Ok
+    );
+    assert_eq!(
+        info_exit(&info(vec![
+            file(Some(ErrorKind::Locked)),
+            file(Some(ErrorKind::Refused))
+        ])),
+        Exit::Refused
+    );
+    assert_eq!(
+        info_exit(&info(vec![
+            file(Some(ErrorKind::Failed)),
+            file(Some(ErrorKind::Unreadable))
+        ])),
+        Exit::Internal
+    );
+}
+
+#[test]
+fn a_form_is_counted_by_field_and_an_xfa_refusal_is_named() {
+    use super::info::form_report;
+    let widget = |object: u32, widget: u32| crate::forms::Widget {
+        object: (object, 0),
+        widget: (widget, 0),
+        page: 0,
+        rect: [0.0; 4],
+        display_rect: [0.0; 4],
+        name: format!("f{object}"),
+        value: crate::forms::Value::Text(String::new()),
+        control: crate::forms::Control::Text,
+        multiline: false,
+        max_length: None,
+        reason: None,
+    };
+    let two = form_report(Ok(crate::forms::Form {
+        // One field with two widgets --- a radio group, or a name shown twice.
+        widgets: vec![widget(1, 101), widget(1, 102), widget(2, 103)],
+    }));
+    assert_eq!(
+        (two.readable, two.fields, two.widgets, two.xfa),
+        (true, 2, 3, false)
+    );
+    let xfa = form_report(Err(crate::forms::XFA_REFUSAL.into()));
+    assert!(!xfa.readable && xfa.xfa, "{xfa:?}");
+    let bound = form_report(Err("This form exceeds the field-tree limit".into()));
+    assert!(!bound.readable && !bound.xfa, "{bound:?}");
+}
+
+#[test]
+fn page_sizes_are_counted_by_displayed_size_first_seen_first() {
+    let size = |w, h| crate::render::PageSize {
+        width_pt: w,
+        height_pt: h,
+    };
+    let sizes = super::info::page_sizes(&[
+        size(612.0, 792.0),
+        size(595.2756, 841.8898),
+        size(612.0, 792.0),
+        size(792.0, 612.0),
+    ]);
+    let seen: Vec<(f64, f64, usize)> = sizes
+        .iter()
+        .map(|s| (s.width_pt, s.height_pt, s.count))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![(612.0, 792.0, 2), (595.28, 841.89, 1), (792.0, 612.0, 1)]
+    );
+}
+
+#[test]
+fn a_page_says_which_order_it_was_read_in_and_whether_its_fonts_say_what_they_mean() {
+    use super::text::ordered;
+    use crate::encoding::PageMapping;
+    let cases = crate::reading::tests::cases();
+    let find = |name: &str| {
+        cases
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.text.clone())
+            .expect(name)
+    };
+    let stated = PageMapping::default();
+    let guessed = PageMapping {
+        composite: 1,
+        guessing: 1,
+        truncated: false,
+    };
+    let unsure = PageMapping {
+        composite: 1,
+        guessing: 0,
+        truncated: true,
+    };
+
+    let tagged = ordered(1, &find("tagged"), Some(&stated));
+    assert_eq!(tagged.order, report::Order::Tagged);
+    assert_eq!(tagged.text, "body one\nbody two\nnote");
+    assert_eq!(tagged.encoding, report::Encoding::Stated);
+    let geometric = ordered(1, &find("tagged-stripped"), Some(&guessed));
+    assert_eq!(geometric.order, report::Order::Geometric);
+    assert_eq!(geometric.text, "note\nbody one\nbody two");
+    assert_eq!(geometric.encoding, report::Encoding::Guessed);
+    let empty = ordered(3, &find("empty"), Some(&unsure));
+    assert_eq!(
+        (empty.order, empty.text.as_str()),
+        (report::Order::None, "")
+    );
+    assert_eq!(empty.encoding, report::Encoding::Unknown);
+    assert_eq!(
+        ordered(1, &find("empty"), None).encoding,
+        report::Encoding::Unknown
+    );
+    // PDFium's line breaks are not the lines: none survives into the text.
+    let separated = ordered(1, &find("tagged-separators"), None);
+    assert!(!separated.text.contains('\r'), "{:?}", separated.text);
+    assert_eq!(separated.text, "body one\nbody two\nnote");
+}
+
+#[test]
+fn a_line_break_pdfium_put_inside_a_line_is_not_kept() {
+    // Two runs close enough to be one line, which PDFium nonetheless separated
+    // with `\r\n`: the break is inside the line, where trimming cannot reach it.
+    let mut text = crate::text::PageText::default();
+    let mut put = |code: u32, quad: [f32; 4]| {
+        text.codes.push(code);
+        text.boxes.extend_from_slice(&quad);
+    };
+    for (at, c) in "one".chars().enumerate() {
+        let left = 72.0 + at as f32 * 5.5;
+        put(c as u32, [left, 100.0, left + 5.5, 111.3]);
+    }
+    put(13, [0.0; 4]);
+    put(10, [0.0; 4]);
+    for (at, c) in "two".chars().enumerate() {
+        let left = 94.0 + at as f32 * 5.5;
+        put(c as u32, [left, 100.0, left + 5.5, 111.3]);
+    }
+    assert_eq!(super::text::ordered(1, &text, None).text, "onetwo");
+}
+
+#[test]
+fn plain_text_ends_every_page_with_a_form_feed() {
+    assert_eq!(
+        super::text::plain(&text_sample()),
+        "Quarterly review\nThe first paragraph.\n\u{c}alpha one\nbeta one\n\u{c}\u{c}"
+    );
 }

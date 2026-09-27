@@ -142,16 +142,13 @@ fn verify_one(env: &Env<'_>, path: &Path) -> report::File {
         Err(Declined::Refused(why)) => {
             return failed(ErrorKind::Refused, format!("{shown}: {why}"));
         }
+        // PDFium could not open it without a password: the worker answers
+        // every question with that, and the sentence is the one below.
+        Err(Declined::Locked(_)) => return failed(ErrorKind::Locked, locked_sentence(&shown)),
         Err(Declined::Failed(why)) => return failed(ErrorKind::Failed, format!("{shown}: {why}")),
     };
     if properties.limits.locked {
-        return failed(
-            ErrorKind::Locked,
-            format!(
-                "{shown} is encrypted with a password, and its signatures cannot be read \
-                 without it --- open it in tpdf to check them"
-            ),
-        );
+        return failed(ErrorKind::Locked, locked_sentence(&shown));
     }
     report::File {
         path: shown,
@@ -163,6 +160,18 @@ fn verify_one(env: &Env<'_>, path: &Path) -> report::File {
             .map(signature_report)
             .collect(),
     }
+}
+
+/// Why a document's signatures were not read: it needs a password.
+///
+/// One sentence for both ways of finding out --- PDFium refusing to open the
+/// document at all, and `lopdf` opening it and finding every object ciphertext
+/// --- because to the reader they are the same fact.
+fn locked_sentence(shown: &str) -> String {
+    format!(
+        "{shown} is encrypted with a password, and its signatures cannot be read without it \
+         --- open it in tpdf to check them"
+    )
 }
 
 /// The exit code a verified report earns.
@@ -241,7 +250,7 @@ pub fn verify_text(report: &report::Verified) -> String {
     lines.join("\n")
 }
 
-fn signature_text(signature: &report::Signature) -> String {
+pub(crate) fn signature_text(signature: &report::Signature) -> String {
     let who = if signature.signer.is_empty() {
         "a certificate that could not be read".to_string()
     } else {

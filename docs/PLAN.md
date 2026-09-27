@@ -15293,7 +15293,10 @@ Decisions the owner took on 2026-09-27, recorded as given:
 - **Keys only through the OS store** --- the macOS keychain, `CurrentUser\My` on Windows. No
   `.p12` option: that is an explicit later opt-in. Unattended use rests on the reader answering
   macOS's prompt with *Always Allow*, and tpdf never works around what the OS decides
-  (`docs/THREAT-MODEL.md` §T6.23 and residual 26).
+  (`docs/THREAT-MODEL.md` §T6.23 and residual 26). **Measured 2026-09-27** with the test
+  identity: after one *Always Allow* on a debug `tpdf-cli`, the next `tpdf-cli sign` ran with no
+  prompt and its output read intact. macOS ties that answer to the binary's code identity, so a
+  rebuilt or updated tool, and the Developer-ID-signed release, ask once more.
 - **Installation**: on macOS the tool is inside the bundle and *Install command-line tool…*
   links `/usr/local/bin/tpdf` to it, asking the system for administrator rights when needed
   (`clitool.rs`), with an uninstall beside it; on Windows a console-subsystem `tpdf-cli.exe`
@@ -15347,11 +15350,12 @@ contents; `opened`; `say` and `json`, one write each; `Exit` and `Failure`, the 
 contract; and `report::SCHEMA`. A test holds every registration to its dispatch and its line in
 `help`.
 
-**Next, queued by the owner on 2026-09-27, in this order --- none of them built:**
+**Next, queued by the owner on 2026-09-27, in this order.** The first two are built --- see
+*Describing a document and reading its text from the command line* below --- and the other two
+are not:
 
-1. `tpdf info --json`: the properties dialog --- pages, metadata, encryption, signatures, claimed
-   conformance --- which is `Request::Properties`, already what `verify` asks.
-2. `tpdf text`: the document's text in its reading order.
+1. ~~`tpdf info --json`~~ --- done 2026-09-27.
+2. ~~`tpdf text`~~ --- done 2026-09-27.
 3. `tpdf fill`: AcroForm values from a JSON file, its output pipeable into `sign`.
 4. `tpdf redact`: by search term or pattern, in batch, with the verified / not-verified report
    as JSON.
@@ -15360,10 +15364,92 @@ contract; and `report::SCHEMA`. A test holds every registration to its dispatch 
 keychain prompt the owner answers; `BUILD.md` has the command and its verification. **The
 Windows tool has never run on a desktop**: it type-checks and the Windows CI job runs
 `tests/cli.rs`, but the store end to end, PATH and a console session are unexercised. No `.p12`
-option (decided above). No password for encrypted documents, which `verify` reports as `locked`.
+option (decided above). No password for `verify`, which reports an encrypted document as
+`locked`; `info` and `text` take one (below).
 Reason and location on an invisible signature, as in the window. Timestamps and step 3. The
 bundled tool's signature and notarization are checked by `release.yml`'s verification step only
 from the next tag on; no bundle containing the tool has been built yet.
+
+#### Describing a document and reading its text from the command line --- done 2026-09-27
+
+`tpdf info` and `tpdf text` (`src-tauri/src/cli/info.rs`, `cli/text.rs`), items 1 and 2 of the
+queue above, each one module and one line in `cli::COMMANDS`. `README.md`'s *Command-line tool*
+section is the reference and `src-tauri/testdata/cli/{info,text}.json` are its samples.
+
+| Command | What it does | Where the work happens |
+|---|---|---|
+| `info <file>... [--password-env VAR] [--json]` | The properties dialog as data: pages and their displayed sizes, version, `/Info`, encryption and permissions, tagged, XMP's conformance claim, attachments, the form (fields, widgets, XFA), and signatures as `verify` reports them (`verify::signature_report`, reused). | one worker per document, `save_outside::Session`: `Request::Properties`, `Request::Open` for the sizes, `Request::Form` --- all requests the application already makes, none extended |
+| `text <file> [--pages 1-3,7] [--password-env VAR] [--json] [-o out [--force]]` | Each page's text in the viewer's reading order, one line per reading line, pages ended by a form feed; `--json` gives `order` (`tagged`, `geometric`, `none`) and `encoding` (`stated`, `guessed`, `unknown`) per page. | one worker: `Request::Open`, `Request::Mapping`, `Request::Text` per page; ordered in this process by `reading.rs` |
+
+Decisions taken in building it, each with its reason:
+
+- **The order is `reading.ts`'s, restated in Rust and held to it.** The viewer decides reading
+  order in TypeScript, and the tool has no webview. `src-tauri/src/reading.rs` restates it
+  function for function; `cli::tests` writes 18 cases and the order Rust gives each to
+  `testdata/cli/reading.json`, and `src/lib/clireading.test.ts` asks `reading.ts` the same
+  questions --- the arrangement `cli/words.rs` already has with `cliwording.test.ts`. The cases
+  cover both routes, all four rotations, turned text, a combining mark, a floated space, a
+  comma, and one case found by search in which a gap equals the cut width in the numbers the
+  viewer holds and exceeds it in the numbers an `f32` cast gives (`docs/TRAPS.md`).
+- **`order` is the viewer's decision, not the document's shape.** `tagged` means `usableRuns`
+  accepted the tags --- every visible character claimed --- which a document with a structure tree
+  can fail; `info`'s `tagged` answers the other question, whether the tree exists.
+- **Lines, not the copy buffer.** Select-all copies the page with PDFium's synthesised breaks
+  where they fell; `text` prints the reading lines with those taken out and trailing whitespace
+  trimmed, because after reordering a separator travels with the column it followed.
+- **A password only by the name of an environment variable** (`--password-env`), sent to the
+  worker as `Request::Unlock`, the window's route. Never argv, which every process can read.
+- **`Declined::Locked`.** A worker holding a document no password opened answers everything
+  with `Response::locked`, which `save_outside::InWorker` folded into `Refused`; so `verify` had
+  reported a password-protected file as `refused` since it shipped, while documenting `locked`.
+  Fixed here; `info` reports locked and exits 0, `text` refuses with 3.
+- **A 64 MiB ceiling on `text`'s output**, refused rather than cut; each page is already bounded
+  by the worker's reply limit. Every question to a session's worker has the 30 s deadline of its
+  own.
+
+**Measured**, macOS arm64, 2026-09-27. `tests/cli.rs`, 102 checks: `info --json` equals, key for
+key, `cli::info::document` built in this process from `DocumentGraph::properties`, PDFium's page
+sizes and `DocumentGraph::form`, on nine fixtures that are between them tagged, encrypted,
+signed and carry a form; `incr-encrypted-pw.pdf` is `locked` without its password and with a
+wrong one, described identically to the in-process reader with it, and `verify` calls it
+`locked`. `text --json` equals the in-process extraction ordered by `reading::read` on six
+fixtures, page for page, and the lines recorded in the fixtures' manifests on all 12 pages that
+record them --- `tagged.pdf` in tagged order, `columns.pdf` column by column, `multilingual.pdf`
+(Japanese, Arabic, folding, astral) and `encodings.pdf` including its guessed page. Control:
+`tagged.pdf`'s first page with its runs removed reads the margin note before the second heading.
+Containment extends to both: under `DYLD_PRINT_LIBRARIES`, `info` and `text` each run with one
+`tpdf-cli` process that maps no PDFium and workers that do.
+
+**Proved able to fail**: 41 mutations in `scripts/mutate_rust.py` (`--only "cli:" --only
+"reading:"`), every one caught by the unit test named for it. Three survived the first run, and
+each was a fixture too weak rather than a rule nobody tested: the test form's two widgets of
+one field shared a widget id, so counting widgets equalled counting fields; the test comma
+overlapped its line by more than half, so the short-mark rule was never the one that kept it;
+and the test's `\r\n` sat at a line's end, where the trim removes it before the filter is
+needed. Two `cli reading:` mutations of `reading.ts` in `scripts/mutate_frontend.py` turn
+`clireading.test.ts` red. `tests/cli.rs` cannot be driven by either harness; its mutations were
+run by hand and are listed in `BUILD.md`.
+
+Beside Poppler's `pdftotext` 26.08 (default mode), words shared / words in the same order:
+`rotated.pdf` 1.000 / 1.000; `tagged.pdf` 1.000 / 0.900, pdftotext reading the margin note
+second where the tags put it last; `columns.pdf` 1.000 / 0.581, pdftotext reading across the
+gutter line by line on all three pages; `multilingual.pdf` 0.688, all of it the Arabic page
+(0.11: pdftotext wraps each line in U+202B...U+202C and keeps the presentation forms PDFium
+maps to base letters) and the folding page (0.86); `encodings.pdf` 0.667, all of it the page
+with a broken `/ToUnicode`, where pdftotext gives three U+FFFD for the astral character PDFium
+pairs; `incr-two-signers.pdf` 0.357, because pdftotext includes the text of the two signature
+widgets' appearances and PDFium's page text does not.
+
+**Not done.** `verify` takes no password. `info` reports no per-page detail beyond the size
+summary (no per-page rotation or boxes). `text` has no layout-preserving mode and does not
+include annotation text.
+
+**Fixed on both sides the same day:** `reading.ts` dropped a page's first character when PDFium
+gave it no box and a later one had one --- it was filed under the index before it, `-1`, which
+no fragment reads --- so `readingOrder` was not a permutation there, contrary to its own comment.
+It now joins the first placed character's fragment in `reading.ts` and `reading.rs` alike;
+`every_order_is_a_permutation_of_the_page` holds it with no exception, and `reading.json` was
+regenerated. The viewer had the defect first; porting it is what exposed it.
 
 ### Cross-cutting
 

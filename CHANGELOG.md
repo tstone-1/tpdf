@@ -35,6 +35,16 @@ have the binary.)
   `tpdf` on your path; on Windows the installer puts `tpdf-cli.exe` beside
   `tpdf.exe`. See the README's *Command-line tool* section.
 
+  `tpdf info` describes documents as the properties dialog does — pages and
+  their sizes, metadata, encryption, tagging, the conformance a document
+  claims, attachments, its form and its signatures — and `tpdf text` prints
+  a document's text in the order it is read, which is the viewer's order: the
+  document's own tags where they cover the page, and otherwise one column
+  after the other rather than across them. Both take a password-protected
+  document's password from an environment variable, never from the command
+  line. `tpdf verify` now reports such a document as *locked*, as its
+  documentation always said, where it used to call it *refused*.
+
 - **A page with a letter outside Latin in its fonts can now be edited.** A
   document that names Cyrillic or other non-Latin letters in the encoding of
   its fonts, as a brochure with a Russian edition does, used to be refused on
@@ -104,6 +114,11 @@ have the binary.)
 
 ### Fixed
 
+- **A page's first character is no longer lost from the reading order.**
+  When the first character on a page had no position of its own and a later
+  one did, it was left out of the order the viewer reads a page in, so it
+  was missing wherever that order is used. It is now read with the text that
+  follows it.
 - **Redacting a form field that appears in several places now removes its
   answer everywhere.** A form that repeats a name or an ID on every page shows
   one field through several widgets. Redacting over one of them removed that

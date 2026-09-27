@@ -1,4 +1,5 @@
-//! `tpdf` on the command line: sign, verify, and list signing identities.
+//! `tpdf` on the command line: sign, verify, list signing identities, describe
+//! a document, and read its text.
 //!
 //! ## The same security model as the application, not a lighter one
 //!
@@ -50,8 +51,10 @@
 
 pub mod args;
 pub mod identities;
+pub mod info;
 pub mod report;
 pub mod sign;
+pub mod text;
 pub mod verify;
 pub mod words;
 
@@ -114,7 +117,7 @@ impl Failure {
 impl From<Declined> for Failure {
     fn from(declined: Declined) -> Self {
         match declined {
-            Declined::Refused(why) => Failure::new(Exit::Refused, why),
+            Declined::Refused(why) | Declined::Locked(why) => Failure::new(Exit::Refused, why),
             Declined::Failed(why) => Failure::new(Exit::Internal, why),
         }
     }
@@ -330,7 +333,13 @@ pub type Parser = fn(&[String]) -> Result<Box<dyn Subcommand>, String>;
 
 /// Every command, in the order `help` lists them. Adding one is a module and a
 /// line here.
-pub const COMMANDS: &[Registered] = &[sign::COMMAND, verify::COMMAND, identities::COMMAND];
+pub const COMMANDS: &[Registered] = &[
+    sign::COMMAND,
+    verify::COMMAND,
+    identities::COMMAND,
+    info::COMMAND,
+    text::COMMAND,
+];
 
 impl Env<'_> {
     /// The worker every document is parsed in: `save::InWorker`, spawned as
@@ -365,7 +374,7 @@ fn json(to: &mut dyn Write, value: &impl serde::Serialize) {
 #[must_use]
 pub fn usage(program: &str) -> String {
     let mut text = format!(
-        "tpdf {} --- sign and verify PDF documents from the command line\n\nUsage:\n",
+        "tpdf {} --- sign, verify, describe and read PDF documents from the command line\n\nUsage:\n",
         env!("CARGO_PKG_VERSION")
     );
     for command in COMMANDS {

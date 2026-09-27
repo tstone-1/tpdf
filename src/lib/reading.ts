@@ -468,6 +468,18 @@ function alignedFragments(text: PageText, axes: Axes, gap: number): Fragment[] {
       ? [{ ranges: [{ from: 0, to: text.codes.length }], box: emptyBox() }]
       : [];
   }
+  // What came before the first placed character was filed under -1, which no
+  // fragment reads, so it dropped out of the reading order altogether: a page
+  // whose first character has no box lost that character, and the order was not
+  // a permutation of the page. It joins the first placed character's fragment,
+  // where the document's own order puts it (`rangesOf` sorts). Found 2026-09-27
+  // porting this to `src-tauri/src/reading.rs`, which carries the same fix.
+  const leading = trailing.get(-1);
+  if (leading) {
+    const first = (items[0] as Placed).index;
+    trailing.set(first, [...leading, ...(trailing.get(first) ?? [])]);
+    trailing.delete(-1);
+  }
 
   // Banded by cross position, so a line is a line wherever its characters came
   // from. Sorted by the *start* of the extent rather than the middle: a

@@ -1998,6 +1998,14 @@ for this fixture`.
 scripts/gates.py
 ```
 
+**Mark new files before the run: `git add -N $(git ls-files --others --exclude-standard)`.**
+Several gates read `git ls-files` --- `dates`, the doc and anchor checks --- so a file that is
+not yet tracked is invisible to them, and a green local run says nothing about it. That is
+not hypothetical: on 2026-09-27 a full local run passed 26/26 over new command-line test data
+carrying certificate expiry dates in 2027, and the pushed commit failed `dates` on CI with 148
+findings. `-N` records the path without staging its content, so it changes what the gates
+see and nothing about what a commit would contain.
+
 That is the whole checklist. **`scripts/gates.py` is the definition of the gates, not a
 description of them** — it holds the commands with their flags, and this file deliberately
 does not repeat them. `AGENTS.md` records why: a checklist weaker than the gate it exists
@@ -5240,7 +5248,10 @@ the record.
   Regenerate the samples with `TPDF_CLI_SAMPLES=write cargo test --lib cli::` and read the
   diff: a changed JSON sample is a changed schema (a renamed or removed key moves
   `report::SCHEMA`), and a changed `wording.json` must still pass `src/lib/cliwording.test.ts`,
-  which holds it to `integrity.ts` and `signing.ts`.
+  which holds it to `integrity.ts` and `signing.ts`. `reading.json` is the same arrangement for
+  `tpdf text`'s reading order: `reading::tests::cases` with the order `src/reading.rs` gives
+  each, which `src/lib/clireading.test.ts` holds to `reading.ts`. A change to either file's
+  ordering rules is a change to both, or one of those two tests goes red.
 - `tests/cli.rs`, **a harness-free test binary** (`harness = false`), because signing spawns
   workers by re-executing the current binary, and libtest's `main` does not answer
   `worker::WORKER_ARGV`. It prints `[PASS]`/`[FAIL]`/`[SKIP]` lines and exits 1 on a failure or
@@ -5250,16 +5261,26 @@ the record.
   by the built tool, with a wrong-digest key, an encrypted document and a non-PDF as refused
   controls; the tool's process never loading PDFium (`DYLD_PRINT_LIBRARIES`, split by pid,
   with a worker loading it as the control; and this process's own image list before and after
-  `cli::run`, then PDFium bound here as the control); and `sandbox_check` on a worker, against
-  this process. Without generated fixtures (*Test fixtures*) the fixture parts say `[SKIP]`.
+  `cli::run`, then PDFium bound here as the control, with `info` and `text` held to the same
+  two rules); `sandbox_check` on a worker, against this process; `info --json` against
+  `cli::info::document` built in this process, and a password-protected document locked, then
+  described with `--password-env`; `text --json` against the in-process extraction and against
+  the lines the fixtures' manifests record, with `tagged.pdf`'s tags removed as the control,
+  and `--pages` and its refusals; and, when Poppler's `pdftotext` is installed, word overlap
+  and word order beside it, printed as `[INFO]` and never counted. The parts that bind PDFium in
+  this process run after the one asserting it has not. Without generated fixtures (*Test
+  fixtures*) the fixture parts say `[SKIP]`.
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 49 checks, ~10 s debug
+cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 102 checks, ~20 s debug
 cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clitool::
 ```
 
-**Proved able to fail.** The `cli:` and `cli tool link:` mutations in `scripts/mutate_rust.py`
-(`--only "cli:" --only "cli tool link:"`, twenty-one) and the `cli wording:` ones in `scripts/mutate_frontend.py`. `tests/cli.rs`
+**Proved able to fail.** The `cli:`, `reading:` and `cli tool link:` mutations in
+`scripts/mutate_rust.py` (`--only "cli:" --only "reading:" --only "cli tool link:"`, forty-four;
+all 41 `cli:` and `reading:` ones caught on 2026-09-27, three only after their fixtures were
+strengthened --- see `docs/PLAN.md`) and the `cli wording:` and `cli reading:` ones in
+`scripts/mutate_frontend.py`. `tests/cli.rs`
 cannot be selected by that harness, so its mutations were run by hand, each rebuilt and
 restored byte-identical (SHA-256 checked), each turning red exactly the check named:
 
@@ -5279,7 +5300,26 @@ sign writes the input unchanged         -> 13 red: sign exits 4 with "did not fi
 ```
 
 macOS arm64, 2026-09-27, 49 checks green before and after each, the file's SHA-256 equal
-before and after.
+before and after. The same day, for `info` and `text`, against 102 checks, the same way:
+
+```
+asked() ignores Response::locked        -> 5 red: info's locked report and its wrong-password
+  (save_outside.rs)                        check, verify's locked kind, and both of text's
+                                           locked refusals
+the session never sends the password    -> 2 red: info and text with the password
+text ignores --pages                    -> 2 red: --pages 3,1, and the page past the end
+info drops the worker's page sizes      -> 10 red: every info agreement, the password one too
+text asks for page 1 every time         -> 14 red: every multi-page text agreement, every
+                                           manifest page after the first, --pages 3,1 and
+                                           the password read
+info ignores the worker's form          -> 5 red: the four fixtures with fields, and the
+                                           variety control
+text binds PDFium in the tool's process -> 2 red: "text: the tool's own process never loaded
+                                           PDFium", and "no PDFium in this process"
+reading.rs ignores the tags             -> 3 red: tagged.pdf page 1 against its manifest,
+                                           the tagged-against-geometric control, and the
+                                           orders variety control
+```
 
 **Against the real keychain, by hand, never by an agent.** `identities` reads certificates only
 and raises no prompt:

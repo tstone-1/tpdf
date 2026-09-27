@@ -74,7 +74,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 |---|---|---|
 | **Webview** (Svelte) | Draws, receives tiles, issues commands — ten of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
-| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no network, no updater |
+| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no network, no updater |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -2264,6 +2264,26 @@ refuses an output that exists unless `--force` is given, and never modifies the 
 and `identities` write nothing. Paths come from the command line and are used at the account's
 own authority, which is what a command-line program is for; there is no webview between them
 and the reader.
+
+**`info` and `text`, and a document's password** (added the same day). Two more commands
+that ask the workers nothing new: `info` asks a worker `Request::Properties`, `Request::Open` and
+`Request::Form`, `text` asks `Request::Open`, `Request::Mapping` and `Request::Text` per page ---
+all questions the window already asks --- through `save_outside::Session`, one worker per
+document with the 30 s deadline on every question; the reading order is computed in this process
+from the character codes and boxes the worker returned --- values the document influences, but
+parsed by nobody here: the ordering sorts and bands numbers, its recursion stops at twelve
+levels as `reading.ts`'s does, and `text` refuses to produce more than 64 MiB rather than
+growing without bound. `tests/cli.rs` holds both to the containment check above under
+`DYLD_PRINT_LIBRARIES`. `text -o` writes one file, refuses an existing one without `--force`,
+and refuses the input under any name. The one new input is a **password**, and it never
+appears on the command line: `--password-env VAR` names an environment variable, because argv is
+readable by every process on the machine and lands in shell history, while another process can
+read this one's environment only at the same account's level, where it could equally read the
+reader's files. The tool reads the variable, sends the value to the worker as `Request::Unlock`
+over its stdin --- §T6.9's route, unchanged --- and prints it nowhere; `tests/cli.rs` asserts it
+is absent from the output. The workers inherit the tool's environment, so the variable is
+visible inside them too; that widens nothing, since a worker already holds the document the
+password decrypts and receives the password on stdin regardless.
 
 **The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
 symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the

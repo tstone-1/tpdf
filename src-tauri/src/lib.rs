@@ -69,6 +69,9 @@ pub mod progressive;
 mod protocol;
 mod queue;
 pub mod raster_redact;
+/// The order a page is read in, restated from `src/lib/reading.ts` for
+/// `tpdf text`, which has no webview to ask.
+pub mod reading;
 pub mod recentdocs;
 pub mod redact;
 pub mod redaction_fill;

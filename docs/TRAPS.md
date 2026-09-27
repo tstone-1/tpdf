@@ -87,6 +87,7 @@ hop through the index.
 - Filtering the engine's answer is weaker than not showing it the pixels
 - The gate reads a band of rows, so a region narrower than its line is judged with its neighbours
 - `FPDFPage_GetRotation` needs a loaded page, and the outline asked for one per bookmark
+- A separator PDFium synthesised travels with the column it followed
 
 ## Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -301,6 +302,7 @@ hop through the index.
 - The first Security-framework call in a process can cost seconds, and a gate pays it every run
 - A feature on a crate already in the tree is not free: `cms`'s `builder` brought ten packages
 - `current_exe` answers with the link a program was started through, not the file it is
+- `json!` widens an `f32` to the cast's `f64`, and the serializer writes the `f32`'s own digits
 
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -534,6 +536,7 @@ hop through the index.
 - A layout test whose every box was bound by its width could not see the rule for its height
 - Asserting that every limit binds found one that never can, and the grid was not what to fix
 - A value written on every keystroke makes the same write on commit dead code, and its mutation survives
+- A refusal type with no case for "locked" made a documented `locked` unreachable
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24725,3 +24728,54 @@ Filter with the separator the names carry: `--only "cli:"` selects the one famil
 `clitool::` is listed beside `cli::` rather than trusted to be covered by it --- there the
 substring runs the other way and `cli::` is not in `clitool::tests::...`.
 
+### `json!` widens an `f32` to the cast's `f64`, and the serializer writes the `f32`'s own digits
+
+2026-09-27, `tpdf text`. `reading.rs` restates `reading.ts` for the command line, and its
+module note says the numbers must be the ones the viewer holds: `commands::read::page_text`
+returns a `PageText` through Tauri, which calls `serde_json::to_string`, and the direct
+serializer writes an `f32` as its own shortest digits --- `101.2` --- which JavaScript parses
+as the `f64` `101.2`. A widening cast gives `101.19999694824219`, a different number.
+
+The differential sample that holds the two implementations together
+(`testdata/cli/reading.json`) was first built with `serde_json::json!({ "text": text, ... })`,
+and **`json!` goes through `Value`, whose `From<f32>` is the cast**. So the sample handed
+`reading.ts` the widened numbers --- the very ones the Rust side had been written to avoid ---
+and seventeen cases agreed anyway, because no case sat on a tie. The eighteenth was found by
+search to make `webview_number` falsifiable (a gap exactly equal to the cut width in decimal
+and 7e-6 wider after the cast): Rust, on the viewer's numbers, said one line; `reading.ts`,
+handed the cast's numbers by the sample, said two. The disagreement was in the sample, not
+the port.
+
+The rule: **a fixture meant to reproduce what a consumer receives must travel the consumer's
+serialization path**, and in serde that means `to_string` and back, never `json!` or
+`to_value` for anything holding an `f32`. A differential that agrees on every case away from a
+tie says nothing about ties.
+
+### A refusal type with no case for "locked" made a documented `locked` unreachable
+
+2026-09-27. `save_outside::Declined` had two cases, `Refused` and `Failed`, and
+`InWorker::asked` turned any `ok: false` reply into `Refused` --- including a worker's
+`Response::locked`, whose `locked` flag it never read. So `tpdf verify` on a document behind a
+password printed `"kind": "refused"`, while `README.md` documented `locked` for exactly that
+file and the committed `verify.json` sample showed it. The sample was built by hand in a unit
+test, so it proved the *shape* could hold `locked`, never that anything produced it; the only
+path to `locked` in the code was `lopdf` failing where PDFium had succeeded, which no fixture
+does. Found by running the built tool on `incr-encrypted-pw.pdf` before writing `info`.
+
+`Declined::Locked` exists now and `tests/cli.rs` runs `verify` on that fixture. The general
+point: **an enumeration value documented for the reader needs a test that reaches it through
+the real path**; a hand-built sample of it is a statement about the schema, not the behaviour.
+
+### A separator PDFium synthesised travels with the column it followed
+
+2026-09-27, `tpdf text` against `columns.pdf`'s manifest. PDFium inserts a synthesised space
+(or `\r\n`) between two text objects, and attaches it --- by index --- to the character before
+it. On the interleaved page the file draws `alpha one`, then `beta one` beside it, so the
+separator follows `alpha one`. Reading order moves `beta one` to the second column, and the
+space stays where the index put it: every left-column line came back as `alpha one ` with a
+trailing blank, and the manifest comparison went red on all ten.
+
+`cli::text::lines` trims trailing whitespace and drops `\r` and `\n`, because both are
+PDFium's rather than the document's; leading whitespace is kept, because an indent can be the
+document's. The viewer's copy path (`readingTextOf`) keeps the separators where they fell,
+which is invisible on screen and shows up in a paste.

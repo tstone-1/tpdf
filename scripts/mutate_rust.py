@@ -224,6 +224,9 @@ FILTERS = [
     # substring, and "cli::" is not in "clitool::tests::..." --- so both.
     "cli::",
     "clitool::",
+    # Added 2026-09-27 with `tpdf text`, in the same edit as its mutations:
+    # `reading.rs` restates `reading.ts` for the command line.
+    "reading::",
 ]
 
 
@@ -10881,6 +10884,14 @@ MUTATIONS += [
         "a_certificate_is_offered_only_while_valid_for_signing",
     ),
     Mutation(
+        # Compare paths only: a hard link to the source reads as another file.
+        "save: same_file ignores file identity",
+        "src/save.rs",
+        "        return a == b;\n    }\n    match (a.canonicalize(), b.canonicalize()) {",
+        "        let _ = (a, b);\n    }\n    match (a.canonicalize(), b.canonicalize()) {",
+        "a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not",
+    ),
+    Mutation(
         # The owner's Developer ID certificate: digitalSignature, code signing only.
         "sign: offer a certificate issued for code signing",
         "src/sign_cms.rs",
@@ -11557,8 +11568,8 @@ MUTATIONS += [
     Mutation(
         "cli: a registered command that nothing dispatches to",
         "src/cli.rs",
-        "pub const COMMANDS: &[Registered] = &[sign::COMMAND, verify::COMMAND, identities::COMMAND];",
-        "pub const COMMANDS: &[Registered] = &[sign::COMMAND, verify::COMMAND];",
+        "    info::COMMAND,\n    text::COMMAND,\n];",
+        "    info::COMMAND,\n];",
         "every_registered_command_is_reached_by_its_name_and_listed_in_help",
     ),
     Mutation(
@@ -11567,6 +11578,178 @@ MUTATIONS += [
         'pub const IDENTIFIER: &str = "com.timostein.tpdf";',
         'pub const IDENTIFIER: &str = "com.timostein.tpdf.cli";',
         "the_identifier_is_the_applications",
+    ),
+    # `tpdf info` and `tpdf text`. What needs a worker --- the locked answer
+    # reaching `verify` and `info` as `locked`, the password crossing to the
+    # worker --- is `tests/cli.rs`, proved by hand and listed in `BUILD.md`.
+    Mutation(
+        "cli: accept page 0 in --pages",
+        "src/cli/text.rs",
+        "            Ok(n) if n >= 1 => Ok(n),",
+        "            Ok(n) => Ok(n),",
+        "a_page_list_is_read_as_the_palette_reads_one",
+    ),
+    Mutation(
+        "cli: read a backwards page range as nothing",
+        "src/cli/text.rs",
+        "                if from > to {",
+        "                if false {",
+        "a_page_list_is_read_as_the_palette_reads_one",
+    ),
+    Mutation(
+        "cli: read a page past the end",
+        "src/cli/text.rs",
+        "        Some(pages) => match pages.iter().find(|page| **page > count) {",
+        "        Some(pages) => match pages.iter().find(|_| false) {",
+        "a_page_past_the_end_is_refused_by_number",
+    ),
+    Mutation(
+        "cli: accept a text -o that names the document",
+        "src/cli/text.rs",
+        "        if lexically_same(&input, out) {",
+        "        if false {",
+        "every_malformed_text_or_info_line_is_refused_with_its_reason",
+    ),
+    Mutation(
+        "cli: replace an existing text output without --force",
+        "src/cli/text.rs",
+        "            if !self.force && output.exists() {",
+        "            if false {",
+        "text_refusals_that_need_no_worker_exit_before_one_is_asked_for",
+    ),
+    Mutation(
+        "cli: read a password variable that is not set as no password",
+        "src/cli/text.rs",
+        "        Err(std::env::VarError::NotPresent) => Err(Failure::new(",
+        "        Err(std::env::VarError::NotPresent) => Ok(None),\n        Err(std::env::VarError::NotUnicode(_)) if false => Err(Failure::new(",
+        "a_password_variable_that_is_not_set_is_a_malformed_line",
+    ),
+    Mutation(
+        "cli: call an empty page geometric",
+        "src/cli/text.rs",
+        "    let order = if text.codes.is_empty() {",
+        "    let order = if false {",
+        "a_page_says_which_order_it_was_read_in_and_whether_its_fonts_say_what_they_mean",
+    ),
+    Mutation(
+        "cli: call a page whose fonts were not all examined stated",
+        "src/cli/text.rs",
+        "        Some(m) if m.certain() => Encoding::Stated,",
+        "        Some(_) => Encoding::Stated,",
+        "a_page_says_which_order_it_was_read_in_and_whether_its_fonts_say_what_they_mean",
+    ),
+    Mutation(
+        "cli: keep PDFium's line breaks in a line",
+        "src/cli/text.rs",
+        "                .filter(|c| *c != '\\r' && *c != '\\n')",
+        "                .filter(|_| true)",
+        "a_line_break_pdfium_put_inside_a_line_is_not_kept",
+    ),
+    Mutation(
+        "cli: forget the form feed after a page",
+        "src/cli/text.rs",
+        "        out.push('\\u{000C}');",
+        "",
+        "plain_text_ends_every_page_with_a_form_feed",
+    ),
+    Mutation(
+        "cli: fail info on a merely locked document",
+        "src/cli/info.rs",
+        "            ErrorKind::Locked => Exit::Ok,",
+        "            ErrorKind::Locked => Exit::Refused,",
+        "a_locked_document_is_reported_by_info_and_exits_0",
+    ),
+    Mutation(
+        "cli: miss an XFA form",
+        "src/cli/info.rs",
+        "            xfa: why == crate::forms::XFA_REFUSAL,",
+        "            xfa: false,",
+        "a_form_is_counted_by_field_and_an_xfa_refusal_is_named",
+    ),
+    Mutation(
+        "cli: count widgets as fields",
+        "src/cli/info.rs",
+        "                .map(|w| w.object)",
+        "                .map(|w| w.widget)",
+        "a_form_is_counted_by_field_and_an_xfa_refusal_is_named",
+    ),
+    Mutation(
+        "cli: report page sizes unrounded",
+        "src/cli/info.rs",
+        "    (f64::from(value) * 100.0).round() / 100.0",
+        "    f64::from(value)",
+        "page_sizes_are_counted_by_displayed_size_first_seen_first",
+    ),
+    Mutation(
+        # Fixed 2026-09-27 on both sides: a first character with no box was lost.
+        "reading: drop a first character that has no box",
+        "src/reading.rs",
+        "    if let Some(leading) = trailing.remove(&-1) {",
+        "    if let Some(leading) = None::<Vec<usize>> {",
+        "every_order_is_a_permutation_of_the_page",
+    ),
+    Mutation(
+        "reading: ignore the document's tags",
+        "src/reading.rs",
+        "    if let Some(tagged) = usable_runs(&view) {",
+        "    if let Some(tagged) = usable_runs(&view).filter(|_| false) {",
+        "tags_that_cover_the_page_decide_its_order_and_the_geometry_does_not",
+    ),
+    Mutation(
+        "reading: use tags that leave a visible character unclaimed",
+        "src/reading.rs",
+        "        if is_visible(view.codes[index]) && placed(char_quad(view, index)) {",
+        "        if false {",
+        "tags_that_leave_a_visible_character_unclaimed_are_not_used",
+    ),
+    Mutation(
+        "reading: never cut between columns",
+        "src/reading.rs",
+        "    if columns.len() > 1 {",
+        "    if false {",
+        "interleaved_columns_read_one_column_after_the_other",
+    ),
+    Mutation(
+        "reading: ignore the page's rotation",
+        "src/reading.rs",
+        "    let axes = axes_for(view.quarter_turns);",
+        "    let axes = axes_for(0);",
+        "a_turned_page_reads_as_the_upright_one_does",
+    ),
+    Mutation(
+        "reading: give a comma a band of its own",
+        "src/reading.rs",
+        "    if shorter < ha.max(hb) * SHORT_MARK {",
+        "    if false {",
+        "a_mark_a_sliver_and_a_comma_stay_on_their_line",
+    ),
+    Mutation(
+        "reading: give a combining mark a band of its own",
+        "src/reading.rs",
+        "        let mark = last >= 0 && combining(view.codes[index]);",
+        "        let mark = false;",
+        "a_mark_a_sliver_and_a_comma_stay_on_their_line",
+    ),
+    Mutation(
+        "reading: compute on the widened f32 rather than the viewer's number",
+        "src/reading.rs",
+        "            boxes: text.boxes.iter().copied().map(webview_number).collect(),",
+        "            boxes: text.boxes.iter().copied().map(f64::from).collect(),",
+        "a_gap_is_measured_in_the_numbers_the_viewer_holds",
+    ),
+    Mutation(
+        "reading: order a turned run in the page's direction",
+        "src/reading.rs",
+        "    if view.char_turns.is_empty() {\n        return aligned_fragments(view, axes, gap);",
+        "    if true {\n        return aligned_fragments(view, axes, gap);",
+        "text_turned_a_quarter_is_read_in_its_own_direction",
+    ),
+    Mutation(
+        "reading: a restated rule drifts from reading.ts",
+        "src/reading.rs",
+        "const SLIVER_PT: f64 = 0.1;",
+        "const SLIVER_PT: f64 = 0.01;",
+        "every_json_shape_and_the_wording_match_their_committed_samples",
     ),
     Mutation(
         "cli tool link: replace a link that is not tpdf's",

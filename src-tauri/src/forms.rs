@@ -68,6 +68,13 @@ pub struct Widget {
     pub reason: Option<String>,
 }
 
+/// Why [`scan`] refuses a form carrying `/XFA`.
+///
+/// A constant so that `tpdf info` can say a form is XFA by comparing against
+/// the refusal rather than by a second look at the catalog, which would be a
+/// second answer to a question this module already answers.
+pub const XFA_REFUSAL: &str = "XFA forms are not supported";
+
 /// A complete scan or an error; never a silently truncated list.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Form {
@@ -251,7 +258,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
         return Ok(Form::default());
     };
     if form.has(b"XFA") {
-        return Err("XFA forms are not supported".into());
+        return Err(XFA_REFUSAL.into());
     }
     let mut members = HashSet::new();
     let cut = crate::fields::walk(

@@ -461,11 +461,11 @@ both.
 
 ## Command-line tool
 
-`tpdf sign`, `tpdf verify` and `tpdf identities` do from a terminal what **Sign document…**
-and **Document properties** do in the window, with the same code: the document is read only
-by the same sandboxed worker processes, the private key never leaves the operating system,
-and every signed file is read back and checked before success is reported. Nothing is
-uploaded and nothing goes online.
+`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info` and `tpdf text` do from a terminal
+what **Sign document…**, **Document properties** and the viewer's own text do in the window,
+with the same code: the document is read only by the same sandboxed worker processes, the
+private key never leaves the operating system, and every signed file is read back and checked
+before success is reported. Nothing is uploaded and nothing goes online.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
@@ -484,6 +484,11 @@ tpdf sign contract.pdf -o contract-signed.pdf --identity 2a144cdb…c74 \
     --visible --page 2 --rect 72,600,220,70 --reason "Approved" --location "Hamburg"
 tpdf verify contract-signed.pdf other.pdf
 tpdf verify --strict --json *.pdf
+tpdf info report.pdf
+tpdf info --json *.pdf
+PDF_PASSWORD=… tpdf info --password-env PDF_PASSWORD locked.pdf
+tpdf text report.pdf --pages 1-3,7 -o report.txt
+tpdf text --json report.pdf
 ```
 
 - **`identities`** lists the certificates in your keychain (macOS) or your personal
@@ -506,6 +511,29 @@ tpdf verify --strict --json *.pdf
   computer trusts its signer, in the words of the application's properties dialog.
   `--strict` makes the exit code 1 unless every document has at least one signature and every
   signature is both intact and trusted.
+- **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
+  and their sizes, PDF version, the metadata in its `/Info` dictionary, encryption and what it
+  permits, whether it is tagged, the conformance its XMP metadata claims (PDF/A, PDF/UA, PDF/X
+  — claimed, never checked), attachments, its form, and its signatures exactly as `verify`
+  reports them. A document that needs a password it was not given is reported as locked, and
+  `info` still exits 0.
+- **`text <file.pdf>`** prints the document's text in the order it is read — the text the
+  viewer's search, selection and screen-reader layer are built on, in the viewer's order: the
+  document's own tags where they cover every visible character on the page, and otherwise the
+  order the viewer recovers from the layout, which reads a two-column page one column after
+  the other. One line per line of the page; each page ends with a form feed, as `pdftotext`
+  ends them. `--pages 1-3,7` reads only those pages, counted from 1 (a range may not run
+  backwards, and a page past the end is refused); `-o <out.txt>` writes to a file instead of
+  the terminal, which must not exist unless `--force` is given. The text of annotations —
+  a signature's visible appearance, a comment — is not the page's and is not included.
+
+**Passwords.** `info` and `text` read a password-protected document when given
+`--password-env VAR`, the *name* of an environment variable holding the password. The
+password itself is never an argument, because arguments are visible to every process on the
+computer and are kept in the shell's history. It reaches the worker the way the window's
+password prompt sends it, and appears in nothing tpdf prints. The workers inherit the
+environment, so they can see the variable too; they already hold the document it opens.
+`verify` does not take a password, and reports such a document as locked.
 
 **The key, and unattended use.** macOS asks whether the tool may use the key the first time
 it signs with it; choose *Always Allow* if a script is to sign without you — which also
@@ -523,13 +551,13 @@ built.
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
 | 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. |
-| 2 | The command line is malformed: a missing `-o`, an output that names the input, a bad `--rect`, an unknown option. |
-| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 2 | The command line is malformed: a missing `-o`, an output that names the input, a bad `--rect` or `--pages`, an unknown option, or a `--password-env` naming a variable that is not set. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, a locked document or a page past its end; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back intact. |
 
 Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
-document, pretty-printed, whenever the exit code is 0 or 1 — and for `verify` also when it is
-3 or 4, since the other documents may have been read. Every document has `schema` (now `1`;
+document, pretty-printed, whenever the exit code is 0 or 1 — and for `verify` and `info` also
+when it is 3 or 4, since the other documents may have been read. Every document has `schema` (now `1`;
 a key may be added without changing it, and one renamed or removed changes it) and
 `command`. Enumerations use the same words as the application's own data.
 
@@ -541,6 +569,30 @@ a key may be added without changing it, and one renamed or removed changes it) a
   one per document in the order given, each with `path` as given, `error` — `null`, or an
   object with `kind` (`unreadable`, `refused`, `locked` for an encrypted document, `failed`)
   and `message` — and `signatures`.
+- `info`: `files`, one per document in the order given, each with `path`, `error` (as for
+  `verify`; `locked` exits 0 here) and `document` — `null` exactly when `error` is not, and
+  otherwise: `version` (`1.7`); `bytes`; `pages`; `page_sizes`, each distinct size as
+  displayed with `width_pt` and `height_pt` (points, two decimals) and `count`, first seen
+  first; `revisions` (one, plus one per incremental update); `metadata`, the `/Info` entries
+  as objects with `name`, `value` and `standard` (whether PDF defines the key — those come
+  first, in their order, and `Producer` and `Creator` are among them); `language` (`/Lang`,
+  or empty); `encryption`, `null` or an object with `method` (`AES-256`), `revision`,
+  `opened_without_password` and `permissions`, each with `what` and `allowed`; `tagged`
+  (`null` when it could not be asked); `conformance`, `null` when the document carries no XMP
+  metadata, else `claimed` (`PDF/A-3B`, sorted) and `unread` (the packet could not all be
+  read); `attachments` (`null` when they could not be counted); `form` with `readable`,
+  `fields` (fields with a widget on a page), `widgets`, `xfa` and `why` (why tpdf could not
+  read it, else `null`); `signatures` (as for `verify`); `unsigned_signature_fields`; and
+  `limits`, what could not be read: `locked` (encrypted, and no password opened its
+  contents), `fields_dropped`, `values_clipped`, `timestamps_unread`, `signatures_dropped`,
+  `unreadable` and `certificates_unread`.
+- `text`: `path` and `pages`, one per page read in document order, each with `page`
+  (counted from 1), `order` — `tagged` (the document's own tags), `geometric` (recovered from
+  the layout, as the viewer recovers it) or `none` (a page with no text) — `encoding` —
+  `stated` (every font on the page says what its characters mean), `guessed` (one does not,
+  so some of the text may be noise; the viewer's screen-reader layer withholds such a page)
+  or `unknown` (the fonts could not all be examined) — and `text`, the page's lines joined by
+  `\n`.
 - `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
   certificate as above), `visible`, `signatures` (every signature in the written file, read
   back) and `summary` (the sentence the application shows after signing).

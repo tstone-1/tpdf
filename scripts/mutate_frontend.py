@@ -5586,6 +5586,8 @@ TEST_FILES = [
     # Added 2026-09-27 with the command-line tool, in the same edit as its
     # mutations: the tool's wording against the application's.
     "src/lib/cliwording.test.ts",
+    # Added 2026-09-27 with `tpdf text`: `reading.rs` against `reading.ts`.
+    "src/lib/clireading.test.ts",
     # Added 2026-09-26 with Phase 6 step 2's sequence and sentences.
     "src/lib/signing.test.ts",
     "src/lib/pendingimport.test.ts",
@@ -8243,6 +8245,27 @@ MUTATIONS += [
         "Read back after writing, the signature is intact.`;",
         "Read back, the signature is intact.`;",
         "closes a signing as the signing panel does"),
+]
+
+# `tpdf text` restates `reading.ts` in Rust (`src-tauri/src/reading.rs`) and
+# writes every case's order to `src-tauri/testdata/cli/reading.json`;
+# `clireading.test.ts` holds the two together. These change the application's
+# side alone, which is the drift that test exists for.
+MUTATIONS += [
+    Mutation("cli reading: the application cuts columns only at a wider gap", "src/lib/reading.ts",
+        "const CUT_CHARS = 3;",
+        "const CUT_CHARS = 60;",
+        "finds the same lines, in the same order"),
+    Mutation("cli reading: the application trusts tags that miss a visible character",
+        "src/lib/reading.ts",
+        "    if (isVisible(code) && placed(charQuad(text, index))) return null;",
+        "    if (false) return null;",
+        "takes the same route as the viewer"),
+    # Fixed 2026-09-27: a first character with no box was filed under -1 and lost.
+    Mutation("reading: drop a first character that has no box", "src/lib/reading.ts",
+        "  if (leading) {\n    const first",
+        "  if (false && leading) {\n    const first",
+        "keeps a first character that has no box"),
 ]
 
 # `signing.ts` is the sequence and the sentences; `App.svelte` supplies the
