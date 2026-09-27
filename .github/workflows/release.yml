@@ -580,8 +580,11 @@ jobs:
           or certificate store, invisibly or drawn on the page; the key never
           leaves the operating system.
 
-          **From a terminal.** `tpdf sign`, `tpdf verify` and `tpdf identities`
-          do the same from the command line, with stable JSON and exit codes.
+          **From a terminal.** `tpdf sign`, `verify` and `identities` sign and
+          check signatures; `info` and `text` read a document's properties and
+          text; `fields` and `fill` read and answer its form; `redact` removes
+          words, patterns or areas and reports whether the result is verified.
+          Every command has stable JSON and exit codes.
           On macOS choose *Install command-line tool…* in the tpdf menu; on
           Windows the installer puts `tpdf-cli.exe` beside `tpdf.exe`. See the
           README's *Command-line tool* section.
@@ -1093,3 +1096,41 @@ jobs:
             || { echo "::error::the bundled command-line tool does not run"; exit 1; }
 
           echo "Verified: Developer ID signed, hardened, notarized, stapled, engine and command-line tool present."
+
+      # The Windows half of the check above. `BUILD.md` recorded "a released MSI
+      # should hold four files, and three means the tool did not ship. Not yet
+      # measured" --- while the release notes already told Windows readers
+      # `tpdf-cli.exe` is beside `tpdf.exe`. A tool the application never needs to
+      # start is exactly the file that can go missing with every other check
+      # green, so both installers are opened here rather than trusted: the MSI by
+      # an administrative install into a scratch folder, whose copy of the tool
+      # must then run, and the NSIS setup by 7-Zip's listing, which reads NSIS
+      # archives and ships on the runner image.
+      - name: Verify the Windows installers carry the command-line tool
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = '${{ matrix.bundle-dir }}'
+          $msi = @(Get-ChildItem "$bundle/msi/*.msi")
+          $nsis = @(Get-ChildItem "$bundle/nsis/*-setup.exe")
+          if ($msi.Count -ne 1 -or $nsis.Count -ne 1) {
+            Write-Output "::error::expected one MSI and one setup.exe, found $($msi.Count) and $($nsis.Count)"
+            exit 1
+          }
+          $out = Join-Path $env:RUNNER_TEMP 'msi-admin'
+          $msiArgs = @('/a', "`"$($msi[0].FullName)`"", '/qn', "TARGETDIR=`"$out`"")
+          $p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Output "::error::msiexec /a exited $($p.ExitCode)"; exit 1 }
+          $cli = @(Get-ChildItem $out -Recurse -Filter 'tpdf-cli.exe')
+          $app = @(Get-ChildItem $out -Recurse -Filter 'tpdf.exe')
+          if ($app.Count -ne 1) { Write-Output "::error::the MSI's extraction holds $($app.Count) tpdf.exe, so the check cannot vouch for anything"; exit 1 }
+          if ($cli.Count -ne 1) { Write-Output "::error::the MSI does not carry tpdf-cli.exe"; exit 1 }
+          if ($cli[0].DirectoryName -ne $app[0].DirectoryName) { Write-Output "::error::tpdf-cli.exe is not beside tpdf.exe in the MSI"; exit 1 }
+          $version = & $cli[0].FullName --version
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^tpdf ') { Write-Output "::error::the MSI's tpdf-cli.exe does not run: $version"; exit 1 }
+          $listing = (& 7z l $nsis[0].FullName) -join "`n"
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::7-Zip could not list the setup"; exit 1 }
+          if ($listing -notmatch '(?m)\btpdf\.exe\s*$') { Write-Output "::error::7-Zip's listing of the setup has no tpdf.exe, so it cannot vouch for tpdf-cli.exe either"; exit 1 }
+          if ($listing -notmatch '(?m)\btpdf-cli\.exe\s*$') { Write-Output "::error::the setup does not carry tpdf-cli.exe"; exit 1 }
+          Write-Output "Verified: both installers carry tpdf-cli.exe, and the MSI's copy runs: $version"

@@ -662,7 +662,14 @@ fn probe(
     };
     let range = unsigned.range;
     let field = unsigned.field.clone();
-    let bytes = sign_cms::finish(original.clone(), unsigned.clone(), &certificate, &[], &key)?;
+    let bytes = sign_cms::finish(
+        original.clone(),
+        unsigned.clone(),
+        now,
+        &certificate,
+        &[],
+        &key,
+    )?;
     let stem = input
         .file_stem()
         .map_or("document".into(), |s| s.to_string_lossy().into_owned());
@@ -816,6 +823,7 @@ fn probe(
     let refused = sign_cms::finish(
         original.clone(),
         unsigned.clone(),
+        now,
         &certificate,
         &[],
         &misdirected,
@@ -873,6 +881,7 @@ fn probe(
         let invisible = sign_cms::finish(
             original.clone(),
             sign_prepare::prepare(original.clone(), now, None)?,
+            now,
             &certificate,
             &[],
             &key,

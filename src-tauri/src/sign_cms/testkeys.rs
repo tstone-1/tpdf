@@ -335,7 +335,7 @@ pub fn signed(
     key: &dyn Key,
 ) -> Result<Vec<u8>, String> {
     let unsigned = crate::sign_prepare::prepare(bytes.to_vec(), NOW, None)?;
-    super::finish(bytes.to_vec(), unsigned, certificate, chain, key)
+    super::finish(bytes.to_vec(), unsigned, NOW, certificate, chain, key)
 }
 
 /// Every signed field's verdict in `bytes`, as the properties dialog reads it.

@@ -4571,7 +4571,18 @@ async function appCommandChecks(
   // what `app.about` did on the day it was added, reporting all three commands
   // present and the check failing anyway. Worth reading the message rather than
   // the verdict there: the two lists differ by a swap, not by a member.
-  const NEEDS_NO_DOCUMENT = ["file.open", "app.about", "app.checkForUpdates", "app.disableAutomaticUpdates"];
+  // The command-line tool pair needs no document on either platform: on macOS
+  // it adds or removes the link, on Windows it says where the installer put the
+  // tool. It joined the registry this cycle without joining this list, which the
+  // 26.9.21 release run of this check found.
+  const NEEDS_NO_DOCUMENT = [
+    "file.open",
+    "app.about",
+    "app.checkForUpdates",
+    "app.disableAutomaticUpdates",
+    "app.installCommandLineTool",
+    "app.uninstallCommandLineTool",
+  ];
 
   viewer.clearSelection();
   // And the mark the removal probe made, for the same reason the selection is

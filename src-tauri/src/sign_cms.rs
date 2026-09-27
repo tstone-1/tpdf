@@ -792,20 +792,31 @@ pub fn splice(
 ///
 /// `original` is the file as read, and is extended in place into the result so
 /// that a large document is not held twice. The steps, in the order the module
-/// note gives: [`check`], [`build`], [`splice`], then `integrity::check` over
-/// the finished bytes, which must say `Intact`.
+/// note gives: [`usable`] at `at`, [`check`], [`build`], [`splice`], then
+/// `integrity::check` over the finished bytes, which must say `Intact`.
+///
+/// **[`usable`] is applied here and not only where certificates are listed.**
+/// The listing is advice to whoever picks; the pick arrives by identity, and the
+/// window's command took an identity from the webview and, for an invisible
+/// signature, went from the store straight to the key (release audit,
+/// 2026-09-27) --- so an expired or code-signing certificate named by hash would
+/// have signed. Here every caller passes through the rule, before the OS is
+/// asked for anything.
 ///
 /// # Errors
 ///
-/// Everything [`check`], [`build`] and [`splice`] refuse, and tpdf's own
-/// verifier not calling the result intact.
+/// A certificate [`usable`] refuses, everything [`check`], [`build`] and
+/// [`splice`] refuse, and tpdf's own verifier not calling the result intact.
 pub fn finish(
     original: Vec<u8>,
     unsigned: Unsigned,
+    at: u64,
     certificate: &[u8],
     chain: &[Vec<u8>],
     key: &dyn Key,
 ) -> Result<Vec<u8>, String> {
+    usable(certificate, at)
+        .map_err(|why| format!("tpdf will not sign with this certificate: {why}"))?;
     let digest = check(&original, &unsigned)?;
     let blob = build(&digest, certificate, chain, key)?;
     let Unsigned {

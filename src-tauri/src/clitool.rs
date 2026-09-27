@@ -56,11 +56,20 @@ pub enum Step {
 }
 
 /// Whether `target` is a tpdf command-line tool inside an application bundle.
+///
+/// The bundle is required by name, and not only its inner layout: until the
+/// 26.9.21 release audit this accepted any `.../Contents/MacOS/tpdf-cli`, so a
+/// link into a plain folder laid out that way counted as tpdf's own.
 fn ours(target: &Path) -> bool {
     target.file_name().is_some_and(|name| name == TOOL)
-        && target
-            .parent()
-            .is_some_and(|dir| dir.ends_with("Contents/MacOS"))
+        && target.parent().is_some_and(|dir| {
+            dir.ends_with("Contents/MacOS")
+                && dir
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::extension)
+                    .is_some_and(|ext| ext == "app")
+        })
 }
 
 /// What installing (`install`) or uninstalling would do, given what `link`
@@ -317,6 +326,30 @@ mod tests {
         std::os::unix::fs::symlink(PathBuf::from("/usr/local/lib").join(TOOL), &link)
             .expect("link");
         assert!(matches!(plan(false, &link, &tool), Step::Foreign(_)));
+        std::fs::remove_file(&link).expect("unlink");
+        // Nor is one inside a bundle but outside `Contents/MacOS`: the layout
+        // is checked as well as the bundle's name.
+        std::os::unix::fs::symlink(
+            PathBuf::from("/Applications/tpdf.app/Contents/Resources").join(TOOL),
+            &link,
+        )
+        .expect("link");
+        for install in [true, false] {
+            assert!(
+                matches!(plan(install, &link, &tool), Step::Foreign(_)),
+                "{install}"
+            );
+        }
+        std::fs::remove_file(&link).expect("unlink");
+        // Nor is one laid out like a bundle inside a folder that is not one.
+        std::os::unix::fs::symlink(PathBuf::from("/tmp/x/Contents/MacOS").join(TOOL), &link)
+            .expect("link");
+        for install in [true, false] {
+            assert!(
+                matches!(plan(install, &link, &tool), Step::Foreign(_)),
+                "{install}"
+            );
+        }
         std::fs::remove_file(&link).expect("unlink");
         std::fs::write(&link, b"a script of somebody's").expect("file");
         for install in [true, false] {

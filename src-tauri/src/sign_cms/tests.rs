@@ -50,7 +50,7 @@ fn the_workers_digest_is_recomputed_rather_than_believed() {
     let cert = own(&key, "Signer");
     let mut unsigned = crate::sign_prepare::prepare(original.clone(), NOW, None).expect("prepared");
     unsigned.digest[5] ^= 0x40;
-    let why = finish(original, unsigned, &cert, &[], &key).expect_err("refused");
+    let why = finish(original, unsigned, NOW, &cert, &[], &key).expect_err("refused");
     assert!(why.contains("digest"), "{why}");
 }
 
@@ -64,13 +64,13 @@ fn an_update_built_against_other_bytes_is_refused() {
     // A different length: the offsets cannot be this file's.
     let mut longer = original.clone();
     longer.push(b'\n');
-    let why = finish(longer, unsigned.clone(), &cert, &[], &key).expect_err("refused");
+    let why = finish(longer, unsigned.clone(), NOW, &cert, &[], &key).expect_err("refused");
     assert!(why.contains("was built against"), "{why}");
 
     // The same length and one byte changed: only the digest can see it.
     let mut changed = original.clone();
     changed[20] ^= 0x01;
-    let why = finish(changed, unsigned, &cert, &[], &key).expect_err("refused");
+    let why = finish(changed, unsigned, NOW, &cert, &[], &key).expect_err("refused");
     assert!(why.contains("digest"), "{why}");
 }
 
@@ -83,7 +83,7 @@ fn a_range_that_does_not_frame_its_hole_is_refused() {
     for (index, delta) in [(1usize, 2i64), (2, -2), (3, 1), (0, 1)] {
         let mut unsigned = prepared.clone();
         unsigned.range[index] = (unsigned.range[index] as i64 + delta) as u64;
-        let why = finish(original.clone(), unsigned, &cert, &[], &key).expect_err("refused");
+        let why = finish(original.clone(), unsigned, NOW, &cert, &[], &key).expect_err("refused");
         assert!(
             why.contains("does not frame"),
             "range[{index}]{delta:+}: {why}"
@@ -99,7 +99,7 @@ fn a_hole_that_is_not_empty_is_refused() {
     let mut unsigned = crate::sign_prepare::prepare(original.clone(), NOW, None).expect("prepared");
     let at = unsigned.range[1] as usize - original.len() + 5;
     unsigned.update[at] = b'1';
-    let why = finish(original, unsigned, &cert, &[], &key).expect_err("refused");
+    let why = finish(original, unsigned, NOW, &cert, &[], &key).expect_err("refused");
     assert!(why.contains("empty value"), "{why}");
 }
 
@@ -343,6 +343,49 @@ fn a_raw_ecdsa_value_becomes_the_der_the_curve_crate_writes() {
 /// alone, both critical. The key usage passes; only the extended key usage can
 /// say the certificate was issued to sign code. The controls are the purposes
 /// that are a document signature's, and a certificate that states none.
+#[test]
+fn signing_refuses_a_certificate_the_listing_would_not_offer() {
+    // The rule is applied where the key is used, not only where certificates
+    // are listed: the window's command signs whatever identity the webview
+    // names. The control is the same key under a certificate for documents,
+    // which must sign, or a `finish` that refused everything would pass.
+    let original = testkeys::plain_pdf();
+    let key = Soft::p256(23);
+    let sign = |spec: Spec<'_>| {
+        let unsigned = crate::sign_prepare::prepare(original.clone(), NOW, None).expect("prepared");
+        finish(
+            original.clone(),
+            unsigned,
+            NOW,
+            &certificate(&key, &spec),
+            &[],
+            &key,
+        )
+    };
+
+    sign(Spec::new("Signer")).expect("a certificate for documents signs");
+    let code = sign(Spec {
+        usage: Some(vec![KeyUsages::DigitalSignature]),
+        purposes: Some(vec!["1.3.6.1.5.5.7.3.3"]),
+        ..Spec::new("Developer")
+    })
+    .expect_err("code signing");
+    assert_eq!(
+        code,
+        "tpdf will not sign with this certificate: it is issued for code signing, not for signing documents"
+    );
+    let expired = sign(Spec {
+        not_before: NOW - 86_400 * 400,
+        not_after: NOW - 86_400,
+        ..Spec::new("Lapsed")
+    })
+    .expect_err("expired");
+    assert!(
+        expired.starts_with("tpdf will not sign with this certificate: "),
+        "{expired}"
+    );
+}
+
 #[test]
 fn a_certificate_issued_for_code_signing_is_not_offered() {
     let key = Soft::p256(22);

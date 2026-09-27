@@ -10709,6 +10709,16 @@ MUTATIONS += [
 # built to see it.
 MUTATIONS += [
     Mutation(
+        # Sign with whatever identity the caller names. The window's command
+        # takes it from the webview, and before 26.9.21 its invisible path never
+        # asked whether the certificate may sign a document at all.
+        "sign: use a certificate the listing would not offer",
+        "src/sign_cms.rs",
+        '    usable(certificate, at).map_err(|why| format!("tpdf will not sign with this certificate: {why}"))?;',
+        "    let _ = at;",
+        "signing_refuses_a_certificate_the_listing_would_not_offer",
+    ),
+    Mutation(
         # Sign a document that was opened with a password, or on an empty one:
         # lopdf would encrypt the signature's own value with the document.
         "sign: sign a document that was encrypted and opened",
@@ -12061,8 +12071,18 @@ MUTATIONS += [
     Mutation(
         "cli tool link: call any file of that name tpdf's",
         "src/clitool.rs",
-        '            .is_some_and(|dir| dir.ends_with("Contents/MacOS"))',
-        "            .is_some()",
+        '            dir.ends_with("Contents/MacOS")',
+        "            true",
+        "only_tpdfs_own_link_is_created_repointed_or_removed",
+        only_on="macos",
+    ),
+    Mutation(
+        # The release audit's case: `/tmp/x/Contents/MacOS/tpdf-cli`, laid out
+        # like a bundle in a folder that is not one.
+        "cli tool link: call a bundle-shaped folder a bundle",
+        "src/clitool.rs",
+        '                    .is_some_and(|ext| ext == "app")',
+        "                    .is_none_or(|_| true)",
         "only_tpdfs_own_link_is_created_repointed_or_removed",
         only_on="macos",
     ),

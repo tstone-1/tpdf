@@ -4,7 +4,7 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
-**Status: released for macOS and Windows, with annotations, page editing, redaction, form filling, visual signatures and bounded text editing.**
+**Status: released for macOS and Windows, with annotations, page editing, redaction, form filling, visual and certificate signatures, bounded text editing and a command-line tool.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
 Windows, including documents behind a password. **It edits**: pages can be turned, moved,
@@ -17,7 +17,10 @@ back and reported either way. What is *not* built is the list further down, and
 general text editing is the one that matters. The editor supports a bounded set of
 text layouts and fonts, with adjustable text boxes, wrapping and bundled font fallback.
 Fill text fields, checkboxes, radio groups,
-dropdowns and lists, or draw and import a visual signature to place on a page.
+dropdowns and lists, or draw and import a visual signature to place on a page. Sign a
+document with a certificate from your macOS keychain or Windows certificate store, see
+whether each signature in a document is intact and whether your computer trusts its signer,
+and sign, verify, extract, fill and redact from scripts with the `tpdf` command-line tool.
 Installers are on the [Releases](https://github.com/tstone-1/tpdf/releases) page:
 macOS is signed with a Developer ID identity and notarized, Windows is unsigned and
 SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for the

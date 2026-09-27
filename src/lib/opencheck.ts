@@ -1110,9 +1110,13 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const background = document.getElementById(`document-tab-${a.id}`);
       background?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 }));
       const tabActions = Array.from(document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]'));
-      check("tab menu offers reveal, copy path and close", tabActions.length === 3 &&
+      // Four since 26.9.18 added *Close all tabs* after the separator; this
+      // phase was not run again until the 26.9.21 release, which found it red.
+      report.check("tab menu offers reveal, copy path, close and close all", tabActions.length === 4 &&
         /^Show in (Explorer|Finder)$/.test(tabActions[0]?.textContent ?? "") &&
-        tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Close");
+        tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Close" &&
+        tabActions[3]?.textContent === "Close all tabs",
+        tabActions.map((item) => item.textContent).join(" | "));
       check("right-clicking a background tab keeps the active document", host.edits()?.doc === b.id);
       check("the header does not repeat the document filename", !document.querySelector("header .title"));
       let copiedPath = "";

@@ -260,9 +260,23 @@ pub fn main() -> i32 {
         .first()
         .and_then(|p| Path::new(p).file_stem())
         .map_or_else(|| "tpdf".to_string(), |s| s.to_string_lossy().into_owned());
+    // Where the engine is, from where this executable sits, or nowhere. The
+    // shared search answers `.` when it is given no resource directory, and a
+    // worker would then load a `libpdfium` from whatever directory the tool was
+    // started in --- for a command-line tool, the reader's own folder, which may
+    // be a download directory (release audit, 2026-09-27). `current_exe`
+    // failing is rare; searching the working directory when it does is not an
+    // answer this tool gives.
+    let Some(resources) = resource_dir() else {
+        let _ = writeln!(
+            std::io::stderr(),
+            "tpdf: could not work out where tpdf is installed, so it will not look for its engine anywhere else"
+        );
+        return Exit::Internal.code();
+    };
     let env = Env {
         store: &OsStore,
-        library_dir: crate::library_dir_among(resource_dir()),
+        library_dir: crate::library_dir_among(Some(resources)),
         now: now(),
         program,
     };

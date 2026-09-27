@@ -2094,9 +2094,12 @@ feature that reaches the reader's **keys** --- the second thing §1 puts first a
 
 - **The worker parses and holds no key.** `sign_prepare::prepare` runs where every other
   parse runs (`Request::PrepareSignature`, answered by the document's own pool) and returns an
-  incremental update with a zeroed `/Contents` hole, its `/ByteRange` and a SHA-256. Nothing
-  about a key, a certificate or the store crosses to it; the request carries a time and
-  nothing else.
+  incremental update with a zeroed `/Contents` hole, its `/ByteRange` and a SHA-256. No key
+  and no certificate crosses to it. The request carries a time, and for a visible signature
+  also the placement, the chosen image and the signer's name, which the app process reads out
+  of the certificate to draw it (`worker_proto::Request::PrepareSignature`,
+  `sign_prepare::Visible`). Corrected at the 26.9.21 release audit, when this said the
+  request carried a time and nothing else --- true until the visible signature landed.
 - **The app process holds the authority and parses no document.** `sign_cms.rs` reads the
   file's bytes and does arithmetic on them: the update must have been built against exactly
   this length, the range must frame exactly the reserved hole, the hole must be empty, and
@@ -2109,7 +2112,9 @@ feature that reaches the reader's **keys** --- the second thing §1 puts first a
   bytes this process assembled --- must call the result `intact`.
 - **A worker reads the written file back.** `save::Verifier::signatures` maps the new file's
   handle into a fresh worker and asks `Request::Properties`, so the verdict the reader is shown
-  is computed where the properties dialog's is.
+  is computed where the properties dialog's is. That is the worker backend, which is the
+  default; under `TPDF_BACKEND=in-process` the read-back runs `docinfo::scan` in the app
+  process, like every other parse on that fallback (`save::Here::signatures`).
 
 **The key never leaves the OS, and tpdf never sees a PIN.** There is no API here that reads a
 key or accepts one: `sign_cms::Key` has one method, which signs a digest. Keychain access
@@ -2122,7 +2127,13 @@ reader asked to sign is the system working; a prompt appearing at any other time
 own store are parsed in the app process (`x509-cert`) to decide whether to offer them: key
 kind, validity at the current time, key usage, and extended key usage --- a certificate that
 states one must name a purpose a document signature serves (`sign_cms::DOCUMENT_PURPOSES`), so a
-code-signing, TLS or login certificate is listed with its reason and not offered. Added
+code-signing, TLS or login certificate is listed with its reason and not offered. **The
+same rule is applied again where the key is used**: `sign_cms::finish` calls `usable` at the
+signing time before it asks the OS for anything, because the window's command takes the
+identity from the webview and, for an invisible signature, went from the store to the key with
+no check until the 26.9.21 release audit found it --- an expired or code-signing certificate
+named by its hash would have signed. `signing_refuses_a_certificate_the_listing_would_not_offer`
+holds it, and a mutation removing the call proves the test can fail. Added
 2026-09-26, after the only identity in the owner's keychain, an Apple Developer ID code-signing
 certificate, turned out to pass the first three. These are the reader's certificates, not the
 document's. The chain placed in the CMS is whatever the OS chain API assembles **without the
@@ -2255,7 +2266,10 @@ moment PDFium is bound there (the control that the list can show it); and `sandb
 reports a worker started by `Worker::spawn_shared` --- the call `InWorker` makes --- as
 sandboxed, against the test process as the unsandboxed control. The PDFium library is found by
 the application's own rule (`library_dir_among`), from the bundle's resource directory beside
-the executable, never from the working directory.
+the executable, never from the working directory: when the tool cannot tell where its own
+executable is, it refuses to start rather than let the shared search fall back to `.`, where a
+worker would have loaded whatever `libpdfium` the reader's current folder held (fixed at the
+26.9.21 release audit).
 
 **What it writes.** `sign` writes one file, the path after `-o`, through `save::write_signed` ---
 the application's writer, staged and renamed, refusing the input under any name --- and only
@@ -2348,8 +2362,12 @@ the OCR worker's Vision refuses every image*).
 **The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
 symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the
 link and the target are both fixed in `clitool.rs`, so the widest thing it can ask for is that
-one link made or removed. A file at that path that is not a link to a `tpdf-cli` inside an
-application bundle is never replaced or removed. When the directory is not writable --- the
+one link made or removed. A file at that path that is not a link to a `tpdf-cli` in the
+`Contents/MacOS` of a folder named `*.app` is never replaced or removed --- the bundle's name
+has been required since the 26.9.21 release audit, before which any folder laid out that way
+counted. The decision is made on what `plan` read; the privileged `ln -sfn` or `rm -f` acts
+on the path moments later, so a local process that swaps the file in that interval is not
+excluded --- one able to write `/usr/local/bin` could replace the link without tpdf anyway. When the directory is not writable --- the
 ordinary case, and on a new Apple silicon Mac it does not exist --- the change goes through
 AppleScript's `do shell script ... with administrator privileges`, which is the system's own
 authorization dialog: tpdf never sees the password, and the tool's path reaches the shell as an

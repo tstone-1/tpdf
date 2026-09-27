@@ -215,6 +215,7 @@ pub async fn sign_document(
         let bytes = sign_cms::finish(
             original,
             unsigned,
+            at,
             &identity.certificate,
             &identity.chain,
             &identity,

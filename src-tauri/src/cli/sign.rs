@@ -366,6 +366,7 @@ fn run_sign(
     let bytes = sign_cms::finish(
         original,
         unsigned,
+        env.now,
         &chosen.certificate,
         &chosen.chain,
         chosen.key.as_ref(),

@@ -6854,8 +6854,13 @@ starts at 0 and increments within the month.
 
    **From 26.9.21 there is one more on purpose: `tpdf-cli.exe`**, the command-line tool, a
    second `[[bin]]` the bundler ships beside `tpdf.exe` (`src/bin/tpdf-cli.rs`). So a released
-   MSI should hold four files, and three means the tool did not ship. Not yet measured: no
-   release containing it has been built. Extract the first one as below, and run
+   MSI should hold four files, and three means the tool did not ship. Since 26.9.21 the
+   release workflow checks this itself (*Verify the Windows installers carry the command-line
+   tool*): it extracts the MSI, requires `tpdf-cli.exe` beside `tpdf.exe` and runs it, and reads
+   the NSIS setup's listing with 7-Zip. Proved failing on 26.9.20's own installers first, on
+   MOTHERSHIP: the MSI extracted to `THIRD-PARTY-NOTICES.md`, `tpdf.exe` and `pdfium.dll` only,
+   and the step stopped at *the MSI does not carry tpdf-cli.exe*. Still extract one as below
+   after a release that changes it, and run
    `tpdf-cli.exe --version` and `tpdf-cli.exe verify` on a signed PDF from the installed
    folder, in a console --- the one Windows check a harness cannot stand in for, since the
    tool exists for a console the application never has.

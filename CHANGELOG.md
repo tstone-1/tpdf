@@ -17,7 +17,7 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
-## [26.9.21] - Unreleased
+## [26.9.21] - 2026-09-27
 
 ### Added
 
@@ -110,12 +110,13 @@ have the binary.)
   is theirs, so smart cards and tokens work through their own drivers. The
   signature is added as a new revision, so signatures already in the
   document stay intact, and the new file is read back and every signature in
-  it checked before you are told it worked. The signature is invisible for
-  now and carries no timestamp: its time is your computer's clock. Save your
+  it checked before you are told it worked. The signature carries no
+  timestamp: its time is your computer's clock. Save your
   edits first; encrypted documents, and documents certified against any
   change, cannot be signed yet. A certificate issued for something other
   than signing documents, such as code signing or logging in to websites, is
-  listed with that reason and not offered.
+  listed with that reason and not offered, and one that has expired or is
+  not valid yet is refused when the document is signed as well.
 - **A signature can be visible.** *Sign document…* now asks whether the
   signature is invisible, as before, or visible. For a visible one you first
   choose what it shows, with a preview drawn by the same code that signs: your
