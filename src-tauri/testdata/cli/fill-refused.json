@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "command": "fill",
+  "input": "form.pdf",
+  "output": "form-filled.pdf",
+  "written": false,
+  "problems": [
+    {
+      "field": "nobody",
+      "problem": "unknown",
+      "why": "no field has this name --- `tpdf fields` lists them"
+    },
+    {
+      "field": "consent",
+      "problem": "type",
+      "why": "takes true or false, and the answer is \"yes\""
+    },
+    {
+      "field": "ACME.answer",
+      "problem": "length",
+      "why": "This answer exceeds the field's maximum length"
+    }
+  ],
+  "fields": []
+}

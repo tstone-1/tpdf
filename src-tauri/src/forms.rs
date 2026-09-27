@@ -75,6 +75,29 @@ pub struct Widget {
 /// second answer to a question this module already answers.
 pub const XFA_REFUSAL: &str = "XFA forms are not supported";
 
+/// Why [`scan`] marks a field not editable, one constant per reason.
+///
+/// Constants for [`XFA_REFUSAL`]'s reason: `tpdf fields` reports *which* reason
+/// by comparing a widget's `reason` against these rather than by reading the
+/// field's flags a second time, which would be a second answer to a question
+/// this module already answers. The text-field flags have one each, in the
+/// order they are tested; until 2026-09-27 the four shared one sentence, which
+/// told a reader a field was "password, file, comb or rich-text" without saying
+/// which.
+pub const UNSUPPORTED: &str = "This field type is not supported yet";
+/// `/Ff` bit 1.
+pub const READ_ONLY: &str = "This field is read-only";
+/// `/Ff` bit 14, on a text field.
+pub const PASSWORD: &str = "Password fields are not supported yet";
+/// `/Ff` bit 21, on a text field.
+pub const FILE_SELECT: &str = "File-select fields are not supported yet";
+/// `/Ff` bit 25, on a text field.
+pub const COMB: &str = "Comb fields are not supported yet";
+/// `/Ff` bit 26, on a text field.
+pub const RICH_TEXT: &str = "Rich-text fields are not supported yet";
+/// The widget's `/F` says hidden, invisible or no-view.
+pub const HIDDEN: &str = "This field is hidden";
+
 /// A complete scan or an error; never a silently truncated list.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Form {
@@ -432,13 +455,19 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
             }
             let annotation_flags = w.get(b"F").and_then(Object::as_i64).unwrap_or(0);
             let reason = if !text && !checkbox && !radio && !choice {
-                Some("This field type is not supported yet".into())
+                Some(UNSUPPORTED.into())
             } else if flags & 1 != 0 {
-                Some("This field is read-only".into())
-            } else if text && flags & ((1 << 13) | (1 << 20) | (1 << 24) | (1 << 25)) != 0 {
-                Some("Password, file, comb and rich-text fields are not supported yet".into())
+                Some(READ_ONLY.into())
+            } else if text && flags & (1 << 13) != 0 {
+                Some(PASSWORD.into())
+            } else if text && flags & (1 << 20) != 0 {
+                Some(FILE_SELECT.into())
+            } else if text && flags & (1 << 24) != 0 {
+                Some(COMB.into())
+            } else if text && flags & (1 << 25) != 0 {
+                Some(RICH_TEXT.into())
             } else if annotation_flags & (1 | 2 | 32) != 0 {
-                Some("This field is hidden".into())
+                Some(HIDDEN.into())
             } else {
                 None
             };
@@ -536,10 +565,56 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
     Ok(result)
 }
 
+/// Which rule an answer broke, for a caller that has to say so as data.
+///
+/// `tpdf fill` reports every problem with a kind a script can branch on;
+/// the application shows only the sentence. One classification, made where the
+/// rule is, rather than a second one made by matching the sentences.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Invalid {
+    /// The field is one [`scan`] marked not editable; the sentence is its reason.
+    NotEditable,
+    /// The answer is not the kind the field takes.
+    Type,
+    /// A radio or choice answer that names no option, several where one is
+    /// allowed, or one twice.
+    Option,
+    /// Characters Helvetica with WinAnsiEncoding cannot draw.
+    Characters,
+    /// Longer than the field's `/MaxLen`, or than the 16 KB every answer is held to.
+    Length,
+    /// A line break in a single-line field, or in a choice label.
+    Line,
+    /// It does not fit visibly in the field.
+    Layout,
+}
+
+/// An answer [`check`] refused: the rule, and the sentence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rejected {
+    /// Which rule.
+    pub invalid: Invalid,
+    /// What the application shows.
+    pub message: String,
+}
+
+fn rejected(invalid: Invalid, message: impl Into<String>) -> Rejected {
+    Rejected {
+        invalid,
+        message: message.into(),
+    }
+}
+
 /// Checks an answer before it can enter the journal or the saved document.
 pub fn validate(widget: &Widget, value: &Value) -> Result<(), String> {
+    check(widget, value).map_err(|r| r.message)
+}
+
+/// [`validate`], with the rule that was broken.
+pub fn check(widget: &Widget, value: &Value) -> Result<(), Rejected> {
     if let Some(reason) = &widget.reason {
-        return Err(reason.clone());
+        return Err(rejected(Invalid::NotEditable, reason.clone()));
     }
     match (&widget.control, value) {
         (
@@ -554,7 +629,10 @@ pub fn validate(widget: &Widget, value: &Value) -> Result<(), String> {
                 || indices.iter().any(|i| *i >= states.len())
                 || (*no_toggle_off && indices.is_empty())
             {
-                return Err("Choose one available radio button".into());
+                return Err(rejected(
+                    Invalid::Option,
+                    "Choose one available radio button",
+                ));
             }
             return Ok(());
         }
@@ -571,44 +649,71 @@ pub fn validate(widget: &Widget, value: &Value) -> Result<(), String> {
                 || !indices.windows(2).all(|p| p[0] < p[1])
                 || indices.iter().any(|i| *i >= options.len())
             {
-                return Err("Choose available options without duplicates".into());
+                return Err(rejected(
+                    Invalid::Option,
+                    "Choose available options without duplicates",
+                ));
             }
             for index in indices {
-                if !crate::textbox::encodable(&options[*index].label)
-                    || options[*index].label.contains(['\r', '\n'])
-                {
-                    return Err("This option uses characters that cannot be saved visibly".into());
+                if !crate::textbox::encodable(&options[*index].label) {
+                    return Err(rejected(
+                        Invalid::Characters,
+                        "This option uses characters that cannot be saved visibly",
+                    ));
+                }
+                if options[*index].label.contains(['\r', '\n']) {
+                    return Err(rejected(
+                        Invalid::Line,
+                        "This option uses characters that cannot be saved visibly",
+                    ));
                 }
             }
-            choice_layout(widget, indices)?;
+            choice_layout(widget, indices).map_err(|m| rejected(Invalid::Layout, m))?;
             return Ok(());
         }
         (Control::Choice { editable: true, .. }, Value::Text(_)) => {}
         (Control::Text, Value::Text(_)) | (Control::Checkbox, Value::Checked(_)) => {}
-        _ => return Err("The answer does not match the field type".into()),
+        _ => {
+            return Err(rejected(
+                Invalid::Type,
+                "The answer does not match the field type",
+            ))
+        }
     }
     match (&widget.control, value) {
         (_, Value::Text(text)) => {
             if text.len() > 16384 {
-                return Err("A form answer is limited to 16 KB".into());
+                return Err(rejected(
+                    Invalid::Length,
+                    "A form answer is limited to 16 KB",
+                ));
             }
             if widget
                 .max_length
                 .is_some_and(|max| text.chars().count() > max)
             {
-                return Err("This answer exceeds the field's maximum length".into());
+                return Err(rejected(
+                    Invalid::Length,
+                    "This answer exceeds the field's maximum length",
+                ));
             }
             if !crate::textbox::encodable(text) {
-                return Err("This field supports Western European characters only".into());
+                return Err(rejected(
+                    Invalid::Characters,
+                    "This field supports Western European characters only",
+                ));
             }
             if !widget.multiline && text.contains(['\r', '\n']) {
-                return Err("This field accepts one line only".into());
+                return Err(rejected(Invalid::Line, "This field accepts one line only"));
             }
-            text_layout(widget, text)?;
+            text_layout(widget, text).map_err(|m| rejected(Invalid::Layout, m))?;
             Ok(())
         }
         (_, Value::Checked(_)) => Ok(()),
-        _ => Err("The answer does not match the field type".into()),
+        _ => Err(rejected(
+            Invalid::Type,
+            "The answer does not match the field type",
+        )),
     }
 }
 

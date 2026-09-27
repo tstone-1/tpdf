@@ -1,6 +1,8 @@
 // Independent macOS reader check for the synthetic AcroForm round trip.
 // Generate with TPDF_FORM_PROBE=<output.pdf> cargo test --lib forms::tests::forms_round_trip_values_and_every_shared_widget_appearance
 // Run: swift scripts/form_pdfkit_check.swift <output.pdf> [render-directory]
+// Also reads what `tpdf fill` writes on the same form: TPDF_FILL_PROBE=<dir> on
+// `cargo test --test cli` leaves it as <dir>/acme-filled.pdf (BUILD.md).
 import PDFKit
 import AppKit
 

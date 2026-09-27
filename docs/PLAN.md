@@ -15034,8 +15034,9 @@ was not written**: creating a keychain file adds it to the user's keychain searc
 user-level state, and the rule for that test was to stop rather than alter it and undo it. So
 `SecItemCopyMatching` over identities is **not covered by a test**. The first `SecTrust`
 evaluation in a process costs seconds (5.4 s and 19.2 s measured), which the chooser pays once.
-**Windows compiles** (`scripts/check_windows.py`) **and has not run**: its ignored test creates a
-CNG certificate in `CurrentUser\My`, signs, and removes it.
+**Windows first ran 2026-09-27** on MOTHERSHIP: the ignored store test created CNG certificates in
+`CurrentUser\My` (RSA and ECDSA P-256), signed through `NCryptSignHash`, and read intact --- once
+its cleanup was fixed, which on the first run left both certificates behind (`BUILD.md`).
 
 **Not done.** A visible appearance --- done 2026-09-27, below. Signing into an existing empty
 signature field. Certification signatures (DocMDP). Encrypted documents, which need a writer
@@ -15350,20 +15351,23 @@ contents; `opened`; `say` and `json`, one write each; `Exit` and `Failure`, the 
 contract; and `report::SCHEMA`. A test holds every registration to its dispatch and its line in
 `help`.
 
-**Next, queued by the owner on 2026-09-27, in this order.** The first two are built --- see
-*Describing a document and reading its text from the command line* below --- and the other two
-are not:
+**Next, queued by the owner on 2026-09-27, in this order.** The first three are built --- see
+*Describing a document and reading its text from the command line* and *Listing and filling a
+form from the command line* below --- and the fourth is not:
 
 1. ~~`tpdf info --json`~~ --- done 2026-09-27.
 2. ~~`tpdf text`~~ --- done 2026-09-27.
-3. `tpdf fill`: AcroForm values from a JSON file, its output pipeable into `sign`.
+3. ~~`tpdf fill`: AcroForm values from a JSON file, its output pipeable into `sign`~~ --- done
+   2026-09-27, with `tpdf fields` beside it.
 4. `tpdf redact`: by search term or pattern, in batch, with the verified / not-verified report
    as JSON.
 
 **Not done.** A real-keychain `sign` has not been run by an agent, because it raises the
 keychain prompt the owner answers; `BUILD.md` has the command and its verification. **The
-Windows tool has never run on a desktop**: it type-checks and the Windows CI job runs
-`tests/cli.rs`, but the store end to end, PATH and a console session are unexercised. No `.p12`
+Windows tool ran on a desktop 2026-09-27** (MOTHERSHIP, from a console over SSH): `identities`,
+`verify` on ten fixtures with the macOS verdicts, and a real invisible and visible sign with a
+temporary store certificate, read intact by tpdf, pyHanko and OpenSSL. Installing onto PATH is
+still unexercised. No `.p12`
 option (decided above). No password for `verify`, which reports an encrypted document as
 `locked`; `info` and `text` take one (below).
 Reason and location on an invisible signature, as in the window. Timestamps and step 3. The
@@ -15450,6 +15454,102 @@ no fragment reads --- so `readingOrder` was not a permutation there, contrary to
 It now joins the first placed character's fragment in `reading.ts` and `reading.rs` alike;
 `every_order_is_a_permutation_of_the_page` holds it with no exception, and `reading.json` was
 regenerated. The viewer had the defect first; porting it is what exposed it.
+
+#### Listing and filling a form from the command line --- done 2026-09-27
+
+`tpdf fields` and `tpdf fill` (`src-tauri/src/cli/fields.rs`, `cli/fill.rs`), item 3 of the queue
+above, each one module and one line in `cli::COMMANDS`. `README.md`'s *Command-line tool* section
+is the reference and `src-tauri/testdata/cli/{fields,fill,fill-refused}.json` are its samples.
+
+| Command | What it does | Where the work happens |
+|---|---|---|
+| `fields <file> [--password-env VAR] [--json]` | Every field with a widget on a page, by fully qualified name: kind, current value in the form `fill` takes, options with `selected`, and whether it can be filled and why not. | one worker, `Request::Form` --- `forms::scan`, the application's form reader; grouped by field in this process |
+| `fill <in> -o <out> --values <answers.json \| -> [--force] [--password-env VAR] [--json]` | Fills the form into a new file, all or nothing, and reads it back. | one worker session (`Request::Properties`, `Request::Open`, `Request::Form`); the answers checked here by `forms::check`; written by `save::write_copy` in a writing worker; the read-back in a fresh worker |
+
+Decisions the owner took, recorded as given:
+
+- **Signed or certified documents are refused (option 1).** The application's writer for form
+  answers is a full rewrite, which invalidates every existing signature; the window warns before
+  doing it (`signedsave.ts`), and a command line has nobody to warn. The refusal mirrors that
+  warning's rule --- a signed field, a DocMDP certification, or signatures that could not all be
+  enumerated (`limits.locked`, `unreadable`, `signatures_dropped`) --- and says to fill the
+  unsigned form and then `tpdf sign` the filled copy.
+- **All or nothing, every problem at once**: an unknown name, a name two fields share, a field
+  answered twice, a field that cannot be filled, a wrong JSON type, an export value no option has
+  or two options share, text Helvetica/WinAnsi cannot draw, over `/MaxLen`, a line break in a
+  one-line field, or an answer that does not fit visibly. Exit 3, nothing written, and with
+  `--json` the problems listed as data.
+- **Read back or removed.** A fresh worker scans the written file; every answered field must read
+  back as asked on every widget, and every other field as before. A difference is exit 4 and the
+  output is removed.
+
+Decisions taken in building it, each with its reason:
+
+- **Answers are export values, never option indices.** The application's journal answers a choice
+  by index (`docs/SUBSYSTEMS.md`), which is stable for a session; an answers file outlives any
+  session and is written by a script that reads names. Two options sharing an export value are
+  therefore refused as ambiguous rather than guessed at, and `fields` marks the chosen one with
+  `selected` so that the case is visible. `fields`'s `value` is itself a valid answer for every
+  field except exactly that one.
+- **The kinds are `text`, `checkbox`, `radio`, `choice_combo`, `choice_list` and `other`**, in the
+  schema's snake_case rather than the brief's `choice-combo`, because every other enumeration in
+  the schema is snake_case. `other` (signature fields, push buttons) is listed rather than hidden,
+  so a script discovering names sees every field, and is never editable.
+- **XFA is a refusal of the document, not a reason on a field.** `forms::scan` refuses an XFA form
+  whole, so there are no fields to attach a reason to; both commands exit 3 and say so.
+- **Why a field is not editable is `forms.rs`'s answer, not a second one.** The four text-field
+  flags shared one sentence, which could not be told apart; they now have one constant each
+  (`forms::PASSWORD`, `FILE_SELECT`, `COMB`, `RICH_TEXT`), which the window shows too, and
+  `fields` maps a widget's sentence to its kind by comparing against the constants --- the
+  arrangement `forms::XFA_REFUSAL` already had with `info`. Likewise `forms::check` now returns
+  which rule an answer broke (`forms::Invalid`), and `validate` is that with the sentence only, so
+  `fill`'s problem kinds are the rules' own classification rather than a match on sentences.
+- **A malformed answers file is exit 3, not 2.** Exit 2 is the command line's; the answers are
+  input the command refuses, the same class as a document it cannot read.
+- **Every widget is checked**, as `forms::write` checks them: an answer that fits one widget of a
+  field and not another is refused, because the writer draws it in both.
+- **The plan keeps every page as it is**, baseline pages in order with no turn and no crop, the
+  fingerprint of the input taken when it was opened. A copy written from an input that changed
+  meanwhile is removed and refused.
+- **An encrypted form stays encrypted**: `write_copy` re-encrypts with the original passwords
+  (`save.rs`), which `tests/cli.rs` confirms with `qpdf --is-encrypted`.
+
+**Later: filling as an appended revision (option 2).** Writing the answers as an incremental
+update instead of a rewrite would leave existing signatures' byte ranges intact, which is what a
+DocMDP certification with form-filling permission (level 2 or 3) expects a filler to do. Not
+built: `Plan::is_appendable` refuses form answers today, the explicit appearances are written
+into the rewritten objects, and a validator's view of which changes a certification permits is
+the subject of `docs/TRAPS.md` entries already (*A new signature field passes the difference
+analysis that refused a new mark*). When it is built, `fill`'s refusal becomes the choice between
+the two writers.
+
+**Measured**, macOS arm64, 2026-09-27. `tests/cli.rs`, 146 checks (44 new): `fields --json`
+equals `cli::fields::report` over `DocumentGraph::form` in this process on four documents that
+between them hold every kind, an inherited field and every reason a field is not editable; `fill`
+through the built tool writes every kind of answer --- text, multiline text, the inherited field,
+checkbox, radio, dropdown, editable dropdown with its own text, single list, multiple list ---
+and a separate `fields` run reads each back as given and every other field unchanged, from a file
+and from stdin; seventeen refusals each alone and six together write nothing, `--force` included;
+a signed and a certified document are refused; an encrypted form is filled with its password and
+`qpdf --is-encrypted` still says so; a filled form signed with the test key verifies intact with
+its answers. Containment: under `DYLD_PRINT_LIBRARIES`, `fields` and `fill` each run with one
+`tpdf-cli` process that maps no PDFium, and `fill`'s three workers each map it. **Independent
+readers:** pypdf (`scripts/fill_pdf_check.py`) reads all eight answers of the every-control form
+as given, with every widget carrying a normal appearance, and rejects the unfilled input; PDFKit
+(`form_pdfkit_check.swift`, unchanged) reads the filled inherited form's two text widgets as
+*Grüße* and its checkbox on, renders both, rejects the unfilled input (0 text widgets --- the
+`/FT` on the grandparent), and reads the filled-then-signed copy the same. PDFKit's thumbnail
+shows no list-selection shading and an empty string value for the list, as `docs/SUBSYSTEMS.md`
+already records for the window's saves.
+
+**Proved able to fail**: 20 new `cli:` mutations in `scripts/mutate_rust.py`, run with the other
+45 `cli:`, `forms:` and `choices:` ones --- all 65 caught by the test named for each. Six hand
+mutations of the code `tests/cli.rs` reaches, listed in `BUILD.md`, each turned the named checks
+red.
+
+**Not done.** Filling a signed or certified document (option 2, above). Characters outside
+Western European text --- `textbox.rs`'s set, as in the window; an embedded font would lift it.
+Choosing between two options that share an export value. `fields` reports no widget geometry.
 
 ### Cross-cutting
 

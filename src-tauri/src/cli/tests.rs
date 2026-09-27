@@ -198,6 +198,8 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("identities", "identities --json"),
         ("info", "info a.pdf --json"),
         ("text", "text a.pdf --pages 2"),
+        ("fields", "fields a.pdf --json"),
+        ("fill", "fill a.pdf -o b.pdf --values answers.json"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -217,7 +219,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
     }
     let why = refused("encrypt a.pdf");
     assert!(
-        why.contains("sign, verify, identities, info, text"),
+        why.contains("sign, verify, identities, info, text, fields, fill"),
         "{why}"
     );
 }
@@ -857,6 +859,9 @@ fn samples() -> Vec<(&'static str, String)> {
         ("info", pretty(&info_sample())),
         ("text", pretty(&text_sample())),
         ("reading", pretty(&reading_sample())),
+        ("fields", pretty(&super::form_tests::fields_sample())),
+        ("fill", pretty(&super::form_tests::fill_samples().0)),
+        ("fill-refused", pretty(&super::form_tests::fill_samples().1)),
     ]
 }
 
@@ -925,7 +930,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 7, "the sample table itself");
+    assert_eq!(want.len(), 10, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -976,6 +981,10 @@ fn every_json_key_is_described_in_the_readme() {
         "page_sizes",
         "opened_without_password",
         "encoding",
+        "custom_text",
+        "not_editable",
+        "problem",
+        "written",
     ] {
         assert!(
             all.contains(known),

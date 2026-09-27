@@ -64,6 +64,11 @@ use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
 use x509_cert::time::{Time, Validity};
 
+// `fields` and `fill`. Under `tests/cli/` and named by path, because a file
+// directly in `tests/` would be a test target of its own to cargo.
+#[path = "cli/forms.rs"]
+mod forms;
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some(worker::WORKER_ARGV) {
@@ -71,7 +76,7 @@ fn main() {
     }
     // The order is load-bearing: 3 asserts this process has not mapped PDFium,
     // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 7] = [
+    let checks: [Check; 9] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -82,6 +87,14 @@ fn main() {
         ("info agrees with the in-process reader", info_agrees),
         ("text agrees with the in-process extraction", text_agrees),
         ("text beside pdftotext, for information", beside_pdftotext),
+        (
+            "fields agrees with the in-process form reader",
+            forms::fields_agree,
+        ),
+        (
+            "fill writes every answer and reads it back",
+            forms::fill_round_trips,
+        ),
     ];
     let mut report = Report::default();
     for (name, check) in checks {
@@ -689,16 +702,40 @@ fn never_maps_pdfium(report: &mut Report) {
     let document = dir.join("plain.pdf");
     std::fs::write(&document, plain_pdf()).expect("document");
     let shown = document.display().to_string();
+    // A form, and answers for it, for `fields` and `fill`.
+    let form = dir.join("form.pdf");
+    std::fs::write(&form, forms::acme_pdf()).expect("form");
+    let answers = dir.join("answers.json");
+    std::fs::write(&answers, r#"{"ACME.answer": "Filled", "consent": true}"#).expect("answers");
+    let form_shown = form.display().to_string();
+    let answers_shown = answers.display().to_string();
 
     #[cfg(target_os = "macos")]
     {
         // The built binary, from outside: dyld names every image each process
         // loads, prefixed by its pid, and the workers inherit the variable.
         let (code, _, stderr) = tool(&["verify", &shown], &[("DYLD_PRINT_LIBRARIES", "1")]);
-        // `info` and `text` read the document through the same workers; each
-        // is held to the same rule, by the same parse of dyld's output.
-        for command in ["info", "text"] {
-            let (code, _, stderr) = tool(&[command, &shown], &[("DYLD_PRINT_LIBRARIES", "1")]);
+        // `info`, `text`, `fields` and `fill` read the document through the
+        // same workers; each is held to the same rule, by the same parse of
+        // dyld's output. `fill` spawns three --- the reading, the writing and
+        // the read-back --- and every one of them is a worker here.
+        let filled = dir.join("filled.pdf").display().to_string();
+        let lines: [Vec<&str>; 4] = [
+            vec!["info", &shown],
+            vec!["text", &shown],
+            vec!["fields", &form_shown],
+            vec![
+                "fill",
+                &form_shown,
+                "-o",
+                &filled,
+                "--values",
+                &answers_shown,
+            ],
+        ];
+        for line in &lines {
+            let command = line[0];
+            let (code, _, stderr) = tool(line, &[("DYLD_PRINT_LIBRARIES", "1")]);
             let parents: std::collections::BTreeSet<String> = stderr
                 .lines()
                 .filter_map(|line| line.strip_prefix("dyld["))
@@ -720,7 +757,7 @@ fn never_maps_pdfium(report: &mut Report) {
             let workers = parents.iter().filter(|pid| mapped_by(pid)).count();
             report.check(
                 &format!("{command}: the tool's own process never loaded PDFium, and a worker did"),
-                code == 0 && clean == 1 && workers >= 1,
+                code == 0 && clean == 1 && workers >= if command == "fill" { 3 } else { 1 },
                 &format!("exit {code}, {clean} clean, {workers} with PDFium"),
             );
         }
@@ -793,6 +830,19 @@ fn never_maps_pdfium(report: &mut Report) {
     let (code, stdout, stderr) = signs(&strings(&["verify", &shown]), &store, now());
     let (info_code, info_out, _) = signs(&strings(&["info", &shown]), &store, now());
     let (text_code, _, _) = signs(&strings(&["text", &shown]), &store, now());
+    let (fields_code, fields_out, _) = signs(&strings(&["fields", &form_shown]), &store, now());
+    let (fill_code, fill_out, fill_err) = signs(
+        &strings(&[
+            "fill",
+            &form_shown,
+            "-o",
+            &dir.join("filled-here.pdf").display().to_string(),
+            "--values",
+            &answers_shown,
+        ]),
+        &store,
+        now(),
+    );
     let after = tpdf_lib::images::mapped();
     report.check(
         "cli::run read the document through a worker",
@@ -803,6 +853,14 @@ fn never_maps_pdfium(report: &mut Report) {
         "cli::run described it and read its text through workers too",
         info_code == 0 && info_out.contains("1 page") && text_code == 0,
         &format!("info exit {info_code}, text exit {text_code}"),
+    );
+    report.check(
+        "cli::run listed a form's fields and filled it through workers too",
+        fields_code == 0
+            && fields_out.contains("ACME.answer")
+            && fill_code == 0
+            && fill_out.contains("Filled 2 fields"),
+        &format!("fields exit {fields_code}, fill exit {fill_code}: {fill_err}"),
     );
     report.check(
         "no PDFium in this process after cli::run verified a document",

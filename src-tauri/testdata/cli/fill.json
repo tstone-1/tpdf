@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "command": "fill",
+  "input": "form.pdf",
+  "output": "form-filled.pdf",
+  "written": true,
+  "problems": [],
+  "fields": [
+    {
+      "name": "ACME.answer",
+      "kind": "text",
+      "value": "Grüße"
+    },
+    {
+      "name": "consent",
+      "kind": "checkbox",
+      "value": true
+    },
+    {
+      "name": "delivery",
+      "kind": "radio",
+      "value": "Second"
+    },
+    {
+      "name": "items",
+      "kind": "choice_list",
+      "value": [
+        "OTHER"
+      ]
+    },
+    {
+      "name": "custom_choice",
+      "kind": "choice_combo",
+      "value": "My own"
+    }
+  ]
+}

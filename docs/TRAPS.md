@@ -303,6 +303,7 @@ hop through the index.
 - A feature on a crate already in the tree is not free: `cms`'s `builder` brought ten packages
 - `current_exe` answers with the link a program was started through, not the file it is
 - `json!` widens an `f32` to the cast's `f64`, and the serializer writes the `f32`'s own digits
+- `mod forms;` in `tests/cli.rs` looks for `tests/forms.rs`, which cargo would also build as a test of its own
 
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -24779,3 +24780,20 @@ trailing blank, and the manifest comparison went red on all ten.
 PDFium's rather than the document's; leading whitespace is kept, because an indent can be the
 document's. The viewer's copy path (`readingTextOf`) keeps the separators where they fell,
 which is invisible on screen and shows up in a paste.
+
+### `mod forms;` in `tests/cli.rs` looks for `tests/forms.rs`, which cargo would also build as a test of its own
+
+`tests/cli.rs` is a test target's crate root, and `tpdf fields`/`tpdf fill` wanted their
+end-to-end checks in a file of their own. `mod forms;` there is resolved beside the root, as in
+any crate: rustc looks for `tests/forms.rs` or `tests/forms/mod.rs`. The first is exactly where
+it must not go --- **cargo makes every `tests/*.rs` a test target of its own**, so the file would
+be compiled twice: once as a module of `cli`, and once as a crate with no `main` and none of
+the helpers it calls through `super::`, which fails to build and takes `cargo test` with it.
+`tests/cli/forms.rs`, where a non-`mod.rs` module of a *library* file would be found, is not
+looked at for a crate root; rustc says `file not found for module` and suggests the two paths
+that would be wrong.
+
+What works is naming the path: `#[path = "cli/forms.rs"] mod forms;`. Cargo does not discover
+files in subdirectories of `tests/` (only `tests/*.rs` and `tests/*/main.rs`), so the module is
+compiled once, as part of `cli`, and a comment beside the attribute says why --- the attribute
+is otherwise the kind of thing a tidy-up removes.

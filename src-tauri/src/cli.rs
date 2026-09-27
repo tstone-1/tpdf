@@ -1,5 +1,5 @@
 //! `tpdf` on the command line: sign, verify, list signing identities, describe
-//! a document, and read its text.
+//! a document, read its text, list its form fields and fill them.
 //!
 //! ## The same security model as the application, not a lighter one
 //!
@@ -24,7 +24,8 @@
 //!   (`save::write_signed`), after `sign_cms::finish` has refused anything
 //!   `integrity::check` does not call intact, and a fresh worker then reads the
 //!   written file back; success is reported only when it finds the new
-//!   signature intact.
+//!   signature intact. A filled file is written by the application's save
+//!   (`save::write_copy`) and read back the same way (`cli/fill.rs`).
 //!
 //! ## Adding a command
 //!
@@ -50,6 +51,8 @@
 //! since other documents in the same run may have been read.
 
 pub mod args;
+pub mod fields;
+pub mod fill;
 pub mod identities;
 pub mod info;
 pub mod report;
@@ -339,6 +342,8 @@ pub const COMMANDS: &[Registered] = &[
     identities::COMMAND,
     info::COMMAND,
     text::COMMAND,
+    fields::COMMAND,
+    fill::COMMAND,
 ];
 
 impl Env<'_> {
@@ -374,7 +379,7 @@ fn json(to: &mut dyn Write, value: &impl serde::Serialize) {
 #[must_use]
 pub fn usage(program: &str) -> String {
     let mut text = format!(
-        "tpdf {} --- sign, verify, describe and read PDF documents from the command line\n\nUsage:\n",
+        "tpdf {} --- sign, verify, describe, read and fill PDF documents from the command line\n\nUsage:\n",
         env!("CARGO_PKG_VERSION")
     );
     for command in COMMANDS {
@@ -387,7 +392,7 @@ pub fn usage(program: &str) -> String {
     text.push_str(
         "\nExit codes: 0 done; 1 verify --strict found a signature that is not intact\n\
          and trusted, or a document with none; 2 the command line is malformed;\n\
-         3 refused (identity, document, output, or the OS); 4 tpdf failed.",
+         3 refused (identity, document, answers, output, or the OS); 4 tpdf failed.",
     );
     text
 }
@@ -409,3 +414,6 @@ fn opened(path: &Path) -> Result<(std::fs::File, usize), String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod form_tests;

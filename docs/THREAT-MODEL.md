@@ -74,7 +74,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 |---|---|---|
 | **Webview** (Svelte) | Draws, receives tiles, issues commands — ten of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
-| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no network, no updater |
+| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy, a filled copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no network, no updater |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -2285,6 +2285,24 @@ is absent from the output. The workers inherit the tool's environment, so the va
 visible inside them too; that widens nothing, since a worker already holds the document the
 password decrypts and receives the password on stdin regardless.
 
+**`fields` and `fill`** (added the same day). `fields` asks one worker `Request::Form` ---
+`forms::scan`, the window's form reader --- and groups its answer by field in this process.
+`fill` asks one worker `Request::Properties`, `Request::Open` and `Request::Form`; checks the
+answers here, against the widgets the worker returned, with `forms::check`, the window's rules
+for a typed answer (values the document influences --- names, options, rectangles --- parsed by
+nobody here: the answers file is JSON from the reader's own account, bounded at 16 MiB, and each
+answer is held to `forms.rs`'s 16 KB); then writes through `save::write_copy`, the window's
+*Save As*: the plan crosses to a writing worker, which re-validates every answer against its own
+scan before `forms::write` touches the object graph, and the copy is staged beside `-o` and
+renamed onto it here. A fresh worker reads the written form back, and a difference removes the
+copy. `tests/cli.rs` holds both commands to the containment check above --- `fill`'s three
+workers each map PDFium and the tool's process none. `fill` writes one file, refuses the input
+and the answers file under any name as the output, and refuses an existing output without
+`--force`. **It refuses a signed or certified document**, or one whose signatures could not all
+be enumerated, because the writer is a full rewrite that would invalidate them --- the window
+asks before doing the same, and a command line has nobody to ask. An encrypted document is
+written re-encrypted with its own passwords, as the window's save writes it.
+
 **The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
 symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the
 link and the target are both fixed in `clitool.rs`, so the widest thing it can ask for is that
@@ -2300,10 +2318,15 @@ would dangle at the next launch.
 **Residual.** A link in `/usr/local/bin` points into the application bundle, so replacing the
 bundle replaces what `tpdf` runs --- which is the same authority an attacker who can replace the
 bundle already has over the application, and is why the link is not a copy. The Windows tool
-**has not run**: it compiles (`scripts/check_windows.py`) and the Windows CI job runs its
-integration test, but no person has run it on a Windows desktop, and `sandbox_check` has no
-Windows counterpart --- a Windows worker's containment is its parent's, and
-`scripts/win_modules.py` is that platform's external instrument.
+**first ran on a desktop 2026-09-27** (MOTHERSHIP): `identities` read the real
+`CurrentUser\My`, `verify` gave the macOS verdicts fixture for fixture, and a temporary
+document-signing certificate signed invisibly and visibly, read intact by tpdf, pyHanko and
+`openssl cms -verify`. `sandbox_check` has no Windows counterpart --- a Windows worker's
+containment is its parent's --- so `scripts/win_modules.py` was the instrument: sampled from
+outside through 800 verifications, the tool's own process never had `pdfium.dll` mapped (15
+modules), against a positive control in which a process that loads the DLL read as loading it.
+The workers refused the module query after their first moments, which is consistent with their
+token and is not evidence about what they map.
 
 ### T7 — Distribution and update
 

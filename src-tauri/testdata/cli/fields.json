@@ -1,0 +1,205 @@
+{
+  "schema": 1,
+  "command": "fields",
+  "path": "form.pdf",
+  "fields": [
+    {
+      "name": "ACME.answer",
+      "kind": "text",
+      "value": "OLD",
+      "options": [],
+      "multiple": false,
+      "custom_text": false,
+      "multiline": false,
+      "max_length": 20,
+      "pages": [
+        1,
+        2
+      ],
+      "widgets": 2,
+      "editable": true,
+      "not_editable": null,
+      "why": null
+    },
+    {
+      "name": "consent",
+      "kind": "checkbox",
+      "value": false,
+      "options": [],
+      "multiple": false,
+      "custom_text": false,
+      "multiline": false,
+      "max_length": null,
+      "pages": [
+        1
+      ],
+      "widgets": 1,
+      "editable": true,
+      "not_editable": null,
+      "why": null
+    },
+    {
+      "name": "delivery",
+      "kind": "radio",
+      "value": "First",
+      "options": [
+        {
+          "export": "First",
+          "label": "First",
+          "selected": true
+        },
+        {
+          "export": "Second",
+          "label": "Second",
+          "selected": false
+        }
+      ],
+      "multiple": false,
+      "custom_text": false,
+      "multiline": false,
+      "max_length": null,
+      "pages": [
+        1,
+        2
+      ],
+      "widgets": 2,
+      "editable": true,
+      "not_editable": null,
+      "why": null
+    },
+    {
+      "name": "delivery_choice",
+      "kind": "choice_combo",
+      "value": "SAME",
+      "options": [
+        {
+          "export": "SAME",
+          "label": "First label",
+          "selected": true
+        },
+        {
+          "export": "SAME",
+          "label": "Second label",
+          "selected": false
+        },
+        {
+          "export": "OTHER",
+          "label": "Third label",
+          "selected": false
+        }
+      ],
+      "multiple": false,
+      "custom_text": false,
+      "multiline": false,
+      "max_length": null,
+      "pages": [
+        1
+      ],
+      "widgets": 1,
+      "editable": true,
+      "not_editable": null,
+      "why": null
+    },
+    {
+      "name": "items",
+      "kind": "choice_list",
+      "value": [
+        "SAME"
+      ],
+      "options": [
+        {
+          "export": "SAME",
+          "label": "First label",
+          "selected": true
+        },
+        {
+          "export": "SAME",
+          "label": "Second label",
+          "selected": false
+        },
+        {
+          "export": "OTHER",
+          "label": "Third label",
+          "selected": false
+        }
+      ],
+      "multiple": true,
+      "custom_text": false,
+      "multiline": false,
+      "max_length": null,
+      "pages": [
+        1
+      ],
+      "widgets": 1,
+      "editable": true,
+      "not_editable": null,
+      "why": null
+    },
+    {
+      "name": "single_item",
+      "kind": "choice_list",
+      "value": "Alpha",
+      "options": [
+        {
+          "export": "Alpha",
+          "label": "Alpha",
+          "selected": true
+        },
+        {
+          "export": "Beta",
+          "label": "Beta",
+          "selected": false
+        },
+        {
+          "export": "Gamma",
+          "label": "Gamma",
+          "selected": false
+        }
+      ],
+      "multiple": false,
+      "custom_text": false,
+      "multiline": false,
+      "max_length": null,
+      "pages": [
+        2
+      ],
+      "widgets": 1,
+      "editable": true,
+      "not_editable": null,
+      "why": null
+    },
+    {
+      "name": "custom_choice",
+      "kind": "choice_combo",
+      "value": "Alpha",
+      "options": [
+        {
+          "export": "Alpha",
+          "label": "Alpha",
+          "selected": true
+        },
+        {
+          "export": "Beta",
+          "label": "Beta",
+          "selected": false
+        },
+        {
+          "export": "Gamma",
+          "label": "Gamma",
+          "selected": false
+        }
+      ],
+      "multiple": false,
+      "custom_text": true,
+      "multiline": false,
+      "max_length": null,
+      "pages": [
+        2
+      ],
+      "widgets": 1,
+      "editable": false,
+      "not_editable": "read_only",
+      "why": "This field is read-only"
+    }
+  ]
+}

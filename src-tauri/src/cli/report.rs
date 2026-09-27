@@ -335,3 +335,177 @@ pub enum Encoding {
     /// The fonts could not all be examined.
     Unknown,
 }
+
+/// `tpdf fields --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fields {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"fields"`.
+    pub command: String,
+    /// The document, as given.
+    pub path: String,
+    /// Every field with a widget on a page, in the order its first widget is
+    /// met: page by page, and within a page in the order of `/Annots`.
+    pub fields: Vec<Field>,
+}
+
+/// One field, as `fill` addresses it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Field {
+    /// The fully qualified name --- its ancestors' `/T` and its own, joined by
+    /// periods: the key `fill` takes.
+    pub name: String,
+    /// What kind of answer it takes.
+    pub kind: FieldKind,
+    /// Its current answer, in the form `fill` takes one: a string for text, a
+    /// boolean for a checkbox, an export value or `null` for a radio group or a
+    /// single choice, an array of export values for a multiple-selection list;
+    /// `null` for `other`.
+    pub value: serde_json::Value,
+    /// A radio group's states or a choice's options, in the document's order;
+    /// empty for the other kinds.
+    pub options: Vec<FieldOption>,
+    /// A list that allows several selections.
+    pub multiple: bool,
+    /// A dropdown that also takes text of its own (`/Ff` Edit).
+    pub custom_text: bool,
+    /// A text field that takes several lines.
+    pub multiline: bool,
+    /// `/MaxLen`, in characters; `null` when there is none.
+    pub max_length: Option<usize>,
+    /// The pages its widgets are on, counted from 1, each once.
+    pub pages: Vec<u32>,
+    /// How many widgets it has.
+    pub widgets: usize,
+    /// Whether `fill` can answer it.
+    pub editable: bool,
+    /// Why not, when it cannot; `null` when it can.
+    pub not_editable: Option<NotEditable>,
+    /// The sentence for `not_editable`, as the application shows it; `null`
+    /// when it is editable.
+    pub why: Option<String>,
+}
+
+/// [`Field::kind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldKind {
+    /// A text field.
+    Text,
+    /// A checkbox.
+    Checkbox,
+    /// A group of radio buttons.
+    Radio,
+    /// A dropdown.
+    ChoiceCombo,
+    /// A list box.
+    ChoiceList,
+    /// Anything else: a signature field, a push button. Never editable.
+    Other,
+}
+
+/// One option of a choice, or one state of a radio group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldOption {
+    /// What `fill` takes and the document stores.
+    pub export: String,
+    /// What is shown. A radio state's label is its export value.
+    pub label: String,
+    /// Whether it is chosen now. The one place two options sharing an export
+    /// value can be told apart, since `value` names the export value only.
+    pub selected: bool,
+}
+
+/// [`Field::not_editable`]: the reasons the application's form filling gives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotEditable {
+    /// `/Ff` ReadOnly.
+    ReadOnly,
+    /// A password text field.
+    Password,
+    /// A file-select text field.
+    FileSelect,
+    /// A comb text field.
+    Comb,
+    /// A rich-text text field.
+    RichText,
+    /// Its widget is hidden.
+    Hidden,
+    /// A kind tpdf does not fill: a signature field, a push button.
+    Unsupported,
+    /// Anything else, such as radio buttons whose appearances do not say which
+    /// state is which; `why` says what.
+    Other,
+}
+
+/// `tpdf fill --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Filled {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"fill"`.
+    pub command: String,
+    /// The document filled, as given. It is never written.
+    pub input: String,
+    /// The filled copy, as given.
+    pub output: String,
+    /// Whether the filled copy was written and kept.
+    pub written: bool,
+    /// Why not, every reason at once: the answers `fill` refused, or those
+    /// that did not read back as given. Empty when `written`.
+    pub problems: Vec<Problem>,
+    /// Every field answered, as a worker read it back from the written file;
+    /// empty unless `written`.
+    pub fields: Vec<FilledField>,
+}
+
+/// One answer `fill` refused, or one that did not read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Problem {
+    /// The name as the answers give it.
+    pub field: String,
+    /// Which rule.
+    pub problem: ProblemKind,
+    /// The sentence, as stderr prints it.
+    pub why: String,
+}
+
+/// [`Problem::problem`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProblemKind {
+    /// No field has this name.
+    Unknown,
+    /// Several fields have this name, or several options this export value.
+    Ambiguous,
+    /// The field cannot be answered; `why` says which reason `fields` gives.
+    NotEditable,
+    /// The answer is the wrong JSON type for the field.
+    Type,
+    /// It names no option of the field, or more than the field takes.
+    Option,
+    /// Characters Helvetica cannot draw: tpdf writes each answer's appearance
+    /// in Helvetica with WinAnsiEncoding, Western European text.
+    Characters,
+    /// Longer than the field's `max_length`, or than 16 KB.
+    Length,
+    /// A line break in a field that takes one line.
+    Line,
+    /// It does not fit visibly in the field.
+    Layout,
+    /// It was written, and the written file does not say it.
+    ReadBack,
+}
+
+/// One answered field, read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilledField {
+    /// Its fully qualified name.
+    pub name: String,
+    /// As [`Field::kind`].
+    pub kind: FieldKind,
+    /// As [`Field::value`], read from the written file.
+    pub value: serde_json::Value,
+}

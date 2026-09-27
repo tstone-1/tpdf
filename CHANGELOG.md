@@ -45,6 +45,20 @@ have the binary.)
   line. `tpdf verify` now reports such a document as *locked*, as its
   documentation always said, where it used to call it *refused*.
 
+  `tpdf fields` lists a document's form fields by the full names a script
+  uses, with each one's kind, current value and options, and says which cannot
+  be filled and why. `tpdf fill` fills a form from a JSON file of names and
+  answers (or from standard input) into a new file: every answer is checked
+  first by the same rules the window applies to a typed one, every problem is
+  reported at once, and a single problem means nothing is written. The copy is
+  written by the application's own save, with a visible appearance for every
+  answer, and read back before the command says it worked. A signed document
+  is refused, because filling rewrites it and would break its signatures: fill
+  the form first, then sign the filled copy with `tpdf sign`.
+
+  In the window, a field that cannot be filled now says which kind it is —
+  password, file-select, comb or rich-text — where it used to name all four.
+
 - **A page with a letter outside Latin in its fonts can now be edited.** A
   document that names Cyrillic or other non-Latin letters in the encoding of
   its fonts, as a brochure with a Russian edition does, used to be refused on

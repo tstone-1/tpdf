@@ -296,6 +296,17 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
+# The same readers on what `tpdf fill` writes. TPDF_FILL_PROBE leaves the filled files, and
+# their inputs as the negative controls, in a scratch directory.
+TPDF_FILL_PROBE=/tmp/tpdf-fill cargo test --manifest-path src-tauri/Cargo.toml --test cli
+uv run --with pypdf scripts/fill_pdf_check.py /tmp/tpdf-fill/every-control-filled.pdf \
+    /tmp/tpdf-fill/every-control-answers.json
+uv run --with pypdf scripts/fill_pdf_check.py /tmp/tpdf-fill/every-control.pdf \
+    /tmp/tpdf-fill/every-control-answers.json --expect-fail
+swift scripts/form_pdfkit_check.swift /tmp/tpdf-fill/acme-filled.pdf /tmp/tpdf-fill/render
+swift scripts/form_pdfkit_check.swift /tmp/tpdf-fill/acme-filled-signed.pdf
+swift scripts/form_pdfkit_check.swift /tmp/tpdf-fill/acme.pdf   # control: must FAIL
+
 # Visual signatures: synthetic colour/alpha quadrants on cropped, rotated pages.
 TPDF_SIGNATURE_PROBE=/tmp/tpdf-signatures \
     cargo test --locked --manifest-path src-tauri/Cargo.toml --lib signature_pixels_alpha_and_placement
@@ -968,7 +979,14 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe --
 # SecTrust evaluation in a process measured 5.4 s and 19.2 s):
 cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_chain_api -- --ignored
 # On Windows, the store end to end: a CNG certificate created in CurrentUser\My,
-# found by identities(), used to sign, and removed with its key --- NOT YET RUN:
+# found by identities(), used to sign, and removed with its key. First run
+# 2026-09-27 on MOTHERSHIP (Windows 11, pwsh 7): RSA and ECDSA P-256 both signed
+# through CNG and read intact. The first attempt failed in its CLEANUP and left
+# both probe certificates, keys included, in the store: PowerShell 7 knows
+# `-DeleteKey` only once the Cert:\ path is bound, so the path now comes first,
+# and every removal is attempted before any failure is reported. After a run,
+# `Get-ChildItem Cert:\CurrentUser\My | ? Subject -like 'CN=tpdf-keystore-probe-*'`
+# must list nothing.
 cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_windows_store -- --ignored --nocapture
 # There is no macOS identity-store test, and the reason is recorded rather than
 # worked around: creating a keychain file (`security create-keychain`,
@@ -1007,7 +1025,8 @@ sandbox-exec -p '(version 1)(allow default)(deny mach-lookup (global-name "com.a
 # evaluation in-memory roots (SecTrustSetAnchorCertificatesOnly on macOS, an
 # exclusive-root chain engine on Windows), and the one system-store control reads
 # a root out of SecTrustCopyAnchorCertificates, read-only. None is ignored. The
-# Windows half has NEVER RUN: its first execution is the Windows CI job.
+# Windows half first ran on the Windows CI job (9ad0355, 2026-09-27): all 14
+# trust tests passed there, the exclusive-root engine included.
 
 # Marks: does a highlight a reader makes land on the words they made it from?
 # Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not
@@ -5266,13 +5285,24 @@ the record.
   `cli::info::document` built in this process, and a password-protected document locked, then
   described with `--password-env`; `text --json` against the in-process extraction and against
   the lines the fixtures' manifests record, with `tagged.pdf`'s tags removed as the control,
-  and `--pages` and its refusals; and, when Poppler's `pdftotext` is installed, word overlap
-  and word order beside it, printed as `[INFO]` and never counted. The parts that bind PDFium in
+  and `--pages` and its refusals; when Poppler's `pdftotext` is installed, word overlap
+  and word order beside it, printed as `[INFO]` and never counted; `fields --json` against
+  `cli::fields::report` over `DocumentGraph::form` in this process, on two forms the test
+  builds (`tests/cli/forms.rs`: an inherited field on two pages, and one with every control
+  and every reason a field is not editable) and on `form.pdf` and `signed-nested-field.pdf`,
+  with every kind and every reason required between them as the control; and `fill` through
+  the built tool --- every kind of answer read back by a separate `fields` run, every field it
+  was not asked to change unchanged, `--values -`, seventeen refusals each on its own and six
+  together with nothing written, the output rules, a signed and a certified document refused,
+  an encrypted form filled with its password and still encrypted (skipped without `qpdf`), and
+  a filled form signed with the test key reading back intact. `fields` and `fill` are held to
+  the containment rule too: under `DYLD_PRINT_LIBRARIES` `fill`'s three workers map PDFium and
+  the tool's process does not. The parts that bind PDFium in
   this process run after the one asserting it has not. Without generated fixtures (*Test
   fixtures*) the fixture parts say `[SKIP]`.
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 102 checks, ~20 s debug
+cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 146 checks, ~30 s debug
 cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clitool::
 ```
 
@@ -5320,6 +5350,27 @@ reading.rs ignores the tags             -> 3 red: tagged.pdf page 1 against its 
                                            the tagged-against-geometric control, and the
                                            orders variety control
 ```
+
+For `fields` and `fill`, the same day, against 146 checks, the same way:
+
+```
+fill without the signed-document refusal -> 2 red: the signed form and the certified document
+the writer drops the form answers        -> 11 red: every successful fill exits 4 ("was written
+  (save.rs)                                 as ... and reads back as OLD") and its output is
+                                           removed, the containment run of fill included
+... and fill never compares the read-back -> 6 red: the separate `fields` read of every output,
+                                           and the fill-then-sign and encrypted round trips
+the read-back is not given the password  -> 2 red: the encrypted fill (4, copy removed) and its
+                                           still-encrypted check
+fields binds PDFium in the tool's process -> 2 red: "fields: the tool's own process never loaded
+                                           PDFium", and "no PDFium in this process"
+the worker answers every form with none  -> 41 red: every fields agreement and its two variety
+  (worker_child.rs)                         controls, every fill, and info's form agreements
+```
+
+The first run of the last one found a defect in the test rather than the code: an index into a
+`serde_json::Map` panicked on a missing key and took the summary line with it, so the run
+reported nothing countable. It is a `get` now, and the rerun gives the 41.
 
 **Against the real keychain, by hand, never by an agent.** `identities` reads certificates only
 and raises no prompt:

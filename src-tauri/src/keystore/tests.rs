@@ -134,7 +134,7 @@ fn the_chain_api_returns_nothing_above_a_self_issued_certificate() {
 /// `CurrentUser\My` with a CNG key, found by `identities`, used to sign, and
 /// removed with its key afterwards --- including when an assertion fails.
 ///
-/// **Not run on macOS, and not yet run on Windows.** Run it on an unlocked
+/// **Not run on macOS; first run on Windows 2026-09-27** (see the cleanup). Run it on an unlocked
 /// Windows desktop with
 /// `cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_windows_store -- --ignored --nocapture`.
 #[cfg(windows)]
@@ -201,11 +201,36 @@ fn the_windows_store_signs_a_revision_that_the_verifier_calls_intact() {
             );
         }
     });
+    // **The path before `-DeleteKey`**: the switch is a dynamic parameter of the
+    // certificate provider, and PowerShell 7 does not know it exists until the
+    // path is bound. Written the other way round, the first run on Windows
+    // (2026-09-27) failed with "A parameter cannot be found that matches
+    // parameter name 'DeleteKey'" and left both probe certificates, keys
+    // included, in the store. And every removal is attempted before any is
+    // reported, because a panic on the first stranded the second.
+    let mut stuck = Vec::new();
     for thumbprint in &made {
-        powershell(&format!(
-            "Remove-Item -DeleteKey Cert:\\CurrentUser\\My\\{thumbprint}"
-        ));
+        let out = std::process::Command::new("pwsh")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Remove-Item -Path Cert:\\CurrentUser\\My\\{thumbprint} -DeleteKey"),
+            ])
+            .output();
+        match out {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => stuck.push(format!(
+                "{thumbprint}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            )),
+            Err(e) => stuck.push(format!("{thumbprint}: {e}")),
+        }
     }
+    assert!(
+        stuck.is_empty(),
+        "probe certificates left in CurrentUser\\My: {stuck:?}"
+    );
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }

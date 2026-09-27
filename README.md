@@ -461,11 +461,11 @@ both.
 
 ## Command-line tool
 
-`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info` and `tpdf text` do from a terminal
-what **Sign document…**, **Document properties** and the viewer's own text do in the window,
-with the same code: the document is read only by the same sandboxed worker processes, the
-private key never leaves the operating system, and every signed file is read back and checked
-before success is reported. Nothing is uploaded and nothing goes online.
+`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf fields` and
+`tpdf fill` do from a terminal what **Sign document…**, **Document properties**, the viewer's own
+text and its form filling do in the window, with the same code: the document is read only by
+the same sandboxed worker processes, the private key never leaves the operating system, and
+every signed or filled file is read back and checked before success is reported. Nothing is uploaded and nothing goes online.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
@@ -489,6 +489,22 @@ tpdf info --json *.pdf
 PDF_PASSWORD=… tpdf info --password-env PDF_PASSWORD locked.pdf
 tpdf text report.pdf --pages 1-3,7 -o report.txt
 tpdf text --json report.pdf
+tpdf fields --json application.pdf
+tpdf fill application.pdf -o filled.pdf --values answers.json
+some-script | tpdf fill application.pdf -o filled.pdf --values - --json
+tpdf fill application.pdf -o filled.pdf --values answers.json && \
+    tpdf sign filled.pdf -o signed.pdf --identity "Jane Doe"
+```
+
+An answers file for `fill` is one JSON object of full field names and answers:
+
+```json
+{
+  "applicant.name": "Jane Doe",
+  "applicant.consent": true,
+  "delivery": "Express",
+  "extras": ["Insurance", "Tracking"]
+}
 ```
 
 - **`identities`** lists the certificates in your keychain (macOS) or your personal
@@ -526,14 +542,37 @@ tpdf text --json report.pdf
   backwards, and a page past the end is refused); `-o <out.txt>` writes to a file instead of
   the terminal, which must not exist unless `--force` is given. The text of annotations —
   a signature's visible appearance, a comment — is not the page's and is not included.
+- **`fields <file.pdf>`** lists the document's form fields, as the window's form filling reads
+  them: each one's full name (its ancestors' names and its own, joined by periods — the name
+  `fill` takes), its kind, its current value in the form `fill` takes an answer, the options of
+  a radio group or a choice, and whether it can be filled and, when not, why: read-only, a
+  password, file-select, comb or rich-text field, hidden, or a kind tpdf does not fill, such as
+  a signature field. A document with an XFA form is refused: tpdf neither reads nor fills one.
+- **`fill <in.pdf> -o <out.pdf> --values <answers.json>`** fills the form and writes the result
+  as a new file; `--values -` reads the answers from standard input. An answer is a string for
+  a text field, `true` or `false` for a checkbox, an option's **export value** for a radio group
+  or a single choice (or `null` to clear it), and an array of export values for a list that
+  takes several; a dropdown that takes text of its own also takes any string. **All or
+  nothing**: every answer is checked first, and a name no field has, a name two fields share,
+  a field that cannot be filled, a wrong type, an export value no option has or two options
+  share, a character the form's font cannot draw (answers are drawn in Helvetica, which covers
+  Western European text), an answer longer than the field allows, a line break in a one-line
+  field, or an answer that does not fit visibly are all reported at once — and one of them
+  means nothing is written. The copy is written by the application's own save, with an
+  appearance for every answer so any reader shows it, and read back: if any answered field
+  does not say what was asked, or any other field changed, the copy is removed and the exit
+  code is 4. **A signed document is refused**, because filling rewrites the document and would
+  invalidate its signatures; fill the unsigned form, then sign the filled copy with `sign`.
+  `-o` must name a new file unless `--force` is given.
 
-**Passwords.** `info` and `text` read a password-protected document when given
+**Passwords.** `info`, `text`, `fields` and `fill` read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
 password prompt sends it, and appears in nothing tpdf prints. The workers inherit the
 environment, so they can see the variable too; they already hold the document it opens.
-`verify` does not take a password, and reports such a document as locked.
+`verify` does not take a password, and reports such a document as locked. A document `fill`
+opens with a password is written encrypted as it was, with the same passwords.
 
 **The key, and unattended use.** macOS asks whether the tool may use the key the first time
 it signs with it; choose *Always Allow* if a script is to sign without you — which also
@@ -551,13 +590,14 @@ built.
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
 | 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. |
-| 2 | The command line is malformed: a missing `-o`, an output that names the input, a bad `--rect` or `--pages`, an unknown option, or a `--password-env` naming a variable that is not set. |
-| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, a locked document or a page past its end; an output that exists; a key the system would not use, or a prompt that was cancelled. |
-| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back intact. |
+| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers file, a bad `--rect` or `--pages`, an unknown option, or a `--password-env` naming a variable that is not set. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `fill`, the copy is then removed. |
 
 Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
-document, pretty-printed, whenever the exit code is 0 or 1 — and for `verify` and `info` also
-when it is 3 or 4, since the other documents may have been read. Every document has `schema` (now `1`;
+document, pretty-printed, whenever the exit code is 0 or 1 — for `verify` and `info` also
+when it is 3 or 4, since the other documents may have been read, and for `fill` also when it
+refuses its answers (3) or finds them not read back (4), with every problem listed. Every document has `schema` (now `1`;
 a key may be added without changing it, and one renamed or removed changes it) and
 `command`. Enumerations use the same words as the application's own data.
 
@@ -593,6 +633,26 @@ a key may be added without changing it, and one renamed or removed changes it) a
   so some of the text may be noise; the viewer's screen-reader layer withholds such a page)
   or `unknown` (the fonts could not all be examined) — and `text`, the page's lines joined by
   `\n`.
+- `fields`: `path` and `fields`, one per field in the order its first widget appears (page by
+  page), each with `name` (the full name `fill` takes), `kind` (`text`, `checkbox`, `radio`,
+  `choice_combo` for a dropdown, `choice_list` for a list, or `other` — a signature field or a
+  push button, never editable), `value` (its answer in the form `fill` takes one: a string, a
+  boolean, an export value or `null`, an array of export values for a list with `multiple`, and
+  `null` for `other`), `options` (a radio group's states or a choice's options, each with
+  `export`, `label` and `selected` — two options may share an export value, and `selected` is
+  what tells them apart; empty for the other kinds), `multiple` (a list that takes several),
+  `custom_text` (a dropdown that also takes text of its own), `multiline`, `max_length`
+  (characters, or `null`), `pages` (counted from 1), `widgets` (how many places it is shown),
+  `editable`, `not_editable` — `null`, or `read_only`, `password`, `file_select`, `comb`,
+  `rich_text`, `hidden`, `unsupported` or `other` — and `why`, the application's sentence for
+  it (`null` when editable).
+- `fill`: `input`, `output`, `written` (whether the filled copy was written and kept),
+  `problems` — empty when written, otherwise every answer refused or not read back, each with
+  `field` (the name as the answers give it), `problem` (`unknown`, `ambiguous`,
+  `not_editable`, `type`, `option`, `characters`, `length`, `line`, `layout`, or `read_back`
+  for one that was written and does not read back) and `why`, the sentence stderr prints — and
+  `fields`, each answered field as the written file says it, with `name`, `kind` and `value`
+  as for `fields`.
 - `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
   certificate as above), `visible`, `signatures` (every signature in the written file, read
   back) and `summary` (the sentence the application shows after signing).

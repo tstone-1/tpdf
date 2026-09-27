@@ -241,8 +241,9 @@ pub(crate) fn password(name: Option<&str>) -> Result<Option<String>, Failure> {
     }
 }
 
-/// A refusal from the worker, as this command's failure.
-fn declined(shown: &str, why: Declined, password_given: bool) -> Failure {
+/// A refusal from the worker, as this command's failure. `fields` and
+/// `fill` share it.
+pub(crate) fn declined(shown: &str, why: Declined, password_given: bool) -> Failure {
     match why {
         Declined::Locked(_) if password_given => Failure::new(
             Exit::Refused,
