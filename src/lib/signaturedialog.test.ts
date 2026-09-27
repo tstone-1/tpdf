@@ -26,7 +26,7 @@ vi.mock("./signature", async (actual) => ({
   },
 }));
 
-const { SignatureDialog } = await import("./signaturedialog");
+const { APPEARANCE_WORDS, SignatureDialog } = await import("./signaturedialog");
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(error: unknown): void } {
   let resolve!: (value: T) => void;
@@ -216,5 +216,20 @@ describe("signature dialog: an answer that arrives after the reader moved on", (
     ui.file.dispatch("change", {});
     await settle();
     expect(ui.main.ctx.drawn).toBe(1);
+  });
+});
+
+describe("signature dialog: named for the use it is put to", () => {
+  it("is called what the signing panel asks, and what it was built for the next time", () => {
+    const ui = mount();
+    const heading = () => (all(dom.root) as Node[]).find((node) => node.tagName === "h2")!.textContent;
+    void ui.dialog.ask(APPEARANCE_WORDS);
+    expect(heading()).toBe("Signature image");
+    expect(ui.button("Use this image")).toBeDefined();
+    ui.button("Cancel").dispatch("click", {});
+    ui.ask();
+    expect(heading()).toBe("Place signature image");
+    expect(ui.button("Place signature image")).toBeDefined();
+    expect(ui.button("Use this image")).toBeUndefined();
   });
 });

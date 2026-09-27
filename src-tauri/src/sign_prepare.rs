@@ -16,7 +16,9 @@
 //! - a signature dictionary, `/SubFilter /ETSI.CAdES.detached`, with the
 //!   signing time in `/M` (PAdES B-B puts it there rather than in a signed
 //!   attribute), a `/ByteRange` of fixed-width placeholders and a `/Contents`
-//!   hex string of [`RESERVED`] zero bytes;
+//!   hex string of [`RESERVED`] zero bytes --- and, when the reader gave them,
+//!   `/Reason` and `/Location` as text strings ([`text_string`]), inside the
+//!   range like everything else in the dictionary;
 //! - a widget --- `/F 132` (print and locked) --- that is also the field,
 //!   named `SignatureN` for the first `N` no top-level field already uses.
 //!   [`prepare`] makes it **invisible**: a zero rectangle on the first page.
@@ -54,7 +56,7 @@ use crate::encoding::{resolve, MAX_DECODE};
 use crate::pagetree::ordered_pages;
 
 pub mod appearance;
-pub use appearance::Visible;
+pub use appearance::{Options, Visible};
 
 /// The bytes of DER the `/Contents` hole holds: **32 KiB**, 65,536 hex digits.
 ///
@@ -131,7 +133,7 @@ pub fn prepare(
     signed_at: u64,
     password: Option<&str>,
 ) -> Result<Unsigned, String> {
-    build(original, signed_at, password, None)
+    build(original, signed_at, password, None, &Details::default())
 }
 
 /// [`prepare`], with the widget placed where the reader put it and an
@@ -154,7 +156,112 @@ pub fn prepare_visible(
     visible: &Visible,
 ) -> Result<Unsigned, String> {
     appearance::check(visible)?;
-    build(original, signed_at, password, Some(visible))
+    let details = Details {
+        reason: visible.options.reason().map(str::to_string),
+        location: visible.options.location().map(str::to_string),
+    };
+    build(original, signed_at, password, Some(visible), &details)
+}
+
+/// What the signature dictionary says beyond what signing requires.
+///
+/// Separate from [`Visible`] because it is about the *dictionary*, which can
+/// carry any Unicode, where [`Visible`] is about the page, which draws Latin-1
+/// only. Today only a visible signature fills it, and [`appearance::check`] has
+/// already refused what it could not draw; the dictionary itself is written for
+/// any text (`a_reason_and_location_are_text_strings_inside_the_range`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Details {
+    reason: Option<String>,
+    location: Option<String>,
+}
+
+/// A visible signature's appearance, drawn before anything is signed.
+///
+/// **Crosses the worker boundary** as `Reply::SignaturePreview` and reaches the
+/// frontend unchanged from `sign_preview`. A picture and its size: nothing in
+/// it is a fact about the reader's document.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Preview {
+    /// The appearance as PNG, [`PREVIEW_SCALE`] pixels a point.
+    pub png: Vec<u8>,
+    /// Its width in pixels.
+    pub width: u32,
+    /// Its height in pixels.
+    pub height: u32,
+}
+
+/// How many pixels a point a preview is drawn at: two, so it is sharp on a
+/// high-density screen at the size the panel shows it.
+pub const PREVIEW_SCALE: f32 = 2.0;
+
+/// The largest side a preview may be asked for, in points.
+///
+/// A bound on the render, not a layout rule: the frontend asks for one
+/// representative shape, and a preview is drawn at two pixels a point.
+pub const PREVIEW_MAX_SIDE: f32 = 720.0;
+
+/// A document holding only `visible`'s appearance, built by the code that signs.
+///
+/// **The preview is the signing, on a page the size of the rectangle.** A blank
+/// page exactly `visible.rect`'s size is made, and [`prepare_visible`] --- the
+/// function the worker runs to sign --- is run over it with the rectangle
+/// covering that page. The answer is that page followed by the revision it
+/// built, empty hole and all, which PDFium renders like any other file. So the
+/// checks, the words, the layout and the form are the ones a signing runs, not
+/// a second copy of them; and since the form is drawn at the origin
+/// (`appearance.rs`, module note), its stream is byte for byte the one written
+/// wherever the reader later places a rectangle of this size on an upright page.
+///
+/// `visible.page` and the rectangle's position are ignored; only its size is
+/// read.
+///
+/// # Errors
+///
+/// The size is not a finite number between [`appearance::MIN_SIDE`] and
+/// [`PREVIEW_MAX_SIDE`], or [`prepare_visible`] refuses --- which is the
+/// refusal the signing would give, said before anything is signed.
+pub fn preview(signed_at: u64, visible: &Visible) -> Result<Vec<u8>, String> {
+    let [left, top, right, bottom] = visible.rect;
+    let (width, height) = (right - left, bottom - top);
+    let sized = |side: f32| {
+        side.is_finite() && f64::from(side) >= appearance::MIN_SIDE && side <= PREVIEW_MAX_SIDE
+    };
+    if !sized(width) || !sized(height) {
+        return Err(format!(
+            "a signature preview is between {} and {PREVIEW_MAX_SIDE} points a side",
+            appearance::MIN_SIDE
+        ));
+    }
+    let mut blank = Document::with_version("1.7");
+    let pages = blank.new_object_id();
+    let page = blank.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), Object::Real(width), Object::Real(height)],
+    });
+    blank.objects.insert(
+        pages,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page.into()],
+            "Count" => 1,
+        }),
+    );
+    let catalog = blank.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    blank.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    blank
+        .save_to(&mut bytes)
+        .map_err(|e| format!("could not build the preview's page: {e}"))?;
+    let whole = Visible {
+        page: 0,
+        rect: [0.0, 0.0, width, height],
+        ..visible.clone()
+    };
+    let unsigned = prepare_visible(bytes.clone(), signed_at, None, &whole)?;
+    bytes.extend_from_slice(&unsigned.update);
+    Ok(bytes)
 }
 
 fn build(
@@ -162,6 +269,7 @@ fn build(
     signed_at: u64,
     password: Option<&str>,
     visible: Option<&Visible>,
+    details: &Details,
 ) -> Result<Unsigned, String> {
     let was = original.len();
     let prev = Document::load_mem_with_options(
@@ -241,10 +349,10 @@ fn build(
     let date = crate::save::pdf_date(at);
     let signature = incremental
         .new_document
-        .add_object(signature_dictionary(&date));
+        .add_object(signature_dictionary(&date, details));
     let mut widget = widget(&field, signature, page);
     if let Some((_, rect, turns, visible)) = placed {
-        let lines = appearance::words(&visible.name, &date);
+        let lines = appearance::words(&visible.name, &date, &visible.options);
         let form = appearance::stream(
             &mut incremental.new_document,
             rect,
@@ -415,8 +523,43 @@ fn array_site(
     }
 }
 
+/// A PDF text string (PDF 32000-1 §7.9.2.2): PDFDocEncoding when every
+/// character has a byte there, and UTF-16BE behind a byte-order mark otherwise.
+///
+/// **PDFDocEncoding is used only where it is Latin-1**: printable ASCII and
+/// `U+00A1`--`U+00FF` less the soft hyphen, whose PDFDocEncoding byte is
+/// undefined. Its other bytes --- `0x18`--`0x1F` and `0x80`--`0xA0` --- mean
+/// typographic characters Latin-1 puts elsewhere, so encoding by code point
+/// there would write a different character, and anything outside the safe set
+/// goes to UTF-16 rather than to a table. `every_safe_character_reads_back`
+/// enumerates the set through `annots::decode_text_string`, which reads through
+/// `lopdf`'s own table.
+///
+/// **A string whose bytes would begin `FE FF` or `EF BB BF` is written as
+/// UTF-16 too**: `þÿ` and `ï»¿` are Latin-1, and a reader seeing those bytes at
+/// the start reads the rest as UTF-16 or UTF-8. Hexadecimal, so no byte of the
+/// reader's text is a delimiter or can spell a placeholder [`fill_range`] looks
+/// for.
+fn text_string(text: &str) -> Object {
+    let safe = |ch: char| {
+        (' '..='~').contains(&ch) || (('\u{a1}'..='\u{ff}').contains(&ch) && ch != '\u{ad}')
+    };
+    let bytes: Option<Vec<u8>> = text
+        .chars()
+        .map(|ch| safe(ch).then_some(ch as u8))
+        .collect();
+    let bytes =
+        bytes.filter(|b| !b.starts_with(&[0xFE, 0xFF]) && !b.starts_with(&[0xEF, 0xBB, 0xBF]));
+    let bytes = bytes.unwrap_or_else(|| {
+        let mut out = vec![0xFE, 0xFF];
+        out.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+        out
+    });
+    Object::String(bytes, StringFormat::Hexadecimal)
+}
+
 /// The signature dictionary with both holes still unfilled.
-fn signature_dictionary(date: &str) -> Dictionary {
+fn signature_dictionary(date: &str, details: &Details) -> Dictionary {
     let mut sig = Dictionary::new();
     sig.set("Type", Object::Name(b"Sig".to_vec()));
     sig.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
@@ -438,6 +581,12 @@ fn signature_dictionary(date: &str) -> Dictionary {
         "Contents",
         Object::String(vec![0; RESERVED], StringFormat::Hexadecimal),
     );
+    if let Some(reason) = &details.reason {
+        sig.set("Reason", text_string(reason));
+    }
+    if let Some(location) = &details.location {
+        sig.set("Location", text_string(location));
+    }
     sig
 }
 

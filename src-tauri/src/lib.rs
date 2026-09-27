@@ -831,6 +831,7 @@ pub fn run() {
             split_document,
             merge_documents,
             sign_identities,
+            sign_preview,
             sign_document,
             keyboard_positions,
             set_menu,

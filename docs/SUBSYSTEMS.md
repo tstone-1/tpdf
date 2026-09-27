@@ -73,6 +73,20 @@ page or under 24 points a side, and any certified document, where pyHanko reads 
 field as a DocMDP violation. PDFKit does not rasterise a `/Sig` widget on a turned page;
 `sign-probe --visible` checks that page's appearance through a stamp copy.
 
+**What it shows (2026-09-27)** is chosen in a panel between the chooser and the drag
+(`signappearance.ts`, wired by `signing.ts`): the image --- saved, drawn or imported now through
+`SignatureDialog` (`APPEARANCE_WORDS`), or none --- the three lines each switchable, and a reason
+and location, which `sign_prepare.rs` also writes as `/Reason` and `/Location` text strings
+(`text_string`: PDFDocEncoding where it equals Latin-1 and does not begin like a byte-order mark,
+UTF-16BE otherwise). They travel as `sign_prepare::Options` inside `Placement` and `Visible`,
+defaulted so an older request means the three lines. The **preview** is `sign_preview`: the app
+process reads the name from the certificate, and the document's worker runs
+`sign_prepare::preview` --- the signing's own `prepare_visible` over a blank page the size of the
+rectangle --- and renders it as PNG (`render::run_signature_preview`); the panel paints it on a
+canvas. The form is drawn at the origin, so the preview's stream is the one the signing writes.
+*Remember as my default* keeps the choices, never the pixels, in `localStorage`
+(`tpdf.signatureAppearance`); anything unexpected there reads as the defaults.
+
 AcroForm filling uses `forms.rs` inside the document worker, with shared field
 answers in the edit journal and `Plan.forms`. Every save carrying answers takes
 an explicit-appearance rewrite; ordinary save, copy, print and raster redaction

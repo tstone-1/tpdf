@@ -890,12 +890,43 @@ for f in text-base14:rsa text-base14:p256 text-base14:p384 incr-signed:rsa \
       "testdata/${f%%:*}.pdf" "/tmp/tpdf-sign-probe/visible-${f%%:*}-${f##*:}" \
       --key "${f##*:}" --visible
 done
+# The appearance's options (2026-09-27): --lines label,name,date (a comma list;
+# all three by default), --reason TEXT, --location TEXT and --no-image. With
+# --visible the probe now also asserts (a) pyHanko's reading of /Reason and
+# /Location --- the text written, trimmed, or null when none was given --- via
+# check_signature.py --json, which prints both; and (b) that the appearance
+# panel's preview, asked for through render::run_signature_preview with the same
+# Visible and time, agrees with the signed page inside the rectangle on every
+# pixel where the original page is paper (at most 1 in 1,000 may differ), with
+# the unsigned page as the control that must disagree. Five checks more than the
+# table above. macOS arm64, 2026-09-27, all green, 0 preview pixels differing in
+# every run, turned pages included:
+#   the eight fixtures above                       26-30 each
+#   text-base14 --reason "Geprüft und freigegeben" --location "Köln-Mülheim"   26/26
+#   text-base14 --reason "þÿ ok" --location "ï»¿ ok"  26/26 (UTF-16 in the file,
+#                                                   read back by pyHanko as typed)
+#   text-base14 --lines date --no-image             26/26
+#   text-base14 --lines ""   (the image alone)      26/26
+#   rotated-90 --reason Approved --location Hamburg 27/27
+#   inherited --reason Approved --lines name        27/27
+#   incr-signed --reason Freigabe --location Berlin 28/28
+# Proved able to fail by mutating sign_prepare.rs, rebuilding, and restoring it
+# byte-identical (SHA-256 checked), each run with --reason Geprüft --location Köln:
+#   /Reason never written          -> "pyHanko: /reason reads" red (Null), alone
+#   preview ignores the options    -> "the signed page shows what the preview
+#                                     showed" red, 3,724 of 40,320 px, alone
+cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
+    testdata/text-base14.pdf /tmp/tpdf-sign-probe/visible-reason --key rsa --visible \
+    --reason "Geprüft und freigegeben" --location "Köln-Mülheim"
 # signature-probe --mode agree on a visibly signed incr-two-signers: 19/19, PDFium
 # reading the same three signatures; --mode integrity 7/7; qpdf --check passes.
 # The window check that would show a visible signature placed and written in the
 # real application does not exist, for the reason below: it needs an identity in
-# the reader's store. By hand: File > Sign document..., choose Visible, drag a
-# rectangle, save; then signature-probe <copy> --mode integrity, and look.
+# the reader's store. By hand: File > Sign document..., choose Visible, choose
+# what it shows in the Signature appearance panel (the preview redraws on each
+# change), drag a rectangle, save; then signature-probe <copy> --mode integrity,
+# uv run --with pyhanko testdata/check_signature.py --json <copy> for the reason
+# and location, and look.
 #
 # A TEST SIGNING IDENTITY for doing that by hand (macOS). A developer's usual
 # identity is often an Apple Developer ID, which is code signing only and which

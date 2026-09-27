@@ -67,6 +67,7 @@ import type {
 } from "./search";
 import type { Place, Session } from "./session";
 import type { Choices, Placement, Signed } from "./signing";
+import type { AppearanceOptions, SignaturePreview } from "./signappearance";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
 
@@ -322,6 +323,20 @@ export interface Commands {
   };
   /** The reader's certificates with a key, sorted into offered and not. */
   sign_identities: { args: NoArgs; reply: Choices };
+  /**
+   * Draws a visible signature's appearance for a `size` (points) rectangle, by
+   * the worker's signing code, before anything is signed. See `signappearance.ts`.
+   */
+  sign_preview: {
+    args: {
+      doc: number;
+      identity: string;
+      size: [number, number];
+      image: import("./signature").SignatureImage | null;
+      options: AppearanceOptions;
+    };
+    reply: SignaturePreview;
+  };
   /**
    * Signs the open document with the certificate `identity` names and writes
    * the result to `path`, a new file. See `signing.ts`.

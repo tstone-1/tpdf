@@ -11185,15 +11185,15 @@ MUTATIONS += [
     Mutation(
         "sign visible: draw without clipping to the rectangle",
         "src/sign_prepare/appearance.rs",
-        '    let mut content = format!("q {x0} {y0} {} {} re W n\\n", x1 - x0, y1 - y0);',
-        '    let mut content = format!("q {x0} {y0} {} {} re n\\n", x1 - x0, y1 - y0);',
+        '    let mut content = format!("q 0 0 {x1} {y1} re W n\\n");',
+        '    let mut content = format!("q 0 0 {x1} {y1} re n\\n");',
         "the_appearance_names_the_signer_and_the_date_inside_its_rectangle",
     ),
     Mutation(
         "sign visible: leave the signer's name out of the words",
         "src/sign_prepare/appearance.rs",
-        "        name.to_string(),\n",
-        "        String::new(),\n",
+        "        lines.push(name.to_string());\n",
+        "        lines.push(String::new());\n",
         "the_appearance_names_the_signer_and_the_date_inside_its_rectangle",
     ),
     Mutation(
@@ -11208,8 +11208,8 @@ MUTATIONS += [
     Mutation(
         "sign visible: draw the words and image in the page's frame on a turned page",
         "src/sign_prepare/appearance.rs",
-        "    let seen = Upright::of(turns, rect);",
-        "    let seen = Upright::of(0, rect);",
+        "    let seen = Upright::of(turns, local);",
+        "    let seen = Upright::of(0, local);",
         "a_turned_page_gets_an_appearance_that_reads_upright",
     ),
     Mutation(
@@ -11235,8 +11235,8 @@ MUTATIONS += [
         # it cannot encode, and a different name goes on the page.
         "sign visible: draw a name WinAnsi cannot spell",
         "src/sign_prepare/appearance.rs",
-        "    if !textbox::encodable(name) || name.chars().any(char::is_control) {",
-        "    if name.chars().any(char::is_control) {",
+        "        if !textbox::encodable(name) || name.chars().any(char::is_control) {",
+        "        if name.chars().any(char::is_control) {",
         "a_name_that_cannot_be_drawn_honestly_is_refused",
     ),
     Mutation(
@@ -11261,6 +11261,174 @@ MUTATIONS += [
         "    if visible.is_some() && certification(&prev) > 0 {",
         "    if false {",
         "a_visible_signature_after_a_certification_is_refused_and_an_invisible_one_is_not",
+    ),
+]
+
+# --- configuring a visible signature's appearance ----------------------------
+#
+# 2026-09-27. The reader chooses the image, which of the three lines are drawn,
+# and a reason and location that are also written as `/Reason` and
+# `/Location`; a preview is drawn by the code that signs. Each mutation removes
+# one rule and names the test built to see it. `sign-probe --visible --reason`
+# holds the written file against pyHanko and the preview against PDFium, and
+# its own mutations are in BUILD.md.
+MUTATIONS += [
+    Mutation(
+        "sign visible: draw the label whether or not it is on",
+        "src/sign_prepare/appearance.rs",
+        "    if options.label {\n",
+        "    if true {\n",
+        "each_line_is_drawn_only_when_it_is_on",
+    ),
+    Mutation(
+        "sign visible: draw the name whether or not it is on",
+        "src/sign_prepare/appearance.rs",
+        "    if options.name {\n        lines.push(name.to_string());",
+        "    if true {\n        lines.push(name.to_string());",
+        "each_line_is_drawn_only_when_it_is_on",
+    ),
+    Mutation(
+        "sign visible: draw the date whether or not it is on",
+        "src/sign_prepare/appearance.rs",
+        "    if options.date {\n",
+        "    if true {\n",
+        "each_line_is_drawn_only_when_it_is_on",
+    ),
+    Mutation(
+        "sign visible: write the reason and never draw it",
+        "src/sign_prepare/appearance.rs",
+        '        lines.push(format!("Reason: {reason}"));',
+        "        let _ = reason;",
+        "each_line_is_drawn_only_when_it_is_on",
+    ),
+    Mutation(
+        "sign visible: write the location and never draw it",
+        "src/sign_prepare/appearance.rs",
+        '        lines.push(format!("Location: {location}"));',
+        "        let _ = location;",
+        "each_line_is_drawn_only_when_it_is_on",
+    ),
+    Mutation(
+        "sign visible: accept an appearance that draws nothing",
+        "src/sign_prepare/appearance.rs",
+        "    if !lines && visible.image.is_none() {",
+        "    if false {",
+        "a_visible_signature_that_would_draw_nothing_is_refused",
+    ),
+    Mutation(
+        # The image alone keeps the half of the box the words would have had.
+        "sign visible: leave the words' half empty when there are no words",
+        "src/sign_prepare/appearance.rs",
+        "        Some(_) if lines.is_empty() => ([0.0, 0.0, 0.0, 0.0], Some([0.0, 0.0, width, height])),\n",
+        "",
+        "a_visible_signature_that_would_draw_nothing_is_refused",
+    ),
+    Mutation(
+        "sign visible: check the name even when it is not drawn",
+        "src/sign_prepare/appearance.rs",
+        "    if options.name {\n        let name = visible.name.as_str();",
+        "    if true {\n        let name = visible.name.as_str();",
+        "the_name_is_checked_only_when_it_is_drawn",
+    ),
+    Mutation(
+        # `winansi_hex` then writes a space for every character it cannot
+        # encode, and different words go on the page.
+        "sign visible: draw a reason WinAnsi cannot spell",
+        "src/sign_prepare/appearance.rs",
+        "    if text.chars().any(char::is_control) || !textbox::encodable(text) {",
+        "    if text.chars().any(char::is_control) {",
+        "a_reason_or_location_that_cannot_be_drawn_is_refused",
+    ),
+    Mutation(
+        "sign visible: never check the location",
+        "src/sign_prepare/appearance.rs",
+        '    check_note("location", options.location())?;\n',
+        "",
+        "a_reason_or_location_that_cannot_be_drawn_is_refused",
+    ),
+    Mutation(
+        "sign visible: accept a reason of any length",
+        "src/sign_prepare/appearance.rs",
+        "    if text.chars().count() > MAX_NOTE_CHARS {",
+        "    if false {",
+        "a_reason_or_location_that_cannot_be_drawn_is_refused",
+    ),
+    Mutation(
+        "sign visible: draw the reason and never write /Reason",
+        "src/sign_prepare.rs",
+        '        sig.set("Reason", text_string(reason));',
+        "        let _ = reason;",
+        "a_reason_and_location_are_text_strings_inside_the_range",
+    ),
+    Mutation(
+        "sign visible: draw the location and never write /Location",
+        "src/sign_prepare.rs",
+        '        sig.set("Location", text_string(location));',
+        "        let _ = location;",
+        "a_reason_and_location_are_text_strings_inside_the_range",
+    ),
+    Mutation(
+        # Every character as its code point's low byte: CJK becomes noise.
+        "sign visible: write a text string as bytes with no UTF-16",
+        "src/sign_prepare.rs",
+        "        .map(|ch| safe(ch).then_some(ch as u8))",
+        "        .map(|ch| Some(ch as u8))",
+        "every_character_reads_back_from_its_text_string",
+    ),
+    Mutation(
+        # 0x80..0xA0 are Latin-1 control and space codes and PDFDocEncoding
+        # bullets, daggers and the euro sign.
+        "sign visible: take PDFDocEncoding for Latin-1 from U+0080",
+        "src/sign_prepare.rs",
+        "(('\\u{a1}'..='\\u{ff}').contains(&ch) && ch != '\\u{ad}')",
+        "(('\\u{80}'..='\\u{ff}').contains(&ch) && ch != '\\u{ad}')",
+        "every_character_reads_back_from_its_text_string",
+    ),
+    Mutation(
+        "sign visible: write the soft hyphen, which PDFDocEncoding lacks, as a byte",
+        "src/sign_prepare.rs",
+        " && ch != '\\u{ad}')",
+        ")",
+        "every_character_reads_back_from_its_text_string",
+    ),
+    Mutation(
+        # "þÿ ok" as bytes FE FF ...: every reader takes it for UTF-16.
+        "sign visible: write Latin-1 that starts like a byte-order mark as bytes",
+        "src/sign_prepare.rs",
+        "        bytes.filter(|b| !b.starts_with(&[0xFE, 0xFF]) && !b.starts_with(&[0xEF, 0xBB, 0xBF]));",
+        "        bytes.filter(|b| !b.starts_with(&[0xEF, 0xBB, 0xBF]));",
+        "a_reason_and_location_are_text_strings_inside_the_range",
+    ),
+    Mutation(
+        # The form drawn where the rectangle sits on the page: correct on the
+        # page, and a different stream from the preview's at every position
+        # but the origin.
+        "sign visible: draw the form at the rectangle's page position",
+        "src/sign_prepare/appearance.rs",
+        "    let local = [0.0, 0.0, rect[2] - rect[0], rect[3] - rect[1]];",
+        "    let local = rect;",
+        "a_preview_draws_the_stream_the_signing_writes",
+    ),
+    Mutation(
+        "sign visible: preview the default lines whatever was chosen",
+        "src/sign_prepare.rs",
+        "        ..visible.clone()",
+        "        options: Options::default(),\n        ..visible.clone()",
+        "a_preview_draws_the_stream_the_signing_writes",
+    ),
+    Mutation(
+        "sign visible: preview a rectangle of any size",
+        "src/sign_prepare.rs",
+        "    if !sized(width) || !sized(height) {",
+        "    if false {",
+        "a_preview_is_refused_where_the_signing_would_be",
+    ),
+    Mutation(
+        "sign visible: drop the reader's choices on the way to the worker",
+        "src/commands/sign.rs",
+        "            options: self.options,",
+        "            options: sign_prepare::Options::default(),",
+        "a_placement_carries_the_readers_choices_to_the_worker",
     ),
 ]
 

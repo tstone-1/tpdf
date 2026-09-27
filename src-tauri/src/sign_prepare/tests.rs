@@ -603,7 +603,14 @@ fn visible(page: u32, rect: [f32; 4], image: Option<crate::signature::Image>) ->
         rect,
         name: "A. Signer".into(),
         image,
+        options: Options::default(),
     }
+}
+
+/// The form's own box for a widget whose `/Rect` is `rect`: the same size, at
+/// the origin, which is where the appearance draws.
+fn local(rect: &[f64]) -> Vec<f64> {
+    vec![0.0, 0.0, rect[2] - rect[0], rect[3] - rect[1]]
 }
 
 /// The page-space numbers of an array of numbers.
@@ -682,7 +689,11 @@ fn a_visible_widget_has_the_rectangle_the_reader_placed_on_the_page_they_chose()
             .expect("subtype"),
         b"Form"
     );
-    assert!(close(&numbers_of(form.get(b"BBox").expect("/BBox")), &rect));
+    // The form is drawn at the origin and placed by `/Rect` alone.
+    assert!(close(
+        &numbers_of(form.get(b"BBox").expect("/BBox")),
+        &local(&rect)
+    ));
     assert_eq!(fields_of(&after), [id]);
     assert_eq!(sig_flags(&after), 3);
 }
@@ -752,7 +763,7 @@ fn the_appearance_names_the_signer_and_the_date_inside_its_rectangle() {
     let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("prepared");
     let after = reread(&original, &unsigned);
     let (_, widget) = new_widget(&after, &unsigned);
-    let rect = numbers_of(widget.get(b"Rect").expect("/Rect"));
+    let rect = local(&numbers_of(widget.get(b"Rect").expect("/Rect")));
     let (_, operations) = appearance_of(&after, &widget);
     let seen = drawn(&operations);
     assert_eq!(
@@ -784,7 +795,7 @@ fn a_saved_image_is_drawn_beside_the_words_and_text_alone_without_one() {
     let unsigned = prepare_visible(original.clone(), NOW, None, &with).expect("prepared");
     let after = reread(&original, &unsigned);
     let (_, widget) = new_widget(&after, &unsigned);
-    let rect = numbers_of(widget.get(b"Rect").expect("/Rect"));
+    let rect = local(&numbers_of(widget.get(b"Rect").expect("/Rect")));
     let (form, operations) = appearance_of(&after, &widget);
     let resources = form
         .get(b"Resources")
@@ -879,6 +890,7 @@ fn a_turned_page_gets_an_appearance_that_reads_upright() {
             rect[0] >= 10.0 && rect[1] >= 20.0 && rect[2] <= 310.0 && rect[3] <= 420.0,
             "{rotate}: {rect:?} is not inside the crop box"
         );
+        let rect = local(&rect);
         let (_, operations) = appearance_of(&after, &widget);
         let seen = drawn(&operations);
         // The baseline runs the reader's way: along x upright, up the page on
@@ -917,58 +929,580 @@ fn a_turned_page_gets_an_appearance_that_reads_upright() {
     }
 }
 
+/// Every combination of the five lines: bit 0 the label, 1 the name, 2 the
+/// date, 3 a reason, 4 a location.
+fn options_for(mask: u32, reason: &str, location: &str) -> Options {
+    Options {
+        label: mask & 1 != 0,
+        name: mask & 2 != 0,
+        date: mask & 4 != 0,
+        reason: if mask & 8 != 0 {
+            reason.into()
+        } else {
+            String::new()
+        },
+        location: if mask & 16 != 0 {
+            location.into()
+        } else {
+            String::new()
+        },
+    }
+}
+
 #[test]
 fn every_layout_keeps_its_ink_inside_the_box_and_apart_from_the_image() {
     let long = "W".repeat(appearance::MAX_NAME_CHARS);
+    let note = "M".repeat(appearance::MAX_NOTE_CHARS - "Reason: ".len());
+    let inset = crate::textbox::INSET;
     let mut checked = 0;
-    for name in ["A. Signer", "Ålfhild Ærøskøbing-Überschär", long.as_str()] {
-        let lines = appearance::words(name, "D:20260926000000Z");
-        for (width, height) in [
-            (24.0, 24.0),
-            (40.0, 24.0),
-            (150.0, 60.0),
-            (60.0, 150.0),
-            (600.0, 200.0),
-            (24.0, 400.0),
-            // Wide and short, so the height rather than the widest line sets
-            // the size: every box above is width-bound, and a layout that
-            // ignored the height passed all of them.
-            (600.0, 24.0),
-            (400.0, 30.0),
-        ] {
-            for image in [None, Some((4, 2)), Some((2, 400)), Some((400, 2))] {
-                let layout = appearance::layout(width, height, image, &lines);
-                assert!(layout.size > 0.0 && layout.size <= appearance::MAX_SIZE);
-                assert_eq!(layout.lines.len(), 3);
-                let e = 1e-9;
-                for (u, v, text) in &layout.lines {
-                    let [u0, v0, u1, v1] = appearance::line_extent(layout.size, *u, *v, text);
-                    assert!(
-                        u0 >= -e && v0 >= -e && u1 <= width + e && v1 <= height + e,
-                        "{name} {width}x{height} {image:?}: {text} at {:?}",
-                        [u0, v0, u1, v1]
-                    );
-                    if let Some([iu, iv, iw, ih]) = layout.image {
-                        let apart =
-                            u1 <= iu + e || u0 >= iu + iw - e || v1 <= iv + e || v0 >= iv + ih - e;
-                        assert!(
-                            apart,
-                            "{name} {width}x{height} {image:?}: {text} over the image"
-                        );
+    // For each number of lines, whether some box was bound by its height and
+    // some by its width: a grid in which one of the two never happens for a
+    // count cannot tell a layout that ignores it from a correct one.
+    let mut bound = [(false, false, false); 6];
+    for (name, reason, location) in [
+        ("A. Signer", "Approved", "Hamburg"),
+        (
+            "Ålfhild Ærøskøbing-Überschär",
+            "Geprüft und freigegeben, Änderungsstand C",
+            "Köln-Mülheim",
+        ),
+        (long.as_str(), note.as_str(), "x"),
+    ] {
+        for mask in 0..32 {
+            let options = options_for(mask, reason, location);
+            let lines = appearance::words(name, "D:20260926000000Z", &options);
+            assert_eq!(lines.len(), mask.count_ones() as usize, "{mask:05b}");
+            for (width, height) in [
+                (24.0, 24.0),
+                (40.0, 24.0),
+                (150.0, 60.0),
+                (60.0, 150.0),
+                (600.0, 200.0),
+                (24.0, 400.0),
+                // Wide and short, so the height rather than the widest line sets
+                // the size: every box above is width-bound, and a layout that
+                // ignored the height passed all of them.
+                (600.0, 24.0),
+                (400.0, 30.0),
+            ] {
+                for image in [None, Some((4, 2)), Some((2, 400)), Some((400, 2))] {
+                    let layout = appearance::layout(width, height, image, &lines);
+                    let e = 1e-9;
+                    if lines.is_empty() {
+                        assert!(layout.lines.is_empty() && layout.size == 0.0);
+                    } else {
+                        assert!(layout.size > 0.0 && layout.size <= appearance::MAX_SIZE);
+                        assert_eq!(layout.lines.len(), lines.len());
+                        // Which limit set the size, from the text's own share
+                        // of the box as the module note states it.
+                        let [tw, th] = match image {
+                            None => [width, height],
+                            Some(_) if width >= height => [width / 2.0, height],
+                            Some(_) => [width, height / 2.0],
+                        };
+                        let widest = lines
+                            .iter()
+                            .map(|l| crate::textbox::advance(l, 1.0))
+                            .fold(0.0_f64, f64::max);
+                        let count = lines.len();
+                        let by_height = (th - inset * 2.0) / (count as f64 * appearance::LEADING);
+                        let by_width = (tw - inset * 2.0) / (widest + appearance::BEARING * 2.0);
+                        bound[count].0 |= (layout.size - by_height).abs() < e;
+                        bound[count].1 |= (layout.size - by_width).abs() < e;
+                        bound[count].2 |= (layout.size - appearance::MAX_SIZE).abs() < e;
                     }
+                    for (u, v, text) in &layout.lines {
+                        let [u0, v0, u1, v1] = appearance::line_extent(layout.size, *u, *v, text);
+                        assert!(
+                            u0 >= -e && v0 >= -e && u1 <= width + e && v1 <= height + e,
+                            "{name} {mask:05b} {width}x{height} {image:?}: {text} at {:?}",
+                            [u0, v0, u1, v1]
+                        );
+                        if let Some([iu, iv, iw, ih]) = layout.image {
+                            let apart = u1 <= iu + e
+                                || u0 >= iu + iw - e
+                                || v1 <= iv + e
+                                || v0 >= iv + ih - e;
+                            assert!(
+                                apart,
+                                "{name} {mask:05b} {width}x{height} {image:?}: {text} over the image"
+                            );
+                        }
+                    }
+                    // Lines are drawn top to bottom in the order given.
+                    for pair in layout.lines.windows(2) {
+                        assert!(pair[0].1 < pair[1].1, "{mask:05b}: out of order");
+                    }
+                    if let Some([iu, iv, iw, ih]) = layout.image {
+                        assert!(
+                            iu >= -e && iv >= -e && iu + iw <= width + e && iv + ih <= height + e
+                        );
+                        let (pw, ph) = image
+                            .map(|(w, h)| (f64::from(w), f64::from(h)))
+                            .expect("an image");
+                        assert!((iw / ih - pw / ph).abs() < 1e-6, "proportions kept");
+                        // With no words the image has the whole box: it meets
+                        // two opposite insets.
+                        if lines.is_empty() {
+                            let fills = (iw - (width - inset * 2.0)).abs() < 1e-6
+                                || (ih - (height - inset * 2.0)).abs() < 1e-6;
+                            assert!(fills, "{width}x{height} {image:?}: {:?}", layout.image);
+                        }
+                    } else {
+                        assert!(image.is_none(), "an image that fits was not placed");
+                    }
+                    checked += 1;
                 }
-                if let Some([iu, iv, iw, ih]) = layout.image {
-                    assert!(iu >= -e && iv >= -e && iu + iw <= width + e && iv + ih <= height + e);
-                    let (pw, ph) = image
-                        .map(|(w, h)| (f64::from(w), f64::from(h)))
-                        .expect("an image");
-                    assert!((iw / ih - pw / ph).abs() < 1e-6, "proportions kept");
-                }
-                checked += 1;
             }
         }
     }
-    assert_eq!(checked, 96);
+    assert_eq!(checked, 3 * 32 * 8 * 4);
+    // One line is never bound by its height here, and in practice cannot be:
+    // one line at the cap needs 12 points plus the insets, the shortest box is
+    // 24, and the only share of a box shorter than 16 is the lower half of a
+    // tall box under 32 points wide, too narrow for any line to reach the cap.
+    // So for one line the limits that bind are the width and the cap; from two
+    // lines on, the height and the width both do.
+    for (count, (height, width, cap)) in bound.iter().enumerate().skip(1) {
+        let seen = if count == 1 {
+            !*height && *width && *cap
+        } else {
+            *height && *width
+        };
+        assert!(
+            seen,
+            "{count} line(s): bound by height {height}, by width {width}, by the cap {cap}"
+        );
+    }
+}
+
+/// The strings an appearance draws, as text.
+fn strings_of(after: &Document, widget: &Dictionary) -> Vec<String> {
+    let (_, operations) = appearance_of(after, widget);
+    drawn(&operations).strings
+}
+
+#[test]
+fn each_line_is_drawn_only_when_it_is_on() {
+    let original = two_pages(0);
+    let every = [
+        "Digitally signed by",
+        "A. Signer",
+        "Date: 2026-09-26 00:00:00 UTC",
+        "Reason: Approved",
+        "Location: Hamburg",
+    ];
+    let mut drawn_somewhere = 0;
+    for mask in 1..32 {
+        let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+        placed.options = options_for(mask, "Approved", "Hamburg");
+        let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("prepared");
+        let after = reread(&original, &unsigned);
+        let (_, widget) = new_widget(&after, &unsigned);
+        let expected: Vec<&str> = every
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| mask & (1 << at) != 0)
+            .map(|(_, line)| *line)
+            .collect();
+        assert_eq!(strings_of(&after, &widget), expected, "{mask:05b}");
+        // And absent from the stream's bytes altogether, not merely from what
+        // the decoder above recognises as a line.
+        let ap = widget.get(b"AP").and_then(Object::as_dict).expect("/AP");
+        let form = after
+            .get_object(ap.get(b"N").and_then(Object::as_reference).expect("/N"))
+            .and_then(Object::as_stream)
+            .expect("stream");
+        let content = String::from_utf8_lossy(&form.content).to_string();
+        for (at, line) in every.iter().enumerate() {
+            let hex = crate::save::winansi_hex(line);
+            assert_eq!(
+                content.contains(&hex),
+                mask & (1 << at) != 0,
+                "{mask:05b}: {line}"
+            );
+        }
+        drawn_somewhere += 1;
+    }
+    assert_eq!(drawn_somewhere, 31);
+}
+
+#[test]
+fn a_visible_signature_that_would_draw_nothing_is_refused() {
+    let original = two_pages(0);
+    let mut placed = visible(1, [20.0, 30.0, 170.0, 90.0], None);
+    placed.options = options_for(0, "", "");
+    let refused = prepare_visible(original.clone(), NOW, None, &placed).expect_err("nothing");
+    assert!(refused.contains("has to show something"), "{refused}");
+    // Blank text is nothing too.
+    placed.options.reason = "   ".into();
+    placed.options.location = "\t".into();
+    let refused = prepare_visible(original.clone(), NOW, None, &placed).expect_err("blank");
+    assert!(refused.contains("has to show something"), "{refused}");
+
+    // The controls: the image alone is something, and it is drawn over the
+    // whole box with no font and no words.
+    placed.image = Some(raster());
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("image alone");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    let rect = local(&numbers_of(widget.get(b"Rect").expect("/Rect")));
+    let (form, operations) = appearance_of(&after, &widget);
+    let seen = drawn(&operations);
+    assert!(seen.strings.is_empty());
+    let resources = form
+        .get(b"Resources")
+        .and_then(Object::as_dict)
+        .expect("resources");
+    assert!(resources.get(b"Font").is_err(), "no font for no words");
+    let [a, _, _, d, e, _] = seen.images[0];
+    // A 4 x 2 raster in a 150 x 60 box: its height fills the box less the
+    // insets, and it is centred, so it passes the middle.
+    assert!(
+        (d - (rect[3] - 2.0 * crate::textbox::INSET)).abs() < 1e-6,
+        "{:?}",
+        seen.images[0]
+    );
+    assert!(
+        e < rect[2] / 2.0 && e + a > rect[2] / 2.0,
+        "{:?}",
+        seen.images[0]
+    );
+    // And one line alone is something.
+    placed.image = None;
+    placed.options = options_for(4, "", "");
+    assert!(prepare_visible(original, NOW, None, &placed).is_ok());
+}
+
+#[test]
+fn a_reason_or_location_that_cannot_be_drawn_is_refused() {
+    let original = two_pages(0);
+    for (reason, location, why) in [
+        ("审核通过", "", "the reason"),
+        ("", "Москва", "the location"),
+        ("Appr\noved", "", "the reason"),
+        ("", "Ham\u{7}burg", "the location"),
+        ("€ 12", "", "the reason"),
+        (
+            &*"a".repeat(appearance::MAX_NOTE_CHARS + 1),
+            "",
+            "longer than",
+        ),
+        (
+            "",
+            &*"b".repeat(appearance::MAX_NOTE_CHARS + 1),
+            "longer than",
+        ),
+    ] {
+        let mut placed = visible(1, [20.0, 30.0, 170.0, 90.0], None);
+        placed.options.reason = reason.into();
+        placed.options.location = location.into();
+        let refused = prepare_visible(original.clone(), NOW, None, &placed).expect_err(why);
+        assert!(refused.contains(why), "{reason:?} {location:?}: {refused}");
+    }
+    // The control: Latin-1 beyond ASCII is drawn, and written.
+    let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    placed.options.reason = "Geprüft".into();
+    placed.options.location = "Köln".into();
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("Latin-1");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    let strings = strings_of(&after, &widget);
+    assert_eq!(&strings[3..], ["Reason: Geprüft", "Location: Köln"]);
+}
+
+#[test]
+fn the_name_is_checked_only_when_it_is_drawn() {
+    let original = two_pages(0);
+    let mut placed = visible(1, [20.0, 30.0, 170.0, 90.0], None);
+    placed.name = "张伟".into();
+    assert!(prepare_visible(original.clone(), NOW, None, &placed)
+        .expect_err("drawn")
+        .contains("turn the name line off"));
+    placed.options.name = false;
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("not drawn");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert_eq!(
+        strings_of(&after, &widget),
+        ["Digitally signed by", "Date: 2026-09-26 00:00:00 UTC"]
+    );
+}
+
+/// The signature dictionary the update added.
+fn signature_of(after: &Document, widget: &Dictionary) -> Dictionary {
+    after
+        .get_dictionary(widget.get(b"V").and_then(Object::as_reference).expect("/V"))
+        .expect("the signature dictionary")
+        .clone()
+}
+
+/// A string entry's bytes.
+fn bytes_of(dict: &Dictionary, key: &[u8]) -> Option<Vec<u8>> {
+    match dict.get(key).ok()? {
+        Object::String(bytes, _) => Some(bytes.clone()),
+        _ => None,
+    }
+}
+
+/// UTF-16BE with its byte-order mark.
+fn utf16(text: &str) -> Vec<u8> {
+    let mut out = vec![0xFE, 0xFF];
+    out.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+    out
+}
+
+#[test]
+fn a_reason_and_location_are_text_strings_inside_the_range() {
+    let original = two_pages(0);
+    let latin = |text: &str| text.chars().map(|ch| ch as u8).collect::<Vec<u8>>();
+    for (reason, location, reason_bytes, location_bytes) in [
+        ("Approved", "Hamburg", latin("Approved"), latin("Hamburg")),
+        // Umlauts and ß have the same byte in PDFDocEncoding as in Latin-1.
+        (
+            "Geprüft, Größe",
+            "Köln-Mülheim",
+            latin("Geprüft, Größe"),
+            latin("Köln-Mülheim"),
+        ),
+        // Outside PDFDocEncoding: UTF-16BE behind its mark. The euro sign has a
+        // PDFDocEncoding byte (0xA0), which is not its Latin-1 one; it goes to
+        // UTF-16 rather than to a table.
+        (
+            "审核通过",
+            "東京都 港区",
+            utf16("审核通过"),
+            utf16("東京都 港区"),
+        ),
+        ("€ 12", "Zürich", utf16("€ 12"), latin("Zürich")),
+        // Latin-1 whose first bytes would read as a byte-order mark.
+        ("þÿ ok", "ï»¿ ok", utf16("þÿ ok"), utf16("ï»¿ ok")),
+    ] {
+        let details = Details {
+            reason: Some(reason.into()),
+            location: Some(location.into()),
+        };
+        let unsigned = build(original.clone(), NOW, None, None, &details).expect(reason);
+        let after = reread(&original, &unsigned);
+        let (_, widget) = new_widget(&after, &unsigned);
+        let signature = signature_of(&after, &widget);
+        assert_eq!(
+            bytes_of(&signature, b"Reason"),
+            Some(reason_bytes),
+            "{reason}"
+        );
+        assert_eq!(
+            bytes_of(&signature, b"Location"),
+            Some(location_bytes),
+            "{location}"
+        );
+        // Read back by the decoder that reads comments, through lopdf's table.
+        for (key, text) in [(&b"Reason"[..], reason), (b"Location", location)] {
+            let back = crate::annots::decode_text_string(&bytes_of(&signature, key).expect("set"));
+            assert_eq!(back, text);
+        }
+        // Inside the byte range: each entry sits in one of the two covered
+        // pieces, not in the hole.
+        let whole = [original.as_slice(), unsigned.update.as_slice()].concat();
+        for key in [&b"/Reason<"[..], b"/Location<"] {
+            let at = only(&whole, key).expect("written once, in hexadecimal") as u64;
+            let end = at
+                + whole[at as usize..]
+                    .iter()
+                    .position(|b| *b == b'>')
+                    .expect(">") as u64;
+            let [_, hole, hole_end, rest] = unsigned.range;
+            let covered = end < hole || (at >= hole_end && end < hole_end + rest);
+            assert!(
+                covered,
+                "{reason}: {at}..{end} against {:?}",
+                unsigned.range
+            );
+        }
+    }
+    // Through the visible path, the entries it drew are the entries it wrote.
+    let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    placed.options.reason = "  Geprüft ".into();
+    placed.options.location = "Köln".into();
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("visible");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    let signature = signature_of(&after, &widget);
+    assert_eq!(bytes_of(&signature, b"Reason"), Some(latin("Geprüft")));
+    assert_eq!(bytes_of(&signature, b"Location"), Some(latin("Köln")));
+    // And none is written when none was given.
+    let unsigned = prepare_visible(
+        original.clone(),
+        NOW,
+        None,
+        &visible(1, [20.0, 30.0, 170.0, 90.0], None),
+    )
+    .expect("plain");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    let signature = signature_of(&after, &widget);
+    assert!(signature.get(b"Reason").is_err() && signature.get(b"Location").is_err());
+}
+
+#[test]
+fn every_character_reads_back_from_its_text_string() {
+    // Enumerated, not sampled: every scalar value, alone and between two
+    // letters, through the decoder that reads comments with lopdf's own
+    // PDFDocEncoding table.
+    let mut pdfdoc = 0;
+    for code in 0..=0x10FFFF_u32 {
+        let Some(ch) = char::from_u32(code) else {
+            continue;
+        };
+        for text in [ch.to_string(), format!("a{ch}b")] {
+            let Object::String(bytes, _) = text_string(&text) else {
+                panic!("not a string")
+            };
+            if !bytes.starts_with(&[0xFE, 0xFF]) {
+                pdfdoc += 1;
+            }
+            assert_eq!(
+                crate::annots::decode_text_string(&bytes),
+                text,
+                "U+{code:04X}"
+            );
+        }
+    }
+    // Printable ASCII and U+00A1..U+00FF less the soft hyphen, each twice ---
+    // less the two sequences that would read as a byte-order mark, which are
+    // longer than one character and so are not in this count.
+    assert_eq!(pdfdoc, (95 + 94) * 2);
+}
+
+#[test]
+fn a_preview_draws_the_stream_the_signing_writes() {
+    let original = two_pages(0);
+    let mut compared = 0;
+    for (image, mask) in [
+        (None, 0b00111),
+        (Some(raster()), 0b11111),
+        (Some(raster()), 0b01101),
+        (None, 0b10000),
+    ] {
+        for (width, height) in [(240.0_f32, 80.0), (100.0, 150.0)] {
+            for (left, top) in [(0.0_f32, 0.0), (20.0, 30.0), (37.5, 211.25)] {
+                let mut placed = visible(1, [left, top, left + width, top + height], image.clone());
+                placed.options = options_for(mask, "Geprüft", "Köln");
+                let unsigned =
+                    prepare_visible(original.clone(), NOW, None, &placed).expect("signed");
+                let after = reread(&original, &unsigned);
+                let (_, widget) = new_widget(&after, &unsigned);
+                let written = form_of(&after, &widget);
+
+                let previewed = preview(NOW, &placed).expect("preview");
+                let shown = Document::load_mem(&previewed).expect("the preview parses");
+                let page = ordered_pages(&shown)[0];
+                let media = numbers_of(
+                    shown
+                        .get_dictionary(page)
+                        .and_then(|p| p.get(b"MediaBox"))
+                        .expect("a media box"),
+                );
+                assert!(
+                    close(&media, &[0.0, 0.0, f64::from(width), f64::from(height)]),
+                    "{media:?}"
+                );
+                let widget = shown
+                    .objects
+                    .values()
+                    .filter_map(|o| o.as_dict().ok())
+                    .find(|d| d.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig"))
+                    .expect("the preview's widget")
+                    .clone();
+                let seen = form_of(&shown, &widget);
+                assert_eq!(seen, written, "{mask:05b} {width}x{height} at {left},{top}");
+                compared += 1;
+            }
+        }
+    }
+    assert_eq!(compared, 24);
+}
+
+/// A widget's appearance as bytes that must match: the stream, its box, and
+/// every image and font it draws with, decoded.
+fn form_of(doc: &Document, widget: &Dictionary) -> (Vec<u8>, Vec<f64>, Vec<Vec<u8>>, Vec<String>) {
+    let ap = widget.get(b"AP").and_then(Object::as_dict).expect("/AP");
+    let form = doc
+        .get_object(ap.get(b"N").and_then(Object::as_reference).expect("/N"))
+        .and_then(Object::as_stream)
+        .expect("stream");
+    let resources = form
+        .dict
+        .get(b"Resources")
+        .and_then(Object::as_dict)
+        .expect("resources");
+    let mut images = Vec::new();
+    if let Ok(xobjects) = resources.get(b"XObject").and_then(Object::as_dict) {
+        for (_, reference) in xobjects.iter() {
+            let image = doc
+                .get_object(reference.as_reference().expect("a reference"))
+                .and_then(Object::as_stream)
+                .expect("an image");
+            images.push(image.decompressed_content().expect("decoded"));
+            let mask = image
+                .dict
+                .get(b"SMask")
+                .and_then(Object::as_reference)
+                .expect("a mask");
+            let mask = doc
+                .get_object(mask)
+                .and_then(Object::as_stream)
+                .expect("mask stream");
+            images.push(mask.decompressed_content().expect("decoded"));
+        }
+    }
+    let fonts = resources
+        .get(b"Font")
+        .and_then(Object::as_dict)
+        .map(|fonts| {
+            fonts
+                .iter()
+                .map(|(name, reference)| {
+                    let font = doc
+                        .get_dictionary(reference.as_reference().expect("a reference"))
+                        .expect("a font");
+                    format!(
+                        "{} {:?} {:?}",
+                        String::from_utf8_lossy(name),
+                        font.get(b"BaseFont").and_then(Object::as_name).ok(),
+                        font.get(b"Encoding").and_then(Object::as_name).ok()
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    (
+        form.content.clone(),
+        numbers_of(form.dict.get(b"BBox").expect("/BBox")),
+        images,
+        fonts,
+    )
+}
+
+#[test]
+fn a_preview_is_refused_where_the_signing_would_be() {
+    for (rect, why) in [
+        ([0.0, 0.0, 20.0, 80.0], "between"),
+        ([0.0, 0.0, 240.0, 800.0], "between"),
+        ([0.0, 0.0, f32::NAN, 80.0], "between"),
+    ] {
+        let refused = preview(NOW, &visible(0, rect, None)).expect_err(why);
+        assert!(refused.contains(why), "{rect:?}: {refused}");
+    }
+    // The signing's own refusals, word for word.
+    let original = two_pages(0);
+    let mut placed = visible(1, [20.0, 30.0, 170.0, 90.0], None);
+    placed.name = "Иван Петров".into();
+    let signing = prepare_visible(original.clone(), NOW, None, &placed).expect_err("name");
+    assert_eq!(preview(NOW, &placed).expect_err("name"), signing);
+    placed.options = options_for(0, "", "");
+    let signing = prepare_visible(original, NOW, None, &placed).expect_err("nothing");
+    assert_eq!(preview(NOW, &placed).expect_err("nothing"), signing);
 }
 
 #[test]

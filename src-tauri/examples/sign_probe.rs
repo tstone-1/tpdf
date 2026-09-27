@@ -51,9 +51,21 @@
 //!   PDFium, must differ from the original by no pixel. Without it, "the
 //!   signed page differs inside the rectangle" could be a renderer that
 //!   differs everywhere.
+//! - **The preview agrees with the page**: `render::run_signature_preview` ---
+//!   the route the panel's live preview takes --- is asked for the same
+//!   appearance, its PNG decoded, and compared pixel for pixel with the signed
+//!   page inside the rectangle, wherever the original page is paper there.
+//!
+//! The appearance's options: `--lines` a comma list of `label`, `name` and
+//! `date` (all three by default), `--reason TEXT` and `--location TEXT` (none by
+//! default), and `--no-image`. A reason or location is also asserted as what
+//! **pyHanko** reads out of `/Reason` and `/Location`, and their absence as its
+//! reading none.
 //!
 //! Usage:
-//!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384] [--visible [--rect l,t,r,b]]
+//!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384]
+//!       [--visible [--rect l,t,r,b] [--lines label,name,date] [--reason TEXT]
+//!        [--location TEXT] [--no-image]]
 //!
 //! Needs `openssl` (3.x) and `uv`. Either missing is `[FAIL]`, never a pass.
 
@@ -64,7 +76,7 @@ use tpdf_lib::document::OpenDocument;
 use tpdf_lib::integrity::Verdict;
 use tpdf_lib::progressive::{self, Placement, RawBitmap};
 use tpdf_lib::sign_cms::{self, Key, KeyKind};
-use tpdf_lib::sign_prepare::{self, Visible};
+use tpdf_lib::sign_prepare::{self, Options, Visible};
 
 struct Report {
     passed: usize,
@@ -171,11 +183,39 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let value = |flag: &str| -> Option<String> {
+        let at = args.iter().position(|a| a == flag)?;
+        match args.get(at + 1) {
+            Some(value) => Some(value.clone()),
+            None => {
+                eprintln!("{flag} needs a value");
+                std::process::exit(2);
+            }
+        }
+    };
+    let lines = value("--lines").unwrap_or_else(|| "label,name,date".into());
+    let lines: Vec<&str> = lines.split(',').map(str::trim).collect();
+    if let Some(unknown) = lines
+        .iter()
+        .find(|l| !["label", "name", "date", ""].contains(l))
+    {
+        eprintln!("--lines takes label, name and date, not {unknown}");
+        std::process::exit(2);
+    }
+    let options = Options {
+        label: lines.contains(&"label"),
+        name: lines.contains(&"name"),
+        date: lines.contains(&"date"),
+        reason: value("--reason").unwrap_or_default(),
+        location: value("--location").unwrap_or_default(),
+    };
+    let image = (!args.iter().any(|a| a == "--no-image")).then(raster);
     let visible = args.iter().any(|a| a == "--visible").then(|| Visible {
         page: 0,
         rect,
         name: "tpdf sign-probe".into(),
-        image: Some(raster()),
+        image,
+        options,
     });
     match probe(&input, &scratch, kind, visible.as_ref()) {
         Ok(true) => {}
@@ -278,6 +318,7 @@ fn where_the_ink_went(
     out: &Path,
     invisible: &Path,
     visible: &Visible,
+    now: u64,
 ) -> Result<(), String> {
     const SCALE: f32 = 2.0;
     let area =
@@ -313,6 +354,9 @@ fn where_the_ink_went(
         a + b + c == 0,
         &format!("{a} inside, {b} edge, {c} outside"),
     );
+    preview_agrees(
+        report, bindings, &before, &after, width, visible, now, SCALE,
+    )?;
 
     if !cfg!(target_os = "macos") {
         println!("[SKIP] PDFKit: not run, it needs macOS");
@@ -387,6 +431,78 @@ fn where_the_ink_went(
         "PDFKit, the same appearance as a stamp: none outside it",
         outside == 0,
         &format!("{outside} px changed outside"),
+    );
+    Ok(())
+}
+
+/// The panel's preview against the signed page, inside the rectangle.
+///
+/// The preview is asked for through `render::run_signature_preview`, the
+/// function a worker runs for the panel, with the very `Visible` the signing
+/// was given and the same time, so the date line is the same. Its PNG is
+/// decoded and laid over the signed page's render at the rectangle; a pixel is
+/// compared where the original page is paper (every channel above 247), since
+/// elsewhere the page's own ink is under the appearance and the preview's
+/// blank page is not.
+///
+/// The control: the same comparison against the *original* page must
+/// disagree, or agreement would say nothing --- a preview of nothing agrees
+/// with a page where the appearance drew nothing.
+#[allow(clippy::too_many_arguments)]
+fn preview_agrees(
+    report: &mut Report,
+    bindings: progressive::Bindings,
+    before: &[u8],
+    after: &[u8],
+    width: u32,
+    visible: &Visible,
+    now: u64,
+    scale: f32,
+) -> Result<(), String> {
+    let preview = tpdf_lib::render::run_signature_preview(bindings, now, visible)?;
+    let decoder = png::Decoder::new(std::io::Cursor::new(&preview.png));
+    let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
+    let mut pixels = vec![0u8; reader.output_buffer_size().ok_or("no PNG size")?];
+    let frame = reader.next_frame(&mut pixels).map_err(|e| e.to_string())?;
+    let (pw, ph) = (frame.width, frame.height);
+    let [l, t, r, b] = visible.rect.map(|v| (v * scale).round() as u32);
+    report.check(
+        "preview: drawn at the rectangle's size",
+        (pw, ph) == (r - l, b - t) && (pw, ph) == (preview.width, preview.height),
+        &format!("{pw}x{ph} for a {}x{} rectangle", r - l, b - t),
+    );
+    let compare = |page: &[u8]| {
+        let (mut compared, mut differ) = (0usize, 0usize);
+        for y in 0..ph.min(b - t) {
+            for x in 0..pw.min(r - l) {
+                let at = (((t + y) * width + (l + x)) * 4) as usize;
+                if (0..3).any(|c| before[at + c] <= 247) {
+                    continue;
+                }
+                let from = ((y * pw + x) * 4) as usize;
+                compared += 1;
+                if (0..3).any(|c| page[at + c].abs_diff(pixels[from + c]) > 8) {
+                    differ += 1;
+                }
+            }
+        }
+        (compared, differ)
+    };
+    let (compared, differ) = compare(after);
+    let area = ((r - l) * (b - t)) as usize;
+    println!(
+        "preview: {differ} of {compared} paper pixels differ from the signed page ({area} px)"
+    );
+    report.check(
+        "preview: the signed page shows what the preview showed",
+        compared * 2 >= area && differ * 1000 <= compared,
+        &format!("{differ} of {compared} compared pixels differ ({area} px in the rectangle)"),
+    );
+    let (compared, differ) = compare(before);
+    report.check(
+        "control, preview against the unsigned page: they disagree",
+        differ * 50 >= compared,
+        &format!("{differ} of {compared} differ"),
     );
     Ok(())
 }
@@ -601,6 +717,25 @@ fn probe(
             &entry.to_string(),
         );
     }
+    if let Some(visible) = visible {
+        // What pyHanko reads out of /Reason and /Location: the text written,
+        // trimmed as tpdf trims it, or nothing when there was none.
+        let entry = theirs
+            .iter()
+            .find(|v| v.get("field").and_then(|f| f.as_str()) == Some(field.as_str()));
+        for (key, wanted) in [
+            ("reason", visible.options.reason()),
+            ("location", visible.options.location()),
+        ] {
+            let read = entry.and_then(|v| v.get(key)).cloned();
+            let expected = wanted.map_or(serde_json::Value::Null, |w| w.into());
+            report.check(
+                &format!("pyHanko: /{key} reads {expected}"),
+                read.as_ref() == Some(&expected),
+                &format!("{read:?}"),
+            );
+        }
+    }
     let summary = pyhanko_summary(&out);
     println!("pyHanko's summary:\n{}", summary.trim_end());
     // The difference analysis, which `--json` does not carry: every signature
@@ -744,7 +879,9 @@ fn probe(
         )?;
         let invisible_path = scratch.join(format!("{stem}-invisible.pdf"));
         std::fs::write(&invisible_path, &invisible).map_err(|e| e.to_string())?;
-        if let Err(why) = where_the_ink_went(&mut report, input, &out, &invisible_path, visible) {
+        if let Err(why) =
+            where_the_ink_went(&mut report, input, &out, &invisible_path, visible, now)
+        {
             report.check("the renderers ran", false, &why);
         }
     }

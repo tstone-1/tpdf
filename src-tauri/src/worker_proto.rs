@@ -228,6 +228,22 @@ pub enum Request {
         #[serde(default)]
         visible: Option<Box<crate::sign_prepare::Visible>>,
     },
+    /// Draw a visible signature's appearance before anything is signed.
+    ///
+    /// [`Request::PrepareSignature`]'s sibling, answered with a picture rather
+    /// than a revision. **It reads nothing of the mapped document**: the worker
+    /// builds a one-page file of the rectangle's size, runs the signing's own
+    /// `sign_prepare::prepare_visible` over it, and renders that
+    /// (`render::run_signature_preview`). It is here rather than in the app
+    /// process because rendering needs PDFium, which the app never maps, and
+    /// the document's worker is the one PDFium there is. It names nothing the
+    /// worker could act on: a time, a rectangle, a name, choices and pixels.
+    SignaturePreview {
+        /// Seconds since the epoch, for the date line.
+        at: u64,
+        /// What the signing would be sent; only the rectangle's size is read.
+        visible: Box<crate::sign_prepare::Visible>,
+    },
     /// Rewrite the mapped document under a plan, into the handed-over file.
     ///
     /// **The whole-document counterpart of [`Request::Append`], and the reason
@@ -512,6 +528,8 @@ pub enum Reply {
     Append(crate::save::Update),
     /// The revision a signature goes into, with its hole still empty.
     PreparedSignature(crate::sign_prepare::Unsigned),
+    /// A visible signature's appearance, drawn as PNG.
+    SignaturePreview(crate::sign_prepare::Preview),
     /// How many bytes a rewrite wrote into the handed-over file.
     ///
     /// A length and nothing else: the document itself went down the output
@@ -819,6 +837,7 @@ mod tests {
             ("Properties", "properties"),
             ("Append", "append"),
             ("PrepareSignature", "prepare_signature"),
+            ("SignaturePreview", "signature_preview"),
         ];
 
         /// Variants that reach a worker by another route, and why.
@@ -1186,6 +1205,11 @@ mod tests {
                 digest: vec![7; 32],
                 field: "Signature2".into(),
             }),
+            Reply::SignaturePreview(crate::sign_prepare::Preview {
+                png: vec![137, 80, 78, 71],
+                width: 480,
+                height: 160,
+            }),
             // The second confusable pair, and the same trick: `Reread` and
             // `Rewrote` are both one `usize`, so given the same number only the
             // tag separates a page count from a byte count.
@@ -1225,6 +1249,7 @@ mod tests {
                 | Reply::Properties(_)
                 | Reply::Append(_)
                 | Reply::PreparedSignature(_)
+                | Reply::SignaturePreview(_)
                 | Reply::Reread(_)
                 | Reply::Rewrote(_)
                 | Reply::Verified(_)

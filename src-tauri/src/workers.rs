@@ -2009,6 +2009,22 @@ impl Engine for Workers {
         }
     }
 
+    fn signature_preview(
+        &self,
+        doc: u32,
+        at: u64,
+        visible: &crate::sign_prepare::Visible,
+    ) -> Result<crate::sign_prepare::Preview, String> {
+        let request = Request::SignaturePreview {
+            at,
+            visible: Box::new(visible.clone()),
+        };
+        match self.ask(doc, &request)? {
+            Reply::SignaturePreview(preview) => Ok(preview),
+            other => Err(mismatched("signature_preview", &other)),
+        }
+    }
+
     /// Answered from this process's own record, without asking a worker.
     ///
     /// The pool is where a password lives for the document's lifetime --- see

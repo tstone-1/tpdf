@@ -77,6 +77,7 @@ import type { Session } from "./session";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
 import type { Choices, Signed } from "./signing";
+import type { SignaturePreview } from "./signappearance";
 
 import Applied_ from "../../src-tauri/testdata/replies/Applied.json";
 import Comments_ from "../../src-tauri/testdata/replies/Comments.json";
@@ -98,6 +99,7 @@ import Session_ from "../../src-tauri/testdata/replies/Session.json";
 import Split_ from "../../src-tauri/testdata/replies/Split.json";
 import Choices_ from "../../src-tauri/testdata/replies/Choices.json";
 import Signed_ from "../../src-tauri/testdata/replies/Signed.json";
+import Preview_ from "../../src-tauri/testdata/replies/Preview.json";
 
 /**
  * A mirror type with every literal widened the way a JSON import widens.
@@ -287,6 +289,11 @@ const SCHEMA = {
     field: ["string"],
     signatures: ["array"],
   } satisfies Shape<Signed>,
+  Preview: {
+    png: ["array"],
+    width: ["number"],
+    height: ["number"],
+  } satisfies Shape<SignaturePreview>,
 } as const;
 
 /**
@@ -321,6 +328,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Split: Split_ satisfies Widen<Split>,
   Choices: Choices_ satisfies Widen<Choices>,
   Signed: Signed_ satisfies Widen<Signed>,
+  Preview: Preview_ satisfies Widen<SignaturePreview>,
 };
 
 /**

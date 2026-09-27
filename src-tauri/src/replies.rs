@@ -663,6 +663,17 @@ fn samples() -> BTreeMap<&'static str, String> {
     );
 
     put(
+        "Preview",
+        &crate::sign_prepare::Preview {
+            // A PNG signature and the start of a header: the sample pins the
+            // shape, and the bytes are a list of numbers either way.
+            png: vec![137, 80, 78, 71, 13, 10, 26, 10],
+            width: 480,
+            height: 160,
+        },
+    );
+
+    put(
         "Merged",
         &save::Merged {
             changed: false,

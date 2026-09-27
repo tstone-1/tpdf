@@ -2,6 +2,15 @@ import { decodeSignature, signatureCanvas, trimSignature, type SignatureImage } 
 
 import { prepareSignatureStorage, loadSignature, rememberSignature, forgetSignature } from "./signaturestore";
 
+/** What the dialog is called and what its accepting button says, for one use of it. */
+export interface SignatureDialogWords { title: string; action: string }
+
+/** The words for placing a visual mark, which is what the dialog was built for. */
+export const PLACE_WORDS: SignatureDialogWords = { title: "Place signature image", action: "Place signature image" };
+
+/** The words for choosing the image a digital signature's appearance shows. */
+export const APPEARANCE_WORDS: SignatureDialogWords = { title: "Signature image", action: "Use this image" };
+
 /** A visual signature editor; image files are decoded by the webview, never Rust. */
 export class SignatureDialog {
   private readonly dialog = document.createElement("dialog");
@@ -10,6 +19,7 @@ export class SignatureDialog {
   private readonly remember = document.createElement("input");
   private readonly white = document.createElement("input");
   private readonly place: HTMLButtonElement;
+  private readonly heading = document.createElement("h2");
   private source: HTMLCanvasElement | null = null;
   private pending: ((image: SignatureImage | null) => void) | null = null;
   private previousFocus: HTMLElement | null = null;
@@ -22,8 +32,8 @@ export class SignatureDialog {
     this.dialog.setAttribute("aria-label", "Place signature image");
     this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;"
       + "border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
-    const heading = document.createElement("h2");
-    heading.textContent = "Place signature image";
+    const heading = this.heading;
+    heading.textContent = PLACE_WORDS.title;
     heading.style.margin = "0 0 8px";
     const help = document.createElement("p");
     help.textContent = "Draw your signature or import a PNG or JPEG image.";
@@ -82,8 +92,12 @@ export class SignatureDialog {
   }
 
   get isOpen(): boolean { return this.dialog.open; }
-  ask(): Promise<SignatureImage | null> {
+  /** Opens the dialog; `words` name it for one use (the signing panel's, say). */
+  ask(words: SignatureDialogWords = PLACE_WORDS): Promise<SignatureImage | null> {
     if (this.pending) this.finish(null);
+    this.heading.textContent = words.title;
+    this.dialog.setAttribute("aria-label", words.title);
+    this.place.textContent = words.action;
     this.previousFocus = document.activeElement as HTMLElement | null;
     this.clear(); this.remember.checked = false;
     this.dialog.showModal();

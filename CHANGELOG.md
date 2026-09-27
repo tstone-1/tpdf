@@ -64,14 +64,20 @@ have the binary.)
   than signing documents, such as code signing or logging in to websites, is
   listed with that reason and not offered.
 - **A signature can be visible.** *Sign document…* now asks whether the
-  signature is invisible, as before, or visible. For a visible one you drag a
-  rectangle on a page, and it shows your saved signature image, when you
-  have one, beside your certificate's name and the signing time in UTC. The
-  appearance is part of what the signature covers. A name outside Latin-1 is
-  refused rather than drawn as a different name, a rectangle must be at
-  least 24 points on each side, and a certified document can only be signed
-  invisibly, because a common validator reads a new visible signature there
-  as breaking the certification.
+  signature is invisible, as before, or visible. For a visible one you first
+  choose what it shows, with a preview drawn by the same code that signs: your
+  saved signature image, one you draw or import there, or none; whether it
+  says *Digitally signed by*, your certificate's name and the signing time in
+  UTC, each on its own; and an optional reason and location, which are also
+  recorded in the signature itself where other readers show them. *Remember as
+  my default* keeps those choices for next time. Then you drag a rectangle on
+  a page, and the appearance is laid out for it. The appearance is part of
+  what the signature covers. Text outside Latin-1 is refused rather than drawn
+  as something else — a name that cannot be drawn can have its line turned
+  off — a signature that would show nothing is refused, a rectangle must be
+  at least 24 points on each side, and a certified document can only be
+  signed invisibly, because a common validator reads a new visible signature
+  there as breaking the certification.
 - **The properties dialog says whether this computer trusts a signature's
   signer.** For every signature whose bytes are intact, tpdf asks the
   operating system's own trust store, offline, whether the signer's

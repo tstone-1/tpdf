@@ -10,18 +10,34 @@
 //!
 //! ## What it draws
 //!
-//! Three lines of Helvetica --- *Digitally signed by*, the certificate's subject
-//! name, and the signing time in UTC, which is `/M` read back so the two cannot
-//! disagree --- and, when the reader has a saved visual signature (Phase 4's
-//! store), that image beside them: on the left of a wide rectangle, above the
-//! words in a tall one. Text alone when there is no saved image.
+//! Up to five lines of Helvetica, each one the reader's choice ([`Options`]):
+//! *Digitally signed by*, the certificate's subject name, the signing time in
+//! UTC --- which is `/M` read back so the two cannot disagree --- and, when the
+//! reader typed them, *Reason:* and *Location:*, which are the signature
+//! dictionary's `/Reason` and `/Location` drawn. Beside them, when the reader
+//! chose one, an image (Phase 4's saved visual signature, or one drawn for this
+//! signing): on the left of a wide rectangle, above the words in a tall one, and
+//! the whole rectangle when no line is on. **Something must be drawn**: a
+//! visible signature with no image and no line is refused, because an empty
+//! rectangle on a page says nothing and looks like a mistake.
 //!
 //! Everything is sized to fit the rectangle rather than clipped by it. The type
-//! is as large as the widest line and the three lines together allow, up to
+//! is as large as the widest line and the lines together allow, up to
 //! [`MAX_SIZE`], and is placed so that Helvetica's whole font bounding box ---
 //! not only the letters of these lines --- stays inside. A clipping path of the
 //! rectangle is written as well, and `/BBox` clips again; those are the floor,
 //! not the layout.
+//!
+//! ## The form is drawn at the origin, so a preview is the same bytes
+//!
+//! The form's `/BBox` is `[0 0 w h]` and everything inside it is drawn in that
+//! box's own space; PDF 32000-1 §12.5.5 maps the box onto the widget's `/Rect`
+//! wherever that is on the page. So the appearance stream depends on the
+//! rectangle's **size**, the page's turns, the options, the image and the time,
+//! and not on where the rectangle sits. That is what lets [`super::preview`]
+//! render, before anything is signed, exactly the stream the signing writes:
+//! `a_preview_draws_the_stream_the_signing_writes` compares the two byte for
+//! byte at several positions.
 //!
 //! ## Characters outside WinAnsi are refused, not substituted
 //!
@@ -65,8 +81,64 @@ pub struct Visible {
     pub rect: [f32; 4],
     /// The signer's name as the certificate gives it.
     pub name: String,
-    /// The reader's saved visual signature, when there is one.
+    /// The image the reader chose, when they chose one.
     pub image: Option<crate::signature::Image>,
+    /// Which lines are drawn, and the reason and location.
+    ///
+    /// Defaulted, so a request written before the reader could choose parses as
+    /// the three lines it drew then and no reason or location.
+    #[serde(default)]
+    pub options: Options,
+}
+
+/// What the reader chose to show, beside or instead of an image.
+///
+/// **Crosses the worker boundary** inside [`Visible`], and from the frontend
+/// inside `commands::sign::Placement`. The signer's name is not here and is not
+/// editable: [`Visible::name`] is read from the certificate by the app process,
+/// and `name` below only says whether it is drawn.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Options {
+    /// *Digitally signed by*.
+    pub label: bool,
+    /// The certificate's subject name.
+    pub name: bool,
+    /// The signing time, `/M` read back.
+    pub date: bool,
+    /// Why the document is signed, or blank for none. Written as `/Reason` and
+    /// drawn as *Reason: ...*.
+    pub reason: String,
+    /// Where it was signed, or blank for none. Written as `/Location` and drawn
+    /// as *Location: ...*.
+    pub location: String,
+}
+
+impl Default for Options {
+    /// The three lines a visible signature drew before there was a choice.
+    fn default() -> Self {
+        Self {
+            label: true,
+            name: true,
+            date: true,
+            reason: String::new(),
+            location: String::new(),
+        }
+    }
+}
+
+impl Options {
+    /// The reason, trimmed, or `None` when there is nothing in it.
+    #[must_use]
+    pub fn reason(&self) -> Option<&str> {
+        Some(self.reason.trim()).filter(|text| !text.is_empty())
+    }
+
+    /// The location, trimmed, or `None` when there is nothing in it.
+    #[must_use]
+    pub fn location(&self) -> Option<&str> {
+        Some(self.location.trim()).filter(|text| !text.is_empty())
+    }
 }
 
 /// The smallest side a visible signature may have, in points.
@@ -88,6 +160,12 @@ pub const MIN_SIDE: f64 = 24.0;
 /// work, not a layout rule: a long name is drawn smaller, not cut.
 pub const MAX_NAME_CHARS: usize = 256;
 
+/// The longest reason or location, in characters.
+///
+/// The same bound as [`MAX_NAME_CHARS`] and for the same reason: it bounds
+/// work, and a long one is drawn smaller rather than cut.
+pub const MAX_NOTE_CHARS: usize = 256;
+
 /// The largest the words are set, in points.
 ///
 /// A large rectangle is a large mark, not a request for headline type; ten is
@@ -104,25 +182,32 @@ const ASCENT: f64 = 0.931;
 const DESCENT: f64 = 0.225;
 
 /// Room left beside each line, in em, for a glyph whose ink passes its advance.
-const BEARING: f64 = 0.1;
+pub(crate) const BEARING: f64 = 0.1;
 
 /// Baseline to baseline, in em. At least `ASCENT + DESCENT`, so no two lines'
 /// boxes overlap and the last one's stays inside the block.
-const LEADING: f64 = 1.2;
+pub(crate) const LEADING: f64 = 1.2;
 
-/// The three lines a visible signature says.
+/// The lines a visible signature says, in the order they are drawn.
 ///
 /// `pdf_date` is the signature dictionary's `/M` exactly as written
 /// (`D:YYYYMMDDHHmmSSZ`), so the time on the page is the time in the
-/// dictionary by construction.
+/// dictionary by construction. A reason or location is drawn with the words
+/// that say what it is, because a bare "Berlin" under a signature could be
+/// anything.
 #[must_use]
-pub fn words(name: &str, pdf_date: &str) -> [String; 3] {
+pub fn words(name: &str, pdf_date: &str, options: &Options) -> Vec<String> {
     let digits = pdf_date.trim_start_matches("D:");
     let part = |from: usize, to: usize| digits.get(from..to).unwrap_or("??");
-    [
-        "Digitally signed by".to_string(),
-        name.to_string(),
-        format!(
+    let mut lines = Vec::with_capacity(5);
+    if options.label {
+        lines.push("Digitally signed by".to_string());
+    }
+    if options.name {
+        lines.push(name.to_string());
+    }
+    if options.date {
+        lines.push(format!(
             "Date: {}-{}-{} {}:{}:{} UTC",
             part(0, 4),
             part(4, 6),
@@ -130,35 +215,85 @@ pub fn words(name: &str, pdf_date: &str) -> [String; 3] {
             part(8, 10),
             part(10, 12),
             part(12, 14)
-        ),
-    ]
+        ));
+    }
+    if let Some(reason) = options.reason() {
+        lines.push(format!("Reason: {reason}"));
+    }
+    if let Some(location) = options.location() {
+        lines.push(format!("Location: {location}"));
+    }
+    lines
 }
 
-/// Refuses a name or an image the appearance cannot honestly draw.
+/// Refuses free text the appearance cannot draw, or the dictionary should not
+/// carry: too long, a control character, or a character Helvetica with
+/// `/WinAnsiEncoding` has no glyph for.
+fn check_note(what: &str, text: Option<&str>) -> Result<(), String> {
+    let Some(text) = text else { return Ok(()) };
+    if text.chars().count() > MAX_NOTE_CHARS {
+        return Err(format!(
+            "the {what} is longer than the {MAX_NOTE_CHARS} characters a visible signature draws"
+        ));
+    }
+    if text.chars().any(char::is_control) || !textbox::encodable(text) {
+        return Err(format!(
+            "the {what}, {text}, has characters tpdf cannot draw in a visible signature yet \
+             (it draws Latin-1 only), and drawing others would put different words on the \
+             page --- change the {what}, or leave it empty"
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses a name, a reason, a location or an image the appearance cannot
+/// honestly draw, and an appearance that would draw nothing.
+///
+/// The name is checked only when it is drawn: a reader whose certificate names
+/// them in a script tpdf cannot draw can still sign visibly with the name line
+/// off, and the name is not written anywhere else by this revision.
 ///
 /// # Errors
 ///
-/// The name is empty, too long, or holds a character outside the Latin-1 part
-/// of WinAnsi (control characters included); or the image is not a valid
-/// signature raster.
+/// Nothing is drawn; the name is drawn and is empty, too long, or holds a
+/// character outside the Latin-1 part of WinAnsi (control characters included);
+/// the reason or location is too long or holds such a character; or the image
+/// is not a valid signature raster.
 pub fn check(visible: &Visible) -> Result<(), String> {
-    let name = visible.name.as_str();
-    if name.trim().is_empty() {
-        return Err("the certificate names nobody, so there is no name to draw".into());
+    let options = &visible.options;
+    let lines = options.label
+        || options.name
+        || options.date
+        || options.reason().is_some()
+        || options.location().is_some();
+    if !lines && visible.image.is_none() {
+        return Err(
+            "a visible signature has to show something --- choose an image or at least one \
+             line of text"
+                .into(),
+        );
     }
-    if name.chars().count() > MAX_NAME_CHARS {
-        return Err(format!(
-            "the certificate's name is longer than the {MAX_NAME_CHARS} characters a visible \
-             signature draws --- sign without a visible appearance"
-        ));
+    if options.name {
+        let name = visible.name.as_str();
+        if name.trim().is_empty() {
+            return Err("the certificate names nobody, so there is no name to draw".into());
+        }
+        if name.chars().count() > MAX_NAME_CHARS {
+            return Err(format!(
+                "the certificate's name is longer than the {MAX_NAME_CHARS} characters a visible \
+                 signature draws --- sign without a visible appearance"
+            ));
+        }
+        if !textbox::encodable(name) || name.chars().any(char::is_control) {
+            return Err(format!(
+                "the certificate's name, {name}, has characters tpdf cannot draw in a visible \
+                 signature yet (it draws Latin-1 only), and drawing others would put a different \
+                 name on the page --- turn the name line off, or sign without a visible appearance"
+            ));
+        }
     }
-    if !textbox::encodable(name) || name.chars().any(char::is_control) {
-        return Err(format!(
-            "the certificate's name, {name}, has characters tpdf cannot draw in a visible \
-             signature yet (it draws Latin-1 only), and drawing others would put a different \
-             name on the page --- sign without a visible appearance"
-        ));
-    }
+    check_note("reason", options.reason())?;
+    check_note("location", options.location())?;
     if visible.image.as_ref().is_some_and(|image| !image.valid()) {
         return Err("the saved signature image is damaged".into());
     }
@@ -220,6 +355,8 @@ pub fn layout(width: f64, height: f64, image: Option<(u32, u32)>, lines: &[Strin
     // squeezed by a long name.
     let (text, picture) = match image {
         None => ([0.0, 0.0, width, height], None),
+        // No words, so the image has the whole box.
+        Some(_) if lines.is_empty() => ([0.0, 0.0, 0.0, 0.0], Some([0.0, 0.0, width, height])),
         Some(_) if width >= height => (
             [width / 2.0, 0.0, width / 2.0, height],
             Some([0.0, 0.0, width / 2.0, height]),
@@ -298,7 +435,7 @@ pub fn line_extent(size: f64, u: f64, baseline: f64, text: &str) -> [f64; 4] {
 }
 
 /// A rectangle as a PDF array: what `/Rect` and `/BBox` are both written as, so
-/// the two are the same numbers rounded the same way.
+/// the two are rounded the same way.
 #[must_use]
 pub fn rect_object(rect: [f64; 4]) -> Object {
     Object::Array(rect.iter().map(|v| Object::Real(*v as f32)).collect())
@@ -307,6 +444,10 @@ pub fn rect_object(rect: [f64; 4]) -> Object {
 /// Builds the appearance form for a widget whose rectangle is `rect` (page
 /// space) on a page turned `turns` quarters, and adds it and what it uses to
 /// `doc`.
+///
+/// Drawn at the origin: the form's box is `[0 0 w h]`, the size of `rect`, and
+/// the reader places it by `/Rect` alone (module note). `rect`'s position is
+/// read for nothing but its size.
 pub fn stream(
     doc: &mut Document,
     rect: [f64; 4],
@@ -314,15 +455,16 @@ pub fn stream(
     lines: &[String],
     image: Option<&crate::signature::Image>,
 ) -> ObjectId {
-    let seen = Upright::of(turns, rect);
+    let local = [0.0, 0.0, rect[2] - rect[0], rect[3] - rect[1]];
+    let seen = Upright::of(turns, local);
     let layout = layout(
         seen.width,
         seen.height,
         image.map(|image| (image.width, image.height)),
         lines,
     );
-    let [x0, y0, x1, y1] = rect;
-    let mut content = format!("q {x0} {y0} {} {} re W n\n", x1 - x0, y1 - y0);
+    let [_, _, x1, y1] = local;
+    let mut content = format!("q 0 0 {x1} {y1} re W n\n");
     let mut resources = Dictionary::new();
     if let (Some(image), Some([u, v, w, h])) = (image, layout.image) {
         let object = image.xobject(doc);
@@ -363,7 +505,7 @@ pub fn stream(
     form.set("Type", Object::Name(b"XObject".to_vec()));
     form.set("Subtype", Object::Name(b"Form".to_vec()));
     form.set("FormType", Object::Integer(1));
-    form.set("BBox", rect_object(rect));
+    form.set("BBox", rect_object(local));
     form.set("Resources", Object::Dictionary(resources));
     doc.add_object(Stream::new(form, content.into_bytes()))
 }

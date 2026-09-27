@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { PageId } from "./pages";
 import type { SignatureImage } from "./signature";
+import type { Appearance } from "./signappearance";
 import {
   UNSAVED,
   afterSigning,
@@ -28,6 +29,12 @@ const choice: Choice = {
 
 /** The reader's saved visual signature, as the store answers it. */
 const saved: SignatureImage = { width: 1, height: 1, rgba: [0, 0, 0, 255] };
+
+/** What the reader chose in the appearance panel. */
+const chosenLook: Appearance = {
+  image: saved,
+  options: { label: false, name: true, date: true, reason: "Approved", location: "Hamburg" },
+};
 
 /** Where the reader dragged, on the page with id 7. */
 const dragged = { page: 7 as PageId, rect: [20, 30, 170, 90] as [number, number, number, number] };
@@ -65,6 +72,10 @@ function shell(overrides: Partial<SigningShell> = {}) {
     savedImage: async () => {
       asked.push("savedImage");
       return saved;
+    },
+    appearance: async (identity, image) => {
+      asked.push(`appearance:${identity}:${image === saved ? "saved" : "none"}`);
+      return chosenLook;
     },
     place: async () => {
       asked.push("place");
@@ -106,7 +117,7 @@ describe("the order the questions are asked in", () => {
     expect(placements).toEqual([null]);
   });
 
-  it("places a visible signature before the file is named, with the saved image", async () => {
+  it("asks what a visible signature shows, then where, then the file, then signs", async () => {
     const { asked, placements, shell: s } = shell({
       choose: async (choices) => {
         asked.push(`choose:${choices.map((c) => c.id).join("+")}`);
@@ -118,20 +129,50 @@ describe("the order the questions are asked in", () => {
       "list",
       "choose:abc",
       "savedImage",
+      "appearance:abc:saved",
       "place",
       "saveAs:report-signed.pdf",
       "sign:abc:/docs/report-signed.pdf",
     ]);
-    expect(placements).toEqual([{ page: 7, rect: [20, 30, 170, 90], image: saved }]);
+    // The panel's image and options, not the saved image the panel was offered.
+    expect(placements).toEqual([
+      { page: 7, rect: [20, 30, 170, 90], image: saved, options: chosenLook.options },
+    ]);
   });
 
-  it("places a visible signature with words alone when there is no saved image", async () => {
+  it("hands the panel no image when none is saved, and signs what the panel answers", async () => {
+    const offered: (SignatureImage | null)[] = [];
     const { placements, shell: s } = shell({
       choose: async () => ({ identity: "abc", visible: true }),
       savedImage: async () => null,
+      appearance: async (_identity, image) => {
+        offered.push(image);
+        return { image: null, options: { ...chosenLook.options, reason: "" } };
+      },
     });
     await signDocument(s);
-    expect(placements).toEqual([{ page: 7, rect: [20, 30, 170, 90], image: null }]);
+    expect(offered).toEqual([null]);
+    expect(placements).toEqual([
+      {
+        page: 7,
+        rect: [20, 30, 170, 90],
+        image: null,
+        options: { ...chosenLook.options, reason: "" },
+      },
+    ]);
+  });
+
+  it("stops without a word, and asks nothing more, when the reader cancels the panel", async () => {
+    const { asked, placements, shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: true }),
+      appearance: async () => {
+        asked.push("appearance");
+        return null;
+      },
+    });
+    expect(await signDocument(s)).toBeNull();
+    expect(asked).toEqual(["list", "savedImage", "appearance"]);
+    expect(placements).toEqual([]);
   });
 
   it("stops without a word when the reader escapes the placement", async () => {
@@ -143,7 +184,26 @@ describe("the order the questions are asked in", () => {
       },
     });
     expect(await signDocument(s)).toBeNull();
-    expect(asked).toEqual(["list", "savedImage", "place"]);
+    expect(asked).toEqual(["list", "savedImage", "appearance:abc:saved", "place"]);
+    expect(placements).toEqual([]);
+  });
+
+  it("stops without a word when the reader cancels the save panel after placing", async () => {
+    const { asked, placements, shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: true }),
+      saveAs: async (suggested) => {
+        asked.push(`saveAs:${suggested}`);
+        return null;
+      },
+    });
+    expect(await signDocument(s)).toBeNull();
+    expect(asked).toEqual([
+      "list",
+      "savedImage",
+      "appearance:abc:saved",
+      "place",
+      "saveAs:report-signed.pdf",
+    ]);
     expect(placements).toEqual([]);
   });
 

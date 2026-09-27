@@ -510,6 +510,16 @@ pub(crate) enum Job {
         visible: Option<Box<crate::sign_prepare::Visible>>,
         reply: Reply<crate::sign_prepare::Unsigned>,
     },
+    /// A visible signature's appearance, drawn. See
+    /// [`RenderService::signature_preview`].
+    SignaturePreview {
+        doc: u32,
+        /// Seconds since the epoch, for the date line.
+        at: u64,
+        /// What the signing would be sent; only the rectangle's size is read.
+        visible: Box<crate::sign_prepare::Visible>,
+        reply: Reply<crate::sign_prepare::Preview>,
+    },
     /// What password this document was opened with, for a caller that has to
     /// parse its bytes itself. See [`RenderService::password`].
     Password {
@@ -1093,6 +1103,32 @@ impl RenderService {
         }
     }
 
+    /// Draws a visible signature's appearance, by the code that signs, in the
+    /// engine that holds `doc`.
+    ///
+    /// `doc` names the worker, not a page: nothing of the document is read.
+    /// See `run_signature_preview`.
+    pub fn signature_preview(
+        &self,
+        doc: u32,
+        at: u64,
+        visible: crate::sign_prepare::Visible,
+        reply: Reply<crate::sign_prepare::Preview>,
+    ) {
+        if self
+            .tx
+            .send(Job::SignaturePreview {
+                doc,
+                at,
+                visible: Box::new(visible),
+                reply,
+            })
+            .is_err()
+        {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// What password this document was opened with, if it needed one.
     ///
     /// **Asked for, rather than read out of the pool, because the pool is not
@@ -1251,6 +1287,12 @@ pub(crate) trait Engine {
         at: u64,
         visible: Option<&crate::sign_prepare::Visible>,
     ) -> Result<crate::sign_prepare::Unsigned, String>;
+    fn signature_preview(
+        &self,
+        doc: u32,
+        at: u64,
+        visible: &crate::sign_prepare::Visible,
+    ) -> Result<crate::sign_prepare::Preview, String>;
     fn password(&self, doc: u32) -> Result<Option<String>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 
@@ -1335,6 +1377,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             visible,
             reply,
         } => reply(engine.prepare_signature(doc, at, visible.as_deref())),
+        Job::SignaturePreview {
+            doc,
+            at,
+            visible,
+            reply,
+        } => reply(engine.signature_preview(doc, at, &visible)),
         Job::Password { doc, reply } => reply(engine.password(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
         Job::ReleaseAll { reply } => reply(engine.release_all()),
@@ -1374,6 +1422,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Properties { reply, .. } => reply(Err(error.to_string())),
             Job::Append { reply, .. } => reply(Err(error.to_string())),
             Job::PrepareSignature { reply, .. } => reply(Err(error.to_string())),
+            Job::SignaturePreview { reply, .. } => reply(Err(error.to_string())),
             Job::Password { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
             Job::ReleaseAll { reply } => reply(Err(error.to_string())),
@@ -1603,6 +1652,18 @@ impl Engine for InProcess {
         visible: Option<&crate::sign_prepare::Visible>,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
         run_prepare_signature(open_slot(&self.docs.borrow(), doc)?, at, visible)
+    }
+
+    fn signature_preview(
+        &self,
+        doc: u32,
+        at: u64,
+        visible: &crate::sign_prepare::Visible,
+    ) -> Result<crate::sign_prepare::Preview, String> {
+        // Asked of an open document, as it is of a worker, so a preview for a
+        // document that has gone fails the same way on both backends.
+        open_slot(&self.docs.borrow(), doc)?;
+        run_signature_preview(self.bindings, at, visible)
     }
 
     fn password(&self, doc: u32) -> Result<Option<String>, String> {
@@ -2375,6 +2436,58 @@ pub(crate) fn run_prepare_signature(
     visible: Option<&crate::sign_prepare::Visible>,
 ) -> Result<crate::sign_prepare::Unsigned, String> {
     document.graph().prepare_signature(at, visible)
+}
+
+/// Draws a visible signature's appearance before anything is signed.
+///
+/// `sign_prepare::preview` builds a one-page file holding exactly the revision
+/// a signing would write for a rectangle of this size, and it is rendered here
+/// the way a tile is, as PNG. The document the request arrived beside is not
+/// read: it is the worker that is borrowed, for its PDFium and its sandbox ---
+/// the app process never maps PDFium (`examples/backend_probe.rs`).
+///
+/// # Errors
+///
+/// What `sign_prepare::preview` refuses --- the refusal the signing itself
+/// would give --- or a render that does not complete.
+pub fn run_signature_preview(
+    bindings: Bindings,
+    at: u64,
+    visible: &crate::sign_prepare::Visible,
+) -> Result<crate::sign_prepare::Preview, String> {
+    let bytes = crate::sign_prepare::preview(at, visible)?;
+    let document = OpenDocument::open_owned(bindings, bytes.into())
+        .map_err(|refusal| format!("the preview could not be drawn: {}", refusal.reason))?;
+    let scale = crate::sign_prepare::PREVIEW_SCALE;
+    let (width, height) = {
+        let page = document.page(0)?;
+        (
+            (page.width_pt() * scale).round().max(1.0) as u16,
+            (page.height_pt() * scale).round().max(1.0) as u16,
+        )
+    };
+    let request = TileRequest {
+        rid: 0,
+        doc: 0,
+        page: 0,
+        scale,
+        turns: 0,
+        invert: false,
+        x: 0,
+        y: 0,
+        width,
+        height,
+        format: TileFormat::Png,
+        crop: None,
+    };
+    match render_tile(bindings, &document, &request, &CancelToken::new())? {
+        TileOutcome::Rendered(tile) => Ok(crate::sign_prepare::Preview {
+            png: tile.bytes,
+            width: u32::from(width),
+            height: u32::from(height),
+        }),
+        TileOutcome::Abandoned => Err("the preview was cancelled".into()),
+    }
 }
 
 /// Rewrites the mapped document under a plan, on the render thread.

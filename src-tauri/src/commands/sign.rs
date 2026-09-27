@@ -1,7 +1,9 @@
 //! Signing with a certificate the reader already has: Phase 6 step 2.
 //!
-//! Two commands. [`sign_identities`] lists what the OS store holds; nothing is
-//! parsed but the reader's own certificates. [`sign_document`] runs the whole
+//! Three commands. [`sign_identities`] lists what the OS store holds; nothing is
+//! parsed but the reader's own certificates. [`sign_preview`] draws what a
+//! visible signature would look like, by the code that signs, before anything is
+//! signed. [`sign_document`] runs the whole
 //! split `docs/PLAN.md` §9 decided: the **worker** builds the revision with an
 //! empty hole (`sign_prepare.rs`), this **app process** reads the file, checks
 //! the worker's numbers against it, has the OS sign, splices the value in and
@@ -29,8 +31,27 @@ pub struct Placement {
     pub page: u64,
     /// `[left, top, right, bottom]`, points, in the page's display space.
     pub rect: [f32; 4],
-    /// The reader's saved visual signature, when they have one.
+    /// The image the reader chose for it, when they chose one.
     pub image: Option<crate::signature::Image>,
+    /// Which lines it shows, and the reason and location. Defaulted, so a
+    /// placement sent before the reader could choose means what it meant then.
+    #[serde(default)]
+    pub options: sign_prepare::Options,
+}
+
+impl Placement {
+    /// What the worker is sent for this placement: the file's page for the
+    /// page id, and the name read from the certificate. The reader's choices
+    /// travel as they came; the worker checks them.
+    fn visible(self, page: u32, name: String) -> sign_prepare::Visible {
+        sign_prepare::Visible {
+            page,
+            rect: self.rect,
+            name,
+            image: self.image,
+            options: self.options,
+        }
+    }
 }
 
 /// The file's page number for a page id, in a plan with nothing unsaved.
@@ -62,6 +83,52 @@ fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+/// The subject name of the certificate `identity` names, read from the store
+/// in this process: the only source of the name a visible signature draws.
+///
+/// Asks the OS for the certificate only; the key is not touched.
+async fn signer_name(identity: &str, at: u64) -> Result<String, String> {
+    let wanted = identity.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let identity = keystore::find(&wanted)?;
+        sign_cms::usable(&identity.certificate, at).map(|offer| offer.subject)
+    })
+    .await
+    .map_err(|e| format!("the certificate search did not run: {e}"))?
+}
+
+/// Draws what a visible signature would look like, before anything is signed.
+///
+/// `size` is `[width, height]` in points --- the panel asks for one
+/// representative shape before the reader has placed anything, and the signing
+/// lays out again for the rectangle actually placed. The name is read from the
+/// certificate here, as [`sign_document`] reads it, so the preview names whom
+/// the signature will. The picture is drawn in `doc`'s worker by the function
+/// that signs (`sign_prepare::preview`); nothing of the document is read and
+/// nothing is written.
+#[tauri::command]
+pub async fn sign_preview(
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    identity: String,
+    size: [f32; 2],
+    image: Option<crate::signature::Image>,
+    options: sign_prepare::Options,
+) -> Result<sign_prepare::Preview, String> {
+    let at = now();
+    let name = signer_name(&identity, at).await?;
+    let visible = sign_prepare::Visible {
+        page: 0,
+        rect: [0.0, 0.0, size[0], size[1]],
+        name,
+        image,
+        options,
+    };
+    let (reply, rx) = reply_channel();
+    service.signature_preview(doc, at, visible, reply);
+    await_reply("sign_preview", rx).await
 }
 
 /// The certificates in the reader's store that have a key, sorted into the
@@ -130,19 +197,8 @@ pub async fn sign_document(
         None => None,
         Some(placement) => {
             let page = baseline_page(&edits.plan(doc)?, placement.page)?;
-            let wanted = identity.clone();
-            let name = tauri::async_runtime::spawn_blocking(move || {
-                let identity = keystore::find(&wanted)?;
-                sign_cms::usable(&identity.certificate, at).map(|offer| offer.subject)
-            })
-            .await
-            .map_err(|e| format!("the certificate search did not run: {e}"))??;
-            Some(sign_prepare::Visible {
-                page,
-                rect: placement.rect,
-                name,
-                image: placement.image,
-            })
+            let name = signer_name(&identity, at).await?;
+            Some(placement.visible(page, name))
         }
     };
     let (reply, rx) = reply_channel();
@@ -177,4 +233,42 @@ pub async fn sign_document(
     })
     .await
     .map_err(|e| format!("the signing did not run: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A placement as `signing.ts` sends it reaches the worker with the
+    /// reader's choices, and one sent without them means the three lines a
+    /// visible signature drew before there was a choice.
+    #[test]
+    fn a_placement_carries_the_readers_choices_to_the_worker() {
+        let sent = r#"{"page":7,"rect":[20,30,170,90],"image":null,
+            "options":{"label":false,"name":true,"date":false,
+                       "reason":"Geprüft","location":"Köln"}}"#;
+        let placement: Placement = serde_json::from_str(sent).expect("the frontend's shape");
+        assert_eq!(placement.page, 7);
+        let visible = placement.visible(1, "A. Signer".into());
+        assert_eq!(visible.page, 1);
+        assert_eq!(visible.name, "A. Signer");
+        assert_eq!(visible.rect, [20.0, 30.0, 170.0, 90.0]);
+        assert_eq!(
+            visible.options,
+            sign_prepare::Options {
+                label: false,
+                name: true,
+                date: false,
+                reason: "Geprüft".into(),
+                location: "Köln".into(),
+            }
+        );
+
+        let older = r#"{"page":7,"rect":[20,30,170,90],"image":null}"#;
+        let placement: Placement = serde_json::from_str(older).expect("the older shape");
+        assert_eq!(
+            placement.visible(1, "A. Signer".into()).options,
+            sign_prepare::Options::default()
+        );
+    }
 }

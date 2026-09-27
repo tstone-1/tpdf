@@ -21,13 +21,14 @@
  * 3. **The reader chooses** a certificate and whether the signature is
  *    **invisible** (the default, and what signing did before it could be
  *    anything else) or **visible**.
- * 4. **A visible one is placed** before the file is named: the reader's saved
- *    visual signature is read (Phase 4's store; none is not an error, the
- *    appearance is then words alone), and the viewer's crop drag is armed for
- *    one rectangle. Escape, or anything else taking the tool, cancels the whole
- *    signing --- nothing has been asked of the OS yet, and nothing is written.
- *    The worker draws the appearance inside the revision it signs; nothing here
- *    draws it.
+ * 4. **A visible one is configured, then placed**, before the file is named:
+ *    the reader's saved visual signature is read (Phase 4's store; none is not
+ *    an error), the appearance panel (`signappearance.ts`) asks what it shows
+ *    with a preview the worker draws, and then the viewer's crop drag is armed
+ *    for one rectangle. Cancel or Escape in the panel, or Escape or anything
+ *    else taking the tool during the drag, cancels the whole signing ---
+ *    nothing has been asked of the OS yet, and nothing is written. The worker
+ *    draws the appearance inside the revision it signs; nothing here draws it.
  * 5. **The reader names the new file** --- `<name>-signed.pdf` beside the
  *    original. The original is never written.
  * 6. **The result is what a worker read back from the written file**, one line
@@ -41,6 +42,7 @@ import type { Integrity } from "./integrity";
 import { WHY } from "./integrity";
 import type { PageId } from "./pages";
 import type { SignatureImage } from "./signature";
+import type { Appearance, AppearanceOptions } from "./signappearance";
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -93,8 +95,10 @@ export interface Placement {
   page: PageId;
   /** `left, top, right, bottom` in points, in the page's display space. */
   rect: [number, number, number, number];
-  /** The saved visual signature, or `null` for words alone. */
+  /** The image the reader chose, or `null` for words alone. */
   image: SignatureImage | null;
+  /** Which lines are drawn, and the reason and location. */
+  options: AppearanceOptions;
 }
 
 /**
@@ -201,6 +205,8 @@ export interface SigningShell {
   choose(choices: Choice[]): Promise<Chosen | null>;
   /** The reader's saved visual signature, or `null` when there is none. */
   savedImage(): Promise<SignatureImage | null>;
+  /** The appearance panel for `identity`: the choices, or `null` for Cancel. */
+  appearance(identity: string, saved: SignatureImage | null): Promise<Appearance | null>;
   /** Arms the placement: where the reader dragged, or `null` for Escape. */
   place(): Promise<{ page: PageId; rect: [number, number, number, number] } | null>;
   /** The save panel, suggesting `suggested`: a path, or `null` for Cancel. */
@@ -224,12 +230,14 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
   if (chosen === null) return null;
   let placement: Placement | null = null;
   if (chosen.visible) {
-    // The image before the drag, so a store that cannot be read says so
-    // before the reader has placed anything.
-    const image = await shell.savedImage();
+    // The saved image before the panel, so a store that cannot be read says so
+    // before the reader has chosen anything.
+    const saved = await shell.savedImage();
+    const appearance = await shell.appearance(chosen.identity, saved);
+    if (appearance === null) return null;
     const placed = await shell.place();
     if (placed === null) return null;
-    placement = { ...placed, image };
+    placement = { ...placed, image: appearance.image, options: appearance.options };
   }
   const path = await shell.saveAs(signedName(shell.openPath));
   if (!path) return null;
@@ -291,7 +299,7 @@ export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
   appearance("invisible", "Invisible — the signature is in the file, not on a page", true);
   const visible = appearance(
     "visible",
-    "Visible — drag a rectangle on a page next; it shows your name, the date and your saved signature image",
+    "Visible — choose what it shows, with a preview, then drag a rectangle on a page",
     false,
   );
   const footer = document.createElement("div");

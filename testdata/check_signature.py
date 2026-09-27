@@ -29,12 +29,14 @@ against it:
 
     {"field": "Signature1", "intact": true, "valid": true,
      "coverage": "ENTIRE_FILE", "md": "sha256", "mechanism": "sha256_rsa",
-     "crypto_constraints": false}
+     "crypto_constraints": false, "reason": null, "location": null}
 
 `intact` and `valid` are pyhanko's two halves of what tpdf calls intact: the
 digest over the byte range, and the signature over the signed attributes.
 `crypto_constraints` is pyhanko's `CRYPTO_CONSTRAINTS_FAILURE` --- an algorithm
-its policy disallows, which for these fixtures is SHA-1. A file pyhanko cannot
+its policy disallows, which for these fixtures is SHA-1. `reason` and `location`
+are the signature dictionary's `/Reason` and `/Location` as pyhanko decodes them
+(PDFDocEncoding or UTF-16), or null when absent, for `sign-probe --reason`. A file pyhanko cannot
 read prints `{"unreadable": "<reason>"}` and nothing else, so the probe can say
 it has no oracle for that file rather than reading silence as agreement.
 
@@ -125,6 +127,8 @@ def verdicts(path: str) -> "list[dict[str, object]]":
         for sig in reader.embedded_signatures:
             status = validate_pdf_signature(sig)
             indicator = getattr(status, "trust_problem_indic", None)
+            reason = sig.sig_object.get("/Reason")
+            location = sig.sig_object.get("/Location")
             out.append(
                 {
                     "field": sig.field_name,
@@ -135,6 +139,8 @@ def verdicts(path: str) -> "list[dict[str, object]]":
                     "mechanism": str(status.pkcs7_signature_mechanism),
                     "crypto_constraints": getattr(indicator, "name", "")
                     == "CRYPTO_CONSTRAINTS_FAILURE",
+                    "reason": None if reason is None else str(reason),
+                    "location": None if location is None else str(location),
                 }
             )
         return out

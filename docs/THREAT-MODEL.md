@@ -2145,6 +2145,18 @@ verifier decides that. Earlier signatures are left intact because their bytes ar
 file's prefix; `sign-probe` shows pyHanko reading each earlier one as covering its entire
 revision with the appended change classed as form filling.
 
+**A visible signature's appearance, configured (2026-09-27).** `sign_preview(doc, identity,
+size, image, options)` draws the appearance before anything is signed. It reads the chosen
+certificate's subject in the app process, as `sign_document` does, and touches no key; it
+reads nothing of the open document. The document's **worker** builds a one-page file of the
+preview's size, runs `sign_prepare::prepare_visible` over it and renders it with PDFium
+(`Request::SignaturePreview`), so the only parser to meet the reader's text and pixels is the
+one already contained, and the app process still never maps PDFium. What crosses back is a
+bounded PNG (at most 720 points a side at two pixels a point). The reason and location the
+reader types are written into the signed revision as `/Reason` and `/Location` --- covered by
+the signature like the rest of the dictionary --- and kept, if asked, in `localStorage` with
+the other per-machine preferences; a signature image's pixels are not.
+
 #### T6.22 — Whether the OS trusts a signer, added 2026-09-27
 
 **What changed.** `docinfo::scan_from` now asks the operating system's trust store, for every

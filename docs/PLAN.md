@@ -15213,6 +15213,60 @@ Latin-1, which need an embedded font. Resizing or moving the placed rectangle be
 The window harness has no signing phase, for step 2's reason: the real app signs only with an
 identity in the reader's store.
 
+#### What a visible signature shows --- done 2026-09-27
+
+Choosing **Visible** now opens a **Signature appearance** panel before the drag, with a live
+preview: the image (the saved one, one drawn or imported there through Phase 4's
+`SignatureDialog`, or none), the three lines each switchable --- *Digitally signed by*, the
+signer's name, the date --- and an optional **Reason** and **Location**, drawn as
+*Reason: ...* and *Location: ...* and written into the signature dictionary as `/Reason` and
+`/Location`. *Remember as my default* keeps the choices for the next signing.
+
+| Half | Where | What it does |
+|---|---|---|
+| Panel | `signappearance.ts` | State, the remembered default, the dialog; the latest preview wins and a closed panel paints nothing. |
+| Sequence | `signing.ts` | Chooser, saved image, panel, drag, save panel, sign; Cancel or Escape at any step ends it with nothing asked of the OS. |
+| Preview | `sign_preview`, worker, `sign_prepare::preview` | The signing's own `prepare_visible` over a blank page the preview's size, rendered by PDFium as PNG. |
+| Dictionary | `sign_prepare.rs` `text_string` | `/Reason`, `/Location` as PDFDocEncoding where it is Latin-1, UTF-16BE behind a mark otherwise, inside the range. |
+
+Decisions, each with its reason:
+
+- **The preview is the signing.** Not a second drawing of it: the worker runs the function it
+  signs with over a page the size of the rectangle, and renders the result. The form is now
+  drawn at the origin (`/BBox [0 0 w h]`) and placed by `/Rect`, so its stream depends on the
+  rectangle's size and not its position, and the preview's stream is byte for byte the one
+  written (`docs/TRAPS.md`, *An appearance drawn where its rectangle sits cannot be previewed as
+  the same bytes*). It is drawn at 240 x 80 points; the signing lays out again for the rectangle
+  placed. Every refusal the signing would give is the preview's message, and holds *Place on
+  page*.
+- **The name is the certificate's, always.** The panel can turn the name line off and cannot
+  edit it; the app process reads it from the store for the preview as it does for the signing.
+  With the line off, a name outside Latin-1 no longer stops a visible signature.
+- **Latin-1 on the page, any Unicode in the dictionary.** A reason or location outside Latin-1
+  is refused, not substituted, because it is drawn. The dictionary writer is not the limit: it
+  writes any text, and `every_character_reads_back_from_its_text_string` enumerates every
+  scalar value. A string whose Latin-1 bytes would begin `FE FF` goes to UTF-16.
+- **Something must be drawn.** No image and no line is refused. The image alone takes the whole
+  rectangle.
+- **The preference is not the image.** `localStorage` under `tpdf.signatureAppearance`, the
+  store the tab-label size and the update setting use; whether an image is shown, the lines, the
+  reason and the location. Pixels stay in the protected store. Anything tpdf did not write reads
+  as the defaults, whole.
+
+**Measured**, macOS arm64, `sign-probe --visible` with `--reason`, `--location`, `--lines` and
+`--no-image` (BUILD.md): the eight fixtures of the step above and seven option variants, all green;
+pyHanko reads `/Reason` and `/Location` as written, `þÿ ok` included, and reads none when none was
+given; `openssl cms -verify` accepts every file. The preview, through
+`render::run_signature_preview`, agrees with the signed page inside the rectangle on every paper
+pixel --- 0 differing on all fifteen runs, the turned pages included --- and disagrees with the
+unsigned page, the control. Proved by mutation: `/Reason` not written turns the pyHanko check
+red, and a preview ignoring the options turns the agreement check red.
+
+**Not done.** Choosing the preview's shape: it is one representative rectangle, and a tall
+rectangle lays the image above the words where the preview shows it beside them. Reason and
+location on an invisible signature. Scripts beyond Latin-1 on the page. Fonts, colours and
+borders, deliberately out of scope. The window harness still has no signing phase.
+
 ### Cross-cutting
 
 OCR (feeding search, selection and redaction verification) has interfaces defined in

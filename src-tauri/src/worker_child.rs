@@ -651,6 +651,12 @@ fn handle(
                 Err(e) => Response::err(e),
             }
         }
+        Request::SignaturePreview { at, visible } => {
+            match render::run_signature_preview(bindings, *at, visible) {
+                Ok(preview) => Response::reply(Reply::SignaturePreview(preview)),
+                Err(e) => Response::err(e),
+            }
+        }
         Request::Rewrite {
             plan,
             job,

@@ -244,6 +244,8 @@ hop through the index.
 - A new signature field passes the difference analysis that refused a new mark
 - A signature that does not carry its root reads as a missing link, not as an untrusted root
 - A visible signature field after a certification is a violation to pyHanko, and an invisible one is not
+- PDFDocEncoding agrees with Latin-1 only from 0xA1, and a Latin-1 string can begin with a byte-order mark
+- An appearance drawn where its rectangle sits cannot be previewed as the same bytes
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -529,6 +531,8 @@ hop through the index.
 - An oracle that cannot open an encrypted document has no answer for the commonest certified one
 - PDFKit rasterises no `/Sig` widget on a turned page, and draws the same appearance as a stamp
 - A layout test whose every box was bound by its width could not see the rule for its height
+- Asserting that every limit binds found one that never can, and the grid was not what to fix
+- A value written on every keystroke makes the same write on commit dead code, and its mutation survives
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24621,3 +24625,71 @@ Two wide, short boxes (600 x 24 and 400 x 30) make the height bind, and both mut
 The rule is the fixture rule in another shape: a `min` of several limits is covered only by
 inputs where each limit, in turn, is the one that wins. Enumerate the grid by which term binds,
 not by what sizes look plausible.
+
+### PDFDocEncoding agrees with Latin-1 only from 0xA1, and a Latin-1 string can begin with a byte-order mark
+
+2026-09-27, `/Reason` and `/Location` in a signature dictionary. A PDF text string is
+PDFDocEncoding or UTF-16BE behind `FE FF` (PDF 32000-1 §7.9.2.2), and "PDFDocEncoding is
+Latin-1" is true for printable ASCII and for `0xA1`--`0xFF` less the soft hyphen, and false
+elsewhere: `0x18`--`0x1F` and `0x80`--`0xA0` are breves, bullets, daggers, ligatures and the
+euro sign, and `0xAD` is undefined. Writing a character as its own code point there puts a
+different character in the file, silently --- a reason with a non-breaking space in it would
+read back with a euro sign.
+
+The second half is the one nobody guesses. `þÿ` is Latin-1, `U+00FE U+00FF`, and as
+PDFDocEncoding its bytes are `FE FF` --- the UTF-16 byte-order mark. A reason beginning with
+those two letters is read by every reader as UTF-16, the rest of it as CJK noise; `ï»¿` does
+the same with UTF-8's mark. `sign_prepare::text_string` therefore uses PDFDocEncoding only for
+the safe set and only when the bytes do not begin with a mark, and UTF-16 otherwise.
+`every_character_reads_back_from_its_text_string` enumerates every scalar value through
+`annots::decode_text_string`, which reads with `lopdf`'s own table, and pyHanko read `þÿ ok`
+back correctly through `sign-probe --reason`. Three mutations --- the safe set widened to
+`0x80`, the soft hyphen admitted, the mark check dropped --- each go red.
+
+### An appearance drawn where its rectangle sits cannot be previewed as the same bytes
+
+2026-09-27, the signature appearance panel's preview. The first visible appearance wrote its
+form with `/BBox` equal to the widget's `/Rect` and drew inside it in page coordinates. That is
+legal and renders identically, and it makes the stream a function of *where* the rectangle
+sits: the same rectangle 20 points to the right is different bytes. A preview drawn before the
+reader has placed anything therefore cannot be the stream the signing writes; at best it is a
+translation of it, and "at best" is exactly the claim a preview exists to remove.
+
+The form is now drawn at the origin --- `/BBox [0 0 w h]` --- and placed by `/Rect` alone, which
+§12.5.5's mapping from box to rectangle does for every widget. The stream depends on the size,
+the page's turns, the options, the image and the time, and on nothing else, so
+`sign_prepare::preview` runs the signing's own `prepare_visible` over a blank page of that size
+and `a_preview_draws_the_stream_the_signing_writes` compares the two byte for byte at three
+positions. Mutating the form back to page coordinates turns that test red, and no render check
+could: every renderer draws both forms the same, which is why nothing had noticed.
+
+### Asserting that every limit binds found one that never can, and the grid was not what to fix
+
+2026-09-27, `every_layout_keeps_its_ink_inside_the_box_and_apart_from_the_image`. The entry
+above about the width-bound grid ended "enumerate the grid by which term binds". The line
+counts became switchable, so the grid now also records, for each number of lines, whether some
+box was bound by its height and some by its width, and asserts both. It went red at once for
+**one** line, and more boxes would never have turned it green: at the cap one line needs 12
+points plus the insets, the smallest box is 24, and the only share of a box shorter than 16 is
+the lower half of a tall box under 32 points wide, too narrow for any line to reach the cap.
+
+So the assertion is per count --- one line must be seen bound by the width and by the cap and
+never by the height; from two lines on, both --- and the reason is written beside it. The
+lesson is the direction of the fix: a coverage assertion that fails is a claim about the
+*rules* before it is a claim about the fixture, and the first step is to work out whether the
+missing case exists at all.
+
+### A value written on every keystroke makes the same write on commit dead code, and its mutation survives
+
+2026-09-27, `signappearance.ts`. *Place on page* copied the reason and location out of their
+inputs into the panel's state before answering, "so text typed and not yet previewed is still
+the reader's choice". Its mutation --- delete that copy --- survived. The input handler already
+writes the state on every keystroke and debounces only the *redraw*, so by the time anybody can
+press the button the copy has nothing left to do.
+
+The survivor was right and the code was wrong: the copy was deleted, and the mutation re-aimed at
+the write that carries the behaviour, the one in the input handler, where it goes red. A
+surviving mutation has two readings --- the test is blind, or the code is dead --- and the second
+is the cheaper one to check first, because it needs nothing but reading who else writes the
+same value.
+

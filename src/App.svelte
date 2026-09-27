@@ -68,7 +68,8 @@
   import { Palette } from "./lib/palette";
   import { PendingImports } from "./lib/pendingimport";
   import { confirmSignatureSave, askSignatureSave, SaveCancelled } from "./lib/signedsave";
-  import { SignatureDialog } from "./lib/signaturedialog";
+  import { APPEARANCE_WORDS, SignatureDialog } from "./lib/signaturedialog";
+  import { askAppearance, PREVIEW_SIZE } from "./lib/signappearance";
   import { loadSignature } from "./lib/signaturestore";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
@@ -2079,6 +2080,15 @@
           list: () => call("sign_identities"),
           choose: (choices) => signing.askIdentity(choices),
           savedImage: () => loadSignature(),
+          // The preview is drawn in this document's worker by the signing's
+          // own code; the drawing dialog is Phase 4's, named for this use.
+          appearance: (identity, saved) =>
+            askAppearance({
+              saved,
+              preview: (image, options) =>
+                call("sign_preview", { doc, identity, size: PREVIEW_SIZE, image, options }),
+              draw: () => signatureDialog?.ask(APPEARANCE_WORDS) ?? Promise.resolve(null),
+            }),
           // The viewer that is showing the document now: a tab switch while
           // this waits destroys it, which answers `null` and ends the signing.
           place: async () => {
