@@ -128,6 +128,53 @@ impl Vision {
     }
 }
 
+/// The side of the blank square [`Vision::warm`] shows the engine.
+///
+/// Measured rather than chosen for looks: a 64 x 64 white image, which contains no text,
+/// still makes Vision compile and load all three of the model bundles a page with text
+/// needs (`com.apple.e5rt.e5bundlecache/<build>/...`, three `.bundle` directories either
+/// way), so the warm-up needs no text renderer and no embedded bitmap.
+pub const WARM_SIDE: u32 = 64;
+
+impl Vision {
+    /// Loads the engine's models into this process, on an image that is not input.
+    ///
+    /// **Called by the OCR worker before its sandbox comes down, and that order is the
+    /// point.** On macOS 27 (26A428) Vision compiles its text models on first use in a
+    /// process and writes them to `~/Library/Caches/<executable name>/
+    /// com.apple.e5rt.e5bundlecache`. [`crate::ocr::OCR_SANDBOX_PROFILE`] denies every
+    /// write, so a worker that met Vision for the first time *inside* the profile had its
+    /// cache write refused (`deny(1) file-write-create ~/Library/Caches/<name>`, the only
+    /// denial the kernel logged) and every recognition came back `__objc2.missingError` ---
+    /// so every redaction was *not verified*. With the models loaded here, the sandboxed
+    /// process never asks to write: measured on a cold cache, a page and a crop of a
+    /// different shape both read after the profile, with no denial logged.
+    ///
+    /// The image is a constant blank square, so nothing a document supplied is processed
+    /// outside the boundary. The first call on a machine pays the compile (23.4 s on an M5
+    /// under 26A428, cold cache); every later worker finds the cache and pays ~0.1 s.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the engine reports. The caller does not treat that as fatal: a failed
+    /// warm-up leaves a worker whose recognitions fail on their own, each with its own
+    /// reason, and the gate above turns any of those into *not verified*.
+    pub fn warm(&self) -> Result<(), RecogniseError> {
+        let side = WARM_SIDE;
+        let rgba = vec![0xff_u8; (side * side * 4) as usize];
+        self.recognise(
+            Pixels {
+                rgba: &rgba,
+                width: side,
+                height: side,
+                scale: 1.0,
+            },
+            &Options::default(),
+        )
+        .map(|_| ())
+    }
+}
+
 impl Recogniser for Vision {
     fn id(&self) -> EngineId {
         EngineId {

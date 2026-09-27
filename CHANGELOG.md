@@ -143,6 +143,16 @@ have the binary.)
 
 ### Fixed
 
+- **On macOS 27, redactions can be verified again.** Every redaction — in the
+  window and with `tpdf redact` — was reported as *not verified*, because the
+  text recogniser that checks the redacted areas could not start inside its
+  sandbox on macOS 27: it wanted to save its prepared models, and the sandbox
+  allows it no writes. It now prepares them before the sandbox closes, on a
+  blank image rather than on anything from your document, and the sandbox is
+  unchanged. The first redaction after installing tpdf or updating macOS
+  takes about half a minute longer while the models are prepared; later ones
+  do not. Nothing was ever reported clean that was not: the failure only ever
+  said *not verified*.
 - **A page's first character is no longer lost from the reading order.**
   When the first character on a page had no position of its own and a later
   one did, it was left out of the order the viewer reads a page in, so it

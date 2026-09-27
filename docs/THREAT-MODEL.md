@@ -2335,14 +2335,15 @@ refused** unless `--invalidate-signatures`, for `fill`'s reason; with it, the re
 signatures the copy no longer carries intact. XFA is refused before anything is asked, in
 `save.rs`'s words (`redact::XFA_REDACTION`).
 
-**Residual, and it is the gate.** On the machine this was built on (macOS 27.0, build 26A428)
-the OCR gate reads nothing: Vision refuses every image inside the OCR worker with
-`__objc2.missingError`, measured the same on an unmodified checkout of the commit before this
-one with `redact-gate-probe` (5/8), while `ocr-sandbox-probe` and `ocr-worker-probe` read a
-whole page under the same profile. So on that system every redaction --- window and tool
-alike --- is *not verified*, correctly, and `tpdf redact` exits 1 for every document it writes.
-That fails closed; it is recorded here because it means no copy is ever *verified* there until
-it is fixed (`docs/TRAPS.md`, *On macOS 27 the OCR worker's Vision refuses every image*).
+**Residual, and it was the gate --- closed 2026-09-27.** On the machine this was built on (macOS
+27.0, build 26A428) the OCR gate read nothing: Vision refused every image inside the OCR worker
+with `__objc2.missingError`, so every redaction --- window and tool alike --- was *not verified*,
+correctly, and `tpdf redact` exited 1 for every document it wrote. The cause was the profile
+refusing Vision's first-use model cache write, and the fix readies the engine before the profile
+comes down without widening it (§5.1). Measured after it: `tpdf redact` on
+`testdata/text-base14.pdf --text WWWWW` exits 0 with `verified: true` on a cold cache, and the
+same build with the warm-up removed exits 1 with the OCR reason (`docs/TRAPS.md`, *On macOS 27
+the OCR worker's Vision refuses every image*).
 
 **The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
 symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the
@@ -2817,6 +2818,42 @@ authorities that still matter:
 (deny network*)
 (deny file-write*)
 ```
+
+**On macOS 27 the engine is readied before the profile, and the profile is unchanged.**
+Measured 2026-09-27 on macOS 27.0 (26A428), M5: Vision compiles its text models on first use in
+a process and writes them to `~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`
+(three `.bundle` directories, 136 KB, about **23.4 s** of compile on a cold cache). Inside the
+profile that write is refused, and the kernel's own report --- `log stream` on
+`sender == "Sandbox"` while a cold worker ran --- names it and nothing else:
+
+```
+deny(1) file-write-create /Users/<user>/Library/Caches/<executable>
+```
+
+No mach-lookup, IOKit, sysctl or read denial appeared for the OCR worker; the profile's
+`(allow default)` already grants those. Vision then fails every image with
+`__objc2.missingError`, and the gate reports every redaction *not verified*.
+
+The remedy asks for no authority. `ocr_worker::enter_boundary` runs one recognition on a
+constant 64 x 64 blank image (`ocr_vision::Vision::warm`) **before** `apply_sandbox`, so the
+models are compiled, cached and loaded while the process may still write, and nothing the
+sandboxed process does afterwards asks to. The warm-up image is a constant --- nothing from a
+document is processed outside the boundary, and the profile still goes on before the first
+request is read. With it, a cold worker logs **no denial at all** across the seven fixtures of
+`redact-gate-probe` (8/8 each), and the boundary still refuses what it is for:
+`ocr-sandbox-probe`'s `ocr` rung, which crosses it through `enter_boundary` itself, has a file
+write and a loopback connect both refused with `PermissionDenied`. Removing the warm-up turns
+that rung and the gate red again (5/8) on a cold cache, which is the control for the claim.
+
+What was weighed and not needed: a writable per-worker cache directory (Vision's cache follows
+`CFFIXED_USER_HOME`, measured, but `HOME` and `TMPDIR` do not move it) would have added a write
+grant; no mach service needed allowing. What the warm-up costs is the pre-sandbox write itself,
+which is Vision's own behaviour in any unsandboxed process on this OS, to the cache directory
+of the executable's name --- and one recognition of a blank square per worker spawn, which
+measured no slower per save than before (warm cache: 110--120 ms per gate call against
+133--160 ms without it). The one-time compile made the first reply slower than
+`REPLY_DEADLINE`'s 30 s allows a slower Mac to be trusted with, so a worker's first reply now
+has `FIRST_REPLY_DEADLINE`, 120 s; every later reply is held to 30 s.
 
 It stays a separate **process** for a reason unrelated to authority: the first rung above is an
 engine aborting its host. Anything that can do that must not share a process with unsaved
@@ -3711,8 +3748,9 @@ which is what makes it evidence rather than a milestone.
 27. **A script that treats `tpdf redact`'s exit code 1 as success ships a copy nobody proved
     clean** (§T6.23), added 2026-09-27. The tool keeps a copy it could not verify, as the window
     does, and says so with exit 1 and every reason; what it cannot do is make a caller read
-    them. On macOS 27.0 (26A428), where the OCR gate reads nothing, *every* copy exits 1 ---
-    so a script written there that accepts 1 accepts everything. Bounded by the contract: 0 is
+    them. On macOS 27.0 (26A428), until the OCR gate was fixed on 2026-09-27 (§5.1), *every*
+    copy exited 1 --- so a script written against that build that learned to accept 1 accepts
+    everything. Bounded by the contract: 0 is
     the only code that means proved clean, the README's table says so, and the report's
     `verified` is `null`, `false` or `true`, never absent. Not closable by tpdf.
 
@@ -3748,6 +3786,10 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --example worker-prob
 swiftc -O -o /tmp/vision_probe scripts/vision_sandbox_probe.swift
 /tmp/vision_probe
 /tmp/vision_probe /tmp/prod.sb            # worker::SANDBOX_PROFILE, extracted from worker.rs
+
+# §5.1 as shipped, each rung in a fresh process with a fresh, cold Vision cache (~47 s).
+cargo run --release --manifest-path src-tauri/Cargo.toml --example ocr-sandbox-probe -- \
+    testdata/text-base14.pdf
 ```
 
 **`worker-bench` is macOS-only** and correctly so: it carries its own POSIX worker, fd passing

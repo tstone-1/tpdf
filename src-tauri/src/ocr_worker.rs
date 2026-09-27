@@ -84,6 +84,18 @@ pub const PIXELS_CAPACITY: usize = 16 * 1024 * 1024;
 /// only place it can be fixed is here, because only the parent survives it.
 pub const REPLY_DEADLINE: Duration = Duration::from_secs(30);
 
+/// How long the parent waits for a worker's **first** reply.
+///
+/// Longer than [`REPLY_DEADLINE`] because the first reply carries the engine's
+/// one-time model load. On macOS the child runs `ocr_vision::Vision::warm` before its
+/// profile comes down, and on a machine whose cache is cold that compile measured
+/// **23.4 s** (M5, macOS 27.0 26A428) --- inside thirty seconds, but not by a margin a
+/// slower Mac can be trusted to keep. A worker that ran out the shorter deadline there
+/// would be killed mid-compile, leave no cache, and do the same on every later save:
+/// a gate that never verifies anything and says only that it timed out. Every later
+/// reply is held to [`REPLY_DEADLINE`] again, so a wedged engine is still bounded.
+pub const FIRST_REPLY_DEADLINE: Duration = Duration::from_secs(120);
+
 /// What the parent asks for.
 ///
 /// The pixels are not in it --- they are in the shared mapping, and this says how
@@ -273,6 +285,9 @@ pub struct OcrWorker {
     /// Set once the process has been given up on, so a second call says why
     /// rather than waiting another deadline for a process that is gone.
     dead: Option<String>,
+    /// Whether any reply has arrived yet, which picks [`FIRST_REPLY_DEADLINE`]
+    /// or [`REPLY_DEADLINE`].
+    answered: bool,
 }
 
 impl OcrWorker {
@@ -368,6 +383,7 @@ impl OcrWorker {
             replies,
             pixels,
             dead: None,
+            answered: false,
         })
     }
 
@@ -425,6 +441,7 @@ impl OcrWorker {
             replies,
             pixels,
             dead: None,
+            answered: false,
         })
     }
 
@@ -451,7 +468,7 @@ impl OcrWorker {
     ///
     /// An image the mapping cannot hold or whose buffer does not match its own
     /// dimensions; a child that has died, answered nothing within
-    /// [`REPLY_DEADLINE`], or answered something this build cannot read; and
+    /// [`FIRST_REPLY_DEADLINE`] the first time or [`REPLY_DEADLINE`] after, or answered something this build cannot read; and
     /// whatever the engine itself reported.
     pub fn recognise(
         &mut self,
@@ -477,7 +494,12 @@ impl OcrWorker {
             return Err(self.give_up(format!("the OCR worker stopped listening: {e}")));
         }
 
-        let reply = match self.replies.recv_timeout(REPLY_DEADLINE) {
+        let deadline = if self.answered {
+            REPLY_DEADLINE
+        } else {
+            FIRST_REPLY_DEADLINE
+        };
+        let reply = match self.replies.recv_timeout(deadline) {
             Ok(Ok(line)) => line,
             Ok(Err(e)) => return Err(self.give_up(format!("the OCR worker's reply broke: {e}"))),
             Err(RecvTimeoutError::Disconnected) => {
@@ -486,7 +508,7 @@ impl OcrWorker {
             Err(RecvTimeoutError::Timeout) => {
                 let why = format!(
                     "the OCR worker did not answer within {} seconds",
-                    REPLY_DEADLINE.as_secs()
+                    deadline.as_secs()
                 );
                 let why = self.give_up(why);
                 return Err(match why {
@@ -496,6 +518,7 @@ impl OcrWorker {
             }
         };
 
+        self.answered = true;
         match serde_json::from_str::<Said>(&reply) {
             Err(e) => Err(self.give_up(format!("the OCR worker's reply did not parse: {e}"))),
             Ok(Said::Failed(why)) => Err(why),
@@ -588,16 +611,41 @@ pub fn child_main() -> ! {
 /// how one platform quietly ends up doing less.
 #[cfg(target_os = "macos")]
 fn serve() -> Result<(), String> {
-    use crate::ocr::OCR_SANDBOX_PROFILE;
-
     // SAFETY: the parent dup2'd a live descriptor to this number before exec, and
     // nothing else in this process owns it. Read-only: the child never writes
     // pixels, and a mapping it cannot write is one it cannot be made to write.
     let pixels = unsafe { Shm::from_fd(PIXELS_FD, PIXELS_CAPACITY, false)? };
 
-    crate::worker_child::apply_sandbox(OCR_SANDBOX_PROFILE)?;
+    let engine = enter_boundary()?;
 
-    serve_loop(&crate::ocr_vision::Vision, &pixels)
+    serve_loop(&engine, &pixels)
+}
+
+/// Readies the engine and puts [`crate::ocr::OCR_SANDBOX_PROFILE`] in force, in that order.
+///
+/// **Public so that `ocr-sandbox-probe` crosses the boundary through this function and not
+/// through a copy of it.** Until 2026-09-27 the probe applied the profile itself, in a process
+/// whose Vision cache an unsandboxed rung had just filled, and so it stayed green on macOS 27
+/// while every worker the gate spawned failed (`docs/TRAPS.md`, *On macOS 27 the OCR worker's
+/// Vision refuses every image*).
+///
+/// The warm-up runs on a constant blank image, never on a request, and before the profile:
+/// on macOS 27 Vision writes its compiled models on first use and the profile denies the
+/// write, which made every recognition fail. [`crate::ocr_vision::Vision::warm`] has the
+/// measurement. Its error is not fatal here --- each later recognition reports its own, and
+/// fails closed.
+///
+/// # Errors
+///
+/// The kernel refusing the profile.
+#[cfg(target_os = "macos")]
+pub fn enter_boundary() -> Result<crate::ocr_vision::Vision, String> {
+    use crate::ocr::OCR_SANDBOX_PROFILE;
+
+    let engine = crate::ocr_vision::Vision;
+    let _ = engine.warm();
+    crate::worker_child::apply_sandbox(OCR_SANDBOX_PROFILE)?;
+    Ok(engine)
 }
 
 /// Adopts the buffer, checks the containment, and answers until stdin closes.

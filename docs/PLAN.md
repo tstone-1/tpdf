@@ -15684,6 +15684,23 @@ redaction (`redact_document`'s route). The image-only fallback. Removing the inv
 signature fields rather than leaving them broken. A `--regions` rectangle in any convention but
 `sign --rect`'s.
 
+**The OCR gate on macOS 27, fixed the same day.** The kernel's sandbox log named one denial for
+the OCR worker, `file-write-create ~/Library/Caches/<executable>`: Vision on 26A428 compiles
+its text models on first use and caches them there, and `OCR_SANDBOX_PROFILE` refuses every
+write. `ocr_worker::enter_boundary` now runs one recognition of a constant blank 64 x 64 image
+before the profile comes down, so the models are loaded while the process may still write and
+the sandboxed process never asks to; the profile is unchanged. The first worker on a machine,
+and the first after each macOS update, pays a 23.4 s compile, so a worker's first reply has a
+120 s deadline (`FIRST_REPLY_DEADLINE`) and later ones keep 30 s. `ocr-sandbox-probe` was
+green throughout because its unsandboxed control rung filled the cache first; each rung now
+has a fresh home, and the `ocr` rung enters through `enter_boundary`. Measured on a cold
+cache: `redact-gate-probe` 8/8 on all seven fixtures, `ocr-sandbox-probe` 7/7, and `tpdf
+redact testdata/text-base14.pdf --text WWWWW` exits 0 with `verified: true`; with the warm-up
+removed, 5/8, 6/7 and exit 1 with the OCR reason. The other `text-base14` lines are *not
+verified* for a reason that is not the gate's --- a path object overlaps them --- which is the
+application's verdict too. So "Exit 0 has not been observed" above no longer holds on this
+machine; `tests/cli.rs` has not been re-run against it here.
+
 ### Cross-cutting
 
 OCR (feeding search, selection and redaction verification) has interfaces defined in

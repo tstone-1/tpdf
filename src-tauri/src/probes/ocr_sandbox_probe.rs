@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tpdf_lib::document::OpenDocument;
-use tpdf_lib::ocr::{Options, Pixels, Recogniser, OCR_SANDBOX_PROFILE};
+use tpdf_lib::ocr::{Options, Pixels, Recogniser};
 use tpdf_lib::ocr_vision::Vision;
+use tpdf_lib::ocr_worker::enter_boundary;
 use tpdf_lib::progressive::{self, CancelToken, RawPage, TileSpec};
 use tpdf_lib::worker::SANDBOX_PROFILE;
 use tpdf_lib::worker_child::apply_sandbox;
@@ -101,20 +102,21 @@ fn child(rung: &str, file: &Path, library: &Path, port: u16) -> ! {
         }
     };
 
-    let profile = match rung {
-        "bare" => None,
-        "ocr" => Some(OCR_SANDBOX_PROFILE),
-        "parser" => Some(SANDBOX_PROFILE),
+    // The `ocr` rung crosses the boundary through the worker's own function, warm-up and
+    // all, rather than applying the profile here: a probe that carried its own copy of the
+    // order stayed green on macOS 27 while the worker it vouched for failed every image.
+    let entered = match rung {
+        "bare" => Ok(()),
+        "ocr" => enter_boundary().map(|_| ()),
+        "parser" => apply_sandbox(SANDBOX_PROFILE),
         other => {
             eprintln!("unknown rung {other:?}");
             std::process::exit(3);
         }
     };
-    if let Some(profile) = profile {
-        if let Err(e) = apply_sandbox(profile) {
-            eprintln!("[rung {rung}] the kernel refused the profile: {e}");
-            std::process::exit(3);
-        }
+    if let Err(e) = entered {
+        eprintln!("[rung {rung}] the kernel refused the profile: {e}");
+        std::process::exit(3);
     }
 
     let answers = Answers {
@@ -291,12 +293,48 @@ impl Rung {
     }
 }
 
+/// The variable Core Foundation takes the home directory from, which is where Vision's
+/// compiled-model cache (`Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`) lands.
+///
+/// `HOME` and `TMPDIR` do not move it; this does (measured on 26A428).
+const FIXED_HOME: &str = "CFFIXED_USER_HOME";
+
+/// Runs one rung in a fresh process **with a home of its own that nothing has used**.
+///
+/// That is the state a reader's first redaction is in, and it is the state this probe could
+/// not see until 2026-09-27: every rung shared `~/Library/Caches/ocr-sandbox-probe`, the
+/// unsandboxed `bare` rung ran first and filled it, and the `ocr` rung then read a page under
+/// a profile that would have refused the very write it no longer needed --- 7/7 while every
+/// worker the redaction gate spawned failed. A fresh home per rung makes each one pay the
+/// cold compile (about 23 s on 26A428), which is the price of measuring the cold path.
 fn run_rung(rung: &str, file: &Path, library: &Path, port: u16) -> Rung {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => return Rung::Unstarted(format!("current_exe: {e}")),
     };
+    let home = std::env::temp_dir().join(format!(
+        "tpdf-ocr-sandbox-home-{}-{rung}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+    if let Err(e) = std::fs::create_dir_all(&home) {
+        return Rung::Unstarted(format!("a fresh home at {}: {e}", home.display()));
+    }
+    let rung_result = run_rung_in(&exe, &home, rung, file, library, port);
+    let _ = std::fs::remove_dir_all(&home);
+    rung_result
+}
+
+fn run_rung_in(
+    exe: &Path,
+    home: &Path,
+    rung: &str,
+    file: &Path,
+    library: &Path,
+    port: u16,
+) -> Rung {
     let out = std::process::Command::new(exe)
+        .env(FIXED_HOME, home)
         .arg("--rung")
         .arg(rung)
         .arg(file)

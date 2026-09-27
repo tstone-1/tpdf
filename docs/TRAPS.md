@@ -173,6 +173,7 @@ hop through the index.
 - A sandboxed child that agrees with its parent has shown nothing until its sandbox refuses something
 - On macOS 27 the OCR worker's Vision refuses every image, and the probes that read a whole page still pass
 - A pre-spawned spare announced its parent's exit as an error on the terminal every worker shares
+- A probe's unsandboxed control rung ran first and filled the cache its sandboxed rung was meant to find empty
 
 ## The document model: saving, structure, signatures
 - An edit reaches the file, and the writer imports the file once per position the page occupies
@@ -24833,6 +24834,26 @@ exit code to the application's verdict on the same regions, which is the claim t
 Remove any `~/Library/Caches/<name>/com.apple.e5rt.e5bundlecache` an experiment leaves behind;
 it changes what the next run measures.
 
+**Diagnosed and fixed the same day, and one sentence above was wrong.** The kernel's own report
+(`/usr/bin/log stream --style compact --predicate 'sender == "Sandbox"'` while a cold worker
+ran) names exactly one denial for the OCR worker, and it is the cache:
+`deny(1) file-write-create /Users/<user>/Library/Caches/<executable>`. Nothing else --- no
+mach-lookup, IOKit or sysctl --- because `(allow default)` grants those. And the claim that
+`redact-gate-probe` "still failed with a warm cache" did not reproduce: with the cache under
+`redact-gate-probe` warm and no fix at all it is **8/8**, in ~150 ms a call. Whatever that run
+warmed, it was not the cache the worker reads, which is keyed by the *executable's* name.
+
+The fix asks for no authority: `ocr_worker::enter_boundary` runs `Vision::warm`, one
+recognition of a constant 64 x 64 blank image, **before** `apply_sandbox`. A blank image is
+enough --- it compiles all three model bundles a page of text needs --- so nothing a document
+supplied is processed outside the boundary. The first worker on a machine pays the compile
+(23.4 s on an M5, cold); every later one reads the cache in about 0.1 s. What Vision on macOS 27
+needs, then, is **one write, once per executable name and OS build, to its own cache
+directory** --- and a process that has already compiled its models in memory never asks for it
+again. The cache is keyed by the OS build (`e5bundlecache/26A428/...`), so every macOS update
+makes it cold again; a fix that relied on the cache already being there would have failed on
+the first redaction after each update.
+
 ### A pre-spawned spare announced its parent's exit as an error on the terminal every worker shares
 
 2026-09-27. `tpdf redact` is the first command to hold a `render::RenderService`, and every
@@ -24870,3 +24891,25 @@ refused), and a search of the written, unfilled file for every `--text` and `--p
 black fill found* --- stays true of it. The general form: a verification defined by what an
 operation *did* cannot see what it was *asked* to do and did not; check the request as well as
 the result.
+
+### A probe's unsandboxed control rung ran first and filled the cache its sandboxed rung was meant to find empty
+
+2026-09-27. `ocr-sandbox-probe` ran three rungs as three fresh processes --- the right shape ---
+and stayed 7/7 on macOS 27 while every OCR worker the redaction gate spawned failed. Fresh
+processes were not fresh machines: Vision caches its compiled models on disk under the
+executable's name, the `bare` rung ran first, unsandboxed, and wrote that cache, and the `ocr`
+rung then found it and never made the write its profile refuses. The control rung was changing
+the state the measured rung ran in.
+
+Two changes made it see the defect, and both generalise. Each rung now gets
+`CFFIXED_USER_HOME` pointing at a fresh empty directory, so the state is the reader's first
+run, not the probe's last; and the `ocr` rung crosses the boundary through
+`ocr_worker::enter_boundary`, the worker's own function, rather than calling `apply_sandbox`
+itself --- a probe carrying its own copy of "how the worker gets contained" measures the copy.
+Proved in both directions: with the worker's warm-up removed the probe is 6/7 with the gate's
+exact error, and restored it is 7/7.
+
+Before trusting any process-isolated probe of a platform library, ask what the library leaves
+**on disk** between processes --- caches, compiled shaders, font registries, preference
+domains --- and which rung writes it first. Isolation by process says nothing about isolation
+by filesystem, and a probe that runs its control first is the most likely to be warmed by it.

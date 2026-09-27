@@ -103,6 +103,12 @@ use std::fmt;
 /// Vision does not run without them. Network and writes stay denied, which is
 /// what a recogniser has no business doing either way.
 ///
+/// **Vision on macOS 27 does want one write**, to cache its compiled models on first use,
+/// and this profile refused it until 2026-09-27, failing every recognition. It is not
+/// granted here: `ocr_worker::enter_boundary` loads the models before the profile comes
+/// down, so the sandboxed process never asks. `docs/THREAT-MODEL.md` §5.1 has the
+/// measurement.
+///
 /// This is deliberately a *different constant* from
 /// [`crate::worker::SANDBOX_PROFILE`] rather than a relaxation flag on it. One
 /// constant standing for two policies is already a trap in `docs/TRAPS.md`, and

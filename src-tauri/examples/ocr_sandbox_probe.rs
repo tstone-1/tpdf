@@ -31,6 +31,12 @@
 //! works reports a perfectly contained ladder, and a `ConnectionRefused` reads exactly like a
 //! sandbox denial --- which is why the parent holds a real listener open and passes its port,
 //! so that an unsandboxed rung connects rather than being refused.
+//!
+//! **Each rung also gets a home of its own that nothing has used** (`CFFIXED_USER_HOME`), and
+//! the `ocr` rung crosses the boundary through `ocr_worker::enter_boundary`, the worker's own
+//! function. Without the first, the `bare` rung filled Vision's on-disk model cache and the
+//! `ocr` rung read a page on macOS 27 that every real worker failed on; without the second, the
+//! probe measured its own copy of the worker's order. `docs/TRAPS.md` has both.
 
 // macOS only, and it fails to *compile* off it rather than doing nothing: `ocr_vision` and
 // `apply_sandbox` are both macOS-gated. The gate goes on a module and never on the crate

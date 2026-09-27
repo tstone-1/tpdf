@@ -3250,6 +3250,25 @@ hand since 2026-07-31, and it measures something that one did not: the rung that
 allowed reads and said nothing about **writes**, while the constant that shipped denies
 `file-write*` and `network*`.
 
+**7/7 again on macOS 27.0 (26A428), 2026-09-27, in 47 s --- and it was 7/7 there before the
+fix too, while every redaction on that machine was *not verified*.** Two things made it blind,
+and both are changed:
+
+- **Every rung shared one Vision cache.** Vision on 26A428 compiles its models on first use and
+  caches them under `~/Library/Caches/<executable>/`; the unsandboxed `bare` rung ran first and
+  filled `ocr-sandbox-probe`'s, so the `ocr` rung never needed the write its profile refuses.
+  Each rung now runs with `CFFIXED_USER_HOME` set to a fresh, empty directory the parent
+  creates and removes, which is where Core Foundation --- and so Vision's cache --- takes the
+  home from (`HOME` and `TMPDIR` do not move it; measured). Each rung therefore pays the cold
+  compile, about 23 s, which is where the 47 s goes.
+- **The `ocr` rung applied the profile itself.** It now crosses the boundary through
+  `ocr_worker::enter_boundary`, the function the worker's `serve` calls, so a change to the
+  worker's order is a change to what this measures.
+
+The control for both: with the worker's warm-up line removed, this probe is **6/7**, `ocr:
+vision still reads the page` failing with `__objc2.missingError` --- the gate's own failure,
+which the old probe could not produce.
+
 **The parent holds a real listener open and passes its port**, and that is not a nicety:
 `ConnectionRefused` and a sandbox denial are the same shape from a client's side, so without
 something to connect to every rung reports a refusal and the row measures nothing. The `bare`
@@ -3285,6 +3304,11 @@ It runs on both CI legs, at **12.7 s** in the debug build the `bins` gate leaves
 |---|---|
 | `text-base14`, `text-marked`, `rotated`, `links`, `columns`, `encodings` | 12/12 |
 | `vector-heavy` | 0/0, 1 skipped — A0 at scale 2 is 128 MB against a 16 MB buffer |
+
+**It measures a warm engine and says nothing about the cold path.** The in-process baseline runs
+Vision unsandboxed before the worker is asked anything, so on macOS it fills the executable's
+model cache first; it stayed 12/12 on macOS 27.0 while every cold worker failed. The cold path
+belongs to `ocr-sandbox-probe` above, which is built to see it; this one measures the handover.
 
 The check **set** is the invariant, not the total: on Windows the *engine is mapped from launch*
 row is absent, because it is a statement about static linkage — `objc2-vision` links Vision,
@@ -3622,11 +3646,15 @@ needs a real document, so it belongs after the step that writes one.
 | `columns`, `text-base14`, `text-marked`, `rotated`, `links`, `text-cid`, `outline-simple` | 8/8 |
 | `encodings` | 0/0, 1 skipped — one text object is every word on the page, so no control survives |
 
-**On macOS 27.0 (26A428) this table does not hold: `text-base14` is 5/8**, the three rows that
-need the engine to read, with `Vision refused the image ... __objc2.missingError` for every
-region --- measured 2026-09-27 on an unmodified export of `3bd81a3` as well as on the tree after
-it, so it is the platform. `docs/TRAPS.md`, *On macOS 27 the OCR worker's Vision refuses every
-image, and the probes that read a whole page still pass*.
+**Re-measured on macOS 27.0 (26A428), 2026-09-27: the seven fixtures are 8/8 each and
+`encodings` is 0/0 with its one skip, with a cold Vision cache** (`~/Library/Caches/redact-gate-probe`
+removed first; the first fixture run pays the ~23 s model compile, later ones take about
+0.4 s). Before that day's fix `text-base14` was 5/8 there, the three rows that need the engine
+to read, with `Vision refused the image ... __objc2.missingError` for every region; with the
+worker's warm-up line removed and the cache cold it is 5/8 again. With a *warm* cache and no
+warm-up it is 8/8, which is why a machine that had once run Vision unsandboxed under the same
+executable name could not show the defect. `docs/TRAPS.md`, *On macOS 27 the OCR worker's
+Vision refuses every image, and the probes that read a whole page still pass*.
 
 **`columns` ran 0/0 until 2026-08-27 and it is the fixture that matters most.** Its longest
 word is `alpha`, five characters, and the target filter was six — so the one corpus that
