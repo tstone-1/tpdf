@@ -222,6 +222,11 @@ pub enum Request {
     PrepareSignature {
         /// Seconds since the epoch.
         at: u64,
+        /// A visible signature's page, rectangle, name and image; `None` for an
+        /// invisible one. A rectangle and pixels, like a mark in a `Plan`: still
+        /// nothing the worker could act on outside the document it holds.
+        #[serde(default)]
+        visible: Option<Box<crate::sign_prepare::Visible>>,
     },
     /// Rewrite the mapped document under a plan, into the handed-over file.
     ///

@@ -45,6 +45,34 @@ earlier ones, which `sign-probe` shows pyHanko agreeing with. Unsaved edits, enc
 documents and DocMDP `/P 1` are refused. `docs/PLAN.md` §9 has the decisions and the
 measurements; `BUILD.md` has `sign-probe` and the keystore tests.
 
+**Whether the OS trusts a signer (2026-09-27)** is asked in the worker, inside
+`docinfo::scan_from`, of every signature whose integrity verdict is intact or weak, and
+nowhere else: `trust.rs` hands the signer's certificate and the rest of the signature's set,
+re-encoded and bounded, to the system store (`SecTrust` on macOS, `CertGetCertificateChain`
+on Windows) with the network off, and `judge` reads the answer --- now; again at the
+certificate's own last or first moment when it is out of date; then its extended key usage
+against `sign_cms::DOCUMENT_PURPOSES`. `Signature::trust` carries it; `integrity.ts`'s
+`trustRow` words it, naming the store and saying revocation was not checked;
+`properties.ts` puts it directly under the integrity row, whose "owner not checked" sentence
+it then replaces. The store construction and the offline flags are shared with
+`keystore.rs`'s signing chain through `trust::platform`. Tests never touch a real store:
+`Anchors::Only` gives one evaluation in-memory roots. `signature-probe --mode trust` is the
+real-store instrument and the sandbox measurement; `docs/THREAT-MODEL.md` §T6.22 the
+residuals.
+
+**A visible appearance (2026-09-27)** is chosen in the same chooser, invisible by default. The
+placement reuses the viewer's crop drag as `ArmedTool` `place` (`Viewer.armPlacement`, one
+rectangle, answered `null` by Escape, another tool or the viewer going); `signing.ts` reads the
+saved visual signature first (`loadSignature`, none meaning words alone) and sends page id,
+display rectangle and pixels with `sign_document`. The app process reads the signer's name from
+the certificate and maps the page id to the file's page; the **worker** checks both and writes
+the `/AP` form, image, soft mask and Helvetica into the revision it signs
+(`sign_prepare/appearance.rs`, through `save::Upright` on a turned page), so the appearance is
+covered by the signature. Refused: names outside Latin-1 (never substituted), rectangles off the
+page or under 24 points a side, and any certified document, where pyHanko reads a new visible
+field as a DocMDP violation. PDFKit does not rasterise a `/Sig` widget on a turned page;
+`sign-probe --visible` checks that page's appearance through a stamp copy.
+
 AcroForm filling uses `forms.rs` inside the document worker, with shared field
 answers in the edit journal and `Plan.forms`. Every save carrying answers takes
 an explicit-appearance rewrite; ordinary save, copy, print and raster redaction

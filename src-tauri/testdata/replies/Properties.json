@@ -99,6 +99,11 @@
         "why": "budget",
         "digest": "SHA-256",
         "method": "ECDSA P-256"
+      },
+      "trust": {
+        "standing": "untrusted",
+        "why": "root",
+        "store": "mac"
       }
     }
   ],

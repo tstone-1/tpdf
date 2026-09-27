@@ -32,17 +32,39 @@
 //! Without those, three readers agreeing would say nothing: a reader that
 //! answered "fine" to everything would agree too.
 //!
+//! ## `--visible`
+//!
+//! Signs through `sign_prepare::prepare_visible` instead, with a rectangle on
+//! page 1 (`--rect left,top,right,bottom`, display points; `40,40,280,120` by
+//! default) and a synthetic signature image, so the appearance, its image and
+//! its font are inside the signed revision. Every check above still runs over
+//! that file --- the appearance must not cost any reader its verdict --- and two
+//! renderers that share no code are asked **where the ink went**:
+//!
+//! - **PDFium**, through `progressive::render` as the viewer renders a tile,
+//!   and **PDFKit**, through `scripts/sign_visible_pdfkit.swift` (macOS only;
+//!   elsewhere it is reported as not run, never as a pass). Each renders the
+//!   original and the signed file at 2 px per point and counts the pixels that
+//!   changed: inside the rectangle there must be ink --- at least 2% of it ---
+//!   and outside it, past a one-pixel antialiasing band, none at all.
+//! - **The control**: the same document signed *invisibly*, rendered by
+//!   PDFium, must differ from the original by no pixel. Without it, "the
+//!   signed page differs inside the rectangle" could be a renderer that
+//!   differs everywhere.
+//!
 //! Usage:
-//!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384]
+//!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384] [--visible [--rect l,t,r,b]]
 //!
 //! Needs `openssl` (3.x) and `uv`. Either missing is `[FAIL]`, never a pass.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tpdf_lib::document::OpenDocument;
 use tpdf_lib::integrity::Verdict;
+use tpdf_lib::progressive::{self, Placement, RawBitmap};
 use tpdf_lib::sign_cms::{self, Key, KeyKind};
-use tpdf_lib::sign_prepare;
+use tpdf_lib::sign_prepare::{self, Visible};
 
 struct Report {
     passed: usize,
@@ -125,13 +147,268 @@ fn main() {
             std::process::exit(2);
         }
     };
-    match probe(&input, &scratch, kind) {
+    let rect = match args
+        .iter()
+        .position(|a| a == "--rect")
+        .map(|at| args.get(at + 1))
+    {
+        None => [40.0, 40.0, 280.0, 120.0],
+        Some(Some(text)) => {
+            let numbers: Vec<f32> = text
+                .split(',')
+                .filter_map(|n| n.trim().parse().ok())
+                .collect();
+            match numbers.as_slice() {
+                [l, t, r, b] => [*l, *t, *r, *b],
+                _ => {
+                    eprintln!("--rect needs four numbers: left,top,right,bottom");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some(None) => {
+            eprintln!("--rect needs a value");
+            std::process::exit(2);
+        }
+    };
+    let visible = args.iter().any(|a| a == "--visible").then(|| Visible {
+        page: 0,
+        rect,
+        name: "tpdf sign-probe".into(),
+        image: Some(raster()),
+    });
+    match probe(&input, &scratch, kind, visible.as_ref()) {
         Ok(true) => {}
         Ok(false) => std::process::exit(1),
         Err(e) => {
             println!("[FAIL] {e}");
             std::process::exit(2);
         }
+    }
+}
+
+/// A 64 x 32 signature raster: a dark blue bar across the middle, transparent
+/// elsewhere, so the image has both ink and the soft mask to honour.
+fn raster() -> tpdf_lib::signature::Image {
+    let (width, height) = (64u32, 32u32);
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for _ in 0..width {
+            if (12..20).contains(&y) {
+                rgba.extend_from_slice(&[20, 30, 120, 255]);
+            } else {
+                rgba.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    tpdf_lib::signature::Image {
+        width,
+        height,
+        rgba,
+    }
+}
+
+/// Page 1 of `file`, rendered at `scale` pixels per point by PDFium as the
+/// viewer renders a tile: RGBA pixels, width, height.
+fn render(
+    bindings: progressive::Bindings,
+    file: &Path,
+    scale: f32,
+) -> Result<(Vec<u8>, u32, u32), String> {
+    let document = OpenDocument::open(bindings, file, None)?;
+    let page = document.page(0)?;
+    let width = (page.width_pt() * scale).round() as u16;
+    let height = (page.height_pt() * scale).round() as u16;
+    let mut buffer = vec![0u8; width as usize * height as usize * 4];
+    let mut bitmap = RawBitmap::borrowed(bindings, &mut buffer, width, height)?;
+    let placement = Placement::tile(&page, scale, 0, 0, 0);
+    let progress = progressive::render(
+        &mut bitmap,
+        &page,
+        placement,
+        None,
+        &progressive::CancelToken::new(),
+    );
+    if !progress.outcome.is_done() {
+        return Err(format!("render did not complete: {:?}", progress.outcome));
+    }
+    Ok((
+        bitmap.pixels().to_vec(),
+        u32::from(width),
+        u32::from(height),
+    ))
+}
+
+/// Changed pixels between two renders: inside `rect` (display points), in the
+/// one-pixel band round it, and everywhere else.
+fn changed(
+    before: &[u8],
+    after: &[u8],
+    width: u32,
+    height: u32,
+    rect: [f32; 4],
+    scale: f32,
+) -> (usize, usize, usize) {
+    let edge = |v: f32| (v * scale).round() as i64;
+    let (x0, y0, x1, y1) = (edge(rect[0]), edge(rect[1]), edge(rect[2]), edge(rect[3]));
+    let (mut inside, mut band, mut outside) = (0, 0, 0);
+    for y in 0..i64::from(height) {
+        for x in 0..i64::from(width) {
+            let at = ((y * i64::from(width) + x) * 4) as usize;
+            let moved = (0..3).any(|c| before[at + c].abs_diff(after[at + c]) > 8);
+            if !moved {
+                continue;
+            }
+            if x >= x0 && x < x1 && y >= y0 && y < y1 {
+                inside += 1;
+            } else if x >= x0 - 1 && x <= x1 && y >= y0 - 1 && y <= y1 {
+                band += 1;
+            } else {
+                outside += 1;
+            }
+        }
+    }
+    (inside, band, outside)
+}
+
+/// The two renderers' verdicts on where a visible signature's ink went.
+fn where_the_ink_went(
+    report: &mut Report,
+    input: &Path,
+    out: &Path,
+    invisible: &Path,
+    visible: &Visible,
+) -> Result<(), String> {
+    const SCALE: f32 = 2.0;
+    let area =
+        ((visible.rect[2] - visible.rect[0]) * SCALE * (visible.rect[3] - visible.rect[1]) * SCALE)
+            as usize;
+    let library = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../vendor/pdfium")
+        .join(tpdf_lib::PDFIUM_SUBDIR);
+    let bindings = progressive::bindings_of(progressive::bind(&library)?);
+    let (before, width, height) = render(bindings, input, SCALE)?;
+    let (after, aw, ah) = render(bindings, out, SCALE)?;
+    if (width, height) != (aw, ah) {
+        return Err(format!("PDFium renders {width}x{height} and {aw}x{ah}"));
+    }
+    let (inside, band, outside) = changed(&before, &after, width, height, visible.rect, SCALE);
+    println!(
+        "PDFium: {inside} changed px inside ({area} px), {band} on the edge, {outside} outside"
+    );
+    report.check(
+        "PDFium: the appearance puts ink inside the rectangle",
+        inside * 50 >= area,
+        &format!("{inside} of {area} px"),
+    );
+    report.check(
+        "PDFium: and none outside it",
+        outside == 0,
+        &format!("{outside} px changed outside"),
+    );
+    let (control, _, _) = render(bindings, invisible, SCALE)?;
+    let (a, b, c) = changed(&before, &control, width, height, visible.rect, SCALE);
+    report.check(
+        "control, invisible signature: PDFium draws the page unchanged",
+        a + b + c == 0,
+        &format!("{a} inside, {b} edge, {c} outside"),
+    );
+
+    if !cfg!(target_os = "macos") {
+        println!("[SKIP] PDFKit: not run, it needs macOS");
+        return Ok(());
+    }
+    let written = std::fs::read(out).map_err(|e| e.to_string())?;
+    let turns = {
+        let document = lopdf::Document::load_mem(&written).map_err(|e| e.to_string())?;
+        let first = *tpdf_lib::pagetree::ordered_pages(&document)
+            .first()
+            .ok_or("the signed file has no page")?;
+        tpdf_lib::pagetree::displayed_page(&document, first).turns
+    };
+    let [inside, band, outside, area] = pdfkit(input, out, visible.rect)?;
+    println!(
+        "PDFKit: {inside} changed px inside ({area} px), {band} on the edge, {outside} outside"
+    );
+    if turns == 0 {
+        report.check(
+            "PDFKit: the appearance puts ink inside the rectangle",
+            inside * 50 >= area,
+            &format!("{inside} of {area} px"),
+        );
+        report.check(
+            "PDFKit: and none outside it",
+            outside == 0,
+            &format!("{outside} px changed outside"),
+        );
+        return Ok(());
+    }
+    // A turned page. PDFKit's rasteriser draws no `/Sig` widget there at all
+    // --- measured: the same appearance under `/Subtype /Stamp` is drawn, a
+    // `/Tx` widget is drawn, a `/Sig` widget is not, and neither `/MK /R` nor
+    // NoRotate changes that (`docs/TRAPS.md`). So the limitation is asserted,
+    // to expire loudly if PDFKit changes, and the appearance itself is checked
+    // through the one door PDFKit leaves open: the same file with the new
+    // widget's subtype renamed, byte for byte the same length.
+    report.check(
+        "PDFKit: draws no /Sig widget on a turned page (a PDFKit limitation; \
+         if this fails, it now does, and the check above applies instead)",
+        inside + band + outside == 0,
+        &format!("{inside} inside, {band} edge, {outside} outside"),
+    );
+    let original = std::fs::read(input).map_err(|e| e.to_string())?;
+    let tail = &written[original.len()..];
+    let needle: &[u8] = b"/Subtype/Widget";
+    let at: Vec<usize> = tail
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, w)| *w == needle)
+        .map(|(at, _)| at)
+        .collect();
+    let [at] = at[..] else {
+        return Err(format!(
+            "the new revision spells /Subtype/Widget {} times",
+            at.len()
+        ));
+    };
+    let mut stamped = written.clone();
+    let from = original.len() + at;
+    stamped[from..from + needle.len()].copy_from_slice(b"/Subtype/Stamp ");
+    let stamped_path = out.with_extension("stamp.pdf");
+    std::fs::write(&stamped_path, &stamped).map_err(|e| e.to_string())?;
+    let [inside, band, outside, area] = pdfkit(input, &stamped_path, visible.rect)?;
+    println!("PDFKit, as a stamp: {inside} changed px inside ({area} px), {band} on the edge, {outside} outside");
+    report.check(
+        "PDFKit, the same appearance as a stamp: ink inside the rectangle",
+        inside * 50 >= area,
+        &format!("{inside} of {area} px"),
+    );
+    report.check(
+        "PDFKit, the same appearance as a stamp: none outside it",
+        outside == 0,
+        &format!("{outside} px changed outside"),
+    );
+    Ok(())
+}
+
+/// `scripts/sign_visible_pdfkit.swift` on page 1: changed pixels inside the
+/// rectangle, on its edge, outside it, and the rectangle's area.
+fn pdfkit(input: &Path, out: &Path, rect: [f32; 4]) -> Result<[usize; 4], String> {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/sign_visible_pdfkit.swift");
+    let [l, t, r, b] = rect.map(|v| v.to_string());
+    let said = run(Command::new("swift")
+        .arg(&script)
+        .arg(input)
+        .arg(out)
+        .arg("0")
+        .args([l, t, r, b]))?;
+    let numbers: Vec<usize> = said
+        .split_whitespace()
+        .filter_map(|word| word.parse().ok())
+        .collect();
+    match numbers[..] {
+        [inside, band, outside, area] => Ok([inside, band, outside, area]),
+        _ => Err(format!("PDFKit's check said {said:?}")),
     }
 }
 
@@ -240,7 +517,12 @@ fn openssl_verifies(bytes: &[u8], range: [u64; 4], scratch: &Path) -> Result<(),
     .map(|_| ())
 }
 
-fn probe(input: &Path, scratch: &Path, kind: &str) -> Result<bool, String> {
+fn probe(
+    input: &Path,
+    scratch: &Path,
+    kind: &str,
+    visible: Option<&Visible>,
+) -> Result<bool, String> {
     std::fs::create_dir_all(scratch).map_err(|e| e.to_string())?;
     let mut report = Report {
         passed: 0,
@@ -258,7 +540,10 @@ fn probe(input: &Path, scratch: &Path, kind: &str) -> Result<bool, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
 
-    let unsigned = sign_prepare::prepare(original.clone(), now, None)?;
+    let unsigned = match visible {
+        None => sign_prepare::prepare(original.clone(), now, None)?,
+        Some(visible) => sign_prepare::prepare_visible(original.clone(), now, None, visible)?,
+    };
     let range = unsigned.range;
     let field = unsigned.field.clone();
     let bytes = sign_cms::finish(original.clone(), unsigned.clone(), &certificate, &[], &key)?;
@@ -316,7 +601,17 @@ fn probe(input: &Path, scratch: &Path, kind: &str) -> Result<bool, String> {
             &entry.to_string(),
         );
     }
-    println!("pyHanko's summary:\n{}", pyhanko_summary(&out).trim_end());
+    let summary = pyhanko_summary(&out);
+    println!("pyHanko's summary:\n{}", summary.trim_end());
+    // The difference analysis, which `--json` does not carry: every signature
+    // line must say its DocMDP is satisfied. A new visible field after a
+    // certification is where this went red (`docs/TRAPS.md`).
+    let judged: Vec<&str> = summary.lines().filter(|l| l.contains(" intact=")).collect();
+    report.check(
+        "pyHanko: every signature's difference analysis is satisfied (docmdp=ok)",
+        judged.len() == theirs.len() && judged.iter().all(|l| l.contains("docmdp=ok")),
+        summary.trim_end(),
+    );
     let verified = openssl_verifies(&written, range, scratch);
     report.check(
         "openssl cms -verify -binary -noverify accepts the signature",
@@ -437,6 +732,22 @@ fn probe(input: &Path, scratch: &Path, kind: &str) -> Result<bool, String> {
         openssl_verifies(&altered, range, scratch).is_err(),
         "openssl accepted a changed document",
     );
+
+    // ------------------------------------------- where a visible one's ink went
+    if let Some(visible) = visible {
+        let invisible = sign_cms::finish(
+            original.clone(),
+            sign_prepare::prepare(original.clone(), now, None)?,
+            &certificate,
+            &[],
+            &key,
+        )?;
+        let invisible_path = scratch.join(format!("{stem}-invisible.pdf"));
+        std::fs::write(&invisible_path, &invisible).map_err(|e| e.to_string())?;
+        if let Err(why) = where_the_ink_went(&mut report, input, &out, &invisible_path, visible) {
+            report.check("the renderers ran", false, &why);
+        }
+    }
 
     println!("\n{} passed, {} failed", report.passed, report.failed);
     Ok(report.failed == 0 && report.passed > 0)

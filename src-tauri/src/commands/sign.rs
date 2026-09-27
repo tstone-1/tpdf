@@ -13,8 +13,49 @@
 use std::path::Path;
 
 use super::{await_reply, outside_of, reply_channel};
+use crate::docmodel::PageSource;
 use crate::render::RenderService;
-use crate::{edits, keystore, save, sign_cms};
+use crate::{edits, keystore, save, sign_cms, sign_prepare};
+
+/// Where the reader placed a visible signature, as the frontend sends it.
+///
+/// `page` is the model's page id --- what every page-level command carries ---
+/// and `rect` the viewer's display-space rectangle on it. The name the
+/// appearance draws is **not** here: it is read from the certificate, in this
+/// process, so the words under the signature are the ones the certificate says.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Placement {
+    /// The page's id, `PageView::id`.
+    pub page: u64,
+    /// `[left, top, right, bottom]`, points, in the page's display space.
+    pub rect: [f32; 4],
+    /// The reader's saved visual signature, when they have one.
+    pub image: Option<crate::signature::Image>,
+}
+
+/// The file's page number for a page id, in a plan with nothing unsaved.
+///
+/// # Errors
+///
+/// The id is not a page of the document, or it names a page tpdf made or
+/// imported --- which cannot happen once unsaved edits are refused, and is
+/// refused rather than guessed at if it ever does.
+pub fn baseline_page(plan: &edits::Plan, id: u64) -> Result<u32, String> {
+    match plan
+        .pages
+        .iter()
+        .find(|view| view.id == id)
+        .map(|view| &view.source)
+    {
+        Some(PageSource::Baseline(page)) => Ok(*page),
+        Some(_) => Err(
+            "the page chosen for the signature is not a page of the file on disk \
+                        --- save the document and sign again"
+                .into(),
+        ),
+        None => Err("the page chosen for the signature is no longer in the document".into()),
+    }
+}
 
 /// Seconds since the epoch, now.
 fn now() -> u64 {
@@ -50,6 +91,10 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
 ///
 /// The OS may show its own prompt while signing --- keychain access, a smart
 /// card's PIN. That is the OS asking, and tpdf never sees the answer.
+// Eight because a Tauri command's arguments are its IPC shape: three are the
+// states Tauri injects, and bundling the five the frontend sends into a struct
+// would change `ipc.ts`'s mirror for no reader's benefit.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn sign_document(
     app: tauri::AppHandle,
@@ -59,6 +104,7 @@ pub async fn sign_document(
     source: String,
     identity: String,
     path: String,
+    placement: Option<Placement>,
 ) -> Result<sign_cms::Signed, String> {
     sign_cms::refuse_unsaved(edits.state(doc)?.dirty)?;
     let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
@@ -75,8 +121,32 @@ pub async fn sign_document(
     // The worker's half, first: if the document cannot be signed at all ---
     // encrypted, certified against any change --- the reader hears that before
     // the OS asks them for anything.
+    //
+    // A visible signature needs the signer's name first, to draw it. It is read
+    // from the certificate the store holds, which asks the OS for nothing but
+    // the certificate --- the key is not touched until the value is made.
+    let at = now();
+    let visible = match placement {
+        None => None,
+        Some(placement) => {
+            let page = baseline_page(&edits.plan(doc)?, placement.page)?;
+            let wanted = identity.clone();
+            let name = tauri::async_runtime::spawn_blocking(move || {
+                let identity = keystore::find(&wanted)?;
+                sign_cms::usable(&identity.certificate, at).map(|offer| offer.subject)
+            })
+            .await
+            .map_err(|e| format!("the certificate search did not run: {e}"))??;
+            Some(sign_prepare::Visible {
+                page,
+                rect: placement.rect,
+                name,
+                image: placement.image,
+            })
+        }
+    };
     let (reply, rx) = reply_channel();
-    service.prepare_signature(doc, now(), reply);
+    service.prepare_signature(doc, at, visible, reply);
     let unsigned = await_reply("sign_document", rx).await?;
 
     let checking = outside_of(&app, service.backend());

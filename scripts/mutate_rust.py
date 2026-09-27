@@ -214,6 +214,11 @@ FILTERS = [
     "sign_prepare::",
     "sign_cms::",
     "keystore::",
+    # Added 2026-09-27 with the trust standing, in the same edit as its
+    # mutations. `docinfo::` is already here through `tests::`, which is the
+    # reliance the notes above refuse; the wiring test lives there too.
+    "trust::",
+    "docinfo::",
 ]
 
 
@@ -10654,9 +10659,7 @@ MUTATIONS += [
         # which is the path the dialog takes --- so this is caught there.
         "docinfo: compute the integrity verdict and drop it",
         "src/docinfo.rs",
-        """    out.integrity = Some(integrity_of(
-        document, sig, bytes, &strict, &out.kind, budget,
-    ));""",
+        "    out.integrity = Some(integrity);",
         "",
         "an_untouched_signature_is_intact",
     ),
@@ -10957,6 +10960,307 @@ MUTATIONS += [
         "            KeyKind::Rsa(_) => Algorithm::RSASignatureDigestPKCS1v15Raw,",
         "the_os_signs_a_revision_that_the_verifier_calls_intact",
         only_on="macos",
+    ),
+]
+
+
+# --- whether an issuer the OS trusts vouches for the signer -------------------
+#
+# `trust.rs`, 2026-09-27. `judge` is one pure function over evaluations, so most
+# of these are aimed at the order of its questions and caught both by a
+# scripted test and by the platform test that reaches the same branch through
+# `SecTrust`. The platform ones are macOS only: the code under them is, and the
+# Windows chain engine has not yet run anywhere (`docs/PLAN.md`, Phase 6).
+MUTATIONS += [
+    Mutation(
+        # Never ask again inside the signer's dates: an expired certificate
+        # reads as a chain that failed, with its dates as the reason.
+        "trust: never re-ask an expired certificate inside its dates",
+        "src/trust.rs",
+        "    } else if now > until || now < from {",
+        "    } else if false {",
+        "a_certificate_that_has_expired_since_reads_as_expired",
+    ),
+    Mutation(
+        # Re-ask every failed chain at another moment, in its dates or not: a
+        # chain failing now could then pass then and read as something else.
+        "trust: re-ask a certificate that is in its dates",
+        "src/trust.rs",
+        "    } else if now > until || now < from {",
+        "    } else if true {",
+        "a_certificate_in_its_dates_is_asked_about_once",
+    ),
+    Mutation(
+        # Re-ask at the present moment rather than the certificate's last one,
+        # which is asking the same question twice.
+        "trust: re-ask an expired certificate now rather than at its end",
+        "src/trust.rs",
+        "        let at = now.clamp(from, until);",
+        "        let at = now;",
+        "an_expired_certificate_is_asked_about_at_its_own_last_moment",
+    ),
+    Mutation(
+        # Call a certificate not yet in force expired.
+        "trust: read every out-of-date certificate as expired",
+        "src/trust.rs",
+        "        let standing = if now > until {",
+        "        let standing = if true {",
+        "a_certificate_not_yet_in_force_reads_as_not_yet_valid",
+    ),
+    Mutation(
+        # Report the dates of a certificate nobody vouched for: "expired" on a
+        # chain that was never trusted, which reads as nearly fine.
+        "trust: report the dates of an unvouched certificate",
+        "src/trust.rs",
+        "        (standing, second)",
+        "        (standing, Evaluation { passed: true, ..second })",
+        "an_expired_certificate_nobody_vouched_for_is_untrusted_not_expired",
+    ),
+    Mutation(
+        # Never ask what the certificate was issued for.
+        "trust: trust a web server's certificate for signing",
+        "src/trust.rs",
+        "    if !purpose {",
+        "    if false {",
+        "a_certificate_issued_only_for_web_servers_is_not_trusted_for_signing",
+    ),
+    Mutation(
+        # The same rule through the scripted path, so it is not left to one OS.
+        "trust: accept every extended key usage",
+        "src/trust.rs",
+        "            crate::sign_cms::DOCUMENT_PURPOSES.contains(&purpose.to_string().as_str())",
+        "            !purpose.to_string().is_empty()",
+        "the_purpose_is_asked_of_a_trusted_chain_and_an_expired_one",
+    ),
+    Mutation(
+        # Drop the reason from an untrusted standing.
+        "trust: say not trusted without saying why",
+        "src/trust.rs",
+        "        return answer(Standing::Untrusted, Some(evaluation.failure));",
+        "        return answer(Standing::Untrusted, None);",
+        "a_standing_that_is_not_trusted_says_why",
+    ),
+    Mutation(
+        # Read a trust API that could not run as a chain it refused: tpdf's
+        # failure reported as a fact about the document.
+        "trust: call an evaluation that could not run untrusted",
+        "src/trust.rs",
+        """    let first = match evaluate(now) {
+        Ok(evaluation) => evaluation,
+        Err(_) => return Trust::unchecked(Doubt::Unavailable),""",
+        """    let first = match evaluate(now) {
+        Ok(evaluation) => evaluation,
+        Err(_) => return answer(Standing::Untrusted, Some(Doubt::Rejected)),""",
+        "an_evaluation_that_could_not_run_is_unchecked_never_untrusted",
+    ),
+    Mutation(
+        # Offer the signer alone: the intermediate the signature carries is
+        # never a candidate, and the chain stops short.
+        "trust: leave the signature's other certificates out",
+        "src/trust.rs",
+        "            others.push(der);",
+        "            drop(der);",
+        "a_blob_is_read_for_its_signer_and_the_rest_of_its_set",
+    ),
+    Mutation(
+        "trust: hand the OS a set of any size",
+        "src/trust.rs",
+        "    if all.len() > MAX_CERTIFICATES {",
+        "    if false {",
+        "a_set_larger_than_the_bound_is_not_handed_to_the_os",
+    ),
+    Mutation(
+        # Ignore the test anchors: every chain then ends at a root the system
+        # does not hold. The control that "trusted" is reachable at all.
+        "trust: ignore the anchors the evaluation was given",
+        "src/trust.rs",
+        """        if let Anchors::Only(roots) = anchors {
+            let roots = roots.iter().map(parse)""",
+        """        if let Anchors::Only(roots) = Anchors::System {
+            let roots = roots.iter().map(parse)""",
+        "a_chain_to_an_anchor_is_trusted",
+        only_on="macos",
+    ),
+    Mutation(
+        # Leave the system's roots out of every evaluation: the store refuses
+        # everything, which every refusal test passes.
+        "trust: consult no system root",
+        "src/trust.rs",
+        """        trust.set_network_fetch_allowed(false).ok()?;
+        Some(trust)""",
+        """        trust.set_network_fetch_allowed(false).ok()?;
+        trust.set_trust_anchor_certificates_only(true).ok()?;
+        Some(trust)""",
+        "a_root_this_mac_trusts_is_trusted_through_the_system_store",
+        only_on="macos",
+    ),
+    Mutation(
+        # Evaluate at the machine's clock whatever moment was asked for.
+        "trust: ignore the moment the chain is evaluated at",
+        "src/trust.rs",
+        "            .set_trust_verify_date(&date)",
+        "            .set_network_fetch_allowed(false)",
+        "a_certificate_that_has_expired_since_reads_as_expired",
+        only_on="macos",
+    ),
+    Mutation(
+        # Read a chain that stops short as one that ends at an untrusted root.
+        "trust: call a missing link an untrusted root",
+        "src/trust.rs",
+        "        Ok(if incomplete(chain) {",
+        "        Ok(if false {",
+        "a_missing_intermediate_is_a_missing_link_not_an_untrusted_root",
+        only_on="macos",
+    ),
+    Mutation(
+        "trust: call an untrusted root a refusal of another kind",
+        "src/trust.rs",
+        "                NOT_TRUSTED => Doubt::Root,",
+        "                NOT_TRUSTED => Doubt::Rejected,",
+        "a_self_signed_certificate_nobody_anchored_ends_at_an_untrusted_root",
+        only_on="macos",
+    ),
+    Mutation(
+        # Read a trust daemon that never answered as a chain it refused ---
+        # which is what the first version did under a sandbox denying `trustd`.
+        "trust: call an unreachable trust service a refusal",
+        "src/trust.rs",
+        "        if UNREACHED.contains(&code) {",
+        "        if false {",
+        "a_trust_service_that_did_not_answer_is_not_a_refusal",
+        only_on="macos",
+    ),
+    Mutation(
+        # Ask trust of every signature, altered and broken ones included.
+        "docinfo: attribute an altered signature to its signer",
+        "src/docinfo.rs",
+        "    out.trust = attributable(&integrity).then(|| trust_of(document, sig));",
+        "    out.trust = Some(trust_of(document, sig));",
+        "trust_is_asked_only_of_a_signature_with_a_signer",
+    ),
+    Mutation(
+        # Ask it of an intact one only: a SHA-1 signature's signer goes unasked.
+        "docinfo: leave a weak signature's signer unasked",
+        "src/docinfo.rs",
+        "    matches!(integrity.verdict, Verdict::Intact | Verdict::Weak)",
+        "    matches!(integrity.verdict, Verdict::Intact)",
+        "trust_is_asked_only_of_a_signature_with_a_signer",
+    ),
+]
+
+
+# --- a visible appearance for a digital signature ----------------------------
+#
+# Phase 6, 2026-09-27. `sign_prepare/appearance.rs` lays out and draws the
+# widget's `/AP`; `sign_prepare.rs` places the widget and refuses what cannot
+# be drawn honestly. Each mutation removes one rule and names the test built to
+# see it. `sign-probe --visible` holds the rendered result against PDFium and
+# PDFKit, and its own mutations are in BUILD.md.
+MUTATIONS += [
+    Mutation(
+        # An appearance dictionary on every widget, visible or not: the
+        # invisible revision stops being the bytes it was.
+        "sign visible: give the invisible widget an /AP as well",
+        "src/sign_prepare.rs",
+        "    let mut widget = widget(&field, signature, page);\n",
+        '    let mut widget = widget(&field, signature, page);\n    widget.set("AP", Dictionary::new());\n',
+        "the_invisible_revision_is_byte_for_byte_what_it_was",
+    ),
+    Mutation(
+        "sign visible: put the widget on the first page whatever was chosen",
+        "src/sign_prepare.rs",
+        "    let page = placed.map_or(first, |(page, ..)| page);",
+        "    let page = first;",
+        "a_visible_widget_has_the_rectangle_the_reader_placed_on_the_page_they_chose",
+    ),
+    Mutation(
+        # Leave the crop box's origin off: right on a page whose crop box starts
+        # at zero, and off by the inset on every other.
+        "sign visible: map the rectangle without the crop box's origin",
+        "src/sign_prepare/appearance.rs",
+        "    Ok([page[0] + ox, page[1] + oy, page[2] + ox, page[3] + oy])",
+        "    Ok(page)",
+        "a_visible_widget_has_the_rectangle_the_reader_placed_on_the_page_they_chose",
+    ),
+    Mutation(
+        "sign visible: draw without clipping to the rectangle",
+        "src/sign_prepare/appearance.rs",
+        '    let mut content = format!("q {x0} {y0} {} {} re W n\\n", x1 - x0, y1 - y0);',
+        '    let mut content = format!("q {x0} {y0} {} {} re n\\n", x1 - x0, y1 - y0);',
+        "the_appearance_names_the_signer_and_the_date_inside_its_rectangle",
+    ),
+    Mutation(
+        "sign visible: leave the signer's name out of the words",
+        "src/sign_prepare/appearance.rs",
+        "        name.to_string(),\n",
+        "        String::new(),\n",
+        "the_appearance_names_the_signer_and_the_date_inside_its_rectangle",
+    ),
+    Mutation(
+        # The image above the words in a wide box, beside them in a tall one:
+        # both layouts fit, so only the placement test can tell.
+        "sign visible: put the image beside the words in a tall box",
+        "src/sign_prepare/appearance.rs",
+        "        Some(_) if width >= height => (",
+        "        Some(_) if width < height => (",
+        "a_saved_image_is_drawn_beside_the_words_and_text_alone_without_one",
+    ),
+    Mutation(
+        "sign visible: draw the words and image in the page's frame on a turned page",
+        "src/sign_prepare/appearance.rs",
+        "    let seen = Upright::of(turns, rect);",
+        "    let seen = Upright::of(0, rect);",
+        "a_turned_page_gets_an_appearance_that_reads_upright",
+    ),
+    Mutation(
+        # Size the type to the width alone: three lines of it then overflow a
+        # short box at the bottom.
+        "sign visible: size the type without the height",
+        "src/sign_prepare/appearance.rs",
+        "        .min(th / (count * LEADING));",
+        ";",
+        "every_layout_keeps_its_ink_inside_the_box_and_apart_from_the_image",
+    ),
+    Mutation(
+        # Put each baseline at the top of its line: every glyph's body then
+        # hangs above the box.
+        "sign visible: set a line's baseline at its top",
+        "src/sign_prepare/appearance.rs",
+        "            let baseline = top + (at as f64) * LEADING * size + ASCENT * size;",
+        "            let baseline = top + (at as f64) * LEADING * size;",
+        "every_layout_keeps_its_ink_inside_the_box_and_apart_from_the_image",
+    ),
+    Mutation(
+        # Draw any name: `winansi_hex` then writes a space for every character
+        # it cannot encode, and a different name goes on the page.
+        "sign visible: draw a name WinAnsi cannot spell",
+        "src/sign_prepare/appearance.rs",
+        "    if !textbox::encodable(name) || name.chars().any(char::is_control) {",
+        "    if name.chars().any(char::is_control) {",
+        "a_name_that_cannot_be_drawn_honestly_is_refused",
+    ),
+    Mutation(
+        "sign visible: accept a rectangle that is not on its page",
+        "src/sign_prepare/appearance.rs",
+        "    if !on_page {",
+        "    if false {",
+        "a_rectangle_off_its_page_too_small_or_on_no_page_is_refused",
+    ),
+    Mutation(
+        "sign visible: accept a rectangle too small to read",
+        "src/sign_prepare/appearance.rs",
+        "    if f64::from(right - left) < MIN_SIDE || f64::from(bottom - top) < MIN_SIDE {",
+        "    if false {",
+        "a_rectangle_off_its_page_too_small_or_on_no_page_is_refused",
+    ),
+    Mutation(
+        # Sign a certified document visibly: pyHanko then reads the new field as
+        # a change the certification forbids.
+        "sign visible: add a visible signature after a certification",
+        "src/sign_prepare.rs",
+        "    if visible.is_some() && certification(&prev) > 0 {",
+        "    if false {",
+        "a_visible_signature_after_a_certification_is_refused_and_an_invisible_one_is_not",
     ),
 ]
 

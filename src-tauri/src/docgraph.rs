@@ -346,11 +346,23 @@ impl DocumentGraph {
     /// # Errors
     ///
     /// The bytes are unreadable, or [`crate::sign_prepare::prepare`] refuses.
-    pub fn prepare_signature(&self, at: u64) -> Result<crate::sign_prepare::Unsigned, String> {
+    pub fn prepare_signature(
+        &self,
+        at: u64,
+        visible: Option<&crate::sign_prepare::Visible>,
+    ) -> Result<crate::sign_prepare::Unsigned, String> {
         let bytes = self
             .bytes()
             .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-        crate::sign_prepare::prepare(bytes.into_owned(), at, self.password())
+        match visible {
+            None => crate::sign_prepare::prepare(bytes.into_owned(), at, self.password()),
+            Some(visible) => crate::sign_prepare::prepare_visible(
+                bytes.into_owned(),
+                at,
+                self.password(),
+                visible,
+            ),
+        }
     }
 
     /// Applies a plan to these bytes and serialises the whole document.

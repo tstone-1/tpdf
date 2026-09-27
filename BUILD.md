@@ -832,14 +832,17 @@ done
 # check, which is asserted to refuse it too), and one covered byte changed.
 # Needs `openssl` 3.x and `uv`; either missing is [FAIL]. The second argument is
 # a scratch directory it writes the key, the certificate and the outputs into.
-# macOS arm64, 2026-09-26, all green:
-#   text-base14 --key rsa|p256|p384        15/15 each
-#   incr-signed --key rsa                  17/17
-#   incr-two-signers --key p256            19/19
-#   incr-certified-2 --key p384            17/17
-#   incr-certified-3 --key rsa             17/17 (pyHanko logs that its diff
+# macOS arm64, 2026-09-27, all green (one check more than 2026-09-26's run:
+# every signature's pyHanko summary line must now say docmdp=ok, which the probe
+# had printed and not asserted --- see the trap "A verdict the probe printed and
+# did not assert passed a DocMDP violation as green"):
+#   text-base14 --key rsa|p256|p384        16/16 each
+#   incr-signed --key rsa                  18/18
+#   incr-two-signers --key p256            20/20
+#   incr-certified-2 --key p384            18/18
+#   incr-certified-3 --key rsa             18/18 (pyHanko logs that its diff
 #                                          policy was not designed for /P 3)
-#   incr-xrefstream --key p256             15/15 (an xref-stream update)
+#   incr-xrefstream --key p256             16/16 (an xref-stream update)
 # pyHanko classes every earlier signature's appended change FORM_FILLING with
 # DocMDP satisfied. incr-certified-1 (/P 1) and incr-encrypted-open exit 2 with
 # tpdf's refusal, which is the answer: neither can be signed.
@@ -849,6 +852,83 @@ for f in text-base14:rsa text-base14:p256 text-base14:p384 incr-signed:rsa \
   cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
       "testdata/${f%%:*}.pdf" "/tmp/tpdf-sign-probe/${f%%:*}-${f##*:}" --key "${f##*:}"
 done
+# --visible signs through sign_prepare::prepare_visible instead: a rectangle on
+# page 1 (--rect left,top,right,bottom in display points, 40,40,280,120 by
+# default) and a synthetic 64 x 32 signature image, so the appearance, its image
+# and its font are inside the signed revision. Every check above still runs, and
+# then two renderers that share no code say WHERE THE INK WENT, each rendering
+# the original and the signed file at 2 px/pt and counting changed pixels:
+#   PDFium, through progressive::render as the viewer renders a tile;
+#   PDFKit, through scripts/sign_visible_pdfkit.swift (macOS only; elsewhere it
+#     prints [SKIP], never a pass).
+# Ink inside the rectangle (at least 2% of it) and none outside, past a
+# one-pixel antialiasing band. The control: the same document signed
+# INVISIBLY renders under PDFium with no pixel changed. On a TURNED page PDFKit
+# rasterises no /Sig widget at all (the trap "PDFKit rasterises no `/Sig`
+# widget on a turned page..."), so there the probe asserts that limitation ---
+# it goes red the day PDFKit changes --- and checks a copy with the new
+# revision's /Subtype/Widget overwritten by /Subtype/Stamp (same length).
+# macOS arm64, 2026-09-27, all green; changed pixels inside the 76,800-px
+# rectangle, none outside and none on the edge in any run:
+#   text-base14 --key rsa|p256|p384        21/21 each  PDFium ~10,000, PDFKit ~10,500
+#   incr-signed --key rsa                  23/23       earlier: FORM_FILLING, docmdp ok
+#   incr-two-signers --key p256            25/25
+#   incr-xrefstream --key p256             21/21
+#   rotated-90 --key rsa                   22/22       PDFKit: widget 0, as a stamp 10,516
+#   inherited --key p256                   22/22       PDFKit: widget 0, as a stamp 10,537
+# incr-certified-2 and -3 exit 2 with tpdf's refusal: pyHanko reads a visible
+# field after a certification as a DocMDP violation (trap "A visible signature
+# field after a certification is a violation to pyHanko...").
+# Proved able to fail by mutating sign_prepare.rs, rebuilding, and restoring it
+# byte-identical (SHA-256 checked):
+#   no /AP on the widget          -> both renderers' ink-inside check red
+#   /Rect moved 100 pt, /BBox not -> ink-inside and none-outside red for both,
+#                                    the stamp copy included on inherited.pdf
+for f in text-base14:rsa text-base14:p256 text-base14:p384 incr-signed:rsa \
+         incr-two-signers:p256 incr-xrefstream:p256 rotated-90:rsa inherited:p256; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
+      "testdata/${f%%:*}.pdf" "/tmp/tpdf-sign-probe/visible-${f%%:*}-${f##*:}" \
+      --key "${f##*:}" --visible
+done
+# signature-probe --mode agree on a visibly signed incr-two-signers: 19/19, PDFium
+# reading the same three signatures; --mode integrity 7/7; qpdf --check passes.
+# The window check that would show a visible signature placed and written in the
+# real application does not exist, for the reason below: it needs an identity in
+# the reader's store. By hand: File > Sign document..., choose Visible, drag a
+# rectangle, save; then signature-probe <copy> --mode integrity, and look.
+#
+# A TEST SIGNING IDENTITY for doing that by hand (macOS). A developer's usual
+# identity is often an Apple Developer ID, which is code signing only and which
+# sign_cms::usable rightly refuses to offer. Make a self-signed one that states a
+# document purpose, outside the repository, and import it yourself: an agent's
+# import into the login keychain is refused as persistence, correctly.
+#   cat > id.cnf <<'CNF'
+#   [req]
+#   distinguished_name = dn
+#   prompt = no
+#   x509_extensions = ext
+#   [dn]
+#   CN = tpdf TEST SIGNER - not a real identity
+#   O = tpdf test
+#   [ext]
+#   basicConstraints = critical, CA:FALSE
+#   keyUsage = critical, digitalSignature, nonRepudiation
+#   extendedKeyUsage = emailProtection, 1.3.6.1.5.5.7.3.36
+#   subjectKeyIdentifier = hash
+#   CNF
+#   openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 30 -config id.cnf
+#   export PW=$(openssl rand -hex 16)
+#   openssl pkcs12 -export -legacy -inkey key.pem -in cert.pem -name "tpdf TEST SIGNER" \
+#       -out id.p12 -passout env:PW
+#   security import id.p12 -k ~/Library/Keychains/login.keychain-db -f pkcs12 -P "$PW"
+# OpenSSL 3 (Homebrew's; /usr/bin/openssl is LibreSSL). `-legacy` because
+# `security import` does not read OpenSSL 3's default PKCS#12 encryption.
+# `security find-identity -v` will NOT list it --- `-v` is trusted identities
+# only --- and tpdf still offers it: its search does not ask for trusted ones.
+# First used 2026-09-27: a visible signature over incr-signed.pdf read intact for
+# both signatures under tpdf, pyHanko and `openssl cms -verify`, trust `untrusted`
+# / `root`, and PDFKit drew the appearance. Remove it with
+#   security delete-identity -c "tpdf TEST SIGNER - not a real identity"
 # The OS key store, which no gate can reach as a store. What the gates do run on
 # macOS: keystore::tests::the_os_signs_a_revision_that_the_verifier_calls_intact
 # hands SecKeyCreateSignature a key made in memory by SecKeyCreateWithData ---
@@ -870,6 +950,33 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_windo
 #   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
 #       <the signed copy> --mode integrity
 # which holds tpdf's verdict on the written file against pyHanko's.
+
+# TRUST (2026-09-27): what the operating system's trust store says about each
+# intact or weak signature's signer, through the REAL system store, offline ---
+# and the same scan again in a child under worker::SANDBOX_PROFILE, which must
+# first fail to read its own input file (the proof its sandbox is live) and then
+# print identical lines. That second half is the measurement trust.rs rests on:
+# the worker can reach trustd. Prints signatures by number, never by field name,
+# because it is meant for real documents. macOS arm64, 2026-09-27: the fixtures
+# read untrusted (their pyHanko test roots are in no store); the three real signed
+# documents step 1 used read intact/untrusted(root), weak/untrusted(root),
+# intact/untrusted(root), identical under the sandbox, and `security verify-cert
+# -p basic -L` over the same certificates agrees (CSSMERR_TP_NOT_TRUSTED). On
+# Windows the sandboxed half is [SKIP]: a Windows worker's containment is applied
+# by its parent, where this process cannot put itself.
+cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+    testdata/incr-signed.pdf --mode trust
+# The unreachable-service case, which the gates hold only as a code mapping: run
+# the probe with trustd denied. Expect `Unchecked / Some(Unavailable)`, and the
+# sandboxed-half comparison [FAIL] (a nested sandbox_init refuses); what matters
+# is the first line --- `untrusted` there is the defect in docs/TRAPS.md.
+sandbox-exec -p '(version 1)(allow default)(deny mach-lookup (global-name "com.apple.trustd") (global-name "com.apple.trustd.agent"))' \
+    src-tauri/target/release/examples/signature-probe testdata/incr-signed.pdf --mode trust
+# trust::tests needs no store and no login session: Anchors::Only gives each
+# evaluation in-memory roots (SecTrustSetAnchorCertificatesOnly on macOS, an
+# exclusive-root chain engine on Windows), and the one system-store control reads
+# a root out of SecTrustCopyAnchorCertificates, read-only. None is ignored. The
+# Windows half has NEVER RUN: its first execution is the Windows CI job.
 
 # Marks: does a highlight a reader makes land on the words they made it from?
 # Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not

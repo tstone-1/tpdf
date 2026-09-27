@@ -308,6 +308,8 @@ const ARM: Record<ToolKind, (viewer: Viewer) => void> = {
   erase: (viewer) => viewer.armErase(),
   crop: (viewer) => viewer.armCrop(),
   redact: (viewer) => viewer.armRedact(),
+  // The promise is the signing sequence's; here only the arming matters.
+  place: (viewer) => void viewer.armPlacement(),
 };
 
 /** What each tool answers when it is the armed one. Same keys, same reason. */
@@ -316,6 +318,7 @@ const ARMED: Record<ToolKind, (viewer: Viewer) => boolean> = {
   erase: (viewer) => viewer.eraseArmed,
   crop: (viewer) => viewer.cropArmed,
   redact: (viewer) => viewer.redactArmed,
+  place: (viewer) => viewer.placeArmed,
 };
 
 describe("one hand, one tool", () => {

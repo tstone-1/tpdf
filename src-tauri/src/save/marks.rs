@@ -849,7 +849,7 @@ const MAX_WAVE_SEGMENTS: f64 = 14_400.0;
 /// Latin-1 and WinAnsi agree byte for byte over `A0..=FF`, and
 /// `textbox::encodable` admits nothing else above ASCII, so the code point *is*
 /// the byte.
-fn winansi_hex(line: &str) -> String {
+pub(crate) fn winansi_hex(line: &str) -> String {
     let mut out = String::with_capacity(line.len() * 2);
     for ch in line.chars() {
         let code = ch as u32;
@@ -868,7 +868,7 @@ fn winansi_hex(line: &str) -> String {
 /// `/DA` naming a font the resources do not have is what makes a reader
 /// substitute one, which is the whole failure `textbox.rs` avoids by measuring a
 /// font every reader is required to have.
-pub(super) const TEXT_FONT: &str = "Helv";
+pub(crate) const TEXT_FONT: &str = "Helv";
 
 /// A line's own rectangle inside a quad: `(bottom, height)` in the page's space.
 ///
@@ -1250,11 +1250,11 @@ fn text_string(value: &str) -> Object {
 /// The text box's own arithmetic says the rest: `textbox::wrap` was being given
 /// 40 points where the reader had dragged 300, so the model broke those words
 /// into one line and the file into eighteen.
-pub(super) struct Upright {
+pub(crate) struct Upright {
     /// The box's width as the reader saw it, in points.
-    pub(super) width: f64,
+    pub(crate) width: f64,
     /// Its height as the reader saw it, in points.
-    pub(super) height: f64,
+    pub(crate) height: f64,
     /// The page-space point the box's displayed top-left corner sits at.
     origin: (f64, f64),
     /// One point to the reader's right, in page space.
@@ -1271,7 +1271,7 @@ impl Upright {
     /// drift the trap index warns about**, so this is not left to agree with that
     /// function by inspection: `an_upright_box_is_the_rectangle_the_reader_dragged`
     /// composes the two at every quarter and asserts the round trip.
-    pub(super) fn of(turns: u8, quad: [f64; 4]) -> Self {
+    pub(crate) fn of(turns: u8, quad: [f64; 4]) -> Self {
         let (w, h) = (quad[2] - quad[0], quad[3] - quad[1]);
         match turns % 4 {
             0 => Self {
@@ -1307,7 +1307,7 @@ impl Upright {
 
     /// The page-space point `u` to the right of the box's displayed top-left
     /// corner and `v` below it.
-    pub(super) fn at(&self, u: f64, v: f64) -> (f64, f64) {
+    pub(crate) fn at(&self, u: f64, v: f64) -> (f64, f64) {
         (
             self.origin.0 + u * self.right.0 + v * self.down.0,
             self.origin.1 + u * self.right.1 + v * self.down.1,
@@ -1326,7 +1326,7 @@ impl Upright {
     ///
     /// The third and fourth coefficients are the *negated* downward direction,
     /// because text space measures up and a reader's box measures down.
-    fn text_matrix(&self, u: f64, v: f64) -> String {
+    pub(crate) fn text_matrix(&self, u: f64, v: f64) -> String {
         let (x, y) = self.at(u, v);
         // Negating a zero gives `-0.0`, which formats as `-0`: a legal number
         // that every reader accepts and no human recognises as the identity.

@@ -90,6 +90,7 @@ pub mod structure;
 pub mod sweep;
 pub mod text;
 pub mod textcache;
+pub mod trust;
 pub mod verify;
 
 /// Helpers shared by this crate's own tests. Not compiled into any binary.

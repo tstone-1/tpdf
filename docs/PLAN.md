@@ -14881,6 +14881,9 @@ and the order is the order in which a claim can be made honestly.
    blob into the reserved span at its fixed offset. Nothing in the app process parses the
    document, and nothing in the worker holds a key. Smart cards and hardware tokens then
    work through the OS's own drivers, and tpdf never sees a PIN.
+   **Then, before step 3: whose key it is, as far as the OS store can say** --- done
+   2026-09-27, below. It needs no network, so it did not have to wait for step 3's decision;
+   what does wait is revocation, which is the part of trust that does.
 3. **Timestamps and long-term validation.** An RFC 3161 request to a timestamp authority,
    and a `/DSS` of certificates and revocation data appended afterwards. Both need the
    **network**, which the application today reaches for exactly one thing --- the updater
@@ -14905,7 +14908,8 @@ certificate and the signature value are all attacker-chosen bytes.
 | `unchecked` | Nothing concluded, and why: an unsupported `/SubFilter` or algorithm, a range this cannot vouch for, an unreadable blob, a certificate the signature does not name, malformed signed attributes, or the hashing budget. |
 
 **What none of them claims is who holds the key.** No chain, no trust store, no revocation,
-no validity-at-signing-time. The dialog says so after every answer that could be read as
+no validity-at-signing-time. (The chain and the store are asked since 2026-09-27, in a
+verdict of their own --- *Whose key it is*, below.) The dialog says so after every answer that could be read as
 trust, and `NOT_CHECKED` says so under every signature. A certificate somebody made on their
 own laptop five minutes ago is `intact` exactly as a notary's is.
 
@@ -15033,24 +15037,181 @@ evaluation in a process costs seconds (5.4 s and 19.2 s measured), which the cho
 **Windows compiles** (`scripts/check_windows.py`) **and has not run**: its ignored test creates a
 CNG certificate in `CurrentUser\My`, signs, and removes it.
 
-**Not done.** A visible appearance --- the Phase 4 visual signature as the widget's `/AP` is the
-next step, and small: the widget exists and has a rectangle. Signing into an existing empty
+**Not done.** A visible appearance --- done 2026-09-27, below. Signing into an existing empty
 signature field. Certification signatures (DocMDP). Encrypted documents, which need a writer
 that leaves the signature's string unencrypted. And step 3.
 
+#### Whose key it is, as far as the OS store can say --- done 2026-09-27
+
+`trust.rs` answers, per signature, the question `integrity.rs` leaves open: **does an issuer
+this operating system trusts vouch for the signer's certificate?** It asks the system's own
+store --- `SecTrustCreateWithCertificates` and `SecTrustEvaluateWithError` under a basic X.509
+policy on macOS, `CertGetCertificateChain` and `CertVerifyCertificateChainPolicy(
+CERT_CHAIN_POLICY_BASE)` on Windows --- with the signer as the leaf and the rest of the
+signature's certificate set offered as candidate issuers. The answer rides in the `Properties`
+reply as `Signature::trust`, directly under the integrity row in the dialog, and it exists
+**only beside an `intact` or `weak` verdict**: for an altered, broken or unchecked signature
+there is nothing to attribute to anybody, and a "trusted" beside one would read as softening
+it.
+
+| Standing | What it claims |
+|---|---|
+| `trusted` | The chain ends, **now**, at a root this Mac (this PC) trusts, and the signer's certificate names a purpose a document signature serves, or none. |
+| `expired` | The chain ended at a trusted root **at the signer's certificate's own last moment**, and that certificate has run out since. |
+| `not_yet_valid` | The chain ends at a trusted root inside the certificate's dates, which begin later. |
+| `untrusted` | Not vouched for, and why: a missing link (an issuer in neither the signature nor this machine), a root this machine does not trust, a certificate above the signer's out of its dates, a certificate issued only for purposes that are not signing documents, or another refusal. |
+| `unchecked` | The store was not asked: the certificates could not be prepared (more than 16, one over 64 KiB), or the trust API failed. Never `untrusted`, because that would be tpdf's failure told as a fact about the document. |
+
+Decisions, each with its reason:
+
+- **The OS store, not Adobe's Approved Trust List** (the open question below, closed). It is
+  what the reader's mail client and browser trust, it costs no maintenance, and the verdict
+  **names it** --- "a root this Mac trusts". The price is stated where it lands: **a signature
+  that chains only to an AATL root reads here as ending at a root this computer does not
+  trust**, and the untrusted-root sentence says that Adobe's list is the other reading. All
+  three real signed documents to hand are that case (below).
+- **No network.** `SecTrustSetNetworkFetchAllowed(false)`; on Windows cache-only retrieval
+  with AIA and root auto-update disabled --- the flags `keystore.rs` already built the signing
+  chain with, now shared from one place (`trust::platform`). So **revocation is not checked**,
+  and every standing that reached a trusted root says so in its own sentence; a missing
+  intermediate is a missing link rather than a download; and on Windows, a root Microsoft
+  distributes on demand and this machine has not yet fetched reads as untrusted. Fetching is
+  step 3's decision.
+- **Evaluated at the present moment.** `/M` is the signer's clock, and without a verified
+  timestamp tpdf cannot know the certificate was in force when the signature was made. So a
+  certificate that has run out is asked about a second time, at its own last moment: a chain
+  that passes there is `expired` --- not "trusted", not "not trusted" --- and one that fails
+  there too is `untrusted` with that evaluation's reason, because a certificate nobody vouched
+  for does not become news by being old. Not-yet-valid is the mirror image at its first moment.
+- **The signer's purpose is part of the answer.** A chain the OS trusts ending at a certificate
+  whose extended key usage names only a web server's, a code signer's or a login's purpose is
+  `untrusted`, purpose. The issuer vouched that the key belongs to a server name or a software
+  publisher, not that its holder signs documents, and a basic X.509 policy checks no usage. The
+  list is `sign_cms::DOCUMENT_PURPOSES`, the one that decides which of the reader's own
+  certificates tpdf offers for signing: a certificate tpdf would refuse to sign with is not one
+  it calls trusted for signing. Key usage is not consulted here (it is, for signing).
+- **A missing link and an untrusted root are told apart by the chain's shape**, not by either
+  platform's error vocabulary: a failed chain whose last certificate is not self-issued stopped
+  short of any root. That is the difference between "tpdf would need to look something up" and
+  "the chain ends where nobody trusts it", and the two produce different sentences.
+- **A trust service that did not answer is `unchecked`, not `untrusted`.** Measured by running
+  the probe under `sandbox-exec` with the Mach lookup to `trustd` denied: the evaluation
+  fails with `errSecInternalError`, which the first version read as a *rejected* chain.
+  `docs/TRAPS.md` has it.
+
+**Where it runs: the worker, measured.** The certificates are attacker-chosen bytes, so the
+first question was whether the sandboxed worker can reach `trustd` at all. `signature-probe
+--mode trust` scans a document in-process, then again in a child that has applied
+`worker::SANDBOX_PROFILE` and proved the sandbox live by failing to read the file it was given,
+and compares the verdict lines. macOS arm64, 2026-09-27: **identical under the sandbox on all
+three real signed documents and on the fixtures** --- the profile's `(allow default)` admits
+the Mach lookups `SecTrust` makes, and `(deny network*)` does not touch them. So it runs
+beside the integrity check in `docinfo::scan_from`, and the OS receives certificates `x509-cert`
+decoded and re-encoded, at most 16 of them, each under 64 KiB. **The Windows half is not
+measured**: a Windows worker's containment (a low-integrity token in a job object) is applied
+by its parent, so the probe cannot put itself there, and no Windows run of any of this has
+happened. `docs/THREAT-MODEL.md` §T6.22 has the residuals.
+
+**Cost.** The whole trust test module --- sixteen tests, nine of them asking `SecTrust` ---
+runs in **0.14 s**, and the first evaluation in a fresh test process took **10 ms**. That is
+the opposite of 2026-09-26's **5.4 s and 19.2 s** for the same first call
+(`docs/TRAPS.md`), so it is not a stable property of the call, and the worker pays whatever
+the day's first `trustd` round trip costs on the first signed document it reads. The three
+real documents' whole scans, debug build, took 30 to 541 ms each.
+
+**Measured on real documents, through the real system store.** `signature-probe --mode
+trust`, the three signed documents step 1 used: `intact`, `untrusted` (root); `weak`,
+`untrusted` (root); `intact`, `untrusted` (root) --- identical under the sandbox. An
+independent reader agrees: the certificates `openssl pkcs7 -print_certs` extracts, handed to
+`security verify-cert -p basic -L` (the system store, no network, read-only), read
+`CSSMERR_TP_NOT_TRUSTED` on all three, and each set carries its own self-issued root, which is
+why the reason is *root* and not *missing link*. None of the three roots is one macOS trusts;
+the documents were made against Adobe's list, which is exactly the case the naming decision
+exists for. **So no real document here shows `trusted`.** The control that the system store
+can say yes is a test instead: a root taken read-only from the store's own anchor list
+(`SecTrustCopyAnchorCertificates`) and asked about through `Anchors::System` reads `trusted`.
+
+**The test seam touches no store.** `Anchors::Only` puts roots held in memory in front of one
+evaluation --- `SecTrustSetAnchorCertificates` plus `SecTrustSetAnchorCertificatesOnly(true)`
+on macOS, an exclusive-root chain engine over an in-memory store on Windows --- so the
+generated certificates of `sign_cms/testkeys.rs` (now with basic constraints) cover a chain to
+the anchor, a self-signed certificate nobody anchored, a missing intermediate and its control,
+an expired leaf with and without a trusted chain, a leaf not yet in force, and a web server's
+certificate beside an e-mail certificate. None needs a login session and none is ignored.
+
+**Not done.** Revocation, and fetching a missing intermediate: both need the network, and are
+step 3's. The Windows implementation compiles (`scripts/check_windows.py`) and **has never
+run**; its first execution will be the Windows CI job's `cargo test`. Key usage on the signer's
+certificate is not asked. The trust of a timestamp authority's own chain is not asked either:
+the timestamp row stays a claim.
+
 **Open questions for steps 2 and 3.**
 
-- **Trust, when it comes: the OS's store or Adobe's list?** `SecTrustEvaluateWithError` and
-  `CertGetCertificateChain` build a chain to what the machine trusts, which is what the
-  reader's mail client trusts, and costs no maintenance. Adobe's Approved Trust List is what
-  most signed PDFs are *made* against, and a signature that chains only to AATL reads as
-  untrusted under the OS store. Neither is obviously right, and a verdict built on either
-  must say which.
+- ~~**Trust, when it comes: the OS's store or Adobe's list?**~~ **Answered 2026-09-27: the OS
+  store**, named in the verdict, with the AATL-only case stated in the untrusted-root sentence
+  --- above. All three real signed documents to hand are that case.
 - **Timestamps need the network**, both to make one (step 3) and to check revocation at the
   time one attests. That is a second network authority beside the updater and is the one
   real change to the threat model this phase makes.
 - ~~**Step 2's splice** writes into a reserved span whose size must be chosen before the
   signature exists.~~ **Answered 2026-09-26**: 32 KiB, half of it for step 3's token --- above.
+
+#### A visible appearance --- done 2026-09-27
+
+The chooser now asks **Invisible** (selected, and what step 2 wrote) or **Visible**. Visible arms
+the viewer's crop drag for one rectangle --- the same gesture, clamp and display-space rectangle,
+as a `place` variant of `ArmedTool` rather than a second drag --- and Escape, another tool or a
+tab switch answers "nothing placed" and ends the signing before the OS is asked anything. The
+widget then gets that page, that `/Rect` and an `/AP /N`: the reader's saved visual signature
+(Phase 4's store) beside three lines of Helvetica --- *Digitally signed by*, the certificate's
+subject name, and `/M` read back as `YYYY-MM-DD HH:MM:SS UTC` --- or the words alone when no
+image is saved.
+
+| Half | Where | What it does |
+|---|---|---|
+| Placement | `signing.ts`, `viewer.ts` `armPlacement` | Chooser, saved image, one rectangle; page id and display rectangle to `sign_document`. |
+| Name | app process, `commands/sign.rs` | Reads the subject from the chosen certificate (`sign_cms::usable`), so the words are the certificate's, not the frontend's. Maps the page id to the file's page through the plan, which has no unsaved edits. |
+| Appearance | worker, `sign_prepare/appearance.rs` | Checks the name and the rectangle, lays out, writes the form, image, soft mask and font **into the revision it signs**, before the range is filled and hashed. |
+
+Decisions, each with its reason:
+
+- **Covered by the signature.** The appearance is objects of the signed revision, so it sits
+  inside the `/ByteRange`. Added later it would be a change after the signature, which is what
+  a difference analysis flags.
+- **Upright through `save::Upright`**, the mapping every mark's appearance uses on a turned page,
+  exported rather than copied (`docs/TRAPS.md`, *A mark's rectangle survives a quarter turn and
+  everything drawn inside it does not*).
+- **Inside the rectangle by construction.** The type is sized so that Helvetica's whole font box,
+  not only these letters, fits: at most 10 pt, three lines at 1.2 em. A clip of the rectangle and
+  `/BBox` are written as well, as the floor. A rectangle under 24 points a side is refused, the
+  first value tried, 8, left a box with an image no room for words.
+- **A name outside Latin-1 is refused, not substituted.** A substitute puts a different name
+  under the signer's signature. The refusal says the invisible signature still works.
+- **Refused after a certification**, at any DocMDP level --- the one measured cost of this step.
+  pyHanko reads a new *visible* signature field after a certification as a change it does not
+  permit (`modification=OTHER`, `docmdp=VIOLATED`) where the same revision without `/AP` and
+  with a zero rectangle is `FORM_FILLING`: `allow_new_visible_after_certify` is off by default,
+  stricter than Acrobat by its own documentation. Approval signatures before it are unaffected.
+- **The invisible path is unchanged byte for byte**, pinned by the SHA-256 of four synthetic
+  revisions built before this existed.
+
+**Measured**, macOS arm64, `sign-probe --visible` (BUILD.md), which now also asserts pyHanko's
+`docmdp=ok` for every signature: tpdf `intact`, pyHanko intact and valid with earlier approval
+signatures `FORM_FILLING`, and `openssl cms -verify` accepting, on `text-base14` (RSA, P-256,
+P-384), `incr-signed`, `incr-two-signers`, `incr-xrefstream`, and the turned `rotated-90` and
+`inherited`. Rendered by **PDFium** as the viewer renders a tile: about 10,000 changed pixels
+inside the 240 x 80 pt rectangle at 2 px/pt and **none** outside it; the invisible control
+changes no pixel. **PDFKit** agrees on every upright page, and on a turned page draws no `/Sig`
+widget at all --- it draws the same appearance as a stamp, inside the rectangle and nowhere
+else, and a `/Tx` widget there too (`docs/TRAPS.md`). Both render checks were proved by mutation:
+no `/AP` turns both renderers' ink checks red, and a `/Rect` moved 100 pt turns ink-inside and
+none-outside red for both, the stamp control included on a turned page.
+
+**Not done.** A preview of the appearance while dragging: the rectangle is outlined, and what
+goes in it is drawn by the worker. Visible signatures on certified documents. Scripts beyond
+Latin-1, which need an embedded font. Resizing or moving the placed rectangle before signing.
+The window harness has no signing phase, for step 2's reason: the real app signs only with an
+identity in the reader's store.
 
 ### Cross-cutting
 

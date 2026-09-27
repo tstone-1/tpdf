@@ -63,6 +63,24 @@ have the binary.)
   change, cannot be signed yet. A certificate issued for something other
   than signing documents, such as code signing or logging in to websites, is
   listed with that reason and not offered.
+- **A signature can be visible.** *Sign document…* now asks whether the
+  signature is invisible, as before, or visible. For a visible one you drag a
+  rectangle on a page, and it shows your saved signature image, when you
+  have one, beside your certificate's name and the signing time in UTC. The
+  appearance is part of what the signature covers. A name outside Latin-1 is
+  refused rather than drawn as a different name, a rectangle must be at
+  least 24 points on each side, and a certified document can only be signed
+  invisibly, because a common validator reads a new visible signature there
+  as breaking the certification.
+- **The properties dialog says whether this computer trusts a signature's
+  signer.** For every signature whose bytes are intact, tpdf asks the
+  operating system's own trust store, offline, whether the signer's
+  certificate chains to a root it trusts, and names the computer whose store
+  answered. A certificate that has run out since reads as expired rather than
+  untrusted, and one issued only for web servers or code signing is not
+  trusted for signing documents. Revocation is not checked, because tpdf
+  does not go online, and a signature made against Adobe's trust list alone
+  reads as ending at a root this computer does not trust.
 
 ### Fixed
 

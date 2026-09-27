@@ -63,6 +63,7 @@ function signed(): Signature {
     certificate: null,
     timestamp: null,
     integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
+    trust: null,
   };
 }
 
@@ -566,8 +567,8 @@ describe("the signing certificate", () => {
 
     const issued = certificateRows(sig).find((r) => r.name === "Issued by");
     expect(issued?.value).toContain("self-issued");
-    // Not a warning. Every root in every trust store is self-issued, and tpdf
-    // has no trust store with which to tell those apart from an unvouched one.
+    // Not a warning. Every root in every trust store is self-issued; telling
+    // those apart from an unvouched one is the trust row's job, not this one's.
     expect(issued?.warn).toBeFalsy();
   });
 

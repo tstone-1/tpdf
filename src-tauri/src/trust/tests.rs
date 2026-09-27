@@ -1,0 +1,461 @@
+use super::*;
+use crate::sign_cms::testkeys::{certificate, Soft, Spec, NOW};
+
+const DAY: u64 = 86_400;
+
+/// A certificate authority: its key, its certificate, and its name.
+struct Authority {
+    key: Soft,
+    der: Vec<u8>,
+    name: &'static str,
+}
+
+fn root(seed: u8, name: &'static str) -> Authority {
+    let key = Soft::p256(seed);
+    let mut spec = Spec::new(name);
+    spec.authority = Some(true);
+    let der = certificate(&key, &spec);
+    Authority { key, der, name }
+}
+
+fn issued_by(issuer: &Authority, seed: u8, name: &'static str, authority: bool) -> Authority {
+    let key = Soft::p256(seed);
+    let mut spec = Spec::new(name);
+    spec.issuer = Some((&issuer.key, issuer.name));
+    spec.authority = Some(authority);
+    spec.serial = seed;
+    let der = certificate(&key, &spec);
+    Authority { key, der, name }
+}
+
+/// The standing of `leaf`, with `others` offered as issuers and `roots` the
+/// only roots --- the test seam, so no test reads or writes the reader's store.
+fn standing(leaf: &[u8], others: &[Vec<u8>], roots: &[Vec<u8>], now: u64) -> Trust {
+    let parsed = Certificate::from_der(leaf).expect("a certificate");
+    judge(&parsed, now, |at| {
+        platform::evaluate(leaf, others, Anchors::Only(roots), at)
+    })
+}
+
+fn trusted() -> Trust {
+    Trust {
+        standing: Standing::Trusted,
+        why: None,
+        store: platform::STORE,
+    }
+}
+
+fn untrusted(why: Doubt) -> Trust {
+    Trust {
+        standing: Standing::Untrusted,
+        why: Some(why),
+        store: platform::STORE,
+    }
+}
+
+// ------------------------------------------------------------- the platform
+//
+// Every test below this line asks the operating system. The first `SecTrust`
+// evaluation in a process has been measured at seconds (`keystore/tests.rs`),
+// so these share that cost rather than each paying it.
+
+#[cfg(any(target_os = "macos", windows))]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn a_chain_to_an_anchor_is_trusted() {
+        // The control. A checker that answered "not trusted" for everything
+        // would pass every refusal below; this is what fails it.
+        let ca = root(61, "tpdf test root");
+        let leaf = issued_by(&ca, 62, "Signer", false);
+        assert_eq!(
+            standing(&leaf.der, &[], std::slice::from_ref(&ca.der), NOW),
+            trusted()
+        );
+    }
+
+    #[test]
+    fn a_self_signed_certificate_nobody_anchored_ends_at_an_untrusted_root() {
+        let ca = root(61, "tpdf test root");
+        let alone = root(63, "Self-made signer");
+        assert_eq!(
+            standing(&alone.der, &[], std::slice::from_ref(&ca.der), NOW),
+            untrusted(Doubt::Root)
+        );
+    }
+
+    #[test]
+    fn a_missing_intermediate_is_a_missing_link_not_an_untrusted_root() {
+        let ca = root(61, "tpdf test root");
+        let middle = issued_by(&ca, 64, "tpdf test intermediate", true);
+        let leaf = issued_by(&middle, 65, "Signer", false);
+        assert_eq!(
+            standing(&leaf.der, &[], std::slice::from_ref(&ca.der), NOW),
+            untrusted(Doubt::Incomplete)
+        );
+        // And the control: the same chain with the intermediate carried, as a
+        // signature's certificate set carries it.
+        assert_eq!(
+            standing(
+                &leaf.der,
+                std::slice::from_ref(&middle.der),
+                std::slice::from_ref(&ca.der),
+                NOW
+            ),
+            trusted()
+        );
+    }
+
+    #[test]
+    fn a_certificate_that_has_expired_since_reads_as_expired() {
+        // Trusted at its own last moment, out of date now. Neither "trusted"
+        // nor "not trusted" is true of it.
+        let ca = root(61, "tpdf test root");
+        let key = Soft::p256(66);
+        let mut spec = Spec::new("Expired signer");
+        spec.issuer = Some((&ca.key, ca.name));
+        spec.not_before = NOW - 400 * DAY;
+        spec.not_after = NOW - 30 * DAY;
+        spec.serial = 66;
+        let leaf = certificate(&key, &spec);
+        let found = standing(&leaf, &[], std::slice::from_ref(&ca.der), NOW);
+        assert_eq!(found.standing, Standing::Expired, "{found:?}");
+        assert_eq!(found.why, None);
+    }
+
+    #[test]
+    fn an_expired_certificate_nobody_vouched_for_is_untrusted_not_expired() {
+        // Its dates are not the news when it was never vouched for.
+        let ca = root(61, "tpdf test root");
+        let key = Soft::p256(67);
+        let mut spec = Spec::new("Expired and self-made");
+        spec.not_before = NOW - 400 * DAY;
+        spec.not_after = NOW - 30 * DAY;
+        let leaf = certificate(&key, &spec);
+        assert_eq!(
+            standing(&leaf, &[], std::slice::from_ref(&ca.der), NOW),
+            untrusted(Doubt::Root)
+        );
+    }
+
+    #[test]
+    fn a_certificate_not_yet_in_force_reads_as_not_yet_valid() {
+        let ca = root(61, "tpdf test root");
+        let key = Soft::p256(68);
+        let mut spec = Spec::new("Future signer");
+        spec.issuer = Some((&ca.key, ca.name));
+        spec.not_before = NOW + 30 * DAY;
+        spec.not_after = NOW + 400 * DAY;
+        spec.serial = 68;
+        let leaf = certificate(&key, &spec);
+        let found = standing(&leaf, &[], std::slice::from_ref(&ca.der), NOW);
+        assert_eq!(found.standing, Standing::NotYetValid, "{found:?}");
+    }
+
+    #[test]
+    fn a_certificate_issued_only_for_web_servers_is_not_trusted_for_signing() {
+        let ca = root(61, "tpdf test root");
+        let signer = |purposes: Vec<&'static str>, serial: u8| {
+            let key = Soft::p256(serial);
+            let mut spec = Spec::new("Purposeful signer");
+            spec.issuer = Some((&ca.key, ca.name));
+            spec.purposes = Some(purposes);
+            spec.serial = serial;
+            certificate(&key, &spec)
+        };
+        let server = signer(vec!["1.3.6.1.5.5.7.3.1"], 69);
+        assert_eq!(
+            standing(&server, &[], std::slice::from_ref(&ca.der), NOW),
+            untrusted(Doubt::Purpose)
+        );
+        // The control: e-mail protection, a purpose a document signature serves.
+        let mail = signer(vec!["1.3.6.1.5.5.7.3.4"], 70);
+        assert_eq!(
+            standing(&mail, &[], std::slice::from_ref(&ca.der), NOW),
+            trusted()
+        );
+    }
+
+    /// The control for the system store itself: a root this Mac trusts is
+    /// trusted when it is asked about, through `Anchors::System`.
+    ///
+    /// Every other system-store assertion here is a refusal, and a store that
+    /// refused everything --- anchors-only left on with nothing anchored, say
+    /// --- would pass them all. The root comes from the store's own list,
+    /// read-only (`SecTrustCopyAnchorCertificates`); nothing is added to it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_root_this_mac_trusts_is_trusted_through_the_system_store() {
+        use security_framework::trust::SecTrust;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs();
+        let anchors = SecTrust::copy_anchor_certificates().expect("the system's anchors");
+        let chosen = anchors
+            .iter()
+            .map(|anchor| anchor.to_der())
+            .find(|der| {
+                Certificate::from_der(der).is_ok_and(|c| {
+                    let v = &c.tbs_certificate.validity;
+                    v.not_before.to_unix_duration().as_secs() < now
+                        && now < v.not_after.to_unix_duration().as_secs()
+                        && serves_documents(&c) == Some(true)
+                })
+            })
+            .expect("a system root in its dates");
+        let parsed = Certificate::from_der(&chosen).expect("a certificate");
+        let found = judge(&parsed, now, |at| {
+            platform::evaluate(&chosen, &[], Anchors::System, at)
+        });
+        assert_eq!(found, trusted(), "{} anchors", anchors.len());
+    }
+
+    /// A `trustd` that never answered is tpdf's failure, not the document's.
+    ///
+    /// Measured 2026-09-27 by running `signature-probe --mode trust` under
+    /// `sandbox-exec` with the Mach lookup to `trustd` denied:
+    /// `SecTrustEvaluateWithError` returns `errSecInternalError` (-26276), and
+    /// the first version of this module read that as `untrusted`, *rejected*.
+    /// A unit test cannot deny the lookup to itself, so this holds the reading
+    /// of the code, beside the control that a real refusal is still one.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_trust_service_that_did_not_answer_is_not_a_refusal() {
+        let alone = root(63, "Self-made signer");
+        let chain = [alone.der.clone()];
+        assert!(platform::failure_of(-26_276, &chain).is_err());
+        assert_eq!(platform::failure_of(-67_843, &chain), Ok(Doubt::Root));
+        let signer = Certificate::from_der(&alone.der).expect("a certificate");
+        let found = judge(&signer, NOW, |_| {
+            platform::failure_of(-26_276, &chain).map(|failure| Evaluation {
+                passed: false,
+                failure,
+                chain: chain.to_vec(),
+            })
+        });
+        assert_eq!(found, Trust::unchecked(Doubt::Unavailable));
+    }
+
+    #[test]
+    fn a_blob_is_read_for_its_signer_and_the_rest_of_its_set() {
+        // `of_blob` is what the worker calls: the signer named by `sid`, the
+        // other certificates offered as issuers. The intermediate travels in
+        // the set, so the chain completes only if the set is read.
+        use crate::sign_cms::testkeys::{plain_pdf, signed};
+        let ca = root(61, "tpdf test root");
+        let middle = issued_by(&ca, 64, "tpdf test intermediate", true);
+        let leaf = issued_by(&middle, 65, "Signer", false);
+        let bytes = signed(
+            &plain_pdf(),
+            &leaf.der,
+            std::slice::from_ref(&middle.der),
+            &leaf.key,
+        )
+        .expect("signed");
+        let blob = blob_of_any(&bytes);
+        assert_eq!(
+            of_blob(&blob, NOW, Anchors::Only(std::slice::from_ref(&ca.der))),
+            trusted()
+        );
+        // The same signature against the system's roots. The test root is in
+        // no store and not in the set, so the chain stops at the intermediate
+        // with its issuer nowhere to be found.
+        assert_eq!(
+            of_blob(&blob, NOW, Anchors::System),
+            untrusted(Doubt::Incomplete)
+        );
+        // Carrying the root as well completes the chain, at a root this
+        // machine does not trust --- the shape a self-made CA produces, and
+        // the one a root only Adobe's list carries produces too.
+        let whole = signed(
+            &plain_pdf(),
+            &leaf.der,
+            &[middle.der.clone(), ca.der.clone()],
+            &leaf.key,
+        )
+        .expect("signed");
+        assert_eq!(
+            of_blob(&blob_of_any(&whole), NOW, Anchors::System),
+            untrusted(Doubt::Root)
+        );
+    }
+}
+
+// ------------------------------------------------- the order of the questions
+//
+// `judge` with scripted evaluations: no operating system, so these hold the
+// reading of an answer rather than any platform's error codes.
+
+fn scripted(
+    passes_at: impl Fn(u64) -> bool,
+    failure: Doubt,
+) -> impl FnMut(u64) -> Result<Evaluation, String> {
+    move |at| {
+        Ok(Evaluation {
+            passed: passes_at(at),
+            failure,
+            chain: Vec::new(),
+        })
+    }
+}
+
+fn leaf(not_before: u64, not_after: u64, purposes: Option<Vec<&'static str>>) -> Certificate {
+    let key = Soft::p256(71);
+    let mut spec = Spec::new("Scripted");
+    spec.not_before = not_before;
+    spec.not_after = not_after;
+    spec.purposes = purposes;
+    Certificate::from_der(&certificate(&key, &spec)).expect("a certificate")
+}
+
+#[test]
+fn an_expired_certificate_is_asked_about_at_its_own_last_moment() {
+    let until = NOW - 30 * DAY;
+    let signer = leaf(NOW - 400 * DAY, until, None);
+    let mut asked = Vec::new();
+    let found = judge(&signer, NOW, |at| {
+        asked.push(at);
+        Ok(Evaluation {
+            passed: at == until,
+            failure: Doubt::Dates,
+            chain: Vec::new(),
+        })
+    });
+    assert_eq!(asked, [NOW, until]);
+    assert_eq!(found.standing, Standing::Expired);
+}
+
+#[test]
+fn a_certificate_in_its_dates_is_asked_about_once() {
+    // A second evaluation at another moment would let a chain that fails now
+    // pass then, and read as something other than its present answer.
+    let signer = leaf(NOW - DAY, NOW + DAY, None);
+    let mut asked = 0;
+    let found = judge(&signer, NOW, |_| {
+        asked += 1;
+        Ok(Evaluation {
+            passed: false,
+            failure: Doubt::Root,
+            chain: Vec::new(),
+        })
+    });
+    assert_eq!(asked, 1);
+    assert_eq!(found, untrusted(Doubt::Root));
+}
+
+#[test]
+fn an_evaluation_that_could_not_run_is_unchecked_never_untrusted() {
+    let signer = leaf(NOW - DAY, NOW + DAY, None);
+    let found = judge(&signer, NOW, |_| Err("trustd is not answering".into()));
+    assert_eq!(found.standing, Standing::Unchecked);
+    assert_eq!(found.why, Some(Doubt::Unavailable));
+    assert_eq!(found.store, None, "no store answered");
+}
+
+#[test]
+fn the_purpose_is_asked_of_a_trusted_chain_and_an_expired_one() {
+    let server = Some(vec!["1.3.6.1.5.5.7.3.1"]);
+    let current = leaf(NOW - DAY, NOW + DAY, server.clone());
+    assert_eq!(
+        judge(&current, NOW, scripted(|_| true, Doubt::Rejected)),
+        untrusted(Doubt::Purpose)
+    );
+    let old = leaf(NOW - 400 * DAY, NOW - DAY, server);
+    assert_eq!(
+        judge(&old, NOW, scripted(|at| at < NOW, Doubt::Dates)),
+        untrusted(Doubt::Purpose)
+    );
+    // `anyExtendedKeyUsage` and no extension at all both admit signing.
+    for purposes in [Some(vec!["2.5.29.37.0"]), None] {
+        let any = leaf(NOW - DAY, NOW + DAY, purposes);
+        assert_eq!(
+            judge(&any, NOW, scripted(|_| true, Doubt::Rejected)),
+            trusted()
+        );
+    }
+}
+
+#[test]
+fn a_standing_that_is_not_trusted_says_why() {
+    // Over every standing `judge` produces from the scripted answers: `why` is
+    // set exactly for `Untrusted` and `Unchecked`.
+    let current = leaf(NOW - DAY, NOW + DAY, None);
+    let old = leaf(NOW - 400 * DAY, NOW - DAY, None);
+    let future = leaf(NOW + DAY, NOW + 400 * DAY, None);
+    let found = [
+        judge(&current, NOW, scripted(|_| true, Doubt::Rejected)),
+        judge(&current, NOW, scripted(|_| false, Doubt::Root)),
+        judge(&old, NOW, scripted(|at| at < NOW, Doubt::Dates)),
+        judge(&future, NOW, scripted(|at| at > NOW, Doubt::Dates)),
+        judge(&current, NOW, |_| Err(String::new())),
+    ];
+    let standings: Vec<Standing> = found.iter().map(|t| t.standing).collect();
+    assert_eq!(
+        standings,
+        [
+            Standing::Trusted,
+            Standing::Untrusted,
+            Standing::Expired,
+            Standing::NotYetValid,
+            Standing::Unchecked
+        ]
+    );
+    for trust in &found {
+        assert_eq!(
+            matches!(trust.standing, Standing::Untrusted | Standing::Unchecked),
+            trust.why.is_some(),
+            "{trust:?}"
+        );
+    }
+    assert_eq!(Trust::default().standing, Standing::Unchecked);
+}
+
+#[test]
+fn a_set_larger_than_the_bound_is_not_handed_to_the_os() {
+    use crate::sign_cms::testkeys::{plain_pdf, signed};
+    let key = Soft::p256(72);
+    let der = certificate(&key, &Spec::new("Signer"));
+    let padding: Vec<Vec<u8>> = (0..MAX_CERTIFICATES)
+        .map(|n| {
+            let mut spec = Spec::new("Filler");
+            spec.serial = u8::try_from(n + 100).expect("small");
+            certificate(&Soft::p256(73), &spec)
+        })
+        .collect();
+    let within =
+        signed(&plain_pdf(), &der, &padding[..MAX_CERTIFICATES - 1], &key).expect("signed");
+    let over = signed(&plain_pdf(), &der, &padding, &key).expect("signed");
+    let prepared = |bytes: &[u8]| {
+        let blob = blob_of_any(bytes);
+        certificates(&blob).map(|(_, others)| others.len())
+    };
+    assert_eq!(prepared(&within), Some(MAX_CERTIFICATES - 1));
+    assert_eq!(prepared(&over), None);
+    assert_eq!(
+        of_blob(&blob_of_any(&over), NOW, Anchors::System),
+        Trust::unchecked(Doubt::Certificate)
+    );
+}
+
+/// The one signature's CMS blob in `bytes`, definite length: the hole its
+/// `/ByteRange` leaves, decoded.
+fn blob_of_any(bytes: &[u8]) -> Vec<u8> {
+    let at = bytes
+        .windows(10)
+        .position(|w| w == b"/ByteRange")
+        .expect("a /ByteRange");
+    let open = at + bytes[at..].iter().position(|b| *b == b'[').expect("[");
+    let close = open + bytes[open..].iter().position(|b| *b == b']').expect("]");
+    let numbers: Vec<usize> = std::str::from_utf8(&bytes[open + 1..close])
+        .expect("ascii")
+        .split_whitespace()
+        .map(|n| n.parse().expect("an integer"))
+        .collect();
+    let hex = std::str::from_utf8(&bytes[numbers[1] + 1..numbers[2] - 1]).expect("ascii");
+    let raw: Vec<u8> = (0..hex.len() / 2)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
+        .collect();
+    crate::ber::to_definite_length(&raw).expect("a blob")
+}

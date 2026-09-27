@@ -178,10 +178,13 @@ recorded here as the bill for a choice, not as a recommendation to undo it. `der
 `derive` (for the ESS `signingCertificateV2` structures, which no crate types) and `signature`
 2.2 becomes a direct dependency for the builder's `Keypair` and `Signer` traits; both were
 already in the tree. The OS calls go through crates already here: `security-framework` on
-macOS, `windows-sys`'s `Win32_Security_Cryptography` feature on Windows.
+macOS, `windows-sys`'s `Win32_Security_Cryptography` feature on Windows. `core-foundation`
+0.10 became a normal macOS dependency on 2026-09-27 for `trust.rs`, whose `SecTrustSetVerifyDate`
+takes a `CFDate`; it was already a dev-dependency and beneath `security-framework`, so the main
+lockfile did not move and the fuzz one gained one edge, no package.
 
 **The only private keys are the tests'.** `rand_chacha` and `flagset` are dev-dependencies, and
-on macOS `security-framework-sys` and `core-foundation` too --- all four already in the tree ---
+on macOS `security-framework-sys` too --- all three already in the tree ---
 for `sign_cms/testkeys.rs` and the keystore test. `rsa`, `p256` and `p384` sign there and
 nowhere else; `sign_cms::tests::no_private_key_type_is_named_outside_the_tests` is the control
 `.cargo/audit.toml` now cites for the RUSTSEC-2023-0071 entry.

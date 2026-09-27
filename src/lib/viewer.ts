@@ -322,7 +322,7 @@ export interface ViewerStatus {
    * same drag with opposite meanings. The line of chrome is where they are told
    * which one their next press is.
    */
-  armed: MarkKind | "crop" | "redact" | null;
+  armed: MarkKind | "crop" | "redact" | "place" | null;
   /** State of the find-in-document scan. */
   search: SearchStatus;
 }
@@ -990,7 +990,18 @@ export type ArmedTool =
   | { kind: "draw"; mark: MarkKind; stamp: StampName | null; image?: SignatureImage }
   | { kind: "erase" }
   | { kind: "crop" }
-  | { kind: "redact" };
+  | { kind: "redact" }
+  | { kind: "place" };
+
+/**
+ * Where the reader put a visible digital signature: the page's id and the
+ * rectangle in the file's display space, the pair {@link ViewerOptions.onCropped}
+ * is handed.
+ */
+export interface Placed {
+  page: PageId;
+  rect: [number, number, number, number];
+}
 
 /**
  * Nothing armed.
@@ -1152,7 +1163,29 @@ export class Viewer {
    * that the window harness and this file ask the same question of the same
    * field.
    */
-  private tool: ArmedTool = NO_TOOL;
+  private current: ArmedTool = NO_TOOL;
+  /**
+   * Who is waiting for {@link armPlacement}'s rectangle, while `place` is armed.
+   *
+   * **Settled by the setter below and nowhere else**, with `null`, the moment
+   * the tool becomes anything but `place`. Seven sites replace the tool ---
+   * five armings, Escape and a cancelled drag --- and the waiter is a signing
+   * sequence holding the document's task queue, so a site that forgot it would
+   * leave that queue stuck behind a promise nothing settles. One setter is one
+   * place to forget nothing.
+   */
+  private placing: ((placed: Placed | null) => void) | null = null;
+  private get tool(): ArmedTool {
+    return this.current;
+  }
+  private set tool(next: ArmedTool) {
+    this.current = next;
+    if (next.kind !== "place" && this.placing) {
+      const waiting = this.placing;
+      this.placing = null;
+      waiting(null);
+    }
+  }
   private readonly signatureImages = new Map<number, HTMLCanvasElement>();
   private signaturePreview: HTMLCanvasElement | null = null;
 
@@ -1578,7 +1611,7 @@ export class Viewer {
     // no equivalent of ink's several strokes.
     this.cropDrag = new PointerDrag(root, {
       begin: (at: DragPoint) => {
-        if (this.tool.kind !== "crop" && this.tool.kind !== "redact") return false;
+        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place") return false;
         const { page, x, y } = this.pageAndPoint(at);
         this.cropDrawing = { slot: page, from: { x, y }, to: { x, y } };
         this.wake();
@@ -1603,7 +1636,7 @@ export class Viewer {
           // Cancelled. The tool goes with it, because Escape means "stop" and
           // `cancelDraw` has already cleared it --- this is the browser's own
           // `pointercancel` arriving by the same door.
-          if (this.tool.kind === "crop" || this.tool.kind === "redact") {
+          if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {
             this.tool = NO_TOOL;
           }
           this.showCursor();
@@ -1630,7 +1663,11 @@ export class Viewer {
         // spent here and cleared *before* the callback for `onDrawn`'s reason:
         // a caller that arms something again must not be undone by these lines.
         const marking = this.tool.kind === "redact";
-        if (this.tool.kind === "crop" || this.tool.kind === "redact") {
+        // Taken before the tool is dropped: the setter settles a waiter it
+        // still finds with `null`, which is the cancel, and this is the commit.
+        const placing = this.placing;
+        this.placing = null;
+        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {
           this.tool = NO_TOOL;
         }
         this.showCursor();
@@ -1639,7 +1676,8 @@ export class Viewer {
         // page's own `/Rotate` and a further turn; `onRedacted`'s does not,
         // because the model holds a redaction in exactly this space.
         const rect = this.fileRectOn(live.slot, quad);
-        if (marking) this.opts.onRedacted?.(id, rect);
+        if (placing) placing({ page: id, rect });
+        else if (marking) this.opts.onRedacted?.(id, rect);
         else this.opts.onCropped?.(id, rect);
       },
     });
@@ -1852,6 +1890,9 @@ export class Viewer {
     // First, so anything that lands during the teardown below finds it set.
     this.life.end();
     this.stop();
+    // A signature placement still waiting is answered "nothing placed": the
+    // document it was for is going, and its sequence must not wait forever.
+    this.tool = NO_TOOL;
     // Before the listeners go: an open note is a `position:absolute` box over a
     // surface that is about to be replaced, and the next document's first frame
     // would otherwise paint under somebody else's comment.
@@ -2168,7 +2209,9 @@ export class Viewer {
         ? "redact"
         : this.tool.kind === "crop"
           ? "crop"
-          : this.drawnStrokes === null
+          : this.tool.kind === "place"
+            ? "place"
+            : this.drawnStrokes === null
             ? this.drawArmed
             : null,
       search: this.searchStatus(),
@@ -4298,6 +4341,38 @@ export class Viewer {
   }
 
   /**
+   * Arms the placement of a visible digital signature: the next drag on a
+   * page is where it goes, and the promise answers that rectangle.
+   *
+   * **The crop's gesture, reused rather than copied**: the same drag, the same
+   * clamp to the page it started on, the same `boxQuad` separating a click from
+   * a drag, and the same display-space rectangle {@link onCropped} is handed.
+   * What differs is only what the rectangle is for, which is the argument
+   * {@link ArmedTool} makes for a variant of its own.
+   *
+   * One-shot. Answers `null` when anything else takes the tool --- Escape,
+   * another tool, the viewer going away --- so a caller always hears back.
+   * Arming again answers the earlier waiter `null` first.
+   */
+  armPlacement(): Promise<Placed | null> {
+    if (this.markNote.openId !== null) this.closeMark();
+    if (this.popup.openId !== null) this.closeComment();
+    this.inking = null;
+    this.tool = NO_TOOL;
+    return new Promise((resolve) => {
+      this.tool = { kind: "place" };
+      this.placing = resolve;
+      this.showCursor();
+      this.wake();
+    });
+  }
+
+  /** Whether a signature placement is armed. For the status line and the harness. */
+  get placeArmed(): boolean {
+    return this.tool.kind === "place";
+  }
+
+  /**
    * Arms the crop tool: the next drag on a page keeps what is inside it.
    *
    * **One-shot, like every drawing tool and unlike the eraser.** A crop replaces
@@ -4673,7 +4748,8 @@ export class Viewer {
         "grabbing"
       : this.tool.kind === "draw" ||
           this.tool.kind === "crop" ||
-          this.tool.kind === "redact"
+          this.tool.kind === "redact" ||
+          this.tool.kind === "place"
         ? "crosshair"
         : this.overLink
           ? "pointer"
@@ -6205,6 +6281,9 @@ export class Viewer {
     // marks what goes: outside the rectangle for a crop, inside it for a
     // redaction.
     const marking = this.tool.kind === "redact";
+    // A signature's rectangle keeps and removes nothing, so it has no scrim:
+    // only the dashed outline, which is where the signature will be.
+    const scrim = this.tool.kind !== "place";
     const origin = this.scroller.pageOrigin(live.slot);
     const size = this.laidSize(live.slot);
     // The page's own rectangle on screen, which the scrim is bounded by.
@@ -6230,11 +6309,11 @@ export class Viewer {
     // the whole distinction between the two tools and a branch written inside
     // this call sequence would be reachable by no test --- the fake DOM's
     // `getContext` answers `null`, so nothing here runs under vitest at all.
-    for (const [x, y, w, h] of scrimBands(
+    for (const [x, y, w, h] of scrim ? scrimBands(
       marking,
       { x0: px0, y0: py0, x1: px1, y1: py1 },
       { x0: kx0, y0: ky0, x1: kx1, y1: ky1 },
-    )) {
+    ) : []) {
       ctx.fillRect(x, y, w, h);
     }
 

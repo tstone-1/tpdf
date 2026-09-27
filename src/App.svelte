@@ -69,6 +69,7 @@
   import { PendingImports } from "./lib/pendingimport";
   import { confirmSignatureSave, askSignatureSave, SaveCancelled } from "./lib/signedsave";
   import { SignatureDialog } from "./lib/signaturedialog";
+  import { loadSignature } from "./lib/signaturestore";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
   import {
@@ -393,8 +394,9 @@
    * that counts strokes --- and it is left out of the table rather than given an
    * unreachable entry, so the fallback is the honest one if that ever changes.
    */
-  function armedLabel(kind: MarkKind | "crop" | "redact"): string {
+  function armedLabel(kind: MarkKind | "crop" | "redact" | "place"): string {
     if (kind === "crop") return "Crop — drag out what to keep";
+    if (kind === "place") return "Signature — drag out where it appears; Esc cancels";
     // **Says what goes, where the crop's says what stays**, because the two are
     // the same drag and this is the only place the reader is told which one
     // they armed. "Nothing is removed yet" is the other half: marking is
@@ -2076,13 +2078,22 @@
           openPath: source,
           list: () => call("sign_identities"),
           choose: (choices) => signing.askIdentity(choices),
+          savedImage: () => loadSignature(),
+          // The viewer that is showing the document now: a tab switch while
+          // this waits destroys it, which answers `null` and ends the signing.
+          place: async () => {
+            if (!viewer) return null;
+            say(signing.PLACE);
+            return await viewer.armPlacement();
+          },
           saveAs: async (suggested) =>
             await saveDialog({
               title: "Save the signed document",
               defaultPath: suggested,
               filters: [{ name: "PDF", extensions: ["pdf"] }],
             }),
-          sign: (identity, path) => call("sign_document", { doc, source, identity, path }),
+          sign: (identity, path, placement) =>
+            call("sign_document", { doc, source, identity, path, placement }),
         });
         if (said) say(said);
       } catch (e) {

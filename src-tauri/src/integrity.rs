@@ -13,8 +13,9 @@
 //! that the key belongs to anybody in particular: no chain is built, no trust
 //! store consulted, no revocation looked up, and a certificate made five
 //! minutes ago on the signer's own laptop passes exactly as a notary's does.
-//! That is Phase 6 step 3's question (`docs/PLAN.md` §9), and the UI says it
-//! was not asked every time it shows the answer to this one.
+//! Whose key it is, as far as the operating system's trust store can say, is
+//! [`crate::trust`]'s separate verdict, asked only on top of this one's
+//! `Intact` or `Weak`; revocation is Phase 6 step 3's (`docs/PLAN.md` §9).
 //!
 //! ## Why a verdict can be `Unchecked`, and why that is never `Intact`
 //!

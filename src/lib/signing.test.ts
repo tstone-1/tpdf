@@ -1,17 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { PageId } from "./pages";
+import type { SignatureImage } from "./signature";
 import {
   UNSAVED,
   afterSigning,
+  askIdentity,
   choiceLabel,
   nothingToChoose,
   signDocument,
   signedName,
   type Choice,
   type Choices,
+  type Placement,
   type Signed,
   type SigningShell,
 } from "./signing";
+import { FakeElement, installFakeDom } from "./testdom";
 
 const choice: Choice = {
   id: "abc",
@@ -21,9 +26,19 @@ const choice: Choice = {
   method: "ECDSA P-256",
 };
 
-/** A shell that records every question asked of it, in order. */
+/** The reader's saved visual signature, as the store answers it. */
+const saved: SignatureImage = { width: 1, height: 1, rgba: [0, 0, 0, 255] };
+
+/** Where the reader dragged, on the page with id 7. */
+const dragged = { page: 7 as PageId, rect: [20, 30, 170, 90] as [number, number, number, number] };
+
+/**
+ * A shell that records every question asked of it, in order, and every
+ * placement `sign` was handed.
+ */
 function shell(overrides: Partial<SigningShell> = {}) {
   const asked: string[] = [];
+  const placements: (Placement | null)[] = [];
   const signed: Signed = {
     path: "/docs/report-signed.pdf",
     field: "Signature1",
@@ -44,18 +59,28 @@ function shell(overrides: Partial<SigningShell> = {}) {
     },
     choose: async (choices) => {
       asked.push(`choose:${choices.map((c) => c.id).join("+")}`);
-      return choices[0]?.id ?? null;
+      const identity = choices[0]?.id;
+      return identity === undefined ? null : { identity, visible: false };
+    },
+    savedImage: async () => {
+      asked.push("savedImage");
+      return saved;
+    },
+    place: async () => {
+      asked.push("place");
+      return dragged;
     },
     saveAs: async (suggested) => {
       asked.push(`saveAs:${suggested}`);
       return "/docs/report-signed.pdf";
     },
-    sign: async (identity, path) => {
+    sign: async (identity, path, placement) => {
       asked.push(`sign:${identity}:${path}`);
+      placements.push(placement);
       return signed;
     },
   };
-  return { asked, shell: { ...base, ...overrides } };
+  return { asked, placements, shell: { ...base, ...overrides } };
 }
 
 describe("the order the questions are asked in", () => {
@@ -71,6 +96,55 @@ describe("the order the questions are asked in", () => {
     expect(said).toBe(
       "Signed as Signature1 and saved to report-signed.pdf. Read back after writing, the signature is intact.",
     );
+  });
+
+  it("signs invisibly by default, asking nothing about a page or an image", async () => {
+    const { asked, placements, shell: s } = shell();
+    await signDocument(s);
+    expect(asked).not.toContain("place");
+    expect(asked).not.toContain("savedImage");
+    expect(placements).toEqual([null]);
+  });
+
+  it("places a visible signature before the file is named, with the saved image", async () => {
+    const { asked, placements, shell: s } = shell({
+      choose: async (choices) => {
+        asked.push(`choose:${choices.map((c) => c.id).join("+")}`);
+        return { identity: "abc", visible: true };
+      },
+    });
+    await signDocument(s);
+    expect(asked).toEqual([
+      "list",
+      "choose:abc",
+      "savedImage",
+      "place",
+      "saveAs:report-signed.pdf",
+      "sign:abc:/docs/report-signed.pdf",
+    ]);
+    expect(placements).toEqual([{ page: 7, rect: [20, 30, 170, 90], image: saved }]);
+  });
+
+  it("places a visible signature with words alone when there is no saved image", async () => {
+    const { placements, shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: true }),
+      savedImage: async () => null,
+    });
+    await signDocument(s);
+    expect(placements).toEqual([{ page: 7, rect: [20, 30, 170, 90], image: null }]);
+  });
+
+  it("stops without a word when the reader escapes the placement", async () => {
+    const { asked, placements, shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: true }),
+      place: async () => {
+        asked.push("place");
+        return null;
+      },
+    });
+    expect(await signDocument(s)).toBeNull();
+    expect(asked).toEqual(["list", "savedImage", "place"]);
+    expect(placements).toEqual([]);
   });
 
   it("refuses unsaved edits before asking the OS anything", async () => {
@@ -213,5 +287,56 @@ describe("the words", () => {
     for (const word of ["valid", "verified", "authentic", "genuine"]) {
       expect(said.toLowerCase()).not.toContain(word);
     }
+  });
+});
+
+describe("the chooser", () => {
+  /** Opens the chooser on a fake DOM and hands back its controls. */
+  function open(choices: Choice[]) {
+    const dom = installFakeDom();
+    const body = new FakeElement("body");
+    Object.assign(globalThis.document, { body, activeElement: null });
+    const create = document.createElement.bind(document);
+    const spy = vi.spyOn(document, "createElement").mockImplementation(((tag: string) => {
+      const node = create(tag) as unknown as FakeElement & Record<string, unknown>;
+      if (tag === "dialog") Object.assign(node, { showModal: () => {}, close: () => {} });
+      if (tag === "input") Object.assign(node, { checked: false, focus: () => {} });
+      // A label is handed its caption as a string, which the fake tree has no node for.
+      if (tag === "label")
+        Object.assign(node, {
+          append: (...kids: unknown[]) => {
+            for (const kid of kids) if (typeof kid !== "string") node.appendChild(kid as FakeElement);
+          },
+        });
+      return node as unknown as HTMLElement;
+    }) as typeof document.createElement);
+    const answer = askIdentity(choices);
+    const nodes = (root: FakeElement): FakeElement[] =>
+      root.children.flatMap((child) => [child, ...nodes(child)]);
+    const all = nodes(body) as (FakeElement & { checked: boolean; value: string; name: string })[];
+    const radio = (name: string, value: string) =>
+      all.find((node) => node.tagName === "input" && node.name === name && node.value === value)!;
+    const button = (text: string) => all.find((node) => node.tagName === "button" && node.textContent === text)!;
+    const done = () => {
+      spy.mockRestore();
+      dom.restore();
+    };
+    return { answer, radio, button, done };
+  }
+
+  it("answers an invisible signature unless the reader picks a visible one", async () => {
+    const first = open([choice]);
+    expect(first.radio("sign-appearance", "invisible").checked).toBe(true);
+    expect(first.radio("sign-appearance", "visible").checked).toBe(false);
+    first.button("Sign…").dispatch("click", {});
+    expect(await first.answer).toEqual({ identity: "abc", visible: false });
+    first.done();
+
+    const second = open([choice]);
+    second.radio("sign-appearance", "invisible").checked = false;
+    second.radio("sign-appearance", "visible").checked = true;
+    second.button("Sign…").dispatch("click", {});
+    expect(await second.answer).toEqual({ identity: "abc", visible: true });
+    second.done();
   });
 });

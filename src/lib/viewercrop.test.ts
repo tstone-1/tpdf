@@ -24,7 +24,7 @@ import type { Comment } from "./comments";
 import type { CropGeometry } from "./crop";
 import { pageId, type MarkView, type PageView } from "./pages";
 import { installFakeDom, settle, type FakeDom } from "./testdom";
-import { Viewer } from "./viewer";
+import { Viewer, type Placed } from "./viewer";
 import { INK_WIDTH } from "./markband";
 
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -751,5 +751,83 @@ describe("a crop whose geometry lands after the pages have moved", () => {
     await settle();
     expect(viewer.knowsPageSize(2)).toBe(false);
     viewer.destroy();
+  });
+});
+
+describe("placing a visible signature shares the crop's drag and nothing else", () => {
+  /** Arms the placement and records what it answers, and when. */
+  function arm(viewer: Viewer) {
+    const answers: (Placed | null)[] = [];
+    void viewer.armPlacement().then((placed) => answers.push(placed));
+    return answers;
+  }
+
+  it("answers the dragged rectangle, in the space a crop is reported in, and crops nothing", async () => {
+    // Compared against a crop of the same drag rather than a transcribed number,
+    // for `reports the region in the same space`'s reason; on the cropped page,
+    // so an untranslated rectangle would differ.
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(true));
+    await settle();
+
+    viewer.armCrop();
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    const answers = arm(viewer);
+    expect(viewer.placeArmed).toBe(true);
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 });
+    await settle();
+
+    expect(answers).toEqual([{ page: 1, rect: cropped[0]?.rect }]);
+    expect(cropped).toHaveLength(1);
+    expect(redacted).toEqual([]);
+    expect(viewer.placeArmed).toBe(false);
+    expect(answers[0]?.rect[0]).toBeGreaterThan(0);
+    viewer.destroy();
+  });
+
+  it("keeps waiting through a click, and answers nothing for Escape mid-drag", async () => {
+    const viewer = build();
+    await settle();
+    viewer.setPages(pages(false));
+    await settle();
+
+    const answers = arm(viewer);
+    drag({ x: 120, y: 140 }, { x: 121, y: 141 });
+    await settle();
+    expect(answers).toEqual([]);
+    expect(viewer.placeArmed).toBe(true);
+
+    drag({ x: 120, y: 140 }, { x: 320, y: 340 }, false);
+    escape();
+    dom.root.dispatch("pointerup", { pointerId: 1, clientX: 320, clientY: 340 });
+    await settle();
+    expect(answers).toEqual([null]);
+    expect(cropped).toEqual([]);
+    expect(viewer.placeArmed).toBe(false);
+    viewer.destroy();
+  });
+
+  it("answers nothing when another tool takes the hand or the viewer goes", async () => {
+    // A signing sequence waits on this with the document's task queue held, so
+    // every way the tool can be taken away has to answer it. Three of them:
+    // another tool, arming the placement again, and the viewer being destroyed.
+    const viewer = build();
+    await settle();
+
+    const first = arm(viewer);
+    viewer.armCrop();
+    await settle();
+    expect(first).toEqual([null]);
+
+    const second = arm(viewer);
+    const third = arm(viewer);
+    await settle();
+    expect(second).toEqual([null]);
+    expect(third).toEqual([]);
+
+    viewer.destroy();
+    await settle();
+    expect(third).toEqual([null]);
   });
 });

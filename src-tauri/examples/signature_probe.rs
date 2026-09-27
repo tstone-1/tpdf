@@ -105,7 +105,9 @@
 //! refuses --- exits 1 naming that, rather than passing with nothing compared.
 //!
 //! Usage:
-//!   signature-probe <file.pdf> [--mode read|agree|nested|clean|integrity] [--lib DIR]
+//!   signature-probe <file.pdf> [--mode read|agree|nested|clean|integrity|trust] [--lib DIR]
+//!
+//! `--sandbox yes` belongs to `--mode trust` and is the half it runs itself.
 
 use std::path::{Path, PathBuf};
 use tpdf_lib::document::OpenDocument;
@@ -122,12 +124,15 @@ enum Mode {
     Clean,
     Nested,
     Integrity,
+    Trust,
 }
 
 struct Args {
     file: PathBuf,
     mode: Mode,
     library: PathBuf,
+    /// `--mode trust` only: apply the worker's sandbox before scanning.
+    sandbox: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -139,6 +144,7 @@ fn parse_args() -> Result<Args, String> {
         file: PathBuf::from(file),
         mode: Mode::Read,
         library: PathBuf::from("vendor/pdfium").join(tpdf_lib::PDFIUM_SUBDIR),
+        sandbox: false,
     };
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -150,10 +156,12 @@ fn parse_args() -> Result<Args, String> {
                     "clean" => Mode::Clean,
                     "nested" => Mode::Nested,
                     "integrity" => Mode::Integrity,
+                    "trust" => Mode::Trust,
                     other => return Err(format!("unknown mode: {other}")),
                 }
             }
             "--lib" => parsed.library = PathBuf::from(value),
+            "--sandbox" => parsed.sandbox = value == "yes",
             other => return Err(format!("unknown flag: {other}")),
         }
     }
@@ -179,6 +187,11 @@ fn main() {
 }
 
 fn run(args: &Args) -> Result<bool, String> {
+    // Before PDFium is bound: this mode reads through `docinfo` alone, and a
+    // sandboxed child must not have mapped anything it would not in a worker.
+    if args.mode == Mode::Trust {
+        return trust(args);
+    }
     let bindings = bind(&args.library)?;
     let document = OpenDocument::open(bindings, &args.file, None)?;
     let ours = document.graph().properties(document.page_count())?;
@@ -193,6 +206,7 @@ fn run(args: &Args) -> Result<bool, String> {
         Mode::Clean => Ok(clean(&ours, &theirs)),
         Mode::Nested => Ok(nested(&ours, &theirs)),
         Mode::Integrity => Ok(integrity(&ours, &args.file)),
+        Mode::Trust => unreachable!("answered before binding"),
     }
 }
 
@@ -717,4 +731,96 @@ fn integrity(ours: &Properties, file: &Path) -> bool {
     }
     println!("\n{} passed, {} failed", report.passed, report.failed);
     report.failed == 0 && report.passed > 0
+}
+
+/// One line per signed signature: its integrity verdict and its trust standing.
+///
+/// Numbered rather than named: this mode is run on real signed documents, and
+/// a field name can be a person's. The verdicts are all the comparison needs.
+fn standings(bytes: &[u8]) -> Result<Vec<String>, String> {
+    let read = docinfo::scan(bytes, 1, None)?;
+    Ok(read
+        .signatures
+        .iter()
+        .filter(|s| s.signed)
+        .enumerate()
+        .map(|(n, s)| {
+            let integrity = s.integrity.clone().unwrap_or_default();
+            let trust = s.trust.as_ref().map_or_else(
+                || "not asked".to_string(),
+                |t| format!("{:?} / {:?} / store {:?}", t.standing, t.why, t.store),
+            );
+            format!(
+                "signature {}: integrity {:?}; trust {trust}",
+                n + 1,
+                integrity.verdict
+            )
+        })
+        .collect())
+}
+
+/// `--mode trust`: the standings through the real system store, here and under
+/// the worker's own sandbox, which must agree.
+///
+/// The second half is the measurement `trust.rs` rests on. The chain is asked
+/// of the OS inside the worker, which runs under `worker::SANDBOX_PROFILE`, and
+/// `SecTrust` works by Mach messages to `trustd`: whether that profile lets them
+/// through is a fact about the profile, not something to reason about. So the
+/// same bytes are scanned in a child that applies the profile first, and the
+/// two lists of lines must be identical. The child proves its sandbox is live
+/// by failing to read the file it was given --- a profile that silently did not
+/// apply would otherwise agree with everything.
+fn trust(args: &Args) -> Result<bool, String> {
+    let bytes = std::fs::read(&args.file).map_err(|e| format!("cannot read the file: {e}"))?;
+    let started = std::time::Instant::now();
+    if args.sandbox {
+        tpdf_lib::worker_child::apply_sandbox(tpdf_lib::worker::SANDBOX_PROFILE)?;
+        if std::fs::read(&args.file).is_ok() {
+            println!("[FAIL] the sandbox did not apply: the file is still readable");
+            return Ok(false);
+        }
+        println!("sandbox live: the file is no longer readable");
+        for line in standings(&bytes)? {
+            println!("{line}");
+        }
+        println!("scan took {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
+        return Ok(true);
+    }
+
+    let ours = standings(&bytes)?;
+    for line in &ours {
+        println!("{line}");
+    }
+    println!("scan took {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
+    if ours.is_empty() {
+        println!("[FAIL] this document has no signature; --mode trust needs one");
+        return Ok(false);
+    }
+    if !cfg!(target_os = "macos") {
+        // A Windows worker is contained by its parent --- a low-integrity token
+        // in a job object --- rather than by a call it makes itself, so this
+        // process cannot put itself where a worker is.
+        println!("[SKIP] the sandboxed half: containment here is applied by a parent");
+        return Ok(true);
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let child = std::process::Command::new(exe)
+        .arg(&args.file)
+        .args(["--mode", "trust", "--sandbox", "yes"])
+        .output()
+        .map_err(|e| format!("the sandboxed child did not run: {e}"))?;
+    let text = String::from_utf8_lossy(&child.stdout);
+    print!("--- under the worker's sandbox ---\n{text}");
+    let theirs: Vec<String> = text
+        .lines()
+        .filter(|line| line.starts_with("signature "))
+        .map(str::to_string)
+        .collect();
+    let live = text.contains("sandbox live");
+    let same = child.status.success() && live && theirs == ours;
+    println!(
+        "{} the sandboxed worker reaches the same standings",
+        if same { "[OK]" } else { "[FAIL]" }
+    );
+    Ok(same)
 }

@@ -1997,8 +1997,13 @@ impl Engine for Workers {
         &self,
         doc: u32,
         at: u64,
+        visible: Option<&crate::sign_prepare::Visible>,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
-        match self.ask(doc, &Request::PrepareSignature { at })? {
+        let request = Request::PrepareSignature {
+            at,
+            visible: visible.cloned().map(Box::new),
+        };
+        match self.ask(doc, &request)? {
             Reply::PreparedSignature(unsigned) => Ok(unsigned),
             other => Err(mismatched("prepare_signature", &other)),
         }

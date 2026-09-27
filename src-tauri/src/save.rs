@@ -4262,6 +4262,12 @@ pub use signed::{read_to_sign, write_signed};
 /// drawn inside this crate is not a reason to rename anything outside it.
 pub use marks::{is_wash, OUTLINE_WIDTH, STAMP_CAP, STAMP_INSET};
 
+/// The reader's frame for a turned page, the WinAnsi text encoder and the name
+/// the standard font is given: what a signature's visible appearance
+/// (`sign_prepare::appearance`) draws with, so that it turns with its page by
+/// the same rule a mark does rather than by a second copy of it.
+pub(crate) use marks::{winansi_hex, Upright, TEXT_FONT};
+
 use marks::{
     check_replies, crop_pages, discard_notes, mark_sites, rewrite_note_edits, turn_pages,
     write_marks, write_note_edits, AnnotsSite,

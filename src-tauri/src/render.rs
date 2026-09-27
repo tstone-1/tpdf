@@ -505,6 +505,9 @@ pub(crate) enum Job {
         doc: u32,
         /// Seconds since the epoch, for the signature's `/M`.
         at: u64,
+        /// Where a visible signature goes and what it shows; `None` for an
+        /// invisible one. Boxed for `Append`'s reason: it carries pixels.
+        visible: Option<Box<crate::sign_prepare::Visible>>,
         reply: Reply<crate::sign_prepare::Unsigned>,
     },
     /// What password this document was opened with, for a caller that has to
@@ -1073,11 +1076,17 @@ impl RenderService {
         &self,
         doc: u32,
         at: u64,
+        visible: Option<crate::sign_prepare::Visible>,
         reply: Reply<crate::sign_prepare::Unsigned>,
     ) {
         if self
             .tx
-            .send(Job::PrepareSignature { doc, at, reply })
+            .send(Job::PrepareSignature {
+                doc,
+                at,
+                visible: visible.map(Box::new),
+                reply,
+            })
             .is_err()
         {
             // Render thread is gone; nothing left to reply with.
@@ -1236,8 +1245,12 @@ pub(crate) trait Engine {
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn properties(&self, doc: u32) -> Result<Properties, String>;
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String>;
-    fn prepare_signature(&self, doc: u32, at: u64)
-        -> Result<crate::sign_prepare::Unsigned, String>;
+    fn prepare_signature(
+        &self,
+        doc: u32,
+        at: u64,
+        visible: Option<&crate::sign_prepare::Visible>,
+    ) -> Result<crate::sign_prepare::Unsigned, String>;
     fn password(&self, doc: u32) -> Result<Option<String>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 
@@ -1316,7 +1329,12 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
-        Job::PrepareSignature { doc, at, reply } => reply(engine.prepare_signature(doc, at)),
+        Job::PrepareSignature {
+            doc,
+            at,
+            visible,
+            reply,
+        } => reply(engine.prepare_signature(doc, at, visible.as_deref())),
         Job::Password { doc, reply } => reply(engine.password(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
         Job::ReleaseAll { reply } => reply(engine.release_all()),
@@ -1582,8 +1600,9 @@ impl Engine for InProcess {
         &self,
         doc: u32,
         at: u64,
+        visible: Option<&crate::sign_prepare::Visible>,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
-        run_prepare_signature(open_slot(&self.docs.borrow(), doc)?, at)
+        run_prepare_signature(open_slot(&self.docs.borrow(), doc)?, at, visible)
     }
 
     fn password(&self, doc: u32) -> Result<Option<String>, String> {
@@ -2353,8 +2372,9 @@ pub(crate) fn run_append(
 pub(crate) fn run_prepare_signature(
     document: &OpenDocument,
     at: u64,
+    visible: Option<&crate::sign_prepare::Visible>,
 ) -> Result<crate::sign_prepare::Unsigned, String> {
-    document.graph().prepare_signature(at)
+    document.graph().prepare_signature(at, visible)
 }
 
 /// Rewrites the mapped document under a plan, on the render thread.

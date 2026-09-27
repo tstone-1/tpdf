@@ -17,9 +17,12 @@
 //!   signing time in `/M` (PAdES B-B puts it there rather than in a signed
 //!   attribute), a `/ByteRange` of fixed-width placeholders and a `/Contents`
 //!   hex string of [`RESERVED`] zero bytes;
-//! - an invisible widget --- a zero rectangle, `/F 132` (print and locked) ---
-//!   that is also the field, named `SignatureN` for the first `N` no top-level
-//!   field already uses, on the first page;
+//! - a widget --- `/F 132` (print and locked) --- that is also the field,
+//!   named `SignatureN` for the first `N` no top-level field already uses.
+//!   [`prepare`] makes it **invisible**: a zero rectangle on the first page.
+//!   [`prepare_visible`] puts it where the reader placed it, on that page, with
+//!   an `/AP /N` appearance ([`appearance`]) written into this same revision,
+//!   so the appearance is covered by the signature it shows;
 //! - that widget added to the page's `/Annots` and to the form's `/Fields`, and
 //!   `/SigFlags` given bits 1 and 2 (signatures exist, append only).
 //!
@@ -42,11 +45,16 @@
 //!   there. A cloned page dictionary is the document's own bytes, and a string
 //!   in it could spell a placeholder; that is a refusal, never a guess.
 
-use lopdf::{Dictionary, Document, IncrementalDocument, Object, ObjectId, StringFormat};
+use lopdf::{
+    dictionary, Dictionary, Document, IncrementalDocument, Object, ObjectId, StringFormat,
+};
 use sha2::{Digest as _, Sha256};
 
 use crate::encoding::{resolve, MAX_DECODE};
 use crate::pagetree::ordered_pages;
+
+pub mod appearance;
+pub use appearance::Visible;
 
 /// The bytes of DER the `/Contents` hole holds: **32 KiB**, 65,536 hex digits.
 ///
@@ -123,6 +131,38 @@ pub fn prepare(
     signed_at: u64,
     password: Option<&str>,
 ) -> Result<Unsigned, String> {
+    build(original, signed_at, password, None)
+}
+
+/// [`prepare`], with the widget placed where the reader put it and an
+/// appearance drawn in it.
+///
+/// **The invisible path is untouched by this**: `prepare` is `build` with no
+/// appearance, and `the_invisible_revision_is_byte_for_byte_what_it_was` pins
+/// its output to the bytes it wrote before this existed.
+///
+/// # Errors
+///
+/// Everything [`prepare`] refuses; and [`appearance::check`] and
+/// [`appearance::place`]'s refusals --- a name that cannot be drawn honestly, a
+/// damaged image, a rectangle off its page or too small --- and a page the
+/// document does not have. The name is checked before the document is parsed.
+pub fn prepare_visible(
+    original: Vec<u8>,
+    signed_at: u64,
+    password: Option<&str>,
+    visible: &Visible,
+) -> Result<Unsigned, String> {
+    appearance::check(visible)?;
+    build(original, signed_at, password, Some(visible))
+}
+
+fn build(
+    original: Vec<u8>,
+    signed_at: u64,
+    password: Option<&str>,
+    visible: Option<&Visible>,
+) -> Result<Unsigned, String> {
     let was = original.len();
     let prev = Document::load_mem_with_options(
         &original,
@@ -151,10 +191,42 @@ pub fn prepare(
                 .into(),
         );
     }
+    // A *visible* signature after any certification: measured with pyHanko,
+    // whose difference analysis reads the new widget as a change the
+    // certification does not permit (`allow_new_visible_after_certify` is off
+    // by default, stricter than Acrobat), and the same revision without an
+    // appearance as form filling it does. `docs/TRAPS.md` has the measurement.
+    if visible.is_some() && certification(&prev) > 0 {
+        return Err(
+            "This document is certified, and a visible signature added after a \
+             certification is read by at least one widely used validator as a change \
+             the certification does not permit. Sign it without a visible appearance --- \
+             an invisible signature is accepted."
+                .into(),
+        );
+    }
 
-    let page = *ordered_pages(&prev)
+    let pages = ordered_pages(&prev);
+    let first = *pages
         .first()
         .ok_or("this document has no page to put a signature on")?;
+    // The page, its rectangle in page space and its turns, for a visible one.
+    let placed = match visible {
+        None => None,
+        Some(visible) => {
+            let page = *pages
+                .get(visible.page as usize)
+                .ok_or("the page chosen for the signature is not in this document")?;
+            let shown = crate::pagetree::displayed_page(&prev, page);
+            Some((
+                page,
+                appearance::place(visible, shown)?,
+                shown.turns,
+                visible,
+            ))
+        }
+    };
+    let page = placed.map_or(first, |(page, ..)| page);
     let root = prev
         .trailer
         .get(b"Root")
@@ -166,12 +238,24 @@ pub fn prepare(
 
     let mut incremental = IncrementalDocument::create_from(original, prev);
     let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(signed_at);
+    let date = crate::save::pdf_date(at);
     let signature = incremental
         .new_document
-        .add_object(signature_dictionary(&crate::save::pdf_date(at)));
-    let widget = incremental
-        .new_document
-        .add_object(widget(&field, signature, page));
+        .add_object(signature_dictionary(&date));
+    let mut widget = widget(&field, signature, page);
+    if let Some((_, rect, turns, visible)) = placed {
+        let lines = appearance::words(&visible.name, &date);
+        let form = appearance::stream(
+            &mut incremental.new_document,
+            rect,
+            turns,
+            &lines,
+            visible.image.as_ref(),
+        );
+        widget.set("Rect", appearance::rect_object(rect));
+        widget.set("AP", dictionary! { "N" => form });
+    }
+    let widget = incremental.new_document.add_object(widget);
     add_to_page(&mut incremental, page, annots, widget)?;
     add_to_form(&mut incremental, root, form, widget)?;
 
@@ -201,8 +285,14 @@ pub fn prepare(
 
 /// Whether a DocMDP certification in the catalog permits no change at all.
 fn certified_without_changes(document: &Document) -> bool {
+    certification(document) == 1
+}
+
+/// The DocMDP level the catalog's certification grants, or zero when the
+/// document is not certified.
+fn certification(document: &Document) -> u8 {
     let Ok(catalog) = document.catalog() else {
-        return false;
+        return 0;
     };
     let Some(signature) = catalog
         .get(b"Perms")
@@ -211,9 +301,9 @@ fn certified_without_changes(document: &Document) -> bool {
         .and_then(|perms| perms.get(b"DocMDP").ok())
         .and_then(|sig| resolve(document, sig).as_dict().ok())
     else {
-        return false;
+        return 0;
     };
-    crate::docinfo::certification_of(document, signature) == 1
+    crate::docinfo::certification_of(document, signature)
 }
 
 /// `SignatureN` for the smallest `N` no top-level field is already called.
@@ -260,12 +350,12 @@ enum Site {
 fn annots_site(document: &Document, page: ObjectId) -> Result<Site, String> {
     let dict = document
         .get_dictionary(page)
-        .map_err(|_| "the first page is not a dictionary".to_string())?;
+        .map_err(|_| "the page the signature goes on is not a dictionary".to_string())?;
     array_site(
         document,
         dict,
         b"Annots",
-        "the first page's annotation list",
+        "the annotation list of the page the signature goes on",
     )
 }
 
@@ -354,7 +444,10 @@ fn signature_dictionary(date: &str) -> Dictionary {
 /// The field and its one widget, merged, with no appearance and no area.
 ///
 /// `/F 132` is Print (4) and Locked (128). A zero rectangle is how PDF 32000-1
-/// §12.7.4.5 spells an invisible signature; a visible one is the next step.
+/// §12.7.4.5 spells an invisible signature; [`prepare_visible`] replaces the
+/// rectangle and adds `/AP`, and keeps the flags --- Print is what puts the
+/// appearance on a printed copy, which is where a visible signature is most
+/// often looked for.
 fn widget(field: &str, signature: ObjectId, page: ObjectId) -> Dictionary {
     let mut widget = Dictionary::new();
     widget.set("Type", Object::Name(b"Annot".to_vec()));
@@ -379,7 +472,7 @@ fn widget(field: &str, signature: ObjectId, page: ObjectId) -> Dictionary {
     widget
 }
 
-/// Adds the widget to the first page's `/Annots`, changing only what holds it.
+/// Adds the widget to its page's `/Annots`, changing only what holds it.
 fn add_to_page(
     incremental: &mut IncrementalDocument,
     page: ObjectId,
@@ -392,7 +485,7 @@ fn add_to_page(
     };
     incremental
         .opt_clone_object_to_new_document(changed)
-        .map_err(|e| format!("could not bring the first page across: {e}"))?;
+        .map_err(|e| format!("could not bring the signature's page across: {e}"))?;
     let object = incremental
         .new_document
         .get_object_mut(changed)

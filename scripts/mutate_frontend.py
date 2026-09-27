@@ -3199,12 +3199,13 @@ MUTATIONS = [
         "viewer: leave the redaction tool armed after a region",
         "src/lib/viewer.ts",
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
-        '        const marking = this.tool.kind === "redact";\n'
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
+        "        this.placing = null;\n"
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
-        '        const marking = this.tool.kind === "redact";\n'
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        "        this.placing = null;\n"
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
         '          this.tool = { kind: "redact" };\n'
         "        }",
         "is spent by one region, like the crop and unlike the eraser",
@@ -3263,9 +3264,10 @@ MUTATIONS = [
         # have to know to reach for and nothing on screen saying what happened.
         "viewer: commit a redaction drag as a crop",
         "src/lib/viewer.ts",
-        "        if (marking) this.opts.onRedacted?.(id, rect);\n"
+        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
+        "        else if (marking) this.opts.onRedacted?.(id, rect);\n"
         "        else this.opts.onCropped?.(id, rect);",
-        "        this.opts.onCropped?.(id, rect);",
+        "        else this.opts.onCropped?.(id, rect);",
         "sends a dragged region to the redaction callback and not the crop's",
     ),
     Mutation(
@@ -5368,8 +5370,8 @@ MUTATIONS += [
         # Drop the sentence that stops "intact" meaning "trustworthy".
         "integrity: call a signature intact without saying trust was not checked",
         "src/lib/integrity.ts",
-        "under the key in its certificate${how(integrity)}.${later} ${TRUST_NOT_CHECKED}`,",
-        "under the key in its certificate${how(integrity)}.${later}`,",
+        '  const owner = trustFollows ? "" : ` ${TRUST_NOT_CHECKED}`;',
+        '  const owner = "";',
         "says after every answer that could mean trust that trust was not checked",
     ),
     Mutation(
@@ -5423,6 +5425,87 @@ MUTATIONS += [
         "  if (verdict) rows.push(verdict);",
         "",
         "comes first, above who the signature says signed it",
+    ),
+]
+
+# The trust row, 2026-09-27: the second verdict, from `trust.rs`, and the
+# words it is carried in. Each mutation removes one thing the row must say.
+MUTATIONS += [
+    Mutation(
+        # Build the trust row and never show it --- the inert-feature shape.
+        "properties: build the trust row and never show it",
+        "src/lib/properties.ts",
+        "  if (trusted) rows.push(trusted);",
+        "",
+        "follows the integrity row, and replaces its not-checked sentence",
+    ),
+    Mutation(
+        # Keep saying ownership was not checked above a row that checked it.
+        "properties: keep the not-checked sentence above a trust row",
+        "src/lib/properties.ts",
+        "  const verdict = integrityRow(signature.integrity, signature.appended_bytes, !!trusted);",
+        "  const verdict = integrityRow(signature.integrity, signature.appended_bytes);",
+        "follows the integrity row, and replaces its not-checked sentence",
+    ),
+    Mutation(
+        # Drop the one sentence that stops "trusted" meaning "not revoked".
+        "trust: call a chain trusted without saying revocation was not checked",
+        "src/lib/integrity.ts",
+        "          `key belongs to the person the certificate names. ${REVOCATION_NOT_CHECKED}`,",
+        "          `key belongs to the person the certificate names.`,",
+        "says revocation was not checked wherever the chain reached a trusted root",
+    ),
+    Mutation(
+        # Say "trusts" without saying whose store.
+        "trust: name no store",
+        "src/lib/integrity.ts",
+        "  const chained = `the signer's certificate chains to a root ${computer} trusts`;",
+        "  const chained = `the signer's certificate chains to a trusted root`;",
+        "names the store that answered",
+    ),
+    Mutation(
+        # Leave the date out of an expired standing.
+        "trust: say expired without the date it ran out",
+        "src/lib/integrity.ts",
+        '          `expired — ${chained}, and it ran out${until ? ` on ${until}` : ""}. The ` +',
+        '          `expired — ${chained}, and it ran out. The ` +',
+        "says an expired certificate may have been in force when used, and cannot tell",
+    ),
+    Mutation(
+        # Drop the Adobe sentence: the reader whose colleague sees "trusted"
+        # in Acrobat is then left with a contradiction and no explanation.
+        "trust: leave Adobe's list out of an untrusted root",
+        "src/lib/integrity.ts",
+        """    `issued to themselves reads this way, and so does one whose root only ` +
+    `Adobe's trust list carries`,""",
+        """    `issued to themselves reads this way`,""",
+        "says a root only Adobe's list carries reads as untrusted here",
+    ),
+    Mutation(
+        # An untrusted chain shown without the warning mark.
+        "trust: leave an untrusted chain unmarked",
+        "src/lib/integrity.ts",
+        """          `the person the certificate names.`,
+        warn: true,""",
+        """          `the person the certificate names.`,""",
+        "marks everything but a trusted chain for a reader's attention",
+    ),
+    Mutation(
+        # Read the doubt from the wrong table entry: every reason the same.
+        "trust: give every doubt the same sentence",
+        "src/lib/integrity.ts",
+        '  const why = trust.why ? DOUBT[trust.why](computer) : "no reason was given";',
+        '  const why = DOUBT.rejected(computer);',
+        "gives each doubt its own sentence",
+    ),
+    Mutation(
+        # Date an expired standing from nothing: the certificate's own dates are
+        # what make "ran out on" true.
+        "properties: date the trust row from nothing",
+        "src/lib/properties.ts",
+        "    signature.certificate?.until,",
+        "    undefined,",
+        "dates an expired standing from the certificate the dialog shows",
     ),
 ]
 
@@ -6366,18 +6449,15 @@ MUTATIONS += [
         # mutation about ink -- the crop's ternary is kept so that the only thing
         # removed is `drawnStrokes`, which is what decides ink's own line.
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
-        '      armed: this.tool.kind === "redact"\n'
-        '        ? "redact"\n'
-        '        : this.tool.kind === "crop"\n'
-        '          ? "crop"\n'
-        "          : this.drawnStrokes === null\n"
+        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
+        '          : this.tool.kind === "place"\n'
+        '            ? "place"\n'
+        "            : this.drawnStrokes === null\n"
         "            ? this.drawArmed\n"
         "            : null,",
-        '      armed: this.tool.kind === "redact"\n'
-        '        ? "redact"\n'
-        '        : this.tool.kind === "crop"\n'
-        '          ? "crop"\n'
-        "          : this.drawArmed,",
+        '          : this.tool.kind === "place"\n'
+        '            ? "place"\n'
+        "            : this.drawArmed,",
         "names a drawing in one field, not two",
     ),
     Mutation(
@@ -6485,7 +6565,8 @@ MUTATIONS += [
         "crop: start the crop drag whether or not the tool is armed",
         "src/lib/viewer.ts",
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
-        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact") return false;',
+        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place") return false;',
         "        if (false) return false;",
         "reports nothing until the tool is armed",
     ),
@@ -6510,12 +6591,13 @@ MUTATIONS += [
         "crop: leave the crop tool armed after a rectangle",
         "src/lib/viewer.ts",
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
-        '        const marking = this.tool.kind === "redact";\n'
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
+        "        this.placing = null;\n"
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
         "          this.tool = NO_TOOL;\n"
         "        }",
-        '        const marking = this.tool.kind === "redact";\n'
-        '        if (this.tool.kind === "crop" || this.tool.kind === "redact") {\n'
+        "        this.placing = null;\n"
+        '        if (this.tool.kind === "crop" || this.tool.kind === "redact" || this.tool.kind === "place") {\n'
         '          this.tool = { kind: "crop" };\n'
         "        }",
         "is spent by one rectangle",
@@ -6587,18 +6669,11 @@ MUTATIONS += [
         "crop: leave the armed crop out of the status the window reads",
         "src/lib/viewer.ts",
         # Re-aimed 2026-09-06 when the five tool flags became one `tool` field.
-        '      armed: this.tool.kind === "redact"\n'
-        '        ? "redact"\n'
+        # Re-aimed 2026-09-27 when the signature placement joined the crop's drag.
         '        : this.tool.kind === "crop"\n'
         '          ? "crop"\n'
-        "          : this.drawnStrokes === null\n"
-        "            ? this.drawArmed\n"
-        "            : null,",
-        '      armed: this.tool.kind === "redact"\n'
-        '        ? "redact"\n'
-        "        : this.drawnStrokes === null\n"
-        "          ? this.drawArmed\n"
-        "          : null,",
+        '          : this.tool.kind === "place"\n',
+        '        : this.tool.kind === "place"\n',
         "names the armed crop, which is not a mark kind",
     ),
     Mutation(
@@ -8151,7 +8226,7 @@ MUTATIONS += [
         "  if (shell.dirty()) return UNSAVED;\n", "",
         "refuses unsaved edits before asking the OS anything"),
     Mutation("signing: go on after the chooser was cancelled", "src/lib/signing.ts",
-        "  if (identity === null) return null;\n", "",
+        "  if (chosen === null) return null;\n", "",
         "stops without a word when the reader cancels either question"),
     Mutation("signing: go on after the save panel was cancelled", "src/lib/signing.ts",
         "  if (!path) return null;\n", "",
@@ -8189,6 +8264,52 @@ MUTATIONS += [
         """      title: "Sign document\\u2026",
       enabled: () => withDocument() && !actions.isDirty(),""",
         "signs the document through its own command, offered with or without edits"),
+]
+
+# --- a visible appearance for a digital signature (Phase 6, 2026-09-27) --------
+# `signing.ts` asks where and hands the image on; `viewer.ts` lends the crop's
+# drag for one rectangle and must answer every waiter. Each mutation removes
+# one of those promises.
+MUTATIONS += [
+    Mutation("signing: sign visibly without asking where", "src/lib/signing.ts",
+        "  if (chosen.visible) {", "  if (false) {",
+        "places a visible signature before the file is named, with the saved image"),
+    Mutation("signing: ask where an invisible signature goes", "src/lib/signing.ts",
+        "  if (chosen.visible) {", "  if (true) {",
+        "signs invisibly by default, asking nothing about a page or an image"),
+    Mutation("signing: go on after the placement was escaped", "src/lib/signing.ts",
+        "    if (placed === null) return null;\n", "",
+        "stops without a word when the reader escapes the placement"),
+    Mutation("signing: leave the saved image out of the placement", "src/lib/signing.ts",
+        "    placement = { ...placed, image };", "    placement = { ...placed, image: null };",
+        "places a visible signature before the file is named, with the saved image"),
+    Mutation("signing: answer visible from the chooser whatever was picked", "src/lib/signing.ts",
+        "      finish(identity === undefined ? null : { identity, visible: visible.checked });",
+        "      finish(identity === undefined ? null : { identity, visible: true });",
+        "answers an invisible signature unless the reader picks a visible one"),
+    Mutation("signing: open the chooser with neither appearance picked", "src/lib/signing.ts",
+        '  appearance("invisible", "Invisible — the signature is in the file, not on a page", true);',
+        '  appearance("invisible", "Invisible — the signature is in the file, not on a page", false);',
+        "answers an invisible signature unless the reader picks a visible one"),
+    Mutation("viewer: leave a placement waiting when the tool is taken", "src/lib/viewer.ts",
+        '    if (next.kind !== "place" && this.placing) {', "    if (false) {",
+        "answers nothing when another tool takes the hand or the viewer goes"),
+    Mutation("viewer: leave a placement waiting when the viewer goes", "src/lib/viewer.ts",
+        "    // document it was for is going, and its sequence must not wait forever.\n    this.tool = NO_TOOL;\n",
+        "    // document it was for is going, and its sequence must not wait forever.\n",
+        "answers nothing when another tool takes the hand or the viewer goes"),
+    Mutation("viewer: send a placed rectangle to the crop callback", "src/lib/viewer.ts",
+        "        if (placing) placing({ page: id, rect });\n        else if (marking)",
+        "        if (false) placing({ page: id, rect });\n        else if (marking)",
+        "answers the dragged rectangle, in the space a crop is reported in, and crops nothing"),
+    Mutation("viewer: refuse the drag a placement is armed for", "src/lib/viewer.ts",
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact" && this.tool.kind !== "place") return false;',
+        '        if (this.tool.kind !== "crop" && this.tool.kind !== "redact") return false;',
+        "answers the dragged rectangle, in the space a crop is reported in, and crops nothing"),
+    Mutation("viewer: answer a committed placement with nothing", "src/lib/viewer.ts",
+        "        const placing = this.placing;\n        this.placing = null;\n",
+        "        const placing = this.placing;\n",
+        "answers the dragged rectangle, in the space a crop is reported in, and crops nothing"),
 ]
 
 if __name__ == "__main__":

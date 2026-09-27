@@ -613,6 +613,14 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       report.check("the worker reports the signature intact",
         properties.signatures.some((s)=>s.integrity?.verdict === "intact"),
         JSON.stringify(properties.signatures.map((s)=>s.integrity)));
+      // And the trust check, from the same place: `trust.rs` asks the OS store
+      // from inside the sandboxed worker, and an unreachable trust service
+      // reads as `unchecked` / `unavailable`. What this asserts is that the
+      // packaged worker got an answer at all, not which one --- the fixture's
+      // signer is a test certificate no store trusts.
+      report.check("the worker's trust check reached the OS",
+        properties.signatures.some((s)=>s.trust !== null && s.trust.standing !== "unchecked"),
+        JSON.stringify(properties.signatures.map((s)=>s.trust)));
       host.run("edit.rotatePageClockwise"); await host.idle();
       report.check("the signed document has pending edits", host.edits()!.dirty, "signed save");
       host.run("file.save");

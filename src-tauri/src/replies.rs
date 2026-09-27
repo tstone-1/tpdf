@@ -229,6 +229,14 @@ fn samples() -> BTreeMap<&'static str, String> {
                     digest: "SHA-256".into(),
                     method: "ECDSA P-256".into(),
                 }),
+                // A shape, not a document: the backend never pairs a standing
+                // with an unchecked verdict. `Untrusted` with a reason and a
+                // store, so every key the mirror has carries a value.
+                trust: Some(crate::trust::Trust {
+                    standing: crate::trust::Standing::Untrusted,
+                    why: Some(crate::trust::Doubt::Root),
+                    store: Some(crate::trust::Store::Mac),
+                }),
             }],
             tagged: Some(true),
             language: "en-GB".into(),

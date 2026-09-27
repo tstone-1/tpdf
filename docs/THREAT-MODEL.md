@@ -1200,7 +1200,8 @@ range --- a later revision can change every page a reader sees while an earlier 
 cannot fully check is `unchecked` with its reason and is never shown as `intact`; a SHA-1 match
 is `weak`, because a chosen-prefix collision makes it forgeable by whoever prepared the
 document. The attacker this does not stop is the one with their own key: anybody can make a
-certificate naming anybody, sign, and be `intact`. Chain building is Phase 6 step 3's question.
+certificate naming anybody, sign, and be `intact`. Whether an issuer the OS trusts vouches for
+the key is a second verdict since 2026-09-27 (§T6.22); revocation is Phase 6 step 3's question.
 
 **A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
 `/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.
@@ -2143,6 +2144,61 @@ the machine's word. It does not claim the certificate is trusted by anybody, and
 verifier decides that. Earlier signatures are left intact because their bytes are the new
 file's prefix; `sign-probe` shows pyHanko reading each earlier one as covering its entire
 revision with the appended change classed as form filling.
+
+#### T6.22 — Whether the OS trusts a signer, added 2026-09-27
+
+**What changed.** `docinfo::scan_from` now asks the operating system's trust store, for every
+signature whose integrity verdict is `intact` or `weak`, whether the signer's certificate
+chains to a root it trusts (`trust.rs`; `docs/PLAN.md` §9, Phase 6). It is the first time a
+document's bytes are handed to an **OS service** rather than to a parser tpdf links: the chain
+builder is `trustd` on macOS and CryptoAPI on Windows.
+
+**Where it runs, and why there.** In the worker, beside the integrity check, because the
+certificates are attacker-chosen. That was a measurement, not an assumption: `signature-probe
+--mode trust` repeats the scan in a child under `worker::SANDBOX_PROFILE` --- proved live by
+the child failing to read its own input file --- and on macOS the verdict lines are identical
+to the unsandboxed ones on every document tried. The profile's `(allow default)` is what admits
+the Mach lookup to `trustd`; `(deny network*)` does not reach it. **Windows is not measured**:
+a Windows worker is contained by its parent, the probe cannot put itself in that position, and
+whether a low-integrity process inside the job can open the stores `CertGetCertificateChain`
+reads is unverified. A chain call that fails outright is `unchecked`, but whether a store it
+cannot open makes the call fail or makes a root read as untrusted is unmeasured --- the second
+would be the macOS `trustd` defect above in a Windows shape, and the first Windows run should
+look for it.
+
+**What the OS receives.** Not the document's bytes as written: the CMS blob is bounded by
+`MAX_SIG_BLOB` as before, each certificate is decoded by `x509-cert` and **re-encoded** as DER,
+at most `trust::MAX_CERTIFICATES` (16) of them and each under `MAX_CERTIFICATE_BYTES` (64 KiB);
+a set outside either bound is `unchecked` rather than truncated. So the platform parser meets
+canonical DER that a Rust decoder already accepted, which narrows but does not remove its
+exposure: the values inside --- names, extensions, keys --- are still the document's.
+
+**Residual: a second native parser of attacker-chosen certificates.** On macOS the evaluation
+happens in `trustd` --- measured: with the Mach lookup to `trustd` denied under `sandbox-exec`,
+`SecTrustEvaluateWithError` fails with `errSecInternalError` --- so the certificates are parsed
+there, **outside** the worker's sandbox, as well as by Security.framework inside the worker when
+each `SecCertificate` is made. So a memory-safety defect in Apple's certificate
+parsing reachable from a document now runs with `trustd`'s authority rather than the
+worker's. The same is true of every process on the machine that verifies a certificate an
+attacker supplied --- a mail client, a browser --- and it is bounded by the re-encoding above,
+but it is a new reach from a document and is listed as residual risk 25. On Windows the parse
+is in-process, inside the worker's containment.
+
+**No network authority is added.** Fetching is off on both platforms, with the same flags the
+signing chain uses, now shared from `trust::platform`: no intermediate is downloaded, no OCSP
+responder or CRL is asked, and on Windows no root is auto-updated. The updater stays the only
+network authority (§T9). The cost is in the answer and stated there: **revocation is not
+checked**, a missing intermediate reads as a missing link, and a root Windows would fetch on
+demand reads as untrusted until the machine has it.
+
+**What a standing claims.** `trusted` means the OS store's rules accept a chain from the
+signer's certificate to a root it trusts, **now**, and that the certificate names a purpose a
+document signature serves. It does not mean the certificate was unrevoked, that it was in force
+when the signature was made, or anything under Adobe's list --- a signature made against an
+AATL-only root reads as ending at a root this computer does not trust, and the sentence says
+so. A certificate that has run out since is `expired`, never `trusted`. The attacker this still
+does not stop is one who holds a key a trusted issuer certified for them, or who controls the
+reader's own trust settings; both are outside a document's reach.
 
 ### T7 — Distribution and update
 
@@ -3464,6 +3520,15 @@ which is what makes it evidence rather than a milestone.
     already renders the document to the reader --- a worker that can lie here can lie about
     every pixel --- and not closed: closing it needs an independent reader of the update in the
     app process, which is the parse the split exists to keep out.
+
+25. **A document's certificates reach `trustd`, outside the worker's sandbox** (§T6.22), added
+    2026-09-27. The trust check asks the OS chain builder about the signer's certificate and the
+    rest of the signature's set, and on macOS that parse happens in the system daemon rather than
+    in the contained worker. Bounded by what is handed over --- at most sixteen certificates,
+    each re-encoded from a successful `x509-cert` decode and under 64 KiB --- and by `trustd`
+    being the component every other program on the machine hands attacker-supplied
+    certificates to. Not closed: closing it means not asking the OS, which is the decision the
+    trust verdict rests on. Unmeasured on Windows, where the parse is in-process and contained.
 
 ## 8. How to re-verify any of this
 

@@ -216,6 +216,9 @@ subsetter = { version = "0.2.6", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 # Keychain-protected signature storage; already used by the TLS verifier. MIT OR Apache-2.0.
 security-framework = "3"
+# `CFDate`, the moment `trust.rs` evaluates a chain at (`SecTrustSetVerifyDate`).
+# Already in the tree beneath `security-framework`; MIT OR Apache-2.0.
+core-foundation = "0.10"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = [
@@ -368,11 +371,11 @@ rand_chacha = "0.3"
 flagset = "0.4"
 
 # `keystore.rs`'s macOS test hands `SecKeyCreateSignature` a key made in memory
-# with `SecKeyCreateWithData`, which `security-framework` does not wrap. Both
-# already in the tree beneath it; MIT OR Apache-2.0.
+# with `SecKeyCreateWithData`, which `security-framework` does not wrap. Already
+# in the tree beneath it; MIT OR Apache-2.0. (`core-foundation`, which that test
+# uses too, is a normal dependency since `trust.rs`.)
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 security-framework-sys = "2"
-core-foundation = "0.10"
 
 [[example]]
 name = "tile-bench"

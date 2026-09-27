@@ -26,6 +26,10 @@
 //! verifier will want in the `certificates` set. Fetching intermediates over
 //! the network would be a second network authority beside the updater
 //! (`docs/THREAT-MODEL.md` §T9), and that belongs to Phase 6 step 3.
+//!
+//! The construction is `trust::platform`'s, which reads a *document's* signer
+//! chain against the same store under the same rules; a conclusion is drawn
+//! there, and only there.
 
 use crate::sign_cms::{Key, KeyKind};
 
@@ -100,8 +104,6 @@ mod platform {
     use security_framework::identity::SecIdentity;
     use security_framework::item::{ItemClass, ItemSearchOptions, Limit, Reference, SearchResult};
     use security_framework::key::{Algorithm, SecKey};
-    use security_framework::policy::SecPolicy;
-    use security_framework::trust::SecTrust;
 
     /// `errSecItemNotFound`: a search that matched nothing, which for a
     /// reader with no signing certificate is the ordinary answer.
@@ -139,21 +141,20 @@ mod platform {
 
     /// The certificates above `certificate`, as `SecTrust` assembles them
     /// without the network. Empty when no chain could be built.
-    #[allow(deprecated)] // `chain()` is macOS 12; the bundle targets 10.13.
+    ///
+    /// Built by `trust::platform::trust_over`, the construction the verdict
+    /// on a signature's chain uses too.
     pub fn chain_of(certificate: &SecCertificate) -> Vec<Vec<u8>> {
-        let Ok(mut trust) = SecTrust::create_with_certificates(
-            std::slice::from_ref(certificate),
-            &[SecPolicy::create_x509()],
-        ) else {
+        let Some(trust) = crate::trust::platform::trust_over(std::slice::from_ref(certificate))
+        else {
             return Vec::new();
         };
-        let _ = trust.set_network_fetch_allowed(false);
         // The outcome is not a verdict here; evaluating is what assembles the
         // chain, and an untrusted one is still the one a verifier wants.
         let _ = trust.evaluate_with_error();
-        (1..trust.certificate_count())
-            .filter_map(|at| trust.certificate_at_index(at))
-            .map(|certificate| certificate.to_der())
+        crate::trust::platform::chain_of(&trust)
+            .into_iter()
+            .skip(1)
             .collect()
     }
 
@@ -180,15 +181,14 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use super::{Identity, KeyKind};
+    use crate::trust::platform::{elements, encoded, OFFLINE};
     use windows_sys::Win32::Security::Cryptography::{
         CertCloseStore, CertDuplicateCertificateContext, CertEnumCertificatesInStore,
         CertFreeCertificateChain, CertFreeCertificateContext, CertGetCertificateChain,
         CertGetCertificateContextProperty, CertOpenSystemStoreW, CryptAcquireCertificatePrivateKey,
         NCryptFreeObject, NCryptSignHash, BCRYPT_PKCS1_PADDING_INFO, BCRYPT_SHA256_ALGORITHM,
-        CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL, CERT_CHAIN_CONTEXT, CERT_CHAIN_DISABLE_AIA,
-        CERT_CHAIN_DISABLE_AUTH_ROOT_AUTO_UPDATE, CERT_CHAIN_PARA, CERT_CONTEXT,
-        CERT_KEY_PROV_INFO_PROP_ID, CERT_NCRYPT_KEY_SPEC, CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG,
-        NCRYPT_PAD_PKCS1_FLAG,
+        CERT_CHAIN_CONTEXT, CERT_CHAIN_PARA, CERT_CONTEXT, CERT_KEY_PROV_INFO_PROP_ID,
+        CERT_NCRYPT_KEY_SPEC, CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG, NCRYPT_PAD_PKCS1_FLAG,
     };
 
     /// A certificate context this process holds a reference to.
@@ -204,15 +204,6 @@ mod platform {
             unsafe {
                 CertFreeCertificateContext(self.0);
             }
-        }
-    }
-
-    fn encoded(context: *const CERT_CONTEXT) -> Vec<u8> {
-        // A context crypt32 handed back is valid for as long as it is held,
-        // and `pbCertEncoded` is `cbCertEncoded` bytes of it.
-        unsafe {
-            std::slice::from_raw_parts((*context).pbCertEncoded, (*context).cbCertEncoded as usize)
-                .to_vec()
         }
     }
 
@@ -269,9 +260,7 @@ mod platform {
             ..Default::default()
         };
         let mut chain: *mut CERT_CHAIN_CONTEXT = std::ptr::null_mut();
-        let flags = CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL
-            | CERT_CHAIN_DISABLE_AIA
-            | CERT_CHAIN_DISABLE_AUTH_ROOT_AUTO_UPDATE;
+        let flags = OFFLINE;
         let built = unsafe {
             CertGetCertificateChain(
                 std::ptr::null_mut(),
@@ -287,17 +276,10 @@ mod platform {
         if !built || chain.is_null() {
             return Vec::new();
         }
-        let mut out = Vec::new();
         // The first simple chain is the one ending at the end certificate;
         // its first element is the end certificate itself.
+        let out = unsafe { elements(chain) }.into_iter().skip(1).collect();
         unsafe {
-            if (*chain).cChain > 0 {
-                let simple = *(*chain).rgpChain;
-                for at in 1..(*simple).cElement as usize {
-                    let element = *(*simple).rgpElement.add(at);
-                    out.push(encoded((*element).pCertContext));
-                }
-            }
             CertFreeCertificateChain(chain);
         }
         out

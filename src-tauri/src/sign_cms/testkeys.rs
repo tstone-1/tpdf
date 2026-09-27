@@ -191,6 +191,8 @@ pub struct Spec<'a> {
     /// The issuer's key and name; `None` issues it to itself.
     pub issuer: Option<(&'a Soft, &'a str)>,
     pub serial: u8,
+    /// Basic constraints' `cA`; `None` states no basic constraints.
+    pub authority: Option<bool>,
 }
 
 /// Seconds since the epoch of a fixed "now" the tests agree on: 2026-09-26.
@@ -206,6 +208,7 @@ impl<'a> Spec<'a> {
             purposes: None,
             issuer: None,
             serial: 1,
+            authority: None,
         }
     }
 }
@@ -256,6 +259,18 @@ pub fn certificate_of(
             extn_id: ObjectIdentifier::new_unwrap("2.5.29.37"),
             critical: true,
             extn_value: OctetString::new(usage.to_der().expect("purposes")).expect("octets"),
+        });
+    }
+    if let Some(ca) = spec.authority {
+        let constraints = x509_cert::ext::pkix::BasicConstraints {
+            ca,
+            path_len_constraint: None,
+        };
+        stated.push(Extension {
+            extn_id: ObjectIdentifier::new_unwrap("2.5.29.19"),
+            critical: true,
+            extn_value: OctetString::new(constraints.to_der().expect("constraints"))
+                .expect("octets"),
         });
     }
     let extensions = (!stated.is_empty()).then_some(stated);

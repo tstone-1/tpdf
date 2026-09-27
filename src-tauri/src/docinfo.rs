@@ -46,9 +46,11 @@
 //!
 //! ## Nothing here says a signature is valid
 //!
-//! This has no trust store, so it cannot say whether the certificate chains to
-//! anybody, whether it was revoked, or whether it was in date when used.
-//! `docs/TRAPS.md` is explicit that the UI must never imply otherwise.
+//! This cannot say whether the certificate was revoked or whether it was in
+//! date when used, and has no trust store of its own: whether the signer chains
+//! to a root is the operating system's answer, asked by [`crate::trust`] and
+//! reported beside the integrity verdict as [`Signature::trust`].
+//! `docs/TRAPS.md` is explicit that the UI must never imply more than that.
 //!
 //! What it reports is what the document *claims* --- the signer's name, reason
 //! and date are strings the signer wrote, and are labelled as claimed --- plus
@@ -58,7 +60,9 @@
 //! field that is a verdict, and it is confined to its own type in
 //! [`crate::integrity`], whose module note says exactly what each answer does
 //! and does not claim --- above all, that "intact" is about the bytes and the
-//! key, never about who holds the key. Every other field stays a claim, and
+//! key, never about who holds the key. [`Signature::trust`], since 2026-09-27,
+//! is the second, confined the same way to [`crate::trust`] and present only
+//! on top of an intact or weak first. Every other field stays a claim, and
 //! `no_signature_field_may_carry_a_verdict` is still the compile error that
 //! makes adding one a decision rather than a drift.
 
@@ -304,6 +308,13 @@ pub struct Signature {
     /// [`crate::integrity`] for exactly what each answer claims. `None` for a
     /// field nobody has signed, which has nothing to check.
     pub integrity: Option<crate::integrity::Integrity>,
+    /// Whether the signer's certificate chains to a root this OS trusts.
+    ///
+    /// **The second verdict, and it rests on the first**: `Some` only when
+    /// [`Signature::integrity`] is intact or weak, because for any other answer
+    /// there is nothing to attribute to anybody. See [`crate::trust`] for the
+    /// store it asks, and for what it does not check --- revocation above all.
+    pub trust: Option<crate::trust::Trust>,
 }
 
 /// What the signing certificate says, as against what the signer typed.
@@ -1231,9 +1242,9 @@ fn read_signature(
 
     out.certification = certification_of(document, sig);
     out.certificate = read_certificate(document, sig, limits);
-    out.integrity = Some(integrity_of(
-        document, sig, bytes, &strict, &out.kind, budget,
-    ));
+    let integrity = integrity_of(document, sig, bytes, &strict, &out.kind, budget);
+    out.trust = attributable(&integrity).then(|| trust_of(document, sig));
+    out.integrity = Some(integrity);
 
     // A *document* timestamp is a signature whose `/Contents` is the token
     // itself rather than a CMS carrying one as an attribute --- PDF 2.0
@@ -1281,6 +1292,32 @@ fn integrity_of(
         .unwrap_or_default();
     let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut 0);
     crate::integrity::check(bytes, range, raw, blob.as_deref(), kind, budget)
+}
+
+/// Whether a verdict leaves anything to attribute to a signer.
+///
+/// Only `intact` and `weak`: an altered signature's signer vouched for bytes
+/// that are no longer there, a broken one's signed nothing that checks out, and
+/// an unchecked one's was not looked at. "Trusted" beside any of those would be
+/// read as softening it, so [`Signature::trust`] is `None` for them.
+fn attributable(integrity: &crate::integrity::Integrity) -> bool {
+    use crate::integrity::Verdict;
+    matches!(integrity.verdict, Verdict::Intact | Verdict::Weak)
+}
+
+/// Whether the signer's certificate chains to a root this OS trusts, now.
+///
+/// The same bounded preparation of the same blob the verdict was read from.
+/// Its refusal is not counted here, for the reason [`integrity_of`]'s is not:
+/// a blob that would not prepare has no `intact` verdict to reach this with.
+fn trust_of(document: &Document, sig: &Dictionary) -> crate::trust::Trust {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    match signature_contents(document, sig, MAX_SIG_BLOB, &mut 0) {
+        Some(blob) => crate::trust::of_blob(&blob, now, crate::trust::Anchors::System),
+        None => crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
+    }
 }
 
 /// Reads the signer's certificate out of the `/Contents` blob.
@@ -1460,7 +1497,9 @@ pub fn parse_certificate(der_bytes: &[u8]) -> Option<Certificate> {
 }
 
 /// Every X.509 certificate in a `SignedData`'s `certificates` set.
-fn certificates_of(signed: &cms::signed_data::SignedData) -> Vec<&x509_cert::Certificate> {
+pub(crate) fn certificates_of(
+    signed: &cms::signed_data::SignedData,
+) -> Vec<&x509_cert::Certificate> {
     use cms::cert::CertificateChoices;
 
     signed
@@ -3269,7 +3308,55 @@ mod tests {
             // `an_unchecked_verdict_always_says_why` and the fixture tests that
             // pin each answer. This line is where adding it was decided.
             integrity: _,
+            // **The second, since 2026-09-27**, and it rests on the first: a
+            // type of its own in `trust.rs`, present only beside an intact or
+            // weak verdict (`trust_is_asked_only_of_a_signature_with_a_signer`),
+            // naming the store it asked and never claiming revocation.
+            trust: _,
         } = signature;
+    }
+
+    #[test]
+    fn trust_is_asked_only_of_a_signature_with_a_signer() {
+        // Intact and weak signatures carry a standing; altered, broken and
+        // unchecked ones carry none, because there is nothing to attribute.
+        // The fixtures' signers are pyHanko test certificates no store holds,
+        // so the intact ones end at a root this machine does not trust --- the
+        // real store asked, and a control that `trust` is filled in at all.
+        use crate::integrity::Verdict;
+        let mut seen = Vec::new();
+        for name in [
+            "incr-signed.pdf",
+            "signed-sha1.pdf",
+            "signed-altered.pdf",
+            "signed-broken.pdf",
+            "signed-nested-field.pdf",
+        ] {
+            let Ok(bytes) = std::fs::read(std::path::Path::new("../testdata").join(name)) else {
+                println!("[SKIP] {name}: not generated");
+                continue;
+            };
+            for signature in scan(&bytes, 1, None).expect("parses").signatures {
+                let verdict = signature.integrity.clone().expect("signed").verdict;
+                let attributable = matches!(verdict, Verdict::Intact | Verdict::Weak);
+                assert_eq!(
+                    signature.trust.is_some(),
+                    attributable,
+                    "{name}: {verdict:?}"
+                );
+                if let Some(trust) = signature.trust {
+                    #[cfg(any(target_os = "macos", windows))]
+                    assert_eq!(
+                        trust.standing,
+                        crate::trust::Standing::Untrusted,
+                        "{name}: {trust:?}"
+                    );
+                    assert!(trust.why.is_some(), "{name}");
+                }
+                seen.push(verdict);
+            }
+        }
+        println!("verdicts examined: {seen:?}");
     }
 
     // ---------------------------------------------------------------- helpers

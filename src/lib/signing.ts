@@ -18,9 +18,19 @@
  *    trip through a certificate chooser to be told.
  * 2. **The certificates are listed**, and none usable is a message naming the
  *    ones that were found and why each is not offered.
- * 3. **The reader chooses**, then **names the new file** --- `<name>-signed.pdf`
- *    beside the original. The original is never written.
- * 4. **The result is what a worker read back from the written file**, one line
+ * 3. **The reader chooses** a certificate and whether the signature is
+ *    **invisible** (the default, and what signing did before it could be
+ *    anything else) or **visible**.
+ * 4. **A visible one is placed** before the file is named: the reader's saved
+ *    visual signature is read (Phase 4's store; none is not an error, the
+ *    appearance is then words alone), and the viewer's crop drag is armed for
+ *    one rectangle. Escape, or anything else taking the tool, cancels the whole
+ *    signing --- nothing has been asked of the OS yet, and nothing is written.
+ *    The worker draws the appearance inside the revision it signs; nothing here
+ *    draws it.
+ * 5. **The reader names the new file** --- `<name>-signed.pdf` beside the
+ *    original. The original is never written.
+ * 6. **The result is what a worker read back from the written file**, one line
  *    per signature, the new one first. Its words are `integrity.ts`'s, so a
  *    signature the reader just made is described exactly as the properties
  *    dialog would describe it.
@@ -29,6 +39,8 @@
 import { basename } from "./paths";
 import type { Integrity } from "./integrity";
 import { WHY } from "./integrity";
+import type { PageId } from "./pages";
+import type { SignatureImage } from "./signature";
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -68,6 +80,32 @@ export interface Signed {
   field: string;
   signatures: Checked[];
 }
+
+/** What the chooser answers: the certificate, and whether the signature shows. */
+export interface Chosen {
+  identity: string;
+  visible: boolean;
+}
+
+/** Where a visible signature goes. Mirrors `commands::sign::Placement`. */
+export interface Placement {
+  /** The page's id, as every page command carries it. */
+  page: PageId;
+  /** `left, top, right, bottom` in points, in the page's display space. */
+  rect: [number, number, number, number];
+  /** The saved visual signature, or `null` for words alone. */
+  image: SignatureImage | null;
+}
+
+/**
+ * What the reader is told while the placement is armed.
+ *
+ * Said in the message area as well as the status line's short label, because
+ * the chooser that asked for it has just closed and nothing else on screen says
+ * the next drag is a signature.
+ */
+export const PLACE =
+  "Drag a rectangle where the signature should appear. Esc cancels signing.";
 
 /** The refusal for a document with edits nobody has saved. */
 export const UNSAVED =
@@ -159,12 +197,16 @@ export interface SigningShell {
   openPath: string;
   /** `sign_identities`. */
   list(): Promise<Choices>;
-  /** The chooser: the id picked, or `null` for Cancel. */
-  choose(choices: Choice[]): Promise<string | null>;
+  /** The chooser: the certificate and the appearance, or `null` for Cancel. */
+  choose(choices: Choice[]): Promise<Chosen | null>;
+  /** The reader's saved visual signature, or `null` when there is none. */
+  savedImage(): Promise<SignatureImage | null>;
+  /** Arms the placement: where the reader dragged, or `null` for Escape. */
+  place(): Promise<{ page: PageId; rect: [number, number, number, number] } | null>;
   /** The save panel, suggesting `suggested`: a path, or `null` for Cancel. */
   saveAs(suggested: string): Promise<string | null>;
-  /** `sign_document`. */
-  sign(identity: string, path: string): Promise<Signed>;
+  /** `sign_document`, with `null` for an invisible signature. */
+  sign(identity: string, path: string, placement: Placement | null): Promise<Signed>;
 }
 
 /**
@@ -178,11 +220,20 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
   if (shell.dirty()) return UNSAVED;
   const choices = await shell.list();
   if (choices.usable.length === 0) return nothingToChoose(choices);
-  const identity = await shell.choose(choices.usable);
-  if (identity === null) return null;
+  const chosen = await shell.choose(choices.usable);
+  if (chosen === null) return null;
+  let placement: Placement | null = null;
+  if (chosen.visible) {
+    // The image before the drag, so a store that cannot be read says so
+    // before the reader has placed anything.
+    const image = await shell.savedImage();
+    const placed = await shell.place();
+    if (placed === null) return null;
+    placement = { ...placed, image };
+  }
   const path = await shell.saveAs(signedName(shell.openPath));
   if (!path) return null;
-  return afterSigning(await shell.sign(identity, path));
+  return afterSigning(await shell.sign(chosen.identity, path, placement));
 }
 
 /**
@@ -191,7 +242,7 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
  * A modal on the same surface as the signed-save warning. Built from
  * `textContent` only, since a certificate's subject is somebody else's text.
  */
-export function askIdentity(choices: Choice[]): Promise<string | null> {
+export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
   dialog.className = "sign-identity-dialog";
@@ -220,6 +271,29 @@ export function askIdentity(choices: Choice[]): Promise<string | null> {
     list.append(label);
     return radio;
   });
+  // The appearance: invisible first and selected, because it is what signing
+  // did before there was a choice and what a reader who reads nothing gets.
+  const shows = document.createElement("div");
+  shows.setAttribute("role", "radiogroup");
+  shows.setAttribute("aria-label", "Appearance");
+  shows.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
+  const appearance = (value: string, text: string, checked: boolean) => {
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "sign-appearance";
+    radio.value = value;
+    radio.checked = checked;
+    const label = document.createElement("label");
+    label.append(radio, ` ${text}`);
+    shows.append(label);
+    return radio;
+  };
+  appearance("invisible", "Invisible — the signature is in the file, not on a page", true);
+  const visible = appearance(
+    "visible",
+    "Visible — drag a rectangle on a page next; it shows your name, the date and your saved signature image",
+    false,
+  );
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
   const cancel = document.createElement("button");
@@ -227,22 +301,23 @@ export function askIdentity(choices: Choice[]): Promise<string | null> {
   const next = document.createElement("button");
   next.textContent = "Sign…";
   footer.append(cancel, next);
-  dialog.append(heading, help, list, footer);
+  dialog.append(heading, help, list, shows, footer);
   document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (id: string | null) => {
+    const finish = (chosen: Chosen | null) => {
       if (settled) return;
       settled = true;
       dialog.close();
       dialog.remove();
       previous?.focus();
-      resolve(id);
+      resolve(chosen);
     };
     cancel.addEventListener("click", () => finish(null));
-    next.addEventListener("click", () =>
-      finish(radios.find((radio) => radio.checked)?.value ?? null),
-    );
+    next.addEventListener("click", () => {
+      const identity = radios.find((radio) => radio.checked)?.value;
+      finish(identity === undefined ? null : { identity, visible: visible.checked });
+    });
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
       finish(null);

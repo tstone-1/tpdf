@@ -645,10 +645,12 @@ fn handle(
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
-        Request::PrepareSignature { at } => match render::run_prepare_signature(document, *at) {
-            Ok(unsigned) => Response::reply(Reply::PreparedSignature(unsigned)),
-            Err(e) => Response::err(e),
-        },
+        Request::PrepareSignature { at, visible } => {
+            match render::run_prepare_signature(document, *at, visible.as_deref()) {
+                Ok(unsigned) => Response::reply(Reply::PreparedSignature(unsigned)),
+                Err(e) => Response::err(e),
+            }
+        }
         Request::Rewrite {
             plan,
             job,

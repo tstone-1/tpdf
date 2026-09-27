@@ -19,11 +19,13 @@
  * are actually chosen. tpdf *parses* certificates --- it reads the subject, the
  * issuer, the serial and the validity dates out of the PKCS#7 blob --- and since
  * 2026-09-26 it also tests each signature against the bytes it covers, in the
- * worker, with the answer in `integrity.ts`. That is still a smaller thing than
- * "valid". It has **no trust store**, does not build a chain and does not check
- * a revocation list, so it knows whether the bytes are the ones signed and
- * whether the certificate's key made the signature --- and nothing about who
- * holds that key.
+ * worker, with the answer in `integrity.ts`; since 2026-09-27 it asks the
+ * operating system's own trust store whether the signer's certificate chains
+ * to a root it trusts. That is still a smaller thing than "valid". It checks
+ * no revocation list, fetches nothing, consults no list but the OS's own, and
+ * cannot tell whether a certificate was in date when it was used --- so the
+ * trust row names the store, and says revocation was not asked, every time it
+ * reaches a trusted root.
  *
  * The vocabulary carries it: a signer's name, reason, location and date are
  * introduced as claimed, and so is everything the certificate says. The
@@ -35,7 +37,7 @@
  * read as a verdict about the signer.
  */
 
-import { integrityRow, type Integrity } from "./integrity";
+import { integrityRow, trustRow, type Integrity, type Trust } from "./integrity";
 
 /** One `/Info` entry, as `docinfo.rs` reports it. */
 export interface Field {
@@ -94,6 +96,11 @@ export interface Signature {
   timestamp: Timestamp | null;
   /** Whether it still covers what it was made over; `null` when unsigned. */
   integrity: Integrity | null;
+  /**
+   * Whether the signer's certificate chains to a root the OS store trusts;
+   * `null` unless `integrity` is intact or weak.
+   */
+  trust: Trust | null;
 }
 
 /**
@@ -201,14 +208,16 @@ export interface Section {
  * it is needed while staying in another.
  */
 export const NOT_CHECKED =
-  "tpdf checks that the bytes a signature covers are unchanged and that the " +
-  "signature matches the key in its certificate. It does not build a chain to " +
-  "an issuer it trusts, look for a revocation, or ask whether the certificate " +
-  "was in date when it was used, so it cannot say who holds that key. What a " +
-  "certificate states its key is for is the issuer's own word, unchecked for " +
-  "the same reason. Nor is a timestamp checked: its own signature, the " +
-  "authority behind it, and whether it covers this signature at all are all " +
-  "unexamined. Nothing here means the signature is valid.";
+  "tpdf checks that the bytes a signature covers are unchanged, that the " +
+  "signature matches the key in its certificate, and whether that certificate " +
+  "chains to a root this computer's own trust store trusts, which is not " +
+  "Adobe's list most signed PDFs are made against. It does not go online, so it " +
+  "looks for no revocation and fetches no missing certificate, and it cannot " +
+  "tell whether the certificate was in date when it was used, because the " +
+  "signing date is the signer's own claim. What a certificate states its key " +
+  "is for is the issuer's own word. Nor is a timestamp checked: its own " +
+  "signature, the authority behind it, and whether it covers this signature " +
+  "at all are all unexamined. Nothing here means the signature is valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -413,7 +422,8 @@ export function certificateRows(signature: Signature): Row[] {
   //
   // Not a verdict, and the wording is what keeps it one: the extension
   // constrains the key, and only a chain built to a trusted issuer makes that
-  // constraint mean anything. tpdf builds no chain, which NOT_CHECKED says.
+  // constraint mean anything. The trust row is where that chain is reported;
+  // this row stays the issuer's word, as NOT_CHECKED says.
   const usage = certificate.key_usage;
   rows.push({
     name: "Key is for",
@@ -588,8 +598,17 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   // The answer first, because it is what a reader opening this about a signed
   // document came to ask: has it been changed. Everything below is who the
   // signature says signed it, which only matters once this is known.
-  const verdict = integrityRow(signature.integrity, signature.appended_bytes);
+  //
+  // Then whose key it is, as far as this computer's trust store can say ---
+  // directly under, because it is the question the first answer leaves open.
+  const trusted = trustRow(
+    signature.trust,
+    signature.certificate?.from,
+    signature.certificate?.until,
+  );
+  const verdict = integrityRow(signature.integrity, signature.appended_bytes, !!trusted);
   if (verdict) rows.push(verdict);
+  if (trusted) rows.push(trusted);
 
   // The certificate goes above what the signer typed, because a reader opening
   // this asks who signed it and these are two different answers to that. Which

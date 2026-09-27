@@ -168,6 +168,8 @@ hop through the index.
 - A reply that grows with the document turns a bigger answer into a dead worker
 - Moving a size check before the work it guards changes when the refusal happens, not whether
 - A withdrawal that is correct as a broadcast is expensive in exactly the moment it is used
+- A trust daemon that could not be reached reads as a chain it refused
+- A sandboxed child that agrees with its parent has shown nothing until its sandbox refuses something
 
 ## The document model: saving, structure, signatures
 - An edit reaches the file, and the writer imports the file once per position the page occupies
@@ -240,6 +242,8 @@ hop through the index.
 - A derived plan clears the fields the writer thought of, and keeps the ones added since
 - A page tree has edges pointing everywhere, so attributing an object to a page is a skip list
 - A new signature field passes the difference analysis that refused a new mark
+- A signature that does not carry its root reads as a missing link, not as an untrusted root
+- A visible signature field after a certification is a violation to pyHanko, and an invisible one is not
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -523,6 +527,8 @@ hop through the index.
 - A bounding rectangle covers every place text left only while all of it moves one way
 - A floor under a limit is a second limit, and it took over wherever the first measurement skipped something
 - An oracle that cannot open an encrypted document has no answer for the commonest certified one
+- PDFKit rasterises no `/Sig` widget on a turned page, and draws the same appearance as a stamp
+- A layout test whose every box was bound by its width could not see the rule for its height
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -660,6 +666,7 @@ hop through the index.
 - A probe that writes its own input can be told to write it over its own output
 - An anchor that still matches is not a mutation that still works
 - A probe that undoes a write by restoring what the writer used to touch measures noise once the writer touches more
+- A verdict the probe printed and did not assert passed a DocMDP violation as green
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -24470,6 +24477,13 @@ Two consequences. A test that generates an OS key costs the gate half a minute f
 And the application pays the same first-call cost the first time the signing chooser lists
 identities, which is why that listing runs on the blocking pool.
 
+**The next day it cost 10 ms** (2026-09-27, same machine): the first `SecTrust` evaluation in a
+fresh test process, and that ignored chain test whole, took 0.01 s; the sixteen-test `trust::`
+module, nine of them evaluating, took 0.14 s. So the seconds are a property of the daemons'
+state that day, not of the call, and neither number is the cost --- the range is. The trust
+tests are therefore not ignored, and a gate that suddenly takes twenty seconds longer in
+`trust::` is this, not a regression.
+
 ### A feature on a crate already in the tree is not free: `cms`'s `builder` brought ten packages
 
 2026-09-26. Phase 6 step 2 was decided to build its CMS with `cms`'s `builder` feature, on the
@@ -24486,3 +24500,124 @@ generation" rule out a duplicate of an older one. Before enabling a feature, rea
 the crate's `Cargo.toml` and count with `cargo metadata` before and after, the same way a new
 crate is counted. `docs/DETAIL.md` *Stack* records the bill.
 
+### A trust daemon that could not be reached reads as a chain it refused
+
+2026-09-27, `trust.rs`. `SecTrustEvaluateWithError` fails for two different reasons with one
+return value: the chain was evaluated and refused, or the evaluation never happened. The first
+version read every failure through the error code's table --- expired, not trusted, anything
+else "rejected" --- and so would have told a reader that the OS refused a chain it was never
+shown. Measured by denying the service rather than reasoning about it: `signature-probe --mode
+trust` under `sandbox-exec -p '(version 1)(allow default)(deny mach-lookup (global-name
+"com.apple.trustd") (global-name "com.apple.trustd.agent"))'` reported `untrusted`,
+*rejected*, for a fixture that reads `untrusted`, *root*, without the rule. The code was
+`errSecInternalError` (-26276).
+
+That is tpdf's failure reported as a fact about the document, in the one direction a reader
+cannot check, and it is the same shape as integrity's rule that an unchecked signature is never
+reassuring nor accusing. `platform::failure_of` now returns an error for the codes that mean
+"did not happen" and `judge` makes it `unchecked`; the test pins the reading of -26276.
+
+The general form: an OS service call has a failure that is not an answer, and a mapping from
+its error codes that has no arm for that failure will put it in whichever arm is the default.
+Find it by taking the service away --- `sandbox-exec` does that for a Mach service without
+touching the service --- before trusting the default arm.
+
+### A sandboxed child that agrees with its parent has shown nothing until its sandbox refuses something
+
+2026-09-27. The question "can the worker call `SecTrust`?" was answered by scanning the same
+bytes twice, in-process and in a child that applies `worker::SANDBOX_PROFILE` first, and
+comparing the verdict lines. Identical lines are exactly what a child whose `sandbox_init`
+silently did nothing would print, and exactly what a child that never reached the sandboxed
+branch would print. So the child first tries to read the file it was given and must fail ---
+the profile denies `file-read*` --- and prints that it did; the parent requires that line as
+well as the agreement.
+
+It is the "control that cannot fail" rule applied to a boundary: an assertion that the sandbox
+*permits* something means nothing until the same run shows the sandbox *denies* something.
+
+### A signature that does not carry its root reads as a missing link, not as an untrusted root
+
+2026-09-27, found by being wrong about it in a test. A generated signer, issued by an
+intermediate issued by a test root, signed with the intermediate in the CMS set and the root
+not, was expected to read `untrusted`, *root*, against the system store. It read *incomplete*:
+the chain stops at the intermediate, whose issuer is in neither the signature nor any store, and
+nothing is fetched. Carrying the root as well turns it into *root*.
+
+The two are different sentences to a reader --- "tpdf would have to look something up" against
+"the chain ends where nobody here trusts it" --- so `trust.rs` tells them apart by the chain's
+shape (a failed chain whose last certificate is not self-issued stopped short) rather than by an
+error code, which each platform spells differently. All three real signed documents to hand
+carry their own self-issued roots, so each reads *root*, which an independent `security
+verify-cert -L` over the same certificates confirms. A document whose signer's set stops at an
+intermediate, which is common, will read *incomplete* instead, and that is correct, not a bug.
+
+### A visible signature field after a certification is a violation to pyHanko, and an invisible one is not
+
+2026-09-27, the visible appearance. *A new signature field passes the difference analysis that
+refused a new mark* found pyHanko accepting an appended signature field after every earlier
+signature, the certified `/P 2` document included. That was an **invisible** field. The same
+revision with a rectangle and an `/AP` --- a form, an image and its soft mask, a font --- is read
+on `incr-certified-2` and `-3` as `modification=OTHER`, `docmdp=VIOLATED`: *"Update of
+Reference(idnum=21) is only allowed after an approval signature, not a certification
+signature"*, where object 21 is the new widget. After an approval signature (`incr-signed`,
+`incr-two-signers`) the visible revision is `FORM_FILLING` like the invisible one.
+
+The mechanism is pyHanko's `SigFieldCreationRule`, whose `allow_new_visible_after_certify` is
+off by default and documented as stricter than Acrobat. So whether a visible signature "breaks a
+certification" depends on which validator is asked, and the one this repository uses as its
+oracle says yes. `sign_prepare` refuses a visible signature on any certified document and says
+the invisible one is accepted; `a_visible_signature_after_a_certification_is_refused_and_an_invisible_one_is_not`
+pins both halves. The lesson is the earlier entry's, one level down: a rule for *what kind* of
+object may be appended is not a rule for every shape of it, so a feature that changes the shape
+--- here, giving the widget an area --- needs the experiment again.
+
+### PDFKit rasterises no `/Sig` widget on a turned page, and draws the same appearance as a stamp
+
+2026-09-27, `sign-probe --visible`. PDFKit's rasteriser (`PDFPage.thumbnail` and
+`PDFPage.draw(with:to:)` alike) drew **no pixel** of a visibly signed widget on
+`rotated-90.pdf` and on `inherited.pdf`, while PDFium drew about 10,000 inside the rectangle and
+none outside, and PDFKit itself drew the same widget on every upright page. `page.annotations`
+lists it, with `hasAppearanceStream` true and `shouldDisplay` true.
+
+Variants of the one signed file, each a single change: the subtype renamed to `/Stamp` --- drawn,
+inside the rectangle and nowhere else; `/FT /Tx` --- drawn; no `/FT` --- not drawn; `/MK /R 90`
+or `270` --- not drawn; the NoRotate flag --- not drawn; `/SigFlags` removed --- not drawn. So it is
+the signature widget on a turned page, not the appearance, the geometry or the rotation of the
+content, and a check of "PDFKit draws ink inside the rectangle" on a turned page can only fail.
+
+What the probe does instead: on a turned page it asserts the limitation --- no pixel changed ---
+so the day PDFKit draws these, the check goes red and says the upright check now applies; and it
+renders a copy with the new revision's `/Subtype/Widget` overwritten by `/Subtype/Stamp ` (the
+same length, so every offset holds) and holds that to ink inside and none outside. The mutation
+that moves `/Rect` by 100 pt turns that stamp check red. Whether Preview's interactive view,
+which draws widgets through its own form layer, shows the signature on a turned page was not
+measured.
+
+### A verdict the probe printed and did not assert passed a DocMDP violation as green
+
+2026-09-27. `sign-probe` printed pyHanko's one-line summary for every run --- `Signature1 ...
+docmdp=VIOLATED` among them --- and asserted only `intact`, `valid` and `coverage` from the JSON.
+The visible signature on a certified document therefore reported `22 passed, 0 failed` with the
+violation in its own output, two lines above the total. It was noticed by reading, which is the
+failure: the next run of the loop would have been skimmed to its last line.
+
+`--json` does not carry the modification level or the DocMDP verdict, which is why the summary
+was printed at all --- as context. The probe now parses the summary and fails unless every
+signature says `docmdp=ok`. The general form: anything a harness prints *because it matters* is
+either asserted or labelled as not asserted; a verdict in the transcript that no check reads is
+the same as no verdict, except that it looks like coverage.
+
+### A layout test whose every box was bound by its width could not see the rule for its height
+
+2026-09-27, `sign_prepare/appearance.rs`. The type size is the smallest of three limits: a
+maximum, the widest line against the width, and three lines against the height.
+`every_layout_keeps_its_ink_inside_the_box_and_apart_from_the_image` walked 72 combinations of
+box, name and image, and two mutations survived it --- dropping the height limit, and putting
+each baseline at the top of its line instead of one ascent below. Every box in the grid was
+narrow enough for the *width* to set the size, which left several points of vertical slack
+that the centring spent on exactly the overflow each mutation caused.
+
+Two wide, short boxes (600 x 24 and 400 x 30) make the height bind, and both mutations go red.
+The rule is the fixture rule in another shape: a `min` of several limits is covered only by
+inputs where each limit, in turn, is the one that wins. Enumerate the grid by which term binds,
+not by what sizes look plausible.

@@ -66,7 +66,7 @@ import type {
   SearchOptions,
 } from "./search";
 import type { Place, Session } from "./session";
-import type { Choices, Signed } from "./signing";
+import type { Choices, Placement, Signed } from "./signing";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
 
@@ -327,7 +327,8 @@ export interface Commands {
    * the result to `path`, a new file. See `signing.ts`.
    */
   sign_document: {
-    args: { doc: number; source: string; identity: string; path: string };
+    /** `placement` is `null` for an invisible signature. */
+    args: { doc: number; source: string; identity: string; path: string; placement: Placement | null };
     reply: Signed;
   };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };
