@@ -473,15 +473,16 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Text in a font whose licence forbids editing
-          can now be replaced: the new text is set in the bundled Noto Sans, and
-          the preview says why. A page is no longer refused because one of its
-          fonts cannot be edited; text in that font stays exactly as it is and
-          the rest of the page can be edited. More of InDesign's and PowerPoint's
-          tagged output is read. In two-column documents, lengthening a line no
-          longer moves the other column or runs into the space between them, and
-          a word pushed along by an edit keeps its space before it. Across a
-          public sample of 31 documents, 22 now offer editable text, up from 19.
+          **New in this release.** Sign a document with a certificate from your
+          macOS keychain or Windows certificate store, invisibly or drawn on the
+          page, and choose what the drawn signature shows; the key never leaves
+          the operating system. *Document properties* now says whether each
+          signature is intact and whether this computer trusts its signer. A new
+          `tpdf` command-line tool signs, verifies, reads, fills and redacts from
+          scripts. On macOS 27, redactions can be verified again: every
+          redaction there had been reported *not verified*. There, the first redaction
+          after installing or after a macOS update takes about half a minute
+          longer while the text recogniser prepares its models.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
