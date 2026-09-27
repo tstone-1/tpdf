@@ -63,6 +63,29 @@ EXEMPT: "dict[tuple[str, str], str]" = {
         "src/lib/properties.test.ts",
         "2030-01-01",
     ): "the same fixture certificate, in the frontend's own expectation",
+    # The command-line tool's samples, 2026-09-27. These reached CI unexempted:
+    # the local gate run that preceded the commit saw the files untracked, and
+    # this gate reads `git ls-files`, so they were invisible to it.
+    (
+        "src-tauri/src/cli/tests.rs",
+        "2027-09-26",
+    ): "a sample usable identity's expiry, which must be ahead of now to be usable",
+    (
+        "src-tauri/testdata/cli/identities.json",
+        "2027-09-26",
+    ): "the same sample identity's expiry, as `identities --json` writes it",
+    (
+        "src-tauri/testdata/cli/sign.json",
+        "2027-09-26",
+    ): "the same sample identity's expiry, as `sign --json` writes it",
+    (
+        "src-tauri/src/cli/tests.rs",
+        "2027-01-02",
+    ): "the end of a sample certificate validity window the trust wording is rendered for",
+    (
+        "src-tauri/testdata/cli/wording.json",
+        "2027-01-02",
+    ): "the same validity window, in every trust sentence the wording sample records",
 }
 
 # The table above has to spell its dates out in Python source, and this file is

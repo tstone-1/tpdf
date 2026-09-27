@@ -4735,13 +4735,29 @@ fn commit(staged: &Path, out: &Path) -> Result<(), String> {
 
 /// Whether two paths name the same file.
 ///
-/// Canonicalized, so `./a.pdf` and an absolute path to the same file are one
-/// file, and a symlink to the source is caught. A destination that does not
-/// exist yet cannot be canonicalized --- which is the ordinary case --- so it
+/// **By file identity first**, when both exist: [`crate::fingerprint::FileId`],
+/// the volume and inode on Unix and the volume serial and file index on Windows.
+/// That is the only comparison that sees a **hard link** --- a second real name
+/// for the same file, whose canonical path is its own. The path comparison
+/// below missed it on both platforms; Windows CI found it on 2026-09-27, because
+/// the CLI's refusal test uses a hard link there (a symlink needs a privilege
+/// Windows does not give a test) and a symlink on Unix, which canonicalizing
+/// already caught.
+///
+/// Otherwise canonicalized, so `./a.pdf` and an absolute path to the same file
+/// are one file, and a symlink to the source is caught. A destination that does
+/// not exist yet cannot be canonicalized --- which is the ordinary case --- so it
 /// falls back to comparing the parent directory and the file name, and that
 /// comparison is what makes the ordinary case answer correctly rather than
-/// answering "different" for everything.
+/// answering "different" for everything. An identity that could not be read is
+/// "could not tell", and falls through to the same path comparison as before.
 pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
+    if let (Some(a), Some(b)) = (
+        crate::fingerprint::FileId::at(a),
+        crate::fingerprint::FileId::at(b),
+    ) {
+        return a == b;
+    }
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => canonical_parent(a) == canonical_parent(b) && a.file_name() == b.file_name(),

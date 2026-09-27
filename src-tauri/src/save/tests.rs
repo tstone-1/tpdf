@@ -10116,3 +10116,30 @@ fn textedit_preserves_encryption() {
         "GEPRÜFT ß"
     );
 }
+
+/// **A hard link to the source is the source.** A second real name for the same
+/// file has a canonical path of its own, so comparing paths calls it a
+/// different file; Windows CI found that on 2026-09-27 through the CLI's
+/// refusal test. The controls: a byte-identical copy is a different file, and
+/// a destination that does not exist yet is still judged by its path.
+#[test]
+fn a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not() {
+    let dir = Scratch::new("same-file");
+    let source = dir.join("source.pdf");
+    std::fs::write(&source, b"%PDF-1.7\n").expect("source");
+    let link = dir.join("link.pdf");
+    std::fs::hard_link(&source, &link).expect("hard link");
+    let copy = dir.join("copy.pdf");
+    std::fs::copy(&source, &copy).expect("copy");
+
+    assert!(same_file(&source, &link), "a hard link names the same file");
+    assert!(
+        !same_file(&source, &copy),
+        "a copy with the same bytes is another file"
+    );
+    assert!(same_file(&source, &dir.join(".").join("source.pdf")));
+    assert!(
+        !same_file(&source, &dir.join("new.pdf")),
+        "a new name is not the source"
+    );
+}
