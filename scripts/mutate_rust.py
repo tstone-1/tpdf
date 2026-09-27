@@ -3395,9 +3395,9 @@ MUTATIONS = [
         # two files, and the guard above passes while the file is overwritten.
         "save: two spellings of one path are two files",
         "src/save.rs",
-        "        (Ok(a), Ok(b)) => a == b,",
-        "        (Ok(_), Ok(_)) => false,",
-        "saving_over_the_open_document_is_refused",
+        "    canonical_parent(a) == canonical_parent(b) && a.file_name() == b.file_name()",
+        "    a == b",
+        "a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not",
     ),
     Mutation(
         # Copy the staged file into place instead of renaming it. An interrupted
@@ -10714,8 +10714,8 @@ MUTATIONS += [
         # asked whether the certificate may sign a document at all.
         "sign: use a certificate the listing would not offer",
         "src/sign_cms.rs",
-        '    usable(certificate, at).map_err(|why| format!("tpdf will not sign with this certificate: {why}"))?;',
-        "    let _ = at;",
+        "    usable(certificate, at)",
+        "    Ok::<u64, String>(at)",
         "signing_refuses_a_certificate_the_listing_would_not_offer",
     ),
     Mutation(
@@ -10897,8 +10897,8 @@ MUTATIONS += [
         # Compare paths only: a hard link to the source reads as another file.
         "save: same_file ignores file identity",
         "src/save.rs",
-        "        return a == b;\n    }\n    match (a.canonicalize(), b.canonicalize()) {",
-        "        let _ = (a, b);\n    }\n    match (a.canonicalize(), b.canonicalize()) {",
+        "        return a == b;\n    }\n    canonical_parent(a) == canonical_parent(b)",
+        "        let _ = (a, b);\n    }\n    canonical_parent(a) == canonical_parent(b)",
         "a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not",
     ),
     Mutation(

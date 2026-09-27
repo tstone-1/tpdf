@@ -10142,4 +10142,15 @@ fn a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not() {
         !same_file(&source, &dir.join("new.pdf")),
         "a new name is not the source"
     );
+    // Neither can be opened, so the answer is the path comparison's. Through
+    // `..` rather than `.`: `Path`'s own equality already skips a `.`, so that
+    // spelling could not tell a real comparison from `a == b`.
+    std::fs::create_dir(dir.join("sub")).expect("sub");
+    assert!(
+        same_file(
+            &dir.join("new.pdf"),
+            &dir.join("sub").join("..").join("new.pdf")
+        ),
+        "two spellings of a name not yet written are one"
+    );
 }

@@ -4739,13 +4739,17 @@ fn commit(staged: &Path, out: &Path) -> Result<(), String> {
 /// Windows does not give a test) and a symlink on Unix, which canonicalizing
 /// already caught.
 ///
-/// Otherwise canonicalized, so `./a.pdf` and an absolute path to the same file
-/// are one file, and a symlink to the source is caught. A destination that does
-/// not exist yet cannot be canonicalized --- which is the ordinary case --- so it
-/// falls back to comparing the parent directory and the file name, and that
-/// comparison is what makes the ordinary case answer correctly rather than
-/// answering "different" for everything. An identity that could not be read is
-/// "could not tell", and falls through to the same path comparison as before.
+/// The identity also settles `./a.pdf` against an absolute path, and a symlink
+/// to the source, since opening follows the link. When either file cannot be
+/// opened --- a destination that does not exist yet, which is the ordinary case
+/// --- the answer comes from the parent directory, canonicalized, and the file
+/// name, and that comparison is what makes the ordinary case answer correctly
+/// rather than "different" for everything.
+///
+/// A comparison of the two canonical paths sat between these until the 26.9.21
+/// release, and its mutation survived: it decided only when both paths
+/// resolved and one could not be opened, and one file cannot be both the open
+/// document and unopenable, so it could never change an answer.
 pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     if let (Some(a), Some(b)) = (
         crate::fingerprint::FileId::at(a),
@@ -4753,10 +4757,7 @@ pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     ) {
         return a == b;
     }
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => canonical_parent(a) == canonical_parent(b) && a.file_name() == b.file_name(),
-    }
+    canonical_parent(a) == canonical_parent(b) && a.file_name() == b.file_name()
 }
 
 fn canonical_parent(path: &Path) -> PathBuf {

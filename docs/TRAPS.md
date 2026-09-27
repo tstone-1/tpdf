@@ -754,6 +754,7 @@ hop through the index.
 - A platform gate widened in one of three copies, and the two left behind blamed the engine
 - A test module whose every test is platform-gated makes its own `use super::*` an error on the other platform
 - The updater ends the process on one platform and not the other, so `ready` is a state only macOS reaches
+- Tauri 2.12 puts an empty `msvcrt.lib` on the library path of everything that depends on `tpdf`
 
 ## Fixtures
 - The test fixtures are generated, not committed
@@ -24942,3 +24943,29 @@ higher for `redact` with the reason beside it. Anything that counts per-process 
 shared stream --- dyld, `log`, a worker's own `eprintln!` --- has the same weakness: a count
 of what is *absent* from a process is inflated by every mangled line, and a count of what is
 present is not.
+
+### Tauri 2.12 puts an empty `msvcrt.lib` on the library path of everything that depends on `tpdf`
+
+2026-09-27, cutting 26.9.21. The dependency update took `tauri-build` from 2.6.3 to 2.7.0, and
+CI's `windows-2025` leg then failed `fuzz` alone: every target, 128 unresolved externals,
+`memcpy`, `memcmp`, `__chkstk` and `__CxxFrameHandler3` among them. Every other Windows gate
+passed, the application's binaries included.
+
+`tauri-build` links the Visual C++ runtime statically by writing a nearly empty `msvcrt.lib`
+into its `OUT_DIR`, adding that directory to the library search path, and giving the linker
+`/NODEFAULTLIB:msvcrt.lib` with `/DEFAULTLIB:libcmt.lib` and two more. In 2.6.3 it did that only
+when `STATIC_VCRUNTIME=true` was set, which `tauri build` does; in 2.7.0 it reads
+`build.windows.staticVCRuntime`, **whose default is `true`**, so every plain `cargo build` of the
+crate does it. The search path reaches every package that depends on `tpdf`; the flags reach only
+`tpdf`'s own binaries. The fuzz package is such a dependant, so its linker met the empty file
+first, said `warning LNK4003: invalid library format; library ignored`, and linked no C runtime.
+The warning is the whole diagnosis, and it sits among 128 errors.
+
+The fix is `src-tauri/fuzz/build.rs` giving the fuzz binaries the same flags, so they link the
+runtime the way the application does. Two things did not work, and both look like they should.
+Setting `STATIC_VCRUNTIME=false` is honoured but does not re-run the build script ---
+`tauri-build` asks to be re-run only on `TAURI_CONFIG` --- so a cached target directory keeps the
+empty file on the path and the same 128 errors; CI caches this one. And naming `msvcrt.lib`
+explicitly finds the same empty file. Any new package that depends on `tpdf` and links a binary
+on Windows will need the same flags; the list is `tauri-build`'s `static_vcruntime.rs`, kept in
+step by hand.
