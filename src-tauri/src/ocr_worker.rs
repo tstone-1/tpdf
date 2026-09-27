@@ -643,9 +643,47 @@ pub fn enter_boundary() -> Result<crate::ocr_vision::Vision, String> {
     use crate::ocr::OCR_SANDBOX_PROFILE;
 
     let engine = crate::ocr_vision::Vision;
-    let _ = engine.warm();
+    let _ = with_stderr_silenced(|| engine.warm());
     crate::worker_child::apply_sandbox(OCR_SANDBOX_PROFILE)?;
     Ok(engine)
+}
+
+/// Runs `work` with this process's standard error pointed at `/dev/null`, then puts it back.
+///
+/// **For the warm-up only, because the warm-up is where Vision talks.** On a virtual Mac
+/// (GitHub's `macos-latest`, 2026-09-27) Vision's first use prints `IOServiceMatchingfailed
+/// for: AppleM2ScalerParavirtDriver` and still recognises text. The worker shares its
+/// parent's standard error, so `tpdf redact` printed that line to the caller's stderr, where
+/// the tool promises nothing on a success, and four `tests/cli.rs` checks went red on the
+/// first CI run that had them. The warm-up reads a constant blank image, so nothing it could
+/// say concerns a document; every later request keeps a working standard error, which is
+/// where a panic in the worker would be reported.
+///
+/// If any step of the redirection fails, `work` runs with standard error as it was: losing
+/// the silence is cosmetic, and refusing to warm would make every recognition fail.
+#[cfg(target_os = "macos")]
+fn with_stderr_silenced<T>(work: impl FnOnce() -> T) -> T {
+    // SAFETY: plain descriptor calls on descriptors this function opens and closes itself,
+    // plus fd 2, which it restores before returning. No Rust object owns fd 2's number.
+    unsafe {
+        let saved = libc::dup(libc::STDERR_FILENO);
+        if saved < 0 {
+            return work();
+        }
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+        if null < 0 || libc::dup2(null, libc::STDERR_FILENO) < 0 {
+            if null >= 0 {
+                libc::close(null);
+            }
+            libc::close(saved);
+            return work();
+        }
+        libc::close(null);
+        let out = work();
+        libc::dup2(saved, libc::STDERR_FILENO);
+        libc::close(saved);
+        out
+    }
 }
 
 /// Adopts the buffer, checks the containment, and answers until stdin closes.

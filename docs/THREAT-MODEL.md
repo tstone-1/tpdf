@@ -2821,8 +2821,8 @@ authorities that still matter:
 
 **On macOS 27 the engine is readied before the profile, and the profile is unchanged.**
 Measured 2026-09-27 on macOS 27.0 (26A428), M5: Vision compiles its text models on first use in
-a process and writes them to `~/Library/Caches/<executable>/com.apple.e5rt.e5bundlecache`
-(three `.bundle` directories, 136 KB, about **23.4 s** of compile on a cold cache). Inside the
+a process and writes them to `~/Library/Caches/<name>/com.apple.e5rt.e5bundlecache` --- the
+bundle identifier inside an app bundle, the executable's name outside one --- (three `.bundle` directories, 136 KB, about **23.4 s** of compile on a cold cache). Inside the
 profile that write is refused, and the kernel's own report --- `log stream` on
 `sender == "Sandbox"` while a cold worker ran --- names it and nothing else:
 

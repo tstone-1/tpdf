@@ -681,6 +681,7 @@ hop through the index.
 - A probe that undoes a write by restoring what the writer used to touch measures noise once the writer touches more
 - A verdict the probe printed and did not assert passed a DocMDP violation as green
 - `--only cli` also runs every `clip` mutation: a harness name filter is a substring
+- Several processes' dyld lines share one stderr and interleave mid-line
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -24854,6 +24855,15 @@ again. The cache is keyed by the OS build (`e5bundlecache/26A428/...`), so every
 makes it cold again; a fix that relied on the cache already being there would have failed on
 the first redaction after each update.
 
+**"Executable name" is true only outside an app bundle.** Measured the same evening with
+`tabs_check.py --phase redact-pages` against a checks build: `~/Library/Caches/tpdf` stayed
+without a cache and `~/Library/Caches/com.timostein.tpdf.checks/com.apple.e5rt.e5bundlecache`
+appeared during the run. Inside a bundle the directory is the bundle identifier, so the shipped
+app, the checks build and the release check each compile their own copy, and clearing a cache
+to get a cold run means clearing the one named after the bundle. The whole phase, cold
+compile included, took 27 s and passed 34/34, among them the new fourth pass that has to come
+back *verified*.
+
 ### A pre-spawned spare announced its parent's exit as an error on the terminal every worker shares
 
 2026-09-27. `tpdf redact` is the first command to hold a `render::RenderService`, and every
@@ -24913,3 +24923,22 @@ Before trusting any process-isolated probe of a platform library, ask what the l
 **on disk** between processes --- caches, compiled shaders, font registries, preference
 domains --- and which rung writes it first. Isolation by process says nothing about isolation
 by filesystem, and a probe that runs its control first is the most likely to be warmed by it.
+
+### Several processes' dyld lines share one stderr and interleave mid-line
+
+2026-09-27, `tests/cli.rs`, the check that `tpdf redact`'s own process never maps PDFium. It
+runs the tool with `DYLD_PRINT_LIBRARIES=1`, which every worker inherits, and attributes each
+image to a process by the `dyld[<pid>]: ` prefix of its line. A full gate run failed it with
+four processes that mapped no PDFium where the check allowed three; four runs of the test alone
+saw two or three. The raw output shows why the count moves: the lines are not written
+atomically, and one process's line lands inside another's ---
+`.../libCheckFix.dylidyld[55923]: <uuid>b`. A worker whose `libpdfium` line is cut that way
+counts as a process that never mapped it.
+
+The two assertions that carry the claim survive it: the first line is written before the tool
+could spawn anything, and a worker that did map PDFium only needs one intact line to be seen.
+What does not survive is an upper bound on the processes that mapped nothing, which is now one
+higher for `redact` with the reason beside it. Anything that counts per-process facts out of a
+shared stream --- dyld, `log`, a worker's own `eprintln!` --- has the same weakness: a count
+of what is *absent* from a process is inflated by every mangled line, and a count of what is
+present is not.

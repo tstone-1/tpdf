@@ -38,6 +38,16 @@ import type { PendingImport } from "./pendingimport";
 /** How long to wait for a document that should already be on its way. */
 const SETTLE_MS = 20_000;
 
+/**
+ * How long to wait for a redaction's verdict. Longer than `SETTLE_MS` because
+ * the first OCR worker on a machine compiles Vision's models before its sandbox
+ * comes down (`ocr_worker::enter_boundary`), which took 23.4 s on an M5 with a
+ * cold cache, and every macOS update makes the cache cold again. The worker's
+ * own first-reply deadline is 120 s; this outlasts it so a timeout there
+ * arrives as a verdict here rather than as a harness timeout.
+ */
+const VERDICT_MS = 150_000;
+
 /** How long to wait for one handed over while the app is running. */
 const ARRIVAL_MS = 30_000;
 
@@ -416,13 +426,13 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     // for its `Applied` and formatting it here would be a second copy of the
     // rules under test; `[data-testid="problem"]` is what the reader looks at.
     //
-    // Three copies and one pass each: a redaction spends its regions and its
+    // Four copies and one pass each: a redaction spends its regions and its
     // journal, and every pass needs a document with all four words still in it.
     // `testdata/make_redact_pages_pdf.py` lays out which word produces which
     // answer and why.
     case "redact-pages": {
       const copies = expected.split("|").filter((path) => path !== "");
-      if (copies.length < 3) throw new Error("three disposable copies of the fixture are required");
+      if (copies.length < 4) throw new Error("four disposable copies of the fixture are required");
       const quiet = async () => {
         if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("the viewer did not settle");
         await pause(100);
@@ -485,7 +495,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
           shown().slice(0, 120));
         offer()!.click();
         await host.idle();
-        const arrived = await settle(() => shown().includes("Redacted "), SETTLE_MS);
+        const arrived = await settle(() => shown().includes("Redacted "), VERDICT_MS);
         await quiet();
         report.check(`${label} reaches a verdict`, arrived, shown().slice(0, 220));
         return shown();
@@ -561,6 +571,21 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         !carried.includes("so the removal did not take it there"), carried.slice(0, 400));
       report.check("and the word the removal took is named nowhere in this one",
         !carried.includes("NOVEMBER-5500"), carried.slice(0, 300));
+
+      // Pass 4, the only one that must come back *verified*, and without it the
+      // three above pass on a machine where no redaction can ever be verified:
+      // each of them expects "not verified", which is also what every region
+      // says when the OCR gate cannot read. On macOS 27 that was every region
+      // (`docs/TRAPS.md`, *On macOS 27 the OCR worker's Vision refuses every
+      // image*), and this phase stayed green. `NOVEMBER-5500` occurs once and is
+      // carried by nothing else, so marking it alone leaves a file the scan and
+      // the OCR gate can both prove clean.
+      const clean = await redactInPlace("pass 4 (nothing left)", copies[3]!, [band.control]);
+      report.check("a removal nothing survives is reported verified",
+        clean.includes("tpdf read the file back and none of the removed words are in it.") &&
+        !clean.includes("Redaction not verified."), clean.slice(0, 300));
+      report.check("with its one region and one removal counted",
+        clean.includes("Redacted 1 region, 1 removal"), clean.slice(0, 140));
       break;
     }
     case "tabs-position": {

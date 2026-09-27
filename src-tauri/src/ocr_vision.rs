@@ -141,8 +141,9 @@ impl Vision {
     ///
     /// **Called by the OCR worker before its sandbox comes down, and that order is the
     /// point.** On macOS 27 (26A428) Vision compiles its text models on first use in a
-    /// process and writes them to `~/Library/Caches/<executable name>/
-    /// com.apple.e5rt.e5bundlecache`. [`crate::ocr::OCR_SANDBOX_PROFILE`] denies every
+    /// process and writes them to `~/Library/Caches/<name>/com.apple.e5rt.e5bundlecache`,
+    /// where `<name>` is the bundle identifier inside an app bundle and the executable's
+    /// name outside one. [`crate::ocr::OCR_SANDBOX_PROFILE`] denies every
     /// write, so a worker that met Vision for the first time *inside* the profile had its
     /// cache write refused (`deny(1) file-write-create ~/Library/Caches/<name>`, the only
     /// denial the kernel logged) and every recognition came back `__objc2.missingError` ---

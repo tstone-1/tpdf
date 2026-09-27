@@ -153,6 +153,10 @@ have the binary.)
   takes about half a minute longer while the models are prepared; later ones
   do not. Nothing was ever reported clean that was not: the failure only ever
   said *not verified*.
+- **`tpdf redact` prints nothing extra on a virtual Mac.** In a macOS
+  virtual machine the text recogniser printed a line about a missing graphics
+  driver the first time it started, and `tpdf redact` passed it on to your
+  error output. That line is now kept back; recognition was never affected.
 - **A page's first character is no longer lost from the reading order.**
   When the first character on a page had no position of its own and a later
   one did, it was left out of the order the viewer reads a page in, so it

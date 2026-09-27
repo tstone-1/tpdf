@@ -39,8 +39,9 @@ the message area rather than out of the reply that produced it. It needs
 testdata/redact-pages.pdf, whose four marked words each make the report answer
 differently -- one survives on the page that was marked, one only on a page that
 was not, one in a form object both pages draw, and one is genuinely removed and
-must be named nowhere. Three passes, so this phase gets a third disposable copy;
-each pass opens one, marks two regions on page 1 through the real IPC, runs
+must be named nowhere. A fourth pass marks only that last word and must come back
+verified. Four passes, so this phase gets a third and a fourth disposable copy;
+each pass opens one, marks regions on page 1 through the real IPC, runs
 file.redactDocument, confirms at its warning and reads what is left on screen.
 file.redactCopy is the sibling command and is not used: it opens a native save
 panel, which no phase can answer, and both report through the same sentence.
@@ -88,12 +89,12 @@ def main() -> int:
         else:
             shutil.copyfile(args.pdf, second)
         if args.phase == "redact-pages":
-            # A third, because a redaction spends the file it is applied to and
-            # the phase makes three of them. Each case needs a document with all
-            # four of the fixture's words still in it.
-            third = room / "third.pdf"
-            shutil.copyfile(args.pdf, third)
-            copies.append(third)
+            # A third and a fourth, because a redaction spends the file it is
+            # applied to and the phase makes four of them. Each case needs a
+            # document with all four of the fixture's words still in it.
+            for extra in ("third.pdf", "fourth.pdf"):
+                shutil.copyfile(args.pdf, room / extra)
+                copies.append(room / extra)
         joined = "|".join(str(copy) for copy in copies)
         env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{joined}",
                    TPDF_SESSION_FILE=str(room / "session.json"))

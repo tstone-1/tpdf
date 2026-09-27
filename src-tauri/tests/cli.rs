@@ -806,7 +806,15 @@ fn never_maps_pdfium(report: &mut Report) {
             // exited, which ends before it maps anything. So the tool is named
             // by being first --- dyld's first line is the process that was
             // started, before it could spawn anything --- and `redact` is
-            // allowed those two beside it.
+            // allowed those two beside it, and one more. Every process here
+            // writes its dyld lines to the one stderr, and they interleave
+            // mid-line (`libCheckFix.dylidyld[55923]: <uuid>b`, captured
+            // 2026-09-27), so a worker whose `libpdfium` line was cut in two
+            // counts as clean. `redact` runs the most processes for the longest,
+            // and a full gate run saw 4 clean where four runs alone saw 2 or 3.
+            // The slack is in the upper bound only; the two assertions that
+            // carry the claim --- the first process maps no PDFium, a worker
+            // does --- are not loosened.
             let clean = parents.iter().filter(|pid| !mapped_by(pid)).count();
             let workers = parents.iter().filter(|pid| mapped_by(pid)).count();
             let first = stderr
@@ -817,7 +825,7 @@ fn never_maps_pdfium(report: &mut Report) {
                 .as_deref()
                 .is_some_and(|pid| parents.contains(pid) && !mapped_by(pid));
             let (ok, ocr) = match command {
-                "redact" => (code == 0 || code == 1, 2),
+                "redact" => (code == 0 || code == 1, 3),
                 "redact --dry-run" => (code == 0, 1),
                 _ => (code == 0, 0),
             };

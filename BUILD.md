@@ -338,13 +338,18 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase im
 # rather than out of the reply that produced it. `verify.rs` and `redact.rs`
 # assert the report, and `redact_import_check.py` asserts it across the worker;
 # between them and the screen sit `recovery.ts`'s `afterRedaction` and
-# `App.svelte`, which no gate reaches. Three passes over three disposable
-# copies, each marking two regions on page 1 and confirming at the warning:
+# `App.svelte`, which no gate reaches. Four passes over four disposable
+# copies, each marking regions on page 1 and confirming at the warning:
 # a word still on the page that was marked, one surviving only on a page that
 # was not, and one in a form object both pages draw, which has no page at all.
 # The fourth word is marked in every pass, occurs nowhere else, and must be
 # named nowhere in any verdict -- the control that says the other three are
 # about the fixture rather than about a scan that reports whatever it is given.
+# The fourth pass marks only that word and must come back *verified*: the other
+# three expect "not verified", which is also every verdict when the OCR gate
+# cannot read, so without it this phase passed on macOS 27 before the Vision fix.
+# The first redaction on a machine or after a macOS update waits ~25 s while
+# Vision compiles its models.
 # `file.redactCopy` is the sibling command and cannot be driven: it opens a
 # native save panel. Both report through the same sentence.
 # `<checks-binary>`, not an ordinary build: every tabs_check phase is reached
