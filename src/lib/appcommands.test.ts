@@ -111,6 +111,7 @@ function harness(
     toggleInvert: () => fired.push("toggleInvert"),
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
+    commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
     automaticUpdates: () => automatic,
     setAutomaticUpdates: (enabled) => { automatic = enabled; fired.push(`setAutomaticUpdates:${enabled}`); },
     applyUpdate: () => fired.push("applyUpdate"),
@@ -459,9 +460,27 @@ describe("the commands a document is needed for", () => {
     // binary was compiled with, so there is nothing for a document to be needed
     // for -- and the reader most likely to ask which version they are running is
     // the one looking at an empty window because a document would not open.
+    //
+    // The command-line tool's pair joined on 2026-09-27 on the same footing: it
+    // links or removes a file outside any document, and the obvious moment to
+    // install it is right after installing the application, with nothing open.
     const { registry } = harness(false);
     const offered = registry.search("").map((ranked) => ranked.command.id);
-    expect(offered).toEqual(["file.open", "app.about", "app.checkForUpdates", "app.disableAutomaticUpdates"]);
+    expect(offered).toEqual([
+      "file.open",
+      "app.about",
+      "app.checkForUpdates",
+      "app.disableAutomaticUpdates",
+      "app.installCommandLineTool",
+      "app.uninstallCommandLineTool",
+    ]);
+  });
+
+  it("asks the backend to install or remove the command-line tool, and nothing else", () => {
+    const { registry, fired } = harness(false);
+    expect(registry.run("app.installCommandLineTool")).toBe(true);
+    expect(registry.run("app.uninstallCommandLineTool")).toBe(true);
+    expect(fired).toEqual(["commandLineTool:true", "commandLineTool:false"]);
   });
 
   it("offers the rest once one is open", () => {
@@ -1323,6 +1342,7 @@ describe("the window shortcuts for editing", () => {
       toggleInvert: () => fired.push("toggleInvert"),
       about: () => fired.push("about"),
       checkForUpdates: () => fired.push("checkForUpdates"),
+      commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
       automaticUpdates: () => true,
       setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
       applyUpdate: () => fired.push("applyUpdate"),

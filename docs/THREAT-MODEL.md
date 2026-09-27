@@ -68,12 +68,13 @@ Explicitly **not** defended against, and out of scope:
 
 ## 3. Trust boundaries
 
-Four principals, each trusting only what is below it in the table.
+Five principals, each trusting only what is below it in the table; the command-line tool sits beside the coordinator rather than above it.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — ten of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — ten of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
+| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no network, no updater |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -2212,6 +2213,78 @@ so. A certificate that has run out since is `expired`, never `trusted`. The atta
 does not stop is one who holds a key a trusted issuer certified for them, or who controls the
 reader's own trust settings; both are outside a document's reach.
 
+#### T6.23 — The command-line tool, added 2026-09-27
+
+**What changed.** A second executable, `tpdf-cli` (`src/bin/tpdf-cli.rs`, `src/cli.rs`),
+ships in both bundles: `Contents/MacOS/tpdf-cli` on macOS and `tpdf-cli.exe` beside
+`tpdf.exe` on Windows. `tpdf verify` reads every signature in the documents it is given,
+`tpdf sign` signs one with a certificate from the OS store (§T6.21), and `tpdf identities`
+lists those certificates. It is a new **entry point**, not a new capability: it reaches the
+same code the window does, and nothing the window cannot.
+
+**Who can invoke it.** Only the reader's own account, or something already running as it: it
+is an ordinary program on disk, with no listener, no service, no URL scheme and no IPC. So it
+widens nothing an attacker at the account's level did not have --- such an attacker can run
+the application too --- and the assets in §1 are reached exactly as the window reaches them.
+It makes no network request; the updater is the application's (§T9), and the tool contains
+no updater.
+
+**The control on the key is the operating system's prompt, and nothing works around it.**
+`tpdf sign` asks the store through `keystore.rs`, the application's module, and the OS decides
+whether this program may use that key: on macOS the keychain item's access control names the
+programs allowed to use it, and `tpdf-cli` is a different program from `tpdf`, so the first
+signing with any key raises the system's prompt, which the reader answers --- *Always Allow*
+is what unattended use rests on, and is the reader's decision. A smart card or token asks for
+its PIN in its own dialog. The tool supplies no password, sets no access control and
+disables no prompt. A visible signature reads the saved signature image from the same
+protected store (`signature_store.rs`) under the application's service name, which is a second
+item and the OS may ask about it separately; `--no-image` does not read it. A key file
+(`.p12`) option is deliberately absent in this version: it would put a private key in a file
+this process reads, which the whole design avoids, and is an explicit later decision.
+
+**The same worker boundary, proved rather than assumed.** A document named on the command
+line is attacker-controlled input exactly as a double-clicked one is. The tool parses none of
+it: `verify` and the read-back after `sign` ask `Request::Properties`, and the revision is built
+by `Request::PrepareSignature`, each in a worker spawned by `save::InWorker` --- which re-executes
+the tool itself with `worker::WORKER_ARGV`, so `cli::main` answers that marker before anything
+else, as the application's `run` does. Measured 2026-09-27 on macOS arm64 by `tests/cli.rs`:
+with `DYLD_PRINT_LIBRARIES` set, the built tool's own process loads no PDFium while a worker it
+spawned does (the positive control); in the test process acting as the tool's coordinator, the
+dynamic linker's image list has no PDFium after `cli::run` has verified a document, and does the
+moment PDFium is bound there (the control that the list can show it); and `sandbox_check`
+reports a worker started by `Worker::spawn_shared` --- the call `InWorker` makes --- as
+sandboxed, against the test process as the unsandboxed control. The PDFium library is found by
+the application's own rule (`library_dir_among`), from the bundle's resource directory beside
+the executable, never from the working directory.
+
+**What it writes.** `sign` writes one file, the path after `-o`, through `save::write_signed` ---
+the application's writer, staged and renamed, refusing the input under any name --- and only
+after `sign_cms::finish` has refused anything `integrity::check` does not call intact. It
+refuses an output that exists unless `--force` is given, and never modifies the input. `verify`
+and `identities` write nothing. Paths come from the command line and are used at the account's
+own authority, which is what a command-line program is for; there is no webview between them
+and the reader.
+
+**The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
+symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the
+link and the target are both fixed in `clitool.rs`, so the widest thing it can ask for is that
+one link made or removed. A file at that path that is not a link to a `tpdf-cli` inside an
+application bundle is never replaced or removed. When the directory is not writable --- the
+ordinary case, and on a new Apple silicon Mac it does not exist --- the change goes through
+AppleScript's `do shell script ... with administrator privileges`, which is the system's own
+authorization dialog: tpdf never sees the password, and the tool's path reaches the shell as an
+argument through `quoted form of`, never as script text. The answer shown is the link read back
+afterwards. A link from a translocated copy (macOS App Translocation) is refused, because it
+would dangle at the next launch.
+
+**Residual.** A link in `/usr/local/bin` points into the application bundle, so replacing the
+bundle replaces what `tpdf` runs --- which is the same authority an attacker who can replace the
+bundle already has over the application, and is why the link is not a copy. The Windows tool
+**has not run**: it compiles (`scripts/check_windows.py`) and the Windows CI job runs its
+integration test, but no person has run it on a Windows desktop, and `sandbox_check` has no
+Windows counterpart --- a Windows worker's containment is its parent's, and
+`scripts/win_modules.py` is that platform's external instrument.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -3541,6 +3614,16 @@ which is what makes it evidence rather than a milestone.
     being the component every other program on the machine hands attacker-supplied
     certificates to. Not closed: closing it means not asking the OS, which is the decision the
     trust verdict rests on. Unmeasured on Windows, where the parse is in-process and contained.
+
+26. **A key the reader allowed the command-line tool to use signs for anything running as
+    them** (§T6.23), added 2026-09-27. *Always Allow* in the macOS keychain prompt is granted to
+    the program, not to an occasion, so once given, any process in the reader's account can run
+    `tpdf sign` with that key and no prompt appears --- which is exactly what unattended signing
+    needs and exactly what a script the reader did not mean to run would use. Bounded by the OS:
+    the grant is the reader's, per key, visible and revocable in Keychain Access, and a key that
+    asks for a PIN or confirmation every time (a smart card, a key marked so) keeps asking. Not
+    closed, and not closable by tpdf without overriding the decision the OS asked the reader to
+    make; the README says what the choice means.
 
 ## 8. How to re-verify any of this
 

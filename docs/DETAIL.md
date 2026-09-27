@@ -95,7 +95,10 @@ they were `[[bin]]` targets of the bundled crate. They are `[[example]]` targets
 and links them exactly as before, the `bins` gate keeps covering them through `--examples`, and
 the bundler does not see them, so the MSI payload is three files — listed in `BUILD.md`'s *Measured against the
 shipped MSI* table, since a local build tree emits a fourth — and about half the size it was. The invocations moved with them: `--example <name>`,
-and built artifacts sit in `target/release/examples/`. **That gate flag is load-bearing, and was
+and built artifacts sit in `target/release/examples/`. **One `[[bin]]` ships deliberately since 2026-09-27**:
+`tpdf-cli`, the command-line tool (`src/bin/tpdf-cli.rs`), which the same bundler behaviour puts in
+`Contents/MacOS` and beside `tpdf.exe` --- so the payload count above is one higher from 26.9.21,
+and a released one without it is the defect. **That gate flag is load-bearing, and was
 proved so rather than assumed** — without `--examples` the `bins` gate covers only the app, and
 an undefined extern called from one example's `main` is what turns it red with `LNK2019`.
 

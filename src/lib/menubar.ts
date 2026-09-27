@@ -106,7 +106,10 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // Beside the install rather than anywhere else, because the two are one
       // sequence: whichever of them is live, it is the next thing to press.
       "app.restartForUpdate", SEPARATOR,
-      "app.disableAutomaticUpdates", "app.enableAutomaticUpdates"],
+      "app.disableAutomaticUpdates", "app.enableAutomaticUpdates", SEPARATOR,
+      // Where a Mac reader looks for it: VS Code and others put their
+      // equivalent in the application menu.
+      "app.installCommandLineTool", "app.uninstallCommandLineTool"],
   },
   {
     title: "File",

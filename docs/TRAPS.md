@@ -300,6 +300,7 @@ hop through the index.
 - Creating a keychain file adds it to the user's search list, so a test cannot make one quietly
 - The first Security-framework call in a process can cost seconds, and a gate pays it every run
 - A feature on a crate already in the tree is not free: `cms`'s `builder` brought ten packages
+- `current_exe` answers with the link a program was started through, not the file it is
 
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -671,6 +672,7 @@ hop through the index.
 - An anchor that still matches is not a mutation that still works
 - A probe that undoes a write by restoring what the writer used to touch measures noise once the writer touches more
 - A verdict the probe printed and did not assert passed a DocMDP violation as green
+- `--only cli` also runs every `clip` mutation: a harness name filter is a substring
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -24692,4 +24694,34 @@ the write that carries the behaviour, the one in the input handler, where it goe
 surviving mutation has two readings --- the test is blind, or the code is dead --- and the second
 is the cheaper one to check first, because it needs nothing but reading who else writes the
 same value.
+
+### `current_exe` answers with the link a program was started through, not the file it is
+
+2026-09-27, the command-line tool. On macOS it is reached through the link
+`/usr/local/bin/tpdf`, and it finds PDFium in `Contents/Resources` beside its own executable
+inside the bundle. `std::env::current_exe` does **not** resolve the link: measured with a
+four-line program run once by its own path and twice through a symlink, it answered the
+link's path both times. Joining `../Resources` onto that would look in `/usr/local/Resources`,
+find no library, and fail at the first document with a bind error naming a directory that has
+nothing to do with tpdf.
+
+`cli::resource_dir` canonicalises first, and so does `clitool::tool`, which is where the
+application decides what the link should point at. The worker spawn does not need to: it
+re-executes whatever `current_exe` names, and executing the link runs the same file. The rule
+worth keeping is narrower than "always canonicalise": **a path that is used to find a
+neighbour must be the file's, not the name it was started by.**
+
+### `--only cli` also runs every `clip` mutation: a harness name filter is a substring
+
+2026-09-27. `scripts/mutate_rust.py --only "cli"` was meant to run the twenty mutations named
+`cli: ...` and `cli tool link: ...`, and ran 63: every mutation whose name contains `clip`
+came along, because `--only` matches a substring of the name, as libtest's own filters do.
+Nothing was wrong with the result --- all 63 were caught --- but the run took three times as
+long, and a reader counting the `[OK]` lines to confirm "the twenty new ones" would have read a
+number that was not about them.
+
+Filter with the separator the names carry: `--only "cli:"` selects the one family and
+`--only "cli tool link:"` the other. The same holds for `FILTERS` in that harness, which is why
+`clitool::` is listed beside `cli::` rather than trusted to be covered by it --- there the
+substring runs the other way and `cli::` is not in `clitool::tests::...`.
 

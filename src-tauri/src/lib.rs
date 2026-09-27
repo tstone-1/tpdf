@@ -10,6 +10,12 @@
 
 pub mod annots;
 pub mod ber;
+/// `tpdf sign`, `tpdf verify` and `tpdf identities`: the command-line tool,
+/// whose `main` is `src/bin/tpdf-cli.rs`. The application's own signing and
+/// verifying, through the same workers, writer and key store.
+pub mod cli;
+/// *Install command-line tool…*: the `/usr/local/bin/tpdf` link on macOS.
+pub mod clitool;
 /// Every `#[tauri::command]` this crate registers, grouped by the state it
 /// touches. The registry below stays here; the bodies do not.
 mod commands;
@@ -280,8 +286,19 @@ pub const PDFIUM_LOADABLE: &str = if cfg!(windows) {
 /// right there. `scripts/fetch_pdfium.py` encodes the same split and its
 /// docstring names this function as the one that had it wrong.
 pub(crate) fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
-    let loadable = PDFIUM_LOADABLE;
+    library_dir_among(app.path().resource_dir().ok())
+}
 
+/// [`pdfium_library_dir`]'s search, given the resource directory to look in.
+///
+/// Split out so the command-line tool (`cli.rs`) finds the library by the same
+/// rule the application does: it has no Tauri context to ask for a resource
+/// directory, and derives one from where its own executable sits in the bundle
+/// (`cli::resource_dir`). One search, two callers, rather than a second copy of
+/// the candidate order that could drift --- the debug-only development tree
+/// first, then `pdfium/` under the resources, then the resources themselves.
+pub(crate) fn library_dir_among(resources: Option<PathBuf>) -> PathBuf {
+    let loadable = PDFIUM_LOADABLE;
     // **Debug builds only, and that is a load-path decision rather than tidiness.**
     // `CARGO_MANIFEST_DIR` is baked in at compile time, so a release built by CI
     // carries the *runner's* checkout path --- and this candidate is tried first,
@@ -299,7 +316,6 @@ pub(crate) fn pdfium_library_dir(app: &tauri::AppHandle) -> PathBuf {
     // `vendor/pdfium` stays worth doing: it is what proves the bundled branch is
     // reachable, and after this it proves it for the debug build too.
     let dev = dev_library_dir();
-    let resources = app.path().resource_dir().ok();
 
     // The *library*, not the directory that should contain it. Those are the
     // same question everywhere except the one platform this got wrong, which is
@@ -853,6 +869,7 @@ pub fn run() {
             document_mapping,
             launch_open_event,
             app_version,
+            command_line_tool,
             take_launch_paths,
             session_load,
             session_remember,

@@ -5224,6 +5224,114 @@ second, and it is not a substitute for the run: it tests the predicate, not the 
 It is **not** a gate, for the same reason `viewer_check.py` is not — an accessibility read
 needs a real session, and on a headless runner it would not fail, it would hang.
 
+### The command-line tool
+
+`tpdf-cli` is the second `[[bin]]` (`src/bin/tpdf-cli.rs`, `src/cli.rs`). `cargo build --bins`
+and `tauri build` build it; the bundler ships it as `Contents/MacOS/tpdf-cli`, signed with the
+hardened runtime before the bundle, and as `tpdf-cli.exe` beside `tpdf.exe` in both Windows
+installers. `README.md`'s *Command-line tool* section is its reference and `docs/PLAN.md` Phase 6
+the record.
+
+**What the gates run.** `cargo test` runs three things for it:
+
+- `cli::tests` and `clitool::tests` --- the command line and every refusal, `--identity`
+  resolution, the exit codes, the committed JSON and wording samples in
+  `src-tauri/testdata/cli/`, and the README holding every JSON key and every exit code.
+  Regenerate the samples with `TPDF_CLI_SAMPLES=write cargo test --lib cli::` and read the
+  diff: a changed JSON sample is a changed schema (a renamed or removed key moves
+  `report::SCHEMA`), and a changed `wording.json` must still pass `src/lib/cliwording.test.ts`,
+  which holds it to `integrity.ts` and `signing.ts`.
+- `tests/cli.rs`, **a harness-free test binary** (`harness = false`), because signing spawns
+  workers by re-executing the current binary, and libtest's `main` does not answer
+  `worker::WORKER_ARGV`. It prints `[PASS]`/`[FAIL]`/`[SKIP]` lines and exits 1 on a failure or
+  on no pass at all. Its four parts: the built tool's `verify --json` against the in-process
+  reader on the signed fixtures (the fixtures must span intact, altered, broken and weak, or the
+  control fails); signing through `cli::run` with a software P-256 key the test holds, read back
+  by the built tool, with a wrong-digest key, an encrypted document and a non-PDF as refused
+  controls; the tool's process never loading PDFium (`DYLD_PRINT_LIBRARIES`, split by pid,
+  with a worker loading it as the control; and this process's own image list before and after
+  `cli::run`, then PDFium bound here as the control); and `sandbox_check` on a worker, against
+  this process. Without generated fixtures (*Test fixtures*) the fixture parts say `[SKIP]`.
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 49 checks, ~10 s debug
+cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clitool::
+```
+
+**Proved able to fail.** The `cli:` and `cli tool link:` mutations in `scripts/mutate_rust.py`
+(`--only "cli:" --only "cli tool link:"`, twenty-one) and the `cli wording:` ones in `scripts/mutate_frontend.py`. `tests/cli.rs`
+cannot be selected by that harness, so its mutations were run by hand, each rebuilt and
+restored byte-identical (SHA-256 checked), each turning red exactly the check named:
+
+```
+cli::main without the worker dispatch   -> 23 red: every check that goes through the built
+                                           tool (its worker runs the usage branch: "`--render-worker`
+                                           is not a command"), and the worker-loads-PDFium
+                                           control. Signing through cli::run stays green --- its
+                                           workers are this test binary, which dispatches.
+run_verify binds PDFium in-process      -> 2 red: "the tool's own process never loaded PDFium"
+                                           and "no PDFium in this process", alone
+worker_child skips sandbox_init         -> 1 red: "the worker is sandboxed", alone
+verify reports every verdict as intact  -> 4 red: the altered, broken and SHA-1 fixtures'
+                                           agreement, and the verdict-variety control
+sign writes the input unchanged         -> 13 red: sign exits 4 with "did not find the new
+                                           signature ... intact", and every read-back of it
+```
+
+macOS arm64, 2026-09-27, 49 checks green before and after each, the file's SHA-256 equal
+before and after.
+
+**Against the real keychain, by hand, never by an agent.** `identities` reads certificates only
+and raises no prompt:
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml --bin tpdf-cli
+src-tauri/target/debug/tpdf-cli identities --json
+```
+
+It should list a Developer ID Application certificate, if the machine has one, under
+`not_usable` with *it is issued for code signing, not for signing documents*, and the test
+identity below (*A TEST SIGNING IDENTITY*) under `usable`. **Signing raises the keychain prompt
+for `tpdf-cli`** (a program distinct from `tpdf`, so it is asked about separately), which the
+person at the machine answers:
+
+```bash
+S=$(mktemp -d)
+cp testdata/incr-signed.pdf "$S/in.pdf"
+src-tauri/target/debug/tpdf-cli sign "$S/in.pdf" -o "$S/signed.pdf" --json \
+    --identity "tpdf TEST SIGNER - not a real identity"
+src-tauri/target/debug/tpdf-cli sign "$S/in.pdf" -o "$S/visible.pdf" --no-image \
+    --identity "tpdf TEST SIGNER - not a real identity" \
+    --visible --rect 40,40,240,80 --reason Approved --location Hamburg
+# Three readers that share no code:
+src-tauri/target/debug/tpdf-cli verify "$S/signed.pdf" "$S/visible.pdf"      # intact x2 each
+uv run --with pyhanko --quiet python3 testdata/check_signature.py --json "$S/signed.pdf"
+cargo run --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+    "$S/signed.pdf" --mode integrity
+python3 - "$S/signed.pdf" "$S/blob.der" "$S/covered.bin" <<'PY'
+import re, sys   # the last signature's CMS and the bytes it covers, as sign-probe cuts them
+b = open(sys.argv[1], "rb").read()
+a, x, y, n = map(int, re.findall(rb"/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]", b)[-1])
+raw = bytes.fromhex(b[x + 1:y - 1].decode())
+head = 2 if raw[1] < 0x80 else 2 + (raw[1] & 0x7F)
+size = raw[1] if raw[1] < 0x80 else int.from_bytes(raw[2:head], "big")
+open(sys.argv[2], "wb").write(raw[:head + size])
+open(sys.argv[3], "wb").write(b[:x] + b[y:y + n])
+PY
+openssl cms -verify -binary -noverify -inform DER -in "$S/blob.der" -content "$S/covered.bin" \
+    -out /dev/null                                   # OpenSSL 3; "CMS Verification successful"
+```
+
+The cut was checked both ways on 2026-09-27: `incr-signed.pdf` verifies, `signed-altered.pdf`
+fails with *content verify error*. **Not yet run against the real keychain**; the first person
+to run it should record the result here.
+
+**The link.** *Install command-line tool…* is not driven by any check: it writes
+`/usr/local/bin` and can raise an administrator prompt. `clitool::tests` holds the decision over
+a scratch directory. By hand, on a built bundle: install, `ls -l /usr/local/bin/tpdf`,
+`tpdf --version`, uninstall, and check the link is gone; then put an ordinary file at that path
+and confirm both commands leave it alone.
+
 ### The exit code of a spike run
 
 `AppHandle::exit(code)` does **not** set the process's exit code. It ends the event loop,
@@ -6390,6 +6498,14 @@ starts at 0 and increments within the month.
    `testdata/vector-heavy.pdf`. Keep the normal-bundle and checks-build results separate.
    On Windows also run `print-probe` (§8), which is the only check that reaches a real spooler.
 
+   **The command-line tool, from the bundle and not from `target/`** (from 26.9.21): run
+   `tpdf.app/Contents/MacOS/tpdf-cli --version` and `... verify testdata/incr-signed.pdf`, and on
+   macOS `codesign -dv --verbose=4` on it (Developer ID, `runtime`), with the development engine
+   hidden --- the tool finds PDFium beside itself in the bundle, and a run that finds the
+   development tree's proves nothing about that. Then *Install command-line tool…* from the
+   bundle and `tpdf --version` through the link. On Windows, `tpdf-cli.exe verify` in a console
+   from the installed folder. *The command-line tool* (§ above) has the rest.
+
    Capture only the test process's own window: use its CGWindowID on macOS and
    `PrintWindow` on Windows. For the Windows capture, verify that an overlapping
    control window does not change the captured application content. A desktop-rectangle screenshot can
@@ -6558,6 +6674,14 @@ starts at 0 and increments within the month.
    `cdylib` at bundle time; whether it was never built there or never harvested is still
    **open**, and it does not affect the shipped application, which links the `rlib` and never
    loads the DLL.
+
+   **From 26.9.21 there is one more on purpose: `tpdf-cli.exe`**, the command-line tool, a
+   second `[[bin]]` the bundler ships beside `tpdf.exe` (`src/bin/tpdf-cli.rs`). So a released
+   MSI should hold four files, and three means the tool did not ship. Not yet measured: no
+   release containing it has been built. Extract the first one as below, and run
+   `tpdf-cli.exe --version` and `tpdf-cli.exe verify` on a signed PDF from the installed
+   folder, in a console --- the one Windows check a harness cannot stand in for, since the
+   tool exists for a console the application never has.
 
    What follows operationally: **read a payload count off a released artifact, never off a
    local build.** `gh release download <tag> --pattern '*.msi'` and extract that — it needs

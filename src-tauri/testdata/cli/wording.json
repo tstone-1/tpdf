@@ -1,0 +1,3554 @@
+{
+  "after_signing": [
+    {
+      "sentence": "Signed as Signature1 and saved to signed-0.pdf. Read back after writing, the signature is intact.",
+      "signed": {
+        "field": "Signature1",
+        "path": "/tmp/signed-0.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": true
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "Signed as Signature2 and saved to signed-1.pdf. Read back after writing, the signature is intact. Earlier signature: Signature1 intact.",
+      "signed": {
+        "field": "Signature2",
+        "path": "/tmp/signed-1.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": false
+          },
+          {
+            "field": "Signature2",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": true
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "Signed as Signature3 and saved to signed-2.pdf. Read back after writing, the signature is intact. Earlier signatures: Signature1 intact, Signature2 altered.",
+      "signed": {
+        "field": "Signature3",
+        "path": "/tmp/signed-2.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": false
+          },
+          {
+            "field": "Signature2",
+            "integrity": {
+              "digest": "",
+              "method": "",
+              "verdict": "altered",
+              "why": null
+            },
+            "ours": false
+          },
+          {
+            "field": "Signature3",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": true
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "Signed as Signature3 and saved to signed-3.pdf. Read back after writing, the signature is intact. Earlier signatures: Signature1 not checked (tpdf does not check signatures in this format), Signature2 not checked.",
+      "signed": {
+        "field": "Signature3",
+        "path": "/tmp/signed-3.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "",
+              "method": "",
+              "verdict": "unchecked",
+              "why": "format"
+            },
+            "ours": false
+          },
+          {
+            "field": "Signature2",
+            "integrity": null,
+            "ours": false
+          },
+          {
+            "field": "Signature3",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": true
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "signed-4.pdf was written, but reading it back did not find the new signature Signature1 intact: broken. Do not rely on that copy.",
+      "signed": {
+        "field": "Signature1",
+        "path": "/tmp/signed-4.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "",
+              "method": "",
+              "verdict": "broken",
+              "why": null
+            },
+            "ours": true
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "signed-5.pdf was written, but reading it back did not find the new signature Signature1 intact: unchanged under SHA-1 only. Do not rely on that copy.",
+      "signed": {
+        "field": "Signature1",
+        "path": "/tmp/signed-5.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-1",
+              "method": "RSA",
+              "verdict": "weak",
+              "why": null
+            },
+            "ours": true
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "signed-6.pdf was written, but reading it back did not find the new signature Signature2 intact: it is not in the file. Do not rely on that copy.",
+      "signed": {
+        "field": "Signature2",
+        "path": "/tmp/signed-6.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": false
+          }
+        ]
+      }
+    }
+  ],
+  "integrity": [
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA). Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA).",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA). It covers the document as it was when signed; what was appended afterwards is not part of it. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA). It covers the document as it was when signed; what was appended afterwards is not part of it.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate. It covers the document as it was when signed; what was appended afterwards is not part of it. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate. It covers the document as it was when signed; what was appended afterwards is not part of it.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-1). Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-1).",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-1). It covers the document as it was when signed; what was appended afterwards is not part of it. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-1). It covers the document as it was when signed; what was appended afterwards is not part of it.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-256, RSA), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-256, RSA), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-256, RSA), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-256, RSA), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match, but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match, but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match, but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match, but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-1), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-1), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-1), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed. Whether that key belongs to the person the certificate names was not checked.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "unchanged under SHA-1 only — the digest and the signature match (SHA-1), but SHA-1 collisions can be manufactured, so this does not show the bytes are the ones signed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-256, RSA). The signature itself checks out, so what changed is the document.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-256, RSA). The signature itself checks out, so what changed is the document.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-256, RSA). The signature itself checks out, so what changed is the document.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-256, RSA). The signature itself checks out, so what changed is the document.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made. The signature itself checks out, so what changed is the document.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made. The signature itself checks out, so what changed is the document.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made. The signature itself checks out, so what changed is the document.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made. The signature itself checks out, so what changed is the document.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-1). The signature itself checks out, so what changed is the document.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-1). The signature itself checks out, so what changed is the document.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-1). The signature itself checks out, so what changed is the document.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "altered — the bytes this signature covers have changed since it was made (SHA-1). The signature itself checks out, so what changed is the document.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-256, RSA), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-256, RSA), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-256, RSA), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-256, RSA), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key, so nothing it states can be relied on, including what it covers.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key, so nothing it states can be relied on, including what it covers.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key, so nothing it states can be relied on, including what it covers.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key, so nothing it states can be relied on, including what it covers.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-1), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-1), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-1), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "broken — the signature does not check out under its certificate's key (SHA-1), so nothing it states can be relied on, including what it covers.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "RSA",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "SHA-1",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not checked — no reason was given. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not checked — tpdf does not check signatures in this format. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not checked — tpdf does not check signatures in this format. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not checked — tpdf does not check signatures in this format. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not checked — tpdf does not check signatures in this format. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not checked — the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not checked — the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not checked — the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not checked — the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not checked — the signature's data could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not checked — the signature's data could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not checked — the signature's data could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not checked — the signature's data could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not checked — the certificate the signature names is not in it, or its key could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not checked — the certificate the signature names is not in it, or its key could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not checked — the certificate the signature names is not in it, or its key could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not checked — the certificate the signature names is not in it, or its key could not be read. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not checked — it uses an algorithm tpdf does not implement. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not checked — its signed attributes are not in the form the CMS standard requires. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not checked — its signed attributes are not in the form the CMS standard requires. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not checked — its signed attributes are not in the form the CMS standard requires. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not checked — its signed attributes are not in the form the CMS standard requires. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not checked — the document's signatures together cover more data than tpdf checks at once. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not checked — the document's signatures together cover more data than tpdf checks at once. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not checked — the document's signatures together cover more data than tpdf checks at once. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not checked — the document's signatures together cover more data than tpdf checks at once. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    }
+  ],
+  "trust": [
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate above the signer's is outside its dates. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate above the signer's is outside its dates. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — this Mac refused its chain. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — this Mac refused its chain. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate above the signer's is outside its dates. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate above the signer's is outside its dates. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — this PC refused its chain. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — this PC refused its chain. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this computer, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate between the signer's and a root is in neither the signature nor on this computer, and tpdf does not look it up. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate above the signer's is outside its dates. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate above the signer's is outside its dates. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — this computer refused its chain. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — this computer refused its chain. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate between the signer's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate between the signer's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate above the signer's is outside its dates. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate above the signer's is outside its dates. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — this Mac refused its chain. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — this Mac refused its chain. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate between the signer's and a root is in neither the signature nor on this PC, and tpdf does not look it up. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate above the signer's is outside its dates. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate above the signer's is outside its dates. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — this PC refused its chain. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — this PC refused its chain. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate between the signer's and a root is in neither the signature nor on this computer, and tpdf does not look it up. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate between the signer's and a root is in neither the signature nor on this computer, and tpdf does not look it up. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate above the signer's is outside its dates. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate above the signer's is outside its dates. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — this computer refused its chain. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — this computer refused its chain. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    }
+  ]
+}

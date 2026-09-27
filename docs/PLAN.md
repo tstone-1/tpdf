@@ -15267,6 +15267,104 @@ rectangle lays the image above the words where the preview shows it beside them.
 location on an invisible signature. Scripts beyond Latin-1 on the page. Fonts, colours and
 borders, deliberately out of scope. The window harness still has no signing phase.
 
+#### Signing and verifying from the command line --- done 2026-09-27
+
+`tpdf sign`, `tpdf verify` and `tpdf identities` (`src-tauri/src/cli.rs`, `src/bin/tpdf-cli.rs`)
+sign and check documents from a terminal with the application's own code. `README.md`'s
+*Command-line tool* section is the reader's reference --- the options, the JSON schema key by
+key, and the exit codes --- and `src-tauri/testdata/cli/*.json` are its committed samples.
+
+| Command | What it does | Where the work happens |
+|---|---|---|
+| `identities [--json]` | Every certificate in the store with a key, sorted by `sign_cms::usable` into those that can sign and those that cannot, with the reason and each one's SHA-256. | app side, `keystore.rs`; nothing of a document |
+| `sign <in> -o <out> --identity <subject \| sha256> [--visible --rect x,y,w,h [--page N] [--no-image] [--lines ...] [--reason ...] [--location ...]] [--force] [--json]` | Signs one document into a new file. | revision in a worker (`Request::PrepareSignature`), CMS and splice in this process (`sign_cms::finish`), write through `save::write_signed`, read-back in a fresh worker |
+| `verify <file>... [--strict] [--json]` | For each signature, the integrity verdict and the trust standing, in the properties dialog's words. | a worker per document, `Request::Properties` |
+
+**Exit codes**: 0 done; 1 `verify --strict` found a document with no signature or a signature
+not both intact and trusted; 2 a malformed command line; 3 refused (identity, document, output,
+or the OS); 4 tpdf failed. **JSON**: `schema` 1, one document on stdout whenever the code is 0
+or 1 (and for `verify`, 3 or 4 too), errors one sentence each on stderr.
+
+Decisions the owner took on 2026-09-27, recorded as given:
+
+- **The form is a command-line tool shipped with the application**, with those three commands,
+  stable JSON and exit codes, and nothing interactive but the operating system's own prompt.
+  No network, no local server and no library API in this version.
+- **Keys only through the OS store** --- the macOS keychain, `CurrentUser\My` on Windows. No
+  `.p12` option: that is an explicit later opt-in. Unattended use rests on the reader answering
+  macOS's prompt with *Always Allow*, and tpdf never works around what the OS decides
+  (`docs/THREAT-MODEL.md` §T6.23 and residual 26).
+- **Installation**: on macOS the tool is inside the bundle and *Install command-line tool…*
+  links `/usr/local/bin/tpdf` to it, asking the system for administrator rights when needed
+  (`clitool.rs`), with an uninstall beside it; on Windows a console-subsystem `tpdf-cli.exe`
+  beside `tpdf.exe`, because the application there is a GUI-subsystem program with no console
+  to write to.
+
+Decisions taken in building it, each with its reason:
+
+- **A second `[[bin]]`, not a Tauri `externalBin` sidecar.** `tauri build` compiles every bin
+  with `--bins`, and the bundler copies each into `Contents/MacOS` and signs it with the
+  hardened runtime inside-out before the bundle (read in tauri-cli 2.11.5's `get_binaries` and
+  the bundler's `copy_binaries_to_bundle`), and puts each beside `tpdf.exe` in both Windows
+  installers. A sidecar needs a target-triple-named prebuilt file in place before the build,
+  which is a second build step to keep in order for no gain. The same mechanism shipped the
+  probes by accident until 2026-07-31; here shipping is the point.
+- **The tool is its own worker.** `save::InWorker` re-executes the current binary with
+  `worker::WORKER_ARGV`, so `cli::main` answers that marker first, as the application's `run`
+  does, and the workers are the application's to the byte. PDFium is found by the application's
+  rule (`library_dir_among`), from the resource directory beside the executable.
+- **The words are the application's, checked.** `cli/words.rs` restates `integrity.ts`'s and
+  `signing.ts`'s sentences and writes every case to `testdata/cli/wording.json`;
+  `cliwording.test.ts` holds the TypeScript functions to it.
+- **`--identity` matches a subject among the certificates that can sign.** An expired
+  certificate beside its renewal is not a rival; two that can sign are refused and both listed
+  by SHA-256, because tpdf does not choose a key for anybody.
+- **An output that exists is refused unless `--force`**, and the appearance's options are
+  refused without `--visible` rather than dropped --- a reason typed and silently discarded is a
+  signature that does not say what its signer thinks.
+
+**Measured**, macOS arm64, 2026-09-27. `tests/cli.rs` (49 checks, part of `cargo test`): the
+built tool's `verify --json` agrees signature for signature with the in-process reader on all 14
+signed fixtures, whose verdicts span intact, altered, broken and weak; and the same verdicts
+agree with pyHanko's reading on the 13 it can read (`incr-ber.pdf` has no oracle), mapped as
+`signature-probe --mode integrity` maps them. Signing through `cli::run` with a software P-256
+key --- invisible, visible with an image and a reason, visible with words alone, and after an
+earlier signature --- reads back intact from the built tool, the earlier signature too; a key
+that signs the wrong digest, an encrypted document and a file that is not a PDF are refused
+with exit 3 and nothing written. Containment: under `DYLD_PRINT_LIBRARIES` the tool's own process
+loads no PDFium while its worker does; `sandbox_check` calls the worker sandboxed and the test
+process not. Against the real keychain, read-only: `identities --json` lists the owner's Developer
+ID as not usable (*issued for code signing*) and *tpdf TEST SIGNER - not a real identity* as
+usable.
+
+**Adding a command is one module and one line.** Each command is a module under
+`src-tauri/src/cli/` --- `sign.rs`, `verify.rs`, `identities.rs` --- with a type implementing
+`cli::Subcommand`, a pure `parse`, and a `cli::Registered` (name, synopsis, summary, parser)
+appended to `cli::COMMANDS`, which is all the dispatch, the usage text and `help` read. What
+they share is `cli.rs`'s and is not restated in a module: `Env` (the key store, the PDFium
+directory, the clock) and `Env::worker`, the only route a command has to a document's
+contents; `opened`; `say` and `json`, one write each; `Exit` and `Failure`, the exit-code
+contract; and `report::SCHEMA`. A test holds every registration to its dispatch and its line in
+`help`.
+
+**Next, queued by the owner on 2026-09-27, in this order --- none of them built:**
+
+1. `tpdf info --json`: the properties dialog --- pages, metadata, encryption, signatures, claimed
+   conformance --- which is `Request::Properties`, already what `verify` asks.
+2. `tpdf text`: the document's text in its reading order.
+3. `tpdf fill`: AcroForm values from a JSON file, its output pipeable into `sign`.
+4. `tpdf redact`: by search term or pattern, in batch, with the verified / not-verified report
+   as JSON.
+
+**Not done.** A real-keychain `sign` has not been run by an agent, because it raises the
+keychain prompt the owner answers; `BUILD.md` has the command and its verification. **The
+Windows tool has never run on a desktop**: it type-checks and the Windows CI job runs
+`tests/cli.rs`, but the store end to end, PATH and a console session are unexercised. No `.p12`
+option (decided above). No password for encrypted documents, which `verify` reports as `locked`.
+Reason and location on an invisible signature, as in the window. Timestamps and step 3. The
+bundled tool's signature and notarization are checked by `release.yml`'s verification step only
+from the next tag on; no bundle containing the tool has been built yet.
+
 ### Cross-cutting
 
 OCR (feeding search, selection and redaction verification) has interfaces defined in

@@ -4741,7 +4741,7 @@ fn commit(staged: &Path, out: &Path) -> Result<(), String> {
 /// falls back to comparing the parent directory and the file name, and that
 /// comparison is what makes the ordinary case answer correctly rather than
 /// answering "different" for everything.
-fn same_file(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => canonical_parent(a) == canonical_parent(b) && a.file_name() == b.file_name(),

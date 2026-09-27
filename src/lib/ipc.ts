@@ -407,6 +407,12 @@ export interface Commands {
   /** The reply is the name of the event a double-click delivers a path on. */
   launch_open_event: { args: NoArgs; reply: string };
   app_version: { args: NoArgs; reply: string };
+  /**
+   * Links `/usr/local/bin/tpdf` to the bundled command-line tool, or removes
+   * that link (`clitool.rs`). No path: the webview can ask for this one change.
+   * The reply is the sentence to show; a refusal is the error.
+   */
+  command_line_tool: { args: { install: boolean }; reply: string };
   take_launch_paths: { args: NoArgs; reply: string[] };
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };

@@ -219,6 +219,11 @@ FILTERS = [
     # reliance the notes above refuse; the wiring test lives there too.
     "trust::",
     "docinfo::",
+    # Added 2026-09-27 with the command-line tool, in the same edit as its
+    # mutations. `cli::` would not reach `clitool::` --- libtest filters on a
+    # substring, and "cli::" is not in "clitool::tests::..." --- so both.
+    "cli::",
+    "clitool::",
 ]
 
 
@@ -11429,6 +11434,162 @@ MUTATIONS += [
         "            options: self.options,",
         "            options: sign_prepare::Options::default(),",
         "a_placement_carries_the_readers_choices_to_the_worker",
+    ),
+]
+
+# The command-line tool (`src/cli.rs`, `src/cli/`, `src/clitool.rs`). What
+# needs a worker --- signing and verifying real documents, containment --- is
+# `tests/cli.rs`, a harness-free binary this table cannot select; its
+# mutations were proved by hand and are listed in `BUILD.md`.
+MUTATIONS += [
+    Mutation(
+        "cli: accept an output that names the input",
+        "src/cli/sign.rs",
+        "    if lexically_same(&input, &output) {",
+        "    if false {",
+        "an_output_that_names_the_input_is_refused",
+    ),
+    Mutation(
+        "cli: accept a rectangle with no width",
+        "src/cli/sign.rs",
+        "        && w > 0.0\n",
+        "\n",
+        "a_rectangle_that_is_not_four_numbers_with_a_size_is_refused",
+    ),
+    Mutation(
+        "cli: drop an appearance option given without --visible",
+        "src/cli/sign.rs",
+        "    if !visible {",
+        "    if false {",
+        "an_appearance_option_without_visible_is_refused_rather_than_dropped",
+    ),
+    Mutation(
+        "cli: accept page 0",
+        "src/cli/sign.rs",
+        "        Ok(n) if n >= 1 => Ok(n),",
+        "        Ok(n) => Ok(n),",
+        "a_page_that_is_not_counted_from_one_is_refused",
+    ),
+    Mutation(
+        "cli: count an expired certificate as a rival",
+        "src/cli/identities.rs",
+        "        .filter(|at| listed[*at].0.offer.is_ok())",
+        "        .filter(|_| true)",
+        "an_expired_certificate_beside_its_renewal_is_not_a_rival",
+    ),
+    Mutation(
+        "cli: choose the first of two certificates that can sign",
+        "src/cli/identities.rs",
+        "        [one] => Ok(*one),",
+        "        [one, ..] => Ok(*one),",
+        "a_subject_two_usable_certificates_share_is_refused_and_both_are_listed",
+    ),
+    Mutation(
+        "cli: match a SHA-256 only in lowercase",
+        "src/cli/identities.rs",
+        "        let wanted = wanted.to_ascii_lowercase();",
+        "        let wanted = wanted.to_string();",
+        "a_subject_two_usable_certificates_share_is_refused_and_both_are_listed",
+    ),
+    Mutation(
+        "cli: judge certificates at the epoch rather than now",
+        "src/cli/identities.rs",
+        "                offer: sign_cms::usable(der, now),",
+        "                offer: sign_cms::usable(der, 0),",
+        "the_identities_report_sorts_by_the_choosers_rule_and_keeps_every_id",
+    ),
+    Mutation(
+        "cli: let --strict pass whatever the verdicts",
+        "src/cli/verify.rs",
+        "        None if strict && !report.strict_passed => Exit::Strict,",
+        "        None if false => Exit::Strict,",
+        "strict_passes_only_intact_and_trusted_signatures_in_every_document",
+    ),
+    Mutation(
+        "cli: pass --strict on an untrusted signature",
+        "src/cli/verify.rs",
+        "            .is_some_and(|t| t.standing == crate::trust::Standing::Trusted)",
+        "            .is_some_and(|_| true)",
+        "strict_passes_only_intact_and_trusted_signatures_in_every_document",
+    ),
+    Mutation(
+        "cli: pass --strict on a document with no signature",
+        "src/cli/verify.rs",
+        "            && !file.signatures.is_empty()\n",
+        "\n",
+        "strict_passes_only_intact_and_trusted_signatures_in_every_document",
+    ),
+    Mutation(
+        "cli: report a worker's failure as a refusal",
+        "src/cli/verify.rs",
+        "            ErrorKind::Failed => Exit::Internal,",
+        "            ErrorKind::Failed => Exit::Refused,",
+        "a_document_that_could_not_be_read_outranks_every_verdict",
+    ),
+    Mutation(
+        "cli: replace an existing output without --force",
+        "src/cli/sign.rs",
+        "    if !sign.force && sign.output.exists() {",
+        "    if false {",
+        "signing_refusals_that_need_no_worker_exit_before_one_is_asked_for",
+    ),
+    Mutation(
+        "cli: sign over the input reached by a second name",
+        "src/cli/sign.rs",
+        "    if save::same_file(&sign.input, &sign.output) {",
+        "    if false {",
+        "signing_refusals_that_need_no_worker_exit_before_one_is_asked_for",
+    ),
+    Mutation(
+        "cli: a word of the tool's own drifts from the application's",
+        "src/cli/words.rs",
+        '    "Whether that key belongs to the person the certificate names was not checked.";',
+        '    "Whether this key belongs to the person the certificate names was not checked.";',
+        "every_json_shape_and_the_wording_match_their_committed_samples",
+    ),
+    Mutation(
+        "cli: rename a JSON key without moving the schema",
+        "src/cli/report.rs",
+        "    pub claimed_time: String,",
+        '    #[serde(rename = "time")]\n    pub claimed_time: String,',
+        "every_json_shape_and_the_wording_match_their_committed_samples",
+    ),
+    Mutation(
+        "cli: a registered command that nothing dispatches to",
+        "src/cli.rs",
+        "pub const COMMANDS: &[Registered] = &[sign::COMMAND, verify::COMMAND, identities::COMMAND];",
+        "pub const COMMANDS: &[Registered] = &[sign::COMMAND, verify::COMMAND];",
+        "every_registered_command_is_reached_by_its_name_and_listed_in_help",
+    ),
+    Mutation(
+        "cli: read the saved image from another application's store",
+        "src/cli.rs",
+        'pub const IDENTIFIER: &str = "com.timostein.tpdf";',
+        'pub const IDENTIFIER: &str = "com.timostein.tpdf.cli";',
+        "the_identifier_is_the_applications",
+    ),
+    Mutation(
+        "cli tool link: replace a link that is not tpdf's",
+        "src/clitool.rs",
+        "    if !ours(&target) {",
+        "    if false {",
+        "only_tpdfs_own_link_is_created_repointed_or_removed",
+        only_on="macos",
+    ),
+    Mutation(
+        "cli tool link: call any file of that name tpdf's",
+        "src/clitool.rs",
+        '            .is_some_and(|dir| dir.ends_with("Contents/MacOS"))',
+        "            .is_some()",
+        "only_tpdfs_own_link_is_created_repointed_or_removed",
+        only_on="macos",
+    ),
+    Mutation(
+        "cli tool link: report success whatever is there afterwards",
+        "src/clitool.rs",
+        "        (true, Step::Present) => format!(",
+        "        (true, _) => format!(",
+        "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
     ),
 ]
 

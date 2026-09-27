@@ -105,9 +105,10 @@ the tpdf menu on macOS or command palette to remember an opt-out on this device.
   encryption.
 - **What a document says about itself**: its title and producer, whether it is encrypted
   and what that permits, what conformance it claims, and who signed it — the signer's
-  certificate, its issuer and its validity, read out of the signature itself. Reading only:
-  there is no trust store here, no chain is built, and nothing shown to you has been
-  verified.
+  certificate, its issuer and its validity, read out of the signature itself. Two things
+  are checked rather than read: whether each signature still covers the bytes it was made
+  over, and whether your computer's own trust store vouches for the signer's certificate
+  (without going online, so revocation is not checked).
   <!-- built: file.properties -->
 - Printing through the system print panel, on both platforms — and every print job is read
   back through the operating system's own PDF parser before the panel opens, which is a
@@ -152,10 +153,12 @@ measured the Windows render constants come out 1.5–1.8x worse.
   prompt you see is theirs. The signature is PAdES baseline B-B (a CAdES detached
   signature over SHA-256, RSA or ECDSA P-256/P-384), added as an incremental revision so
   signatures already in the document stay intact, and the written file is read back and
-  its signatures checked before you are told it worked. It is invisible — there is no
-  signature appearance on the page yet — and it carries no timestamp, so its time is the
+  its signatures checked before you are told it worked. It can be invisible, or drawn on
+  the page where you place it — your saved signature image, the signer's name, the date,
+  and a reason and location if you give them. It carries no timestamp, so its time is the
   one your computer's clock said. Documents with unsaved edits, encrypted documents and
-  documents certified against any change are refused.
+  documents certified against any change are refused. The same signing and checking is
+  available from a terminal: see [Command-line tool](#command-line-tool).
   <!-- built: file.signDocument -->
 
 - **Saving signed or certified documents requires confirmation.** The current writer
@@ -456,6 +459,104 @@ inserted twice --- is refused, because the edit reaches the file and would appea
 both.
 <!-- built: edit.editText -->
 
+## Command-line tool
+
+`tpdf sign`, `tpdf verify` and `tpdf identities` do from a terminal what **Sign document…**
+and **Document properties** do in the window, with the same code: the document is read only
+by the same sandboxed worker processes, the private key never leaves the operating system,
+and every signed file is read back and checked before success is reported. Nothing is
+uploaded and nothing goes online.
+
+**Installing it.** On macOS the tool is inside the application. Choose **Install
+command-line tool…** in the tpdf menu (or the command palette): it links
+`/usr/local/bin/tpdf` to the tool inside `tpdf.app`, and macOS asks for an administrator
+password if that folder needs one. **Uninstall command-line tool…** removes the link. A file
+already at that path that tpdf did not put there is left alone. Because it is a link, the
+tool updates with the application. On Windows both installers put `tpdf-cli.exe` beside
+`tpdf.exe`, in the folder tpdf is installed in, and **Install command-line tool…** says
+which; add that folder to `PATH`, or call the tool by its full path. The examples below say `tpdf`; on Windows it is `tpdf-cli`.
+<!-- built: app.installCommandLineTool app.uninstallCommandLineTool -->
+
+```
+tpdf identities
+tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe"
+tpdf sign contract.pdf -o contract-signed.pdf --identity 2a144cdb…c74 \
+    --visible --page 2 --rect 72,600,220,70 --reason "Approved" --location "Hamburg"
+tpdf verify contract-signed.pdf other.pdf
+tpdf verify --strict --json *.pdf
+```
+
+- **`identities`** lists the certificates in your keychain (macOS) or your personal
+  certificate store (Windows) that have a private key: the ones that can sign a document, and
+  the ones that cannot with the reason — expired, not yet valid, a key tpdf does not sign
+  with, or issued for something else, such as code signing or a web server. The rules are
+  the application's.
+- **`sign <in.pdf> -o <out.pdf> --identity <subject | SHA-256>`** signs with one of them.
+  `--identity` takes the certificate's subject exactly as `identities` prints it, or its
+  SHA-256 in hex. A subject that two certificates able to sign share is refused, and both
+  are listed with their SHA-256, because tpdf does not choose a key for you. The original is
+  never changed; `-o` must name a new file unless `--force` is given. `--visible` draws the
+  signature on a page: `--rect x,y,w,h` in points from the top-left corner of the page as it
+  is displayed, `--page N` counted from 1 (1 by default); your saved signature image is drawn
+  beside the words unless `--no-image` is given, `--lines label,name,date` chooses which of
+  the three lines appear, and `--reason` and `--location` are drawn and written into the
+  signature. Those options need `--visible`, and are refused without it rather than
+  dropped.
+- **`verify <file.pdf>...`** says, for every signature, whether it is intact and whether this
+  computer trusts its signer, in the words of the application's properties dialog.
+  `--strict` makes the exit code 1 unless every document has at least one signature and every
+  signature is both intact and trusted.
+
+**The key, and unattended use.** macOS asks whether the tool may use the key the first time
+it signs with it; choose *Always Allow* if a script is to sign without you — which also
+lets anything else running as you sign with that key through `tpdf`, until you remove the
+permission in Keychain Access. A visible
+signature reads your saved signature image from the same protected store, and macOS may ask
+about that too; `--no-image` does not read it at all. A smart card or token asks for its PIN in the system's own dialog. tpdf never
+sees what you type, and does nothing to avoid the prompt: if the system asks, the command
+waits for an answer. Signing with a key file (`.p12`) instead of the system store is not
+built.
+
+**Exit codes** are stable:
+
+| Code | Meaning |
+|---|---|
+| 0 | Done. For `verify`, every document was read, whatever the verdicts. |
+| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. |
+| 2 | The command line is malformed: a missing `-o`, an output that names the input, a bad `--rect`, an unknown option. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back intact. |
+
+Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
+document, pretty-printed, whenever the exit code is 0 or 1 — and for `verify` also when it is
+3 or 4, since the other documents may have been read. Every document has `schema` (now `1`;
+a key may be added without changing it, and one renamed or removed changes it) and
+`command`. Enumerations use the same words as the application's own data.
+
+- `identities`: `usable` and `not_usable`, lists of certificates. Each has `id` (SHA-256 of
+  the certificate, lowercase hex) and `subject` (its common name, or its whole name when it
+  has none); a usable one also `issuer`, `expires` (`YYYY-MM-DD HH:MM:SS UTC`) and `method`
+  (`RSA 3072`, `ECDSA P-256`), and one that is not usable `why`, a clause.
+- `verify`: `strict_passed` (whether `--strict` would pass, present either way) and `files`,
+  one per document in the order given, each with `path` as given, `error` — `null`, or an
+  object with `kind` (`unreadable`, `refused`, `locked` for an encrypted document, `failed`)
+  and `message` — and `signatures`.
+- `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
+  certificate as above), `visible`, `signatures` (every signature in the written file, read
+  back) and `summary` (the sentence the application shows after signing).
+- A signature: `field`; `signer` and `issuer` (from its certificate, empty when none could
+  be read); `claimed_time` (the time the signer's computer gave; not checked);
+  `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
+  `integrity` with `verdict` (`intact`, `weak`, `altered`, `broken`, `unchecked`), `why`
+  (for `unchecked`, else `null`), `digest`, `method` and `sentence`; and `trust`, `null`
+  unless the verdict is `intact` or `weak`, with `standing` (`trusted`, `expired`,
+  `not_yet_valid`, `untrusted`, `unchecked`), `why`, `store` (`mac`, `windows`, or `null`)
+  and `sentence`. Each `sentence` is the properties dialog's row, word for word.
+
+Committed samples of each document are in
+[`src-tauri/testdata/cli/`](src-tauri/testdata/cli/), and a test holds this description to
+them key by key.
+
 ## Not built yet
 
 This list is checked rather than remembered: each bullet carries the command that would
@@ -482,10 +583,11 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Timestamped and long-term-validation signatures, certification signatures, a visible
-  signature appearance, and any decision about whether a signer's certificate is trusted.
-  Signing exists; what it proves stops at the document being unchanged since it was signed
-  by the key in its certificate.
+- Timestamped and long-term-validation signatures, certification signatures, and
+  revocation checking. Signing exists, and so does asking this computer's trust store about
+  a signer; what a signature proves stops at the document being unchanged since it was
+  signed by the key in its certificate, and whether an issuer this computer trusts vouches
+  for that certificate today.
   <!-- not-built: file.timestampSignature -->
 - General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
   paragraph reflow and unsupported complex content streams.

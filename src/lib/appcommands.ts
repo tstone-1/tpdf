@@ -134,6 +134,13 @@ export interface AppActions {
   about(): void;
   /** Ask the update endpoint whether there is a newer tpdf. */
   checkForUpdates(): void;
+  /**
+   * Link the command-line tool as `/usr/local/bin/tpdf` (`install`), or remove
+   * that link; on Windows, say where the installer put `tpdf-cli.exe`. The
+   * backend decides and reads the result back (`clitool.rs`); this side shows
+   * the sentence.
+   */
+  commandLineTool(install: boolean): void;
   automaticUpdates(): boolean;
   setAutomaticUpdates(enabled: boolean): void;
   /** Download and apply the update the last check found. */
@@ -661,6 +668,21 @@ export function registerAppCommands(
       title: "Restart to finish update",
       enabled: () => actions.updateReady(),
       run: () => actions.restartForUpdate(),
+    },
+    {
+      // Always enabled, and the pair is not guarded on whether the link exists:
+      // the answer to "is it installed" is in the filesystem, and the backend
+      // reads it there each time rather than trusting a state this side kept.
+      // Installing twice says so; removing what is not there says so. No
+      // binding, like every command a reader runs once.
+      id: "app.installCommandLineTool",
+      title: "Install command-line tool…",
+      run: () => actions.commandLineTool(true),
+    },
+    {
+      id: "app.uninstallCommandLineTool",
+      title: "Uninstall command-line tool…",
+      run: () => actions.commandLineTool(false),
     },
     {
       id: "file.properties",

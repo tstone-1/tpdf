@@ -4496,8 +4496,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Timestamped and long-term-validation signatures, certification signatures, a visible",
-        "- Timestamped and long-term-validation signatures, <!-- built: file.print --> certification signatures, a visible",
+        "- Timestamped and long-term-validation signatures, certification signatures, and",
+        "- Timestamped and long-term-validation signatures, <!-- built: file.print --> certification signatures, and",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -5583,6 +5583,9 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    # Added 2026-09-27 with the command-line tool, in the same edit as its
+    # mutations: the tool's wording against the application's.
+    "src/lib/cliwording.test.ts",
     # Added 2026-09-26 with Phase 6 step 2's sequence and sentences.
     "src/lib/signing.test.ts",
     "src/lib/pendingimport.test.ts",
@@ -8222,6 +8225,26 @@ MUTATIONS += [
 ]
 
 # --- signing with a certificate the reader has (Phase 6 step 2, 2026-09-26) ---
+# The command-line tool restates the application's verdict sentences in Rust
+# (`src-tauri/src/cli/words.rs`) and writes every case to
+# `src-tauri/testdata/cli/wording.json`; `cliwording.test.ts` holds the two to
+# each other. These change the application's side alone, which is the drift
+# that test exists for: the tool would go on printing the old words.
+MUTATIONS += [
+    Mutation("cli wording: the application drops the revocation caveat", "src/lib/integrity.ts",
+        '  "Revocation was not checked: tpdf does not go online, so a certificate its " +',
+        '  "Revocation was not checked: tpdf does not go online, so a certificate the " +',
+        "says each trust standing as the properties dialog does"),
+    Mutation("cli wording: the application says intact differently", "src/lib/integrity.ts",
+        "          `intact — the signed bytes are unchanged and the signature checks out ` +",
+        "          `intact — the signed bytes are unchanged and the signature verifies ` +",
+        "says each integrity verdict as the properties dialog does"),
+    Mutation("cli wording: the application closes a signing differently", "src/lib/signing.ts",
+        "Read back after writing, the signature is intact.`;",
+        "Read back, the signature is intact.`;",
+        "closes a signing as the signing panel does"),
+]
+
 # `signing.ts` is the sequence and the sentences; `App.svelte` supplies the
 # shell. Each mutation removes one step or one word the reader relies on.
 MUTATIONS += [

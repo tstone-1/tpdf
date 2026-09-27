@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "command": "identities",
+  "usable": [
+    {
+      "id": "2a144cdb0facc6919f9163d7776c3c2f7f35bbd23021c002d61c29c7f0819c74",
+      "subject": "A. Signer",
+      "issuer": "An Issuing CA",
+      "expires": "2027-09-26 00:00:00 UTC",
+      "method": "RSA 3072"
+    }
+  ],
+  "not_usable": [
+    {
+      "id": "f526049003c94827b7f211c5f5bfecb156d4fdb300ed41ea722431d109b75531",
+      "subject": "Developer ID Application: A. Signer (TEAMID1234)",
+      "why": "it is issued for code signing, not for signing documents"
+    }
+  ]
+}

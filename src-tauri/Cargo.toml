@@ -377,6 +377,34 @@ flagset = "0.4"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 security-framework-sys = "2"
 
+# The command-line tool, `tpdf sign`/`verify`/`identities` (`src/cli.rs`).
+#
+# A `[[bin]]` and not an `[[example]]`, which is the opposite of the probes'
+# move and for the same reason: `tauri build` compiles every bin with `--bins`
+# and the bundler ships every one it finds (`get_binaries` in tauri-cli, read
+# at 2.11.5) --- into `Contents/MacOS` beside the application, signed with
+# the hardened runtime inside-out before the bundle is, and beside `tpdf.exe`
+# in both Windows installers. Shipping is the point here; it was the defect for
+# the probes. Declared by name so `src/bin/` holds only declared sources
+# (`docs/DETAIL.md`: a subdirectory there becomes a phantom binary). The
+# application stays `default-run`, so `tauri dev` still runs the window.
+[[bin]]
+name = "tpdf"
+path = "src/main.rs"
+
+[[bin]]
+name = "tpdf-cli"
+path = "src/bin/tpdf-cli.rs"
+
+# The command-line tool against real workers. Its own `main` (`harness =
+# false`), because a worker is this test binary re-exec'd with
+# `worker::WORKER_ARGV`, and libtest's `main` does not know that marker ---
+# `docs/TRAPS.md`, *A probe that spawns a worker is also the worker*.
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
+harness = false
+
 [[example]]
 name = "tile-bench"
 path = "examples/tile_bench.rs"

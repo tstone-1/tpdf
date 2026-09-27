@@ -3162,6 +3162,7 @@ async function appCommandChecks(
     // an exception from a helper nobody was looking at.
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
+    commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
     automaticUpdates: () => true,
     setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
     applyUpdate: () => fired.push("applyUpdate"),
@@ -4293,6 +4294,12 @@ async function appCommandChecks(
     // it does once pressed --- settle, count the dirty tabs, ask, respect a no
     // --- is `update.test.ts`, which fakes the relaunch.
     "app.restartForUpdate": "it would end the process this check is writing its transcript from",
+    // Both write outside the application --- a link in `/usr/local/bin` --- and
+    // on a fresh Mac ask for an administrator password, which a check must not
+    // do to whoever is at the machine. The decision is `clitool.rs`'s tests,
+    // over a scratch directory; the wiring is `appcommands.test.ts`.
+    "app.installCommandLineTool": "it writes /usr/local/bin and can raise an administrator prompt",
+    "app.uninstallCommandLineTool": "it removes /usr/local/bin/tpdf and can raise an administrator prompt",
     // Driving either from the palette would time the layout against a chain of
     // two IPC round trips --- measure the ink, then ask what size the page
     // becomes --- and the probe framework's settle is a frame-loop wait, not a

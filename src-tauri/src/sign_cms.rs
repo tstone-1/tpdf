@@ -122,16 +122,25 @@ pub fn choices(found: &[(String, Vec<u8>)], now: u64) -> Choices {
                 method: offer.method,
             }),
             Err(why) => out.skipped.push(Skipped {
-                subject: Certificate::from_der(der)
-                    .map(|c| crate::docinfo::common_name(&c.tbs_certificate.subject))
-                    .ok()
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "(a certificate with no readable name)".into()),
+                subject: named(der),
                 why,
             }),
         }
     }
     out
+}
+
+/// Who a certificate [`usable`] refused names, as far as it can be read.
+///
+/// The chooser's wording for a certificate it lists without offering, and the
+/// command-line `identities`' too, so the two name a refused certificate alike.
+#[must_use]
+pub fn named(der: &[u8]) -> String {
+    Certificate::from_der(der)
+        .map(|c| crate::docinfo::common_name(&c.tbs_certificate.subject))
+        .ok()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "(a certificate with no readable name)".into())
 }
 
 /// One signature in the file just written, as the worker's verifier read it.

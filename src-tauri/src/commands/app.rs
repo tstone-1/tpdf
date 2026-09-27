@@ -56,3 +56,21 @@ pub fn take_launch_paths(launch: tauri::State<'_, launch::Launch>) -> Vec<String
         .map(|path| path.to_string_lossy().into_owned())
         .collect()
 }
+
+/// *Install command-line tool…* (`install`) and *Uninstall command-line tool…*.
+///
+/// On macOS, links `/usr/local/bin/tpdf` to the tool inside this bundle, or
+/// removes that link, asking the system for administrator rights only when the
+/// directory needs them --- `clitool.rs` has the rules, among them that a file
+/// tpdf did not put there is never replaced or removed. On Windows, says where
+/// the installer put `tpdf-cli.exe`. The answer is a sentence for the reader,
+/// read back from the filesystem after the change.
+///
+/// Takes no path: the link and the tool are both fixed, so the webview can ask
+/// for this one change and nothing else.
+#[tauri::command]
+pub async fn command_line_tool(install: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::clitool::apply(install))
+        .await
+        .map_err(|e| format!("the command-line tool change did not run: {e}"))?
+}

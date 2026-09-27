@@ -659,6 +659,15 @@
     about: () => {
       notice = `tpdf ${appVersion}`;
     },
+    // The backend reads the filesystem back after the change and answers with
+    // the sentence; a refusal --- somebody else's file at the path, a cancelled
+    // administrator prompt --- arrives as the error and is shown the same way.
+    commandLineTool: (install) => {
+      void call("command_line_tool", { install }).then(
+        (said) => (notice = said),
+        (why: unknown) => (notice = String(why)),
+      );
+    },
     // Wrapped rather than passed straight through, because a check that lands on
     // `current` shows nothing in the header by design -- so before this, pressing
     // "Check for updates" and being up to date was indistinguishable from a

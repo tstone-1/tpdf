@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "command": "verify",
+  "strict_passed": false,
+  "files": [
+    {
+      "path": "contract.pdf",
+      "error": null,
+      "signatures": [
+        {
+          "field": "Signature1",
+          "signer": "First Signer",
+          "issuer": "tpdf test root CA",
+          "claimed_time": "2026-09-26 20:20:13 +02:00",
+          "covers_whole_file": false,
+          "appended_bytes": 9101,
+          "integrity": {
+            "verdict": "intact",
+            "why": null,
+            "digest": "SHA-256",
+            "method": "RSA",
+            "sentence": "intact — the signed bytes are unchanged and the signature checks out under the key in its certificate (SHA-256, RSA). It covers the document as it was when signed; what was appended afterwards is not part of it."
+          },
+          "trust": {
+            "standing": "untrusted",
+            "why": "root",
+            "store": "mac",
+            "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names."
+          }
+        },
+        {
+          "field": "Signature2",
+          "signer": "",
+          "issuer": "",
+          "claimed_time": "",
+          "covers_whole_file": true,
+          "appended_bytes": 0,
+          "integrity": {
+            "verdict": "unchecked",
+            "why": "format",
+            "digest": "",
+            "method": "",
+            "sentence": "not checked — tpdf does not check signatures in this format. This says nothing either way about whether the document changed."
+          },
+          "trust": null
+        }
+      ]
+    },
+    {
+      "path": "locked.pdf",
+      "error": {
+        "kind": "locked",
+        "message": "locked.pdf is encrypted with a password, and its signatures cannot be read without it --- open it in tpdf to check them"
+      },
+      "signatures": []
+    }
+  ]
+}

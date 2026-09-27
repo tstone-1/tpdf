@@ -286,6 +286,110 @@ impl InWorker {
     }
 }
 
+/// Why a one-shot worker did not answer with what was asked.
+///
+/// Two cases rather than one sentence, because the command-line tool
+/// (`cli.rs`) answers them with different exit codes: a worker that **refused**
+/// --- `Response::err`, the document is encrypted, certified against any
+/// change, not a PDF --- has said something true about the document, and a
+/// worker that **failed** --- it died, it did not answer in time, it answered a
+/// different question --- has said nothing about it at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Declined {
+    /// The worker answered, with a refusal.
+    Refused(String),
+    /// No answer came, or not one to this question.
+    Failed(String),
+}
+
+impl Declined {
+    /// The sentence, whichever case it is.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Declined::Refused(why) | Declined::Failed(why) => why,
+        }
+    }
+}
+
+impl InWorker {
+    /// Everything a worker holding `file` reports about it: `Request::Properties`.
+    ///
+    /// The whole reply rather than [`Verifier::signatures`]'s list, because the
+    /// command-line `verify` has to tell a document whose signatures could not
+    /// be read --- an encrypted one, `limits.locked` --- from one that has none.
+    /// Same worker, same request, same code as the properties dialog.
+    ///
+    /// # Errors
+    ///
+    /// The file could not be mapped, the worker could not be started, it
+    /// refused, or it did not answer within [`DEFAULT_DEADLINE`].
+    pub fn properties(
+        &self,
+        file: &std::fs::File,
+        len: usize,
+    ) -> Result<crate::docinfo::Properties, Declined> {
+        let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)
+            .map_err(Declined::Failed)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, |worker| {
+            match Self::asked(worker, &Request::Properties)? {
+                Reply::Properties(properties) => Ok(*properties),
+                other => Err(Declined::Failed(format!(
+                    "the worker answered the properties request with {other:?}"
+                ))),
+            }
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Declined::Failed)?
+    }
+
+    /// The revision a signature goes into, built by a worker holding `file`.
+    ///
+    /// `Request::PrepareSignature`, which the document's own pool answers in
+    /// the application: the same request to the same kind of process, for a
+    /// caller that has no pool --- the command-line tool, which opens one
+    /// document, signs it and exits.
+    ///
+    /// # Errors
+    ///
+    /// As [`InWorker::properties`]; a refusal is `sign_prepare`'s own.
+    pub fn prepare_signature(
+        &self,
+        file: &std::fs::File,
+        len: usize,
+        at: u64,
+        visible: Option<crate::sign_prepare::Visible>,
+    ) -> Result<crate::sign_prepare::Unsigned, Declined> {
+        let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)
+            .map_err(Declined::Failed)?;
+        let pid = worker.pid();
+        let request = Request::PrepareSignature {
+            at,
+            visible: visible.map(Box::new),
+        };
+        let rx = asked_on_a_thread(worker, move |worker| match Self::asked(worker, &request)? {
+            Reply::PreparedSignature(unsigned) => Ok(unsigned),
+            other => Err(Declined::Failed(format!(
+                "the worker answered the signature request with {other:?}"
+            ))),
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Declined::Failed)?
+    }
+
+    /// One request, with a refusal kept apart from a failure.
+    fn asked(worker: &mut Worker, request: &Request) -> Result<Reply, Declined> {
+        let answered = worker.call(request).map_err(Declined::Failed)?;
+        if !answered.ok {
+            return Err(Declined::Refused(answered.error));
+        }
+        answered
+            .reply
+            .ok_or_else(|| Declined::Failed("the worker answered with no payload at all".into()))
+    }
+}
+
 impl Outside for InWorker {}
 
 // A mapped source can change underneath a renderer. Raster redaction instead

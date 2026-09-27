@@ -21,6 +21,20 @@ have the binary.)
 
 ### Added
 
+- **Sign and verify from a terminal.** `tpdf sign`, `tpdf verify` and
+  `tpdf identities` do what *Sign document…* and *Document properties* do, for
+  scripts and batches: sign a PDF with a certificate from your keychain or
+  certificate store, invisibly or drawn on a page, say whether each signature
+  in a set of files is intact and whether this computer trusts its signer, and
+  list which of your certificates can sign. The key never leaves the operating
+  system, which asks you before the tool may use it; the document is read only
+  by the same sandboxed workers the application uses; and every signed copy is
+  read back and checked before the command says it worked. `--json` gives a
+  stable, documented output and the exit codes are fixed, so a script can
+  branch on them. On macOS, *Install command-line tool…* in the tpdf menu puts
+  `tpdf` on your path; on Windows the installer puts `tpdf-cli.exe` beside
+  `tpdf.exe`. See the README's *Command-line tool* section.
+
 - **A page with a letter outside Latin in its fonts can now be edited.** A
   document that names Cyrillic or other non-Latin letters in the encoding of
   its fonts, as a brochure with a Russian edition does, used to be refused on
