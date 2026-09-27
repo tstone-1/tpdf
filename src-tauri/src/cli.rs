@@ -1,5 +1,5 @@
 //! `tpdf` on the command line: sign, verify, list signing identities, describe
-//! a document, read its text, list its form fields and fill them.
+//! a document, read its text, list its form fields and fill them, and redact.
 //!
 //! ## The same security model as the application, not a lighter one
 //!
@@ -43,8 +43,8 @@
 //! ## Exit codes
 //!
 //! [`Exit`] is the list of record, and `README.md` repeats it for readers:
-//! 0 done; 1 `verify --strict` found something that is not intact and trusted;
-//! 2 the command line is malformed; 3 tpdf refused (the identity, the document,
+//! 0 done; 1 `verify --strict` found something that is not intact and trusted,
+//! or `redact` wrote a copy it could not prove clean; 2 the command line is malformed; 3 tpdf refused (the identity, the document,
 //! the output) or the OS did; 4 tpdf itself failed. Errors go to stderr, one
 //! sentence each; with `--json`, stdout carries exactly one JSON document
 //! whenever the exit code is 0 or 1, and for `verify` also when it is 3 or 4,
@@ -55,6 +55,8 @@ pub mod fields;
 pub mod fill;
 pub mod identities;
 pub mod info;
+pub mod redact;
+pub mod regions;
 pub mod report;
 pub mod sign;
 pub mod text;
@@ -78,7 +80,8 @@ pub enum Exit {
     /// Done.
     Ok = 0,
     /// `verify --strict`: a document with no signature, or a signature that is
-    /// not both intact and trusted.
+    /// not both intact and trusted. `redact`: the copy was written and could
+    /// not be proved clean; the file is kept and every reason is reported.
     Strict = 1,
     /// The command line is malformed.
     Usage = 2,
@@ -245,7 +248,11 @@ pub fn main() -> i32 {
         }
     };
     // Before anything else: this process may be one of its own workers. It
-    // never returns from here.
+    // never returns from here. The OCR worker first, as `lib.rs`'s `run` orders
+    // them: `redact`'s gate spawns one, and a child that found no marker here
+    // would fall into this parser and exit --- `ocr_worker::child_main_if_asked`
+    // records the day that read as an engine that crashed.
+    crate::ocr_worker::child_main_if_asked(&argv);
     if argv.get(1).map(String::as_str) == Some(crate::worker::WORKER_ARGV) {
         crate::worker_child::main(&argv);
     }
@@ -344,6 +351,7 @@ pub const COMMANDS: &[Registered] = &[
     text::COMMAND,
     fields::COMMAND,
     fill::COMMAND,
+    redact::COMMAND,
 ];
 
 impl Env<'_> {
@@ -379,7 +387,7 @@ fn json(to: &mut dyn Write, value: &impl serde::Serialize) {
 #[must_use]
 pub fn usage(program: &str) -> String {
     let mut text = format!(
-        "tpdf {} --- sign, verify, describe, read and fill PDF documents from the command line\n\nUsage:\n",
+        "tpdf {} --- sign, verify, describe, read, fill and redact PDF documents from the command line\n\nUsage:\n",
         env!("CARGO_PKG_VERSION")
     );
     for command in COMMANDS {
@@ -391,8 +399,9 @@ pub fn usage(program: &str) -> String {
     }
     text.push_str(
         "\nExit codes: 0 done; 1 verify --strict found a signature that is not intact\n\
-         and trusted, or a document with none; 2 the command line is malformed;\n\
-         3 refused (identity, document, answers, output, or the OS); 4 tpdf failed.",
+         and trusted, or a document with none, or redact wrote a copy it could not\n\
+         prove clean; 2 the command line is malformed; 3 refused (identity,\n\
+         document, answers, output, or the OS); 4 tpdf failed.",
     );
     text
 }
@@ -417,3 +426,6 @@ mod tests;
 
 #[cfg(test)]
 mod form_tests;
+
+#[cfg(test)]
+mod redact_tests;

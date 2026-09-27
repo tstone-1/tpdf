@@ -57,8 +57,21 @@ use crate::{pdfium_library_dir, render};
 /// needs the app handle and they are reachable from `cargo test`, where there is
 /// none. See `save::Outside`.
 fn outside_of(app: &tauri::AppHandle, backend: render::Backend) -> Box<dyn crate::save::Outside> {
+    outside_at(pdfium_library_dir(app), backend)
+}
+
+/// [`outside_of`] with the library directory already found.
+///
+/// **For the command-line tool**, which has no app handle to ask and finds the
+/// directory by the same search from where its executable sits (`cli::Env`).
+/// One choice, two ways to reach it, so `tpdf redact` parses where the window's
+/// redaction parses.
+pub(crate) fn outside_at(
+    library: std::path::PathBuf,
+    backend: render::Backend,
+) -> Box<dyn crate::save::Outside> {
     match backend {
-        render::Backend::Worker => Box::new(crate::save::InWorker::at(pdfium_library_dir(app))),
+        render::Backend::Worker => Box::new(crate::save::InWorker::at(library)),
         render::Backend::InProcess => Box::new(crate::save::Here),
     }
 }

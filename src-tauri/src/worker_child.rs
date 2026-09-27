@@ -181,8 +181,22 @@ fn serve(args: &[String]) -> Result<(), String> {
             // stopped warming would look exactly like one that worked, which is
             // the failure shape this repository keeps meeting. The parent waits
             // for this in `PreWorker::adopt`.
-            reply(&mut std::io::stdout(), &Response::reply(Reply::Warm))?;
-            wait_for_document()?
+            //
+            // A spare the parent never used is not a failure: the parent
+            // exited, or retired it, and a closed channel is how it says so ---
+            // here, as a reply nobody reads, or below, as a handover that never
+            // comes. Exiting 0 with nothing on stderr keeps that from reading
+            // as a crash: `tpdf redact` promises one sentence per error on the
+            // terminal it shares with every worker, and every run of it left a
+            // spare behind saying `[worker] the parent closed the handover
+            // socket` or `could not reply: Broken pipe`.
+            if reply(&mut std::io::stdout(), &Response::reply(Reply::Warm)).is_err() {
+                return Ok(());
+            }
+            match wait_for_document()? {
+                Some(shm) => shm,
+                None => return Ok(()),
+            }
         }
     };
 
@@ -1008,21 +1022,24 @@ fn reply(out: &mut impl Write, response: &Response) -> Result<(), String> {
 ///
 /// # Errors
 ///
-/// The socket closing --- which is how a pre-spawned worker that is never given a
-/// file learns to exit rather than waiting forever --- or a malformed handover.
+/// A malformed handover. The socket closing is `Ok(None)` --- which is how a
+/// pre-spawned worker that is never given a file learns to exit rather than
+/// waiting forever.
 #[cfg(target_os = "macos")]
-fn wait_for_document() -> Result<Shm, String> {
+fn wait_for_document() -> Result<Option<Shm>, String> {
     use std::os::fd::IntoRawFd;
 
     // SAFETY: the parent dup2'd its half of a socket pair to this number before
     // exec, and nothing else in this process reads it.
-    let (fd, len) = unsafe { recv_document(SOCK_FD) }?;
+    let Some((fd, len)) = unsafe { recv_document(SOCK_FD) }? else {
+        return Ok(None);
+    };
     // `into_raw_fd` rather than `as_raw_fd` and a forget: `Shm` adopts the
     // descriptor and closes it on drop, so leaving the `OwnedFd` alive would
     // close it twice.
     let raw = fd.into_raw_fd();
     // SAFETY: just received, owned here, and handed to `Shm` which now owns it.
-    unsafe { Shm::from_fd(raw, len, false) }
+    unsafe { Shm::from_fd(raw, len, false) }.map(Some)
 }
 
 /// Blocks until the parent hands over a document mapping.
@@ -1040,10 +1057,11 @@ fn wait_for_document() -> Result<Shm, String> {
 ///
 /// # Errors
 ///
-/// The pipe closing --- which is how a pre-spawned worker that is never given a
-/// file learns to exit rather than waiting forever --- or a malformed handover.
+/// A malformed handover. The pipe closing is `Ok(None)` --- which is how a
+/// pre-spawned worker that is never given a file learns to exit rather than
+/// waiting forever.
 #[cfg(windows)]
-fn wait_for_document() -> Result<Shm, String> {
+fn wait_for_document() -> Result<Option<Shm>, String> {
     use std::io::BufRead;
 
     let mut line = String::new();
@@ -1052,18 +1070,18 @@ fn wait_for_document() -> Result<Shm, String> {
         .read_line(&mut line)
         .map_err(|e| format!("reading the document handover: {e}"))?;
     if read == 0 {
-        return Err("the parent closed the pipe before handing over a document".into());
+        return Ok(None);
     }
     let handover: Handover = serde_json::from_str(line.trim())
         .map_err(|e| format!("unreadable document handover {line:?}: {e}"))?;
     // SAFETY: the parent duplicated this section into our table before naming it,
     // and nothing else in this process owns it.
-    unsafe { Shm::from_handle(handover.handle, handover.len, false) }
+    unsafe { Shm::from_handle(handover.handle, handover.len, false) }.map(Some)
 }
 
 /// Not reachable: a worker refuses to start at all on this platform.
 #[cfg(not(any(target_os = "macos", windows)))]
-fn wait_for_document() -> Result<Shm, String> {
+fn wait_for_document() -> Result<Option<Shm>, String> {
     Err("pre-spawned workers are implemented on macOS and Windows only".into())
 }
 

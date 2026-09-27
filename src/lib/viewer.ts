@@ -124,6 +124,7 @@ import {
 } from "./pages";
 import { displayedSize, Scroller, type PageSize } from "./scroller";
 import {
+  matchHalves,
   PLAIN_SEARCH,
   Search,
   sameOptions,
@@ -5547,18 +5548,7 @@ export class Viewer {
    * between two pages, so one rectangle cannot span them.
    */
   async matchQuadsByPage(): Promise<{ page: PageId; quads: number[] }[] | null> {
-    const halves: { slot: number; from: number; to: number }[] = [];
-    for (const match of this.searcher.matches) {
-      if (match.endPage === undefined) {
-        halves.push({ slot: match.page, from: match.start, to: match.end });
-      } else {
-        // `Infinity` for the first half's end because it runs to wherever that
-        // page's text stops, which this does not have to know and `runsFor`
-        // clamps.
-        halves.push({ slot: match.page, from: match.start, to: Infinity });
-        halves.push({ slot: match.endPage, from: 0, to: match.end });
-      }
-    }
+    const halves = matchHalves(this.searcher.matches);
     const slots = [...new Set(halves.map((half) => half.slot))].sort(
       (a, b) => a - b,
     );

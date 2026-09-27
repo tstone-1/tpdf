@@ -2303,6 +2303,47 @@ be enumerated, because the writer is a full rewrite that would invalidate them -
 asks before doing the same, and a command line has nobody to ask. An encrypted document is
 written re-encrypted with its own passwords, as the window's save writes it.
 
+**`redact`, a second entry point to redaction** (added the same day). `tpdf redact` reaches
+the window's *Redact and save as…* with no window: it opens the document in a
+`render::RenderService` on the **worker backend, always** --- whatever `TPDF_BACKEND` says ---
+whose workers are the tool re-executed with `worker::WORKER_ARGV`, as `Env::worker`'s are; runs
+the viewer's search (`search.rs`) over each page's codes in this process, which reads numbers
+and code points a worker returned and parses nothing; marks what it found on an
+`edits::Edits`, the window's model, through `Edits::redact`; and hands the result to
+`commands::redact::ask_redactions` and `redact_copy_asked`, the body of the window's command
+(§T6.11) --- plans from a worker, the rewrite by `save::write_copy` in a writing worker, the byte
+scan in a scanning worker, the OCR gate in its own worker under `OCR_SANDBOX_PROFILE` (§5.1),
+and the black fill. `cli::main` answers the OCR worker's marker as well as the parser's, as the
+application's `run` does. `tests/cli.rs` holds `redact` to the containment check above, dry run
+and real run: the tool's own process maps no PDFium; the processes beside its PDFium workers
+that map none are the OCR worker, which reads pixels, and a pre-spawned spare that ended
+without a document.
+
+**The report is the claim, and it is the window's.** `verified` is `true` only when
+`redact::Applied` is --- every list of reasons empty --- and the tool adds two readers that can
+only take that away: a search of the written, unfilled file for every `--text` and `--pattern`
+(the check a reader makes by hand), and a reason for each match whose characters have no
+position and so could not be marked, which the window's scan would not look for because it
+looks for what was *taken*. The sentence printed is `recovery.ts`'s `afterRedaction`, held to
+it by `cliwording.test.ts`, so a script is never told more than a reader of the window. **Exit
+code 1 means written and not proved clean**: the file is kept, as the window keeps it
+(§T6.11's *never claim clean, not never write*), and the reasons are the reader's to act on ---
+a script that treats exit 1 as success has discarded the one thing this subsystem produces.
+Exit 4 removes what was written. A `redact` report holds the removed words, in `hits` and
+`taking`; it is the reader's to store as they would the original. **A signed document is
+refused** unless `--invalidate-signatures`, for `fill`'s reason; with it, the report counts the
+signatures the copy no longer carries intact. XFA is refused before anything is asked, in
+`save.rs`'s words (`redact::XFA_REDACTION`).
+
+**Residual, and it is the gate.** On the machine this was built on (macOS 27.0, build 26A428)
+the OCR gate reads nothing: Vision refuses every image inside the OCR worker with
+`__objc2.missingError`, measured the same on an unmodified checkout of the commit before this
+one with `redact-gate-probe` (5/8), while `ocr-sandbox-probe` and `ocr-worker-probe` read a
+whole page under the same profile. So on that system every redaction --- window and tool
+alike --- is *not verified*, correctly, and `tpdf redact` exits 1 for every document it writes.
+That fails closed; it is recorded here because it means no copy is ever *verified* there until
+it is fixed (`docs/TRAPS.md`, *On macOS 27 the OCR worker's Vision refuses every image*).
+
 **The link.** *Install command-line tool…* (`command_line_tool`) makes `/usr/local/bin/tpdf` a
 symbolic link to the bundled tool, and its sibling removes it. The webview names no path: the
 link and the target are both fixed in `clitool.rs`, so the widest thing it can ask for is that
@@ -3667,6 +3708,13 @@ which is what makes it evidence rather than a milestone.
     asks for a PIN or confirmation every time (a smart card, a key marked so) keeps asking. Not
     closed, and not closable by tpdf without overriding the decision the OS asked the reader to
     make; the README says what the choice means.
+27. **A script that treats `tpdf redact`'s exit code 1 as success ships a copy nobody proved
+    clean** (§T6.23), added 2026-09-27. The tool keeps a copy it could not verify, as the window
+    does, and says so with exit 1 and every reason; what it cannot do is make a caller read
+    them. On macOS 27.0 (26A428), where the OCR gate reads nothing, *every* copy exits 1 ---
+    so a script written there that accepts 1 accepts everything. Bounded by the contract: 0 is
+    the only code that means proved clean, the README's table says so, and the report's
+    `verified` is `null`, `false` or `true`, never absent. Not closable by tpdf.
 
 ## 8. How to re-verify any of this
 

@@ -143,6 +143,16 @@ use commands::{
     sign::*, spike::*,
 };
 
+/// The window's *Redact and save as*, without the window.
+///
+/// `tpdf redact` reaches these from inside the crate; they are public here for
+/// one more caller, `tests/cli.rs`, whose parity check drives the application's
+/// path in-process on the regions the tool marked and compares the verdicts.
+/// Nothing else outside the crate has a reason to call them.
+pub mod redaction {
+    pub use crate::commands::redact::{ask_redactions, redact_copy_asked, Asked, Stopped};
+}
+
 /// Who creates the window, and what it points at (spike 0.7).
 ///
 /// Spike 0.2 left 142 ms warm between `main` and the setup hook unattributed.

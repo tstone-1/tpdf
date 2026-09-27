@@ -3978,12 +3978,7 @@ fn apply_redactions(
     // an ordinary Save a copy of an XFA form is a serialisation and must go on
     // working.
     if !redactions.is_empty() && redact::has_xfa(doc) {
-        return Err(Refusal::from(
-            "this document carries an XFA form, which keeps its own copy of \
-             every answer --- tpdf cannot redact one, and writing the file \
-             would leave that copy behind"
-                .to_string(),
-        ));
+        return Err(Refusal::from(redact::XFA_REDACTION.to_string()));
     }
 
     let mut done = Redacted::default();

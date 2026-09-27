@@ -200,6 +200,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("text", "text a.pdf --pages 2"),
         ("fields", "fields a.pdf --json"),
         ("fill", "fill a.pdf -o b.pdf --values answers.json"),
+        ("redact", "redact a.pdf -o b.pdf --text Secret"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -219,7 +220,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
     }
     let why = refused("encrypt a.pdf");
     assert!(
-        why.contains("sign, verify, identities, info, text, fields, fill"),
+        why.contains("sign, verify, identities, info, text, fields, fill, redact"),
         "{why}"
     );
 }
@@ -730,10 +731,44 @@ fn wording() -> serde_json::Value {
         }));
     }
 
+    // Every shape `afterRedaction` has: verified or not, one or several of
+    // each count, one reason or several, changed or not.
+    let mut after_redaction = Vec::new();
+    let reasons: [Vec<String>; 3] = [
+        Vec::new(),
+        vec![
+            "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
+                .into(),
+        ],
+        vec![
+            "4711-0815 is still in the file, on page 2".into(),
+            "page 2: the removed area could not be shown unreadable. the engine rejected the image"
+                .into(),
+        ],
+    ];
+    for (regions, shows) in [(1, 1), (3, 2), (0, 0)] {
+        for why in &reasons {
+            for changed in [false, true] {
+                let verified = why.is_empty();
+                after_redaction.push(serde_json::json!({
+                    "applied": {
+                        "regions": regions,
+                        "shows": shows,
+                        "verified": verified,
+                        "why": why,
+                        "changed": changed,
+                    },
+                    "sentence": words::after_redaction(regions, shows, verified, why, changed),
+                }));
+            }
+        }
+    }
+
     serde_json::json!({
         "integrity": integrities,
         "trust": trusts,
         "after_signing": after,
+        "after_redaction": after_redaction,
     })
 }
 
@@ -862,6 +897,12 @@ fn samples() -> Vec<(&'static str, String)> {
         ("fields", pretty(&super::form_tests::fields_sample())),
         ("fill", pretty(&super::form_tests::fill_samples().0)),
         ("fill-refused", pretty(&super::form_tests::fill_samples().1)),
+        ("redact", pretty(&super::redact_tests::redact_samples().0)),
+        (
+            "redact-dry-run",
+            pretty(&super::redact_tests::redact_samples().1),
+        ),
+        ("regions", pretty(&super::regions::sample())),
     ]
 }
 
@@ -904,8 +945,10 @@ fn every_json_shape_and_the_wording_match_their_committed_samples() {
         wrong.is_empty(),
         "{} sample(s) disagree. A changed JSON sample is a changed schema: add a field \
          freely, but a renamed or removed one moves `report::SCHEMA`. A changed wording \
-         sample must agree with `src/lib/integrity.ts` and `signing.ts`, which \
-         `cliwording.test.ts` checks. Regenerate with TPDF_CLI_SAMPLES=write.\n\n{}",
+         sample must agree with `src/lib/integrity.ts`, `signing.ts` and `recovery.ts`, \
+         which `cliwording.test.ts` checks, and the regions sample with the viewer's \
+         search, text and selection code, which `cliregions.test.ts` checks. \
+         Regenerate with TPDF_CLI_SAMPLES=write.\n\n{}",
         wrong.len(),
         wrong.join("\n\n")
     );
@@ -930,7 +973,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 10, "the sample table itself");
+    assert_eq!(want.len(), 13, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -963,7 +1006,7 @@ fn every_json_key_is_described_in_the_readme() {
 
     let mut all = std::collections::BTreeSet::new();
     for (name, json) in samples() {
-        if name == "wording" || name == "reading" {
+        if name == "wording" || name == "reading" || name == "regions" {
             continue;
         }
         keys(
@@ -985,6 +1028,8 @@ fn every_json_key_is_described_in_the_readme() {
         "not_editable",
         "problem",
         "written",
+        "signatures_invalidated",
+        "form_text_removals",
     ] {
         assert!(
             all.contains(known),

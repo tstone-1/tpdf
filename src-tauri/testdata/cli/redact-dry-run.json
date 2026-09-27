@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "command": "redact",
+  "input": "contacts.pdf",
+  "output": null,
+  "dry_run": true,
+  "written": false,
+  "verified": null,
+  "reasons": [
+    "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
+  ],
+  "summary": null,
+  "regions": 3,
+  "removals": 3,
+  "signatures_invalidated": 0,
+  "searches": [
+    {
+      "kind": "pattern",
+      "query": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+      "matches": 1
+    },
+    {
+      "kind": "text",
+      "query": "DE89 3704",
+      "matches": 1
+    }
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "hits": [
+        "jane.doe@example.com",
+        "DE89 3704 0044 0532 0130 00"
+      ],
+      "regions": 2,
+      "text_removals": 2,
+      "form_text_removals": 0,
+      "image_removals": 0,
+      "taking": [
+        "Contact: jane.doe@example.com",
+        "Account DE89 3704 0044 0532 0130 00"
+      ],
+      "left": [
+        "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
+      ]
+    },
+    {
+      "page": 3,
+      "hits": [],
+      "regions": 1,
+      "text_removals": 0,
+      "form_text_removals": 0,
+      "image_removals": 1,
+      "taking": [],
+      "left": []
+    }
+  ]
+}

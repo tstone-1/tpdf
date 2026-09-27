@@ -8,24 +8,29 @@
 
 use std::path::Path;
 
-use tauri::Manager;
-
-use super::{await_reply, outside_of, password_for, reply_channel};
+use super::{await_reply, outside_at, outside_of, password_for, reply_channel};
 use crate::docmodel::PageSource;
-use crate::render::RenderService;
-use crate::{edits, ocr_gate, redact, save, verify, webopen, with_close_note, SaveFailure};
+use crate::render::{Backend, RenderService};
+use crate::{
+    edits, ocr_gate, pdfium_library_dir, redact, save, verify, webopen, with_close_note,
+    SaveFailure,
+};
 
 // Paint only after both verification passes read the uncovered result. The
 // fingerprint prevents applying that verdict to a file changed in between.
+//
+// By library directory rather than by app handle, so that `tpdf redact` reaches
+// this exactly as the window does --- the command-line tool has no handle, and
+// a second copy of the fill for it would be the drift this file exists to stop.
 async fn finish_redaction_fill(
-    app: &tauri::AppHandle,
-    service: &RenderService,
+    library: std::path::PathBuf,
+    backend: Backend,
     path: String,
     plan: edits::Plan,
     fingerprint: crate::fingerprint::Fingerprint,
     password: Option<String>,
 ) -> Result<(), String> {
-    let writer = outside_of(app, service.backend());
+    let writer = outside_at(library, backend);
     tauri::async_runtime::spawn_blocking(move || {
         save::fill_redactions(
             Path::new(&path),
@@ -131,32 +136,43 @@ pub async fn redaction_plans(
 /// in nothing else. A second copy of this loop is the drift this repository
 /// keeps recording: the two would go on agreeing about the ordinals and
 /// eventually disagree about which objects the reader was warned about.
-struct Asked {
+///
+/// **Public for the command-line tool**, which is the third caller: `tpdf
+/// redact` asks with this, reports [`Asked::pages`] for `--dry-run`, and hands
+/// the rest to [`redact_copy_asked`] --- the window's write, verification and
+/// verdict, not a restatement of them.
+pub struct Asked {
     /// The reader's plan with the redaction ordinals in it.
-    plan: edits::Plan,
+    pub plan: edits::Plan,
     /// The words the regions cover, to look for in what gets written.
-    needles: Vec<String>,
+    pub needles: Vec<String>,
     /// What the removal could not take. Not a refusal --- see [`redact_copy`]
     /// --- but a reason the file cannot be called clean, carried to the verdict.
-    concerns: Vec<String>,
+    pub concerns: Vec<String>,
     /// How many regions were asked about.
-    regions: usize,
+    pub regions: usize,
     /// How many text-showing operations the removal names, after merging.
-    shows: usize,
+    pub shows: usize,
+    /// What each page's removal takes, counted, in page order.
+    ///
+    /// Read off the same [`redact::PageAggregate`] the plan is built from, so a
+    /// dry run and the write it predicts cannot count two different things.
+    /// The window reads none of it; its review panel asks per region.
+    pub pages: Vec<redact::PageSummary>,
     /// What the OCR gate needs and only the source document can supply.
     ///
     /// Collected here rather than after the write because after the write it
     /// cannot be: the control the gate renders has to be no larger than the
     /// smallest box a region covered, and the removal takes exactly those boxes.
     /// See [`ocr_gate::GatePage`].
-    gate: Vec<ocr_gate::GatePage>,
+    pub gate: Vec<ocr_gate::GatePage>,
     /// How many of the written pages came from another file.
     ///
     /// Not a count of anything being removed --- a page of another file cannot
     /// be marked ([`crate::docmodel::Refusal::RedactionOnImportedPage`]). It is
     /// what [`redact::inserted_pages_note`] needs to say, when the scan finds a
     /// word, that the scan cannot say which page it was on.
-    inserted: usize,
+    pub inserted: usize,
     /// Which slots of the **written** file carry a region somebody marked.
     ///
     /// Taken off [`Asked::gate`] after [`redact::gate_at_output_slots`] has
@@ -167,7 +183,7 @@ struct Asked {
     ///
     /// It is what [`redact::marked_pages_note`] compares the walk's answer
     /// against; without it a page number in a reason is trivia.
-    marked: Vec<u32>,
+    pub marked: Vec<u32>,
 }
 
 /// Works out what removing every marked region would take.
@@ -181,7 +197,7 @@ struct Asked {
 /// # Errors
 ///
 /// Nothing marked, or a worker that could not read a page.
-async fn ask_redactions(
+pub async fn ask_redactions(
     edits: &edits::Edits,
     service: &RenderService,
     doc: u32,
@@ -197,6 +213,7 @@ async fn ask_redactions(
     let mut regions = 0usize;
     let mut shows_total = 0usize;
     let mut gate: Vec<ocr_gate::GatePage> = Vec::new();
+    let mut pages: Vec<redact::PageSummary> = Vec::new();
 
     for target in targets {
         let page = target.source;
@@ -227,6 +244,7 @@ async fn ask_redactions(
         // no test could construct and no mutation could aim at. See
         // [`redact::aggregate`].
         let one = redact::aggregate(page, displayed, plans, text.as_ref());
+        pages.push(one.summary());
         concerns.extend(one.concerns);
         needles.extend(one.needles);
         shows_total += one.shows;
@@ -301,6 +319,7 @@ async fn ask_redactions(
         concerns,
         regions,
         shows: shows_total,
+        pages,
         gate,
         inserted,
         marked,
@@ -317,8 +336,12 @@ async fn ask_redactions(
 ///
 /// **Nothing here refuses.** A join that failed is one more reason the file
 /// cannot be called clean, and [`redact::Applied`] is what carries it.
+///
+/// The service is taken by value --- a clone is a handle to the same render
+/// thread --- rather than fetched from an app handle, so the command-line tool,
+/// which has a service and no app, runs the same gate.
 async fn gate_written_file(
-    app: &tauri::AppHandle,
+    service: RenderService,
     path: String,
     pages: Vec<ocr_gate::GatePage>,
     password: Option<String>,
@@ -326,17 +349,13 @@ async fn gate_written_file(
     if pages.is_empty() {
         return Vec::new();
     }
-    let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let service = handle.state::<RenderService>();
-        ocr_gate::run(&service, &path, password, &pages)
-    })
-    .await
-    .unwrap_or_else(|e| {
-        vec![format!(
-            "the removed areas could not be checked, so the file cannot be shown clean: {e}"
-        )]
-    })
+    tauri::async_runtime::spawn_blocking(move || ocr_gate::run(&service, &path, password, &pages))
+        .await
+        .unwrap_or_else(|e| {
+            vec![format!(
+                "the removed areas could not be checked, so the file cannot be shown clean: {e}"
+            )]
+        })
 }
 
 /// Creates a fresh image-only copy; verification finishes before publication.
@@ -379,11 +398,95 @@ pub async fn redact_raster_copy(
 /// the regions stay pending, so a reader who does not like the result closes the
 /// file and still has their marks.
 ///
+/// The ask is [`ask_redactions`], and everything after it --- the write, the
+/// read-back, the OCR gate, the fill, and the order those happen in --- is
+/// [`redact_copy_asked`], where the reasons for that order are written down.
+/// It is a function of its own since 2026-09-27 so that `tpdf redact` reaches
+/// the same body with no app handle; this command is the two calls joined.
+///
+/// # Errors
+///
+/// Nothing marked; the worker refusing to read a page; anything
+/// `save::write_copy` refuses (an encrypted source, a page count that disagrees
+/// with the baseline, writing over the source); or the written file not being
+/// readable back.
+#[tauri::command]
+pub async fn redact_copy(
+    app: tauri::AppHandle,
+    edits: tauri::State<'_, edits::Edits>,
+    service: tauri::State<'_, RenderService>,
+    doc: u32,
+    source: String,
+    path: String,
+) -> Result<redact::Applied, String> {
+    let asked = ask_redactions(&edits, &service, doc).await?;
+    redact_copy_asked(
+        &service,
+        pdfium_library_dir(&app),
+        doc,
+        asked,
+        source,
+        path,
+        None,
+    )
+    .await
+    .map_err(Stopped::into_message)
+}
+
+/// Why a redaction to a new file stopped before it had a verdict.
+///
+/// **Two kinds, because a caller that can delete has to know which one.** The
+/// window shows either as a sentence --- [`Stopped::into_message`] is the one it
+/// always showed --- but `tpdf redact` promises that a failure leaves nothing
+/// behind, and whether there *is* anything behind is the difference between the
+/// two.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stopped {
+    /// Refused before anything was written: `save::write_copy`'s refusals ---
+    /// an XFA form, a page count that disagrees with the baseline, writing over
+    /// the source.
+    Refused(String),
+    /// Failed. `written` says whether the output was already on disk, as a file
+    /// that has not been verified or not been filled.
+    Failed {
+        /// The sentence.
+        message: String,
+        /// Whether the output now exists.
+        written: bool,
+    },
+}
+
+impl Stopped {
+    /// The sentence, as [`redact_copy`] has always reported it.
+    #[must_use]
+    pub fn into_message(self) -> String {
+        match self {
+            Stopped::Refused(message) | Stopped::Failed { message, .. } => message,
+        }
+    }
+}
+
+/// One more reader of a written, unfilled redaction: handed its path and key,
+/// it returns the reasons it found not to call the file clean. See
+/// [`redact_copy_asked`]'s `also`.
+pub type ReadBack<'a> = dyn Fn(&str, Option<&str>) -> Vec<String> + Sync + 'a;
+
+/// [`redact_copy`] after the ask: write, verify, gate, fill.
+///
+/// **The body of the window's command, reached by the command-line tool too.**
+/// `tpdf redact` builds the same model the window builds --- regions on an
+/// [`edits::Edits`], through [`edits::Edits::redact`] --- asks with
+/// [`ask_redactions`], and hands the answer here, so the writer, the read-back,
+/// the OCR gate, the black fill and the rule that `verified` is true only when
+/// `why` is empty are this function's and nobody else's. `library` is where the
+/// writing and scanning workers find PDFium: the app's resource directory, or
+/// the tool's, found by the same search.
+///
 /// Four steps, and the order is the safety of it:
 ///
 /// 1. **Ask.** For each page holding regions, a worker computes what a removal
 ///    would take --- against PDFium's own object list, behind the sandbox, which
-///    is where every parse of the reader's bytes belongs.
+///    is where every parse of the reader's bytes belongs. ([`ask_redactions`].)
 /// 2. **Write.** The ordinals go into the plan and `save::write_copy` takes the
 ///    ordinary rewrite path, which is what applies them --- see
 ///    `save::apply_redactions` for why it is safe for that to happen last.
@@ -392,6 +495,8 @@ pub async fn redact_raster_copy(
 ///    The answer is *verified*, or *not verified* with every reason --- never a
 ///    bare success, which is §6 step 4 and is why [`redact::Applied`] cannot
 ///    carry the first without the second.
+/// 4. **Fill.** The black boxes are drawn only after both verification passes
+///    have read the uncovered file, and against the fingerprint they read.
 ///
 /// **An object the removal cannot take does not stop the write, and that is a
 /// decision rather than an oversight.** §6's deny-by-default rule says such an
@@ -416,31 +521,40 @@ pub async fn redact_raster_copy(
 ///
 /// # Errors
 ///
-/// Nothing marked; the worker refusing to read a page; anything
-/// `save::write_copy` refuses (an encrypted source, a page count that disagrees
-/// with the baseline, writing over the source); or the written file not being
-/// readable back.
-#[tauri::command]
-pub async fn redact_copy(
-    app: tauri::AppHandle,
-    edits: tauri::State<'_, edits::Edits>,
-    service: tauri::State<'_, RenderService>,
+/// [`Stopped::Refused`] for anything `save::write_copy` refuses (an encrypted
+/// source, a page count that disagrees with the baseline, writing over the
+/// source, an XFA form); [`Stopped::Failed`] when a step did not run or the
+/// written file could not be read back or filled.
+///
+/// **`also` is one more reader of the unfilled file, and it can only take a
+/// verdict away.** It is handed the written path and the key, after the byte
+/// scan and before the OCR gate and the fill, and every sentence it returns is
+/// one more reason in `why`. The window passes `None`. `tpdf redact` passes a
+/// search of the written file for its own queries --- the check a reader would
+/// make by hand --- which has no counterpart in the window because the window
+/// marks by hand. It runs before the fill so that the sentence the application
+/// shows, *"Checks before adding the black fill found: ..."*, stays true of it.
+pub async fn redact_copy_asked(
+    service: &RenderService,
+    library: std::path::PathBuf,
     doc: u32,
+    asked: Asked,
     source: String,
     path: String,
-) -> Result<redact::Applied, String> {
-    let asked = ask_redactions(&edits, &service, doc).await?;
+    also: Option<&ReadBack<'_>>,
+) -> Result<redact::Applied, Stopped> {
     let plan = asked.plan.clone();
     let needles = asked.needles.clone();
     let concerns = asked.concerns.clone();
     let regions = asked.regions;
     let shows_total = asked.shows;
+    let backend = service.backend();
 
     let out = std::path::PathBuf::from(path);
     let from = std::path::PathBuf::from(source);
     let written = out.clone();
     let out_path = out.to_string_lossy().into_owned();
-    let password = password_for(&service, doc, "redact_copy").await;
+    let password = password_for(service, doc, "redact_copy").await;
     // **Kept for the two readers after the write, which need the same key.**
     // The file about to be written is re-encrypted whenever the source was, so
     // a verifier arriving without the password parses no objects at all and
@@ -452,15 +566,18 @@ pub async fn redact_copy(
     // parses is a document a reader is about to have words removed from, so the
     // parse is the one that most wants to be somewhere that cannot reach their
     // files.
-    let writing = outside_of(&app, service.backend());
+    let writing = outside_at(library.clone(), backend);
     let (copied, fingerprint) = tauri::async_runtime::spawn_blocking(move || {
         let copied = save::write_copy(&from, &plan, &out, password.as_deref(), &*writing)?;
         let fingerprint = crate::fingerprint::Fingerprint::of(&out)?;
         Ok::<_, save::Refusal>((copied, fingerprint))
     })
     .await
-    .map_err(|e| format!("the redaction did not run: {e}"))?
-    .map_err(|why| why.message)?;
+    .map_err(|e| Stopped::Failed {
+        message: format!("the redaction did not run: {e}"),
+        written: false,
+    })?
+    .map_err(|why| Stopped::Refused(why.message))?;
 
     // Read back rather than verified from what was written, which is the same
     // rule the append's own verification follows: what matters is the file on
@@ -480,12 +597,19 @@ pub async fn redact_copy(
     // the two are the same choice made twice rather than one choice shared. It
     // costs a `Box` and a worker spawn on the path that has already written a
     // file and waited for the platter.
-    let scanning = outside_of(&app, service.backend());
+    let scanning = outside_at(library.clone(), backend);
     let report = tauri::async_runtime::spawn_blocking(move || {
         scan_written_file(&*scanning, &written, &needles, verifying.as_deref())
     })
     .await
-    .map_err(|e| format!("the verification did not run: {e}"))??;
+    .map_err(|e| Stopped::Failed {
+        message: format!("the verification did not run: {e}"),
+        written: true,
+    })?
+    .map_err(|message| Stopped::Failed {
+        message,
+        written: true,
+    })?;
 
     // The objects the removal could not take come first, because they are the
     // finding a reader can act on: a picture of the words in the region is a
@@ -505,11 +629,19 @@ pub async fn redact_copy(
         &report.found,
         report.placed(),
     ));
+    if let Some(also) = also {
+        why.extend(also(&out_path, key.as_deref()));
+    }
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
-    why.extend(gate_written_file(&app, out_path.clone(), asked.gate, key.clone()).await);
-    finish_redaction_fill(&app, &service, out_path, asked.plan, fingerprint, key).await?;
+    why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
+    finish_redaction_fill(library, backend, out_path, asked.plan, fingerprint, key)
+        .await
+        .map_err(|message| Stopped::Failed {
+            message,
+            written: true,
+        })?;
     Ok(redact::Applied {
         regions,
         shows: shows_total,
@@ -669,10 +801,25 @@ pub async fn redact_document(
     ));
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
-    why.extend(gate_written_file(&app, source.clone(), asked.gate, key.clone()).await);
-    finish_redaction_fill(&app, &service, source, asked.plan, fingerprint, key)
-        .await
-        .map_err(SaveFailure::after_close)?;
+    why.extend(
+        gate_written_file(
+            service.inner().clone(),
+            source.clone(),
+            asked.gate,
+            key.clone(),
+        )
+        .await,
+    );
+    finish_redaction_fill(
+        pdfium_library_dir(&app),
+        service.backend(),
+        source,
+        asked.plan,
+        fingerprint,
+        key,
+    )
+    .await
+    .map_err(SaveFailure::after_close)?;
     Ok(redact::Applied {
         regions: asked.regions,
         shows: asked.shows,

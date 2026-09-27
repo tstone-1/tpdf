@@ -222,16 +222,20 @@ fn rectangle(text: &str) -> Result<[f32; 4], String> {
     let [x, y, w, h] = numbers.as_slice() else {
         return Err(refused());
     };
-    let (x, y, w, h) = (*x, *y, *w, *h);
+    rectangle_of(*x, *y, *w, *h).ok_or_else(refused)
+}
+
+/// `x, y, w, h` as `[left, top, right, bottom]`, when it is a rectangle a page
+/// can hold: finite, not left of or above the page's corner, and with a width
+/// and height above zero. `sign --rect` and `redact --regions` share the rule,
+/// because they share the convention.
+pub(crate) fn rectangle_of(x: f32, y: f32, w: f32, h: f32) -> Option<[f32; 4]> {
     let fine = [x, y, w, h, x + w, y + h].iter().all(|v| v.is_finite())
         && x >= 0.0
         && y >= 0.0
         && w > 0.0
         && h > 0.0;
-    if !fine {
-        return Err(refused());
-    }
-    Ok([x, y, x + w, y + h])
+    fine.then_some([x, y, x + w, y + h])
 }
 
 /// `label,name,date`, any subset, or empty for none.

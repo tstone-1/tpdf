@@ -2104,6 +2104,11 @@ fn recount(doc: &mut Document, node: ObjectId, depth: usize) -> i64 {
 /// sake of a checkbox.
 const MIN_FIELD_VALUE: usize = 4;
 
+/// Why a redaction of an XFA document is refused: `save.rs`'s pre-flight says
+/// it, and `tpdf redact` says it before asking anything, in the same words.
+pub const XFA_REDACTION: &str = "this document carries an XFA form, which keeps its own copy of \
+     every answer --- tpdf cannot redact one, and writing the file would leave that copy behind";
+
 /// Whether the document carries an XFA form.
 ///
 /// **`docs/PLAN.md` §6 refuses a redaction of one, and this is what that refusal
@@ -2476,6 +2481,52 @@ pub struct PageAggregate {
     /// How many distinct removals this page contributes: page text, form text
     /// and image draws --- the number a reader is shown before committing.
     pub shows: usize,
+}
+
+/// What one page's removal takes, counted, for a report rather than a writer.
+///
+/// **Read off a [`PageAggregate`] and never computed beside one**, so a count a
+/// dry run prints and the removal that follows it are the same count: the
+/// ordinals in [`PageAggregate::planned`] are what the writer takes, and these
+/// are their lengths. `tpdf redact` is the reader; the window's review panel
+/// asks per region instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageSummary {
+    /// The page in the file the removal reads, counted from 0.
+    pub page: u32,
+    /// How many regions were asked about on it.
+    pub regions: usize,
+    /// Text-showing operations in the page's own content that go, merged.
+    pub text: usize,
+    /// Text-showing operations inside Form XObjects that go, merged.
+    pub form_text: usize,
+    /// Image draws that go, merged.
+    pub images: usize,
+    /// What the removed operations draw, one string per region that took any.
+    ///
+    /// Wider than what a region covers whenever an operation runs past it:
+    /// route B takes a whole operation. This is the collateral a reader has to
+    /// see, and the needles the written file is scanned for.
+    pub taking: Vec<String>,
+    /// What the removal cannot take, one sentence each: the reasons the file
+    /// will not be called clean before anything is written.
+    pub left: Vec<String>,
+}
+
+impl PageAggregate {
+    /// This page's counts, from the plan the writer will be handed.
+    #[must_use]
+    pub fn summary(&self) -> PageSummary {
+        PageSummary {
+            page: self.planned.source,
+            regions: self.planned.areas.len(),
+            text: self.planned.shows.len(),
+            form_text: self.planned.form_shows.len(),
+            images: self.planned.images.len(),
+            taking: self.planned.taking.clone(),
+            left: self.concerns.clone(),
+        }
+    }
 }
 
 /// Turns one page's region plans into what the writer, the gate and the reader need.

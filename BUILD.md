@@ -296,6 +296,15 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
+# pypdf on what `tpdf redact` writes: none of the matched strings in the text or the content
+# streams, both controls kept. TPDF_REDACT_PROBE leaves the input (the negative control), the
+# copy written by all three kinds of query at once, and the strings expected gone and kept.
+TPDF_REDACT_PROBE=/tmp/tpdf-redact cargo test --manifest-path src-tauri/Cargo.toml --test cli
+uv run --with pypdf scripts/redact_pdf_check.py /tmp/tpdf-redact/contacts-redacted.pdf \
+    /tmp/tpdf-redact/contacts-expected.json
+uv run --with pypdf scripts/redact_pdf_check.py /tmp/tpdf-redact/contacts.pdf \
+    /tmp/tpdf-redact/contacts-expected.json --expect-fail
+
 # The same readers on what `tpdf fill` writes. TPDF_FILL_PROBE leaves the filled files, and
 # their inputs as the negative controls, in a scratch directory.
 TPDF_FILL_PROBE=/tmp/tpdf-fill cargo test --manifest-path src-tauri/Cargo.toml --test cli
@@ -3613,6 +3622,12 @@ needs a real document, so it belongs after the step that writes one.
 | `columns`, `text-base14`, `text-marked`, `rotated`, `links`, `text-cid`, `outline-simple` | 8/8 |
 | `encodings` | 0/0, 1 skipped — one text object is every word on the page, so no control survives |
 
+**On macOS 27.0 (26A428) this table does not hold: `text-base14` is 5/8**, the three rows that
+need the engine to read, with `Vision refused the image ... __objc2.missingError` for every
+region --- measured 2026-09-27 on an unmodified export of `3bd81a3` as well as on the tree after
+it, so it is the platform. `docs/TRAPS.md`, *On macOS 27 the OCR worker's Vision refuses every
+image, and the probes that read a whole page still pass*.
+
 **`columns` ran 0/0 until 2026-08-27 and it is the fixture that matters most.** Its longest
 word is `alpha`, five characters, and the target filter was six — so the one corpus that
 puts a *second* text object on the region's own rows was the one this skipped. Every other
@@ -5270,7 +5285,10 @@ the record.
   which holds it to `integrity.ts` and `signing.ts`. `reading.json` is the same arrangement for
   `tpdf text`'s reading order: `reading::tests::cases` with the order `src/reading.rs` gives
   each, which `src/lib/clireading.test.ts` holds to `reading.ts`. A change to either file's
-  ordering rules is a change to both, or one of those two tests goes red.
+  ordering rules is a change to both, or one of those two tests goes red. `regions.json` is the
+  same again for `tpdf redact`: `cli/regions.rs`'s runs and regions over those cases, raw quads
+  and hits over a page break, which `src/lib/cliregions.test.ts` holds to `runsFor`,
+  `areasFrom` and `matchHalves`; `redact.json` and `redact-dry-run.json` are its report.
 - `tests/cli.rs`, **a harness-free test binary** (`harness = false`), because signing spawns
   workers by re-executing the current binary, and libtest's `main` does not answer
   `worker::WORKER_ARGV`. It prints `[PASS]`/`[FAIL]`/`[SKIP]` lines and exits 1 on a failure or
@@ -5297,12 +5315,23 @@ the record.
   an encrypted form filled with its password and still encrypted (skipped without `qpdf`), and
   a filled form signed with the test key reading back intact. `fields` and `fill` are held to
   the containment rule too: under `DYLD_PRINT_LIBRARIES` `fill`'s three workers map PDFium and
-  the tool's process does not. The parts that bind PDFium in
+  the tool's process does not. `redact` (`tests/cli/redact.rs`) on a two-page document the test
+  builds --- by `--text`, `--pattern` (an e-mail address and an IBAN), `--regions` and all
+  three --- with none of the matched strings left for the built tool's `text`, `pdftotext` and
+  the bytes of `qpdf --qdf`, both `CONTROL-KEEP` lines kept, the input as the control that every
+  reader finds every string, nothing on stderr, and a dry run of each line writing nothing and
+  counting what the write took; parity with `redaction::redact_copy_asked` driven in this
+  process on the same regions, for that document, a document whose shared form the removal
+  leaves, `text-base14.pdf` and `text-marked.pdf`; and the refusals --- an existing output, the
+  input under a hard link, XFA, a signed document (and `--invalidate-signatures`), a locked one
+  (and its password). Its containment runs a dry run and a write under `DYLD_PRINT_LIBRARIES`,
+  where the processes beside the PDFium workers that map none are the OCR worker and a spare
+  that ended without a document. The parts that bind PDFium in
   this process run after the one asserting it has not. Without generated fixtures (*Test
   fixtures*) the fixture parts say `[SKIP]`.
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 146 checks, ~30 s debug
+cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 194 checks, ~100 s debug
 cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clitool::
 ```
 
@@ -5310,7 +5339,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clito
 `scripts/mutate_rust.py` (`--only "cli:" --only "reading:" --only "cli tool link:"`, forty-four;
 all 41 `cli:` and `reading:` ones caught on 2026-09-27, three only after their fixtures were
 strengthened --- see `docs/PLAN.md`) and the `cli wording:` and `cli reading:` ones in
-`scripts/mutate_frontend.py`. `tests/cli.rs`
+`scripts/mutate_frontend.py`. `tpdf redact` added 24 more (`--only "cli: regions" --only "cli:
+redact"`) and four frontend ones (`cli regions:`, and `cli wording:`'s redaction sentence);
+two of the 24 survived their first run, each a test whose fixture decided the case before the
+rule could --- a turned character that did not overlap the run it must not join, and a third
+page that could not have matched a carried tail --- and are caught since. `tests/cli.rs`
 cannot be selected by that harness, so its mutations were run by hand, each rebuilt and
 restored byte-identical (SHA-256 checked), each turning red exactly the check named:
 
@@ -5371,6 +5404,26 @@ the worker answers every form with none  -> 41 red: every fields agreement and i
 The first run of the last one found a defect in the test rather than the code: an index into a
 `serde_json::Map` panicked on a missing key and took the summary line with it, so the run
 reported nothing countable. It is a `get` now, and the rerun gives the 41.
+
+For `redact`, the same day, against 194 checks, the same way (each file's SHA-256 equal before
+and after):
+
+```
+redact_copy_asked ignores its also reader -> 1 red: shared-form.pdf's search of the written file
+  (commands/redact.rs)                       finds nothing beside the application's reason
+a spare reports its parent's exit          -> 4 red: "nothing is printed on stderr", every line
+  as an error (worker_child.rs)               ("[worker] the parent closed the handover socket")
+cli::main without the OCR worker dispatch  -> 8 red: the four stderr checks ("`--ocr-worker` is
+                                             not a command"), and the tool's reasons against
+                                             the application's on all four parity documents
+redact parses in the tool's process        -> 3 red: the dry run's and the write's containment,
+  (Backend::InProcess)                        and "no PDFium in this process"
+redact ignores --pages                     -> 1 red: "--pages 1 ... leaves page 2's"
+the application calls every copy verified  -> 7 red: three documents' verdicts and exit codes,
+  (redact_copy_asked)                         and text-marked.pdf's own reason; shared-form.pdf
+                                             stays green, because the tool's search of the copy
+                                             finds the word and withholds the verdict itself
+```
 
 **Against the real keychain, by hand, never by an agent.** `identities` reads certificates only
 and raises no prompt:

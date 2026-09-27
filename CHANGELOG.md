@@ -59,6 +59,21 @@ have the binary.)
   In the window, a field that cannot be filled now says which kind it is —
   password, file-select, comb or rich-text — where it used to name all four.
 
+  `tpdf redact` removes text from a document into a new file, the way *Redact
+  and save as…* does: by words (`--text`), by a regular expression such as an
+  e-mail address or an IBAN (`--pattern`), or by rectangles on the page
+  (`--regions`), any of them as often as needed. What it finds is what the
+  viewer's *Find* finds, and it is marked as *Mark all matches for redaction*
+  marks it. The copy is then read back — searched for what was removed and for
+  every query again, and each removed area read by the system's text
+  recogniser — before the black boxes are drawn, and the command says
+  *verified* only when every one of those checks proved the copy clean. When
+  one could not, the copy is still written, the exit code is 1 and every reason
+  is listed, in the same words the window uses. `--dry-run` says what would be
+  removed, page by page, without writing anything. A signed document is refused
+  unless `--invalidate-signatures` is given, and a document with an XFA form is
+  refused as the window refuses it.
+
 - **A page with a letter outside Latin in its fonts can now be edited.** A
   document that names Cyrillic or other non-Latin letters in the encoding of
   its fonts, as a brochure with a Russian edition does, used to be refused on

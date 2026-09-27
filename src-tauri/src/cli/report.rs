@@ -509,3 +509,88 @@ pub struct FilledField {
     /// As [`Field::value`], read from the written file.
     pub value: serde_json::Value,
 }
+
+/// `tpdf redact --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Redacted {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"redact"`.
+    pub command: String,
+    /// The document, as given. It is never written.
+    pub input: String,
+    /// The redacted copy, as given; `null` for a dry run given no `-o`.
+    pub output: Option<String>,
+    /// `--dry-run`: nothing was or would have been written by this run.
+    pub dry_run: bool,
+    /// Whether the redacted copy was written and kept.
+    pub written: bool,
+    /// `true` only when every check proved the written copy clean; `false`
+    /// with every reason in [`Redacted::reasons`]; `null` when nothing was
+    /// written.
+    pub verified: Option<bool>,
+    /// Why the copy could not be proved clean, one sentence each --- or, for a
+    /// dry run, what the removal will not be able to take. Empty when
+    /// `verified` is `true`.
+    pub reasons: Vec<String>,
+    /// The sentence the application shows after a redaction, word for word;
+    /// `null` unless written.
+    pub summary: Option<String>,
+    /// How many regions were marked.
+    pub regions: usize,
+    /// How many distinct removals they take: text-showing operations, text
+    /// inside forms, and image draws.
+    pub removals: usize,
+    /// Signatures the input carried, every one of which the rewrite
+    /// invalidates; nonzero only with `--invalidate-signatures`.
+    pub signatures_invalidated: usize,
+    /// Each `--text` and `--pattern`, in the order given, with how many times
+    /// it matched on the pages searched.
+    pub searches: Vec<Search>,
+    /// Every page that has a match or a region, in page order.
+    pub pages: Vec<RedactedPage>,
+}
+
+/// One `--text` or `--pattern`, and what it found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Search {
+    /// Which option gave it.
+    pub kind: SearchKind,
+    /// The query, as given.
+    pub query: String,
+    /// How many times it matched.
+    pub matches: usize,
+}
+
+/// [`Search::kind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchKind {
+    /// `--text`: the viewer's find, literally.
+    Text,
+    /// `--pattern`: the viewer's find with *Regular expression* on.
+    Pattern,
+}
+
+/// One page of a redaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactedPage {
+    /// Counted from 1.
+    pub page: u32,
+    /// Each match that starts on this page, as the page spells it.
+    pub hits: Vec<String>,
+    /// Regions marked on it: one per run of a match on a line, plus each
+    /// `--regions` rectangle.
+    pub regions: usize,
+    /// Text-showing operations in the page's content that go.
+    pub text_removals: usize,
+    /// Text-showing operations inside forms the page draws that go.
+    pub form_text_removals: usize,
+    /// Image draws that go.
+    pub image_removals: usize,
+    /// What the removed operations draw, one string per region that took any
+    /// --- often more than the match, because a whole operation goes.
+    pub taking: Vec<String>,
+    /// What the removal cannot take, one sentence each.
+    pub left: Vec<String>,
+}

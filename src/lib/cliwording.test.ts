@@ -2,7 +2,10 @@
  * The command-line tool says what the application says, word for word.
  *
  * `tpdf verify` and `tpdf sign` print the properties dialog's Integrity and
- * Trust rows and the signing panel's closing sentence. The tool is Rust and has
+ * Trust rows and the signing panel's closing sentence, and `tpdf redact` the
+ * sentence the window shows after a redaction --- the one place a redaction's
+ * verdict is worded, so the tool can never say *verified* more strongly than
+ * the window does. The tool is Rust and has
  * no webview to ask, so `src-tauri/src/cli/words.rs` restates the functions
  * below --- and a restatement is a second copy, which drifts. So Rust writes
  * every case it can produce to `src-tauri/testdata/cli/wording.json`
@@ -17,6 +20,7 @@ import { describe, expect, it } from "vitest";
 
 import wording from "../../src-tauri/testdata/cli/wording.json";
 import { integrityRow, trustRow, type Integrity, type Trust } from "./integrity";
+import { afterRedaction } from "./recovery";
 import { afterSigning, type Signed } from "./signing";
 
 describe("the command-line tool's wording", () => {
@@ -27,6 +31,10 @@ describe("the command-line tool's wording", () => {
     expect(wording.integrity.length).toBe((5 * 3 + 7) * 2 * 2);
     expect(wording.trust.length).toBe(5 * 3 * 8 * 2);
     expect(wording.after_signing.length).toBe(7);
+    // 3 count pairs x 3 reason lists x changed or not.
+    expect(wording.after_redaction.length).toBe(3 * 3 * 2);
+    expect(wording.after_redaction.some((c) => c.applied.verified)).toBe(true);
+    expect(wording.after_redaction.some((c) => !c.applied.verified)).toBe(true);
   });
 
   it("says each integrity verdict as the properties dialog does", () => {
@@ -40,6 +48,12 @@ describe("the command-line tool's wording", () => {
     for (const c of wording.trust) {
       const row = trustRow(c.trust as Trust, c.from, c.until);
       expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
+    }
+  });
+
+  it("reports a redaction as the window does", () => {
+    for (const c of wording.after_redaction) {
+      expect(afterRedaction(c.applied), JSON.stringify(c.applied)).toBe(c.sentence);
     }
   });
 

@@ -605,6 +605,17 @@ impl Prepared {
         })
     }
 
+    /// Whether no page can match this query, whatever it says: an empty query,
+    /// or a literal one of only whitespace. See [`Prepared::new`].
+    ///
+    /// For `tpdf redact`, which refuses such a query as a malformed command
+    /// line rather than reporting that it found nothing --- a search that
+    /// cannot match reads exactly like a document that is already clean.
+    #[must_use]
+    pub fn matches_nothing(&self) -> bool {
+        self.barren
+    }
+
     /// Every non-overlapping occurrence in one page's characters.
     #[must_use]
     pub fn find_in(&self, codes: &[u32], page: u32) -> Vec<Match> {

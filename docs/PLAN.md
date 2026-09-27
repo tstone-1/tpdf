@@ -15351,16 +15351,16 @@ contents; `opened`; `say` and `json`, one write each; `Exit` and `Failure`, the 
 contract; and `report::SCHEMA`. A test holds every registration to its dispatch and its line in
 `help`.
 
-**Next, queued by the owner on 2026-09-27, in this order.** The first three are built --- see
-*Describing a document and reading its text from the command line* and *Listing and filling a
-form from the command line* below --- and the fourth is not:
+**Next, queued by the owner on 2026-09-27, in this order.** All four are built --- see
+*Describing a document and reading its text from the command line*, *Listing and filling a
+form from the command line* and *Redacting from the command line* below:
 
 1. ~~`tpdf info --json`~~ --- done 2026-09-27.
 2. ~~`tpdf text`~~ --- done 2026-09-27.
 3. ~~`tpdf fill`: AcroForm values from a JSON file, its output pipeable into `sign`~~ --- done
    2026-09-27, with `tpdf fields` beside it.
-4. `tpdf redact`: by search term or pattern, in batch, with the verified / not-verified report
-   as JSON.
+4. ~~`tpdf redact`: by search term or pattern, in batch, with the verified / not-verified report
+   as JSON~~ --- done 2026-09-27.
 
 **Not done.** A real-keychain `sign` has not been run by an agent, because it raises the
 keychain prompt the owner answers; `BUILD.md` has the command and its verification. **The
@@ -15550,6 +15550,139 @@ red.
 **Not done.** Filling a signed or certified document (option 2, above). Characters outside
 Western European text --- `textbox.rs`'s set, as in the window; an embedded font would lift it.
 Choosing between two options that share an export value. `fields` reports no widget geometry.
+
+#### Redacting from the command line --- done 2026-09-27
+
+`tpdf redact` (`src-tauri/src/cli/redact.rs`, `cli/regions.rs`), item 4 of the queue above, one
+module and one line in `cli::COMMANDS`. `README.md`'s *Command-line tool* section is the
+reference and `src-tauri/testdata/cli/{redact,redact-dry-run,regions}.json` are its samples.
+
+| Command | What it does | Where the work happens |
+|---|---|---|
+| `redact <in> -o <out> (--text S \| --pattern RE \| --regions F)... [--case-sensitive] [--pages SPEC] [--dry-run] [--invalidate-signatures] [--password-env VAR] [--force] [--json]` | Removes every match and rectangle into a new file, verifies it, and reports *verified* or *not verified* with every reason. | a `RenderService` on the worker backend: `open`, `properties`, `form`, `text` per page; the search here (`search::Prepared` over the worker's codes); the regions here (`regions.rs`); then `commands::redact::ask_redactions` and `redact_copy_asked` --- the window's plans, rewrite, byte scan, OCR gate and fill, unchanged |
+
+Decisions the lead took on 2026-09-27, recorded as given:
+
+- **The command line** above. `--text` and `--pattern` repeat and combine; `--regions` takes
+  rectangles in `sign --rect`'s convention, `[x, y, w, h]` from the top-left of the displayed
+  page, as a JSON array of `{"page", "rect"}`.
+- **The app's search semantics**: the same fold and case folding, so what a reader would find is
+  what goes; mapped to boxes the way the viewer maps a hit; `--pattern` is the viewer's regex
+  mode over the same folded text. A pattern that matches nothing is not an error.
+- **Removal and verification through the app's path unchanged**, and the same verdict: never
+  worded more strongly than the window.
+- **Exit codes**: 0 written and verified; 1 written, not verified, kept; 2 usage; 3 refused,
+  nothing written; 4 internal failure, nothing left behind.
+- **`--dry-run`** writes nothing and reports per page from the same plans.
+- **Signed documents** refused (3) unless `--invalidate-signatures`; **XFA** refused.
+- **Containment is the application's**: the tool process parses no document.
+
+Decisions taken in building it, each with its reason:
+
+- **The window's command body became a function the tool calls, not a second copy.**
+  `redact_copy`'s write-verify-gate-fill moved into `commands::redact::redact_copy_asked`, which
+  takes a `RenderService` and the PDFium directory instead of an app handle; the Tauri command is
+  now `ask_redactions` and that, joined. `finish_redaction_fill` and `gate_written_file` take the
+  directory and a service clone for the same reason. `Asked` is public and gained `pages`, one
+  `redact::PageSummary` per page read off the same `PageAggregate` the plan is built from, which
+  is what `--dry-run` prints --- so a dry run and the write cannot count two things.
+- **The search runs here, over the worker's codes, with the window's matcher.** `search.rs` reads
+  `codes` and nothing else, and a worker's own search reads the same extraction
+  (`document::page_codes`), so one `Request::Text` per page gives the hits and the boxes from
+  one extraction. A page's tail carries to the next only when that page is the next in the file,
+  `search.ts`'s rule, so `--pages 1,3` does not join page 1 to page 3. A page that cannot be read
+  stops everything, as `redactMatches` stops.
+- **The route from a hit to regions is restated and held to the original.** `matchHalves` was
+  taken out of `Viewer.matchQuadsByPage` into `search.ts` so it could be; `regions.rs` restates it,
+  `runsFor` and `areasFrom`, and writes 72 runs over the 18 reading cases, six raw quads and a
+  set of hits to `regions.json`, which `cliregions.test.ts` compares number for number --- areas
+  after `Math.fround`, since a region reaches Rust as JSON parsed into an `f32`, which is also why
+  `regions::ipc_f32` narrows through the decimal rather than by a cast (they differ at an `f32`
+  midpoint). The 500-match bound is the window's, refused rather than truncated.
+- **Two more readers, and both can only withhold the verdict.** The window verifies what the
+  removal *took*; a batch run must also answer for what it was *asked*. So a match whose
+  characters have no box, which becomes no region, is a reason (and with nothing else marked the
+  run is refused); and `redact_copy_asked` takes an optional `also` reader, run on the written,
+  unfilled file before the gate --- the tool passes a search of it for every query, the window
+  passes `None`. Before the fill, so the window's sentence *"Checks before adding the black fill
+  found"* stays true of it. `docs/TRAPS.md` has the entry.
+- **A query that can match nothing is exit 2**, not a report of zero: an empty pattern or a
+  literal of only whitespace (`search::Prepared::matches_nothing`) reads exactly like a clean
+  document. A pattern that does not compile is exit 2 with the find bar's message.
+- **Nothing matched: exit 0, `written: false`, no file.** The window refuses *nothing marked*; a
+  batch over many documents wants to go on, and writing an unchanged rewrite would be a copy
+  that says it was redacted. The report says zero per query.
+- **`-o` is optional with `--dry-run`**, and when given is checked as the real run would check it,
+  so a dry run predicts the refusals it can.
+- **`--pages` limits the search and its read-back, not `--regions`**, whose rectangles name their
+  own pages.
+- **A source changed during the run is exit 3 and the copy removed**, `fill`'s rule; the window
+  reports it and keeps the file, because the reader is looking at it.
+- **A failure after the write removes the copy (exit 4)**, which is why `Stopped` carries whether
+  anything was written.
+- **The signature refusal is the window's warning rule**, shared with `fill` as
+  `cli::fill::signed_state`; with `--invalidate-signatures` the report counts the signatures the
+  input carried. The rewrite keeps the signature dictionaries, which then read as not intact
+  (`verify` calls `incr-signed.pdf`'s copy `unchecked`); removing them is not done.
+- **XFA is refused before anything is asked**, in `save.rs`'s words, now `redact::XFA_REDACTION`,
+  so a dry run refuses what the write would.
+- **The report holds the removed words** (`hits`, `taking`): reviewing a batch removal needs them,
+  and the README says to store the report as the original.
+- **A spare the parent never used exits 0 and says nothing.** The tool is the first command with a
+  render service, whose pre-spawned spare announced every exit as an error on the shared stderr;
+  `worker_child` and `recv_document` now treat a closed handover as the ending it is.
+- **The tool's `main` answers the OCR worker's marker** before the parser's, as `lib.rs`'s does.
+- **The image-only fallback (`redact_raster_copy`) is not offered**; the tool writes the text
+  route only.
+
+**Measured**, macOS arm64 (macOS 27.0, 26A428), 2026-09-27. `tests/cli.rs`, 194 checks (48 new):
+on a two-page document built in the test (an e-mail address, an IBAN, a code word on both pages,
+one of them cropped, a line only a rectangle reaches, and two `CONTROL-KEEP` lines) --- by
+`--text`, by two `--pattern`s, by `--regions` and all at once --- the built tool's `text`, Poppler's
+`pdftotext` and the bytes of `qpdf --qdf` find none of the matched strings in the copy and both
+controls, and the other secrets are still there; the same three readers find every string in the
+input (the control). A dry run of each line writes nothing and reports the same regions,
+removals, searches and pages as the write. `--pages 1` leaves page 2's copy. A query matching
+nothing exits 0 and writes nothing. Refusals: an existing output (then `--force`), the input
+under a hard link (2), XFA for a write and a dry run, `incr-signed.pdf` (and with
+`--invalidate-signatures` its copy's signature is not intact), `incr-encrypted-pw.pdf` without
+its password (and with it the copy stays encrypted and the word is gone). **Parity**: on the built
+document, `text-base14.pdf` and `text-marked.pdf`, the same regions marked in the test process and
+handed to `redaction::redact_copy_asked` give the tool's `verified`, every reason word for word,
+and the region count; the exit code is 0 exactly when that is verified. On a fourth document,
+built with a Form XObject the page draws twice, the removal leaves the form (the application's
+reason) and the tool's search of the copy still finds the word --- one reason more, in the
+application's order otherwise. A successful run prints nothing on stderr. `text-marked.pdf` is not
+verified for a reason that is not the platform's --- an annotation keeps a copy of the removed
+line --- and exits 1 with the copy kept. **pypdf** (`scripts/redact_pdf_check.py`, `uv run --with
+pypdf`) finds none of the four strings in the copy's text or content streams and both controls,
+and rejects the input with eight findings. **Containment**: under `DYLD_PRINT_LIBRARIES`, a dry
+run and a write each run with a tool process that maps no PDFium, workers that do, and beside
+them only the OCR worker and a spare that ended without a document; `cli::run` in the test
+process redacts with nothing mapped there.
+
+**No copy here was verified, and none could be.** On this machine the OCR gate's Vision refuses
+every image in its worker (`docs/TRAPS.md`, *On macOS 27 the OCR worker's Vision refuses every
+image, and the probes that read a whole page still pass*), measured the same on an unmodified
+export of the commit before with `redact-gate-probe`, 5/8. Every write exits 1 with the gate's
+reason, in the window and the tool alike; exit 0 is covered by the parity rule and by
+`cli::redact::outcome`'s unit test, not by a run.
+
+**Proved able to fail**: 24 `cli:` mutations in `scripts/mutate_rust.py` (`--only "cli: regions"
+--only "cli: redact"`) and four in `scripts/mutate_frontend.py` (`cli regions:`, and `cli
+wording:`'s redaction sentence), each caught by the test named for it; two anchors re-aimed
+(`fill`'s signature rule, the command list). Two of the 24 survived their first run, both tests
+whose fixture decided the case before the rule could, and are caught since. Six hand mutations
+of code only `tests/cli.rs` reaches --- the `also` call, the quiet spare, the OCR dispatch, the
+worker backend, `--pages`, and the application's `verified` --- each turned the named checks
+red (`BUILD.md` lists them).
+
+**Not done.** Exit 0 has not been observed on any machine, for the reason above; the Windows
+engine may read, and `tests/cli.rs` has not run there. The OCR profile's fix is a threat-model
+decision left open. Whole-word matching (the viewer has it; the brief did not ask). An in-place
+redaction (`redact_document`'s route). The image-only fallback. Removing the invalidated
+signature fields rather than leaving them broken. A `--regions` rectangle in any convention but
+`sign --rect`'s.
 
 ### Cross-cutting
 

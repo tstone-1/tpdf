@@ -42,6 +42,10 @@
 //! 7. **Beside `pdftotext`**, when Poppler is installed: word overlap and word
 //!    order per fixture, printed, never counted. A second reader with its own
 //!    reading-order rules is expected to differ, most on a tagged page.
+//! 8. **`redact`** (`cli/redact.rs`): what it matches is gone for three readers
+//!    and what it does not match is not; a dry run predicts the write; the
+//!    verdict and every reason equal the application's path driven in this
+//!    process; refusals write nothing. Its containment is 3's, below.
 //!
 //! Fixtures under `testdata/` are generated, not committed (`BUILD.md`); a
 //! check whose fixtures are absent says `[SKIP]` and names them, and is never
@@ -68,15 +72,22 @@ use x509_cert::time::{Time, Validity};
 // directly in `tests/` would be a test target of its own to cargo.
 #[path = "cli/forms.rs"]
 mod forms;
+// `redact`, for the same reason.
+#[path = "cli/redact.rs"]
+mod redact;
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
+    // `redact` runs the OCR gate, whose engine is this binary re-executed with
+    // its own marker --- and so does the application's path the parity check
+    // drives in this process.
+    tpdf_lib::ocr_worker::child_main_if_asked(&argv);
     if argv.get(1).map(String::as_str) == Some(worker::WORKER_ARGV) {
         worker_child::main(&argv);
     }
     // The order is load-bearing: 3 asserts this process has not mapped PDFium,
     // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 9] = [
+    let checks: [Check; 12] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -94,6 +105,18 @@ fn main() {
         (
             "fill writes every answer and reads it back",
             forms::fill_round_trips,
+        ),
+        (
+            "redact removes what it finds and nothing else",
+            redact::removes_what_it_finds,
+        ),
+        (
+            "redact's verdict is the application's",
+            redact::verdict_is_the_applications,
+        ),
+        (
+            "redact's refusals write nothing",
+            redact::refusals_write_nothing,
         ),
     ];
     let mut report = Report::default();
@@ -709,6 +732,10 @@ fn never_maps_pdfium(report: &mut Report) {
     std::fs::write(&answers, r#"{"ACME.answer": "Filled", "consent": true}"#).expect("answers");
     let form_shown = form.display().to_string();
     let answers_shown = answers.display().to_string();
+    // A document with words to redact, for `redact`.
+    let contacts = dir.join("contacts.pdf");
+    std::fs::write(&contacts, redact::contacts_pdf()).expect("contacts");
+    let contacts_shown = contacts.display().to_string();
 
     #[cfg(target_os = "macos")]
     {
@@ -720,7 +747,8 @@ fn never_maps_pdfium(report: &mut Report) {
         // dyld's output. `fill` spawns three --- the reading, the writing and
         // the read-back --- and every one of them is a worker here.
         let filled = dir.join("filled.pdf").display().to_string();
-        let lines: [Vec<&str>; 4] = [
+        let redacted = dir.join("redacted.pdf").display().to_string();
+        let lines: [Vec<&str>; 6] = [
             vec!["info", &shown],
             vec!["text", &shown],
             vec!["fields", &form_shown],
@@ -732,9 +760,28 @@ fn never_maps_pdfium(report: &mut Report) {
                 "--values",
                 &answers_shown,
             ],
+            vec![
+                "redact",
+                &contacts_shown,
+                "--dry-run",
+                "--text",
+                "Rumpelstilzchen",
+            ],
+            vec![
+                "redact",
+                &contacts_shown,
+                "-o",
+                &redacted,
+                "--text",
+                "Rumpelstilzchen",
+            ],
         ];
         for line in &lines {
-            let command = line[0];
+            let command = if line.contains(&"--dry-run") {
+                "redact --dry-run"
+            } else {
+                line[0]
+            };
             let (code, _, stderr) = tool(line, &[("DYLD_PRINT_LIBRARIES", "1")]);
             let parents: std::collections::BTreeSet<String> = stderr
                 .lines()
@@ -752,12 +799,33 @@ fn never_maps_pdfium(report: &mut Report) {
                     .any(|(_, image)| image.to_ascii_lowercase().contains("pdfium"))
             };
             // The tool is the one process running tpdf-cli that maps no PDFium;
-            // every worker is tpdf-cli too, and maps it.
+            // every worker is tpdf-cli too, and maps it --- except two of
+            // `redact`'s, whose render service is the application's: the OCR
+            // worker, which reads pixels and never a document, and a spare the
+            // pool pre-spawned and nobody handed a document before the tool
+            // exited, which ends before it maps anything. So the tool is named
+            // by being first --- dyld's first line is the process that was
+            // started, before it could spawn anything --- and `redact` is
+            // allowed those two beside it.
             let clean = parents.iter().filter(|pid| !mapped_by(pid)).count();
             let workers = parents.iter().filter(|pid| mapped_by(pid)).count();
+            let first = stderr
+                .lines()
+                .filter_map(|line| line.strip_prefix("dyld["))
+                .find_map(|rest| rest.split_once("]: ").map(|(pid, _)| pid.to_string()));
+            let tool_clean = first
+                .as_deref()
+                .is_some_and(|pid| parents.contains(pid) && !mapped_by(pid));
+            let (ok, ocr) = match command {
+                "redact" => (code == 0 || code == 1, 2),
+                "redact --dry-run" => (code == 0, 1),
+                _ => (code == 0, 0),
+            };
             report.check(
                 &format!("{command}: the tool's own process never loaded PDFium, and a worker did"),
-                code == 0 && clean == 1 && workers >= if command == "fill" { 3 } else { 1 },
+                ok && tool_clean
+                    && clean <= 1 + ocr
+                    && workers >= if command == "fill" { 3 } else { 1 },
                 &format!("exit {code}, {clean} clean, {workers} with PDFium"),
             );
         }
@@ -843,7 +911,24 @@ fn never_maps_pdfium(report: &mut Report) {
         &store,
         now(),
     );
+    let (redact_code, redact_out, redact_err) = signs(
+        &strings(&[
+            "redact",
+            &contacts_shown,
+            "-o",
+            &dir.join("redacted-here.pdf").display().to_string(),
+            "--text",
+            "Rumpelstilzchen",
+        ]),
+        &store,
+        now(),
+    );
     let after = tpdf_lib::images::mapped();
+    report.check(
+        "cli::run redacted a document through workers too",
+        (redact_code == 0 || redact_code == 1) && redact_out.contains("Redact"),
+        &format!("redact exit {redact_code}: {redact_err}"),
+    );
     report.check(
         "cli::run read the document through a worker",
         code == 0 && stdout.contains("no signatures"),

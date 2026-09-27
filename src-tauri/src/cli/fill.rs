@@ -476,33 +476,56 @@ pub fn resolve(form: &Form, answers: &Answers) -> Result<Vec<Resolved>, Vec<Prob
     }
 }
 
-/// Why a document must not be filled by this writer, when it must not.
+/// What a full rewrite would do to a document's signatures.
 ///
 /// The application's rule (`signedsave.ts`'s `signatureSaveMessage`), minus
 /// the dialog: a signed or certified document, or one whose signatures could
 /// not all be enumerated. Its `/Info` limits are left out, because they say
-/// nothing about signatures.
+/// nothing about signatures. `fill` and `redact` both write through a rewrite,
+/// and both refuse on this answer; `redact --invalidate-signatures` proceeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignedState {
+    /// This many signatures or certifications, every one of which a rewrite
+    /// invalidates.
+    Signed(usize),
+    /// Whether it is signed could not be read completely.
+    Unknown,
+}
+
+/// [`SignedState`] for a document, or `None` when a rewrite breaks nothing.
 #[must_use]
-pub fn signed_refusal(shown: &str, properties: &Properties) -> Option<String> {
-    if properties
+pub fn signed_state(properties: &Properties) -> Option<SignedState> {
+    let signed = properties
         .signatures
         .iter()
-        .any(|s| s.signed || s.certification > 0)
-    {
-        return Some(format!(
-            "{shown} is signed, and filling rewrites the document, which would invalidate its \
-             signatures --- fill the unsigned document, then sign the filled copy with `tpdf \
-             sign`"
-        ));
+        .filter(|s| s.signed || s.certification > 0)
+        .count();
+    if signed > 0 {
+        return Some(SignedState::Signed(signed));
     }
     let limits = &properties.limits;
     if limits.locked || limits.unreadable > 0 || limits.signatures_dropped > 0 {
-        return Some(format!(
-            "{shown}: whether it is signed could not be read completely, and filling rewrites \
-             the document, which would invalidate any signature --- so it is not filled"
-        ));
+        return Some(SignedState::Unknown);
     }
     None
+}
+
+/// Why a document must not be filled by this writer, when it must not.
+///
+/// [`signed_state`], in `fill`'s words.
+#[must_use]
+pub fn signed_refusal(shown: &str, properties: &Properties) -> Option<String> {
+    match signed_state(properties)? {
+        SignedState::Signed(_) => Some(format!(
+            "{shown} is signed, and filling rewrites the document, which would invalidate its \
+             signatures --- fill the unsigned document, then sign the filled copy with `tpdf \
+             sign`"
+        )),
+        SignedState::Unknown => Some(format!(
+            "{shown}: whether it is signed could not be read completely, and filling rewrites \
+             the document, which would invalidate any signature --- so it is not filled"
+        )),
+    }
 }
 
 /// A plan that keeps every page as it is and writes `answers`.

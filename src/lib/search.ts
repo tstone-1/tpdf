@@ -848,6 +848,33 @@ export class Search {
 }
 
 /**
+ * Each match as one half per page it covers, in match order.
+ *
+ * What {@link Viewer.matchQuadsByPage} marks for removal, taken out of it so
+ * that `tpdf redact` can be held to it: `src-tauri/src/cli/regions.rs` restates
+ * this, and `cliregions.test.ts` compares the two case for case. A hit that
+ * runs over a page break is two halves, because there is no shared coordinate
+ * space between two pages for one rectangle to span.
+ */
+export function matchHalves(
+  matches: readonly Match[],
+): { slot: number; from: number; to: number }[] {
+  const halves: { slot: number; from: number; to: number }[] = [];
+  for (const match of matches) {
+    if (match.endPage === undefined) {
+      halves.push({ slot: match.page, from: match.start, to: match.end });
+    } else {
+      // `Infinity` for the first half's end because it runs to wherever that
+      // page's text stops, which this does not have to know and `runsFor`
+      // clamps.
+      halves.push({ slot: match.page, from: match.start, to: Infinity });
+      halves.push({ slot: match.endPage, from: 0, to: match.end });
+    }
+  }
+  return halves;
+}
+
+/**
  * How many matches may be marked for removal in one command.
  *
  * **Measured rather than picked.** Across 41 real PDFs, the patterns somebody

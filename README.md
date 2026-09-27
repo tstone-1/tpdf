@@ -461,11 +461,12 @@ both.
 
 ## Command-line tool
 
-`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf fields` and
-`tpdf fill` do from a terminal what **Sign document…**, **Document properties**, the viewer's own
-text and its form filling do in the window, with the same code: the document is read only by
-the same sandboxed worker processes, the private key never leaves the operating system, and
-every signed or filled file is read back and checked before success is reported. Nothing is uploaded and nothing goes online.
+`tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf fields`,
+`tpdf fill` and `tpdf redact` do from a terminal what **Sign document…**, **Document
+properties**, the viewer's own text, its form filling and **Redact and save as…** do in the
+window, with the same code: the document is read only by the same sandboxed worker processes,
+the private key never leaves the operating system, and every signed, filled or redacted file is
+read back and checked before success is reported. Nothing is uploaded and nothing goes online.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
@@ -494,6 +495,12 @@ tpdf fill application.pdf -o filled.pdf --values answers.json
 some-script | tpdf fill application.pdf -o filled.pdf --values - --json
 tpdf fill application.pdf -o filled.pdf --values answers.json && \
     tpdf sign filled.pdf -o signed.pdf --identity "Jane Doe"
+tpdf redact statement.pdf -o statement-redacted.pdf --text "Jane Doe" --text "4711-0815"
+tpdf redact letter.pdf -o letter-redacted.pdf \
+    --pattern '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+tpdf redact invoice.pdf -o invoice-redacted.pdf --case-sensitive \
+    --pattern '\b[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b'
+tpdf redact scan.pdf -o scan-redacted.pdf --regions boxes.json --dry-run --json
 ```
 
 An answers file for `fill` is one JSON object of full field names and answers:
@@ -505,6 +512,17 @@ An answers file for `fill` is one JSON object of full field names and answers:
   "delivery": "Express",
   "extras": ["Insurance", "Tracking"]
 }
+```
+
+A regions file for `redact` is one JSON array of rectangles, each on a page counted from 1,
+measured as `sign --rect` measures one — `[x, y, w, h]` in points from the top-left corner of
+the page as it is displayed:
+
+```json
+[
+  { "page": 1, "rect": [72, 96, 220, 14] },
+  { "page": 3, "rect": [300, 540, 120, 40] }
+]
 ```
 
 - **`identities`** lists the certificates in your keychain (macOS) or your personal
@@ -564,15 +582,42 @@ An answers file for `fill` is one JSON object of full field names and answers:
   code is 4. **A signed document is refused**, because filling rewrites the document and would
   invalidate its signatures; fill the unsigned form, then sign the filled copy with `sign`.
   `-o` must name a new file unless `--force` is given.
+- **`redact <in.pdf> -o <out.pdf>`** removes text and pictures from the document and writes
+  the result as a new file, with the window's redaction: the same removal, the same checks of
+  the written file, and the same verdict, in the same words. `--text` finds what the viewer's
+  **Find** finds — case ignored, a line break or a run of spaces matching one space, a soft
+  hyphen ignored — and `--pattern` is a regular expression (Rust's `regex` syntax) run over that
+  same text: one space for each run of whitespace, so `\n` never occurs and `^` and `$` are the
+  page's start and end, not a line's; case is ignored unless `--case-sensitive`, which applies
+  to both. Each may be given as often as needed, with `--regions <file.json>` for what a search
+  cannot find, such as a signature drawn as a picture. A match is marked as the window's **Mark
+  all matches for redaction** marks it, one rectangle for each line it runs over, and more than
+  500 matches in one run are refused rather than marked partly. `--pages 1-3,7` limits the
+  search, not the regions file. **What goes can be more than the match**: tpdf removes a whole
+  run of text the document drew in one piece whenever any of its characters is in a rectangle,
+  which is often the whole line; the report says what each page's removal takes. The copy is
+  then read back: searched for every removed string, searched again for every `--text` and
+  `--pattern`, and each removed area rendered and read by the system's text recogniser to prove
+  nothing legible is left, before the black boxes are drawn. **Exit code 0 means every check
+  proved the copy clean; 1 means the copy was written and could not be proved clean**, with
+  every reason — a line the removal could not take, a copy still found elsewhere, an area the
+  recogniser could not read back. The file is kept either way; treat a copy that exits 1 as
+  unredacted until you have checked it. `--dry-run` writes nothing (and needs no `-o`) and
+  reports what would be marked and taken. A query that matches nothing is not an error: the
+  report says so and nothing is written. **A signed document is refused**, because redacting
+  rewrites the document and invalidates every signature; `--invalidate-signatures` redacts it
+  anyway and says how many signatures the copy no longer carries intact. A document with an XFA
+  form is refused, as the window refuses it. `-o` must name a new file unless `--force` is
+  given.
 
-**Passwords.** `info`, `text`, `fields` and `fill` read a password-protected document when given
+**Passwords.** `info`, `text`, `fields`, `fill` and `redact` read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
 password prompt sends it, and appears in nothing tpdf prints. The workers inherit the
 environment, so they can see the variable too; they already hold the document it opens.
 `verify` does not take a password, and reports such a document as locked. A document `fill`
-opens with a password is written encrypted as it was, with the same passwords.
+or `redact` opens with a password is written encrypted as it was, with the same passwords.
 
 **The key, and unattended use.** macOS asks whether the tool may use the key the first time
 it signs with it; choose *Always Allow* if a script is to sign without you — which also
@@ -589,10 +634,10 @@ built.
 | Code | Meaning |
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
-| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. |
-| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers file, a bad `--rect` or `--pages`, an unknown option, or a `--password-env` naming a variable that is not set. |
-| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
-| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `fill`, the copy is then removed. |
+| 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. |
+| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, nothing for `redact` to remove, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
 
 Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
 document, pretty-printed, whenever the exit code is 0 or 1 — for `verify` and `info` also
@@ -653,6 +698,20 @@ a key may be added without changing it, and one renamed or removed changes it) a
   for one that was written and does not read back) and `why`, the sentence stderr prints — and
   `fields`, each answered field as the written file says it, with `name`, `kind` and `value`
   as for `fields`.
+- `redact`: `input`, `output` (`null` for a dry run given no `-o`), `dry_run`, `written`
+  (whether the copy was written and kept — `false` for a dry run and when nothing matched),
+  `verified` (`true` only when every check proved the copy clean, `false` when it could not be,
+  `null` when nothing was written), `reasons` (each reason it could not be, one sentence each;
+  for a dry run, what the removal will not be able to take), `summary` (the sentence the
+  application shows after a redaction, word for word, or `null`), `regions` (rectangles
+  marked), `removals` (runs of text and pictures they take), `signatures_invalidated`,
+  `searches` — one per `--text` and `--pattern`, text first, each with `kind` (`text` or
+  `pattern`), `query` and `matches` — and `pages`, each page with a match or a region: `page`
+  (counted from 1), `hits` (each match starting there, as the page spells it), `regions`,
+  `text_removals`, `form_text_removals` (text inside a form the page draws),
+  `image_removals`, `taking` (what the removed runs draw, often more than the match) and `left`
+  (what the removal cannot take there, one sentence each). **The report holds the words it
+  removed**, in `hits` and `taking`: keep it where you would keep the original.
 - `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
   certificate as above), `visible`, `signatures` (every signature in the written file, read
   back) and `summary` (the sentence the application shows after signing).

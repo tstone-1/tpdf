@@ -171,6 +171,8 @@ hop through the index.
 - A withdrawal that is correct as a broadcast is expensive in exactly the moment it is used
 - A trust daemon that could not be reached reads as a chain it refused
 - A sandboxed child that agrees with its parent has shown nothing until its sandbox refuses something
+- On macOS 27 the OCR worker's Vision refuses every image, and the probes that read a whole page still pass
+- A pre-spawned spare announced its parent's exit as an error on the terminal every worker shares
 
 ## The document model: saving, structure, signatures
 - An edit reaches the file, and the writer imports the file once per position the page occupies
@@ -538,6 +540,7 @@ hop through the index.
 - Asserting that every limit binds found one that never can, and the grid was not what to fix
 - A value written on every keystroke makes the same write on commit dead code, and its mutation survives
 - A refusal type with no case for "locked" made a documented `locked` unreachable
+- A redaction's read-back looks for what was taken, so a match that could not be marked is invisible to it
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -24797,3 +24800,73 @@ What works is naming the path: `#[path = "cli/forms.rs"] mod forms;`. Cargo does
 files in subdirectories of `tests/` (only `tests/*.rs` and `tests/*/main.rs`), so the module is
 compiled once, as part of `cli`, and a comment beside the attribute says why --- the attribute
 is otherwise the kind of thing a tidy-up removes.
+
+### On macOS 27 the OCR worker's Vision refuses every image, and the probes that read a whole page still pass
+
+2026-09-27, building `tpdf redact`. Every redaction the tool wrote came back *not verified*
+with `the engine rejected the image: Vision refused the image: The operation couldn't be
+completed. (__objc2.missingError error 0.)` for every region --- and so did
+`redact-gate-probe`, the window's own gate, on an unmodified export of the commit before
+(`git archive 3bd81a3`, built in a separate target directory): **5/8, the same three rows red**.
+The machine is macOS 27.0, build 26A428. So it is the platform and not the change, and it
+fails closed: no copy is called clean, in the window or the tool.
+
+What makes it a trap is that the two OCR probes stay green. `ocr-sandbox-probe` applies
+`OCR_SANDBOX_PROFILE` and reads a page; `ocr-worker-probe` reads a page through `OcrWorker`,
+the gate's own worker. Both run Vision **in their own process, unsandboxed, first** --- the
+second as its in-process baseline --- and Vision on this build writes a compiled model cache to
+`~/Library/Caches/<executable name>/com.apple.e5rt.e5bundlecache` on first use. A throwaway
+example that sent a page straight to `OcrWorker` failed until the same executable had run
+Vision once in-process, and then succeeded in every later run, sandboxed. The sandboxed worker
+cannot write that cache (`file-write*` is denied), and the gate never runs Vision anywhere
+else. Warming the cache is not the whole story, though: `redact-gate-probe` and `tpdf-cli` both
+still failed with a warm cache under their names, in about 7.5 s per region against ~10 ms, so
+something else the sandboxed worker is denied is also in the path. Not diagnosed further; the
+remedy is a decision about the OCR profile (a writable cache directory, or a model compiled
+before the profile comes down), which belongs to the threat model rather than to a command.
+
+Two things to take from it. A probe that warms a platform cache before measuring measures a
+warm machine: the controls here were real, and they were controls for a different starting
+state than the one a reader's first redaction is in. And *every* redaction on this system is
+not verified, so no fixture here can show `tpdf redact` exiting 0 --- `tests/cli.rs` holds the
+exit code to the application's verdict on the same regions, which is the claim that survives.
+Remove any `~/Library/Caches/<name>/com.apple.e5rt.e5bundlecache` an experiment leaves behind;
+it changes what the next run measures.
+
+### A pre-spawned spare announced its parent's exit as an error on the terminal every worker shares
+
+2026-09-27. `tpdf redact` is the first command to hold a `render::RenderService`, and every
+run of it ended with one of `[worker] the parent closed the handover socket` or `[worker] could
+not reply: Broken pipe` on stderr --- after a successful, correct run, on the stream the
+README promises carries one sentence per error. The render service pre-spawns a spare worker at
+start and another whenever one is adopted; a spare that is still waiting for a document when
+its parent exits finds the handover socket closed, or its `Warm` reply unread, and
+`worker_child` reported both as failures with exit 1. The window has always done the same at
+quit, and nobody reads the app's stderr.
+
+A spare the parent never used is not a failure, and the closed channel is how a spare learns it
+is not needed --- the doc comment on `wait_for_document` said so while the code called it an
+error. `recv_document` now returns `Ok(None)` for a socket closed before the handover (the
+pipe's end of file on Windows), and a spare whose `Warm` reply cannot be written, or whose
+handover never comes, exits 0 and says nothing. A malformed handover is still an error.
+`tests/cli.rs` asserts a successful `redact` leaves stderr empty, which is what would notice the
+next one.
+
+### A redaction's read-back looks for what was taken, so a match that could not be marked is invisible to it
+
+2026-09-27, `tpdf redact`. The window's verification scans the written file for the strings the
+removal *took* (`RegionPlan::taking`, a whole text-showing operation per region) and asks the OCR
+gate about the regions. Both are about what was marked. A search hit whose characters have no
+box --- PDFium's four zeroes --- becomes no region (`runsFor` skips an unplaced character, and
+`areasFrom` a run with no area), so nothing is taken, nothing is scanned for, no region is
+rendered, and the copy can be *verified* with the words still in its text layer. In the window a
+reader marks what they see, so the gap is theirs to notice; a batch run marks what a pattern
+finds, and nobody looks.
+
+So `tpdf redact` adds two readers, and both can only take a verdict away: a reason for every
+match that became no region (`cli::redact::unmarked`, and with nothing else marked the run is
+refused), and a search of the written, unfilled file for every `--text` and `--pattern`, run by
+`redact_copy_asked` before the fill so that the window's sentence --- *Checks before adding the
+black fill found* --- stays true of it. The general form: a verification defined by what an
+operation *did* cannot see what it was *asked* to do and did not; check the request as well as
+the result.

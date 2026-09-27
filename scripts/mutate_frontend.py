@@ -5588,6 +5588,9 @@ TEST_FILES = [
     "src/lib/cliwording.test.ts",
     # Added 2026-09-27 with `tpdf text`: `reading.rs` against `reading.ts`.
     "src/lib/clireading.test.ts",
+    # Added 2026-09-27 with `tpdf redact`: `regions.rs` against `matchHalves`,
+    # `runsFor` and `areasFrom`.
+    "src/lib/cliregions.test.ts",
     # Added 2026-09-26 with Phase 6 step 2's sequence and sentences.
     "src/lib/signing.test.ts",
     "src/lib/pendingimport.test.ts",
@@ -8245,6 +8248,32 @@ MUTATIONS += [
         "Read back after writing, the signature is intact.`;",
         "Read back, the signature is intact.`;",
         "closes a signing as the signing panel does"),
+]
+
+# `tpdf redact` restates the window's route from a search hit to the regions it
+# marks (`src-tauri/src/cli/regions.rs`), and its verdict sentence
+# (`cli/words.rs`); `cliregions.test.ts` and `cliwording.test.ts` hold them to
+# the originals. These change the application's side alone.
+MUTATIONS += [
+    Mutation("cli regions: the application ends a hit over a break at its own end",
+        "src/lib/search.ts",
+        "      halves.push({ slot: match.page, from: match.start, to: Infinity });",
+        "      halves.push({ slot: match.page, from: match.start, to: match.end });",
+        "splits a hit over a page break as matchHalves does"),
+    Mutation("cli regions: the application joins characters from different lines",
+        "src/lib/text.ts",
+        "  return shorter > 0 && overlap / shorter > 0.5;",
+        "  return shorter > 0;",
+        "merges a range into the runs runsFor gives"),
+    Mutation("cli regions: the application keeps a sliver", "src/lib/selection.ts",
+        "export const MIN_REDACTION_SIDE = 0.5;",
+        "export const MIN_REDACTION_SIDE = 0;",
+        "shares the viewer's limits"),
+    Mutation("cli wording: the application calls a redaction clean differently",
+        "src/lib/recovery.ts",
+        "tpdf read the file back and none of the removed words are in it.`",
+        "tpdf read the file back and it is clean.`",
+        "reports a redaction as the window does"),
 ]
 
 # `tpdf text` restates `reading.ts` in Rust (`src-tauri/src/reading.rs`) and

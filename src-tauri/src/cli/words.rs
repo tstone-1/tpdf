@@ -252,3 +252,47 @@ pub fn after_signing(
     }
     text
 }
+
+/// The sentence after a redaction: `recovery.ts`'s `afterRedaction(applied)`.
+///
+/// **The one place a verdict is worded**, and it is the window's word for word
+/// --- `tpdf redact` must never say *verified* more strongly than the
+/// application does, and holding the two to one sample is what makes that a
+/// checked claim. `why` is empty exactly when `verified`, as
+/// `redact::Applied` promises.
+#[must_use]
+pub fn after_redaction(
+    regions: usize,
+    shows: usize,
+    verified: bool,
+    why: &[String],
+    changed: bool,
+) -> String {
+    let count = |many: usize, noun: &str| {
+        if many == 1 {
+            format!("1 {noun}")
+        } else {
+            format!("{many} {noun}s")
+        }
+    };
+    let removed = format!("{}, {}", count(regions, "region"), count(shows, "removal"));
+    let verdict = if verified {
+        format!(
+            "Redacted {removed}. tpdf read the file back and none of the removed words are in it."
+        )
+    } else {
+        format!(
+            "Redaction not verified. Redacted {removed}, but tpdf could not prove the file is \
+             clean. Checks before adding the black fill found: {}. Treat it as unredacted until \
+             you have checked it.",
+            why.join("; ")
+        )
+    };
+    if !changed {
+        return verdict;
+    }
+    format!(
+        "{verdict} The original also changed on disk while you had it open, so this was built \
+         from the newer version."
+    )
+}

@@ -136,19 +136,20 @@ pub(crate) fn send_document(socket: i32, fd: i32, len: usize) -> Result<(), Stri
     Ok(())
 }
 
-/// Receives a document mapping's descriptor and its length.
+/// Receives a document mapping's descriptor and its length, or `None` when the
+/// socket closed first --- which is how a pre-spawned worker learns the parent
+/// has gone away without ever giving it a file. That is an ending, not an
+/// error: every spare a parent never used ends this way.
 ///
 /// # Errors
 ///
-/// The socket closing --- which is how a pre-spawned worker learns the parent has
-/// gone away without ever giving it a file --- or a message that is not the one
-/// this protocol sends.
+/// A message that is not the one this protocol sends.
 ///
 /// # Safety
 ///
 /// The caller must own `socket` and must not be reading it concurrently.
 #[cfg(target_os = "macos")]
-pub unsafe fn recv_document(socket: i32) -> Result<(OwnedFd, usize), String> {
+pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, String> {
     let mut payload = [0u8; 8];
     let mut iov = libc::iovec {
         iov_base: payload.as_mut_ptr().cast(),
@@ -169,7 +170,7 @@ pub unsafe fn recv_document(socket: i32) -> Result<(OwnedFd, usize), String> {
             return Err(format!("recvmsg: {}", std::io::Error::last_os_error()));
         }
         if read == 0 {
-            return Err("the parent closed the handover socket".into());
+            return Ok(None);
         }
         // Checked rather than assumed: a short read leaves the rest of `payload`
         // zeroed, and a length of zero is a mapping of nothing that would fail
@@ -194,7 +195,7 @@ pub unsafe fn recv_document(socket: i32) -> Result<(OwnedFd, usize), String> {
         if len == 0 {
             return Err("the handover length is zero".into());
         }
-        Ok((OwnedFd::from_raw_fd(fd), len))
+        Ok(Some((OwnedFd::from_raw_fd(fd), len)))
     }
 }
 
