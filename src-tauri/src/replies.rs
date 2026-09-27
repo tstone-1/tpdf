@@ -602,6 +602,59 @@ fn samples() -> BTreeMap<&'static str, String> {
     put("Copied", &save::Copied { changed: true });
 
     put(
+        "Choices",
+        &crate::sign_cms::Choices {
+            usable: vec![crate::sign_cms::Choice {
+                id: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".into(),
+                subject: "A. Signer".into(),
+                issuer: "Example CA".into(),
+                // In the past, for `scripts/check_dates.py`'s reason (see `certificate`).
+                expires: "2026-01-01 00:00:00 UTC".into(),
+                method: "ECDSA P-256".into(),
+            }],
+            skipped: vec![crate::sign_cms::Skipped {
+                subject: "Old Signer".into(),
+                why: "it has expired".into(),
+            }],
+        },
+    );
+
+    put(
+        "Signed",
+        &crate::sign_cms::Signed {
+            path: "/tmp/one-signed.pdf".into(),
+            field: "Signature2".into(),
+            signatures: vec![
+                crate::sign_cms::Checked {
+                    field: "Signature1".into(),
+                    integrity: Some(crate::integrity::Integrity {
+                        verdict: crate::integrity::Verdict::Unchecked,
+                        why: Some(crate::integrity::Why::Range),
+                        digest: String::new(),
+                        method: String::new(),
+                    }),
+                    ours: false,
+                },
+                crate::sign_cms::Checked {
+                    field: "Signature2".into(),
+                    integrity: Some(crate::integrity::Integrity {
+                        verdict: crate::integrity::Verdict::Intact,
+                        why: None,
+                        digest: "SHA-256".into(),
+                        method: "ECDSA P-256".into(),
+                    }),
+                    ours: true,
+                },
+                crate::sign_cms::Checked {
+                    field: "Signature3".into(),
+                    integrity: None,
+                    ours: false,
+                },
+            ],
+        },
+    );
+
+    put(
         "Merged",
         &save::Merged {
             changed: false,

@@ -144,10 +144,30 @@ tauri-plugin-process = "2.3"
 # way *in* as well as on the way out. Parsing only: there is no trust store and
 # no chain building, and `docinfo.rs` is shaped so that no field here could
 # carry a verdict.
-cms = { version = "0.2.3", default-features = false }
+#
+# `builder` since 2026-09-26, for Phase 6 step 2: the **app process** assembles
+# the CMS `SignedData` a signature carries (`sign_cms.rs`), and the key that
+# signs it stays in the OS key store. **It costs ten packages in the lockfile,
+# seven of them compiled** (619 to 629 over the whole tree, measured with
+# `cargo metadata`): `sha3` and `keccak`, and the older generation of the
+# RustCrypto cipher stack the builder's `EnvelopedData` half needs --- `aes`
+# 0.8, `cbc` 0.1, `cipher` 0.4, `inout` 0.1 and `block-padding` 0.3, beside
+# their newer versions already here. `tls_codec`, `tls_codec_derive` and
+# `zeroize_derive` are resolved and built for no target (`cargo tree -e normal
+# --target all -i` names nothing). All ten `Apache-2.0 OR MIT`. None of it is
+# fed a document: its input is a digest, the reader's own certificate and what
+# the OS returned. Building the `SignedData` from `cms`'s types by hand would
+# have cost none of the ten; the builder was the decision, and this is its bill.
+cms = { version = "0.2.3", default-features = false, features = ["builder"] }
 # cms 0.2.3 exposes der 0.7 and x509-cert 0.2 types in SignedData. Keep these
 # versions aligned until cms migrates; newer versions are distinct Rust types.
-der = { version = "0.7", default-features = false }
+# `derive` for the ESS `signingCertificateV2` attribute (`sign_cms.rs`), which
+# no crate here types; `der_derive` was already in the tree through `cms`.
+der = { version = "0.7", default-features = false, features = ["derive"] }
+# The `Keypair` and `Signer` traits the `cms` builder signs through, which
+# `sign_cms.rs` implements over a key the OS holds. Already in the tree at 2.2
+# through `cms` and `ecdsa`, so declaring it adds no package.
+signature = { version = "2", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
 
 # Whether a signature still covers the bytes it was made over: `integrity.rs`.
@@ -337,6 +357,23 @@ windows = { version = "0.62", features = [
 # "open this document" rather than two that can drift.
 tauri-plugin-single-instance = "2.4.4"
 
+# Test-only software keys for `sign_cms.rs` and `sign_prepare.rs`, so every gate
+# run covers the CMS assembly and the splice without an OS key store. Both
+# already in the tree (rand 0.8.8, rand_chacha 0.3.1 over rand_core 0.6.4), so
+# this adds no package; nothing here reaches the shipped binary.
+[dev-dependencies]
+rand_chacha = "0.3"
+# The key-usage flags a test certificate states. Already in the tree through
+# `x509-cert`; Apache-2.0.
+flagset = "0.4"
+
+# `keystore.rs`'s macOS test hands `SecKeyCreateSignature` a key made in memory
+# with `SecKeyCreateWithData`, which `security-framework` does not wrap. Both
+# already in the tree beneath it; MIT OR Apache-2.0.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+security-framework-sys = "2"
+core-foundation = "0.10"
+
 [[example]]
 name = "tile-bench"
 path = "examples/tile_bench.rs"
@@ -444,6 +481,10 @@ path = "examples/links_probe.rs"
 [[example]]
 name = "signature-probe"
 path = "examples/signature_probe.rs"
+
+[[example]]
+name = "sign-probe"
+path = "examples/sign_probe.rs"
 
 [[example]]
 name = "search-probe"

@@ -187,6 +187,7 @@ touching `src-tauri/src/textedit/`. Its topics, in order:
 [`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md).** Its topics, in order:
 
 - Visual signatures and their Keychain/DPAPI store; the digital-signature warning before any write.
+- Certificate signing: the worker/app split, `sign_prepare.rs`, `sign_cms.rs`, `keystore.rs`.
 - AcroForm filling (`forms.rs`) and choice answers by option index.
 - Document tabs (`documenttabs.ts`), and two Windows worker-cleanup rules.
 - The worker writes with `lopdf`: append, rewrite, copies, print, merge, and `verify::scan`.
@@ -208,7 +209,7 @@ each provisional choice and the verdict is recorded per row (see `docs/PLAN.md` 
 | macOS print dialog | PDFKit + AppKit via [`objc2`](https://docs.rs/objc2) (Zlib OR Apache-2.0 OR MIT) | **Settled** — paginates and runs the panel; also the independent parser every print job is read back with |
 | Windows print dialog | `Windows.Data.Pdf` + GDI via [`windows`](https://docs.rs/windows) (MIT OR Apache-2.0) | **Settled** — reads the job back, rasterises each page onto a printer DC, `PrintDlgW` for the panel. Raster where macOS is vector; see below |
 | XMP metadata | [`quick-xml`](https://docs.rs/quick-xml) (MIT) | **Settled** — reads the catalog's `/Metadata` packet for conformance claims. Already in the tree through Tauri's `plist`, so it adds no package; namespace-aware, and expands no entity |
-| Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** — reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. Parsing only; there is no trust store and no chain building. PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
+| Certificates in a signature | [`cms`](https://docs.rs/cms) + [`x509-cert`](https://docs.rs/x509-cert) + [`der`](https://docs.rs/der) (Apache-2.0 OR MIT) | **Settled** — reads the signer's certificate out of `/Contents`: subject, issuer, serial, validity. No trust store, no chain building; `builder` assembles the CMS the OS signs (`sign_cms.rs`). PDFium's read-only signature API is not a second implementation but *is* the differential, through `signature-probe` |
 
 The PDFium pin is `pdfium-8066-tpdf.1`, installed by `scripts/fetch_pdfium.py` and
 verified by digest. TPDF builds the unpatched 8066 source through

@@ -164,6 +164,28 @@ ways: `cargo audit --file src-tauri/Cargo.lock` exits 0 with the entry and 1 wit
 entry becomes wrong the day anything here signs with `rsa`; Phase 6 step 2 signs inside the
 OS key store instead, which is part of why.
 
+**Signing, 2026-09-26: one feature, one direct crate, and ten packages in the lockfile.**
+Phase 6 step 2 assembles the CMS in the **app process** with `cms`'s `builder` feature. That
+feature was a decision taken before its cost was measured, and the cost is ten packages
+(`cargo metadata`: 619 to 629), seven of them compiled: `sha3` and `keccak`, and an older
+generation of the RustCrypto cipher stack the builder's `EnvelopedData` half needs --- `aes`
+0.8, `cbc` 0.1, `cipher` 0.4, `inout` 0.1, `block-padding` 0.3 --- beside their newer versions
+already here. `tls_codec`, `tls_codec_derive` and `zeroize_derive` are resolved and built for
+no target. All ten `Apache-2.0 OR MIT`, swept by the `notices` gate, and both lockfiles carry
+them. Writing the `SignedData` from `cms`'s own types would have cost none of them; the
+builder's value is the attribute ordering and the version rule, which are twenty lines. It is
+recorded here as the bill for a choice, not as a recommendation to undo it. `der` gains
+`derive` (for the ESS `signingCertificateV2` structures, which no crate types) and `signature`
+2.2 becomes a direct dependency for the builder's `Keypair` and `Signer` traits; both were
+already in the tree. The OS calls go through crates already here: `security-framework` on
+macOS, `windows-sys`'s `Win32_Security_Cryptography` feature on Windows.
+
+**The only private keys are the tests'.** `rand_chacha` and `flagset` are dev-dependencies, and
+on macOS `security-framework-sys` and `core-foundation` too --- all four already in the tree ---
+for `sign_cms/testkeys.rs` and the keystore test. `rsa`, `p256` and `p384` sign there and
+nowhere else; `sign_cms::tests::no_private_key_type_is_named_outside_the_tests` is the control
+`.cargo/audit.toml` now cites for the RUSTSEC-2023-0071 entry.
+
 **`fax` (MIT, pdf-rs project) was added 2026-09-18 and brings exactly one package** — its
 derive crate is behind a feature that is not enabled. It decodes the CCITT Group 4 stencil
 masks of scanned pages inside the worker, as one more parser of attacker-chosen bytes;

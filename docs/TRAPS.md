@@ -239,6 +239,7 @@ hop through the index.
 - Two page numbers that agree in every case anyone tried, and the step that parts them fails safe
 - A derived plan clears the fields the writer thought of, and keeps the ones added since
 - A page tree has edges pointing everywhere, so attributing an object to a page is a skip list
+- A new signature field passes the difference analysis that refused a new mark
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -290,6 +291,9 @@ hop through the index.
 - macOS has no `setsid`, so a detached restart never starts
 - `matches!` is not exhaustive, and a comment beside one said a new variant would be a compile error
 - `PDFPage.thumbnail` pixels are the main display's colour space, not sRGB
+- Creating a keychain file adds it to the user's search list, so a test cannot make one quietly
+- The first Security-framework call in a process can cost seconds, and a gate pays it every run
+- A feature on a crate already in the tree is not free: `cms`'s `builder` brought ten packages
 
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
@@ -24410,4 +24414,75 @@ When an oracle is built for one question, list how the subject opens documents a
 the oracle opens them the same way: the empty password, a repaired cross-reference, a
 non-strict parse. A step the subject performs and the oracle skips makes the oracle stricter on
 the wrong axis, and its refusals look like findings about the document.
+
+### A new signature field passes the difference analysis that refused a new mark
+
+2026-09-26, Phase 6 step 2. *Digital signatures constrain what may be edited at all* records
+spike 0.6: pyHanko's difference analysis rejected an appended **annotation** on a signed
+document at every DocMDP level, including the level that permits annotations. The same
+analysis, run by `sign-probe` over a revision that adds a **signature field** --- a new widget
+in the first page's `/Annots` and the form's `/Fields`, a new `/Sig` dictionary, `/SigFlags`
+raised --- accepts it on every fixture: each earlier signature intact, valid, covering its
+entire revision, modification level `FORM_FILLING`, DocMDP satisfied, the certified `/P 2`
+document included.
+
+So "any change after a signature is flagged" is not what the validator does, and neither is
+"the spec's permission level decides". It has rules for what it expects to see appended ---
+signing is one --- and flags what it has no rule for. That makes the answer for any new kind of
+appended change an experiment, not an inference from either direction of this entry: run
+`check_signature.py` on the result before a feature promises that earlier signatures survive
+it, and read the modification level rather than only `intact`.
+
+### Creating a keychain file adds it to the user's search list, so a test cannot make one quietly
+
+2026-09-26. The plan for Phase 6 step 2's macOS test was a temporary keychain under a temp
+directory, an identity imported into it, the keychain named explicitly in the search with
+`kSecMatchSearchList`, and **no change to the user's search list or default keychain**. The last
+condition cannot be met: `security create-keychain` and `SecKeychainCreate` both end in the
+Security framework's `StorageManager::created`, which adds the new keychain to the user's
+search list, and sets it as the default if there is none. Apple's open-source Security
+framework is the source for that; it was **not measured here**, because measuring it is the
+alteration the rule forbids. `security delete-keychain` removes it from the list again, which is
+why CI scripts that do this rarely notice --- they alter and restore user state, on a machine
+nobody logs in to.
+
+What was done instead, and what it leaves uncovered: `SecKeyCreateWithData` makes a key object
+in memory from the test's own key bytes, touching no keychain, and the shipped signing function
+is called with it. The identity search itself (`SecItemCopyMatching` over `kSecClassIdentity`)
+has no test, because only a keychain holding an identity can answer it.
+
+The general form: when a test's isolation rule says "never touch user state", find out which
+API call *creates* the resource and what that call registers as a side effect, before designing
+the test around the resource.
+
+### The first Security-framework call in a process can cost seconds, and a gate pays it every run
+
+2026-09-26, measured in `keystore.rs`'s tests. An in-memory `SecKeyCreateRandomKey`
+(`kSecAttrIsPermanent` false, so no keychain) took **24 s** on its first call in a test process
+and **3.8 s** on its second, of a different key type. The first `SecTrust` evaluation of a
+self-issued certificate with network fetching disallowed took **5.4 s** and **19.2 s** in two
+runs, and **0.5 ms** when repeated in the same process. The work is in the system daemons, not
+in the call, and it lands on whichever call is first.
+
+Two consequences. A test that generates an OS key costs the gate half a minute for nothing, so
+`the_os_signs_a_revision_that_the_verifier_calls_intact` imports key bytes with
+`SecKeyCreateWithData` instead, and the chain test is `#[ignore]`d with its cost as the reason.
+And the application pays the same first-call cost the first time the signing chooser lists
+identities, which is why that listing runs on the blocking pool.
+
+### A feature on a crate already in the tree is not free: `cms`'s `builder` brought ten packages
+
+2026-09-26. Phase 6 step 2 was decided to build its CMS with `cms`'s `builder` feature, on the
+reasoning that `cms` and the RustCrypto generation it uses were already here. Measured after
+enabling it: **619 to 629 packages** in `cargo metadata`, seven of them compiled --- `sha3`,
+`keccak`, and an **older generation** of the cipher stack (`aes` 0.8, `cbc` 0.1, `cipher` 0.4,
+`inout` 0.1, `block-padding` 0.3) for the builder's `EnvelopedData` half, beside the newer
+versions already present --- and three more resolved into the lockfile and built for no target.
+All permissive; the `notices` gate and `cargo audit` were both clean.
+
+The licence was never at risk. What the reasoning missed is that a feature switches on optional
+dependencies, and "the crate is already in the tree" says nothing about them; nor does "the same
+generation" rule out a duplicate of an older one. Before enabling a feature, read its line in
+the crate's `Cargo.toml` and count with `cargo metadata` before and after, the same way a new
+crate is counted. `docs/DETAIL.md` *Stack* records the bill.
 

@@ -818,6 +818,59 @@ for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
       "testdata/$f.pdf" --mode integrity
 done
 
+# SIGNING (Phase 6 step 2, 2026-09-26): does what tpdf signs verify under readers
+# that did not write it? sign-probe signs through the production path ---
+# sign_prepare::prepare (what the worker runs), sign_cms::finish,
+# save::write_signed --- with the key held by `openssl` and the value made by
+# `openssl pkeyutl`, so no key is ever in tpdf and the signer shares no code with
+# any verifier. Then three readers: tpdf's integrity.rs (every signature intact,
+# one more than before), pyHanko via check_signature.py (intact and valid; ours
+# covering ENTIRE_FILE, every earlier one ENTIRE_REVISION), and
+# `openssl cms -verify -binary -noverify` over the covered pieces. And three
+# controls that must turn every reader that can see them: the value spliced two
+# digits late, a signature over the wrong digest (written past finish's own
+# check, which is asserted to refuse it too), and one covered byte changed.
+# Needs `openssl` 3.x and `uv`; either missing is [FAIL]. The second argument is
+# a scratch directory it writes the key, the certificate and the outputs into.
+# macOS arm64, 2026-09-26, all green:
+#   text-base14 --key rsa|p256|p384        15/15 each
+#   incr-signed --key rsa                  17/17
+#   incr-two-signers --key p256            19/19
+#   incr-certified-2 --key p384            17/17
+#   incr-certified-3 --key rsa             17/17 (pyHanko logs that its diff
+#                                          policy was not designed for /P 3)
+#   incr-xrefstream --key p256             15/15 (an xref-stream update)
+# pyHanko classes every earlier signature's appended change FORM_FILLING with
+# DocMDP satisfied. incr-certified-1 (/P 1) and incr-encrypted-open exit 2 with
+# tpdf's refusal, which is the answer: neither can be signed.
+for f in text-base14:rsa text-base14:p256 text-base14:p384 incr-signed:rsa \
+         incr-two-signers:p256 incr-certified-2:p384 incr-certified-3:rsa \
+         incr-xrefstream:p256; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
+      "testdata/${f%%:*}.pdf" "/tmp/tpdf-sign-probe/${f%%:*}-${f##*:}" --key "${f##*:}"
+done
+# The OS key store, which no gate can reach as a store. What the gates do run on
+# macOS: keystore::tests::the_os_signs_a_revision_that_the_verifier_calls_intact
+# hands SecKeyCreateSignature a key made in memory by SecKeyCreateWithData ---
+# no keychain touched --- through the same function the shipped path calls.
+# Two more are ignored and run by hand. On macOS, the chain API (the first
+# SecTrust evaluation in a process measured 5.4 s and 19.2 s):
+cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_chain_api -- --ignored
+# On Windows, the store end to end: a CNG certificate created in CurrentUser\My,
+# found by identities(), used to sign, and removed with its key --- NOT YET RUN:
+cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_windows_store -- --ignored --nocapture
+# There is no macOS identity-store test, and the reason is recorded rather than
+# worked around: creating a keychain file (`security create-keychain`,
+# SecKeychainCreate) adds it to the user's keychain search list.
+#
+# No window check drives signing end to end, and the reason is the same one: the
+# real app signs only with an identity in the reader's store, so a harness phase
+# would need one put there. By hand, on a machine whose store already holds a
+# signing identity: a build of the app, any PDF, File > Sign document..., then
+#   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
+#       <the signed copy> --mode integrity
+# which holds tpdf's verdict on the written file against pyHanko's.
+
 # Marks: does a highlight a reader makes land on the words they made it from?
 # Run ALL FOUR modes, and run them on BOTH geometry fixtures -- that is not
 # thoroughness, it is the only way two of the checks can fail at all. Measured by

@@ -212,6 +212,17 @@ pub enum Request {
         /// What to write. Never a path, never a destination.
         plan: crate::edits::Plan,
     },
+    /// Build the revision a signature goes into.
+    ///
+    /// [`Request::Append`]'s sibling for Phase 6 step 2, and here for its
+    /// reason: `sign_prepare::prepare` parses the document. It names nothing the
+    /// worker could act on --- a time, which becomes the signature's `/M` --- and
+    /// it carries no key, because the worker never holds one: the answer is a
+    /// revision with an empty hole, and the app process fills it.
+    PrepareSignature {
+        /// Seconds since the epoch.
+        at: u64,
+    },
     /// Rewrite the mapped document under a plan, into the handed-over file.
     ///
     /// **The whole-document counterpart of [`Request::Append`], and the reason
@@ -494,6 +505,8 @@ pub enum Reply {
     Properties(Box<crate::docinfo::Properties>),
     /// The update section for a save that only adds marks.
     Append(crate::save::Update),
+    /// The revision a signature goes into, with its hole still empty.
+    PreparedSignature(crate::sign_prepare::Unsigned),
     /// How many bytes a rewrite wrote into the handed-over file.
     ///
     /// A length and nothing else: the document itself went down the output
@@ -800,6 +813,7 @@ mod tests {
             ("Mapping", "mapping"),
             ("Properties", "properties"),
             ("Append", "append"),
+            ("PrepareSignature", "prepare_signature"),
         ];
 
         /// Variants that reach a worker by another route, and why.
@@ -1160,6 +1174,13 @@ mod tests {
                 pages: 2,
                 built_against: 888,
             }),
+            Reply::PreparedSignature(crate::sign_prepare::Unsigned {
+                update: vec![4, 5, 6],
+                built_against: 888,
+                range: [0, 900, 966, 12],
+                digest: vec![7; 32],
+                field: "Signature2".into(),
+            }),
             // The second confusable pair, and the same trick: `Reread` and
             // `Rewrote` are both one `usize`, so given the same number only the
             // tag separates a page count from a byte count.
@@ -1198,6 +1219,7 @@ mod tests {
                 | Reply::Mapping(_)
                 | Reply::Properties(_)
                 | Reply::Append(_)
+                | Reply::PreparedSignature(_)
                 | Reply::Reread(_)
                 | Reply::Rewrote(_)
                 | Reply::Verified(_)

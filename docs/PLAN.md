@@ -14873,7 +14873,7 @@ API is read-only, so this needs its own crypto stack.
 and the order is the order in which a claim can be made honestly.
 
 1. **Is the signature intact?** Done 2026-09-26, below.
-2. **Sign with a certificate the reader already has** --- from the macOS keychain or the
+2. **Sign with a certificate the reader already has** --- done 2026-09-26, below; from the macOS keychain or the
    Windows certificate store, **with the key never leaving the OS**. The worker prepares the
    document: the signature dictionary with a reserved `/Contents`, the `/ByteRange`, and the
    digest over it. The app process asks the OS to sign that digest (`SecKeyCreateSignature`;
@@ -14960,6 +14960,84 @@ wrongly. No fixture here writes any of them. Ed25519 and curves other than P-256
 are `unchecked`, algorithm. A PSS signature whose mask hash differs from its message hash is
 refused rather than verified, because `rsa` uses one hash for both.
 
+#### Sign with a certificate the reader has --- done 2026-09-26
+
+*Sign document…* (`file.signDocument`) signs the open document with a certificate from the
+reader's own store and writes the result to a **new file**; the original is never written.
+**What a signature made here claims**: these bytes, as written, were signed by the key in this
+certificate, at the time the reader's clock gave. Nothing about who holds the key --- that is
+the reader's verifier's question, and step 3's.
+
+| Half | Where | What it does |
+|---|---|---|
+| Revision | worker, `sign_prepare.rs` | Parses the document, builds one incremental revision --- a `/Sig` dictionary with a zeroed `/Contents` and a fixed-width `/ByteRange`, an invisible widget that is also the field, the page's `/Annots` and the form's `/Fields` extended, `/SigFlags` 3 --- and returns it with the range and the SHA-256 it covers. Holds no key. |
+| Signature | app process, `sign_cms.rs` + `keystore.rs` | Reads the file as bytes, checks every number the worker sent against them and **recomputes the digest over the bytes it will write**, builds the CMS (`cms`'s builder), has the OS sign `SHA-256(signed attributes)`, splices the value in by position, and refuses unless `integrity::check` calls the result `intact`. Parses no document. |
+| Read-back | a fresh worker, `save::Verifier::signatures` | Maps the written file's handle and answers `Request::Properties`, so the verdict the reader is told is computed where the properties dialog's is. |
+
+Decisions, each with its reason:
+
+- **PAdES baseline B-B.** `/SubFilter /ETSI.CAdES.detached`, SHA-256, and exactly three signed
+  attributes: `contentType`, `messageDigest`, and ESS `signingCertificateV2` (hash, issuer and
+  serial), which binds the signature to one certificate rather than to any certificate over
+  the same key. The time is `/M`, not a `signingTime` attribute, as B-B requires. RSA signs
+  PKCS#1 v1.5 (2048 bits or more); ECDSA signs on P-256 or P-384 with SHA-256. Anything else
+  is not offered.
+- **The reserved span is 32 KiB of DER, 65,536 hex digits, and step 2 may fill half.** The
+  size is fixed the moment the revision is serialised, so it had to be chosen for step 3 now:
+  an RFC 3161 token is an unsigned attribute carrying the TSA's own chain, typically 3 to
+  8 KiB. Step 2's CMS is refused above 16 KiB (`STEP_TWO_LIMIT`), which keeps the other half
+  for the token and needs no second format. Measured: an RSA-2048 signer with an RSA-2048
+  issuer is **1,899 bytes** of CMS. The price is 64 KB of zeros per signature in the file.
+- **Offered certificates** have a key of those kinds, are inside their validity now, and ---
+  when they state a key usage --- include `digitalSignature` **or** `nonRepudiation`. The
+  second is accepted on purpose: qualified signature cards commonly carry `nonRepudiation`
+  alone. The rest are listed with the reason, so a reader whose card holds only an expired
+  certificate is told that rather than told they have none. Extended key usage is not
+  consulted.
+- **The chain is what the OS assembles without the network** --- `SecTrust` with fetching
+  disallowed; `CertGetCertificateChain` cache-only with AIA off. Not a trust decision.
+- **Refused before the OS is asked**: unsaved edits (a signature is over the file, and the
+  reader is looking at the file plus their edits --- say *save first*); an **encrypted**
+  document, because `lopdf` would encrypt the signature's own `/Contents` with the document,
+  which PDF 32000-1 §7.6.2 excludes, and no reader could then check it; a certification that
+  permits **no** change (DocMDP `/P 1`); and a file over `save::APPEND_MAX_BYTES` (256 MiB),
+  since the worker re-parses it at about three times its size and a Windows worker's commit
+  cap would kill it rather than let it refuse. `/P 2` and `/P 3` are signed.
+- **The signed-document warning is not shown**, and deliberately: it warns that *saving* can
+  invalidate signatures, and this writes no byte of the earlier revisions.
+
+**Measured, by three readers that share no code.** `sign-probe` signs through this path with
+the key held by `openssl` and the value made by `openssl pkeyutl`, then asks tpdf's own
+verifier, pyHanko and `openssl cms -verify -binary -noverify`. macOS arm64, 2026-09-26, every
+check green on eight runs: an unsigned document with RSA-2048, P-256 and P-384 (15/15 each);
+`incr-signed` (17/17), `incr-two-signers` (19/19), `incr-certified-2` and `-3` (17/17); and
+`incr-xrefstream`, whose update is a cross-reference stream (15/15). **pyHanko reads every
+earlier signature as intact, valid and covering its entire revision, with the appended change
+classed `FORM_FILLING` and DocMDP satisfied** --- on the certified `/P 2` document too. That is
+the opposite of what spike 0.6 found for an *annotation* appended to a signed document
+(`docs/TRAPS.md`, *Digital signatures constrain what may be edited at all*): its difference
+policy knows a new signature field and did not know a new mark. The three controls turn every
+reader that can see them: the value spliced two digits late (tpdf not intact, OpenSSL refuses),
+a signature over the wrong digest (`broken`, `valid=no`, OpenSSL refuses, `finish` refuses),
+and one covered byte changed (`altered`, `intact=no`, OpenSSL refuses). `qpdf --check` passes
+the outputs, and `signature-probe --mode agree` finds PDFium reading the same signatures,
+certificates and ranges.
+
+**The OS half.** On macOS the shipped call (`keystore::platform::sign_with`, the one used after
+`SecIdentityCopyPrivateKey`) is exercised on every gate run with a key made in memory by
+`SecKeyCreateWithData`, RSA and P-256, and the result is `intact`. **The temporary-keychain test
+was not written**: creating a keychain file adds it to the user's keychain search list, which is
+user-level state, and the rule for that test was to stop rather than alter it and undo it. So
+`SecItemCopyMatching` over identities is **not covered by a test**. The first `SecTrust`
+evaluation in a process costs seconds (5.4 s and 19.2 s measured), which the chooser pays once.
+**Windows compiles** (`scripts/check_windows.py`) **and has not run**: its ignored test creates a
+CNG certificate in `CurrentUser\My`, signs, and removes it.
+
+**Not done.** A visible appearance --- the Phase 4 visual signature as the widget's `/AP` is the
+next step, and small: the widget exists and has a rectangle. Signing into an existing empty
+signature field. Certification signatures (DocMDP). Encrypted documents, which need a writer
+that leaves the signature's string unencrypted. And step 3.
+
 **Open questions for steps 2 and 3.**
 
 - **Trust, when it comes: the OS's store or Adobe's list?** `SecTrustEvaluateWithError` and
@@ -14971,9 +15049,8 @@ refused rather than verified, because `rsa` uses one hash for both.
 - **Timestamps need the network**, both to make one (step 3) and to check revocation at the
   time one attests. That is a second network authority beside the updater and is the one
   real change to the threat model this phase makes.
-- **Step 2's splice** writes into a reserved span whose size must be chosen before the
-  signature exists. An OS signature plus the chain the store returns is a few kilobytes; a
-  timestamp token adds several more. Reserving for step 3 in step 2 avoids a second format.
+- ~~**Step 2's splice** writes into a reserved span whose size must be chosen before the
+  signature exists.~~ **Answered 2026-09-26**: 32 KiB, half of it for step 3's token --- above.
 
 ### Cross-cutting
 

@@ -72,8 +72,8 @@ Four principals, each trusting only what is below it in the table.
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — nine of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
-| **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — ten of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), and can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
+| **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -87,10 +87,10 @@ mounts a viewer. Resource limits remain per worker, not an aggregate limit acros
 The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
-`redact_copy`, `redact_document` and `redact_raster_copy`, and all nine write a file at the process's authority
-with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for nine specific writes; the flat version reads as the
+`redact_copy`, `redact_document`, `redact_raster_copy` and `sign_document`, and all ten write a file at the
+process's authority with a path the caller chose.
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy sign_document --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for ten specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -829,7 +829,8 @@ it was written rather than silently re-pointed, because what it is about is a co
 summary going stale, and re-pointing it every time would erase its own evidence.)
 
 **The current list lives in §3 and is the authority; do not count from this section.** It is
-**nine** as of 2026-09-07 with `redact_raster_copy`. It reached eight on 2026-08-30 without anybody adding three of them here or
+**nine** as of 2026-09-07 with `redact_raster_copy`, and **ten** as of 2026-09-26 with
+`sign_document` (§T6.21). It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names —
@@ -1170,10 +1171,10 @@ public key --- RSA PKCS#1 v1.5 and PSS through `rsa`, ECDSA over P-256 and P-384
 the signature value. What bounds it:
 
 - **The worker, again.** It is called from `docinfo::scan_from`, so it runs where every other
-  parser does and needed no new mechanism. No key material other than the document's own
-  public keys exists anywhere in tpdf; `rsa`'s RUSTSEC-2023-0071 is a timing leak in
-  private-key operations, which this never performs, and is accepted in `.cargo/audit.toml`
-  on that ground.
+  parser does and needed no new mechanism. No private key exists anywhere in tpdf; `rsa`'s
+  RUSTSEC-2023-0071 is a timing leak in private-key operations, which this never performs, and
+  is accepted in `.cargo/audit.toml` on that ground. Signing (§T6.21) did not change that: the
+  OS signs, and `rsa` signs only in the test build, with keys the tests make.
 - **The blob is the one `signature_contents` already prepared**, under `MAX_SIG_BLOB` and the
   BER walk's bounds, so no new byte reaches a decoder the certificate reader did not already
   reach. The signed attributes are located by walking the same, already-decoded structure.
@@ -2079,6 +2080,69 @@ restated for it.
 them; two of them did, and that is fixed in the same increment. A handle goes back to the render
 service to be reused, so a list left under one would answer the next file's clicks with this
 one's addresses.
+
+#### T6.21 — Signing with a certificate the reader has, added 2026-09-26
+
+**What changed.** `sign_document(doc, source, identity, path)` signs the open document and
+writes the result to a new file, and `sign_identities` lists the certificates in the reader's
+store that have a private key. It is Phase 6 step 2 (`docs/PLAN.md` §9), and it is the first
+feature that reaches the reader's **keys** --- the second thing §1 puts first after the files.
+
+**The split is the security design, and each half is refused the other's authority.**
+
+- **The worker parses and holds no key.** `sign_prepare::prepare` runs where every other
+  parse runs (`Request::PrepareSignature`, answered by the document's own pool) and returns an
+  incremental update with a zeroed `/Contents` hole, its `/ByteRange` and a SHA-256. Nothing
+  about a key, a certificate or the store crosses to it; the request carries a time and
+  nothing else.
+- **The app process holds the authority and parses no document.** `sign_cms.rs` reads the
+  file's bytes and does arithmetic on them: the update must have been built against exactly
+  this length, the range must frame exactly the reserved hole, the hole must be empty, and
+  **the digest is recomputed here over the bytes that will be written** and compared with the
+  worker's. A worker that described one document and built another is refused before the OS
+  is asked anything. The CMS is assembled from the reader's certificate and the digest; the
+  OS signs `SHA-256(signed attributes)` (`SecKeyCreateSignature`; `NCryptSignHash` through
+  `CryptAcquireCertificatePrivateKey` with CNG only); the value is spliced into the hole by
+  position. Before anything is written, `integrity::check` --- pure arithmetic and CMS over
+  bytes this process assembled --- must call the result `intact`.
+- **A worker reads the written file back.** `save::Verifier::signatures` maps the new file's
+  handle into a fresh worker and asks `Request::Properties`, so the verdict the reader is shown
+  is computed where the properties dialog's is.
+
+**The key never leaves the OS, and tpdf never sees a PIN.** There is no API here that reads a
+key or accepts one: `sign_cms::Key` has one method, which signs a digest. Keychain access
+confirmations, smart-card PINs and Windows' key-protection dialogs are the operating system's
+own, raised during the one call that signs; that is correct and expected, and nothing in the
+webview or the app process can observe what is typed into them. A prompt appearing when the
+reader asked to sign is the system working; a prompt appearing at any other time is not ours.
+
+**What the certificate listing reads, and what it does not.** Certificates from the reader's
+own store are parsed in the app process (`x509-cert`) to decide whether to offer them: key
+kind, validity at the current time, key usage, and extended key usage --- a certificate that
+states one must name a purpose a document signature serves (`sign_cms::DOCUMENT_PURPOSES`), so a
+code-signing, TLS or login certificate is listed with its reason and not offered. Added
+2026-09-26, after the only identity in the owner's keychain, an Apple Developer ID code-signing
+certificate, turned out to pass the first three. These are the reader's certificates, not the
+document's. The chain placed in the CMS is whatever the OS chain API assembles **without the
+network** --- `SecTrust` with fetching disallowed, `CertGetCertificateChain` cache-only with AIA
+disabled --- so signing adds no network authority; the updater remains the only one (§T9), and
+fetching intermediates or revocation data is Phase 6 step 3's decision. Building the chain is
+not a trust decision here and nothing is concluded from it.
+
+**What is written, and what is refused.** The original is never modified: the signed copy is
+the original's bytes followed by one revision, written through the same staging and rename as
+every other copy (`save::write_signed`), and naming the original is refused. Refused before the
+OS is asked: a document with unsaved edits (a signature over the file would not be over what
+the reader sees); an **encrypted** document, because the writer would encrypt the signature's
+own value; a certification that permits **no** change (DocMDP `/P 1`); and a file over
+`save::APPEND_MAX_BYTES`, the bound a marks-only append already works under (§T3).
+
+**What a signature made here claims.** That these bytes, as written, were signed by the key in
+this certificate, at the time the reader's clock gave --- PAdES B-B has no timestamp, so `/M` is
+the machine's word. It does not claim the certificate is trusted by anybody, and a reader's
+verifier decides that. Earlier signatures are left intact because their bytes are the new
+file's prefix; `sign-probe` shows pyHanko reading each earlier one as covering its entire
+revision with the appended change classed as form filling.
 
 ### T7 — Distribution and update
 
@@ -3389,6 +3453,17 @@ which is what makes it evidence rather than a milestone.
     and print" font) leaves nothing in the file to say so, and the edit goes ahead. Nothing
     inside the document can close that; inferring rights from a font's name would be a guess
     presented as a check.
+
+24. **A compromised worker chooses the revision the reader signs** (§T6.21), added 2026-09-26.
+    The app process checks the update's arithmetic --- its length, its range, its empty hole
+    and the digest over the bytes written --- and deliberately does not parse it, so it cannot
+    say *what* the new revision contains. A worker the document has taken over could write a
+    revision that also replaces a page's content, and the reader would sign that. The read-back
+    by a second worker and the reader's own verifier see the change as part of the signed
+    revision, not as an alteration after it. Bounded by the worker being the process that
+    already renders the document to the reader --- a worker that can lie here can lie about
+    every pixel --- and not closed: closing it needs an independent reader of the update in the
+    app process, which is the parse the split exists to keep out.
 
 ## 8. How to re-verify any of this
 

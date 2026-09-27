@@ -4413,8 +4413,8 @@ MUTATIONS += [
         # anything can go red about it.
         "release-notes: call a shipped command unbuilt",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.signDocument -->",
-        "          <!-- not-built: edit.signDocument edit.insertPages -->",
+        "          <!-- not-built: file.timestampSignature -->",
+        "          <!-- not-built: file.timestampSignature edit.insertPages -->",
         "calls nothing unbuilt that the application registers",
     ),
     Mutation(
@@ -4433,8 +4433,8 @@ MUTATIONS += [
         # nothing, which is also the only shape this can fail as.
         "release-notes: claim something the README does not",
         ".github/workflows/release.yml",
-        "          <!-- not-built: edit.signDocument -->",
-        "          <!-- not-built: edit.signDocument edit.editTextBox -->",
+        "          <!-- not-built: file.timestampSignature -->",
+        "          <!-- not-built: file.timestampSignature edit.editTextBox -->",
         "agrees with the README about what is not built",
     ),
     Mutation(
@@ -4455,7 +4455,7 @@ MUTATIONS += [
         # it.
         "readme: say a shipped command is not built",
         "README.md",
-        "  <!-- not-built: edit.signDocument -->",
+        "  <!-- not-built: file.timestampSignature -->",
         "  <!-- not-built: edit.stamp.approved -->",
         "claims nothing absent that the application registers",
     ),
@@ -4494,8 +4494,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Certificate-based digital signing and signature verification.",
-        "- Certificate-based digital signing <!-- built: file.print --> and signature verification.",
+        "- Timestamped and long-term-validation signatures, certification signatures, a visible",
+        "- Timestamped and long-term-validation signatures, <!-- built: file.print --> certification signatures, a visible",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -5500,6 +5500,8 @@ MUTATIONS += [
 ]
 
 TEST_FILES = [
+    # Added 2026-09-26 with Phase 6 step 2's sequence and sentences.
+    "src/lib/signing.test.ts",
     "src/lib/pendingimport.test.ts",
     "src/lib/palette.test.ts",
     "src/lib/textedit.test.ts",
@@ -8139,6 +8141,54 @@ MUTATIONS += [
         '    return this.queue.then(() => undefined, () => undefined);',
         '    return Promise.resolve();',
         "waits for a flushed write to be answered, so a relaunch cannot outrun it"),
+]
+
+# --- signing with a certificate the reader has (Phase 6 step 2, 2026-09-26) ---
+# `signing.ts` is the sequence and the sentences; `App.svelte` supplies the
+# shell. Each mutation removes one step or one word the reader relies on.
+MUTATIONS += [
+    Mutation("signing: sign over unsaved edits", "src/lib/signing.ts",
+        "  if (shell.dirty()) return UNSAVED;\n", "",
+        "refuses unsaved edits before asking the OS anything"),
+    Mutation("signing: go on after the chooser was cancelled", "src/lib/signing.ts",
+        "  if (identity === null) return null;\n", "",
+        "stops without a word when the reader cancels either question"),
+    Mutation("signing: go on after the save panel was cancelled", "src/lib/signing.ts",
+        "  if (!path) return null;\n", "",
+        "stops without a word when the reader cancels either question"),
+    Mutation("signing: open the chooser with nothing in it", "src/lib/signing.ts",
+        "  if (choices.usable.length === 0) return nothingToChoose(choices);\n", "",
+        "says what was found when nothing can sign, and asks nothing more"),
+    Mutation("signing: report success for a signature that did not read back intact",
+        "src/lib/signing.ts",
+        '  if (!ours || ours.integrity?.verdict !== "intact") {',
+        "  if (!ours) {",
+        "puts a new signature that did not read back intact first, and warns"),
+    Mutation("signing: leave the earlier signatures out of the report", "src/lib/signing.ts",
+        "  const earlier = signed.signatures.filter((s) => !s.ours);",
+        "  const earlier = signed.signatures.filter(() => false);",
+        "lists every earlier signature after the new one"),
+    Mutation("signing: strip only a lowercase .pdf from the suggested name", "src/lib/signing.ts",
+        '  const stem = basename(openPath).replace(/\\.pdf$/i, "");',
+        '  const stem = basename(openPath).replace(/\\.pdf$/, "");',
+        "suggests a -signed name beside the original, whatever its case"),
+    Mutation("signing: say nothing about what was found but not offered", "src/lib/signing.ts",
+        "  if (choices.skipped.length === 0) return none;\n", "  return none;\n",
+        "names what was found but not offered, and says nothing more when nothing was"),
+    Mutation(
+        # The inert command again: registered, guarded, and reaching nothing.
+        "appcommands: register Sign document without reaching its action",
+        "src/lib/appcommands.ts",
+        "      run: () => actions.signDocument(),",
+        "      run: () => actions.saveCopy(),",
+        "signs the document through its own command, offered with or without edits"),
+    Mutation("appcommands: withhold Sign document on an edited document",
+        "src/lib/appcommands.ts",
+        """      title: "Sign document\\u2026",
+      enabled: withDocument,""",
+        """      title: "Sign document\\u2026",
+      enabled: () => withDocument() && !actions.isDirty(),""",
+        "signs the document through its own command, offered with or without edits"),
 ]
 
 if __name__ == "__main__":

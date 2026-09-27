@@ -1,0 +1,443 @@
+//! Does what tpdf signs verify under readers that did not write it?
+//!
+//! Phase 6 step 2's instrument. It signs a PDF through the production path ---
+//! `sign_prepare::prepare`, the function the worker runs, then
+//! `sign_cms::finish` and `save::write_signed` --- with one piece swapped: the
+//! key is not the OS's but an `openssl`-generated one, and **`openssl pkeyutl`
+//! makes the signature value**. That keeps the key out of tpdf entirely, as the
+//! OS keeps it on the shipped path, and makes the signer a program that shares
+//! no code with the verifier either.
+//!
+//! Then three readers judge the file:
+//!
+//! 1. **tpdf's own** `integrity.rs`, through `docinfo::scan`, as the properties
+//!    dialog reads it: every signature `intact`, one more than the input had.
+//! 2. **pyHanko**, through `testdata/check_signature.py --json`: every signature
+//!    `intact` and `valid`, ours covering the entire file and every earlier one
+//!    an entire revision --- which is what "the earlier signature is still
+//!    intact, now with a revision appended" means in its words.
+//! 3. **OpenSSL**: `openssl cms -verify -binary -noverify` over the two covered
+//!    pieces joined, with the CMS blob cut out of the hole. `-noverify` skips the
+//!    certificate chain, which is trust and not this step's question.
+//!
+//! And three controls, each of which must turn every reader that can see it:
+//!
+//! - **the value spliced two digits late**: the hole no longer holds the value,
+//!   so tpdf must not call it intact and OpenSSL must refuse the blob it cuts;
+//! - **a signature over the wrong digest**, written past `finish`'s own check:
+//!   tpdf `broken`, pyHanko `valid=no`, OpenSSL a verification failure;
+//! - **one byte changed inside the signed range**: tpdf `altered`, pyHanko
+//!   `intact=no`, OpenSSL a digest mismatch.
+//!
+//! Without those, three readers agreeing would say nothing: a reader that
+//! answered "fine" to everything would agree too.
+//!
+//! Usage:
+//!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384]
+//!
+//! Needs `openssl` (3.x) and `uv`. Either missing is `[FAIL]`, never a pass.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use tpdf_lib::integrity::Verdict;
+use tpdf_lib::sign_cms::{self, Key, KeyKind};
+use tpdf_lib::sign_prepare;
+
+struct Report {
+    passed: usize,
+    failed: usize,
+}
+
+impl Report {
+    fn check(&mut self, what: &str, ok: bool, detail: &str) {
+        if ok {
+            self.passed += 1;
+            println!("[PASS] {what}");
+        } else {
+            self.failed += 1;
+            println!("[FAIL] {what}: {detail}");
+        }
+    }
+}
+
+/// A key `openssl` holds, asked to sign one digest.
+struct Openssl {
+    key: PathBuf,
+    scratch: PathBuf,
+    /// Flip a bit of the digest before signing: the wrong-digest control.
+    misdirect: bool,
+}
+
+impl Key for Openssl {
+    fn sign_digest(&self, _kind: KeyKind, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
+        let mut digest = *digest;
+        if self.misdirect {
+            digest[0] ^= 0x01;
+        }
+        let input = self.scratch.join("digest.bin");
+        let output = self.scratch.join("value.bin");
+        std::fs::write(&input, digest).map_err(|e| e.to_string())?;
+        // `-pkeyopt digest:sha256` makes RSA wrap the digest in a SHA-256
+        // DigestInfo (PKCS#1 v1.5) and ECDSA answer in DER --- the two forms
+        // `sign_cms::Key` promises.
+        run(Command::new("openssl")
+            .args(["pkeyutl", "-sign", "-pkeyopt", "digest:sha256", "-inkey"])
+            .arg(&self.key)
+            .arg("-in")
+            .arg(&input)
+            .arg("-out")
+            .arg(&output))?;
+        std::fs::read(&output).map_err(|e| e.to_string())
+    }
+}
+
+fn run(command: &mut Command) -> Result<String, String> {
+    let out = command.output().map_err(|e| format!("{command:?}: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "{command:?}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (input, scratch) = match args.as_slice() {
+        [input, scratch, ..] => (PathBuf::from(input), PathBuf::from(scratch)),
+        _ => {
+            eprintln!("usage: sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384]");
+            std::process::exit(2);
+        }
+    };
+    let kind = match args
+        .iter()
+        .position(|a| a == "--key")
+        .map(|at| args.get(at + 1))
+    {
+        None => "rsa",
+        Some(Some(kind)) => kind.as_str(),
+        Some(None) => {
+            eprintln!("--key needs a value");
+            std::process::exit(2);
+        }
+    };
+    match probe(&input, &scratch, kind) {
+        Ok(true) => {}
+        Ok(false) => std::process::exit(1),
+        Err(e) => {
+            println!("[FAIL] {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// A key and a self-issued certificate for it, made by `openssl`.
+fn credentials(scratch: &Path, kind: &str) -> Result<(PathBuf, Vec<u8>), String> {
+    let key = scratch.join("key.pem");
+    let pem = scratch.join("cert.pem");
+    let der = scratch.join("cert.der");
+    let algorithm: &[&str] = match kind {
+        "rsa" => &["-newkey", "rsa:2048"],
+        "p256" => &["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256"],
+        "p384" => &["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-384"],
+        other => return Err(format!("unknown key kind {other}")),
+    };
+    run(Command::new("openssl")
+        .args(["req", "-x509", "-nodes", "-days", "2", "-sha256"])
+        .args(algorithm)
+        .args([
+            "-subj",
+            "/CN=tpdf sign-probe",
+            "-addext",
+            "keyUsage=critical,digitalSignature",
+        ])
+        .arg("-keyout")
+        .arg(&key)
+        .arg("-out")
+        .arg(&pem))?;
+    run(Command::new("openssl")
+        .args(["x509", "-outform", "DER", "-in"])
+        .arg(&pem)
+        .arg("-out")
+        .arg(&der))?;
+    Ok((key, std::fs::read(&der).map_err(|e| e.to_string())?))
+}
+
+/// Every signed field's verdict, as the properties dialog reads it.
+fn tpdf_verdicts(bytes: &[u8]) -> Result<Vec<(String, Verdict)>, String> {
+    Ok(tpdf_lib::docinfo::scan(bytes, 1, None)?
+        .signatures
+        .into_iter()
+        .filter(|s| s.signed)
+        .map(|s| (s.field, s.integrity.unwrap_or_default().verdict))
+        .collect())
+}
+
+/// What pyHanko concludes about each signature in `file`.
+fn pyhanko(file: &Path) -> Result<Vec<serde_json::Value>, String> {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/check_signature.py");
+    let out = run(Command::new("uv")
+        .args(["run", "--with", "pyhanko", "--quiet", "python3"])
+        .arg(&script)
+        .arg("--json")
+        .arg(file))?;
+    let found: Vec<serde_json::Value> = out
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(|e| format!("{e}: {line}")))
+        .collect::<Result<_, _>>()?;
+    if let Some(reason) = found.iter().find_map(|v| v.get("unreadable")) {
+        return Err(format!("pyHanko cannot read {}: {reason}", file.display()));
+    }
+    Ok(found)
+}
+
+/// pyHanko's one-line summary, for the modification level it reports.
+fn pyhanko_summary(file: &Path) -> String {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/check_signature.py");
+    run(Command::new("uv")
+        .args(["run", "--with", "pyhanko", "--quiet", "python3"])
+        .arg(&script)
+        .arg(file))
+    .unwrap_or_else(|e| e)
+}
+
+/// `openssl cms -verify` over the signature whose value sits at `range`.
+///
+/// The blob is cut out of the hole exactly as a verifier would: the hex
+/// between `<` and `>`, decoded, and ended where its structure ends.
+fn openssl_verifies(bytes: &[u8], range: [u64; 4], scratch: &Path) -> Result<(), String> {
+    let [_, first, second, _] = range.map(|n| n as usize);
+    let hex = &bytes[first + 1..second - 1];
+    let raw: Vec<u8> = hex
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap_or("zz"), 16))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("the hole is not hex: {e}"))?;
+    let blob = tpdf_lib::ber::to_definite_length(&raw).ok_or("the hole holds no CMS value")?;
+    let (blob_path, content) = (scratch.join("blob.der"), scratch.join("covered.bin"));
+    std::fs::write(&blob_path, blob).map_err(|e| e.to_string())?;
+    std::fs::write(&content, [&bytes[..first], &bytes[second..]].concat())
+        .map_err(|e| e.to_string())?;
+    run(Command::new("openssl")
+        .args([
+            "cms",
+            "-verify",
+            "-binary",
+            "-noverify",
+            "-inform",
+            "DER",
+            "-in",
+        ])
+        .arg(&blob_path)
+        .arg("-content")
+        .arg(&content)
+        .args(["-out", "/dev/null"]))
+    .map(|_| ())
+}
+
+fn probe(input: &Path, scratch: &Path, kind: &str) -> Result<bool, String> {
+    std::fs::create_dir_all(scratch).map_err(|e| e.to_string())?;
+    let mut report = Report {
+        passed: 0,
+        failed: 0,
+    };
+    let original = std::fs::read(input).map_err(|e| format!("{}: {e}", input.display()))?;
+    let before = tpdf_verdicts(&original)?.len();
+    let (key_path, certificate) = credentials(scratch, kind)?;
+    let key = Openssl {
+        key: key_path,
+        scratch: scratch.to_path_buf(),
+        misdirect: false,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+
+    let unsigned = sign_prepare::prepare(original.clone(), now, None)?;
+    let range = unsigned.range;
+    let field = unsigned.field.clone();
+    let bytes = sign_cms::finish(original.clone(), unsigned.clone(), &certificate, &[], &key)?;
+    let stem = input
+        .file_stem()
+        .map_or("document".into(), |s| s.to_string_lossy().into_owned());
+    let out = scratch.join(format!("{stem}-signed.pdf"));
+    tpdf_lib::save::write_signed(input, &out, &bytes).map_err(|why| why.message)?;
+    let written = std::fs::read(&out).map_err(|e| e.to_string())?;
+    println!(
+        "signed {} as {field} with {kind}: {} -> {} bytes, {} earlier signature(s)",
+        input.display(),
+        original.len(),
+        written.len(),
+        before
+    );
+
+    // --------------------------------------------------------- the file
+    report.check(
+        "the written file is the original followed by one revision",
+        written.starts_with(&original) && written.len() > original.len(),
+        "the original's bytes are not the file's prefix",
+    );
+    let ours = tpdf_verdicts(&written)?;
+    report.check(
+        "tpdf: one signature more than before",
+        ours.len() == before + 1,
+        &format!("{} before, {} after", before, ours.len()),
+    );
+    for (name, verdict) in &ours {
+        report.check(
+            &format!("tpdf: {name} intact"),
+            *verdict == Verdict::Intact,
+            &format!("{verdict:?}"),
+        );
+    }
+    let theirs = pyhanko(&out)?;
+    report.check(
+        "pyHanko: the same number of signatures",
+        theirs.len() == ours.len(),
+        &format!("pyHanko {}, tpdf {}", theirs.len(), ours.len()),
+    );
+    for entry in &theirs {
+        let name = entry.get("field").and_then(|v| v.as_str()).unwrap_or("?");
+        let flag = |key: &str| entry.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+        let coverage = entry.get("coverage").and_then(|v| v.as_str()).unwrap_or("");
+        let want = if name == field {
+            "ENTIRE_FILE"
+        } else {
+            "ENTIRE_REVISION"
+        };
+        report.check(
+            &format!("pyHanko: {name} intact and valid, covering {want}"),
+            flag("intact") && flag("valid") && coverage == want,
+            &entry.to_string(),
+        );
+    }
+    println!("pyHanko's summary:\n{}", pyhanko_summary(&out).trim_end());
+    let verified = openssl_verifies(&written, range, scratch);
+    report.check(
+        "openssl cms -verify -binary -noverify accepts the signature",
+        verified.is_ok(),
+        &verified.err().unwrap_or_default(),
+    );
+
+    // ------------------------------------------------ control: wrong offset
+    let mut late = unsigned.update.clone();
+    let mut shifted = range;
+    shifted[1] += 2;
+    let digest = sign_cms::check(&original, &unsigned)?;
+    let blob = sign_cms::build(&digest, &certificate, &[], &key)?;
+    sign_cms::splice(&mut late, unsigned.built_against, shifted, &blob)?;
+    let late = [original.as_slice(), late.as_slice()].concat();
+    let found = tpdf_verdicts(&late)?;
+    let theirs_late = found.iter().find(|(n, _)| *n == field).map(|(_, v)| *v);
+    report.check(
+        "control, value two digits late: tpdf does not call it intact",
+        theirs_late.is_some_and(|v| v != Verdict::Intact),
+        &format!("{theirs_late:?}"),
+    );
+    report.check(
+        "control, value two digits late: openssl refuses",
+        openssl_verifies(&late, range, scratch).is_err(),
+        "openssl accepted a misplaced value",
+    );
+
+    // ------------------------------------------- control: the wrong digest
+    let misdirected = Openssl {
+        misdirect: true,
+        ..Openssl {
+            key: key.key.clone(),
+            scratch: scratch.to_path_buf(),
+            misdirect: false,
+        }
+    };
+    let wrong_blob = sign_cms::build(&digest, &certificate, &[], &misdirected)?;
+    let mut wrong = unsigned.update.clone();
+    sign_cms::splice(&mut wrong, unsigned.built_against, range, &wrong_blob)?;
+    let wrong_path = scratch.join(format!("{stem}-wrong-digest.pdf"));
+    let wrong = [original.as_slice(), wrong.as_slice()].concat();
+    std::fs::write(&wrong_path, &wrong).map_err(|e| e.to_string())?;
+    let verdict = tpdf_verdicts(&wrong)?
+        .into_iter()
+        .find(|(n, _)| *n == field)
+        .map(|(_, v)| v);
+    report.check(
+        "control, wrong digest: tpdf says broken",
+        verdict == Some(Verdict::Broken),
+        &format!("{verdict:?}"),
+    );
+    let theirs_wrong = pyhanko(&wrong_path)?;
+    let entry = theirs_wrong
+        .iter()
+        .find(|v| v.get("field").and_then(|f| f.as_str()) == Some(field.as_str()));
+    report.check(
+        "control, wrong digest: pyHanko says valid=no",
+        entry.is_some_and(|v| v.get("valid").and_then(serde_json::Value::as_bool) == Some(false)),
+        &format!("{entry:?}"),
+    );
+    report.check(
+        "control, wrong digest: openssl refuses",
+        openssl_verifies(&wrong, range, scratch).is_err(),
+        "openssl accepted a signature over the wrong digest",
+    );
+    let refused = sign_cms::finish(
+        original.clone(),
+        unsigned.clone(),
+        &certificate,
+        &[],
+        &misdirected,
+    );
+    report.check(
+        "control, wrong digest: finish refuses to hand it back",
+        refused.as_ref().is_err_and(|why| why.contains("Broken")),
+        &format!("{:?}", refused.map(|b| b.len())),
+    );
+
+    // ------------------------------------------ control: a changed byte
+    let mut altered = written.clone();
+    // A digit of the signing time in the new revision's `/M`: covered by the
+    // range, and harmless to every parser, so the only thing that changes is
+    // whether the covered bytes still hash to what was signed.
+    let date = written[original.len()..]
+        .windows(3)
+        .position(|w| w == b"(D:")
+        .ok_or("the revision has no /M date")?;
+    let at = original.len() + date + 3;
+    altered[at] = if altered[at] == b'1' { b'2' } else { b'1' };
+    let altered_path = scratch.join(format!("{stem}-altered.pdf"));
+    std::fs::write(&altered_path, &altered).map_err(|e| e.to_string())?;
+    let verdict = tpdf_verdicts(&altered)
+        .ok()
+        .and_then(|v| v.into_iter().find(|(n, _)| *n == field).map(|(_, v)| v));
+    report.check(
+        "control, changed byte: tpdf says altered",
+        verdict == Some(Verdict::Altered),
+        &format!("{verdict:?}"),
+    );
+    match pyhanko(&altered_path) {
+        Ok(found) => {
+            let entry = found
+                .iter()
+                .find(|v| v.get("field").and_then(|f| f.as_str()) == Some(field.as_str()));
+            report.check(
+                "control, changed byte: pyHanko says intact=no",
+                entry.is_some_and(|v| {
+                    v.get("intact").and_then(serde_json::Value::as_bool) == Some(false)
+                }),
+                &format!("{entry:?}"),
+            );
+        }
+        Err(e) => report.check("control, changed byte: pyHanko reads the file", false, &e),
+    }
+    report.check(
+        "control, changed byte: openssl refuses",
+        openssl_verifies(&altered, range, scratch).is_err(),
+        "openssl accepted a changed document",
+    );
+
+    println!("\n{} passed, {} failed", report.passed, report.failed);
+    Ok(report.failed == 0 && report.passed > 0)
+}

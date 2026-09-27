@@ -208,6 +208,12 @@ FILTERS = [
     # as its mutations. Eleventh entry. `tests::` would match today for the
     # reason the note above gives, and that is not a reason to rely on it.
     "integrity::",
+    # Added 2026-09-26 with Phase 6 step 2, in the same edit as its mutations:
+    # the worker's revision, the app process's CMS and splice, and the OS key
+    # store's pure parts.
+    "sign_prepare::",
+    "sign_cms::",
+    "keystore::",
 ]
 
 
@@ -10680,6 +10686,277 @@ MUTATIONS += [
                 &mut budget.clone(),
             ));""",
         "the_hashing_budget_is_shared_by_every_signature_of_a_document",
+    ),
+]
+
+
+# --- signing with a certificate the reader has -------------------------------
+#
+# Phase 6 step 2, 2026-09-26. `sign_prepare.rs` is the worker's revision,
+# `sign_cms.rs` the app process's checks, CMS and splice, `keystore.rs` the OS
+# half. Each mutation removes one rule and names the test that is the only one
+# built to see it.
+MUTATIONS += [
+    Mutation(
+        # Sign a document that was opened with a password, or on an empty one:
+        # lopdf would encrypt the signature's own value with the document.
+        "sign: sign a document that was encrypted and opened",
+        "src/sign_prepare.rs",
+        "    if prev.is_encrypted() || prev.was_encrypted() {",
+        "    if prev.is_encrypted() {",
+        "an_encrypted_document_is_refused_whether_or_not_it_was_opened",
+    ),
+    Mutation(
+        "sign: sign over a certification that permits no change",
+        "src/sign_prepare.rs",
+        "    if certified_without_changes(&prev) {",
+        "    if false {",
+        "a_certification_that_permits_no_change_is_refused_and_the_others_are_not",
+    ),
+    Mutation(
+        # Take the first placeholder found: a string in a cloned page that spells
+        # one gets the range written into it, and the real hole is left alone.
+        "sign: take a placeholder that occurs twice",
+        "src/sign_prepare.rs",
+        "    found.next().is_none().then_some(first)",
+        "    Some(first)",
+        "a_placeholder_the_document_already_spells_is_a_refusal_not_a_guess",
+    ),
+    Mutation(
+        # Truncate a range too wide for the placeholder instead of refusing.
+        "sign: let the offsets overflow the placeholder",
+        "src/sign_prepare.rs",
+        "    if text.len() + 1 > width {",
+        "    if false {",
+        "a_file_whose_offsets_outgrow_the_placeholder_is_refused",
+    ),
+    Mutation(
+        # Rewrite the page as well as its own /Annots array: a change an
+        # earlier signature's difference analysis must then account for.
+        "sign: rewrite the page whose annotation list is its own object",
+        "src/sign_prepare.rs",
+        """    let changed = match site {
+        Site::Object(array) => array,
+        Site::Inline | Site::Absent => page,
+    };""",
+        """    incremental
+        .opt_clone_object_to_new_document(page)
+        .map_err(|e| e.to_string())?;
+    let changed = match site {
+        Site::Object(array) => array,
+        Site::Inline | Site::Absent => page,
+    };""",
+        "a_list_that_is_its_own_object_is_rewritten_and_its_owner_is_not",
+    ),
+    Mutation(
+        "sign: set /SigFlags without keeping the bits already there",
+        "src/sign_prepare.rs",
+        '    dict.set("SigFlags", Object::Integer(flags | SIG_FLAGS));',
+        '    dict.set("SigFlags", Object::Integer(SIG_FLAGS));',
+        "existing_sig_flags_are_kept_and_the_two_bits_added",
+    ),
+    Mutation(
+        # Replace an inline list instead of appending to it: the fields and
+        # annotations already there are dropped from the new revision.
+        "sign: replace an inline list rather than append to it",
+        "src/sign_prepare.rs",
+        """        Site::Inline => dict
+            .get_mut(key)
+            .and_then(Object::as_array_mut)
+            .map(|array| array.push(reference))
+            .map_err(|e| e.to_string()),""",
+        """        Site::Inline => {
+            dict.set(key.to_vec(), Object::Array(vec![reference]));
+            Ok(())
+        }""",
+        "every_shape_of_the_two_lists_gains_the_widget",
+    ),
+    Mutation(
+        "sign: name the new field Signature1 whatever exists",
+        "src/sign_prepare.rs",
+        "        .find(|name| !taken.iter().any(|t| t == name.as_bytes()))",
+        "        .find(|_| true)",
+        "a_list_that_is_its_own_object_is_rewritten_and_its_owner_is_not",
+    ),
+    Mutation(
+        # Leave the `<` out of the hole: the range then covers a byte of the
+        # value's own string, which no verifier accepts.
+        "sign: start the hole after its delimiter",
+        "src/sign_prepare.rs",
+        '    let first = was + contents + b"/Contents".len();',
+        '    let first = was + contents + b"/Contents<".len();',
+        "the_range_frames_exactly_the_reserved_hole_and_the_digest_is_its_bytes",
+    ),
+    Mutation(
+        "sign: hash the hole along with the covered bytes",
+        "src/sign_prepare.rs",
+        "    hasher.update(&update[second - was..]);",
+        "    hasher.update(&update[first - was..]);",
+        "the_range_frames_exactly_the_reserved_hole_and_the_digest_is_its_bytes",
+    ),
+    Mutation(
+        # Believe the worker's digest. A worker that described one document and
+        # built another then gets the reader to sign what it built.
+        "sign: believe the worker's digest",
+        "src/sign_cms.rs",
+        "    if unsigned.digest != digest {",
+        "    if false {",
+        "the_workers_digest_is_recomputed_rather_than_believed",
+    ),
+    Mutation(
+        "sign: accept an update built against another length",
+        "src/sign_cms.rs",
+        "    if unsigned.built_against != was {",
+        "    if false {",
+        "an_update_built_against_other_bytes_is_refused",
+    ),
+    Mutation(
+        "sign: accept a range whose hole is not the reservation",
+        "src/sign_cms.rs",
+        "        && second == first.saturating_add(RESERVED * 2 + 2)\n",
+        "\n",
+        "a_range_that_does_not_frame_its_hole_is_refused",
+    ),
+    Mutation(
+        "sign: accept a hole that is not empty",
+        "src/sign_cms.rs",
+        "    if !zeros {",
+        "    if false {",
+        "a_hole_that_is_not_empty_is_refused",
+    ),
+    Mutation(
+        # Hand back whatever was built. The key that is not the certificate's,
+        # and the value over the wrong digest, are then written as signatures.
+        "sign: skip the check of what was just signed",
+        "src/sign_cms.rs",
+        "    if verdict.verdict != crate::integrity::Verdict::Intact {",
+        "    if false {",
+        "a_signature_over_the_wrong_digest_is_broken_and_not_written",
+    ),
+    Mutation(
+        "sign: splice the value one byte late",
+        "src/sign_cms.rs",
+        "? + 1 - built_against;",
+        "? + 2 - built_against;",
+        "the_value_is_spliced_as_uppercase_hex_at_the_start_of_the_hole",
+    ),
+    Mutation(
+        "sign: write a CMS past the half kept for a timestamp",
+        "src/sign_cms.rs",
+        "    if blob.len() > STEP_TWO_LIMIT {",
+        "    if false {",
+        "a_blob_past_the_step_two_limit_is_refused",
+    ),
+    Mutation(
+        # Leave out ESS signingCertificateV2: PAdES B-B's binding of the
+        # signature to one certificate.
+        "sign: leave the signing certificate unnamed",
+        "src/sign_cms.rs",
+        """    info.add_signed_attribute(signing_certificate(&signer, certificate)?)
+        .map_err(|e| failed("the signing certificate could not be named", &e))?;""",
+        "",
+        "the_signed_attributes_are_exactly_the_three_pades_b_b_names",
+    ),
+    Mutation(
+        "sign: offer an expired certificate",
+        "src/sign_cms.rs",
+        "    if now > until {",
+        "    if false {",
+        "a_certificate_is_offered_only_while_valid_for_signing",
+    ),
+    Mutation(
+        # Refuse the qualified card that states nonRepudiation alone.
+        "sign: accept only digitalSignature",
+        "src/sign_cms.rs",
+        "        if !usage.digital_signature() && !usage.non_repudiation() {",
+        "        if !usage.digital_signature() {",
+        "a_certificate_is_offered_only_while_valid_for_signing",
+    ),
+    Mutation(
+        # The owner's Developer ID certificate: digitalSignature, code signing only.
+        "sign: offer a certificate issued for code signing",
+        "src/sign_cms.rs",
+        "            .any(|purpose| DOCUMENT_PURPOSES.contains(&purpose.as_str()))",
+        "            .any(|_| true)",
+        "a_certificate_issued_for_code_signing_is_not_offered",
+    ),
+    Mutation(
+        "sign: offer a certificate that is not for signing",
+        "src/sign_cms.rs",
+        "        if !usage.digital_signature() && !usage.non_repudiation() {",
+        "        if false {",
+        "a_certificate_is_offered_only_while_valid_for_signing",
+    ),
+    Mutation(
+        "sign: sign with an RSA key under 2048 bits",
+        "src/sign_cms.rs",
+        "            if bits < MIN_RSA_BITS {",
+        "            if false {",
+        "only_the_keys_tpdf_signs_with_are_offered",
+    ),
+    Mutation(
+        # Hand the worker a document it will die parsing, on Windows.
+        "sign: prepare a document past the worker's bound",
+        "src/sign_cms.rs",
+        "    if len > crate::save::APPEND_MAX_BYTES {",
+        "    if false {",
+        "a_document_past_the_workers_bound_is_refused_and_one_at_it_is_not",
+    ),
+    Mutation(
+        "sign: sign over unsaved edits",
+        "src/sign_cms.rs",
+        "    if dirty {",
+        "    if false {",
+        "unsaved_edits_refuse_before_anything_is_signed",
+    ),
+    Mutation(
+        "sign: call every signature in the report the new one",
+        "src/sign_cms.rs",
+        "            ours: signature.field == field,",
+        "            ours: true,",
+        "the_report_marks_the_new_signature_and_leaves_out_unsigned_fields",
+    ),
+    Mutation(
+        # Keep an ECDSA half's leading zeros: a non-minimal DER INTEGER.
+        "sign: keep leading zeros in a raw ECDSA half",
+        "src/sign_cms.rs",
+        "        let leading = half.iter().take_while(|b| **b == 0).count();",
+        "        let leading = 0;",
+        "a_raw_ecdsa_value_becomes_the_der_the_curve_crate_writes",
+    ),
+    Mutation(
+        # Drop the sign byte: a half with its top bit set reads as negative.
+        "sign: leave out the sign byte of a raw ECDSA half",
+        "src/sign_cms.rs",
+        "        if body[0] & 0x80 != 0 {",
+        "        if false {",
+        "a_raw_ecdsa_value_becomes_the_der_the_curve_crate_writes",
+    ),
+    Mutation(
+        # The control `.cargo/audit.toml` cites: a private-key type named in a
+        # shipped file.
+        "sign: name a private-key type in a shipped file",
+        "src/keystore.rs",
+        "pub struct Identity {",
+        "// SigningKey\npub struct Identity {",
+        "no_private_key_type_is_named_outside_the_tests",
+    ),
+    Mutation(
+        "keystore: name an identity by an uppercase hash",
+        "src/keystore.rs",
+        '        .map(|b| format!("{b:02x}"))',
+        '        .map(|b| format!("{b:02X}"))',
+        "an_identity_is_named_by_the_sha256_of_its_certificate",
+    ),
+    Mutation(
+        # Ask the OS for a raw RSA signature, without the DigestInfo a
+        # verifier checks. macOS only: the code under it is.
+        "keystore: sign RSA without the SHA-256 DigestInfo",
+        "src/keystore.rs",
+        "            KeyKind::Rsa(_) => Algorithm::RSASignatureDigestPKCS1v15SHA256,",
+        "            KeyKind::Rsa(_) => Algorithm::RSASignatureDigestPKCS1v15Raw,",
+        "the_os_signs_a_revision_that_the_verifier_calls_intact",
+        only_on="macos",
     ),
 ]
 

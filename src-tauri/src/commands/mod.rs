@@ -33,6 +33,7 @@ pub mod read;
 pub mod redact;
 pub mod save;
 pub mod session;
+pub mod sign;
 pub mod spike;
 
 use crate::render::RenderService;

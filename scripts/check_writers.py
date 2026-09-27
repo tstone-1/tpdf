@@ -77,6 +77,10 @@ TERMINAL = [
     # `print_bytes` does: a print job comes back as bytes, so it is built in a
     # scratch file this process makes.
     "print_range_bytes",
+    # Added 2026-09-26 with Phase 6 step 2. The signed copy is assembled in the
+    # app process from the file's bytes and the worker's revision, and this is
+    # where it is created -- beside the reader's chosen name, then renamed.
+    "write_signed",
 ]
 
 NUMBERS = {

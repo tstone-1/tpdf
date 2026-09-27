@@ -199,9 +199,46 @@ impl Verifier for InWorker {
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
+
+    fn signatures(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+    ) -> Result<Vec<crate::docinfo::Signature>, String> {
+        // The handle, never the path: the file just signed, not whatever has
+        // its name now. `Verifier::scan`'s reason, applied to the signature.
+        let mapped = Shm::map_open_file(file, len)?;
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, Self::ask_signatures);
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
 }
 
 impl InWorker {
+    /// What a worker holding the signed file reports about its signatures.
+    ///
+    /// `Request::Properties`, which is what the properties dialog asks, so the
+    /// verdict a reader is shown after signing is computed by the same code,
+    /// in the same kind of process, as the one they would see by opening the
+    /// file and looking.
+    fn ask_signatures(worker: &mut Worker) -> Result<Vec<crate::docinfo::Signature>, String> {
+        let answered = worker.call(&Request::Properties)?;
+        if !answered.ok {
+            return Err(answered.error);
+        }
+        match answered.reply {
+            Some(Reply::Properties(properties)) => Ok(properties.signatures),
+            other => Err(format!(
+                "the worker answered the signature check with {}",
+                match other {
+                    Some(reply) => format!("{reply:?}"),
+                    None => "no payload at all".to_string(),
+                }
+            )),
+        }
+    }
+
     /// The two requests the scan makes, on the thread that owns the worker.
     ///
     /// **The unlock is not optional, and its absence is the reassuring failure.**

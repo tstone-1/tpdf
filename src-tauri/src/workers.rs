@@ -1993,6 +1993,17 @@ impl Engine for Workers {
         }
     }
 
+    fn prepare_signature(
+        &self,
+        doc: u32,
+        at: u64,
+    ) -> Result<crate::sign_prepare::Unsigned, String> {
+        match self.ask(doc, &Request::PrepareSignature { at })? {
+            Reply::PreparedSignature(unsigned) => Ok(unsigned),
+            other => Err(mismatched("prepare_signature", &other)),
+        }
+    }
+
     /// Answered from this process's own record, without asking a worker.
     ///
     /// The pool is where a password lives for the document's lifetime --- see

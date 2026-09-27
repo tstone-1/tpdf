@@ -144,6 +144,20 @@ measured the Windows render constants come out 1.5–1.8x worse.
   Imported PNG/JPEG dimensions are bounded before image decoding.
   <!-- built: edit.addSignature -->
 
+- **Sign a document with a certificate you already have** — **Sign document…** in the
+  File menu or the command palette. tpdf lists the certificates in your macOS keychain or
+  Windows certificate store that can sign, you pick one and name a new file, and the
+  signed copy is written beside the original, which is not changed. The private key never
+  leaves the operating system: macOS or Windows makes the signature, and any PIN or access
+  prompt you see is theirs. The signature is PAdES baseline B-B (a CAdES detached
+  signature over SHA-256, RSA or ECDSA P-256/P-384), added as an incremental revision so
+  signatures already in the document stay intact, and the written file is read back and
+  its signatures checked before you are told it worked. It is invisible — there is no
+  signature appearance on the page yet — and it carries no timestamp, so its time is the
+  one your computer's clock said. Documents with unsaved edits, encrypted documents and
+  documents certified against any change are refused.
+  <!-- built: file.signDocument -->
+
 - **Saving signed or certified documents requires confirmation.** The current writer
   may invalidate their cryptographic signatures, including when filling permitted
   form fields. This warning does not verify the signatures.
@@ -468,8 +482,11 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Certificate-based digital signing and signature verification.
-  <!-- not-built: edit.signDocument -->
+- Timestamped and long-term-validation signatures, certification signatures, a visible
+  signature appearance, and any decision about whether a signer's certificate is trusted.
+  Signing exists; what it proves stops at the document being unchanged since it was signed
+  by the key in its certificate.
+  <!-- not-built: file.timestampSignature -->
 - General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
   paragraph reflow and unsupported complex content streams.
 

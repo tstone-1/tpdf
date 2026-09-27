@@ -76,6 +76,7 @@ import type { PageMapping, PageMatches } from "./search";
 import type { Session } from "./session";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
+import type { Choices, Signed } from "./signing";
 
 import Applied_ from "../../src-tauri/testdata/replies/Applied.json";
 import Comments_ from "../../src-tauri/testdata/replies/Comments.json";
@@ -95,6 +96,8 @@ import RegionPlan_ from "../../src-tauri/testdata/replies/RegionPlan.json";
 import ScrollBenchConfig_ from "../../src-tauri/testdata/replies/ScrollBenchConfig.json";
 import Session_ from "../../src-tauri/testdata/replies/Session.json";
 import Split_ from "../../src-tauri/testdata/replies/Split.json";
+import Choices_ from "../../src-tauri/testdata/replies/Choices.json";
+import Signed_ from "../../src-tauri/testdata/replies/Signed.json";
 
 /**
  * A mirror type with every literal widened the way a JSON import widens.
@@ -275,6 +278,15 @@ const SCHEMA = {
     changed: ["boolean"],
     paths: ["array"],
   } satisfies Shape<Split>,
+  Choices: {
+    usable: ["array"],
+    skipped: ["array"],
+  } satisfies Shape<Choices>,
+  Signed: {
+    path: ["string"],
+    field: ["string"],
+    signatures: ["array"],
+  } satisfies Shape<Signed>,
 } as const;
 
 /**
@@ -307,6 +319,8 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   PreparedImport: PreparedImport_ satisfies Widen<PreparedImport>,
   Session: Session_ satisfies Widen<Session>,
   Split: Split_ satisfies Widen<Split>,
+  Choices: Choices_ satisfies Widen<Choices>,
+  Signed: Signed_ satisfies Widen<Signed>,
 };
 
 /**

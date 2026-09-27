@@ -486,6 +486,13 @@ export interface AppActions {
   splitDocument(groups: number[][]): void;
   /** Ask for documents to combine with this one, and for a name to write to. */
   mergeDocuments(): void;
+  /**
+   * Choose a certificate, name a new file, and sign the document into it.
+   *
+   * The sequence and its refusals are `signing.ts`; the original file is never
+   * written.
+   */
+  signDocument(): void;
   /** Show what the document says about itself. */
   showProperties(): void;
 }
@@ -1447,6 +1454,19 @@ export function registerAppCommands(
       keys: label("file.saveCopy"),
       enabled: withDocument,
       run: () => actions.saveCopy(),
+    },
+    {
+      // Offered on any open document, for `file.saveCopy`'s reason: a command
+      // that appears only when it can succeed is one nobody finds. A document
+      // with unsaved edits is told to save first, by `signing.ts`, rather than
+      // not being offered the command at all.
+      //
+      // "Sign document…", not "Sign": the ellipsis is the chooser and the save
+      // panel that follow, and the result is a new file.
+      id: "file.signDocument",
+      title: "Sign document\u2026",
+      enabled: withDocument,
+      run: () => actions.signDocument(),
     },
     {
       // A separate fallback rather than a mode of `file.redactCopy`: the result

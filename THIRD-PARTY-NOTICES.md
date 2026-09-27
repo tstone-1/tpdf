@@ -2531,11 +2531,12 @@ SOFTWARE.
 
 ## Rust crates
 
-430 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+440 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
+| aes | 0.8.4 | MIT OR Apache-2.0 |
 | aes | 0.9.3 | MIT OR Apache-2.0 |
 | aho-corasick | 1.1.5 | Unlicense OR MIT |
 | alloc-no-stdlib | 2.0.4 | BSD-3-Clause |
@@ -2553,6 +2554,7 @@ SOFTWARE.
 | bitflags | 2.13.2 | MIT OR Apache-2.0 |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 |
+| block-padding | 0.3.3 | MIT OR Apache-2.0 |
 | block-padding | 0.4.2 | MIT OR Apache-2.0 |
 | block2 | 0.6.2 | MIT |
 | brotli | 8.0.4 | BSD-3-Clause AND MIT |
@@ -2566,11 +2568,13 @@ SOFTWARE.
 | cargo-platform | 0.1.9 | MIT OR Apache-2.0 |
 | cargo_metadata | 0.19.2 | MIT |
 | caseless | 0.2.2 | MIT |
+| cbc | 0.1.2 | MIT OR Apache-2.0 |
 | cbc | 0.2.1 | MIT OR Apache-2.0 |
 | cfb | 0.7.3 | MIT |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 |
 | chrono | 0.4.45 | MIT OR Apache-2.0 |
+| cipher | 0.4.4 | MIT OR Apache-2.0 |
 | cipher | 0.5.2 | MIT OR Apache-2.0 |
 | cms | 0.2.3 | Apache-2.0 OR MIT |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT |
@@ -2687,6 +2691,7 @@ SOFTWARE.
 | indexmap | 1.9.3 | Apache-2.0 OR MIT |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
 | infer | 0.19.0 | MIT |
+| inout | 0.1.4 | MIT OR Apache-2.0 |
 | inout | 0.2.2 | MIT OR Apache-2.0 |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 |
 | itertools | 0.15.0 | MIT OR Apache-2.0 |
@@ -2697,6 +2702,7 @@ SOFTWARE.
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT |
 | json-patch | 3.0.1 | MIT/Apache-2.0 |
 | jsonptr | 0.6.3 | MIT OR Apache-2.0 |
+| keccak | 0.1.6 | Apache-2.0 OR MIT |
 | keyboard-types | 0.7.0 | MIT OR Apache-2.0 |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 |
 | libc | 0.2.189 | MIT OR Apache-2.0 |
@@ -2825,6 +2831,7 @@ SOFTWARE.
 | sha1 | 0.10.7 | MIT OR Apache-2.0 |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 |
 | sha2 | 0.11.0 | MIT OR Apache-2.0 |
+| sha3 | 0.10.9 | MIT OR Apache-2.0 |
 | signature | 2.2.0 | Apache-2.0 OR MIT |
 | simd-adler32 | 0.3.10 | MIT |
 | simdutf8 | 0.1.5 | MIT OR Apache-2.0 |
@@ -2872,6 +2879,8 @@ SOFTWARE.
 | time-macros | 0.2.32 | MIT OR Apache-2.0 |
 | tinystr | 0.8.4 | Unicode-3.0 |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
+| tls_codec | 0.4.2 | Apache-2.0 OR MIT |
+| tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
 | tokio | 1.53.1 | MIT |
 | tokio-rustls | 0.26.5 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.19 | MIT |
@@ -2957,6 +2966,7 @@ SOFTWARE.
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT |
+| zeroize_derive | 1.5.0 | Apache-2.0 OR MIT |
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.8 | Unicode-3.0 |
 | zerovec-derive | 0.11.6 | Unicode-3.0 |
@@ -2994,6 +3004,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2014 PistonDevelopers
 - Copyright (c) 2014 Sean McArthur
 - Copyright (c) 2014 Steve "Sc00bz" Thomas (steve at tobtu dot com)
+- Copyright (c) 2014 Sébastien Martini
 - Copyright (c) 2014 The Rust Project Developers
 - Copyright (c) 2014 The html5ever Project Developers
 - Copyright (c) 2014, Kang Seonghoon.
@@ -3033,6 +3044,8 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2016--2023
 - Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
 - Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
+- Copyright (c) 2016-2020 RustCrypto Developers
+- Copyright (c) 2016-2023 Artyom Pavlov, Marek Kotewicz
 - Copyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved.
 - Copyright (c) 2016-2025 RustCrypto Developers
 - Copyright (c) 2016-2026 Sean McArthur
@@ -3102,6 +3115,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2020 Frommi
 - Copyright (c) 2020 Nikolai Vazquez
 - Copyright (c) 2020 Osspial
+- Copyright (c) 2020 The RustCrypto Project Developers
 - Copyright (c) 2020-2021 RustCrypto Developers
 - Copyright (c) 2020-2022 RustCrypto Developers
 - Copyright (c) 2020-2022 Tauri Programme within The Commons Conservancy
@@ -7898,7 +7912,6 @@ Apache License
 #### MIT OR Apache-2.0 — LICENSE-MIT
 
 ```
-Copyright (c) 2018-2024 The RustCrypto Project Developers
 Copyright (c) 2018 Artyom Pavlov
 
 Permission is hereby granted, free of charge, to any

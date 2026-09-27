@@ -16,10 +16,14 @@ ignore = [
     # rsa 0.9: the Marvin attack, a timing side channel in *private-key*
     # operations (decryption and signing), with no fixed release. tpdf holds no
     # RSA private key anywhere: `integrity.rs` only verifies, in the worker,
-    # which is a public-key operation the advisory does not cover. Revisit
-    # before Phase 6 step 2 (signing), where the key stays in the OS key store
-    # and signs there rather than in this crate -- if that design ever changes
-    # to sign with `rsa`, this entry is wrong. Recorded 2026-09-26, against both
+    # which is a public-key operation the advisory does not cover. Revisited
+    # 2026-09-26 with Phase 6 step 2 (signing): the shipped path signs in the
+    # OS key store (`keystore.rs`), never in this crate. `rsa` does sign in the
+    # test build --- `sign_cms/testkeys.rs`, with keys the tests generate ---
+    # where a timing leak exposes nothing. The control is
+    # `sign_cms::tests::no_private_key_type_is_named_outside_the_tests`, which
+    # fails the day a private-key type is named in a shipped source file; that
+    # is the day this entry is wrong. Recorded 2026-09-26, against both
     # lockfiles: the fuzz crate reaches `rsa` through its path dependency.
     "RUSTSEC-2023-0071",
     # ttf-parser: unmaintained (author statement, harfbuzz/ttf-parser#217); no

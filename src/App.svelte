@@ -60,6 +60,7 @@
   import { releaseOrphans } from "./lib/orphans";
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { call, isOpenRefusal } from "./lib/ipc";
+  import * as signing from "./lib/signing";
   import { openWithPassword } from "./lib/unlock";
   import { isMac, label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
@@ -717,6 +718,7 @@
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
     mergeDocuments: () => void mergeDocuments(),
+    signDocument: () => void signDocument(),
     showProperties: () => void showProperties(),
   };
 
@@ -2054,6 +2056,38 @@
         if (e instanceof SaveCancelled) return;
       say(String(e));
     }
+    });
+  }
+
+  /**
+   * Signs the document with a certificate the reader already has, into a new
+   * file. The sequence, its refusals and every sentence are `signing.ts`'s; this
+   * supplies the chooser, the save panel, the command and the message area.
+   */
+  async function signDocument(): Promise<void> {
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || openDoc < 0) return;
+      const doc = openDoc;
+      const source = openPathName;
+      try {
+        const said = await signing.signDocument({
+          dirty: () => dirty,
+          openPath: source,
+          list: () => call("sign_identities"),
+          choose: (choices) => signing.askIdentity(choices),
+          saveAs: async (suggested) =>
+            await saveDialog({
+              title: "Save the signed document",
+              defaultPath: suggested,
+              filters: [{ name: "PDF", extensions: ["pdf"] }],
+            }),
+          sign: (identity, path) => call("sign_document", { doc, source, identity, path }),
+        });
+        if (said) say(said);
+      } catch (e) {
+        say(String(e));
+      }
     });
   }
 

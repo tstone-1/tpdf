@@ -2043,10 +2043,13 @@ pub fn append_update(
 /// Spike 0.6's `TailSink`, and it is here for the same reason it was there: an
 /// append that first materialised a copy of the document would cost what a
 /// rewrite costs, which is the whole thing being avoided.
-struct Tail {
-    skip: usize,
-    seen: usize,
-    tail: Vec<u8>,
+///
+/// `pub(crate)` since 2026-09-26 for `sign_prepare.rs`, whose signature revision
+/// is an append in exactly this sense and discards the same prefix.
+pub(crate) struct Tail {
+    pub(crate) skip: usize,
+    pub(crate) seen: usize,
+    pub(crate) tail: Vec<u8>,
 }
 
 impl std::io::Write for Tail {
@@ -2416,6 +2419,24 @@ pub trait Verifier: Send {
         needles: &[String],
         password: Option<&str>,
     ) -> Result<verify::Report, String>;
+
+    /// Every signature in a file this build just signed, with the verdict
+    /// `integrity.rs` gives each.
+    ///
+    /// **The check a reader is shown after signing**, and a parse of the file
+    /// for the reason [`Verifier::scan`] is one: every revision before the new
+    /// one is the reader's document verbatim. So it is asked of a worker
+    /// wherever there is one, like the scan. No password: an encrypted document
+    /// is refused before it is signed (`sign_prepare.rs`).
+    ///
+    /// # Errors
+    ///
+    /// The file could not be read, or could not be parsed at all.
+    fn signatures(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+    ) -> Result<Vec<crate::docinfo::Signature>, String>;
 }
 
 /// Re-reads in the coordinator, which is the process that just did the writing.
@@ -2452,6 +2473,16 @@ impl Verifier for Here {
     ) -> Result<verify::Report, String> {
         let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
         Ok(verify::scan(&bytes, needles, password))
+    }
+
+    fn signatures(
+        &self,
+        file: &mut std::fs::File,
+        len: usize,
+    ) -> Result<Vec<crate::docinfo::Signature>, String> {
+        let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
+        let pages = u32::try_from(reread_pages(&bytes, None)?).unwrap_or(u32::MAX);
+        crate::docinfo::scan(&bytes, pages, None).map(|found| found.signatures)
     }
 }
 
@@ -4219,6 +4250,9 @@ pub fn pdf_date(at: std::time::SystemTime) -> String {
 }
 
 mod marks;
+
+mod signed;
+pub use signed::{read_to_sign, write_signed};
 
 /// The marks half of a save: see [`marks`] for what is in it and why.
 ///

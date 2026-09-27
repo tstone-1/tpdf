@@ -66,6 +66,7 @@ import type {
   SearchOptions,
 } from "./search";
 import type { Place, Session } from "./session";
+import type { Choices, Signed } from "./signing";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
 
@@ -318,6 +319,16 @@ export interface Commands {
   merge_documents: {
     args: { doc: number; source: string; path: string; others: string[] };
     reply: Merged;
+  };
+  /** The reader's certificates with a key, sorted into offered and not. */
+  sign_identities: { args: NoArgs; reply: Choices };
+  /**
+   * Signs the open document with the certificate `identity` names and writes
+   * the result to `path`, a new file. See `signing.ts`.
+   */
+  sign_document: {
+    args: { doc: number; source: string; identity: string; path: string };
+    reply: Signed;
   };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };
   /** The reply is the event name the menu emits on, or null when none was built. */

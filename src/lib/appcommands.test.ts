@@ -184,6 +184,7 @@ function harness(
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
+    signDocument: () => fired.push("signDocument"),
     showProperties: () => fired.push("showProperties"),
   };
   const registry = new CommandRegistry();
@@ -794,6 +795,25 @@ describe("the page operations", () => {
     expect(fired).toEqual(["mergeDocuments"]);
   });
 
+  it("signs the document through its own command, offered with or without edits", () => {
+    // Reaching its action, and only its own: a sign command wired to Save a
+    // copy would write an unsigned file and pass every other check here.
+    const { registry, fired } = harness();
+    const command = registry.all().find((entry) => entry.id === "file.signDocument");
+    expect(command?.title).toBe("Sign document\u2026");
+    expect(registry.run("file.signDocument")).toBe(true);
+    expect(fired).toEqual(["signDocument"]);
+    // Offered on an edited document too: the refusal to sign unsaved edits is
+    // `signing.ts`'s sentence, and a command that vanished instead would leave
+    // the reader looking for it.
+    const edited = harness(true, {}, {}, false, false, true);
+    expect(edited.registry.run("file.signDocument")).toBe(true);
+    // And withheld with no document at all.
+    const closed = harness(false);
+    expect(closed.registry.run("file.signDocument")).toBe(false);
+    expect(closed.fired).toEqual([]);
+  });
+
   it("redact the open file through the command, with no value to carry", () => {
     // Registered, guarded on a document, and reaching its action --- the last of
     // those being the half that shipped inert once before.
@@ -1360,6 +1380,7 @@ describe("the window shortcuts for editing", () => {
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
+    signDocument: () => fired.push("signDocument"),
     showProperties: () => fired.push("showProperties"),
     };
     return { fired, actions };

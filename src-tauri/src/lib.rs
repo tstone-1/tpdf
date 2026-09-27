@@ -31,6 +31,7 @@ pub mod integrity;
 pub mod invert;
 #[cfg(target_os = "macos")]
 pub mod keylayout;
+pub mod keystore;
 pub mod launch;
 pub mod links;
 pub mod menu;
@@ -80,6 +81,8 @@ mod save_order;
 pub mod save_outside;
 pub mod search;
 pub mod session;
+pub mod sign_cms;
+pub mod sign_prepare;
 pub mod signature;
 pub mod signature_store;
 pub mod startup;
@@ -127,7 +130,7 @@ use tauri::Manager;
 use commands::document::start_eager_open;
 use commands::{
     app::*, document::*, edit::*, menubar::*, print::*, read::*, redact::*, save::*, session::*,
-    spike::*,
+    sign::*, spike::*,
 };
 
 /// Who creates the window, and what it points at (spike 0.7).
@@ -826,6 +829,8 @@ pub fn run() {
             extract_pages,
             split_document,
             merge_documents,
+            sign_identities,
+            sign_document,
             keyboard_positions,
             set_menu,
             set_menu_enabled,
@@ -1013,6 +1018,14 @@ mod tests {
                 password: password.map(str::to_string),
             });
             self.answer.clone()
+        }
+
+        fn signatures(
+            &self,
+            _file: &mut std::fs::File,
+            _len: usize,
+        ) -> Result<Vec<crate::docinfo::Signature>, String> {
+            Err("a redaction's read-back never asks for signatures".into())
         }
     }
 

@@ -500,6 +500,13 @@ pub(crate) enum Job {
         plan: Box<edits::Plan>,
         reply: Reply<save::Update>,
     },
+    /// The revision a signature goes into. See [`RenderService::prepare_signature`].
+    PrepareSignature {
+        doc: u32,
+        /// Seconds since the epoch, for the signature's `/M`.
+        at: u64,
+        reply: Reply<crate::sign_prepare::Unsigned>,
+    },
     /// What password this document was opened with, for a caller that has to
     /// parse its bytes itself. See [`RenderService::password`].
     Password {
@@ -1055,6 +1062,28 @@ impl RenderService {
         }
     }
 
+    /// Builds the revision a signature goes into, in whichever engine holds the
+    /// document --- a worker, wherever there is one.
+    ///
+    /// The worker half of Phase 6 step 2: `sign_prepare::prepare` parses the
+    /// document, so it runs where every other parse of it runs. What comes back
+    /// is an update section with an empty hole, its `/ByteRange` and a digest;
+    /// the key that fills the hole is never in the process that built it.
+    pub fn prepare_signature(
+        &self,
+        doc: u32,
+        at: u64,
+        reply: Reply<crate::sign_prepare::Unsigned>,
+    ) {
+        if self
+            .tx
+            .send(Job::PrepareSignature { doc, at, reply })
+            .is_err()
+        {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// What password this document was opened with, if it needed one.
     ///
     /// **Asked for, rather than read out of the pool, because the pool is not
@@ -1207,6 +1236,8 @@ pub(crate) trait Engine {
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn properties(&self, doc: u32) -> Result<Properties, String>;
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String>;
+    fn prepare_signature(&self, doc: u32, at: u64)
+        -> Result<crate::sign_prepare::Unsigned, String>;
     fn password(&self, doc: u32) -> Result<Option<String>, String>;
     fn close(&self, doc: u32) -> Result<(), String>;
 
@@ -1285,6 +1316,7 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
+        Job::PrepareSignature { doc, at, reply } => reply(engine.prepare_signature(doc, at)),
         Job::Password { doc, reply } => reply(engine.password(doc)),
         Job::Close { doc, reply } => reply(engine.close(doc)),
         Job::ReleaseAll { reply } => reply(engine.release_all()),
@@ -1323,6 +1355,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Properties { reply, .. } => reply(Err(error.to_string())),
             Job::Append { reply, .. } => reply(Err(error.to_string())),
+            Job::PrepareSignature { reply, .. } => reply(Err(error.to_string())),
             Job::Password { reply, .. } => reply(Err(error.to_string())),
             Job::Close { reply, .. } => reply(Err(error.to_string())),
             Job::ReleaseAll { reply } => reply(Err(error.to_string())),
@@ -1543,6 +1576,14 @@ impl Engine for InProcess {
 
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String> {
         run_append(open_slot(&self.docs.borrow(), doc)?, plan)
+    }
+
+    fn prepare_signature(
+        &self,
+        doc: u32,
+        at: u64,
+    ) -> Result<crate::sign_prepare::Unsigned, String> {
+        run_prepare_signature(open_slot(&self.docs.borrow(), doc)?, at)
     }
 
     fn password(&self, doc: u32) -> Result<Option<String>, String> {
@@ -2303,6 +2344,17 @@ pub(crate) fn run_append(
     plan: &edits::Plan,
 ) -> Result<save::Update, String> {
     document.graph().append(plan)
+}
+
+/// Builds a signature's revision on the render thread.
+///
+/// [`run_append`]'s counterpart for Phase 6 step 2, and a parse for the same
+/// reason: see `sign_prepare.rs`.
+pub(crate) fn run_prepare_signature(
+    document: &OpenDocument,
+    at: u64,
+) -> Result<crate::sign_prepare::Unsigned, String> {
+    document.graph().prepare_signature(at)
 }
 
 /// Rewrites the mapped document under a plan, on the render thread.

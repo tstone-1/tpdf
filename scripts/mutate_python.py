@@ -377,10 +377,22 @@ MUTATIONS = [
         "writers: a writing command missing from the threat model's list",
         "writers",
         "docs/THREAT-MODEL.md",
-        "<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy -->",
-        "<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_document redact_raster_copy -->",
+        "<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy sign_document -->",
+        "<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_document redact_raster_copy sign_document -->",
         red=True,
         says="redact_copy",
+    ),
+    Mutation(
+        # A terminal writer the gate does not know about: the command that
+        # reaches only it drops out of the set, and the list then names a
+        # command that "reaches no writer". Added with `write_signed`, the tenth.
+        "writers: forget the terminal writer signing reaches",
+        "writers",
+        "scripts/check_writers.py",
+        '    "write_signed",\n]',
+        "]",
+        red=True,
+        says="sign_document",
     ),
     # --- a command the window harness neither drives nor excuses --------------
     Mutation(

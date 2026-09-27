@@ -1789,7 +1789,7 @@ fn subject_key_identifier(certificate: &x509_cert::Certificate) -> Option<Vec<u8
 ///
 /// Written out rather than taken from `RdnSequence`'s own `Display`, because
 /// that one escapes for round-tripping and this string is read by a person.
-fn distinguished_name(name: &x509_cert::name::Name) -> String {
+pub(crate) fn distinguished_name(name: &x509_cert::name::Name) -> String {
     let mut parts: Vec<String> = Vec::new();
     for rdn in name.0.iter() {
         for attribute in rdn.0.as_slice() {
@@ -1808,7 +1808,7 @@ fn distinguished_name(name: &x509_cert::name::Name) -> String {
 }
 
 /// The common name alone, which is what a person reads as "who signed this".
-fn common_name(name: &x509_cert::name::Name) -> String {
+pub(crate) fn common_name(name: &x509_cert::name::Name) -> String {
     for rdn in name.0.iter() {
         for attribute in rdn.0.as_slice() {
             if attribute.oid.to_string() == "2.5.4.3" {
@@ -1862,7 +1862,7 @@ fn attribute_text(attribute: &x509_cert::attr::AttributeTypeAndValue) -> String 
 }
 
 /// `notBefore` / `notAfter`, in the shape [`format_date`] produces.
-fn certificate_date(time: &x509_cert::time::Time) -> String {
+pub(crate) fn certificate_date(time: &x509_cert::time::Time) -> String {
     let at = time.to_date_time();
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
@@ -1900,7 +1900,7 @@ fn clip_text(text: &str) -> String {
 /// `/FieldMDP` and `/UR` are the other two and mean different things, so taking
 /// the first entry's `/P` would report a field-locking signature as a
 /// certification of the whole document.
-fn certification_of(document: &Document, sig: &Dictionary) -> u8 {
+pub(crate) fn certification_of(document: &Document, sig: &Dictionary) -> u8 {
     let Some(references) = sig
         .get(b"Reference")
         .ok()

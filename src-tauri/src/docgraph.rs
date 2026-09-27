@@ -338,6 +338,21 @@ impl DocumentGraph {
             .map_err(|why| why.message)
     }
 
+    /// Builds the revision a signature goes into, over these bytes.
+    ///
+    /// Uncached, like [`DocumentGraph::append`]: each signing is its own
+    /// revision, made at its own time.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable, or [`crate::sign_prepare::prepare`] refuses.
+    pub fn prepare_signature(&self, at: u64) -> Result<crate::sign_prepare::Unsigned, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        crate::sign_prepare::prepare(bytes.into_owned(), at, self.password())
+    }
+
     /// Applies a plan to these bytes and serialises the whole document.
     ///
     /// The counterpart of [`DocumentGraph::append`] for every plan an append

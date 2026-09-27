@@ -3250,6 +3250,7 @@ async function appCommandChecks(
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
+    signDocument: () => fired.push("signDocument"),
     showProperties: () => fired.push("showProperties"),
   };
 
@@ -4210,6 +4211,15 @@ async function appCommandChecks(
       // no value for the palette to carry and nothing for a probe to put in it.
       id: "file.mergeDocuments",
       ...shell("mergeDocuments"),
+      read: () => fired.join(","),
+    },
+    {
+      // Driven for `file.mergeDocuments`' reason: the action is a recorder, so
+      // no chooser opens, no OS key is asked and nothing is written. What this
+      // covers is the palette reaching the action; the sequence behind it is
+      // `signing.test.ts`, and the real window is `tabs_check.py`'s to drive.
+      id: "file.signDocument",
+      ...shell("signDocument"),
       read: () => fired.join(","),
     },
     {

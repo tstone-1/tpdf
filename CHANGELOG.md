@@ -49,6 +49,20 @@ have the binary.)
   can make for themselves passes the same check, and the dialog says so
   beside every answer. RSA, RSA-PSS and ECDSA over P-256 and P-384 are
   checked.
+- **Sign a document with a certificate you already have.** *Sign document…*
+  in the File menu lists the certificates in your macOS keychain or Windows
+  certificate store that can sign, and writes a signed copy beside the
+  original, which is left unchanged. The key never leaves the operating
+  system: macOS or Windows makes the signature, and any PIN or access prompt
+  is theirs, so smart cards and tokens work through their own drivers. The
+  signature is added as a new revision, so signatures already in the
+  document stay intact, and the new file is read back and every signature in
+  it checked before you are told it worked. The signature is invisible for
+  now and carries no timestamp: its time is your computer's clock. Save your
+  edits first; encrypted documents, and documents certified against any
+  change, cannot be signed yet. A certificate issued for something other
+  than signing documents, such as code signing or logging in to websites, is
+  listed with that reason and not offered.
 
 ### Fixed
 

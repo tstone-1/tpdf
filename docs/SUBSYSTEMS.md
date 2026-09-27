@@ -33,6 +33,18 @@ says what it checked and that the key's owner was not. The read that feeds this
 warning therefore also hashes each signature's range, under the per-document
 `integrity::MAX_HASHED` budget, once per document.
 
+**Signing with a certificate (Phase 6 step 2, 2026-09-26)** is split across the boundary:
+the worker builds the revision (`sign_prepare.rs`, `Request::PrepareSignature`), the app
+process reads the file as bytes, re-derives the digest, has the OS sign it through
+`keystore.rs` and splices the CMS in (`sign_cms.rs`), `save::write_signed` writes a new file,
+and a fresh worker reads it back (`save::Verifier::signatures`). The worker never holds a key
+and the app process never parses the document. `signing.ts` carries the sequence and every
+sentence; `App.svelte` supplies the chooser, the save panel and the message area. The
+signed-save warning is not shown: signing appends one revision and writes no byte of the
+earlier ones, which `sign-probe` shows pyHanko agreeing with. Unsaved edits, encrypted
+documents and DocMDP `/P 1` are refused. `docs/PLAN.md` §9 has the decisions and the
+measurements; `BUILD.md` has `sign-probe` and the keystore tests.
+
 AcroForm filling uses `forms.rs` inside the document worker, with shared field
 answers in the edit journal and `Plan.forms`. Every save carrying answers takes
 an explicit-appearance rewrite; ordinary save, copy, print and raster redaction
