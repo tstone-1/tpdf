@@ -37,8 +37,8 @@ you do not need to have diagnosed it.
   Windows, reading a file the user can read and opening a socket are the disclosed ceiling
   above rather than defects, so a report there is valuable when it shows a **write**, a reach
   into the app process, or an escape from the job object.
-- Anything that causes the *application* process to parse or map a PDF engine — the
-  boundary's whole purpose. Note the one documented exception: printing maps the operating
+- Anything that causes the *application* process, or the `tpdf` command-line tool's own
+  process, to parse or map a PDF engine — the boundary's whole purpose. Note the one documented exception: printing maps the operating
   system's own PDF parser into the app process on both platforms, which is stated rather
   than hidden, and is measured by `examples/print_probe.rs`.
 - Recovering content from a document tpdf reported as successfully redacted.
@@ -53,6 +53,12 @@ you do not need to have diagnosed it.
   programs and saved fallback font subsets.
 - Bypassing image-import bounds, protected signature-image storage, or the consent
   required before writes that can invalidate a document's digital signatures.
+- A digital signature tpdf reports as **intact** when the signed bytes or the signature do
+  not check out, or as **trusted** when this computer's trust store does not vouch for its
+  signer. Revocation is not checked, and a signature trusted only through Adobe's list reads
+  as untrusted here; both are disclosed rather than defects.
+- tpdf signing with a certificate it lists as unusable, or a signing key's private part
+  leaving the operating system's key store.
 
 **Out of scope**
 
