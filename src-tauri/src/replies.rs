@@ -714,6 +714,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                         ours: false,
                         timestamp: None,
                         revocation: None,
+                        archive: false,
                     },
                     crate::sign_cms::Checked {
                         field: "Signature2".into(),
@@ -746,13 +747,17 @@ fn samples() -> BTreeMap<&'static str, String> {
                             revocation_chain: Some(chain_sample()),
                         }),
                         revocation: Some(revocation_sample()),
+                        archive: false,
                     },
+                    // The archive timestamp a long-term signing writes after
+                    // it, so the sample carries `archive` both ways.
                     crate::sign_cms::Checked {
                         field: "Signature3".into(),
                         integrity: None,
                         ours: false,
                         timestamp: None,
                         revocation: None,
+                        archive: true,
                     },
                 ],
             }),

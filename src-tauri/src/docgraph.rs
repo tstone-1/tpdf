@@ -365,6 +365,22 @@ impl DocumentGraph {
         }
     }
 
+    /// The revision a document timestamp goes into, over these bytes --- a
+    /// signed copy with its validation data, not yet written: PAdES B-LTA's
+    /// archive timestamp. Uncached, for [`DocumentGraph::prepare_signature`]'s
+    /// reason.
+    ///
+    /// # Errors
+    ///
+    /// The bytes are unreadable, or
+    /// [`crate::sign_prepare::prepare_document_timestamp`] refuses.
+    pub fn prepare_document_timestamp(&self) -> Result<crate::sign_prepare::Unsigned, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        crate::sign_prepare::prepare_document_timestamp(bytes.into_owned(), self.password())
+    }
+
     /// These bytes --- a signed copy --- with a `/DSS` revision of `gathered`
     /// appended, and what `docinfo::scan` reads in the result. Uncached: a
     /// question about bytes that are about to change.

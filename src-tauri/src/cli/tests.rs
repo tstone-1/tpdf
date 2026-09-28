@@ -851,9 +851,45 @@ fn wording() -> serde_json::Value {
                     &field,
                     signatures,
                     sentences.as_ref().map(|(t, a)| (t.as_str(), a.as_deref())),
+                    &[],
                 ),
             }));
         }
+    }
+    // A long-term signing's archive timestamp after the new signature, intact
+    // and not: named apart from the earlier signatures, never among them.
+    for archive in [
+        integrity(Verdict::Intact, None, "SHA-256", "ECDSA P-256"),
+        integrity(Verdict::Broken, None, "", ""),
+    ] {
+        let signatures = [
+            ("Signature1".to_string(), false, Some(intact.clone())),
+            ("Signature2".to_string(), true, Some(intact.clone())),
+        ];
+        let archives = [("Signature3".to_string(), Some(archive.clone()))];
+        after.push(serde_json::json!({
+            "signed": {
+                "path": "/tmp/signed-archive.pdf",
+                "field": "Signature2",
+                "signatures": signatures
+                    .iter()
+                    .map(|(f, ours, i)| serde_json::json!({
+                        "field": f, "ours": ours, "integrity": i, "timestamp": null,
+                    }))
+                    .chain(archives.iter().map(|(f, i)| serde_json::json!({
+                        "field": f, "ours": false, "integrity": i, "timestamp": null,
+                        "archive": true,
+                    })))
+                    .collect::<Vec<_>>(),
+            },
+            "sentence": words::after_signing(
+                "signed-archive.pdf",
+                "Signature2",
+                &signatures,
+                None,
+                &archives,
+            ),
+        }));
     }
 
     // Every shape `afterRedaction` has: verified or not, one or several of
@@ -1353,6 +1389,7 @@ fn samples() -> Vec<(&'static str, String)> {
             ),
         ],
         None,
+        &[],
     );
     let sign = report::Signed {
         schema: report::SCHEMA,

@@ -855,3 +855,227 @@ fn a_compressed_dss_stream_is_decoded_and_a_vri_past_its_bound_is_counted() {
     );
     assert_eq!((found.unread, found.dropped), (0, 1));
 }
+
+// ------------------------------------------------ archive timestamps (B-LTA)
+
+/// `bytes` with a document timestamp appended, its token minted by `tsa` at
+/// `at` --- over the range, or over other bytes when `broken`.
+fn archived(bytes: &[u8], tsa: &TestTsa, at: u64, broken: bool) -> Vec<u8> {
+    let unsigned =
+        crate::sign_prepare::prepare_document_timestamp(bytes.to_vec(), None).expect("prepared");
+    let imprint = if broken {
+        Imprint::Sha256.digest(b"not this document")
+    } else {
+        unsigned.digest.clone()
+    };
+    let token = mint_with(Imprint::Sha256, &imprint, None, at, tsa, &Faults::default());
+    if broken {
+        // `seal_document_timestamp` refuses what it would not call intact, so
+        // the damaged one is spliced by hand, as a hostile writer would.
+        let mut update = unsigned.update.clone();
+        let hole = usize::try_from(unsigned.range[1]).expect("offset") + 1 - bytes.len();
+        for (index, byte) in token.iter().enumerate() {
+            update[hole + index * 2..hole + index * 2 + 2]
+                .copy_from_slice(format!("{byte:02X}").as_bytes());
+        }
+        let mut out = bytes.to_vec();
+        out.extend_from_slice(&update);
+        return out;
+    }
+    crate::sign_cms::seal_document_timestamp(bytes.to_vec(), unsigned, &token).expect("sealed")
+}
+
+/// Every signed field, in the document's order.
+fn read_all(bytes: &[u8], anchors: &[Vec<u8>]) -> Vec<Signature> {
+    scan_at(bytes, crate::trust::Anchors::Only(anchors), NOW)
+        .expect("scanned")
+        .signatures
+        .into_iter()
+        .filter(|s| s.signed)
+        .collect()
+}
+
+/// A signature timestamped at `G` by an authority whose certificate ran out
+/// ten days later --- before `NOW`.
+fn stamped_by_a_lapsed_authority(w: &World) -> Vec<u8> {
+    let lapsed = TestTsa::dated(crate::integrity::test_tsa::FROM, G + 10 * DAY);
+    signed(&w.signer, &[], G, &lapsed)
+}
+
+#[test]
+fn a_lapsed_authority_attests_nothing_without_an_archive_timestamp() {
+    // The control for the tests below: B-T, read after the authority's
+    // certificate ran out.
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let signature = read(&stamped_by_a_lapsed_authority(&w), &anchors(&w));
+    let stamp = signature.timestamp.expect("a timestamp");
+    assert_eq!(
+        stamp.trust.map(|t| t.standing),
+        Some(Standing::Expired),
+        "judged now, the authority's certificate has run out"
+    );
+    assert_eq!(
+        signature.revocation.map(|r| r.basis),
+        Some(Basis::Claimed),
+        "so the signer is judged at its own date"
+    );
+}
+
+#[test]
+fn an_archive_timestamp_lets_a_lapsed_authority_attest_the_time_it_stated() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let bytes = archived(
+        &stamped_by_a_lapsed_authority(&w),
+        &w.tsa,
+        G + 5 * DAY,
+        false,
+    );
+    let [signature, archive] = read_all(&bytes, &anchors(&w))
+        .try_into()
+        .expect("two fields");
+    assert_eq!(archive.kind, "ETSI.RFC3161");
+    assert_eq!(
+        archive.trust.as_ref().map(|t| t.standing),
+        Some(Standing::Trusted),
+        "the archive's own authority, now"
+    );
+    let stamp = signature.timestamp.as_ref().expect("a timestamp");
+    let trust = stamp.trust.as_ref().expect("the authority's standing");
+    assert_eq!(
+        (trust.standing, trust.attested_at.as_str()),
+        (Standing::TrustedAtTimestamp, "2026-09-06 00:00:00 UTC"),
+        "{trust:?}"
+    );
+    // And so the signer is judged at the time the token states, as B-T was
+    // before its authority ran out.
+    assert_eq!(
+        signature
+            .trust
+            .as_ref()
+            .map(|t| (t.standing, t.attested_at.as_str())),
+        Some((Standing::TrustedAtTimestamp, "2026-09-01 00:00:00 UTC"))
+    );
+    assert_eq!(signature.revocation.map(|r| r.basis), Some(Basis::Attested));
+}
+
+#[test]
+fn an_archive_timestamp_made_after_the_authority_lapsed_proves_nothing_for_it() {
+    // Twenty days on, the authority's certificate had already run out: the
+    // archive shows the token existed then, and at that moment nothing vouched
+    // for it.
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let bytes = archived(
+        &stamped_by_a_lapsed_authority(&w),
+        &w.tsa,
+        G + 20 * DAY,
+        false,
+    );
+    let [signature, _] = read_all(&bytes, &anchors(&w))
+        .try_into()
+        .expect("two fields");
+    let stamp = signature.timestamp.expect("a timestamp");
+    assert_ne!(
+        stamp.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp),
+        "{:?}",
+        stamp.trust
+    );
+    assert_eq!(signature.revocation.map(|r| r.basis), Some(Basis::Claimed));
+}
+
+#[test]
+fn an_archive_timestamp_that_does_not_attest_is_no_archive() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let lapsed = stamped_by_a_lapsed_authority(&w);
+    // Its token over other bytes; a sound one from an authority whose
+    // certificate is not issued for timestamping; and a weak one, stamping a
+    // SHA-1 of the range, which does not show the time belongs to it.
+    let unfit = TestTsa::with_purposes(None);
+    for (what, bytes) in [
+        ("broken", archived(&lapsed, &w.tsa, G + 5 * DAY, true)),
+        ("unfit", archived(&lapsed, &unfit, G + 5 * DAY, false)),
+        ("weak", archived_weak(&lapsed, &w.tsa, G + 5 * DAY)),
+    ] {
+        let [signature, archive] = read_all(&bytes, &anchors(&w))
+            .try_into()
+            .expect("two fields");
+        assert!(archive.integrity.is_some(), "{what}: the archive was read");
+        assert_eq!(
+            signature.revocation.map(|r| r.basis),
+            Some(Basis::Claimed),
+            "{what}: judged at its own date"
+        );
+    }
+}
+
+/// [`archived`], its token stamping the range's SHA-1: sound, and weak.
+fn archived_weak(bytes: &[u8], tsa: &TestTsa, at: u64) -> Vec<u8> {
+    let unsigned =
+        crate::sign_prepare::prepare_document_timestamp(bytes.to_vec(), None).expect("prepared");
+    let mut whole = bytes.to_vec();
+    whole.extend_from_slice(&unsigned.update);
+    let [_, hole, rest, len] = unsigned.range.map(|n| usize::try_from(n).expect("offset"));
+    let mut covered = whole[..hole].to_vec();
+    covered.extend_from_slice(&whole[rest..rest + len]);
+    let token = mint_with(
+        Imprint::Sha1,
+        &Imprint::Sha1.digest(&covered),
+        None,
+        at,
+        tsa,
+        &Faults::default(),
+    );
+    let mut update = unsigned.update.clone();
+    let start = hole + 1 - bytes.len();
+    for (index, byte) in token.iter().enumerate() {
+        update[start + index * 2..start + index * 2 + 2]
+            .copy_from_slice(format!("{byte:02X}").as_bytes());
+    }
+    let mut out = bytes.to_vec();
+    out.extend_from_slice(&update);
+    out
+}
+
+#[test]
+fn an_archive_moment_is_the_earliest_covering_one() {
+    let archives = [
+        Archive { end: 900, at: 30 },
+        Archive { end: 500, at: 10 },
+        Archive { end: 700, at: 20 },
+    ];
+    // A range ending at 600 is covered by the two reaching further; the
+    // earlier of them is the moment.
+    assert_eq!(archive_moment(&archives, 600), Some(20));
+    // One reaching exactly as far covers nothing past it: it is that range.
+    assert_eq!(archive_moment(&archives, 900), None);
+    assert_eq!(archive_moment(&archives, 100), Some(10));
+}
+
+#[test]
+fn a_date_this_module_wrote_reads_back_as_the_moment_it_names() {
+    assert_eq!(utc_seconds("2026-09-01 00:00:00 UTC"), Some(G));
+    assert_eq!(
+        utc_seconds(&crate::revocation::format_time(G + 3_723)),
+        Some(G + 3_723)
+    );
+    for bad in [
+        "",
+        "2026-09-01 00:00:00",
+        "2026-13-01 00:00:00 UTC",
+        "2026-09-01 UTC",
+    ] {
+        assert_eq!(utc_seconds(bad), None, "{bad}");
+    }
+}

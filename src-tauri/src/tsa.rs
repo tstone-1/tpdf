@@ -442,6 +442,18 @@ fn unpadded(bytes: &[u8]) -> Vec<u8> {
 ///
 /// Every [`Refusal`] from [`Refusal::Unreadable`] on.
 pub fn accept(answer: &[u8], value: &[u8], nonce: &[u8]) -> Result<Vec<u8>, Refusal> {
+    let asked: [u8; 32] = sha2_10::Sha256::digest(value).into();
+    accept_over(answer, token::Target::Signature(value), &asked, nonce)
+}
+
+/// [`accept`], for a token over `target` whose SHA-256 is `asked`: a
+/// signature's value, or a document timestamp's covered range.
+fn accept_over(
+    answer: &[u8],
+    target: token::Target<'_>,
+    asked: &[u8; 32],
+    nonce: &[u8],
+) -> Result<Vec<u8>, Refusal> {
     let response = TimeStampResp::from_der(answer).map_err(|_| Refusal::Unreadable)?;
     // 0 granted, 1 grantedWithMods: both carry a token. Every other status is
     // the authority declining, whatever else the answer holds.
@@ -454,11 +466,7 @@ pub fn accept(answer: &[u8], value: &[u8], nonce: &[u8]) -> Result<Vec<u8>, Refu
         .to_der()
         .map_err(|_| Refusal::Unreadable)?;
 
-    let verdict = token::check(
-        &token,
-        token::Target::Signature(value),
-        &mut crate::integrity::MAX_HASHED.clone(),
-    );
+    let verdict = token::check(&token, target, &mut crate::integrity::MAX_HASHED.clone());
     if verdict.verdict != Verdict::Intact {
         return Err(Refusal::Token(verdict));
     }
@@ -471,7 +479,6 @@ pub fn accept(answer: &[u8], value: &[u8], nonce: &[u8]) -> Result<Vec<u8>, Refu
     // is SHA-256 --- short of one hash colliding with another. A comparison of
     // the identifier as well was written first, and a mutation removing it
     // showed no input could make it matter.
-    let asked: [u8; 32] = sha2_10::Sha256::digest(value).into();
     if imprint.hashed_message.as_bytes() != asked {
         return Err(Refusal::Imprint);
     }
@@ -608,6 +615,43 @@ pub async fn ask(url: &url::Url, value: &[u8], limits: &Limits) -> Result<Vec<u8
 /// As [`ask`].
 pub fn ask_blocking(url: &url::Url, value: &[u8], limits: &Limits) -> Result<Vec<u8>, Refusal> {
     tauri::async_runtime::block_on(ask(url, value, limits))
+}
+
+/// Asks `url` for a document timestamp's token over the covered `pieces` of a
+/// file --- PAdES B-LTA's archive timestamp --- and returns it once the checks
+/// [`ask`] makes of a signature's token have passed over the range instead.
+///
+/// # Errors
+///
+/// As [`ask`].
+pub async fn ask_over_range(
+    url: &url::Url,
+    pieces: &[&[u8]],
+    limits: &Limits,
+) -> Result<Vec<u8>, Refusal> {
+    let nonce = fresh_nonce()?;
+    let mut hasher = sha2_10::Sha256::new();
+    for piece in pieces {
+        hasher.update(piece);
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    let body = request(&digest, &nonce).map_err(Refusal::Unreachable)?;
+    let answer = post(url, body, limits).await?;
+    accept_over(&answer, token::Target::Range(pieces), &digest, &nonce)
+}
+
+/// [`ask_over_range`], waited for on the application's async runtime, for
+/// [`ask_blocking`]'s callers.
+///
+/// # Errors
+///
+/// As [`ask`].
+pub fn ask_over_range_blocking(
+    url: &url::Url,
+    pieces: &[&[u8]],
+    limits: &Limits,
+) -> Result<Vec<u8>, Refusal> {
+    tauri::async_runtime::block_on(ask_over_range(url, pieces, limits))
 }
 
 /// The timestamped CMS for `made`, when one was asked for.

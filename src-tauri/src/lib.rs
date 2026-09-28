@@ -1083,6 +1083,13 @@ mod tests {
         ) -> Result<crate::sign_dss::Extended, String> {
             Err("a redaction's read-back never asks for validation data".into())
         }
+
+        fn document_timestamp(
+            &self,
+            _signed: &[u8],
+        ) -> Result<crate::sign_prepare::Unsigned, String> {
+            Err("a redaction's read-back never asks for a document timestamp".into())
+        }
     }
 
     /// The redaction read-back asks the verifier, and does not parse the file.

@@ -159,8 +159,29 @@ pub fn prepare_visible(
     let details = Details {
         reason: visible.options.reason().map(str::to_string),
         location: visible.options.location().map(str::to_string),
+        document_timestamp: false,
     };
     build(original, signed_at, password, Some(visible), &details)
+}
+
+/// A document timestamp's revision (PDF 2.0 §12.8.5, PAdES B-LTA's archive
+/// timestamp): an invisible field whose `/V` is a `/DocTimeStamp` with
+/// `/SubFilter /ETSI.RFC3161`. [`Unsigned::digest`] is the SHA-256 the
+/// timestamp authority is asked to stamp, and the token it answers is the whole
+/// of `/Contents` (`sign_cms::seal_document_timestamp`).
+///
+/// # Errors
+///
+/// Everything [`prepare`] refuses, for the same reasons.
+pub fn prepare_document_timestamp(
+    original: Vec<u8>,
+    password: Option<&str>,
+) -> Result<Unsigned, String> {
+    let details = Details {
+        document_timestamp: true,
+        ..Details::default()
+    };
+    build(original, 0, password, None, &details)
 }
 
 /// What the signature dictionary says beyond what signing requires.
@@ -174,6 +195,10 @@ pub fn prepare_visible(
 struct Details {
     reason: Option<String>,
     location: Option<String>,
+    /// A document timestamp (`/Type /DocTimeStamp`, `/SubFilter
+    /// /ETSI.RFC3161`, no `/M`) rather than a signature: its `/Contents` is a
+    /// timestamp token over the range, and nobody's key signs it.
+    document_timestamp: bool,
 }
 
 /// A visible signature's appearance, drawn before anything is signed.
@@ -561,13 +586,21 @@ fn text_string(text: &str) -> Object {
 /// The signature dictionary with both holes still unfilled.
 fn signature_dictionary(date: &str, details: &Details) -> Dictionary {
     let mut sig = Dictionary::new();
-    sig.set("Type", Object::Name(b"Sig".to_vec()));
-    sig.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
-    sig.set("SubFilter", Object::Name(b"ETSI.CAdES.detached".to_vec()));
-    sig.set(
-        "M",
-        Object::String(date.as_bytes().to_vec(), StringFormat::Literal),
-    );
+    if details.document_timestamp {
+        // No `/M`: the time is the token's, and a second, unchecked date
+        // beside it would only be something to disagree with.
+        sig.set("Type", Object::Name(b"DocTimeStamp".to_vec()));
+        sig.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
+        sig.set("SubFilter", Object::Name(b"ETSI.RFC3161".to_vec()));
+    } else {
+        sig.set("Type", Object::Name(b"Sig".to_vec()));
+        sig.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
+        sig.set("SubFilter", Object::Name(b"ETSI.CAdES.detached".to_vec()));
+        sig.set(
+            "M",
+            Object::String(date.as_bytes().to_vec(), StringFormat::Literal),
+        );
+    }
     sig.set(
         "ByteRange",
         Object::Array(vec![

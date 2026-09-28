@@ -620,3 +620,38 @@ fn every_refusal_names_the_authority() {
         assert!(sentence.contains("timestamp.example"), "{sentence}");
     }
 }
+
+// ---------------------------------------------- the archive timestamp's range
+
+#[test]
+fn an_archive_timestamp_is_asked_over_the_covered_range_and_checked_over_it() {
+    // PAdES B-LTA: the imprint is SHA-256 over the pieces the range covers,
+    // in order, and the token is checked over those pieces --- not over a
+    // signature's value.
+    let pieces: [&[u8]; 2] = [b"%PDF-1.7 before the hole", b" after it %%EOF"];
+    let fake = granting(Imprint::Sha256, Faults::default());
+    let token = ask_over_range_blocking(&fake.url, &pieces, &QUICK).expect("accepted");
+    let request = fake.seen.recv().expect("the request arrived");
+    let (digest, _) = asked(&request);
+    let wanted: [u8; 32] = sha2_10::Sha256::digest(pieces.concat()).into();
+    assert_eq!(digest, wanted, "the imprint is over the pieces, joined");
+    let verdict = token::check(
+        &token,
+        token::Target::Range(&pieces),
+        &mut crate::integrity::MAX_HASHED.clone(),
+    );
+    assert_eq!(verdict.verdict, Verdict::Intact, "{verdict:?}");
+
+    // A token over anything else is refused, as a signature's is.
+    let fake = granting(
+        Imprint::Sha256,
+        Faults {
+            wrong_imprint: true,
+            ..Faults::default()
+        },
+    );
+    assert!(matches!(
+        ask_over_range_blocking(&fake.url, &pieces, &QUICK),
+        Err(Refusal::Token(_) | Refusal::Imprint)
+    ));
+}

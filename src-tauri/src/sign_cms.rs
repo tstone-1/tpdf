@@ -162,6 +162,11 @@ pub struct Checked {
     /// added long-term validation data, `none` for one that did not.
     #[serde(default)]
     pub revocation: Option<crate::revocation::Revocation>,
+    /// A document timestamp written after the signature just made: the
+    /// archive timestamp a long-term signing adds (PAdES B-LTA), named apart
+    /// from the signatures before it. Since 2026-09-28.
+    #[serde(default)]
+    pub archive: bool,
 }
 
 /// What signing reports: the new field, and every signature the written file
@@ -182,11 +187,17 @@ pub struct Signed {
 /// and listing one would read as a signature that failed.
 #[must_use]
 pub fn report(path: String, field: String, found: Vec<crate::docinfo::Signature>) -> Signed {
-    let signatures = found
+    let signed: Vec<crate::docinfo::Signature> = found
         .into_iter()
         .filter(|signature| signature.signed)
-        .map(|signature| Checked {
+        .collect();
+    let at = signed.iter().position(|signature| signature.field == field);
+    let signatures = signed
+        .into_iter()
+        .enumerate()
+        .map(|(index, signature)| Checked {
             ours: signature.field == field,
+            archive: signature.kind == "ETSI.RFC3161" && at.is_some_and(|at| index > at),
             field: signature.field,
             integrity: signature.integrity,
             timestamp: signature.timestamp,
@@ -810,6 +821,65 @@ fn write_hex(
         update[at + index * 2..at + index * 2 + 2].copy_from_slice(digits.as_bytes());
     }
     Ok(())
+}
+
+/// A document timestamp's revision with `token` in its `/Contents`, appended
+/// to `original` --- the document [`crate::sign_prepare::prepare_document_timestamp`]
+/// built `unsigned` against --- and read back before it is returned: the token
+/// out of the finished bytes must be `Intact` over the range, or nothing is.
+///
+/// # Errors
+///
+/// The token is larger than the span the revision reserved; the revision was
+/// built against other bytes; or tpdf's own verifier does not call the result
+/// intact.
+pub fn seal_document_timestamp(
+    original: Vec<u8>,
+    unsigned: crate::sign_prepare::Unsigned,
+    token: &[u8],
+) -> Result<Vec<u8>, String> {
+    let crate::sign_prepare::Unsigned {
+        mut update,
+        built_against,
+        range,
+        ..
+    } = unsigned;
+    if built_against != original.len() {
+        return Err(format!(
+            "the document timestamp's revision was built against {built_against} bytes, and \
+             the document is {}",
+            original.len()
+        ));
+    }
+    if token.len() > RESERVED {
+        return Err(format!(
+            "the document timestamp takes {} bytes, and the space set aside for it holds \
+             {RESERVED}",
+            token.len()
+        ));
+    }
+    write_hex(&mut update, built_against, range, token)?;
+    let mut bytes = original;
+    bytes.extend_from_slice(&update);
+    let mut contents = token.to_vec();
+    contents.resize(RESERVED, 0);
+    let numbers = range.map(|n| i64::try_from(n).unwrap_or(i64::MAX));
+    let verdict = crate::integrity::check(
+        &bytes,
+        &numbers,
+        &contents,
+        Some(token),
+        "ETSI.RFC3161",
+        &mut crate::integrity::MAX_HASHED.clone(),
+    );
+    if verdict.verdict != crate::integrity::Verdict::Intact {
+        return Err(format!(
+            "tpdf's own check of the document timestamp it wrote did not call it intact \
+             ({:?})",
+            verdict.verdict
+        ));
+    }
+    Ok(bytes)
 }
 
 /// id-aa-timeStampToken, RFC 3161 Appendix A: where a signature carries the

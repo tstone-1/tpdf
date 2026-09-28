@@ -65,7 +65,8 @@ describe("the command-line tool's wording", () => {
     // 7 signing reports, each with no timestamp and with four: sound, named
     // and trusted; sound from an authority nobody vouches for; sound and
     // unnamed; and one that does not check out.
-    expect(wording.after_signing.length).toBe(7 * 5);
+    // And two with an archive timestamp after the new signature.
+    expect(wording.after_signing.length).toBe(7 * 5 + 2);
     expect(
       wording.after_signing.filter((c) => c.sentence.includes(" Timestamp: ")).length,
     ).toBeGreaterThan(0);

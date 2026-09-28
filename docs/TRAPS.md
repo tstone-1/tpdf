@@ -802,6 +802,7 @@ hop through the index.
 - The guard the type checker asked for made the loop bound untestable
 - A fixture cannot put tagged and untagged text on one page, and the untagged half simply is not there
 - A fixture rewritten to reach one parser leaves the standard, and every other reader then judges it differently
+- A fake server that answers once encodes how many requests the code makes
 
 ## Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -25214,3 +25215,21 @@ which is what keeps that mutation aimed.
 Worth knowing whenever a check is widened to include what an older check already covers: the
 older one becomes redundant silently, and only a mutation of it says so. Widen to the part not
 yet covered, not to the whole.
+
+### A fake server that answers once encodes how many requests the code makes
+
+2026-09-28, adding the archive timestamp (PAdES B-LTA) to a long-term signing. `tests/cli.rs`'s
+fake timestamp authority accepted **one** connection and then its thread returned: written when a
+signing asked an authority exactly once, it said so in its shape rather than in any assertion.
+The first run after the change asked twice --- the signature's token, then the archive's --- and
+five checks went red with *could not reach the timestamp authority at 127.0.0.1: Connection
+refused*, which reads like a network fault and was a fixture's assumption. The unit tests had
+passed, because each supplies its own stamper.
+
+It was caught only because the second request was in the same process run as the first; a fake
+that answered once and then answered wrongly, rather than not at all, would have produced a
+refusal the tests could have been "fixed" to expect. A fake server answers every request until
+it is dropped, and a test that means *exactly once* counts the requests and says so --- which is
+what `Pki::paths()` does for the revocation half. The CLI fake now answers every connection, and
+the checks assert what was written: an intact archive over the whole file.
+

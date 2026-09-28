@@ -127,11 +127,14 @@ enum Stage {
     /// Made by the key; its timestamp did not come.
     Made(sign_cms::Made),
     /// Made, timestamped and sealed; its long-term validation data did not
-    /// come. `cms` is the timestamped signature, which says what to ask about.
+    /// come. `cms` is the timestamped signature, which says what to ask about;
+    /// `authority` is the one that stamped it, asked again for the archive
+    /// timestamp --- a retry does not name it again.
     Sealed {
         bytes: Vec<u8>,
         cms: Vec<u8>,
         field: String,
+        authority: Option<url::Url>,
     },
 }
 
@@ -220,6 +223,7 @@ fn conclude(
     out: PathBuf,
     checking: &dyn crate::save::Outside,
     pending: &Pending,
+    archive_by: ArchiveBy,
 ) -> Result<Signing, String> {
     let waiting = |why: String, number: u64, stage: Waiting| Signing {
         signed: None,
@@ -229,7 +233,7 @@ fn conclude(
             stage,
         }),
     };
-    let (bytes, cms, field) = match stage {
+    let (bytes, cms, field, stamped_by) = match stage {
         Stage::Made(made) => {
             let stamped = match crate::tsa::stamp(&made, authority, |url, value| {
                 crate::tsa::ask_blocking(url, value, &crate::tsa::LIMITS)
@@ -246,9 +250,14 @@ fn conclude(
             };
             let field = made.field.clone();
             let cms = stamped.clone();
-            (made.seal(stamped)?, cms, field)
+            (made.seal(stamped)?, cms, field, authority.cloned())
         }
-        Stage::Sealed { bytes, cms, field } => (bytes, Some(cms), field),
+        Stage::Sealed {
+            bytes,
+            cms,
+            field,
+            authority,
+        } => (bytes, Some(cms), field, authority),
     };
     let bytes = match (long_term, cms) {
         (false, _) => bytes,
@@ -261,6 +270,12 @@ fn conclude(
             checking,
             &crate::longterm::os_chain,
             &mut crate::longterm::fetch_blocking,
+            // The archive timestamp, from the authority that stamped the
+            // signature.
+            &mut |pieces| match stamped_by.as_ref() {
+                Some(url) => archive_by(url, pieces),
+                None => Err(crate::longterm::Refusal::NoTimestamp.sentence()),
+            },
         ) {
             Ok(extended) => extended,
             // A revoked certificate: nothing is kept to be written without
@@ -269,7 +284,16 @@ fn conclude(
                 return Err(format!("{} --- nothing was written", why.sentence()))
             }
             Err(why) => {
-                let number = pending.keep(Stage::Sealed { bytes, cms, field }, source, out);
+                let number = pending.keep(
+                    Stage::Sealed {
+                        bytes,
+                        cms,
+                        field,
+                        authority: stamped_by,
+                    },
+                    source,
+                    out,
+                );
                 return Ok(waiting(why.sentence(), number, Waiting::LongTerm));
             }
         },
@@ -288,6 +312,17 @@ fn conclude(
         signed: Some(sign_cms::report(out.display().to_string(), field, found)),
         unstamped: None,
     })
+}
+
+/// Who stamps an archive timestamp: the authority's token over the covered
+/// pieces of the file, or the sentence saying why not. [`ask_archive`] in the
+/// application; a test's own authority in a test.
+type ArchiveBy = fn(&url::Url, &[&[u8]]) -> Result<Vec<u8>, String>;
+
+/// [`ArchiveBy`] for the application: `tsa::ask_over_range` against `url`.
+fn ask_archive(url: &url::Url, pieces: &[&[u8]]) -> Result<Vec<u8>, String> {
+    crate::tsa::ask_over_range_blocking(url, pieces, &crate::tsa::LIMITS)
+        .map_err(|why| why.sentence(url.host_str().unwrap_or_default()))
 }
 
 /// The long-term choice, judged against the timestamp: long-term data is
@@ -461,6 +496,7 @@ pub async fn sign_document(
             PathBuf::from(path),
             checking.as_ref(),
             &app.state::<Pending>(),
+            ask_archive,
         )
     })
     .await
@@ -510,6 +546,7 @@ pub async fn sign_resume(
             out,
             checking.as_ref(),
             &held,
+            ask_archive,
         )
     })
     .await
@@ -588,7 +625,24 @@ mod tests {
         let cms = made.stamped(&token).expect("stamped");
         let field = made.field.clone();
         let bytes = made.seal(Some(cms.clone())).expect("sealed");
-        Stage::Sealed { bytes, cms, field }
+        Stage::Sealed {
+            bytes,
+            cms,
+            field,
+            authority: url::Url::parse("http://127.0.0.1:9/").ok(),
+        }
+    }
+
+    /// [`ArchiveBy`] for a test: the test authority's token over the pieces.
+    fn test_archive(_: &url::Url, pieces: &[&[u8]]) -> Result<Vec<u8>, String> {
+        use crate::integrity::test_tsa::{mint, Imprint};
+        Ok(mint(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(&pieces.concat()),
+            None,
+            now(),
+            &crate::integrity::test_tsa::TestTsa::new(),
+        ))
     }
 
     fn scratch(name: &str) -> (PathBuf, PathBuf) {
@@ -622,6 +676,7 @@ mod tests {
             out.clone(),
             &crate::save::Here,
             &pending,
+            test_archive,
         )
         .expect("an answer");
         let waiting = answer.unstamped.expect("held");
@@ -644,6 +699,7 @@ mod tests {
             out.clone(),
             &crate::save::Here,
             &pending,
+            test_archive,
         )
         .expect("written");
         let signed = answer.signed.expect("signed");
@@ -673,6 +729,7 @@ mod tests {
             out,
             &crate::save::Here,
             &Pending::default(),
+            test_archive,
         )
         .expect("written");
         let signed = answer.signed.expect("signed");
@@ -703,6 +760,7 @@ mod tests {
             out.clone(),
             &crate::save::Here,
             &pending,
+            test_archive,
         ) {
             Err(why) => why,
             Ok(answer) => panic!("not refused: {answer:?}"),

@@ -293,6 +293,7 @@ fn long_term_half(
     field: &str,
     now: u64,
     scratch: &Path,
+    asked: &url::Url,
 ) -> Result<(), String> {
     use tpdf_lib::longterm;
     let whole = longterm::extend(
@@ -303,6 +304,7 @@ fn long_term_half(
         &tpdf_lib::save::Here,
         &longterm::os_chain,
         &mut longterm::fetch_blocking,
+        &mut |_: &[&[u8]]| Err("the archive timestamp is not reached for this signer".into()),
     );
     report.check(
         "long-term, the whole path: the self-made signer is refused, nothing to write",
@@ -393,6 +395,60 @@ fn long_term_half(
         "long-term: the signature is still intact under its revision",
         ours.integrity.as_ref().map(|i| i.verdict) == Some(Verdict::Intact),
         &format!("{:?}", ours.integrity),
+    );
+
+    // The archive timestamp over the whole (PAdES B-LTA): the revision built
+    // as a worker builds it, the same real authority asked for a token over
+    // the covered range, sealed, and read back.
+    use tpdf_lib::save::Verifier as _;
+    let unsigned = tpdf_lib::save::Here.document_timestamp(&whole)?;
+    let [_, hole, rest, _] = unsigned
+        .range
+        .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    let staged = [whole.as_slice(), unsigned.update.as_slice()].concat();
+    let at = std::time::Instant::now();
+    let token = tpdf_lib::tsa::ask_over_range_blocking(
+        asked,
+        &[&staged[..hole], &staged[rest..]],
+        &tpdf_lib::tsa::LIMITS,
+    )
+    .map_err(|why| why.sentence(asked.host_str().unwrap_or_default()))?;
+    println!(
+        "long-term: archive timestamp, {} bytes, in {:.2} s",
+        token.len(),
+        at.elapsed().as_secs_f64()
+    );
+    let archived = tpdf_lib::sign_cms::seal_document_timestamp(whole.clone(), unsigned, &token)?;
+    let out = scratch.join("authority-lta.pdf");
+    std::fs::write(&out, &archived).map_err(|e| e.to_string())?;
+    println!(
+        "long-term: {} + {} bytes of archive revision -> {}",
+        whole.len(),
+        archived.len() - whole.len(),
+        out.display()
+    );
+    let found = tpdf_lib::docinfo::scan(&archived, 1, None)?;
+    let signed: Vec<_> = found.signatures.iter().filter(|s| s.signed).collect();
+    let archive = signed.last().ok_or("no field in the archived file")?;
+    report.check(
+        "long-term: the archive timestamp covers the whole file, intact, its authority trusted",
+        archive.kind == "ETSI.RFC3161"
+            && archive.covers_whole_file
+            && archive.integrity.as_ref().map(|i| i.verdict) == Some(Verdict::Intact)
+            && archive.trust.as_ref().map(|t| t.standing)
+                == Some(tpdf_lib::trust::Standing::Trusted),
+        &format!("{:?} / {:?}", archive.integrity, archive.trust),
+    );
+    let ours = signed
+        .iter()
+        .find(|s| s.field == field)
+        .ok_or("our signature is not in the archived file")?;
+    let stamp_trust = ours.timestamp.as_ref().and_then(|t| t.trust.as_ref());
+    println!("long-term: the signature's authority, under the archive, reads {stamp_trust:?}");
+    report.check(
+        "long-term: the signature's authority is judged at the archive's time",
+        stamp_trust.map(|t| t.standing) == Some(tpdf_lib::trust::Standing::TrustedAtTimestamp),
+        &format!("{stamp_trust:?}"),
     );
     Ok(())
 }
@@ -1162,7 +1218,8 @@ fn probe(
 
     // --------------------------------------------- the long-term data
     if let (true, Some(cms)) = (long_term, cms.as_ref()) {
-        long_term_half(&mut report, &bytes, cms, &field, now, scratch)?;
+        let authority = timestamp.ok_or("--long-term needs --timestamp")?;
+        long_term_half(&mut report, &bytes, cms, &field, now, scratch, authority)?;
     }
 
     // ------------------------------------------------ control: wrong offset

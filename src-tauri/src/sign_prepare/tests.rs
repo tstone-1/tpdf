@@ -1281,6 +1281,7 @@ fn a_reason_and_location_are_text_strings_inside_the_range() {
         let details = Details {
             reason: Some(reason.into()),
             location: Some(location.into()),
+            document_timestamp: false,
         };
         let unsigned = build(original.clone(), NOW, None, None, &details).expect(reason);
         let after = reread(&original, &unsigned);

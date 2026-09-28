@@ -855,7 +855,10 @@ fn authority_by(answer: Answer, tsa: test_tsa::TestTsa) -> String {
     use std::io::{BufRead as _, Read as _, Write as _};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
     let port = listener.local_addr().expect("an address").port();
-    std::thread::spawn(move || {
+    // Every connection answered the same way, until the process ends: a
+    // long-term signing asks twice --- the signature's timestamp, then the
+    // archive timestamp over the whole (PAdES B-LTA).
+    std::thread::spawn(move || loop {
         let Ok((stream, _)) = listener.accept() else {
             return;
         };
@@ -864,7 +867,7 @@ fn authority_by(answer: Answer, tsa: test_tsa::TestTsa) -> String {
         loop {
             let mut line = String::new();
             if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                return;
+                break;
             }
             let line = line.trim_end().to_ascii_lowercase();
             if line.is_empty() {
@@ -876,10 +879,10 @@ fn authority_by(answer: Answer, tsa: test_tsa::TestTsa) -> String {
         }
         let mut body = vec![0; length];
         if reader.read_exact(&mut body).is_err() {
-            return;
+            continue;
         }
         let Some((digest, nonce)) = asked(&body) else {
-            return;
+            continue;
         };
         let mint = |faults: &test_tsa::Faults, nonce: &[u8]| {
             test_tsa::mint_with(
@@ -1161,6 +1164,14 @@ fn long_term_when_signing(report: &mut Report) {
                     && signature["revocation"]["standing"] == "good"
                     && signature["timestamp"]["revocation"]["standing"] == "good",
                 &signature.to_string(),
+            );
+            let archive = &json["files"][0]["signatures"][1];
+            report.check(
+                "long-term data: an archive timestamp over the whole follows, and is intact",
+                json["files"][0]["signatures"].as_array().map(Vec::len) == Some(2)
+                    && archive["covers_whole_file"] == true
+                    && archive["timestamp"]["integrity"]["verdict"] == "intact",
+                &archive.to_string(),
             );
             report.check(
                 "long-term data: the tool reads what the in-process reader reads",

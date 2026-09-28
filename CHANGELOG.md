@@ -81,6 +81,16 @@ have the binary.)
   signature whose certificate the document shows revoked before that time, and
   still passes one carrying no revocation data. The JSON gains `revocation` on
   each signature and each timestamp, and `attested_at` on each trust answer.
+- **Signatures stay checkable after the timestamp authority's certificate
+  expires.** *Keep it verifiable after the certificates expire* (and `tpdf sign
+  --long-term`) now ends with an archive timestamp: after the revocation data
+  is added, the same timestamp authority is asked once more, for a timestamp
+  over the whole document (PAdES B-LTA). When you open such a document years
+  later, after the authority's own certificate has run out, tpdf judges that
+  authority at the time the archive timestamp attests, so the signature's time
+  still counts. If the archive timestamp cannot be had, nothing is written, and
+  you can try again or sign without the long-term data. The message after
+  signing names the archive timestamp on its own, not as an earlier signature.
 - **The certificates above the signer's are checked too.** An issuing
   authority whose own certificate has been revoked vouches for nothing it
   issued, so a signature under it is no better than one whose own certificate

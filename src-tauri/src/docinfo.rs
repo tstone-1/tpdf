@@ -1229,12 +1229,18 @@ fn read_signatures(
         order: fields::Order::Document,
     };
 
-    let mut out: Vec<Signature> = Vec::new();
+    // The walk collects; the judging comes after, because an archive
+    // timestamp judges what came before it (`archive_moment`), so the
+    // document timestamps are read first, the one reaching furthest first,
+    // and each signature is read knowing the moments those after it attest.
+    // Owned: the walk lends each node for the length of one visit. A field
+    // dictionary is a handful of references, so the copy is cheap.
+    let mut found: Vec<(String, Dictionary)> = Vec::new();
     let cut = fields::walk(document, &bounds, |node| {
         // Charged before the dictionary is read, so the ceiling costs one pop
         // rather than one parse -- and reported, because a form that stops
         // yielding signatures reads exactly like one that has no more.
-        if out.len() >= MAX_SIGNATURES {
+        if found.len() >= MAX_SIGNATURES {
             limits.signatures_dropped += 1;
             return fields::Flow::Leaf;
         }
@@ -1247,12 +1253,42 @@ fn read_signatures(
         // at once is legal and means a field that also has widget children, so
         // this reads the field *and* descends.
         if name_of(document, field, b"FT") == "Sig" {
-            out.push(read_signature(
-                document, field, node.name, size, bytes, limits, budget, judging,
-            ));
+            found.push((node.name, field.clone()));
         }
         fields::Flow::Descend
     });
+
+    let reach: Vec<Option<(bool, u64)>> = found
+        .iter()
+        .map(|(_, field)| signed_reach(document, field))
+        .collect();
+    let mut order: Vec<usize> = (0..found.len()).collect();
+    order.sort_by_key(|&at| match reach[at] {
+        Some((true, end)) => (0, std::cmp::Reverse(end)),
+        _ => (1, std::cmp::Reverse(0)),
+    });
+    let mut archives: Vec<Archive> = Vec::new();
+    let mut read: Vec<Option<Signature>> = vec![None; found.len()];
+    for at in order {
+        let (name, field) = &found[at];
+        let archive = reach[at].and_then(|(_, end)| archive_moment(&archives, end));
+        let signature = read_signature(
+            document,
+            field,
+            name.clone(),
+            size,
+            bytes,
+            limits,
+            budget,
+            judging,
+            archive,
+        );
+        if let (Some((true, end)), Some(moment)) = (reach[at], archiving(&signature)) {
+            archives.push(Archive { end, at: moment });
+        }
+        read[at] = Some(signature);
+    }
+    let out: Vec<Signature> = read.into_iter().flatten().collect();
 
     // What the walk itself could not do. Both are additions rather than
     // assignments: the closure above has already counted what it met, and these
@@ -1263,7 +1299,111 @@ fn read_signatures(
     out
 }
 
-/// Reads one signature field.
+/// A moment an archive timestamp attests, and how far into the file its
+/// signed range reaches: everything written before `end` existed at `at`.
+#[derive(Clone, Copy, Debug)]
+struct Archive {
+    end: u64,
+    at: u64,
+}
+
+/// Whether a signature field is a document timestamp, and where the signed
+/// range its `/ByteRange` states ends --- `None` for an unsigned field, or a
+/// range that does not start at the file's first byte, which covers nothing
+/// before it and so can archive nothing.
+fn signed_reach(document: &Document, field: &Dictionary) -> Option<(bool, u64)> {
+    let sig = field
+        .get(b"V")
+        .ok()
+        .and_then(|o| resolve(document, o).as_dict().ok())?;
+    let range = sig
+        .get(b"ByteRange")
+        .ok()
+        .and_then(|o| resolve(document, o).as_array().ok())?;
+    let numbers: Vec<i64> = range
+        .iter()
+        .map(|o| resolve(document, o).as_i64().ok())
+        .collect::<Option<_>>()?;
+    if numbers.len() < 2 || numbers.len() % 2 != 0 || numbers[0] != 0 {
+        return None;
+    }
+    let last = numbers.chunks_exact(2).last()?;
+    let end = u64::try_from(last[0].checked_add(last[1])?).ok()?;
+    Some((name_of(document, sig, b"SubFilter") == "ETSI.RFC3161", end))
+}
+
+/// The moment the earliest archive timestamp covering a signed range that
+/// ends at `end` attests: one whose own range reaches further, so it was made
+/// over everything this range holds. The earliest, because each later one
+/// protects the earlier, and what an archive proves is that the data existed
+/// by then --- the first proof is the strongest statement (ETSI EN 319 102-1
+/// §5.6.2 validates at the earliest proven time).
+fn archive_moment(archives: &[Archive], end: u64) -> Option<u64> {
+    archives
+        .iter()
+        .filter(|archive| archive.end > end)
+        .map(|archive| archive.at)
+        .min()
+}
+
+/// The moment a document timestamp attests for what it covers, when it may:
+/// intact, its authority trusted now or at a later archive's moment, nothing on
+/// its chain revoked, and its time inside its authority's certificate --- the
+/// rule [`attested_moment`] applies to a signature's own token. `None` for
+/// anything else.
+fn archiving(signature: &Signature) -> Option<u64> {
+    if signature.kind != "ETSI.RFC3161" {
+        return None;
+    }
+    let stamp = signature.timestamp.as_ref()?;
+    let at = utc_seconds(&stamp.when)?;
+    let certificate = stamp.authority.as_ref()?;
+    let intact = stamp
+        .integrity
+        .as_ref()
+        .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact);
+    let trusted = stamp.trust.as_ref().is_some_and(|t| {
+        matches!(
+            t.standing,
+            crate::trust::Standing::Trusted | crate::trust::Standing::TrustedAtTimestamp
+        )
+    });
+    let revoked = stamp
+        .revocation_chain
+        .as_ref()
+        .is_some_and(|c| c.standing == crate::revocation::Status::Revoked);
+    let from = utc_seconds(&certificate.from)?;
+    let until = utc_seconds(&certificate.until)?;
+    (intact && trusted && !revoked && (from..=until).contains(&at)).then_some(at)
+}
+
+/// A `YYYY-MM-DD HH:MM:SS UTC` date, as this module formats every date, in
+/// seconds since the epoch.
+fn utc_seconds(text: &str) -> Option<u64> {
+    let digits: Vec<u32> = text
+        .strip_suffix(" UTC")?
+        .split(['-', ' ', ':'])
+        .map(|part| part.parse().ok())
+        .collect::<Option<_>>()?;
+    let [year, month, day, hour, minute, second] = digits[..] else {
+        return None;
+    };
+    let at = der::DateTime::new(
+        u16::try_from(year).ok()?,
+        u8::try_from(month).ok()?,
+        u8::try_from(day).ok()?,
+        u8::try_from(hour).ok()?,
+        u8::try_from(minute).ok()?,
+        u8::try_from(second).ok()?,
+    )
+    .ok()?;
+    Some(at.unix_duration().as_secs())
+}
+
+/// Reads one signature field. `archive` is the moment an archive timestamp
+/// later in the file attests for everything this signature's range holds, when
+/// one does: the timestamp authorities in it are then judged at that moment
+/// rather than now (PAdES B-LTA).
 #[allow(clippy::too_many_arguments)]
 fn read_signature(
     document: &Document,
@@ -1274,6 +1414,7 @@ fn read_signature(
     limits: &mut Limits,
     budget: &mut u64,
     judging: &Judging<'_>,
+    archive: Option<u64>,
 ) -> Signature {
     let text = |dict: &Dictionary, key: &[u8]| -> String { text_of(document, dict, key) };
     let mut out = Signature {
@@ -1379,6 +1520,7 @@ fn read_signature(
             budget,
             judging.anchors,
             judging.now,
+            archive,
         ) {
             own.extend(&crate::revocation::Material::of_cms(&bytes));
             out.timestamp = Some(timestamp);
@@ -1455,7 +1597,10 @@ fn read_signature(
 
     if attributable(&integrity) {
         let extra = &judging.dss_certificates;
-        out.trust = Some(match (&blob, attested) {
+        // A document timestamp's signer is judged at the moment a later
+        // archive timestamp attests, as a token's authority is.
+        let at = attested.or(archive.filter(|_| document_timestamp));
+        out.trust = Some(match (&blob, at) {
             (None, _) => crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
             (Some(blob), Some(at)) => {
                 crate::trust::of_blob_at(blob, extra, purpose, at, judging.anchors)
@@ -1683,10 +1828,13 @@ fn attested_moment(timestamp: &Timestamp, token: &[u8], at: u64) -> Option<u64> 
         .integrity
         .as_ref()
         .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact);
-    let trusted = timestamp
-        .trust
-        .as_ref()
-        .is_some_and(|t| t.standing == crate::trust::Standing::Trusted);
+    // Trusted now, or at the moment an archive timestamp attests.
+    let trusted = timestamp.trust.as_ref().is_some_and(|t| {
+        matches!(
+            t.standing,
+            crate::trust::Standing::Trusted | crate::trust::Standing::TrustedAtTimestamp
+        )
+    });
     // The authority's own certificate, or any above it: an issuing authority
     // the document shows revoked vouches for nothing below it.
     let revoked = timestamp
@@ -2179,7 +2327,7 @@ fn read_timestamp(
     anchors: crate::trust::Anchors<'_>,
     now: u64,
 ) -> Option<Timestamp> {
-    read_timestamp_token(blob, unread, budget, anchors, now).map(|(timestamp, _)| timestamp)
+    read_timestamp_token(blob, unread, budget, anchors, now, None).map(|(timestamp, _)| timestamp)
 }
 
 /// [`read_timestamp`], with the token's own bytes beside it: the scan needs
@@ -2190,6 +2338,7 @@ fn read_timestamp_token(
     budget: &mut u64,
     anchors: crate::trust::Anchors<'_>,
     now: u64,
+    archive: Option<u64>,
 ) -> Option<(Timestamp, Vec<u8>)> {
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
@@ -2228,6 +2377,7 @@ fn read_timestamp_token(
         budget,
         anchors,
         now,
+        archive,
     );
     Some((checked, token))
 }
@@ -2242,11 +2392,19 @@ fn checked(
     budget: &mut u64,
     anchors: crate::trust::Anchors<'_>,
     now: u64,
+    archive: Option<u64>,
 ) -> Timestamp {
     let integrity = crate::integrity::token::check(token, target, budget);
     let attested = attributable(&integrity);
-    let trust = attested.then(|| {
-        crate::trust::of_blob_for(token, crate::trust::Purpose::Timestamping, now, anchors)
+    // The authority now --- or, when an archive timestamp later in the file
+    // attests that this token existed at a moment, at that moment: the
+    // archive's authority vouches for the time, so the authority under
+    // question does not choose it (PAdES B-LTA, `docs/PLAN.md` §9).
+    let trust = attested.then(|| match archive {
+        Some(at) => {
+            crate::trust::of_blob_at(token, &[], crate::trust::Purpose::Timestamping, at, anchors)
+        }
+        None => crate::trust::of_blob_for(token, crate::trust::Purpose::Timestamping, now, anchors),
     });
     Timestamp {
         integrity: Some(integrity),

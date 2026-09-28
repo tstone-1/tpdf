@@ -14898,10 +14898,10 @@ and the order is the order in which a claim can be made honestly.
    (*Revocation, from the document's own data*, below), with no network in the read path, by
    decision. **Increment C2 --- fetching that data while signing and appending the `/DSS`,
    PAdES B-LT --- is done 2026-09-28** (*Long-term validation data when signing*, below).
-   **Step 3 is complete up to B-LT.** What is not built is PAdES B-LTA: archive (document)
-   timestamps over the validation data, which keep a signature checkable once the timestamp
-   authority's own certificate has expired --- neither written nor read --- and adding
-   validation data to a signature already in a document.
+   **Step 3 is complete up to B-LTA** since 2026-09-28 (*Archive timestamps*, below): a
+   long-term signing ends with an archive timestamp over the whole, and the reader judges a
+   timestamp authority at the moment a later archive attests. What is not built is adding
+   validation data, or a further archive timestamp, to a signature already in a document.
 
 #### Is the signature intact --- done 2026-09-26
 
@@ -16241,7 +16241,7 @@ with a `DummyTimeStamper` token and appends the `/DSS` its validation used (`/Ce
 `/DSS` and in no store; the test anchors the one self-issued certificate there.
 
 **Not done.** Fetching revocation data while signing and appending a `/DSS` (increment C2,
-done since, below). Archive timestamps (PAdES B-LTA): a document timestamp over the validation data, which keeps a
+done since, below). Archive timestamps (PAdES B-LTA; done since, *Archive timestamps*, below): a document timestamp over the validation data, which keeps a
 signature checkable after the authority's certificate expires --- until then an authority
 `expired` now attests no moment. Delta and indirect lists, `onlySomeReasons` partitions. A
 delegated responder's own revocation. Revocation of certificates above the signer's and the
@@ -16377,9 +16377,8 @@ anchors re-aimed because the code under them moved: `cli: drop --timestamp`, the
 visible answer, the backend's authority, *try again* with the authority, and the README's
 not-built line.
 
-**Not done.** PAdES B-LTA: archive timestamps over the validation data, written or read ---
-until then a B-LT signature is checkable until its timestamp authority's certificate expires.
-Adding validation data to a signature already in a document, which the README lists as not
+**Not done.** PAdES B-LTA: archive timestamps over the validation data, written or read
+(done since, *Archive timestamps*, below). Adding validation data to a signature already in a document, which the README lists as not
 built. Revocation of the certificates above the signer's and the authority's is gathered,
 checked and written, and judged by the reader since *The whole chain*, below. A signer certificate
 from a real CA, measured end to end. Windows: the code is the same and `scripts/check_windows.py`
@@ -16505,6 +16504,93 @@ than one that answers for a leaf. The signing panel's closing sentence names the
 revocation and not the chains'. A real CA's intermediate read revoked: none is to hand, so the
 revoked chain is exercised only against minted data. Windows: the code is the same and
 `scripts/check_windows.py` compiles it.
+
+#### Archive timestamps (PAdES B-LTA) --- done 2026-09-28
+
+Phase 6 step 3's last level. A B-LT signature is checkable only until its timestamp authority's
+own certificate expires --- a few years for the public authorities --- because after that nothing
+vouches for the time the token states, and the signer is judged now. An **archive timestamp** is
+a document timestamp over the whole file, the validation data included, from an authority
+trusted at the moment it is read: it proves the earlier timestamp existed while its authority's
+certificate was still in force. Both halves are built.
+
+| Half | Where | What it does |
+|---|---|---|
+| Reading | `docinfo::read_signatures`, `archive_moment`, `archiving` | Fields are collected first; document timestamps are read first, the one reaching furthest first, and each attesting one (intact, its authority trusted now or at a later archive's moment, nothing on its chain revoked, its time inside its certificate) records the moment and how far its range reaches. Every field whose range ends before one is read with the **earliest** such moment. |
+| The authority then | `docinfo::checked`, `trust::of_blob_at` | A token's authority --- and a document timestamp's --- is judged at that moment instead of now; `trusted_at_timestamp` there earns the attested moment as `trusted` does. |
+| The revision | worker, `sign_prepare::prepare_document_timestamp` (`Request::PrepareDocumentTimestamp`, `save::Verifier::document_timestamp`) | An invisible field, `/V` a `/DocTimeStamp` with `/SubFilter /ETSI.RFC3161` and no `/M`, over the signed copy with its `/DSS`, not yet written. |
+| The token | app process, `tsa::ask_over_range` | Increment B's client, the imprint SHA-256 over the covered pieces, the answer checked over the same pieces (`token::Target::Range`), the nonce matched. |
+| The seal | app process, `sign_cms::seal_document_timestamp` | Spliced into the hole, and read back: nothing is returned that `integrity::check` does not call intact. |
+| The policy | `longterm::extend`, `commands::sign::conclude`, `cli/sign.rs` | Every long-term signing ends with it; a failure is `Refusal::Archive` with the authority's sentence, held and offered again like any long-term failure. |
+
+Decisions, each with its reason:
+
+- **The long-term choice writes B-LTA, with no second choice.** *Keep it verifiable after the
+  certificates expire* promises exactly what the archive timestamp delivers, and B-LT alone kept
+  it only until the authority's certificate expired. A second checkbox would ask the reader a
+  question only a specialist can answer.
+- **The same authority, asked again.** The reader chose whom to ask for a time; a second,
+  unchosen authority would be a network party nobody picked. `Stage::Sealed` now carries it, so
+  a retry after a failed long-term step --- which does not name the authority again --- still
+  knows whom to ask.
+- **The earliest covering archive decides, and "covering" means reaching further.** Each later
+  archive protects the earlier, and what one proves is that the data existed by then; the first
+  proof is the strongest statement (EN 319 102-1 §5.6.2). A range that ends exactly where
+  another does is that range, not one covering it.
+- **Judged at the archive's moment whenever there is one**, even for an authority still in date
+  --- C1's rule for the signer: one moment, and the stronger statement. **This changes increment
+  A's answer** for a token under an archive: its authority reads `trusted_at_timestamp`, worded
+  *judged at X, the time an archive timestamp later in this document attests*, which replaces
+  the sentence C1 left unreachable.
+- **An archive attests only what C1 lets a token attest**: intact (not weak), its authority
+  trusted, its chain not revoked, its time inside its certificate. A weak or unfit archive is no
+  archive, and the fields before it are read as if it were not there.
+- **The validation data for the archive's own authority is not added.** B-LTA as ETSI
+  defines it is the archive timestamp; its authority's data is added when the next archive is,
+  which is the *not done* below.
+- **The reserved span is the signature's, 32 KiB**, so the archive revision is 66,203 bytes
+  where the largest real token is 7,657. Halving it is possible and not done: one reserve for both
+  kinds keeps `fill_range`'s placeholder check single.
+- **Zero packages**: 618 before and after.
+
+**Measured**, macOS arm64 (macOS 27.0), 2026-09-28. Offline: six new tests in
+`docinfo::revocation_tests` --- a signature stamped by an authority whose certificate ran out
+ten days after its token, read without an archive (`expired`, the signer at its own date), with
+one five days after (the authority `trusted_at_timestamp` at the archive's moment, the signer at
+the token's), with one after the authority lapsed (nothing), and with a broken, an unfit and a
+weak archive (nothing); the earliest-covering rule; the date parser. One in `sign_cms::tests`
+(sealed only intact, refused against other bytes), one in `tsa::tests` (the imprint over the
+pieces, a token over other bytes refused), two in `longterm::tests` (the archive covers the
+signature and its `/DSS`, reported as the archive; a declined or wrong token writes nothing).
+`tests/cli.rs` has 247 checks, one new: the tool's long-term signing ends with an intact archive
+over the whole file, its fake authority now answering every request. Frontend: the closing
+sentence names the archive apart from earlier signatures, held to the Rust port by two new
+`wording.json` cases.
+
+**Real authorities, once, a measurement and not a gate** (`sign-probe --timestamp <each>
+--long-term`, `BUILD.md`): after the authority's `/DSS`, an archive timestamp from the same
+authority. DigiCert 6,005 bytes in 0.36 s, Sectigo 6,633 in 2.00 s, GlobalSign 7,657 in 0.38 s;
+each archive read back intact, covering the whole file, its authority trusted by the system store,
+and the signature's authority judged `trusted_at_timestamp` at the archive's moment --- 28/28
+checks each. **pyHanko 0.37** with the system roots, no fetching, `validate_pdf_timestamp` on
+each archive: *INTACT:TRUSTED*, coverage *ENTIRE_FILE*. `qpdf --check`: no syntax or stream
+errors.
+
+**Proved able to fail**: 13 new mutations in `scripts/mutate_rust.py` (`archive:`) and 2 in
+`scripts/mutate_frontend.py`. **Four survived their first run** and each was a finding: the
+sort key's first half alone changed nothing, because a document timestamp's end already sorts
+first (re-aimed at the sort itself); an archive not intact and one untrusted still failed to
+attest in the tests, because the only broken archive was also untrusted and the untrusted one
+also left the earlier authority untrusted (a weak archive and an archive from an authority not
+issued for timestamping were added); and the seal's built-against check was masked by the
+read-back after it (the test now asserts which one refused). A fifth check, in `longterm`, was
+the same redundancy and was deleted rather than tested. Three earlier anchors re-aimed.
+
+**Not done.** Adding a further archive timestamp, with the validation data for the previous
+archive's authority, to a document already archived: what keeps a document checkable past the
+archive authority's own certificate, and the next step if documents are kept for decades.
+Adding validation data to a signature already in a document. A Windows run against the real
+authorities; `scripts/check_windows.py` compiles it.
 
 ### Cross-cutting
 

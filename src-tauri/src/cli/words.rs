@@ -508,10 +508,11 @@ pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
             "trusted — {chained} and is issued for timestamping. It is judged at the present \
              moment, not at the time it attests."
         ),
-        // Never produced for an authority, whose certificate is judged now;
-        // worded rather than unreachable, so the sample covers every case.
+        // An authority judged at the moment an archive timestamp later in the
+        // document attests (PAdES B-LTA), which then vouches for the time.
         Standing::TrustedAtTimestamp => format!(
-            "trusted — {chained} and is issued for timestamping, judged at {}.",
+            "trusted — {chained} and is issued for timestamping, judged at {}, the time \
+             an archive timestamp later in this document attests.",
             trust.attested_at
         ),
         Standing::Expired => format!(
@@ -637,6 +638,7 @@ pub fn after_signing(
     field: &str,
     signatures: &[(String, bool, Option<Integrity>)],
     timestamp: Option<(&str, Option<&str>)>,
+    archives: &[(String, Option<Integrity>)],
 ) -> String {
     let ours = signatures.iter().find(|(_, ours, _)| *ours);
     let earlier: Vec<_> = signatures.iter().filter(|(_, ours, _)| !ours).collect();
@@ -663,6 +665,16 @@ pub fn after_signing(
         if let Some(authority) = authority {
             text.push_str(&format!(" Timestamp authority: {authority}"));
         }
+    }
+    // The archive timestamp a long-term signing adds after the signature
+    // (PAdES B-LTA): named apart, because it is neither earlier nor a
+    // signature anybody made.
+    if !archives.is_empty() {
+        let listed: Vec<String> = archives
+            .iter()
+            .map(|(field, integrity)| format!("{field} {}", verdict_briefly(integrity.as_ref())))
+            .collect();
+        text.push_str(&format!(" Archive timestamp: {}.", listed.join(", ")));
     }
     if !earlier.is_empty() {
         let listed: Vec<String> = earlier

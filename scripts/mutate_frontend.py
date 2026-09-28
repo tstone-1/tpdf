@@ -4496,8 +4496,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Adding long-term-validation data to a document that is already signed, archive timestamps,",
-        "- Adding long-term-validation data to a document that is already signed, <!-- built: file.print --> archive timestamps,",
+        "- Adding long-term-validation data, or a further archive timestamp, to a document that is",
+        "- Adding long-term-validation data, <!-- built: file.print --> or a further archive timestamp, to a document that is",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -8352,7 +8352,7 @@ MUTATIONS += [
         "  if (!ours) {",
         "puts a new signature that did not read back intact first, and warns"),
     Mutation("signing: leave the earlier signatures out of the report", "src/lib/signing.ts",
-        "  const earlier = signed.signatures.filter((s) => !s.ours);",
+        "  const earlier = signed.signatures.filter((s) => !s.ours && !s.archive);",
         "  const earlier = signed.signatures.filter(() => false);",
         "lists every earlier signature after the new one"),
     Mutation("signing: strip only a lowercase .pdf from the suggested name", "src/lib/signing.ts",
@@ -8704,6 +8704,20 @@ MUTATIONS += [
         "    if (lapsedAbove) rows.push(lapsedAbove);",
         "",
         "puts each chain's row under its certificate's own, and only when there is a chain above it",
+    ),
+    Mutation(
+        "archive: list the archive timestamp as an earlier signature",
+        "src/lib/signing.ts",
+        "  const earlier = signed.signatures.filter((s) => !s.ours && !s.archive);",
+        "  const earlier = signed.signatures.filter((s) => !s.ours);",
+        "closes a signing as the signing panel does",
+    ),
+    Mutation(
+        "archive: leave the archive timestamp out of the closing sentence",
+        "src/lib/signing.ts",
+        "    text += ` Archive timestamp: ${listed}.`;",
+        "",
+        "closes a signing as the signing panel does",
     ),
     Mutation(
         "trust: say trusted at the timestamp without saying when",

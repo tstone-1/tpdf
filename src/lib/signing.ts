@@ -114,6 +114,8 @@ export interface Checked {
   timestamp?: Timestamp | null;
   /** The signer's revocation, as the file's own data says: `good` after long-term data. */
   revocation?: Revocation | null;
+  /** The archive timestamp a long-term signing writes after the signature (PAdES B-LTA). */
+  archive?: boolean;
 }
 
 /** What `sign_document` answers. Mirrors `sign_cms::Signed`. */
@@ -252,7 +254,8 @@ function verdict(integrity: Integrity | null): string {
 export function afterSigning(signed: Signed): string {
   const name = basename(signed.path);
   const ours = signed.signatures.find((s) => s.ours);
-  const earlier = signed.signatures.filter((s) => !s.ours);
+  const earlier = signed.signatures.filter((s) => !s.ours && !s.archive);
+  const archives = signed.signatures.filter((s) => s.archive);
   if (!ours || ours.integrity?.verdict !== "intact") {
     return (
       `${name} was written, but reading it back did not find the new signature ` +
@@ -281,6 +284,12 @@ export function afterSigning(signed: Signed): string {
     if (authority && stamp?.revocation?.standing === "good") {
       text += ` Authority revocation: ${authority.value}`;
     }
+  }
+  // The archive timestamp a long-term signing adds after the signature: named
+  // apart, because it is neither earlier nor a signature anybody made.
+  if (archives.length > 0) {
+    const listed = archives.map((s) => `${s.field} ${verdict(s.integrity)}`).join(", ");
+    text += ` Archive timestamp: ${listed}.`;
   }
   if (earlier.length > 0) {
     const listed = earlier.map((s) => `${s.field} ${verdict(s.integrity)}`).join(", ");
@@ -495,8 +504,9 @@ export function askIdentity(
   longTermLabel.append(
     longTerm,
     " Keep it verifiable after the certificates expire — tpdf also asks the " +
-      "certificate authorities whether the certificates are revoked and adds their " +
-      "answers to the document. Needs a timestamp.",
+      "certificate authorities whether the certificates are revoked, adds their " +
+      "answers to the document, and asks the timestamp authority once more for a " +
+      "timestamp over the whole. Needs a timestamp.",
   );
   stamps.append(longTermLabel);
   const noneStamp = stampRadios[0];

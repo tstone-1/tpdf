@@ -779,3 +779,43 @@ fn a_timestamp_past_the_reserved_span_is_refused() {
     fits.extend(vec![0u8; 0x4000]);
     signature.stamped(&fits).expect("fits");
 }
+
+// ------------------------------------------------------ document timestamps
+
+#[test]
+fn a_document_timestamp_is_sealed_only_when_it_reads_back_intact() {
+    use crate::integrity::test_tsa::{mint, Imprint, TestTsa};
+    let original = testkeys::plain_pdf();
+    let tsa = TestTsa::new();
+    let unsigned =
+        crate::sign_prepare::prepare_document_timestamp(original.clone(), None).expect("prepared");
+    // The control: a token over the range is written, and reads as a document
+    // timestamp whose verdict is intact.
+    let token = mint(Imprint::Sha256, &unsigned.digest, None, NOW, &tsa);
+    let bytes =
+        seal_document_timestamp(original.clone(), unsigned.clone(), &token).expect("sealed");
+    let found = crate::docinfo::scan(&bytes, 1, None).expect("scanned");
+    let stamp = found
+        .signatures
+        .iter()
+        .find(|s| s.signed)
+        .expect("the field");
+    assert_eq!(stamp.kind, "ETSI.RFC3161");
+    assert_eq!(
+        stamp.integrity.as_ref().map(|i| i.verdict),
+        Some(Verdict::Intact)
+    );
+    // A token over anything else is refused, and so is one against other bytes.
+    let other = mint(
+        Imprint::Sha256,
+        &Imprint::Sha256.digest(b"else"),
+        None,
+        NOW,
+        &tsa,
+    );
+    assert!(seal_document_timestamp(original.clone(), unsigned.clone(), &other).is_err());
+    let mut longer = original;
+    longer.push(b'\n');
+    let why = seal_document_timestamp(longer, unsigned, &token).expect_err("refused");
+    assert!(why.contains("built against"), "{why}");
+}

@@ -427,14 +427,14 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
           `trusted — ${chained} and is issued for timestamping. It is judged at the ` +
           `present moment, not at the time it attests.`,
       };
-    // Never produced for an authority, whose certificate is judged now;
-    // worded rather than unreachable, so the sample covers every case.
+    // An authority judged at the moment an archive timestamp later in the
+    // document attests (PAdES B-LTA), which then vouches for the time.
     case "trusted_at_timestamp":
       return {
         name,
         value:
           `trusted — ${chained} and is issued for timestamping, judged at ` +
-          `${trust.attested_at}.`,
+          `${trust.attested_at}, the time an archive timestamp later in this document attests.`,
       };
     case "expired":
       return {

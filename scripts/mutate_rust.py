@@ -10697,19 +10697,8 @@ MUTATIONS += [
         # A fresh budget per signature rather than one per document.
         "docinfo: give each signature its own hashing budget",
         "src/docinfo.rs",
-        """            out.push(read_signature(
-                document, field, node.name, size, bytes, limits, budget, judging,
-            ));""",
-        """            out.push(read_signature(
-                document,
-                field,
-                node.name,
-                size,
-                bytes,
-                limits,
-                &mut budget.clone(),
-                judging,
-            ));""",
+        "            limits,\n            budget,\n            judging,\n            archive,\n",
+        "            limits,\n            &mut budget.clone(),\n            judging,\n            archive,\n",
         "the_hashing_budget_is_shared_by_every_signature_of_a_document",
     ),
 ]
@@ -10863,8 +10852,8 @@ MUTATIONS += [
         # Ask about the authority of a token nothing vouches for.
         "docinfo: ask about a broken token's authority",
         "src/docinfo.rs",
-        "    let trust = attested.then(|| {",
-        "    let trust = Some(()).map(|()| {",
+        "    let trust = attested.then(|| match archive {",
+        "    let trust = Some(()).map(|()| match archive {",
         "a_broken_tokens_time_is_not_attested_and_its_authority_not_asked",
     ),
     Mutation(
@@ -11094,8 +11083,8 @@ MUTATIONS += [
         # and the value over the wrong digest, are then written as signatures.
         "sign: skip the check of what was just signed",
         "src/sign_cms.rs",
-        "    if verdict.verdict != crate::integrity::Verdict::Intact {",
-        "    if false {",
+        "        if verdict.verdict != crate::integrity::Verdict::Intact {",
+        "        if false {",
         "a_signature_over_the_wrong_digest_is_broken_and_not_written",
     ),
     Mutation(
@@ -13215,6 +13204,109 @@ MUTATIONS += [
         "        if chain.dropped > 0 {",
         "        if false {",
         "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+]
+
+
+# --- archive timestamps, read (PAdES B-LTA, 2026-09-28) -----------------------
+#
+# `docinfo.rs`: a document timestamp later in the file attests a moment at
+# which the timestamp authorities before it are judged. Each removes one rule
+# of that, and names the test built so only that rule fails it.
+MUTATIONS += [
+    Mutation(
+        "archive: judge a token's authority now whatever an archive attests",
+        "src/docinfo.rs",
+        "    let trust = attested.then(|| match archive {",
+        "    let trust = attested.then(|| match None::<u64> {",
+        "an_archive_timestamp_lets_a_lapsed_authority_attest_the_time_it_stated",
+    ),
+    Mutation(
+        # Not the sort key's first half alone: a document timestamp's end
+        # already sorts before every other field's placeholder, so that edit
+        # changes nothing (measured, 2026-09-28).
+        "archive: read the fields in the document's order",
+        "src/docinfo.rs",
+        "    order.sort_by_key(|&at| match reach[at] {",
+        "    order.sort_by_key(|&at| match None::<Option<(bool, u64)>>.unwrap_or(reach[at]).filter(|_| false) {",
+        "an_archive_timestamp_lets_a_lapsed_authority_attest_the_time_it_stated",
+    ),
+    Mutation(
+        "archive: a range reaching as far covers itself",
+        "src/docinfo.rs",
+        "        .filter(|archive| archive.end > end)",
+        "        .filter(|archive| archive.end >= end)",
+        "an_archive_moment_is_the_earliest_covering_one",
+    ),
+    Mutation(
+        "archive: the latest covering archive is the moment",
+        "src/docinfo.rs",
+        "        .map(|archive| archive.at)\n        .min()",
+        "        .map(|archive| archive.at)\n        .max()",
+        "an_archive_moment_is_the_earliest_covering_one",
+    ),
+    Mutation(
+        "archive: a document timestamp that is not intact still archives",
+        "src/docinfo.rs",
+        "    (intact && trusted && !revoked && (from..=until).contains(&at)).then_some(at)",
+        "    (trusted && !revoked && (from..=until).contains(&at)).then_some(at)",
+        "an_archive_timestamp_that_does_not_attest_is_no_archive",
+    ),
+    Mutation(
+        "archive: an untrusted document timestamp still archives",
+        "src/docinfo.rs",
+        "    (intact && trusted && !revoked && (from..=until).contains(&at)).then_some(at)",
+        "    (intact && !revoked && (from..=until).contains(&at)).then_some(at)",
+        "an_archive_timestamp_that_does_not_attest_is_no_archive",
+    ),
+    Mutation(
+        "archive: only an authority trusted now attests a moment",
+        "src/docinfo.rs",
+        "    let trusted = timestamp.trust.as_ref().is_some_and(|t| {",
+        "    let trusted = timestamp.trust.as_ref().is_some_and(|t| t.standing == crate::trust::Standing::Trusted) && timestamp.trust.as_ref().is_some_and(|t| {",
+        "an_archive_timestamp_lets_a_lapsed_authority_attest_the_time_it_stated",
+    ),
+    Mutation(
+        "archive: seal a document timestamp that does not read back intact",
+        "src/sign_cms.rs",
+        "    if verdict.verdict != crate::integrity::Verdict::Intact {\n        return Err(format!(\n            \"tpdf's own check of the document timestamp",
+        "    if false {\n        return Err(format!(\n            \"tpdf's own check of the document timestamp",
+        "a_document_timestamp_is_sealed_only_when_it_reads_back_intact",
+    ),
+    Mutation(
+        "archive: seal a document timestamp against other bytes",
+        "src/sign_cms.rs",
+        "    if built_against != original.len() {",
+        "    if false {",
+        "a_document_timestamp_is_sealed_only_when_it_reads_back_intact",
+    ),
+    Mutation(
+        "archive: write the long-term data without an archive timestamp",
+        "src/longterm.rs",
+        "    archived(whole, worker, archive)",
+        "    let _ = &archive;\n    Ok(whole)",
+        "the_archive_timestamp_covers_the_signature_and_its_validation_data",
+    ),
+    Mutation(
+        "archive: ask for a token over the first piece only",
+        "src/tsa.rs",
+        "    for piece in pieces {",
+        "    for piece in pieces.iter().take(1) {",
+        "an_archive_timestamp_is_asked_over_the_covered_range_and_checked_over_it",
+    ),
+    Mutation(
+        "archive: take the authority's answer unchecked",
+        "src/tsa.rs",
+        "    accept_over(&answer, token::Target::Range(pieces), &digest, &nonce)",
+        "    let _ = (&digest, &nonce);\n    Ok(answer)",
+        "an_archive_timestamp_is_asked_over_the_covered_range_and_checked_over_it",
+    ),
+    Mutation(
+        "archive: report the archive timestamp as an earlier signature",
+        "src/sign_cms.rs",
+        '            archive: signature.kind == "ETSI.RFC3161" && at.is_some_and(|at| index > at),',
+        "            archive: false && at.is_some_and(|at| index > at),",
+        "the_archive_timestamp_covers_the_signature_and_its_validation_data",
     ),
 ]
 

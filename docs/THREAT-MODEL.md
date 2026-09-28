@@ -2507,6 +2507,15 @@ certifying each other cannot loop it; the steps are at most the candidates, whic
 above already count. The chain the OS assembles is **not** offered as candidates --- a revocation
 answer stays a property of the file, the same on every computer --- which is residual 34.
 
+**Archive timestamps, added the same day (PAdES B-LTA).** A document timestamp later in the file
+now fixes the moment the timestamp authorities before it are judged at (`docinfo::archive_moment`,
+`docs/PLAN.md` §9 *Archive timestamps*). **The party under question still does not choose its
+moment**: the archive is another authority's token --- or the same one's, later --- judged by the
+same rules as any token (intact, not weak; trusted for timestamping now or at a still later
+archive's moment; nothing on its chain revoked; its time inside its certificate), and only a
+range reaching past the earlier one's counts. No new parse: the fields were already read, now in
+a different order, and each document timestamp was already checked over its range.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -2793,6 +2802,16 @@ can answer `good` for a revoked certificate, as it can for every relying party.
 
 **Residual.** Residuals 32 and 33. And the coordinator parses more network bytes than for the
 token alone, with the same bound-then-parse rule and the same memory-safe parsers.
+
+**The archive timestamp, added the same day (PAdES B-LTA).** Every long-term signing now ends
+with one more request to **the same timestamp authority the reader chose** --- never a second,
+unchosen one --- for a token over the whole file, validation data included (`longterm::archived`,
+`tsa::ask_over_range`). What it learns is what the first request told it: a SHA-256 and a nonce,
+nothing of the document. The token is judged by increment B's rules over the covered range
+before it is kept, and the sealed file is read back before it is returned; a worker builds the
+revision over a snapshot of bytes not yet written, as for the `/DSS`. **No new authority, no
+new parser**: one request more under the same limits, and a refusal writes nothing, like any
+other long-term failure.
 
 ### T8 — The webview
 

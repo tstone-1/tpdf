@@ -75,6 +75,19 @@ fn no_os_chain(_: &[u8], _: &[Vec<u8>]) -> Vec<Vec<u8>> {
     Vec::new()
 }
 
+/// The archive timestamp, from the test authority: a token over the pieces,
+/// now, as `tsa::ask_over_range` would return one.
+fn archive(pieces: &[&[u8]]) -> Result<Vec<u8>, String> {
+    let covered: Vec<u8> = pieces.concat();
+    Ok(mint(
+        Imprint::Sha256,
+        &Imprint::Sha256.digest(&covered),
+        None,
+        now(),
+        &crate::integrity::test_tsa::TestTsa::new(),
+    ))
+}
+
 /// The whole second half: planned, gathered, appended and checked.
 fn extended(signed: &Sealed) -> Result<Vec<u8>, Refusal> {
     extend(
@@ -85,6 +98,7 @@ fn extended(signed: &Sealed) -> Result<Vec<u8>, Refusal> {
         &crate::save::Here,
         &no_os_chain,
         &mut quick,
+        &mut archive,
     )
 }
 
@@ -291,6 +305,86 @@ fn a_b_lt_signature_under_an_intermediate_reads_back_good_for_the_whole_chain() 
 }
 
 #[test]
+fn the_archive_timestamp_covers_the_signature_and_its_validation_data() {
+    // PAdES B-LTA: the last revision is a document timestamp over the whole,
+    // the /DSS included, and it reads back intact.
+    let pki = Pki::start(good());
+    let signed = sealed(&pki);
+    let bytes = extended(&signed).expect("extended");
+    let found: Vec<crate::docinfo::Signature> = crate::docinfo::scan(&bytes, 1, None)
+        .expect("scanned")
+        .signatures
+        .into_iter()
+        .filter(|s| s.signed)
+        .collect();
+    let [ours, archive] = found.as_slice() else {
+        panic!("a signature and an archive timestamp: {found:?}");
+    };
+    assert_eq!(ours.field, signed.field);
+    assert_eq!(archive.kind, "ETSI.RFC3161");
+    assert!(archive.covers_whole_file, "{archive:?}");
+    assert_eq!(
+        archive.integrity.as_ref().map(|i| i.verdict),
+        Some(crate::integrity::Verdict::Intact)
+    );
+    // It covers the /DSS: the signature's own range ends before it, and the
+    // archive's reaches the end of the file.
+    let (certificates, _, _) = dss(&bytes);
+    assert!(!certificates.is_empty(), "the /DSS is there");
+    assert!(ours.appended_bytes > 0 && !ours.covers_whole_file);
+    assert!(archive.covered_bytes > ours.covered_bytes);
+    // And the report after signing names it as the archive, not as an
+    // earlier signature.
+    let report = crate::sign_cms::report(String::new(), signed.field.clone(), found.clone());
+    let flags: Vec<(bool, bool)> = report
+        .signatures
+        .iter()
+        .map(|c| (c.ours, c.archive))
+        .collect();
+    assert_eq!(flags, [(true, false), (false, true)]);
+}
+
+#[test]
+fn an_archive_timestamp_that_does_not_come_writes_nothing() {
+    let pki = Pki::start(good());
+    let signed = sealed(&pki);
+    for (what, answer) in [
+        (
+            "the authority declined",
+            Err::<Vec<u8>, String>("the authority at 127.0.0.1 declined".into()),
+        ),
+        (
+            "a token over other bytes",
+            Ok(mint(
+                Imprint::Sha256,
+                &Imprint::Sha256.digest(b"other bytes"),
+                None,
+                now(),
+                &crate::integrity::test_tsa::TestTsa::new(),
+            )),
+        ),
+    ] {
+        let why = extend(
+            &signed.bytes,
+            &signed.cms,
+            &signed.field,
+            now(),
+            &crate::save::Here,
+            &no_os_chain,
+            &mut quick,
+            &mut |_: &[&[u8]]| answer.clone(),
+        )
+        .expect_err(what);
+        assert!(matches!(why, Refusal::Archive(_)), "{what}: {why:?}");
+        assert!(!why.revoked(), "{what}");
+        assert!(
+            why.sentence().contains("archive timestamp"),
+            "{what}: {why:?}"
+        );
+    }
+}
+
+#[test]
 fn an_intermediate_is_asked_about_and_carried() {
     let pki = Pki::start(Plan {
         intermediate: true,
@@ -484,6 +578,7 @@ fn a_responder_that_is_down_silent_or_too_long_leaves_nothing_answered() {
             // run, 2026-09-28; `tsa::tests::a_refused_connection_is_unreachable`).
             fetch_blocking(&elsewhere, body, limits)
         },
+        &mut archive,
     )
     .expect_err("refused");
     assert!(why.sentence().contains("could not be reached"), "{why:?}");
@@ -854,6 +949,10 @@ impl crate::save::Verifier for Elsewhere {
         extended.built_against += 1;
         Ok(extended)
     }
+
+    fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String> {
+        crate::save::Here.document_timestamp(signed)
+    }
 }
 
 #[test]
@@ -868,6 +967,7 @@ fn a_revision_built_against_other_bytes_is_refused() {
         &Elsewhere,
         &no_os_chain,
         &mut quick,
+        &mut archive,
     )
     .expect_err("refused");
     assert!(

@@ -2456,6 +2456,19 @@ pub trait Verifier: Send {
         signed: &[u8],
         gathered: &crate::sign_dss::Gathered,
     ) -> Result<crate::sign_dss::Extended, String>;
+
+    /// The revision a document timestamp goes into, built over `signed` --- a
+    /// signed copy with its validation data, not yet written
+    /// (`sign_prepare::prepare_document_timestamp`, PAdES B-LTA).
+    ///
+    /// **A parse of the document, so it is asked of a worker** wherever there
+    /// is one, for [`Verifier::validation`]'s reason.
+    ///
+    /// # Errors
+    ///
+    /// What `sign_prepare::prepare_document_timestamp` refuses, or the worker
+    /// failing.
+    fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String>;
 }
 
 /// Re-reads in the coordinator, which is the process that just did the writing.
@@ -2511,6 +2524,10 @@ impl Verifier for Here {
     ) -> Result<crate::sign_dss::Extended, String> {
         let pages = u32::try_from(reread_pages(signed, None)?).unwrap_or(u32::MAX);
         crate::sign_dss::extend(signed, gathered, pages)
+    }
+
+    fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String> {
+        crate::sign_prepare::prepare_document_timestamp(signed.to_vec(), None)
     }
 }
 

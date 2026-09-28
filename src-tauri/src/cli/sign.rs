@@ -442,6 +442,12 @@ fn run_sign(
             &worker,
             &crate::longterm::os_chain,
             &mut crate::longterm::fetch_blocking,
+            // The archive timestamp, from the authority the line named.
+            &mut |pieces| match sign.timestamp.as_ref() {
+                Some(url) => crate::tsa::ask_over_range_blocking(url, pieces, &crate::tsa::LIMITS)
+                    .map_err(|why| why.sentence(url.host_str().unwrap_or_default())),
+                None => Err(crate::longterm::Refusal::NoTimestamp.sentence()),
+            },
         )
         .map_err(|why| {
             let next = if why.revoked() {
@@ -486,12 +492,20 @@ fn run_sign(
         .find(|s| s.field == field)
         .and_then(|s| s.timestamp.as_ref())
         .map(|stamp| super::verify::timestamp_report(stamp, false));
+    // The document timestamps written after ours are the archive a long-term
+    // signing adds; everything else is the signature or one before it.
+    let ours_at = found.iter().position(|s| s.field == field);
+    let archive = |index: usize, s: &docinfo::Signature| {
+        s.kind == "ETSI.RFC3161" && ours_at.is_some_and(|at| index > at)
+    };
     let summary = words::after_signing(
         &name,
         &field,
         &found
             .iter()
-            .map(|s| (s.field.clone(), s.field == field, s.integrity.clone()))
+            .enumerate()
+            .filter(|(index, s)| !archive(*index, s))
+            .map(|(_, s)| (s.field.clone(), s.field == field, s.integrity.clone()))
             .collect::<Vec<_>>(),
         timestamp.as_ref().map(|t| {
             (
@@ -499,6 +513,12 @@ fn run_sign(
                 t.trust.as_ref().map(|trust| trust.sentence.as_str()),
             )
         }),
+        &found
+            .iter()
+            .enumerate()
+            .filter(|(index, s)| archive(*index, s))
+            .map(|(_, s)| (s.field.clone(), s.integrity.clone()))
+            .collect::<Vec<_>>(),
     );
     // Ours must read back intact, and --- when a timestamp was asked for ---
     // carry one that reads back intact too: a timestamp `seal` checked in the

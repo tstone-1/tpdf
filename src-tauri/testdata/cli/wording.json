@@ -1575,6 +1575,92 @@
           }
         ]
       }
+    },
+    {
+      "sentence": "Signed as Signature2 and saved to signed-archive.pdf. Read back after writing, the signature is intact. Archive timestamp: Signature3 intact. Earlier signature: Signature1 intact.",
+      "signed": {
+        "field": "Signature2",
+        "path": "/tmp/signed-archive.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": false,
+            "timestamp": null
+          },
+          {
+            "field": "Signature2",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": true,
+            "timestamp": null
+          },
+          {
+            "archive": true,
+            "field": "Signature3",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "ECDSA P-256",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": false,
+            "timestamp": null
+          }
+        ]
+      }
+    },
+    {
+      "sentence": "Signed as Signature2 and saved to signed-archive.pdf. Read back after writing, the signature is intact. Archive timestamp: Signature3 broken. Earlier signature: Signature1 intact.",
+      "signed": {
+        "field": "Signature2",
+        "path": "/tmp/signed-archive.pdf",
+        "signatures": [
+          {
+            "field": "Signature1",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": false,
+            "timestamp": null
+          },
+          {
+            "field": "Signature2",
+            "integrity": {
+              "digest": "SHA-256",
+              "method": "RSA",
+              "verdict": "intact",
+              "why": null
+            },
+            "ours": true,
+            "timestamp": null
+          },
+          {
+            "archive": true,
+            "field": "Signature3",
+            "integrity": {
+              "digest": "",
+              "method": "",
+              "verdict": "broken",
+              "why": null
+            },
+            "ours": false,
+            "timestamp": null
+          }
+        ]
+      }
     }
   ],
   "authority": [
@@ -2900,7 +2986,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -2911,7 +2997,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -2922,7 +3008,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -2933,7 +3019,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -2944,7 +3030,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -2955,7 +3041,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -2966,7 +3052,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -2977,7 +3063,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -2988,7 +3074,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -2999,7 +3085,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3010,7 +3096,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3021,7 +3107,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3032,7 +3118,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3043,7 +3129,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3054,7 +3140,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3065,7 +3151,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3076,7 +3162,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3087,7 +3173,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3098,7 +3184,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3109,7 +3195,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3120,7 +3206,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3131,7 +3217,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3142,7 +3228,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3153,7 +3239,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3164,7 +3250,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3175,7 +3261,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3186,7 +3272,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3197,7 +3283,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3208,7 +3294,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3219,7 +3305,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3230,7 +3316,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3241,7 +3327,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3252,7 +3338,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3263,7 +3349,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3274,7 +3360,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3285,7 +3371,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3296,7 +3382,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3307,7 +3393,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3318,7 +3404,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3329,7 +3415,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3340,7 +3426,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3351,7 +3437,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3362,7 +3448,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3373,7 +3459,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3384,7 +3470,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3395,7 +3481,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3406,7 +3492,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3417,7 +3503,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3428,7 +3514,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3439,7 +3525,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3450,7 +3536,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3461,7 +3547,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3472,7 +3558,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3483,7 +3569,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3494,7 +3580,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3505,7 +3591,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3516,7 +3602,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3527,7 +3613,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3538,7 +3624,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3549,7 +3635,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3560,7 +3646,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3571,7 +3657,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3582,7 +3668,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3593,7 +3679,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3604,7 +3690,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3615,7 +3701,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3626,7 +3712,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3637,7 +3723,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3648,7 +3734,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3659,7 +3745,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3670,7 +3756,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3681,7 +3767,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3692,7 +3778,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3703,7 +3789,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3714,7 +3800,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3725,7 +3811,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3736,7 +3822,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3747,7 +3833,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3758,7 +3844,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3769,7 +3855,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3780,7 +3866,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3791,7 +3877,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3802,7 +3888,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3813,7 +3899,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3824,7 +3910,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3835,7 +3921,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3846,7 +3932,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3857,7 +3943,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3868,7 +3954,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3879,7 +3965,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3890,7 +3976,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3901,7 +3987,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3912,7 +3998,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3923,7 +4009,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3934,7 +4020,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3945,7 +4031,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3956,7 +4042,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3967,7 +4053,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -3978,7 +4064,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -3989,7 +4075,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4000,7 +4086,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4011,7 +4097,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4022,7 +4108,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4033,7 +4119,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4044,7 +4130,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4055,7 +4141,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4066,7 +4152,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4077,7 +4163,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4088,7 +4174,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4099,7 +4185,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4110,7 +4196,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4121,7 +4207,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4132,7 +4218,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4143,7 +4229,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4154,7 +4240,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4165,7 +4251,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4176,7 +4262,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4187,7 +4273,7 @@
     },
     {
       "from": "",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",
@@ -4198,7 +4284,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at .",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at , the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "",
         "standing": "trusted_at_timestamp",
@@ -4209,7 +4295,7 @@
     },
     {
       "from": "2026-01-02 03:04:05 UTC",
-      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC.",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping, judged at 2026-08-21 12:00:00 UTC, the time an archive timestamp later in this document attests.",
       "trust": {
         "attested_at": "2026-08-21 12:00:00 UTC",
         "standing": "trusted_at_timestamp",

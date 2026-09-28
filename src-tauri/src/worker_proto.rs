@@ -242,6 +242,14 @@ pub enum Request {
         /// What to put in the `/DSS`.
         gathered: crate::sign_dss::Gathered,
     },
+    /// Build a document timestamp's revision over the mapped signed copy.
+    ///
+    /// PAdES B-LTA, 2026-09-28: [`Request::AppendValidation`]'s sequel, for its
+    /// reason --- `sign_prepare::prepare_document_timestamp` parses the document,
+    /// and the mapped bytes are the signed copy with its validation data, not yet
+    /// written. It carries nothing; the answer is the revision, whose digest the
+    /// app process has a timestamp authority stamp.
+    PrepareDocumentTimestamp,
     /// Draw a visible signature's appearance before anything is signed.
     ///
     /// [`Request::PrepareSignature`]'s sibling, answered with a picture rather
@@ -901,6 +909,12 @@ mod tests {
                 "AppendValidation",
                 "asked by `save::InWorker` of a worker it spawned itself over the signed \
                  copy, which is not written yet and so is in no document's pool",
+            ),
+            (
+                "PrepareDocumentTimestamp",
+                "asked by `save::InWorker` of a worker it spawned itself over the signed \
+                 copy with its validation data, which is not written yet and so is in no \
+                 document's pool",
             ),
             (
                 "Unlock",

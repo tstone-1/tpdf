@@ -216,6 +216,43 @@ impl TestTsa {
         }
     }
 
+    /// A second authority under the same root, with its own key, whose
+    /// certificate is in force only from `from` until `until`: one that has
+    /// run out by the time a document is read, which only an archive timestamp
+    /// can still vouch for.
+    #[must_use]
+    pub fn dated(from: u64, until: u64) -> Self {
+        let root_key = key(0x51);
+        let key = key(0x53);
+        let root = certificate(&Spec {
+            subject: ROOT,
+            issuer: ROOT,
+            key: &root_key,
+            signer: &root_key,
+            serial: 1,
+            purposes: None,
+            authority: true,
+        });
+        let certificate = certificate_dated(
+            &Spec {
+                subject: "tpdf test timestamp authority since expired",
+                issuer: ROOT,
+                key: &key,
+                signer: &root_key,
+                serial: 3,
+                purposes: Some(&[TIMESTAMPING]),
+                authority: false,
+            },
+            Dates { from, until },
+        );
+        TestTsa {
+            key,
+            certificate,
+            root,
+            carried: Vec::new(),
+        }
+    }
+
     /// The authority of [`TestTsa::new`] --- the same keys and root --- whose
     /// certificate says where its revocation data is published, and whose
     /// tokens carry the root, as a public authority's carry its chain: what a

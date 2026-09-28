@@ -2450,6 +2450,15 @@ pub(crate) fn run_append_validation(
         .append_validation(gathered, document.page_count())
 }
 
+/// Builds a document timestamp's revision over the mapped signed copy, on the
+/// render thread. See
+/// `crate::worker_proto::Request::PrepareDocumentTimestamp`.
+pub(crate) fn run_prepare_document_timestamp(
+    document: &OpenDocument,
+) -> Result<crate::sign_prepare::Unsigned, String> {
+    document.graph().prepare_document_timestamp()
+}
+
 /// Draws a visible signature's appearance before anything is signed.
 ///
 /// `sign_prepare::preview` builds a one-page file holding exactly the revision

@@ -1098,6 +1098,15 @@ done
 # UNTRUSTED over the probe's B-T copy; openssl ocsp -respin over each dss-ocsp-<n>.der
 # with -CAfile the system roots and -verify_other the dss-cert-<n>.der: all seven
 # "Response verify OK", good. docs/PLAN.md says what this did not measure.
+# Since PAdES B-LTA the probe then asks the same authority for an archive timestamp
+# over authority-lt.pdf and writes authority-lta.pdf: 2026-09-28, 28/28 each, archive
+# tokens of 6,005 / 6,633 / 7,657 B in 0.36 / 2.00 / 0.38 s, the signature's authority
+# judged trusted_at_timestamp at the archive's time. pyHanko over each archive, the
+# system roots, no fetching:
+#   r = PdfFileReader(open('authority-lta.pdf', 'rb'))
+#   st = validate_pdf_timestamp(r.embedded_signatures[-1],
+#       validation_context=ValidationContext(trust_roots=roots, allow_fetching=False))
+# INTACT:TRUSTED, coverage ENTIRE_FILE, on all three; qpdf --check clean.
 #
 # The window check that would show a visible signature placed and written in the
 # real application does not exist, for the reason below: it needs an identity in

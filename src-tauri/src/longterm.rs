@@ -234,6 +234,9 @@ pub enum Refusal {
     /// The worker's revision, or its reading of the result, was not what could
     /// be written.
     Written(String),
+    /// The archive timestamp over the whole --- PAdES B-LTA --- could not be
+    /// had, or did not check out: the timestamp authority's sentence.
+    Archive(String),
 }
 
 impl Refusal {
@@ -284,6 +287,10 @@ impl Refusal {
             Refusal::Written(why) => format!(
                 "tpdf's own check of the signed document with its long-term validation data \
                  did not pass: {why}"
+            ),
+            Refusal::Archive(why) => format!(
+                "the archive timestamp, which keeps the signature checkable after the \
+                 timestamp authority's own certificate expires, could not be added: {why}"
             ),
         }
     }
@@ -669,6 +676,12 @@ fn judged(
 /// in the application and the tool, a test's own in a test.
 pub type OsChain<'a> = dyn Fn(&[u8], &[Vec<u8>]) -> Vec<Vec<u8>> + 'a;
 
+/// Who stamps the archive timestamp: given the covered pieces of the file,
+/// the timestamp authority's token over them, or the sentence saying why not
+/// --- `tsa::ask_over_range` against the authority the reader chose, or a
+/// test's.
+pub type Archive<'a> = dyn FnMut(&[&[u8]]) -> Result<Vec<u8>, String> + 'a;
+
 /// Who fetches: `tsa::fetch` on the application's runtime, or a test's.
 pub type Fetch<'a> = dyn FnMut(&url::Url, Option<(&str, Vec<u8>)>, &tsa::Limits) -> Result<Vec<u8>, tsa::Refusal>
     + 'a;
@@ -963,9 +976,10 @@ pub fn fetch_blocking(
     tauri::async_runtime::block_on(tsa::fetch(url, body, limits))
 }
 
-/// The whole of a B-LT signing's second half: what to ask about, the
-/// fetching, the worker's revision and its reading, and the check --- and the
-/// signed document with the revision appended, when every step passed.
+/// The whole of a long-term signing's second half: what to ask about, the
+/// fetching, the worker's revision and its reading, the check, and the
+/// archive timestamp over it all --- and the signed document with both
+/// revisions appended, when every step passed (PAdES B-LTA since 2026-09-28).
 ///
 /// `bytes` is the sealed B-T document; `cms` the timestamped signature in it;
 /// `field` its field.
@@ -973,6 +987,7 @@ pub fn fetch_blocking(
 /// # Errors
 ///
 /// Every [`Refusal`].
+#[allow(clippy::too_many_arguments)]
 pub fn extend(
     bytes: &[u8],
     cms: &[u8],
@@ -981,6 +996,7 @@ pub fn extend(
     worker: &dyn crate::save::Verifier,
     os_chain: &OsChain<'_>,
     fetch: &mut Fetch<'_>,
+    archive: &mut Archive<'_>,
 ) -> Result<Vec<u8>, Refusal> {
     let (subjects, certificates) = plan(cms, os_chain)?;
     let gathered = gather(&subjects, certificates, now, TOTAL, fetch)?;
@@ -998,7 +1014,51 @@ pub fn extend(
     let mut whole = Vec::with_capacity(bytes.len() + extended.update.len());
     whole.extend_from_slice(bytes);
     whole.extend_from_slice(&extended.update);
-    Ok(whole)
+    archived(whole, worker, archive)
+}
+
+/// `whole` --- the signed document with its validation data --- with an
+/// archive timestamp over all of it appended (PAdES B-LTA): a document
+/// timestamp, whose revision the worker builds and whose token `archive` asks
+/// the reader's timestamp authority for, sealed only when it reads back intact.
+///
+/// **Why the same authority, and why always.** The validation data keeps the
+/// signature checkable until the timestamp authority's own certificate
+/// expires, which for the public authorities is within a few years; the
+/// archive timestamp is what a reader then judges that authority at, and it is
+/// what *Keep it verifiable after the certificates expire* promises
+/// (`docs/PLAN.md` §9, *Archive timestamps*). The reader already chose whom to
+/// ask for a time, so that authority is asked again rather than a second one
+/// nobody chose.
+///
+/// # Errors
+///
+/// [`Refusal::Written`] for the worker's revision, [`Refusal::Archive`] for
+/// the authority's answer or the sealed result not reading back intact.
+fn archived(
+    whole: Vec<u8>,
+    worker: &dyn crate::save::Verifier,
+    archive: &mut Archive<'_>,
+) -> Result<Vec<u8>, Refusal> {
+    // A revision built against other bytes is refused by the seal, which
+    // checks it before splicing --- one check, not two that hide each other.
+    let unsigned = worker
+        .document_timestamp(&whole)
+        .map_err(Refusal::Written)?;
+    let token = {
+        let [_, hole, rest, _] = unsigned
+            .range
+            .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+        let mut staged = whole.clone();
+        staged.extend_from_slice(&unsigned.update);
+        let (Some(before), Some(after)) = (staged.get(..hole), staged.get(rest..)) else {
+            return Err(Refusal::Written(
+                "the archive timestamp's revision states a range outside itself".into(),
+            ));
+        };
+        archive(&[before, after]).map_err(Refusal::Archive)?
+    };
+    crate::sign_cms::seal_document_timestamp(whole, unsigned, &token).map_err(Refusal::Archive)
 }
 
 #[cfg(test)]

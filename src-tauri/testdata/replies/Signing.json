@@ -13,7 +13,8 @@
         },
         "ours": false,
         "timestamp": null,
-        "revocation": null
+        "revocation": null,
+        "archive": false
       },
       {
         "field": "Signature2",
@@ -126,14 +127,16 @@
           "basis": "attested",
           "moment": "2026-01-02 03:04:06 UTC",
           "after_moment": true
-        }
+        },
+        "archive": false
       },
       {
         "field": "Signature3",
         "integrity": null,
         "ours": false,
         "timestamp": null,
-        "revocation": null
+        "revocation": null,
+        "archive": true
       }
     ]
   },

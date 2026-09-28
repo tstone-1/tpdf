@@ -248,6 +248,33 @@ impl Verifier for InWorker {
         });
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
+
+    fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String> {
+        // [`Verifier::validation`]'s snapshot, for its reason: nothing is
+        // written until the timestamp this revision is for has been stamped
+        // and read back.
+        let mut mapped = Shm::create(signed.len())?;
+        mapped.as_mut_slice().copy_from_slice(signed);
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, move |worker| {
+            let answered = worker.call(&Request::PrepareDocumentTimestamp)?;
+            if !answered.ok {
+                return Err(answered.error);
+            }
+            match answered.reply {
+                Some(Reply::PreparedSignature(unsigned)) => Ok(unsigned),
+                other => Err(format!(
+                    "the worker answered the document timestamp with {}",
+                    match other {
+                        Some(reply) => format!("{reply:?}"),
+                        None => "no payload at all".to_string(),
+                    }
+                )),
+            }
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
 }
 
 impl InWorker {
