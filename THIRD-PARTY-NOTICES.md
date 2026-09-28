@@ -2531,7 +2531,7 @@ SOFTWARE.
 
 ## Rust crates
 
-424 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
+425 crates are linked into the application binary. Build- and dev-dependencies are excluded: they run at compile time and are not distributed.
 
 | Crate | Version | Licence |
 |---|---|---|
@@ -2943,6 +2943,7 @@ SOFTWARE.
 | writeable | 0.6.4 | Unicode-3.0 |
 | wry | 0.57.0 | Apache-2.0 OR MIT |
 | x509-cert | 0.2.5 | Apache-2.0 OR MIT |
+| x509-ocsp | 0.2.1 | Apache-2.0 OR MIT |
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.3 | Unicode-3.0 |
@@ -3115,6 +3116,7 @@ MIT and the BSD family require the copyright notice itself to be reproduced, whi
 - Copyright (c) 2021 the Deno authors
 - Copyright (c) 2021-2022 The RustCrypto Project Developers
 - Copyright (c) 2021-2023 The RustCrypto Project Developers
+- Copyright (c) 2021-2024 The RustCrypto Project Developers
 - Copyright (c) 2021-2025 The RustCrypto Project Developers
 - Copyright (c) 2021-2026 RustCrypto Developers
 - Copyright (c) 2022 1Password

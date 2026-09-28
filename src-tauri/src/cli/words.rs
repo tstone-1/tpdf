@@ -2,7 +2,7 @@
 //!
 //! **A port, held to its original by a test, not a second author.** The words
 //! live in `src/lib/integrity.ts` (`integrityRow`, `trustRow`, `timestampRow`,
-//! `authorityRow`, `WHY`, `DOUBT`)
+//! `authorityRow`, `revocationRow`, `WHY`, `DOUBT`, `GAP`)
 //! and `src/lib/signing.ts` (`afterSigning`), where the properties dialog and
 //! the signing panel say them. The command-line tool has no webview to ask, so
 //! the functions are restated here --- and `words_sample` writes every case this
@@ -17,18 +17,13 @@
 //! genuine.
 
 use crate::integrity::{Integrity, Verdict, Why};
+use crate::revocation::{Basis, Gap, Reason, Revocation, Source, Status};
 use crate::trust::{Doubt, Standing, Store, Trust};
 
 /// Said after every answer that could be read as "this signer is who they say".
 /// `integrity.ts`'s `TRUST_NOT_CHECKED`.
 pub const TRUST_NOT_CHECKED: &str =
     "Whether that key belongs to the person the certificate names was not checked.";
-
-/// Said after every standing that says the chain reached a trusted root.
-/// `integrity.ts`'s `REVOCATION_NOT_CHECKED`.
-pub const REVOCATION_NOT_CHECKED: &str =
-    "Revocation was not checked: tpdf does not fetch revocation data, so a certificate its \
-     issuer has since withdrawn reads the same as one it has not.";
 
 /// Why a signature was not checked, as a clause that follows "not checked —".
 /// `integrity.ts`'s `WHY`.
@@ -91,6 +86,9 @@ pub fn doubt_about(doubt: Doubt, computer: &str, whose: &str) -> String {
             "the signer's certificate was issued for something other than signing documents".into()
         }
         Doubt::Timestamping => "the authority's certificate was not issued for timestamping".into(),
+        Doubt::NotInForce => {
+            "the signer's certificate was not in force at the time the timestamp attests".into()
+        }
         Doubt::Rejected => format!("{computer} refused its chain"),
         Doubt::Certificate => {
             "the signature's certificates could not be prepared for the check".into()
@@ -102,7 +100,8 @@ pub fn doubt_about(doubt: Doubt, computer: &str, whose: &str) -> String {
 /// The trust row's value: `integrity.ts`'s `trustRow(trust, from, until).value`.
 ///
 /// `from` and `until` are the signer's certificate's dates as the certificate
-/// rows show them, empty when unknown.
+/// rows show them, empty when unknown. Revocation is a row of its own since
+/// 2026-09-28 ([`revocation_sentence`]), so no sentence here speaks for it.
 #[must_use]
 pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
     let computer = computer(trust.store);
@@ -110,15 +109,31 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
         .why
         .map_or_else(|| "no reason was given".to_string(), |d| doubt(d, computer));
     let chained = format!("the signer's certificate chains to a root {computer} trusts");
+    let judged = if trust.attested_at.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", judged at {}, the time the timestamp attests",
+            trust.attested_at
+        )
+    };
     match trust.standing {
         Standing::Trusted => format!(
             "trusted — {chained}, so an issuer {computer} trusts vouches that the key \
-             belongs to the person the certificate names. {REVOCATION_NOT_CHECKED}"
+             belongs to the person the certificate names."
+        ),
+        Standing::TrustedAtTimestamp => format!(
+            "trusted at the timestamp — the signer's certificate chained to a root {computer} \
+             trusts at {}, the time a timestamp from an authority {computer} trusts attests, so \
+             an issuer {computer} trusts vouched that the key belonged to the person the \
+             certificate names when the signature was made. Whether the certificate has run \
+             out since does not change that.",
+            trust.attested_at
         ),
         Standing::Expired => format!(
             "expired — {chained}, and it ran out{}. The date a signature gives is the \
-             signer's own claim, so tpdf cannot tell whether it was made before then. \
-             {REVOCATION_NOT_CHECKED}",
+             signer's own claim, and no timestamp from an authority {computer} trusts attests \
+             when it was made, so tpdf cannot tell whether it was made before then.",
             if until.is_empty() {
                 String::new()
             } else {
@@ -126,8 +141,7 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
             }
         ),
         Standing::NotYetValid => format!(
-            "not yet in force — {chained}, but it only comes into force{}. \
-             {REVOCATION_NOT_CHECKED}",
+            "not yet in force — {chained}, but it only comes into force{}.",
             if from.is_empty() {
                 " later".to_string()
             } else {
@@ -135,12 +149,146 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
             }
         ),
         Standing::Untrusted => format!(
-            "not trusted — {why}. So nothing establishes that the key belongs to the \
+            "not trusted — {why}{judged}. So nothing establishes that the key belongs to the \
              person the certificate names."
         ),
         Standing::Unchecked => {
             format!("not checked — {why}. This says nothing either way about who holds the key.")
         }
+    }
+}
+
+/// A revocation reason, as a phrase. `integrity.ts`'s `REASON`.
+#[must_use]
+pub fn reason(reason: Reason) -> &'static str {
+    match reason {
+        Reason::Unspecified => "no stated reason",
+        Reason::KeyCompromise => "key compromise",
+        Reason::CaCompromise => "compromise of its issuer",
+        Reason::AffiliationChanged => "a change of affiliation",
+        Reason::Superseded => "being superseded",
+        Reason::CessationOfOperation => "cessation of operation",
+        Reason::CertificateHold => "a hold, which may be lifted",
+        Reason::RemoveFromCrl => "removal from a list",
+        Reason::PrivilegeWithdrawn => "privilege withdrawn",
+        Reason::AaCompromise => "compromise of an attribute authority",
+    }
+}
+
+/// Why revocation data led to no conclusion, as a clause; `moment` is the
+/// moment judged, as [`moment_phrase`] words it. `integrity.ts`'s `GAP`.
+#[must_use]
+pub fn gap(gap: Gap, moment: &str) -> String {
+    match gap {
+        Gap::Unreadable => "some of the document's revocation data could not be read".into(),
+        Gap::Bound => "the document carries more revocation data than tpdf reads".into(),
+        Gap::Issuer => {
+            "the certificate that issued it is not in the document, so the data about it \
+             cannot be checked"
+                .into()
+        }
+        Gap::Signature => "the data's own signature does not check out".into(),
+        Gap::Unauthorised => {
+            "the data is signed by a party its issuer did not authorise to answer for it".into()
+        }
+        Gap::Algorithm => "the data uses an algorithm tpdf does not implement".into(),
+        Gap::Unsupported => "the data is in a form tpdf does not interpret".into(),
+        Gap::Stale => format!("the latest data about it does not reach {moment}"),
+        Gap::Expired => {
+            "the data was issued after the certificate expired, and does not say that it keeps \
+             expired certificates"
+                .into()
+        }
+        Gap::Dates => "the data's own dates do not hang together".into(),
+        Gap::Budget => {
+            "the document's signatures together cover more data than tpdf checks at once".into()
+        }
+    }
+}
+
+/// The moment a revocation was judged at, and whose clock it is.
+/// `integrity.ts`'s `momentPhrase`.
+#[must_use]
+pub fn moment_phrase(revocation: &Revocation) -> String {
+    let at = &revocation.moment;
+    match revocation.basis {
+        Basis::Attested => format!("{at}, the time the timestamp attests"),
+        Basis::Stated => format!("{at}, the time the timestamp states"),
+        Basis::Claimed => {
+            format!("{at}, the signing date the signer gave, which is their own claim")
+        }
+        Basis::Now => "the present moment".into(),
+    }
+}
+
+/// The revocation row's value: `integrity.ts`'s
+/// `revocationRow(revocation, whose).value`. `authority` says the certificate
+/// is a timestamp authority's rather than the signer's.
+#[must_use]
+pub fn revocation_sentence(revocation: &Revocation, authority: bool) -> String {
+    let whose = if authority {
+        "the authority's certificate"
+    } else {
+        "the signer's certificate"
+    };
+    let made = if authority {
+        "the timestamp"
+    } else {
+        "the signature"
+    };
+    let moment = moment_phrase(revocation);
+    let source = match revocation.source {
+        Some(Source::Ocsp) => {
+            "an OCSP response in the document, signed by its issuer or a responder its issuer \
+             authorised,"
+        }
+        Some(Source::Crl) => "a revocation list in the document, signed by its issuer,",
+        None => "data in the document",
+    };
+    let next = if revocation.next.is_empty() {
+        String::new()
+    } else {
+        format!(" and meant to hold until {}", revocation.next)
+    };
+    let issued = format!("issued {}{next}", revocation.issued);
+    let why = revocation
+        .reason
+        .map_or_else(String::new, |r| format!(", for {}", reason(r)));
+    match revocation.standing {
+        Status::Good => format!(
+            "not revoked — {source} {issued}, says {whose} had not been revoked, and it \
+             reaches {moment}."
+        ),
+        Status::Revoked if revocation.after_moment => format!(
+            "revoked after the timestamp — {source} {issued}, says {whose} was revoked on {}{why}, \
+             after {moment}. A revocation after that time does not undo {made}, which was made \
+             before it.",
+            revocation.revoked
+        ),
+        Status::Revoked if revocation.basis == Basis::Attested => format!(
+            "revoked — {source} {issued}, says {whose} was revoked on {}{why}, at or before \
+             {moment}, so it was already withdrawn when {made} was made.",
+            revocation.revoked
+        ),
+        Status::Revoked => format!(
+            "revoked — {source} {issued}, says {whose} was revoked on {}{why}. Nothing tpdf \
+             trusts attests when {made} was made, so it cannot tell whether that was before then.",
+            revocation.revoked
+        ),
+        Status::Unknown => {
+            format!("unknown — {source} {issued}, says its responder does not know {whose}.")
+        }
+        Status::None => format!(
+            "not checked — the document carries no revocation data for {whose}, and tpdf does \
+             not fetch any, so a certificate its issuer has since withdrawn reads the same as one \
+             it has not."
+        ),
+        Status::Unchecked => format!(
+            "not checked — {}. This says nothing either way about whether {whose} was revoked.",
+            revocation
+                .why
+                .map_or_else(|| "no reason was given".to_string(), |g| gap(g, &moment))
+        ),
     }
 }
 
@@ -213,12 +361,17 @@ pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
     match trust.standing {
         Standing::Trusted => format!(
             "trusted — {chained} and is issued for timestamping. It is judged at the present \
-             moment, not at the time it attests. {REVOCATION_NOT_CHECKED}"
+             moment, not at the time it attests."
+        ),
+        // Never produced for an authority, whose certificate is judged now;
+        // worded rather than unreachable, so the sample covers every case.
+        Standing::TrustedAtTimestamp => format!(
+            "trusted — {chained} and is issued for timestamping, judged at {}.",
+            trust.attested_at
         ),
         Standing::Expired => format!(
             "expired — {chained}, and it ran out{}. tpdf judges it at the present moment, so \
-             it cannot tell whether it was in force when the timestamp was made. \
-             {REVOCATION_NOT_CHECKED}",
+             it cannot tell whether it was in force when the timestamp was made.",
             if until.is_empty() {
                 String::new()
             } else {
@@ -226,8 +379,7 @@ pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
             }
         ),
         Standing::NotYetValid => format!(
-            "not yet in force — {chained}, but it only comes into force{}. \
-             {REVOCATION_NOT_CHECKED}",
+            "not yet in force — {chained}, but it only comes into force{}.",
             if from.is_empty() {
                 " later".to_string()
             } else {

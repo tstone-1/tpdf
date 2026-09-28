@@ -251,8 +251,10 @@ on disk and leaves the process running the old code, so without it the reader ha
 reopen by hand. The capability list names `process:allow-restart` alone rather than
 `process:default`, which would also hand the webview `exit`. And, since 2026-09-28, `reqwest`
 and `rustls` declared directly for the timestamp client (`tsa.rs`): **zero packages**, 617
-before and after, because both are the updater's own with the features it already resolves. All
-permissive, swept as below.
+before and after, because both are the updater's own with the features it already resolves.
+And, the same day, `x509-ocsp` (Apache-2.0 OR MIT) for reading the OCSP responses a document
+carries (`revocation.rs`, worker only): **one package, itself**, 617 to 618, on the
+`der`/`x509-cert`/`spki` generation already here. All permissive, swept as below.
 
 **That plugin was the only network authority in the application until 2026-09-28, and it changed
 a property that had held until 26.8.2: tpdf made no request at all.** The second is the timestamp

@@ -22,22 +22,22 @@
 //! computer does not trust. The verdict names the store for that reason
 //! (`docs/PLAN.md` §9, Phase 6, records the decision).
 //!
-//! ## No network, so no revocation
+//! ## No network, and no revocation here
 //!
 //! Network retrieval is off: `SecTrustSetNetworkFetchAllowed(false)`, and
 //! cache-only retrieval with AIA and root auto-update disabled on Windows.
-//! Nothing here fetches an intermediate, an OCSP response or a CRL --- a second
-//! network authority beside the updater (`docs/THREAT-MODEL.md` §T9) is Phase 6
-//! step 3's decision. Two consequences are stated wherever the answer is:
-//! **revocation is not checked**, and an issuer missing from both the
-//! signature and this machine reads as a missing link rather than being looked
-//! up. On Windows a third: a root Microsoft distributes on demand, and which
+//! Nothing here fetches an intermediate, an OCSP response or a CRL, and nothing
+//! here asks about revocation at all: that is [`crate::revocation`]'s, from the
+//! data the document carries and never fetched (`docs/PLAN.md` §9). An issuer
+//! missing from the signature, the document's `/DSS` and this machine reads as
+//! a missing link rather than being looked up. On Windows a third: a root Microsoft distributes on demand, and which
 //! this machine has not yet downloaded, reads as not trusted.
 //!
 //! ## Time
 //!
-//! The chain is evaluated **now**. `/M` is the signer's own clock and is not
-//! evidence, and without a verified timestamp tpdf cannot know that the
+//! The chain is evaluated **now**, unless the signature's timestamp earns an
+//! attested moment ([`judge_at`], since 2026-09-28). `/M` is the signer's own
+//! clock and is not evidence, and without such a timestamp tpdf cannot know that the
 //! certificate was in force when the signature was made. So a certificate that
 //! has expired since is reported as exactly that: [`Standing::Expired`] means
 //! the chain is sound and ends at a trusted root **at the certificate's own
@@ -112,6 +112,11 @@ pub struct Trust {
     pub why: Option<Doubt>,
     /// The store that was asked. `None` when none was.
     pub store: Option<Store>,
+    /// The moment the chain was judged at, formatted, when it was the time an
+    /// intact timestamp from a trusted authority attests
+    /// ([`Standing::TrustedAtTimestamp`], or `untrusted` there); empty when it
+    /// was judged now. Added 2026-09-28.
+    pub attested_at: String,
 }
 
 /// The answer, in increasing order of what it establishes.
@@ -131,6 +136,11 @@ pub enum Standing {
     Expired,
     /// The chain ends at a root this operating system trusts, now.
     Trusted,
+    /// The chain ended at a root this operating system trusts **at the time
+    /// an intact timestamp attests**, from an authority it trusts for
+    /// timestamping --- whatever has happened to the certificate since. The
+    /// moment is the authority's, in [`Trust::attested_at`]. Since 2026-09-28.
+    TrustedAtTimestamp,
 }
 
 /// Which store answered.
@@ -161,6 +171,9 @@ pub enum Doubt {
     /// A timestamp authority's certificate does not name timestamping among
     /// its purposes, which RFC 3161 §2.3 requires of it --- or names none.
     Timestamping,
+    /// The signer's certificate was not in force at the time a trusted
+    /// timestamp attests: it had expired, or had not begun. Since 2026-09-28.
+    NotInForce,
     /// The operating system refused the chain for another reason.
     Rejected,
     /// The signature's certificates could not be prepared for the store:
@@ -179,6 +192,7 @@ impl Trust {
             standing: Standing::Unchecked,
             why: Some(why),
             store: None,
+            attested_at: String::new(),
         }
     }
 }
@@ -248,7 +262,20 @@ pub fn of_blob(blob: &[u8], now: u64, anchors: Anchors<'_>) -> Trust {
 /// moment it is judged at.
 #[must_use]
 pub fn of_blob_for(blob: &[u8], purpose: Purpose, now: u64, anchors: Anchors<'_>) -> Trust {
-    let Some((leaf, others)) = certificates(blob) else {
+    of_blob_with(blob, &[], purpose, now, anchors)
+}
+
+/// [`of_blob_for`] with `extra` certificates --- a document's `/DSS` --- offered
+/// to the chain builder beside the signature's own.
+#[must_use]
+pub fn of_blob_with(
+    blob: &[u8],
+    extra: &[Vec<u8>],
+    purpose: Purpose,
+    now: u64,
+    anchors: Anchors<'_>,
+) -> Trust {
+    let Some((leaf, others)) = certificates_with(blob, extra) else {
         return Trust::unchecked(Doubt::Certificate);
     };
     let Ok(parsed) = Certificate::from_der(&leaf) else {
@@ -259,11 +286,23 @@ pub fn of_blob_for(blob: &[u8], purpose: Purpose, now: u64, anchors: Anchors<'_>
     })
 }
 
-/// The signer's certificate and the other members of the set, re-encoded.
+/// The signer's certificate and the other members of the set, re-encoded,
+/// with `extra` offered as further candidate issuers: the certificates a
+/// document's `/DSS` carries, since 2026-09-28.
 ///
 /// `None` when there is no certificate `SignerInfo.sid` identifies, or when the
-/// set is larger or any member bigger than this hands to the OS.
+/// signature's own set is larger or any member bigger than this hands to the
+/// OS. Held to the
+/// same bounds as the signature's own set, separately --- at most
+/// [`MAX_CERTIFICATES`] of them, each under [`MAX_CERTIFICATE_BYTES`] --- and
+/// one over its size is left out rather than refusing the lot: an extra
+/// candidate a chain needed reads as a missing link, which is what it is.
+#[cfg(test)]
 fn certificates(blob: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+    certificates_with(blob, &[])
+}
+
+fn certificates_with(blob: &[u8], extra: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
 
@@ -289,6 +328,16 @@ fn certificates(blob: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
         let der = encode(certificate)?;
         if der != leaf {
             others.push(der);
+        }
+    }
+    let mut added = 0;
+    for der in extra {
+        if added == MAX_CERTIFICATES {
+            break;
+        }
+        if der.len() <= MAX_CERTIFICATE_BYTES && *der != leaf && !others.contains(der) {
+            others.push(der.clone());
+            added += 1;
         }
     }
     Some((leaf, others))
@@ -321,6 +370,7 @@ pub fn judge_for(
         standing,
         why,
         store,
+        attested_at: String::new(),
     };
     let Some(serves) = serves(signer, purpose) else {
         return Trust::unchecked(Doubt::Certificate);
@@ -366,6 +416,76 @@ pub fn judge_for(
         return answer(Standing::Untrusted, Some(doubt));
     }
     answer(standing, None)
+}
+
+/// The signer's standing **at `at`**, the time an intact timestamp from an
+/// authority this computer trusts attests --- Phase 6's long-term validation,
+/// since 2026-09-28.
+///
+/// Asked instead of the present moment, not as well: the point of an attested
+/// time is that a certificate which has run out since, or been revoked since,
+/// did not stop the signature being sound when it was made. The caller
+/// decides when the time qualifies (`docinfo`: token `intact`, authority
+/// `trusted`, not revoked, and `genTime` inside the authority's certificate's
+/// dates); this only asks the store about that moment.
+#[must_use]
+pub fn of_blob_at(
+    blob: &[u8],
+    extra: &[Vec<u8>],
+    purpose: Purpose,
+    at: u64,
+    anchors: Anchors<'_>,
+) -> Trust {
+    let Some((leaf, others)) = certificates_with(blob, extra) else {
+        return Trust::unchecked(Doubt::Certificate);
+    };
+    let Ok(parsed) = Certificate::from_der(&leaf) else {
+        return Trust::unchecked(Doubt::Certificate);
+    };
+    judge_at(&parsed, purpose, at, |moment| {
+        platform::evaluate(&leaf, &others, anchors, moment)
+    })
+}
+
+/// [`judge_for`] at an attested moment: one evaluation, at `at`, with the
+/// signer's own dates asked first --- a certificate not in force when the
+/// signature provably existed is [`Doubt::NotInForce`], whatever the chain.
+pub fn judge_at(
+    signer: &Certificate,
+    purpose: Purpose,
+    at: u64,
+    mut evaluate: impl FnMut(u64) -> Result<Evaluation, String>,
+) -> Trust {
+    let answer = |standing: Standing, why: Option<Doubt>| Trust {
+        standing,
+        why,
+        store: platform::STORE,
+        attested_at: crate::revocation::format_time(at),
+    };
+    let Some(serves) = serves(signer, purpose) else {
+        return Trust::unchecked(Doubt::Certificate);
+    };
+    let validity = &signer.tbs_certificate.validity;
+    let from = validity.not_before.to_unix_duration().as_secs();
+    let until = validity.not_after.to_unix_duration().as_secs();
+    if at < from || at > until {
+        return answer(Standing::Untrusted, Some(Doubt::NotInForce));
+    }
+    let evaluation = match evaluate(at) {
+        Ok(evaluation) => evaluation,
+        Err(_) => return Trust::unchecked(Doubt::Unavailable),
+    };
+    if !evaluation.passed {
+        return answer(Standing::Untrusted, Some(evaluation.failure));
+    }
+    if !serves {
+        let doubt = match purpose {
+            Purpose::Documents => Doubt::Purpose,
+            Purpose::Timestamping => Doubt::Timestamping,
+        };
+        return answer(Standing::Untrusted, Some(doubt));
+    }
+    answer(Standing::TrustedAtTimestamp, None)
 }
 
 /// Whether the certificate's extended key usage admits `purpose`.

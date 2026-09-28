@@ -186,6 +186,15 @@ der = { version = "0.7", default-features = false, features = ["derive"] }
 # through `cms` and `ecdsa`, so declaring it adds no package.
 signature = { version = "2", default-features = false }
 x509-cert = { version = "0.2", default-features = false }
+# The OCSP responses a document carries for long-term validation:
+# `revocation.rs`, Phase 6 step 3, increment C1 (2026-09-28). **One package, itself**
+# --- 617 before and 618 after over the whole tree, counted with `cargo metadata`
+# --- because it is RustCrypto's, on the `der` 0.7 / `x509-cert` 0.2 / `spki`
+# generation above. Apache-2.0 OR MIT. Decoding only, no `builder`: a third
+# ASN.1 surface on attacker-chosen bytes, read in the worker under the bounds
+# `revocation.rs` names (`docs/THREAT-MODEL.md` §T6.25). Nothing is fetched to
+# read a document; the reader never goes online for revocation, by decision.
+x509-ocsp = { version = "0.2.1", default-features = false }
 
 # Whether a signature still covers the bytes it was made over: `integrity.rs`.
 # RustCrypto, on the same generation as `cms`/`x509-cert`/`spki`/`der` above,

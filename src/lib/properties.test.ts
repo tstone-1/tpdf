@@ -66,6 +66,7 @@ function signed(): Signature {
     timestamp: null,
     integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
     trust: null,
+    revocation: null,
   };
 }
 
@@ -718,6 +719,7 @@ describe("a timestamp on a signature", () => {
       },
       trust: null,
       attested: verdict === "intact" || verdict === "weak",
+      revocation: null,
     };
   }
 
@@ -758,16 +760,46 @@ describe("a timestamp on a signature", () => {
     expect(row?.value).not.toContain("this signature");
   });
 
+  it("puts the authority's revocation under its standing, and only beside one", () => {
+    const sig = signed();
+    const revocation = {
+      standing: "none" as const,
+      why: null,
+      source: null,
+      issued: "",
+      next: "",
+      revoked: "",
+      reason: null,
+      basis: "stated" as const,
+      moment: "2026-08-21 12:00:00 UTC",
+      after_moment: false,
+    };
+    sig.timestamp = {
+      ...stamp("intact"),
+      trust: { standing: "trusted", why: null, store: "mac", attested_at: "" },
+      revocation,
+    };
+    const rows = signatureRows(sig, 1024);
+    const names = rows.map((r) => r.name);
+    expect(names.indexOf("Authority revocation")).toBe(
+      names.indexOf("Timestamp authority") + 1,
+    );
+    expect(rows.find((r) => r.name === "Authority revocation")?.value).toContain(
+      "no revocation data for the authority's certificate",
+    );
+  });
+
   it("puts the authority's standing under the time, and only when there is one", () => {
     const sig = signed();
     sig.timestamp = {
       ...stamp("intact"),
-      trust: { standing: "untrusted", why: "timestamping", store: "mac" },
+      trust: { standing: "untrusted", why: "timestamping", store: "mac", attested_at: "" },
     };
     const names = signatureRows(sig, 1024).map((r) => r.name);
     expect(names).toContain("Timestamped");
     expect(names).toContain("Timestamp authority");
     expect(names.indexOf("Timestamped")).toBeLessThan(names.indexOf("Timestamp authority"));
+    expect(names).not.toContain("Authority revocation");
     const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamp authority");
     expect(row?.value).toContain("not issued for timestamping");
 

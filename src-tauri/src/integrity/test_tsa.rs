@@ -435,8 +435,37 @@ struct Spec<'a> {
     authority: bool,
 }
 
-/// A certificate for `spec.key`, signed by `spec.signer` with ECDSA SHA-256.
+/// id-pkix-ocsp-nocheck (RFC 6960 §4.2.2.2.1), which a delegated responder's
+/// certificate carries so that nobody asks about its own revocation: the
+/// GlobalSign responder measured on 2026-09-28 carries it.
+const OCSP_NO_CHECK: &str = "1.3.6.1.5.5.7.48.1.5";
+
+/// [`Spec`]'s dates, when a certificate needs other ones than 2020 to 2040.
+#[derive(Clone, Copy)]
+struct Dates {
+    from: u64,
+    until: u64,
+}
+
+/// A certificate for `spec.key`, signed by `spec.signer` with ECDSA SHA-256,
+/// valid 2020 to 2040.
 fn certificate(spec: &Spec<'_>) -> Vec<u8> {
+    certificate_dated(
+        spec,
+        Dates {
+            from: FROM,
+            until: UNTIL,
+        },
+    )
+}
+
+/// [`certificate`], valid between `dates`.
+fn certificate_dated(spec: &Spec<'_>, dates: Dates) -> Vec<u8> {
+    certificate_with(spec, dates, &[])
+}
+
+/// [`certificate_dated`], with `more` extensions after the ones `spec` says.
+fn certificate_with(spec: &Spec<'_>, dates: Dates, more: &[Extension]) -> Vec<u8> {
     let point = spec.key.verifying_key().to_encoded_point(false);
     let spki = SubjectPublicKeyInfoOwned {
         algorithm: AlgorithmIdentifierOwned {
@@ -471,6 +500,7 @@ fn certificate(spec: &Spec<'_>) -> Vec<u8> {
             extn_value: OctetString::new(usage.to_der().expect("purposes")).expect("octets"),
         });
     }
+    extensions.extend_from_slice(more);
     let time = |seconds: u64| {
         Time::GeneralTime(
             GeneralizedTime::from_unix_duration(Duration::from_secs(seconds)).expect("a time"),
@@ -482,8 +512,8 @@ fn certificate(spec: &Spec<'_>) -> Vec<u8> {
         signature: ecdsa_sha256.clone(),
         issuer: Name::from_str(&format!("CN={}", spec.issuer)).expect("issuer"),
         validity: Validity {
-            not_before: time(FROM),
-            not_after: time(UNTIL),
+            not_before: time(dates.from),
+            not_after: time(dates.until),
         },
         subject: Name::from_str(&format!("CN={}", spec.subject)).expect("subject"),
         subject_public_key_info: spki,
@@ -547,4 +577,635 @@ fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
     }
     out.extend_from_slice(content);
     out
+}
+
+// ------------------------------------------------------ revocation data
+//
+// A certificate authority that issues end-entity certificates, OCSP responses
+// (RFC 6960) and revocation lists (RFC 5280 §5), for the revocation tests and
+// for the fake OCSP and CRL servers a later increment's tests run. Same rule
+// as the authority above: external crates only, never `crate::`.
+
+/// id-kp-OCSPSigning, the purpose a delegated responder's certificate names.
+pub const OCSP_SIGNING: &str = "1.3.6.1.5.5.7.3.9";
+
+/// A certificate authority: a P-256 key and its self-signed certificate.
+pub struct TestCa {
+    key: p256::ecdsa::SigningKey,
+    name: String,
+    /// The authority's own certificate, DER: the anchor a test hands
+    /// `trust::Anchors::Only`.
+    pub certificate: Vec<u8>,
+}
+
+/// A certificate a [`TestCa`] issued, with its key.
+pub struct Issued {
+    key: p256::ecdsa::SigningKey,
+    /// The seed the key was made from, so `sign_cms::testkeys::Soft::p256`
+    /// can make the same key to sign a document with.
+    pub seed: u8,
+    /// The certificate, DER.
+    pub certificate: Vec<u8>,
+}
+
+impl TestCa {
+    /// A root named `name`, its key made from `seed`, valid 2020 to 2040.
+    #[must_use]
+    pub fn new(name: &str, seed: u8) -> Self {
+        let key = key(seed);
+        let certificate = certificate(&Spec {
+            subject: name,
+            issuer: name,
+            key: &key,
+            signer: &key,
+            serial: 1,
+            purposes: None,
+            authority: true,
+        });
+        TestCa {
+            key,
+            name: name.to_string(),
+            certificate,
+        }
+    }
+
+    /// A root whose key usage permits signing certificates and **not**
+    /// revocation lists (`keyCertSign` without `cRLSign`): a list it signs is
+    /// one RFC 5280 §6.3.3 (f) refuses.
+    #[must_use]
+    pub fn without_list_signing(name: &str, seed: u8) -> Self {
+        let key = key(seed);
+        let spec = Spec {
+            subject: name,
+            issuer: name,
+            key: &key,
+            signer: &key,
+            serial: 1,
+            purposes: None,
+            authority: true,
+        };
+        // KeyUsage: a BIT STRING with keyCertSign (bit 5) alone.
+        let usage = der::asn1::BitString::new(2, vec![0x04]).expect("bits");
+        let certificate = certificate_with(
+            &spec,
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &[Extension {
+                extn_id: oid("2.5.29.15"),
+                critical: true,
+                extn_value: OctetString::new(usage.to_der().expect("usage")).expect("octets"),
+            }],
+        );
+        TestCa {
+            key,
+            name: name.to_string(),
+            certificate,
+        }
+    }
+
+    /// The root that issued [`TestTsa`]'s certificate --- the same key and the
+    /// same bytes --- so data it signs is about the test authority.
+    #[must_use]
+    pub fn of_tsa() -> Self {
+        TestCa::new(ROOT, 0x51)
+    }
+
+    /// An end-entity certificate for a key made from `seed`, with `serial`
+    /// and the stated `purposes` (none for `None`), valid 2020 to 2040.
+    #[must_use]
+    pub fn issue(&self, subject: &str, seed: u8, serial: u8, purposes: Option<&[&str]>) -> Issued {
+        let key = key(seed);
+        let certificate = certificate(&Spec {
+            subject,
+            issuer: &self.name,
+            key: &key,
+            signer: &self.key,
+            serial,
+            purposes,
+            authority: false,
+        });
+        Issued {
+            key,
+            seed,
+            certificate,
+        }
+    }
+
+    /// [`TestCa::issue`], valid from `from` until `until` rather than 2020 to
+    /// 2040: for a signer whose certificate was not in force at some moment.
+    #[must_use]
+    pub fn issue_dated(
+        &self,
+        subject: &str,
+        seed: u8,
+        serial: u8,
+        from: u64,
+        until: u64,
+    ) -> Issued {
+        let key = key(seed);
+        let certificate = certificate_dated(
+            &Spec {
+                subject,
+                issuer: &self.name,
+                key: &key,
+                signer: &self.key,
+                serial,
+                purposes: None,
+                authority: false,
+            },
+            Dates { from, until },
+        );
+        Issued {
+            key,
+            seed,
+            certificate,
+        }
+    }
+
+    /// An intermediate authority this one issues: a certificate that may
+    /// issue others, for a chain the signature does not carry in full.
+    #[must_use]
+    pub fn intermediate(&self, name: &str, seed: u8, serial: u8) -> TestCa {
+        let key = key(seed);
+        let certificate = certificate(&Spec {
+            subject: name,
+            issuer: &self.name,
+            key: &key,
+            signer: &self.key,
+            serial,
+            purposes: None,
+            authority: true,
+        });
+        TestCa {
+            key,
+            name: name.to_string(),
+            certificate,
+        }
+    }
+
+    /// A delegated OCSP responder: a certificate this authority issues with
+    /// `id-kp-OCSPSigning`, as RFC 6960 §4.2.2.2 requires, and
+    /// `id-pkix-ocsp-nocheck`, as real responders' certificates carry it.
+    #[must_use]
+    pub fn responder(&self, seed: u8) -> Issued {
+        self.responder_dated(seed, FROM, UNTIL)
+    }
+
+    /// [`TestCa::responder`], in force only from `from` until `until`: a
+    /// responder whose certificate was not in force when it answered.
+    #[must_use]
+    pub fn responder_dated(&self, seed: u8, from: u64, until: u64) -> Issued {
+        let key = key(seed);
+        let spec = Spec {
+            subject: "tpdf test OCSP responder",
+            issuer: &self.name,
+            key: &key,
+            signer: &self.key,
+            serial: 0x70,
+            purposes: Some(&[OCSP_SIGNING]),
+            authority: false,
+        };
+        let certificate = certificate_with(
+            &spec,
+            Dates { from, until },
+            &[Extension {
+                extn_id: oid(OCSP_NO_CHECK),
+                critical: false,
+                extn_value: OctetString::new(der::asn1::Null.to_der().expect("null"))
+                    .expect("octets"),
+            }],
+        );
+        Issued {
+            key,
+            seed,
+            certificate,
+        }
+    }
+}
+
+/// What an OCSP response says about a certificate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    Good,
+    /// Revoked at `at` (seconds since the epoch), with an RFC 5280 reason
+    /// code when `reason` is given.
+    Revoked {
+        at: u64,
+        reason: Option<u8>,
+    },
+    Unknown,
+}
+
+/// Who signs an OCSP response.
+#[derive(Clone, Copy)]
+pub enum Responder<'a> {
+    /// The certificate's issuer itself; the `ResponderID` names it by key.
+    Issuer,
+    /// A responder certificate, carried in the response and named by name.
+    /// Whether it is authorised is the test's choice: one from
+    /// [`TestCa::responder`] is; one issued without `id-kp-OCSPSigning`, or
+    /// by another authority, is not.
+    Delegated(&'a Issued),
+}
+
+/// How a minted OCSP response is wrong. The default is nothing.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OcspFaults {
+    /// The `CertID`'s serial is one more than the certificate's: an answer
+    /// about another certificate.
+    pub wrong_cert_id: bool,
+    /// One bit of the response's signature flipped after signing.
+    pub corrupt_signature: bool,
+    /// An extension tpdf does not know, marked critical, on the response.
+    pub critical_extension: bool,
+    /// `archiveCutoff` at this time: the responder keeps expired certificates.
+    pub archive_cutoff: Option<u64>,
+}
+
+/// An `OCSPResponse`, DER --- status successful, type basic --- saying
+/// `status` about `certificate`, which `issuer` issued, with `this_update`
+/// and `next_update` (seconds since the epoch; `producedAt` is
+/// `this_update`), signed by `responder`, wrong in the ways `faults` says.
+///
+/// `CertID` hashes with SHA-1, as OpenSSL and the public responders do.
+///
+/// # Panics
+///
+/// Never on inputs a test chooses.
+#[must_use]
+pub fn mint_ocsp(
+    certificate: &[u8],
+    issuer: &TestCa,
+    status: Status,
+    this_update: u64,
+    next_update: Option<u64>,
+    responder: Responder<'_>,
+    faults: &OcspFaults,
+) -> Vec<u8> {
+    use x509_ocsp::{
+        BasicOcspResponse, CertId, CertStatus, OcspGeneralizedTime, OcspResponse,
+        OcspResponseStatus, ResponderId, ResponseBytes, ResponseData, RevokedInfo, SingleResponse,
+    };
+
+    let subject = Certificate::from_der(certificate).expect("the certificate");
+    let authority = Certificate::from_der(&issuer.certificate).expect("the issuer");
+    let key_bits = |c: &Certificate| {
+        c.tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .raw_bytes()
+            .to_vec()
+    };
+    let mut serial = subject.tbs_certificate.serial_number.as_bytes().to_vec();
+    if faults.wrong_cert_id {
+        if let Some(last) = serial.last_mut() {
+            *last = last.wrapping_add(1);
+        }
+    }
+    let cert_id = CertId {
+        hash_algorithm: AlgorithmIdentifierOwned {
+            oid: oid(Imprint::Sha1.oid()),
+            parameters: Some(der::asn1::Null.into()),
+        },
+        issuer_name_hash: OctetString::new(
+            Imprint::Sha1.digest(&subject.tbs_certificate.issuer.to_der().expect("issuer")),
+        )
+        .expect("octets"),
+        issuer_key_hash: OctetString::new(Imprint::Sha1.digest(&key_bits(&authority)))
+            .expect("octets"),
+        serial_number: SerialNumber::new(&serial).expect("serial"),
+    };
+    let when = |seconds: u64| {
+        OcspGeneralizedTime(
+            GeneralizedTime::from_unix_duration(Duration::from_secs(seconds)).expect("a time"),
+        )
+    };
+    let cert_status = match status {
+        Status::Good => CertStatus::good(),
+        Status::Unknown => CertStatus::unknown(),
+        Status::Revoked { at, reason } => CertStatus::Revoked(RevokedInfo {
+            revocation_time: when(at),
+            revocation_reason: reason.map(crl_reason),
+        }),
+    };
+    let (responder_id, signer, certs) = match responder {
+        Responder::Issuer => (
+            ResponderId::ByKey(
+                OctetString::new(Imprint::Sha1.digest(&key_bits(&authority))).expect("octets"),
+            ),
+            &issuer.key,
+            None,
+        ),
+        Responder::Delegated(delegate) => {
+            let certificate =
+                Certificate::from_der(&delegate.certificate).expect("the responder's certificate");
+            (
+                ResponderId::ByName(certificate.tbs_certificate.subject.clone()),
+                &delegate.key,
+                Some(vec![certificate]),
+            )
+        }
+    };
+    let mut extensions = Vec::new();
+    if faults.critical_extension {
+        extensions.push(Extension {
+            extn_id: oid("1.3.6.1.4.1.0.9"),
+            critical: true,
+            extn_value: OctetString::new(der::asn1::Null.to_der().expect("null")).expect("octets"),
+        });
+    }
+    if let Some(cutoff) = faults.archive_cutoff {
+        extensions.push(Extension {
+            extn_id: oid("1.3.6.1.5.5.7.48.1.6"),
+            critical: false,
+            extn_value: OctetString::new(
+                GeneralizedTime::from_unix_duration(Duration::from_secs(cutoff))
+                    .expect("a time")
+                    .to_der()
+                    .expect("time"),
+            )
+            .expect("octets"),
+        });
+    }
+    let data = ResponseData {
+        version: x509_ocsp::Version::V1,
+        responder_id,
+        produced_at: when(this_update),
+        responses: vec![SingleResponse {
+            cert_id,
+            cert_status,
+            this_update: when(this_update),
+            next_update: next_update.map(when),
+            single_extensions: None,
+        }],
+        response_extensions: (!extensions.is_empty()).then_some(extensions),
+    };
+    let tbs = data.to_der().expect("response data");
+    let mut value = sign_p256(signer, &tbs);
+    if faults.corrupt_signature {
+        let last = value.len() - 1;
+        value[last] ^= 0x01;
+    }
+    let basic = BasicOcspResponse {
+        tbs_response_data: data,
+        signature_algorithm: ecdsa_sha256(),
+        signature: BitString::from_bytes(&value).expect("bits"),
+        certs,
+    };
+    OcspResponse {
+        response_status: OcspResponseStatus::Successful,
+        response_bytes: Some(ResponseBytes {
+            response_type: oid("1.3.6.1.5.5.7.48.1.1"),
+            response: OctetString::new(basic.to_der().expect("basic")).expect("octets"),
+        }),
+    }
+    .to_der()
+    .expect("a response")
+}
+
+/// The `BasicOCSPResponse` inside a minted `OCSPResponse`: what a CMS `crls`
+/// set carries in `id-ri-ocsp-response` form.
+///
+/// # Panics
+///
+/// On bytes [`mint_ocsp`] did not make.
+#[must_use]
+pub fn basic_of(response: &[u8]) -> Vec<u8> {
+    x509_ocsp::OcspResponse::from_der(response)
+        .expect("a response")
+        .response_bytes
+        .expect("bytes")
+        .response
+        .as_bytes()
+        .to_vec()
+}
+
+/// One certificate a list names as revoked.
+#[derive(Clone, Copy)]
+pub struct Listed<'a> {
+    /// The certificate, DER; its serial is what the list carries.
+    pub certificate: &'a [u8],
+    /// When it was revoked, seconds since the epoch.
+    pub at: u64,
+    /// An RFC 5280 reason code, when the entry states one.
+    pub reason: Option<u8>,
+}
+
+/// How a minted list is wrong. The default is nothing.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CrlFaults {
+    /// One bit of the list's signature flipped after signing.
+    pub corrupt_signature: bool,
+    /// The list names another issuer than the one that signs it.
+    pub wrong_issuer: bool,
+    /// A delta-CRL indicator, critical: a form tpdf does not interpret.
+    pub delta: bool,
+    /// `expiredCertsOnCRL` at this time: the list keeps expired certificates.
+    pub expired_certs_on_crl: Option<u64>,
+    /// An `issuingDistributionPoint` saying the list covers only authorities'
+    /// certificates (`onlyContainsCACerts`): its silence about an end
+    /// entity's says nothing.
+    pub only_authorities: bool,
+    /// An `issuingDistributionPoint` naming a distribution point the test
+    /// certificates do not name: a partition that is not theirs.
+    pub partition: bool,
+}
+
+/// A `CertificateList`, DER, by `issuer`, listing `listed`, with
+/// `this_update` and `next_update`, wrong in the ways `faults` says.
+///
+/// # Panics
+///
+/// Never on inputs a test chooses.
+#[must_use]
+pub fn mint_crl(
+    issuer: &TestCa,
+    listed: &[Listed<'_>],
+    this_update: u64,
+    next_update: Option<u64>,
+    faults: &CrlFaults,
+) -> Vec<u8> {
+    use x509_cert::crl::{CertificateList, RevokedCert, TbsCertList};
+
+    let utc = |seconds: u64| {
+        Time::UtcTime(
+            der::asn1::UtcTime::from_unix_duration(Duration::from_secs(seconds)).expect("a time"),
+        )
+    };
+    let revoked: Vec<RevokedCert> = listed
+        .iter()
+        .map(|entry| {
+            let certificate = Certificate::from_der(entry.certificate).expect("a certificate");
+            RevokedCert {
+                serial_number: certificate.tbs_certificate.serial_number.clone(),
+                revocation_date: utc(entry.at),
+                crl_entry_extensions: entry.reason.map(|reason| {
+                    vec![Extension {
+                        extn_id: oid("2.5.29.21"),
+                        critical: false,
+                        extn_value: OctetString::new(crl_reason(reason).to_der().expect("reason"))
+                            .expect("octets"),
+                    }]
+                }),
+            }
+        })
+        .collect();
+    let mut extensions = vec![Extension {
+        // cRLNumber, which RFC 5280 §5.2.3 requires of a conforming issuer.
+        extn_id: oid("2.5.29.20"),
+        critical: false,
+        extn_value: OctetString::new(this_update.to_der().expect("number")).expect("octets"),
+    }];
+    if faults.delta {
+        extensions.push(Extension {
+            extn_id: oid("2.5.29.27"),
+            critical: true,
+            extn_value: OctetString::new(1u8.to_der().expect("number")).expect("octets"),
+        });
+    }
+    if faults.only_authorities || faults.partition {
+        // IssuingDistributionPoint ::= SEQUENCE {
+        //   distributionPoint [0] DistributionPointName OPTIONAL,
+        //   onlyContainsUserCerts [1] BOOLEAN DEFAULT FALSE,
+        //   onlyContainsCACerts [2] BOOLEAN DEFAULT FALSE, ... }
+        let mut point = Vec::new();
+        if faults.partition {
+            let uri = b"http://crl.example/partition-2.crl";
+            // [0] { fullName [0] { uniformResourceIdentifier [6] uri } }
+            point.extend(tlv(0xa0, &tlv(0xa0, &tlv(0x86, uri))));
+        }
+        if faults.only_authorities {
+            point.extend(tlv(0x82, &[0xff]));
+        }
+        extensions.push(Extension {
+            extn_id: oid("2.5.29.28"),
+            critical: true,
+            extn_value: OctetString::new(sequence(&[&point[..]])).expect("octets"),
+        });
+    }
+    if let Some(since) = faults.expired_certs_on_crl {
+        extensions.push(Extension {
+            extn_id: oid("2.5.29.60"),
+            critical: false,
+            extn_value: OctetString::new(
+                GeneralizedTime::from_unix_duration(Duration::from_secs(since))
+                    .expect("a time")
+                    .to_der()
+                    .expect("time"),
+            )
+            .expect("octets"),
+        });
+    }
+    let name = if faults.wrong_issuer {
+        "tpdf test - some other authority".to_string()
+    } else {
+        issuer.name.clone()
+    };
+    let tbs = TbsCertList {
+        version: x509_cert::Version::V2,
+        signature: ecdsa_sha256(),
+        issuer: Name::from_str(&format!("CN={name}")).expect("issuer"),
+        this_update: utc(this_update),
+        next_update: next_update.map(utc),
+        revoked_certificates: (!revoked.is_empty()).then_some(revoked),
+        crl_extensions: Some(extensions),
+    };
+    let mut value = sign_p256(&issuer.key, &tbs.to_der().expect("tbs"));
+    if faults.corrupt_signature {
+        let last = value.len() - 1;
+        value[last] ^= 0x01;
+    }
+    CertificateList {
+        tbs_cert_list: tbs,
+        signature_algorithm: ecdsa_sha256(),
+        signature: BitString::from_bytes(&value).expect("bits"),
+    }
+    .to_der()
+    .expect("a list")
+}
+
+/// `bytes` with one incremental revision appended that gives the catalog a
+/// `/DSS` of `certificates`, `responses` (full `OCSPResponse`s) and `lists`,
+/// each an uncompressed stream --- what a PAdES B-LT writer appends after
+/// signing. Every earlier byte is kept, so the signatures still cover what
+/// they covered.
+///
+/// # Panics
+///
+/// On a document `lopdf` cannot load.
+#[must_use]
+pub fn with_dss(
+    bytes: &[u8],
+    certificates: &[Vec<u8>],
+    responses: &[Vec<u8>],
+    lists: &[Vec<u8>],
+) -> Vec<u8> {
+    use lopdf::{Dictionary, Document, IncrementalDocument, Object, Stream};
+
+    let prev = Document::load_mem(bytes).expect("a document");
+    let root = prev
+        .trailer
+        .get(b"Root")
+        .and_then(Object::as_reference)
+        .expect("a catalog reference");
+    let mut catalog = prev
+        .get_object(root)
+        .and_then(Object::as_dict)
+        .expect("a catalog")
+        .clone();
+    let mut incremental = IncrementalDocument::create_from(bytes.to_vec(), prev);
+    let doc = &mut incremental.new_document;
+    let mut streams = |items: &[Vec<u8>]| -> Object {
+        Object::Array(
+            items
+                .iter()
+                .map(|item| {
+                    Object::Reference(doc.add_object(Stream::new(Dictionary::new(), item.clone())))
+                })
+                .collect(),
+        )
+    };
+    let mut dss = Dictionary::new();
+    dss.set("Certs", streams(certificates));
+    dss.set("OCSPs", streams(responses));
+    dss.set("CRLs", streams(lists));
+    let dss = doc.add_object(dss);
+    catalog.set("DSS", dss);
+    doc.set_object(root, catalog);
+    let mut out = Vec::new();
+    incremental.save_to(&mut out).expect("saved");
+    out
+}
+
+fn ecdsa_sha256() -> AlgorithmIdentifierOwned {
+    AlgorithmIdentifierOwned {
+        oid: oid("1.2.840.10045.4.3.2"),
+        parameters: None,
+    }
+}
+
+/// ECDSA P-256 over SHA-256 of `data`, DER.
+fn sign_p256(key: &p256::ecdsa::SigningKey, data: &[u8]) -> Vec<u8> {
+    let digest = sha2_10::Sha256::digest(data);
+    let value: p256::ecdsa::Signature = key.sign_prehash(&digest).expect("signed");
+    value.to_der().as_bytes().to_vec()
+}
+
+/// An RFC 5280 reason code as the type both formats carry it in.
+fn crl_reason(code: u8) -> x509_cert::ext::pkix::CrlReason {
+    use x509_cert::ext::pkix::CrlReason as R;
+    match code {
+        1 => R::KeyCompromise,
+        2 => R::CaCompromise,
+        3 => R::AffiliationChanged,
+        4 => R::Superseded,
+        5 => R::CessationOfOperation,
+        6 => R::CertificateHold,
+        8 => R::RemoveFromCRL,
+        9 => R::PrivilegeWithdrawn,
+        10 => R::AaCompromise,
+        _ => R::Unspecified,
+    }
 }

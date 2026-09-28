@@ -1003,6 +1003,42 @@ for srv in digicert sectigo globalsign; do
   cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
       testdata/text-base14.pdf "/tmp/tpdf-sign-probe/timestamp-$srv" --key rsa --timestamp "$srv"
 done
+#
+# REVOCATION (Phase 6 step 3, increment C1). Nothing here goes online in a gate;
+# two ignored instruments let OpenSSL and pyHanko judge what tpdf judges. First,
+# minted OCSP responses and lists, written with the answer tpdf gives each:
+TPDF_REVOCATION_OUT=/tmp/tpdf-revocation cargo test --manifest-path src-tauri/Cargo.toml \
+    --lib write_minted_data_for_openssl -- --ignored --nocapture
+cd /tmp/tpdf-revocation
+for n in good revoked unknown delegated unauthorised corrupt wrong-certid; do
+  openssl ocsp -respin ocsp-$n.der -issuer ca.pem -cert subject.pem -CAfile ca.pem \
+      -verify_other ca.pem -no_nonce -validity_period 999999999
+done
+for n in empty listed corrupt wrong-issuer; do
+  openssl crl -inform DER -in crl-$n.der -CAfile ca.pem -noout
+done
+# macOS arm64, OpenSSL 3.6.3, 2026-09-28: all eleven agree (good/revoked/unknown/
+# delegated OK with that status; unauthorised "missing ocspsigning usage";
+# corrupt "signature failure"; wrong CertID "No Status found" = tpdf none; a list
+# naming another issuer "unable to get issuer certificate" = tpdf none). pyHanko's
+# own verify_ocsp_response / verify_crl agree on the same files once the
+# responder carries id-pkix-ocsp-nocheck (docs/TRAPS.md).
+#
+# Second, real data, once: ask each authority above for a token (openssl ts
+# -query, curl), split the certificates out of it, fetch an OCSP response about
+# the timestamping certificate and the list it names (openssl ocsp -url, curl),
+# and lay each out as <dir>/<authority>/{subject,issuer,ocsp,crl}.der. Then:
+TPDF_REVOCATION_REAL=<dir> cargo test --manifest-path src-tauri/Cargo.toml \
+    --lib judge_real_data -- --ignored --nocapture
+# 2026-09-28: good on all six (three responses, three lists), as OpenSSL said
+# given the system roots; one byte flipped in a response and a list, unchecked
+# signature from tpdf and a verify failure from OpenSSL. docs/PLAN.md §9 has the
+# sizes and the issue times that decided the freshness rule.
+#
+# incr-lt.pdf is the B-LT fixture another tool wrote (make_incremental_pdf.py,
+# pyHanko with cryptography's responses); pyHanko's own reading of it is
+# validate_pdf_signature at its token's time with the /DSS as the only
+# revocation data, which says INTACT:TRUSTED with the root it carries anchored.
 # The window check that would show a visible signature placed and written in the
 # real application does not exist, for the reason below: it needs an identity in
 # the reader's store. By hand: File > Sign document..., choose Visible, choose

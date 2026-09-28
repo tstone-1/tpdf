@@ -42,6 +42,7 @@ fn trusted() -> Trust {
         standing: Standing::Trusted,
         why: None,
         store: platform::STORE,
+        attested_at: String::new(),
     }
 }
 
@@ -50,6 +51,7 @@ fn untrusted(why: Doubt) -> Trust {
         standing: Standing::Untrusted,
         why: Some(why),
         store: platform::STORE,
+        attested_at: String::new(),
     }
 }
 
@@ -582,4 +584,139 @@ fn blob_of_any(bytes: &[u8]) -> Vec<u8> {
         .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
         .collect();
     crate::ber::to_definite_length(&raw).expect("a blob")
+}
+
+// -------------------------------------------- judged at an attested moment
+//
+// Scripted, so the order of the questions is held whatever the platform: the
+// evaluation is a closure that records the moment it was asked about.
+
+fn passing(chain: &[u8]) -> Result<Evaluation, String> {
+    Ok(Evaluation {
+        passed: true,
+        failure: Doubt::Rejected,
+        chain: vec![chain.to_vec()],
+    })
+}
+
+#[test]
+fn an_attested_moment_is_the_one_moment_asked_about() {
+    let ca = root(61, "tpdf test root");
+    let key = Soft::p256(67);
+    let mut spec = Spec::new("Signer since expired");
+    spec.issuer = Some((&ca.key, ca.name));
+    spec.not_before = NOW - 400 * DAY;
+    spec.not_after = NOW - 30 * DAY;
+    spec.serial = 67;
+    let leaf = certificate(&key, &spec);
+    let parsed = Certificate::from_der(&leaf).expect("a certificate");
+    let at = NOW - 60 * DAY;
+    let mut asked = Vec::new();
+    let found = judge_at(&parsed, Purpose::Documents, at, |moment| {
+        asked.push(moment);
+        passing(&leaf)
+    });
+    // Out of date now, and in force then: trusted at the timestamp, and the
+    // present never asked about.
+    assert_eq!(asked, vec![at]);
+    assert_eq!(found.standing, Standing::TrustedAtTimestamp, "{found:?}");
+    assert_eq!(found.attested_at, crate::revocation::format_time(at));
+    // The same certificate judged now is expired: the attested moment is what
+    // changed the answer.
+    let now = judge(&parsed, NOW, |_| {
+        Ok(Evaluation {
+            passed: false,
+            failure: Doubt::Dates,
+            chain: vec![leaf.clone()],
+        })
+    });
+    assert_ne!(now.standing, Standing::TrustedAtTimestamp);
+}
+
+#[test]
+fn a_certificate_not_in_force_at_the_attested_moment_is_refused_before_asking() {
+    let ca = root(61, "tpdf test root");
+    let leaf = issued_by(&ca, 68, "Signer", false);
+    let parsed = Certificate::from_der(&leaf.der).expect("a certificate");
+    let validity = &parsed.tbs_certificate.validity;
+    let from = validity.not_before.to_unix_duration().as_secs();
+    let until = validity.not_after.to_unix_duration().as_secs();
+    for at in [from - 1, until + 1] {
+        let mut asked = 0;
+        let found = judge_at(&parsed, Purpose::Documents, at, |_| {
+            asked += 1;
+            passing(&leaf.der)
+        });
+        assert_eq!(
+            (found.standing, found.why),
+            (Standing::Untrusted, Some(Doubt::NotInForce)),
+            "{at}"
+        );
+        assert_eq!(asked, 0, "the dates are the answer, not the chain");
+    }
+    // The boundaries themselves are inside.
+    for at in [from, until] {
+        let found = judge_at(&parsed, Purpose::Documents, at, |_| passing(&leaf.der));
+        assert_eq!(found.standing, Standing::TrustedAtTimestamp, "{at}");
+    }
+}
+
+#[test]
+fn a_chain_refused_at_the_attested_moment_is_untrusted_with_that_reason_and_moment() {
+    let ca = root(61, "tpdf test root");
+    let leaf = issued_by(&ca, 69, "Signer", false);
+    let parsed = Certificate::from_der(&leaf.der).expect("a certificate");
+    let found = judge_at(&parsed, Purpose::Documents, NOW, |_| {
+        Ok(Evaluation {
+            passed: false,
+            failure: Doubt::Root,
+            chain: vec![leaf.der.clone()],
+        })
+    });
+    assert_eq!(
+        (found.standing, found.why),
+        (Standing::Untrusted, Some(Doubt::Root))
+    );
+    assert!(!found.attested_at.is_empty());
+    // A trust service that did not answer is tpdf's failure, not a refusal.
+    let found = judge_at(&parsed, Purpose::Documents, NOW, |_| Err("down".into()));
+    assert_eq!(
+        (found.standing, found.why),
+        (Standing::Unchecked, Some(Doubt::Unavailable))
+    );
+    // And the purpose is still asked.
+    let web = {
+        let key = Soft::p256(70);
+        let mut spec = Spec::new("A web server");
+        spec.issuer = Some((&ca.key, ca.name));
+        spec.purposes = Some(vec!["1.3.6.1.5.5.7.3.1"]);
+        spec.serial = 70;
+        certificate(&key, &spec)
+    };
+    let parsed = Certificate::from_der(&web).expect("a certificate");
+    let found = judge_at(&parsed, Purpose::Documents, NOW, |_| passing(&web));
+    assert_eq!(
+        (found.standing, found.why),
+        (Standing::Untrusted, Some(Doubt::Purpose))
+    );
+}
+
+#[test]
+fn dss_certificates_are_offered_within_their_own_bound() {
+    // Up to MAX_CERTIFICATES extras, each under the size bound, duplicates
+    // once; an oversized one is left out rather than refusing the lot.
+    let Ok(bytes) = std::fs::read("../testdata/incr-signed.pdf") else {
+        println!("[SKIP] incr-signed.pdf: not generated");
+        return;
+    };
+    let raw = blob_of_any(&bytes);
+    let (_, own) = certificates_with(&raw, &[]).expect("the signature's set");
+    let extras: Vec<Vec<u8>> = (0..MAX_CERTIFICATES as u8 + 3)
+        .map(|n| root(0x10 + n, "tpdf test extra").der)
+        .collect();
+    let mut offered = extras.clone();
+    offered.push(extras[0].clone());
+    offered.push(vec![0x30; MAX_CERTIFICATE_BYTES + 1]);
+    let (_, with) = certificates_with(&raw, &offered).expect("the set and extras");
+    assert_eq!(with.len(), own.len() + MAX_CERTIFICATES);
 }

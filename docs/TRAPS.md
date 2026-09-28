@@ -252,6 +252,9 @@ hop through the index.
 - An appearance drawn where its rectangle sits cannot be previewed as the same bytes
 - pyHanko's timestamp verdict folds the imprint into `intact`, and accepts a token OpenSSL refuses
 - OpenSSL refused Sectigo's timestamp given every system root, and accepted it given the one root the token names
+- `der`'s `GeneralizedTime` refuses fractional seconds, and a token stating milliseconds read as no timestamp at all
+- Revocation data required to postdate the signature would call every real B-LT document stale
+- pyHanko asks about an OCSP responder's own revocation unless its certificate says not to
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -545,6 +548,7 @@ hop through the index.
 - A value written on every keystroke makes the same write on commit dead code, and its mutation survives
 - A refusal type with no case for "locked" made a documented `locked` unreachable
 - A redaction's read-back looks for what was taken, so a match that could not be marked is invisible to it
+- A bound checked on the way in through one door is untested through the other
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -25055,3 +25059,79 @@ the token's `sid` names; the chain is `trust.rs`'s question, which the OS answer
 it finds. What the incident is worth knowing for is the direction of the error: an oracle that
 refuses a sound token looks, on the first run against a real server, exactly like tpdf accepting a
 bad one --- and it was the anchor set, not the token, that decided it.
+
+### `der`'s `GeneralizedTime` refuses fractional seconds, and a token stating milliseconds read as no timestamp at all
+
+2026-09-28, found by the first fixture another tool wrote for increment C1. `incr-lt.pdf`'s
+signature carries a pyHanko `DummyTimeStamper` token, and the scan reported no timestamp at all
+--- `timestamps_unread: 1`, the signature untimestamped, and so its signer judged now where
+the whole fixture existed to be judged at the token's time. The token was sound; pyHanko and
+OpenSSL both read it.
+
+Its `genTime` was `20260928100351.638502Z`. RFC 3161 §2.4.2 permits a fraction of a second
+(and DER forbids a trailing zero in one), and `der` 0.7's `GeneralizedTime` refuses any
+fraction: `read_gen_time` decoded the fifth field with it, got an error, and the token was
+counted unreadable exactly as a garbage one would be. Increment A's fixtures pin `genTime` to a
+whole second (`fixed_dt`), and the three public authorities measured that day write whole
+seconds, so nothing had ever handed it one.
+
+`gen_time_of` now reads the `GeneralizedTime` value itself: DER's form, `Z`, the fraction
+checked and dropped --- a moment rounded down is never later than the one attested.
+`a_gen_time_with_fractional_seconds_is_read_to_the_second` holds both halves. The same crate
+decodes OCSP and list times; RFC 5280 forbids fractions there, and one that carries them is
+counted unreadable, which is the honest answer rather than a silent one.
+
+### Revocation data required to postdate the signature would call every real B-LT document stale
+
+2026-09-28, while choosing increment C1's freshness rule. ETSI EN 319 102-1 V1.3.1 §5.2.5's
+NOTE 2 suggests that once the signing time is known, revocation data should be accepted only
+if issued after it --- a freshness of zero. It reads like the obviously correct rule for a
+timestamped signature, and it is the one this file would have built had it not been measured.
+
+The three public authorities' live OCSP answers about their own timestamping certificates,
+asked for at 10:00 UTC that day, were issued **before** the request: GlobalSign's 3.2 hours
+before, Sectigo's 3.5 days, DigiCert's 54 days --- responders pre-produce and serve a signed
+answer until its `nextUpdate`. Under zero freshness a B-LT document whose writer fetched those
+answers the same minute it was timestamped reads `stale`, every time, and the increment that
+writes such documents would make ones its own reader refuses. The standard's *default*
+(§5.2.5.4: freshness is the `thisUpdate`-to-`nextUpdate` interval, which reduces to
+`nextUpdate` after the moment) accepts all three, and is what `revocation::combine` implements.
+
+The lesson is the one this file keeps relearning: **a rule chosen by reading is a guess about
+the data**. The stricter policy is still available and is the owner's to take, with its price
+now known --- C2 would have to wait for, or ask for, a response issued after the timestamp.
+
+### pyHanko asks about an OCSP responder's own revocation unless its certificate says not to
+
+2026-09-28. The first minted delegated OCSP response read `good` to tpdf and to `openssl ocsp
+-respin`, and *indeterminate* to pyHanko's `verify_ocsp_response` --- the one disagreement across
+the eleven minted responses and lists. The response was sound; the responder's certificate
+carried `id-kp-OCSPSigning` and was issued by the right authority.
+
+RFC 6960 §4.2.2.2.1 lets a delegated responder's certificate carry `id-pkix-ocsp-nocheck`,
+saying clients need not check its revocation. Without it, pyHanko's `require` policy asks for
+revocation data about the *responder* too, finds none, and gives up on the certificate the
+response was about. OpenSSL does not ask; tpdf does not ask either way (residual 31 in
+`docs/THREAT-MODEL.md`). The GlobalSign responder measured the same day carries the extension, as
+real ones do, so the minter's responder carries it now and all three readers agree.
+
+Worth knowing in both directions: an oracle's *indeterminate* on a delegated response is first a
+question about the responder's certificate, and a minter that leaves out an extension real
+issuers always write tests a shape nobody meets --- and here, one only the strictest of three
+readers would notice.
+
+### A bound checked on the way in through one door is untested through the other
+
+2026-09-28, the one survivor of increment C1's mutation table. `revocation::Material` bounds an
+OCSP response's size twice: `response` checks a full `OCSPResponse` before unwrapping it, and
+`basic` checks the `BasicOCSPResponse` it is handed. The test for the bounds fed an oversized
+response through `response` --- whose own check refused it --- so deleting `basic`'s check
+changed nothing any test saw. But `basic` has a second caller: the CMS `crls` set carries
+responses already unwrapped, in `id-ri-ocsp-response` form, and reaches `basic` directly. The
+bound on that door was untested, and so was the door: nothing had exercised the CMS path at all
+until the mutation said so.
+
+A guard reached through several entrances is covered only through the ones a test walks.
+`a_basic_response_over_its_bound_is_refused_on_the_way_in_too` walks the second, and
+`a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute` the path behind it.
+

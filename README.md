@@ -568,9 +568,15 @@ the page as it is displayed:
 - **`verify <file.pdf>...`** says, for every signature, whether it is intact and whether this
   computer trusts its signer, in the words of the application's properties dialog — and, for
   a signature carrying an RFC 3161 timestamp or a document timestamp, whether the timestamp
-  checks out and covers it, and whether this computer trusts the authority that made it.
-  `--strict` makes the exit code 1 unless every document has at least one signature and every
-  signature is both intact and trusted.
+  checks out and covers it, and whether this computer trusts the authority that made it —
+  and what the revocation data the document itself carries says about each certificate.
+  Nothing is fetched to check a signature, so a document carrying no revocation data is
+  reported as not checked for it. When a signature carries an intact timestamp from an
+  authority this computer trusts, its signer is judged at the time that timestamp attests
+  rather than now. `--strict` makes the exit code 1 unless every document has at least one
+  signature and every signature is intact, trusted (now or at an attested time), and not
+  shown revoked by the document's own data before that time. A document carrying no
+  revocation data still passes, as nearly every signed document would otherwise fail.
 - **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
   and their sizes, PDF version, the metadata in its `/Info` dictionary, encryption and what it
   permits, whether it is tagged, the conformance its XMP metadata claims (PDF/A, PDF/UA, PDF/X
@@ -701,7 +707,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   read it, else `null`); `signatures` (as for `verify`); `unsigned_signature_fields`; and
   `limits`, what could not be read: `locked` (encrypted, and no password opened its
   contents), `fields_dropped`, `values_clipped`, `timestamps_unread`, `signatures_dropped`,
-  `unreadable` and `certificates_unread`.
+  `unreadable`, `certificates_unread`, `revocation_unread` (revocation data present and
+  not readable) and `revocation_dropped` (revocation data past a count bound).
 - `text`: `path` and `pages`, one per page read in document order, each with `page`
   (counted from 1), `order` — `tagged` (the document's own tags), `geometric` (recovered from
   the layout, as the viewer recovers it) or `none` (a page with no text) — `encoding` —
@@ -751,9 +758,23 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
   `integrity` with `verdict` (`intact`, `weak`, `altered`, `broken`, `unchecked`), `why`
   (for `unchecked`, else `null`), `digest`, `method` and `sentence`; and `trust`, `null`
-  unless the verdict is `intact` or `weak`, with `standing` (`trusted`, `expired`,
-  `not_yet_valid`, `untrusted`, `unchecked`), `why`, `store` (`mac`, `windows`, or `null`)
-  and `sentence`; and `timestamp`, `null` for a signature with no timestamp, otherwise with
+  unless the verdict is `intact` or `weak`, with `standing` (`trusted`,
+  `trusted_at_timestamp` — judged at the time an intact timestamp from an authority this
+  computer trusts attests — `expired`, `not_yet_valid`, `untrusted`, `unchecked`), `why`
+  (`not_in_force` among them: the certificate was not in force at that attested time),
+  `store` (`mac`, `windows`, or `null`), `attested_at` (that attested time, empty when the
+  certificate was judged now) and `sentence`; `revocation`, `null` exactly when `trust` is,
+  what the revocation data the document carries says about the signer's certificate (for a
+  document timestamp, its authority's): `standing` (`good`, `revoked`, `unknown`, `none` —
+  the document carries none, so nothing was checked — or `unchecked`), `why` (for
+  `unchecked`: `unreadable`, `bound`, `issuer`, `signature`, `unauthorised`, `algorithm`,
+  `unsupported`, `stale`, `expired`, `dates`, `budget`; else `null`), `source` (`ocsp`,
+  `crl`, or `null`), `issued` and `next` (the answering data's `thisUpdate` and
+  `nextUpdate`, or empty), `revoked` (when, for `revoked`), `reason` (as RFC 5280 names it,
+  `key_compromise`, or `null`), `basis` (whose clock `moment` is: `attested`, `stated` — the
+  time a timestamp states, for its own authority — `claimed`, the signer's own date, or
+  `now`), `moment`, `after_moment` (revoked after an attested time, which does not undo the
+  signature) and `sentence`; and `timestamp`, `null` for a signature with no timestamp, otherwise with
   `time` (the time the timestamp states, `YYYY-MM-DD HH:MM:SS UTC`), `authority` (who made
   it, from its certificate, empty when none could be read), `attested` (whether the time is
   vouched for: `true` exactly when the timestamp's own verdict is `intact` or `weak` — any
@@ -762,8 +783,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   signed bytes; `why` may also be `binding`, a timestamp that does not name the certificate
   it was made with) and `trust` (as above, for the authority and for timestamping, `null`
   unless `attested`; `why` may also be `timestamping`, an authority whose certificate was
-  not issued for it). Revocation is not checked, and the signer's certificate is judged at
-  the present moment, not at the time a timestamp attests. Each `sentence` is the properties
+  not issued for it) and `revocation` (as above, for the authority's certificate at the time
+  the timestamp states, `null` unless `trust` is set). Each `sentence` is the properties
   dialog's row, word for word.
 
 Committed samples of each document are in
@@ -796,12 +817,12 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Long-term-validation signatures, certification signatures, and revocation checking.
-  Signing exists, with a timestamp if you ask for one, and so does asking this computer's
-  trust store about a signer and a timestamp's authority; what a signature proves stops at
-  the document being unchanged since it was signed by the key in its certificate, and
-  whether an issuer this computer trusts vouches for that certificate today — not on the
-  date a timestamp attests.
+- Adding long-term-validation data when signing, and certification signatures. Signing
+  exists, with a timestamp if you ask for one; reading a document's own revocation data and
+  judging a signer at the time a trusted timestamp attests exist too. What is not built is
+  gathering OCSP responses and revocation lists while signing and appending them to the
+  document, and archive timestamps that keep a signature checkable after its timestamp
+  authority's certificate runs out.
   <!-- not-built: file.addValidationData -->
 - General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
   paragraph reflow and unsupported complex content streams.

@@ -113,6 +113,24 @@ fn certificate() -> docinfo::Certificate {
 ///
 /// Keyed by the Rust type's own name, which is also the file's stem and the name
 /// `src/lib/replyshapes.test.ts` reads them back under.
+/// A revocation answer with every key set: `revoked`, from a list, with a
+/// reason and after an attested moment --- a shape, so the mirror's every
+/// field carries a value, not a pairing the backend is claimed to produce.
+fn revocation_sample() -> crate::revocation::Revocation {
+    crate::revocation::Revocation {
+        standing: crate::revocation::Status::Revoked,
+        why: Some(crate::revocation::Gap::Stale),
+        source: Some(crate::revocation::Source::Crl),
+        issued: "2026-01-03 00:00:00 UTC".into(),
+        next: "2026-01-10 00:00:00 UTC".into(),
+        revoked: "2026-01-02 12:00:00 UTC".into(),
+        reason: Some(crate::revocation::Reason::KeyCompromise),
+        basis: crate::revocation::Basis::Attested,
+        moment: "2026-01-02 03:04:06 UTC".into(),
+        after_moment: true,
+    }
+}
+
 fn samples() -> BTreeMap<&'static str, String> {
     let mut out: BTreeMap<&'static str, String> = BTreeMap::new();
     let mut put = |name: &'static str, value: &dyn erased::Sample| {
@@ -231,8 +249,10 @@ fn samples() -> BTreeMap<&'static str, String> {
                         standing: crate::trust::Standing::Untrusted,
                         why: Some(crate::trust::Doubt::Timestamping),
                         store: Some(crate::trust::Store::Mac),
+                        attested_at: String::new(),
                     }),
                     attested: true,
+                    revocation: Some(revocation_sample()),
                 }),
                 // `Unchecked` with a reason, so the sample carries every key the
                 // mirror has --- `why` is `null` on every other verdict, and a
@@ -250,7 +270,9 @@ fn samples() -> BTreeMap<&'static str, String> {
                     standing: crate::trust::Standing::Untrusted,
                     why: Some(crate::trust::Doubt::Root),
                     store: Some(crate::trust::Store::Mac),
+                    attested_at: "2026-01-02 03:04:06 UTC".into(),
                 }),
+                revocation: Some(revocation_sample()),
             }],
             tagged: Some(true),
             language: "en-GB".into(),
@@ -268,6 +290,8 @@ fn samples() -> BTreeMap<&'static str, String> {
                 signatures_dropped: 4,
                 unreadable: 5,
                 certificates_unread: 6,
+                revocation_unread: 7,
+                revocation_dropped: 8,
             },
             scan_ms: 11.75,
         },
@@ -685,8 +709,10 @@ fn samples() -> BTreeMap<&'static str, String> {
                                 standing: crate::trust::Standing::Trusted,
                                 why: None,
                                 store: Some(crate::trust::Store::Mac),
+                                attested_at: String::new(),
                             }),
                             attested: true,
+                            revocation: Some(revocation_sample()),
                         }),
                     },
                     crate::sign_cms::Checked {

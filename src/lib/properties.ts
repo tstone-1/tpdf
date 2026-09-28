@@ -21,11 +21,13 @@
  * 2026-09-26 it also tests each signature against the bytes it covers, in the
  * worker, with the answer in `integrity.ts`; since 2026-09-27 it asks the
  * operating system's own trust store whether the signer's certificate chains
- * to a root it trusts. That is still a smaller thing than "valid". It checks
- * no revocation list, fetches nothing, consults no list but the OS's own, and
+ * to a root it trusts; since 2026-09-28 it reads the revocation data the
+ * document itself carries, and judges the signer at the time a trusted
+ * timestamp attests. That is still a smaller thing than "valid". It fetches
+ * nothing, consults no list but the OS's own, and without such a timestamp
  * cannot tell whether a certificate was in date when it was used --- so the
- * trust row names the store, and says revocation was not asked, every time it
- * reaches a trusted root.
+ * trust row names the store, and the revocation row says, when the document
+ * carries no revocation data, that nothing was checked.
  *
  * The vocabulary carries it: a signer's name, reason, location and date are
  * introduced as claimed, and so is everything the certificate says. The
@@ -40,9 +42,11 @@
 import {
   authorityRow,
   integrityRow,
+  revocationRow,
   timestampRow,
   trustRow,
   type Integrity,
+  type Revocation,
   type Trust,
 } from "./integrity";
 
@@ -108,6 +112,12 @@ export interface Signature {
    * `null` unless `integrity` is intact or weak.
    */
   trust: Trust | null;
+  /**
+   * What the document's own revocation data says about the signer's
+   * certificate (a document timestamp's: its authority's); `null` exactly
+   * when `trust` is.
+   */
+  revocation: Revocation | null;
 }
 
 /**
@@ -129,6 +139,8 @@ export interface Timestamp {
   trust: Trust | null;
   /** Whether the verdict is intact or weak, decided in the worker. */
   attested: boolean;
+  /** The authority's revocation, at the time the token states; `null` unless `trust`. */
+  revocation: Revocation | null;
 }
 
 /**
@@ -227,15 +239,14 @@ export const NOT_CHECKED =
   "tpdf checks that the bytes a signature covers are unchanged, that the " +
   "signature matches the key in its certificate, and whether that certificate " +
   "chains to a root this computer's own trust store trusts, which is not " +
-  "Adobe's list most signed PDFs are made against. It fetches nothing to check a signature, so it " +
-  "looks for no revocation and fetches no missing certificate, and it cannot " +
-  "tell whether the certificate was in date when it was used, because the " +
-  "signing date is the signer's own claim. What a certificate states its key " +
-  "is for is the issuer's own word. A timestamp's own signature and whether " +
-  "it covers this signature are checked, and its authority is asked about as " +
-  "the signer is, but the signer's certificate is still judged at the present " +
-  "moment rather than at the time the timestamp attests. Nothing here means " +
-  "the signature is valid.";
+  "Adobe's list most signed PDFs are made against. It fetches nothing to check a signature: " +
+  "revocation is judged only from data the document itself carries, a document " +
+  "carrying none is not checked for it, and no missing certificate is fetched. " +
+  "What a certificate states its key is for is the issuer's own word. A " +
+  "timestamp's own signature and whether it covers this signature are checked, " +
+  "and its authority is asked about as the signer is; only when the timestamp is " +
+  "intact and its authority trusted is the signer's certificate judged at the " +
+  "time it attests rather than now. Nothing here means the signature is valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -627,6 +638,10 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   const verdict = integrityRow(signature.integrity, signature.appended_bytes, !!trusted);
   if (verdict) rows.push(verdict);
   if (trusted) rows.push(trusted);
+  // Then whether its issuer has withdrawn it, as far as the document's own
+  // revocation data says. A document timestamp's signer is its authority.
+  const withdrawn = revocationRow(signature.revocation, signature.kind === "ETSI.RFC3161");
+  if (withdrawn) rows.push(withdrawn);
 
   // The certificate goes above what the signer typed, because a reader opening
   // this asks who signed it and these are two different answers to that. Which
@@ -653,6 +668,9 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
     rows.push(timestampRow(stamp.when, by, stamp.integrity, document));
     const authority = authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
     if (authority) rows.push(authority);
+    // A document timestamp's authority revocation is the field's own row above.
+    const lapsed = document ? null : revocationRow(stamp.revocation ?? null, true);
+    if (lapsed) rows.push(lapsed);
   }
   rows.push(coverageOf(signature, bytes));
   // Directly under Covers, which is the row it completes: that one says how much

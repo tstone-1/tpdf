@@ -36,9 +36,17 @@
  * names the store ("a root this Mac trusts"), because a signature made against
  * Adobe's list alone reads here as ending at a root this computer does not
  * trust. It is evaluated at the present moment, so a certificate that has run
- * out since is `expired` rather than trusted or not. And every standing that
- * reached a trusted root ends with {@link REVOCATION_NOT_CHECKED}: tpdf fetches no
- * revocation data, so revocation is never asked.
+ * out since is `expired` rather than trusted or not --- **unless** the signature
+ * carries an intact timestamp from an authority this computer trusts, when it
+ * is evaluated at the time that timestamp attests instead
+ * (`trusted_at_timestamp`, since 2026-09-28).
+ *
+ * ## The revocation row, and what `none` means
+ *
+ * {@link revocationRow} is the third, from `revocation.rs`: what the revocation
+ * data **the document itself carries** says about the certificate. tpdf never
+ * fetches any, so a document carrying none --- the ordinary case --- reads
+ * *not checked*, never as reassurance, and says so in its own sentence.
  *
  * ## A timestamp, and the time it is allowed to call attested
  *
@@ -105,7 +113,13 @@ export const WHY: Record<Why, string> = {
 };
 
 /** How the signer's certificate stands in the OS store. Mirrors `trust::Standing`. */
-export type Standing = "unchecked" | "untrusted" | "not_yet_valid" | "expired" | "trusted";
+export type Standing =
+  | "unchecked"
+  | "untrusted"
+  | "not_yet_valid"
+  | "expired"
+  | "trusted"
+  | "trusted_at_timestamp";
 
 /** Why it is not trusted, or was not asked. Mirrors `trust::Doubt`. */
 export type Doubt =
@@ -116,7 +130,8 @@ export type Doubt =
   | "rejected"
   | "certificate"
   | "unavailable"
-  | "timestamping";
+  | "timestamping"
+  | "not_in_force";
 
 /** The store that answered. Mirrors `trust::Store`. */
 export type Store = "mac" | "windows";
@@ -129,6 +144,8 @@ export interface Trust {
   standing: Standing;
   why: Doubt | null;
   store: Store | null;
+  /** The attested moment the chain was judged at; empty when judged now. */
+  attested_at: string;
 }
 
 /** The computer whose store answered, as the sentence names it. */
@@ -136,18 +153,6 @@ export const COMPUTER: Record<Store, string> = {
   mac: "this Mac",
   windows: "this PC",
 };
-
-/**
- * Said after every standing that says the chain reached a trusted root.
- *
- * tpdf fetches no revocation data, so no revocation list or OCSP responder is asked.
- * It said "does not go online" until 2026-09-28, when asking a timestamp authority
- * for a token while signing made that false as a general statement.
- * Stated once and reused, for the reason {@link TRUST_NOT_CHECKED} is.
- */
-export const REVOCATION_NOT_CHECKED =
-  "Revocation was not checked: tpdf does not fetch revocation data, so a certificate its " +
-  "issuer has since withdrawn reads the same as one it has not.";
 
 /**
  * Why the store does not vouch, as a clause; `computer` names the machine and
@@ -169,6 +174,8 @@ export const DOUBT: Record<Doubt, (computer: string, whose?: string) => string> 
   certificate: () => "the signature's certificates could not be prepared for the check",
   unavailable: () => "the operating system's trust check could not be run",
   timestamping: () => "the authority's certificate was not issued for timestamping",
+  not_in_force: () =>
+    "the signer's certificate was not in force at the time the timestamp attests",
 };
 
 /**
@@ -189,21 +196,36 @@ export function trustRow(
   const computer = trust.store ? COMPUTER[trust.store] : "this computer";
   const why = trust.why ? DOUBT[trust.why](computer) : "no reason was given";
   const chained = `the signer's certificate chains to a root ${computer} trusts`;
+  const judged = trust.attested_at
+    ? `, judged at ${trust.attested_at}, the time the timestamp attests`
+    : "";
   switch (trust.standing) {
     case "trusted":
       return {
         name,
         value:
           `trusted — ${chained}, so an issuer ${computer} trusts vouches that the ` +
-          `key belongs to the person the certificate names. ${REVOCATION_NOT_CHECKED}`,
+          `key belongs to the person the certificate names.`,
+      };
+    case "trusted_at_timestamp":
+      return {
+        name,
+        value:
+          `trusted at the timestamp — the signer's certificate chained to a root ` +
+          `${computer} trusts at ${trust.attested_at}, the time a timestamp from an ` +
+          `authority ${computer} trusts attests, so an issuer ${computer} trusts ` +
+          `vouched that the key belonged to the person the certificate names when ` +
+          `the signature was made. Whether the certificate has run out since does ` +
+          `not change that.`,
       };
     case "expired":
       return {
         name,
         value:
           `expired — ${chained}, and it ran out${until ? ` on ${until}` : ""}. The ` +
-          `date a signature gives is the signer's own claim, so tpdf cannot tell ` +
-          `whether it was made before then. ${REVOCATION_NOT_CHECKED}`,
+          `date a signature gives is the signer's own claim, and no timestamp from ` +
+          `an authority ${computer} trusts attests when it was made, so tpdf cannot ` +
+          `tell whether it was made before then.`,
         warn: true,
       };
     case "not_yet_valid":
@@ -211,15 +233,15 @@ export function trustRow(
         name,
         value:
           `not yet in force — ${chained}, but it only comes into force` +
-          `${from ? ` on ${from}` : " later"}. ${REVOCATION_NOT_CHECKED}`,
+          `${from ? ` on ${from}` : " later"}.`,
         warn: true,
       };
     case "untrusted":
       return {
         name,
         value:
-          `not trusted — ${why}. So nothing establishes that the key belongs to ` +
-          `the person the certificate names.`,
+          `not trusted — ${why}${judged}. So nothing establishes that the key ` +
+          `belongs to the person the certificate names.`,
         warn: true,
       };
     case "unchecked":
@@ -403,7 +425,16 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
         name,
         value:
           `trusted — ${chained} and is issued for timestamping. It is judged at the ` +
-          `present moment, not at the time it attests. ${REVOCATION_NOT_CHECKED}`,
+          `present moment, not at the time it attests.`,
+      };
+    // Never produced for an authority, whose certificate is judged now;
+    // worded rather than unreachable, so the sample covers every case.
+    case "trusted_at_timestamp":
+      return {
+        name,
+        value:
+          `trusted — ${chained} and is issued for timestamping, judged at ` +
+          `${trust.attested_at}.`,
       };
     case "expired":
       return {
@@ -411,7 +442,7 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
         value:
           `expired — ${chained}, and it ran out${until ? ` on ${until}` : ""}. tpdf ` +
           `judges it at the present moment, so it cannot tell whether it was in force ` +
-          `when the timestamp was made. ${REVOCATION_NOT_CHECKED}`,
+          `when the timestamp was made.`,
         warn: true,
       };
     case "not_yet_valid":
@@ -419,7 +450,7 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
         name,
         value:
           `not yet in force — ${chained}, but it only comes into force` +
-          `${from ? ` on ${from}` : " later"}. ${REVOCATION_NOT_CHECKED}`,
+          `${from ? ` on ${from}` : " later"}.`,
         warn: true,
       };
     case "untrusted":
@@ -432,6 +463,194 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
       return {
         name,
         value: `not checked — ${why}. This says nothing either way about who attests this time.`,
+        warn: true,
+      };
+  }
+}
+
+/** The answer about revocation. Mirrors `revocation::Status`. */
+export type RevocationStatus = "none" | "unchecked" | "unknown" | "revoked" | "good";
+
+/** Why revocation data led to no conclusion. Mirrors `revocation::Gap`. */
+export type Gap =
+  | "unreadable"
+  | "bound"
+  | "issuer"
+  | "signature"
+  | "unauthorised"
+  | "algorithm"
+  | "unsupported"
+  | "stale"
+  | "expired"
+  | "dates"
+  | "budget";
+
+/** A revocation's stated reason. Mirrors `revocation::Reason`. */
+export type Reason =
+  | "unspecified"
+  | "key_compromise"
+  | "ca_compromise"
+  | "affiliation_changed"
+  | "superseded"
+  | "cessation_of_operation"
+  | "certificate_hold"
+  | "remove_from_crl"
+  | "privilege_withdrawn"
+  | "aa_compromise";
+
+/** Whose clock the moment judged is. Mirrors `revocation::Basis`. */
+export type Basis = "attested" | "stated" | "claimed" | "now";
+
+/**
+ * What the document's own revocation data says about one certificate.
+ * Mirrors `revocation::Revocation`; present exactly where a {@link Trust} is.
+ */
+export interface Revocation {
+  standing: RevocationStatus;
+  why: Gap | null;
+  source: "ocsp" | "crl" | null;
+  issued: string;
+  next: string;
+  revoked: string;
+  reason: Reason | null;
+  basis: Basis;
+  moment: string;
+  after_moment: boolean;
+}
+
+/** A revocation reason, as a phrase. */
+export const REASON: Record<Reason, string> = {
+  unspecified: "no stated reason",
+  key_compromise: "key compromise",
+  ca_compromise: "compromise of its issuer",
+  affiliation_changed: "a change of affiliation",
+  superseded: "being superseded",
+  cessation_of_operation: "cessation of operation",
+  certificate_hold: "a hold, which may be lifted",
+  remove_from_crl: "removal from a list",
+  privilege_withdrawn: "privilege withdrawn",
+  aa_compromise: "compromise of an attribute authority",
+};
+
+/** Why revocation data led to no conclusion; `moment` as {@link momentPhrase}. */
+export const GAP: Record<Gap, (moment: string) => string> = {
+  unreadable: () => "some of the document's revocation data could not be read",
+  bound: () => "the document carries more revocation data than tpdf reads",
+  issuer: () =>
+    "the certificate that issued it is not in the document, so the data about it " +
+    "cannot be checked",
+  signature: () => "the data's own signature does not check out",
+  unauthorised: () =>
+    "the data is signed by a party its issuer did not authorise to answer for it",
+  algorithm: () => "the data uses an algorithm tpdf does not implement",
+  unsupported: () => "the data is in a form tpdf does not interpret",
+  stale: (moment) => `the latest data about it does not reach ${moment}`,
+  expired: () =>
+    "the data was issued after the certificate expired, and does not say that it keeps " +
+    "expired certificates",
+  dates: () => "the data's own dates do not hang together",
+  budget: () => "the document's signatures together cover more data than tpdf checks at once",
+};
+
+/** The moment a revocation was judged at, and whose clock it is. */
+export function momentPhrase(revocation: Revocation): string {
+  const at = revocation.moment;
+  switch (revocation.basis) {
+    case "attested":
+      return `${at}, the time the timestamp attests`;
+    case "stated":
+      return `${at}, the time the timestamp states`;
+    case "claimed":
+      return `${at}, the signing date the signer gave, which is their own claim`;
+    case "now":
+      return "the present moment";
+  }
+}
+
+/**
+ * The row that says what the document's own revocation data says about a
+ * certificate: the signer's, or a timestamp authority's (`authority`).
+ *
+ * `null` when there is no answer, which is wherever there is no trust
+ * standing. **`none` is worded as not checked**: tpdf fetches no revocation
+ * data, so a document that carries none --- most of them --- has had
+ * nothing checked, and a sentence that read as reassurance there would be a
+ * confident false statement. Only `good` and a revocation after an attested
+ * moment are shown without a warning.
+ */
+export function revocationRow(revocation: Revocation | null, authority = false): Row | null {
+  if (!revocation) return null;
+  const name = authority ? "Authority revocation" : "Revocation";
+  const whose = authority ? "the authority's certificate" : "the signer's certificate";
+  const made = authority ? "the timestamp" : "the signature";
+  const moment = momentPhrase(revocation);
+  const source =
+    revocation.source === "ocsp"
+      ? "an OCSP response in the document, signed by its issuer or a responder its issuer " +
+        "authorised,"
+      : revocation.source === "crl"
+        ? "a revocation list in the document, signed by its issuer,"
+        : "data in the document";
+  const next = revocation.next ? ` and meant to hold until ${revocation.next}` : "";
+  const issued = `issued ${revocation.issued}${next}`;
+  const why = revocation.reason ? `, for ${REASON[revocation.reason]}` : "";
+  switch (revocation.standing) {
+    case "good":
+      return {
+        name,
+        value:
+          `not revoked — ${source} ${issued}, says ${whose} had not been revoked, and it ` +
+          `reaches ${moment}.`,
+      };
+    case "revoked":
+      if (revocation.after_moment) {
+        return {
+          name,
+          value:
+            `revoked after the timestamp — ${source} ${issued}, says ${whose} was revoked ` +
+            `on ${revocation.revoked}${why}, after ${moment}. A revocation after that time ` +
+            `does not undo ${made}, which was made before it.`,
+        };
+      }
+      if (revocation.basis === "attested") {
+        return {
+          name,
+          value:
+            `revoked — ${source} ${issued}, says ${whose} was revoked on ` +
+            `${revocation.revoked}${why}, at or before ${moment}, so it was already ` +
+            `withdrawn when ${made} was made.`,
+          warn: true,
+        };
+      }
+      return {
+        name,
+        value:
+          `revoked — ${source} ${issued}, says ${whose} was revoked on ` +
+          `${revocation.revoked}${why}. Nothing tpdf trusts attests when ${made} was made, ` +
+          `so it cannot tell whether that was before then.`,
+        warn: true,
+      };
+    case "unknown":
+      return {
+        name,
+        value: `unknown — ${source} ${issued}, says its responder does not know ${whose}.`,
+        warn: true,
+      };
+    case "none":
+      return {
+        name,
+        value:
+          `not checked — the document carries no revocation data for ${whose}, and tpdf ` +
+          `does not fetch any, so a certificate its issuer has since withdrawn reads the ` +
+          `same as one it has not.`,
+        warn: true,
+      };
+    case "unchecked":
+      return {
+        name,
+        value:
+          `not checked — ${revocation.why ? GAP[revocation.why](moment) : "no reason was given"}. ` +
+          `This says nothing either way about whether ${whose} was revoked.`,
         warn: true,
       };
   }

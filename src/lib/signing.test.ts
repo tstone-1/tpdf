@@ -445,6 +445,7 @@ describe("a timestamp", () => {
           integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
           trust: null,
           attested: true,
+          revocation: null,
         },
       },
     ],

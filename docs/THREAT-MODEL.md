@@ -1208,7 +1208,8 @@ cannot fully check is `unchecked` with its reason and is never shown as `intact`
 is `weak`, because a chosen-prefix collision makes it forgeable by whoever prepared the
 document. The attacker this does not stop is the one with their own key: anybody can make a
 certificate naming anybody, sign, and be `intact`. Whether an issuer the OS trusts vouches for
-the key is a second verdict since 2026-09-27 (§T6.22); revocation is Phase 6 step 3's question.
+the key is a second verdict since 2026-09-27 (§T6.22), and whether the document's own
+revocation data says the key was withdrawn a third since 2026-09-28 (§T6.25).
 
 **A fifth route, and a third parser: tpdf reads XMP as of 2026-08-21.** The catalog's
 `/Metadata` is an RDF/XML packet the document chose, and `xmp::scan` hands it to `quick-xml`.
@@ -2218,9 +2219,10 @@ is in-process, inside the worker's containment.
 **No network authority is added.** Fetching is off on both platforms, with the same flags the
 signing chain uses, now shared from `trust::platform`: no intermediate is downloaded, no OCSP
 responder or CRL is asked, and on Windows no root is auto-updated. The network authorities are
-the updater's (§T9) and, since 2026-09-28, the timestamp client's (§T10); trust asks neither. The cost is in the answer and stated there: **revocation is not
-checked**, a missing intermediate reads as a missing link, and a root Windows would fetch on
-demand reads as untrusted until the machine has it.
+the updater's (§T9) and, since 2026-09-28, the timestamp client's (§T10); trust asks neither. The cost is in the answer and stated there: **revocation is judged only from
+data the document carries** (§T6.25, since 2026-09-28; before that it was not judged at all), a
+missing intermediate reads as a missing link unless the document's `/DSS` carries it, and a root
+Windows would fetch on demand reads as untrusted until the machine has it.
 
 **What a standing claims.** `trusted` means the OS store's rules accept a chain from the
 signer's certificate to a root it trusts, **now**, and that the certificate names a purpose a
@@ -2437,6 +2439,58 @@ token is Phase 6 step 3's increment B, which is where that changes: §T10.
 a token stating any time, for any signature, and it reads `intact` and `trusted`. That is what
 trusting a timestamp authority means, and the same is true of every reader of RFC 3161 tokens;
 listed as residual risk 28 together with the moment the authority is judged at.
+
+#### T6.25 — Reading revocation data a document carries, added 2026-09-28
+
+**What changed.** A document made for long-term validation carries the revocation data it
+was signed against: a `/DSS` dictionary (`/Certs`, `/OCSPs`, `/CRLs`, and `/VRI` entries naming
+more of the same), the Adobe `adbe-revocationInfoArchival` signed attribute, and the CMS
+`crls` set. `revocation.rs` now reads all three and judges, for the signer's certificate and
+a timestamp authority's, whether that data says the certificate was revoked (`docs/PLAN.md`
+§9, *Revocation, from the document's own data*). A signature whose timestamp is intact and
+whose authority this computer trusts is then judged at the time the token attests.
+
+**No network authority is added, and that is the decision.** Reading and verifying never
+fetch. Asking an OCSP responder or downloading a list while a document is open would tell each
+certificate authority which signed documents the reader opens, and would put a network
+authority in the read path, which runs in a worker with `(deny network*)`. So a document
+carrying no revocation data reads *not checked* for revocation, which is what it is.
+
+**Where it runs, and what bounds it.** In the worker, from `docinfo::scan_from`, beside the
+integrity and trust checks. New attacker-chosen input, all of it parsed there: the `/DSS`
+streams, decoded through `lopdf`'s bounded `decompressed_content_with_limit` at each kind's
+size bound --- a filtered stream that will not decode inside it is counted, never read raw;
+`OCSPResponse` and `BasicOCSPResponse` (`x509-ocsp`, one new package); `CertificateList`
+(`x509-cert`); the Adobe attribute, walked by tag. Counts and sizes are named constants in
+`revocation.rs` --- 32 responses of at most 64 KiB, 8 lists of at most 8 MiB, 32 `/DSS`
+certificates of at most 64 KiB, 64 `/VRI` entries --- and anything dropped at a bound or
+unreadable is counted in `Limits::revocation_dropped` / `revocation_unread`, and turns every
+answer that would have been *good* or *none* into *not checked*: what was not read might have
+said revoked. Every signature over a response, a list or a delegated responder's certificate
+is checked by `integrity::signed_by`, the arithmetic a signature's own verdict rests on, and
+charged to the document's `MAX_HASHED` before it is hashed; a list's check is memoised per
+issuer, so eight megabytes are hashed once however many certificates ask.
+
+**What reaches the OS store.** The `/DSS` certificates, as extra candidate issuers for the
+chain the OS builds --- at most sixteen beside the signature's own set, each under 64 KiB and
+re-encoded from a successful decode. Residual 25 now covers them too. Revocation data never
+reaches the OS: tpdf judges it itself, because the OS evaluation it asks is offline and would
+not.
+
+**What an answer claims.** `good`: checked data --- signed by the certificate's issuer, or
+for OCSP by a responder the issuer authorised with `id-kp-OCSPSigning`, about this
+certificate by `CertID` or by the list's issuer and scope --- says it was not revoked, and its
+`nextUpdate` is after the moment judged (EN 319 102-1 §5.2.5.4's default freshness).
+`revoked`, with the date and reason; after an attested moment, which does not undo the
+signature. `unknown`, `none`, and `unchecked` with a reason. Which moment, and whose clock it
+is, is stated in the sentence every time.
+
+**The attested moment moves the signer's trust question, and is earned.** Only an `intact`
+token (not `weak`), from an authority the store trusts for timestamping *now*, not shown
+revoked by the document's own data, with `genTime` inside the authority's certificate's dates.
+Anything less and the signer is judged now, as before.
+
+**Residuals** 30 and 31, below; 28 is narrowed.
 
 ### T7 — Distribution and update
 
@@ -3913,9 +3967,12 @@ which is what makes it evidence rather than a milestone.
     tpdf judges the authority's certificate at the present moment, with no revocation data, so
     a timestamping key compromised and revoked since reads the same as one that never was, and
     an authority whose certificate has expired since reads `expired` even when the token was
-    made well inside its dates. Bounded by the standing's own words --- judged now, revocation
-    not checked --- and by the time being called attested only beside a sound token. Not closed:
-    closing it is long-term validation, revocation data from `genTime`, which needs the network.
+    made well inside its dates. Bounded by the standing's own words --- judged now --- and by the
+    time being called attested only beside a sound token. **Narrowed 2026-09-28** (§T6.25): a
+    document carrying revocation data for the authority's certificate is now judged against it
+    at the time the token states, and a revoked authority no longer attests a moment for the
+    signer. Not closed for the ordinary document, which carries none: that reads *not checked*,
+    and fetching it would need the network in the read path, which was decided against.
 29. **Over `http://`, an attacker on the path can substitute a timestamp from an authority of its
     own** (§T10), added 2026-09-28. It sees the imprint and the nonce in the request and can mint
     a token over both; the token checks out and is written. It cannot forge one from the
@@ -3927,6 +3984,21 @@ which is what makes it evidence rather than a milestone.
     price of trust being asked in the coordinator on network bytes, and of refusing a real
     authority whose root a Windows machine has not yet fetched --- a decision left open in
     `docs/PLAN.md` §9, Phase 6's open questions.
+30. **A signer judged at an attested moment is judged with today's trust store** (§T6.25),
+    added 2026-09-28. The OS store is asked whether the chain ended at a root it trusts *at*
+    `genTime`, using the roots it holds now: a root distrusted since reads as not trusted, and a
+    root added since as trusted --- the chain model EN 319 102-1 describes, with current anchors.
+    And the moment is the authority's, trusted *now*: an authority compromised without its
+    revocation reaching the document can attest any time. Bounded by the sentence naming both
+    the moment and whose clock it is. Not closed: archive timestamps, which re-attest the
+    validation data before an authority's certificate runs out, are not read.
+31. **A delegated OCSP responder's own revocation is not asked** (§T6.25), added 2026-09-28.
+    tpdf checks that the issuer issued the responder's certificate for `id-kp-OCSPSigning` and
+    that it was in force when it answered; it does not look for revocation data about the
+    responder itself. Real responders' certificates carry `id-pkix-ocsp-nocheck`, which says
+    not to (RFC 6960 §4.2.2.2.1), and pyHanko, which does ask when that extension is absent,
+    was the one oracle to disagree before the test responder carried it. Bounded by responder
+    certificates being short-lived by practice. Not closed.
 
 ## 8. How to re-verify any of this
 

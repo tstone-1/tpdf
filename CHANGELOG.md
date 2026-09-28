@@ -43,14 +43,33 @@ have the binary.)
   checks out; a timestamp that does not is shown with the time it states and
   the reason it is not believed. A document timestamp — a signature field that
   is only a timestamp of the document — is checked the same way instead of
-  being reported as a format tpdf does not check. Revocation is still not
-  checked, and the signer's certificate is still judged as it stands today,
-  not on the date the timestamp gives. `tpdf verify --json` and
+  being reported as a format tpdf does not check. `tpdf verify --json` and
   `tpdf info --json` carry the result as a new `timestamp` key on each
   signature.
+- **Revocation, from what the document carries.** A document signed for
+  long-term validation carries the certificates, OCSP responses and revocation
+  lists its signatures were checked against. tpdf now reads them and says, for
+  the signer and for a timestamp authority, whether they show the certificate
+  revoked — checking that each answer is signed by the certificate's issuer, or
+  by a responder the issuer authorised, that it is about this certificate, and
+  that it is recent enough for the moment in question. tpdf never goes online
+  for this: a document that carries no revocation data — most of them — is
+  shown as not checked for revocation, in those words, and never as fine.
+- **A timestamped signature is judged at the time it was made.** When a
+  signature's timestamp checks out and this computer trusts the authority that
+  made it, the signer's certificate is judged at the time the timestamp gives,
+  so a certificate that has run out since, or been revoked since, no longer
+  makes an old signature look doubtful. The properties dialog says which time
+  was used and whose clock it is. `tpdf verify --strict` now also fails a
+  signature whose certificate the document shows revoked before that time, and
+  still passes one carrying no revocation data. The JSON gains `revocation` on
+  each signature and each timestamp, and `attested_at` on each trust answer.
 
 ### Fixed
 
+- **A timestamp stating fractions of a second is read.** A timestamp whose time
+  included milliseconds, which the standard allows, was not read at all, and the
+  signature was shown as if nobody had timestamped it.
 - **`tpdf` JSON reads correctly in PowerShell.** A script that captured
   `tpdf-cli ... --json` in PowerShell got `PrÃ¼fung.pdf` back for a file
   called `Prüfung.pdf`, because PowerShell decodes a program's output through

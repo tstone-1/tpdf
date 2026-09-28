@@ -230,6 +230,9 @@ FILTERS = [
     # Added 2026-09-28 with the timestamp client, in the same edit as its
     # mutations: the fake authority on 127.0.0.1 is in `tsa::tests`.
     "tsa::",
+    # Added 2026-09-28 with revocation (increment C1), in the same edit as its
+    # mutations. "docinfo::" already reaches `docinfo::revocation_tests`.
+    "revocation::",
 ]
 
 
@@ -10687,7 +10690,7 @@ MUTATIONS += [
         "docinfo: give each signature its own hashing budget",
         "src/docinfo.rs",
         """            out.push(read_signature(
-                document, field, node.name, size, bytes, limits, budget,
+                document, field, node.name, size, bytes, limits, budget, judging,
             ));""",
         """            out.push(read_signature(
                 document,
@@ -10697,6 +10700,7 @@ MUTATIONS += [
                 bytes,
                 limits,
                 &mut budget.clone(),
+                judging,
             ));""",
         "the_hashing_budget_is_shared_by_every_signature_of_a_document",
     ),
@@ -10918,8 +10922,16 @@ MUTATIONS += [
         # Give an authority's refusal the document signer's reason.
         "trust: say an authority is not a document signer",
         "src/trust.rs",
-        "            Purpose::Timestamping => Doubt::Timestamping,",
-        "            Purpose::Timestamping => Doubt::Purpose,",
+        """            Purpose::Timestamping => Doubt::Timestamping,
+        };
+        return answer(Standing::Untrusted, Some(doubt));
+    }
+    answer(standing, None)""",
+        """            Purpose::Timestamping => Doubt::Purpose,
+        };
+        return answer(Standing::Untrusted, Some(doubt));
+    }
+    answer(standing, None)""",
         "a_timestamp_authority_must_name_timestamping_alone_and_critical",
     ),
 ]
@@ -11270,8 +11282,8 @@ MUTATIONS += [
         # Never ask what the certificate was issued for.
         "trust: trust a web server's certificate for signing",
         "src/trust.rs",
-        "    if !serves {",
-        "    if false {",
+        "    if !serves {\n        let doubt = match purpose {\n            Purpose::Documents => Doubt::Purpose,\n            Purpose::Timestamping => Doubt::Timestamping,\n        };\n        return answer(Standing::Untrusted, Some(doubt));\n    }\n    answer(standing, None)",
+        "    if false {\n        let doubt = match purpose {\n            Purpose::Documents => Doubt::Purpose,\n            Purpose::Timestamping => Doubt::Timestamping,\n        };\n        return answer(Standing::Untrusted, Some(doubt));\n    }\n    answer(standing, None)",
         "a_certificate_issued_only_for_web_servers_is_not_trusted_for_signing",
     ),
     Mutation(
@@ -11286,8 +11298,8 @@ MUTATIONS += [
         # Drop the reason from an untrusted standing.
         "trust: say not trusted without saying why",
         "src/trust.rs",
-        "        return answer(Standing::Untrusted, Some(evaluation.failure));",
-        "        return answer(Standing::Untrusted, None);",
+        "        return answer(Standing::Untrusted, Some(evaluation.failure));\n    }\n    if !serves {\n        let doubt = match purpose {\n            Purpose::Documents => Doubt::Purpose,\n            Purpose::Timestamping => Doubt::Timestamping,\n        };\n        return answer(Standing::Untrusted, Some(doubt));\n    }\n    answer(standing, None)",
+        "        return answer(Standing::Untrusted, None);\n    }\n    if !serves {\n        let doubt = match purpose {\n            Purpose::Documents => Doubt::Purpose,\n            Purpose::Timestamping => Doubt::Timestamping,\n        };\n        return answer(Standing::Untrusted, Some(doubt));\n    }\n    answer(standing, None)",
         "a_standing_that_is_not_trusted_says_why",
     ),
     Mutation(
@@ -11384,8 +11396,8 @@ MUTATIONS += [
         # Ask trust of every signature, altered and broken ones included.
         "docinfo: attribute an altered signature to its signer",
         "src/docinfo.rs",
-        "    out.trust = attributable(&integrity).then(|| trust_of(document, sig, purpose));",
-        "    out.trust = Some(trust_of(document, sig, purpose));",
+        "    if attributable(&integrity) {\n        let extra = &judging.dss_certificates;",
+        "    if true {\n        let extra = &judging.dss_certificates;",
         "trust_is_asked_only_of_a_signature_with_a_signer",
     ),
     Mutation(
@@ -11753,7 +11765,7 @@ MUTATIONS += [
     Mutation(
         "cli: pass --strict on an untrusted signature",
         "src/cli/verify.rs",
-        "            .is_some_and(|t| t.standing == crate::trust::Standing::Trusted)",
+        "            .is_some_and(|t| matches!(t.standing, Standing::Trusted | Standing::TrustedAtTimestamp))",
         "            .is_some_and(|_| true)",
         "strict_passes_only_intact_and_trusted_signatures_in_every_document",
     ),
@@ -12486,6 +12498,375 @@ MUTATIONS += [
     ),
 ]
 
+
+# --- revocation, and the signer judged at the attested time -----------------
+#
+# `revocation.rs`, `docinfo.rs`, `trust.rs` and `cli/verify.rs`, 2026-09-28
+# (Phase 6 step 3, increment C1). Each removes one check a revocation answer or
+# the attested moment rests on, and names the test built so only that check
+# can fail it --- the responses, lists and certificates come from
+# `integrity/test_tsa.rs`, one fault apiece.
+MUTATIONS += [
+    Mutation(
+        "revocation: accept an OCSP response whose signature fails",
+        "src/revocation.rs",
+        "                (true, Ok(true)) => return Ok(()),",
+        "                (true, Ok(_)) => return Ok(()),",
+        "a_response_whose_signature_fails_is_not_believed",
+    ),
+    Mutation(
+        "revocation: accept any responder as authorised",
+        "src/revocation.rs",
+        "            let authorised = responder == issuer || delegated(responder, issuer, produced);",
+        "            let authorised = true || delegated(responder, issuer, produced);",
+        "a_responder_without_the_ocsp_signing_purpose_is_not_authorised",
+    ),
+    Mutation(
+        "revocation: a delegated responder needs no OCSP-signing purpose",
+        "src/revocation.rs",
+        "    purpose\n        && (from..=until).contains(&at)",
+        "    (purpose || true)\n        && (from..=until).contains(&at)",
+        "a_responder_without_the_ocsp_signing_purpose_is_not_authorised",
+    ),
+    Mutation(
+        "revocation: a delegated responder need not be in force",
+        "src/revocation.rs",
+        "    purpose\n        && (from..=until).contains(&at)",
+        "    purpose\n        && ((from..=until).contains(&at) || true)",
+        "a_response_from_a_responder_out_of_its_dates_is_not_authorised",
+    ),
+    Mutation(
+        "revocation: a delegated responder need not be issued by the issuer",
+        "src/revocation.rs",
+        "            crate::integrity::signed_by(issuer, &responder.signature_algorithm, &tbs, value)\n                == Ok(true)",
+        "            crate::integrity::signed_by(issuer, &responder.signature_algorithm, &tbs, value)\n                != Ok(false) || true",
+        "a_responder_another_authority_delegated_is_not_authorised",
+    ),
+    Mutation(
+        "revocation: match a CertID without its serial",
+        "src/revocation.rs",
+        "        if &id.serial_number != serial {\n            continue;\n        }",
+        "",
+        "a_response_about_another_certificate_says_nothing_about_this_one",
+    ),
+    Mutation(
+        "revocation: match a CertID without its issuer name",
+        "src/revocation.rs",
+        "        if hash.digest(&[issuer_name]) != id.issuer_name_hash.as_bytes() {",
+        "        if false {",
+        "another_authoritys_response_about_the_same_serial_is_not_data_about_this_one",
+    ),
+    Mutation(
+        "revocation: match a CertID without its issuer key",
+        "src/revocation.rs",
+        "        if hash.digest(&[key_bits(issuer)]) != id.issuer_key_hash.as_bytes() {",
+        "        if false {",
+        "a_response_under_the_issuers_name_and_another_key_is_not_about_this_certificate",
+    ),
+    Mutation(
+        "revocation: find an issuer by its name alone",
+        "src/revocation.rs",
+        "            && crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)\n                == Ok(true)",
+        "            && (crate::integrity::signed_by(candidate, &subject.signature_algorithm, &signed, value)\n                == Ok(true) || true)",
+        "an_issuer_is_found_by_its_key_and_not_by_its_name_alone",
+    ),
+    Mutation(
+        "revocation: accept a list whose signature fails",
+        "src/revocation.rs",
+        "            Ok(true) => Ok(()),\n            Ok(false) => Err(Gap::Signature),",
+        "            Ok(_) => Ok(()),",
+        "a_list_whose_signature_fails_is_not_believed",
+    ),
+    Mutation(
+        "revocation: read another issuer's list as this certificate's",
+        "src/revocation.rs",
+        "    if tbs.issuer.to_der().ok().as_deref() != Some(issuer_name) {",
+        "    if false {",
+        "a_list_naming_another_issuer_says_nothing_about_this_certificate",
+    ),
+    Mutation(
+        "revocation: a list's scope covers everything",
+        "src/revocation.rs",
+        "    match in_scope(subject, tbs.crl_extensions.as_deref()) {",
+        "    match Ok::<bool, Gap>(true) {",
+        "a_list_whose_scope_leaves_the_certificate_out_says_nothing_about_it",
+    ),
+    Mutation(
+        "revocation: any key may sign a list",
+        "src/revocation.rs",
+        "        if !signs_lists(issuer) {",
+        "        if false {",
+        "a_list_signed_by_a_key_not_permitted_to_sign_lists_is_not_authorised",
+    ),
+    Mutation(
+        "revocation: a list names no serial",
+        "src/revocation.rs",
+        "        .find(|entry| &entry.serial_number == serial);",
+        "        .find(|_| false);",
+        "a_list_naming_the_certificate_is_revoked_with_its_reason",
+    ),
+    Mutation(
+        "revocation: a list's first entry is this certificate",
+        "src/revocation.rs",
+        "        .find(|entry| &entry.serial_number == serial);",
+        "        .find(|_| true);",
+        "a_list_listing_every_certificate_but_this_one_is_not_a_revocation_of_it",
+    ),
+    Mutation(
+        "revocation: every good is fresh",
+        "src/revocation.rs",
+        "        if !s.next_update.is_some_and(|next| next > moment.at) {",
+        "        if false {",
+        "a_good_that_does_not_reach_the_moment_is_stale",
+    ),
+    Mutation(
+        "revocation: a nextUpdate at the moment is fresh",
+        "src/revocation.rs",
+        "        if !s.next_update.is_some_and(|next| next > moment.at) {",
+        "        if !s.next_update.is_some_and(|next| next >= moment.at) {",
+        "a_good_that_does_not_reach_the_moment_is_stale",
+    ),
+    Mutation(
+        "revocation: a revocation after any moment is after the signature",
+        "src/revocation.rs",
+        "            after_moment: moment.basis == Basis::Attested && at > moment.at,",
+        "            after_moment: at > moment.at,",
+        "a_revocation_after_the_attested_moment_does_not_undo_the_signature",
+    ),
+    Mutation(
+        "revocation: a revocation at the moment is after it",
+        "src/revocation.rs",
+        "            after_moment: moment.basis == Basis::Attested && at > moment.at,",
+        "            after_moment: moment.basis == Basis::Attested && at >= moment.at,",
+        "a_revocation_after_the_attested_moment_does_not_undo_the_signature",
+    ),
+    Mutation(
+        "revocation: name the latest revocation rather than the earliest",
+        "src/revocation.rs",
+        "        .min_by_key(|(_, at, _)| *at);",
+        "        .max_by_key(|(_, at, _)| *at);",
+        "a_revocation_outweighs_a_good_and_the_earliest_revocation_is_the_one_named",
+    ),
+    Mutation(
+        "revocation: judge the earliest good for freshness",
+        "src/revocation.rs",
+        "        .max_by_key(|s| s.this_update);",
+        "        .min_by_key(|s| s.this_update);",
+        "the_latest_good_is_the_one_judged_for_freshness",
+    ),
+    Mutation(
+        "revocation: none stands beside data that would not read",
+        "src/revocation.rs",
+        "    if matches!(answer.standing, Status::Good | Status::None) {",
+        "    if matches!(answer.standing, Status::Good) {",
+        "data_that_would_not_read_turns_none_into_not_checked",
+    ),
+    Mutation(
+        "revocation: a good stands beside data dropped at a bound",
+        "src/revocation.rs",
+        "        if dropped > 0 {\n            return Revocation::unchecked(moment, Gap::Bound);\n        }",
+        "",
+        "data_left_unread_at_a_bound_turns_good_and_none_into_not_checked_and_leaves_revoked",
+    ),
+    Mutation(
+        "revocation: a good issued after expiry counts",
+        "src/revocation.rs",
+        "        if s.this_update > until && !s.keeps_expired_since.is_some_and(|since| since <= until) {",
+        "        if false {",
+        "a_good_issued_after_the_certificate_expired_counts_only_with_an_archive_cutoff",
+    ),
+    Mutation(
+        "revocation: dates from the future are dates",
+        "src/revocation.rs",
+        "                let incoherent = s.this_update > now.saturating_add(SKEW)",
+        "                let incoherent = false && s.this_update > now.saturating_add(SKEW)",
+        "a_response_issued_in_the_future_has_no_dates",
+    ),
+    Mutation(
+        "revocation: an unknown critical response extension is ignored",
+        "src/revocation.rs",
+        "        if critical_unknown(data.response_extensions.as_deref(), &[OCSP_NONCE]) {",
+        "        if false {",
+        "a_critical_extension_tpdf_does_not_know_is_unsupported",
+    ),
+    Mutation(
+        "revocation: a delta list is read as a full one",
+        "src/revocation.rs",
+        "        if critical_unknown(tbs.crl_extensions.as_deref(), &[ISSUING_DISTRIBUTION_POINT]) {",
+        "        if false {",
+        "a_delta_list_is_unsupported",
+    ),
+    Mutation(
+        "revocation: check a response's signature without charging the budget",
+        "src/revocation.rs",
+        "            charge(budget, response.signed.len())?;",
+        "",
+        "the_budget_is_charged_before_a_signature_is_checked",
+    ),
+    Mutation(
+        "revocation: no count bound on responses",
+        "src/revocation.rs",
+        "        } else if self.responses.len() >= MAX_RESPONSES {",
+        "        } else if false {",
+        "data_left_unread_at_a_bound_turns_good_and_none_into_not_checked_and_leaves_revoked",
+    ),
+    Mutation(
+        "revocation: no size bound on a list",
+        "src/revocation.rs",
+        "        if der.len() > MAX_LIST_BYTES {",
+        "        if false {",
+        "material_refuses_what_is_over_its_size_bounds",
+    ),
+    Mutation(
+        "revocation: no count bound on lists",
+        "src/revocation.rs",
+        "        } else if self.lists.len() >= MAX_LISTS {",
+        "        } else if false {",
+        "material_refuses_what_is_over_its_size_bounds",
+    ),
+    Mutation(
+        "revocation: no size bound on a basic response",
+        "src/revocation.rs",
+        "    pub fn basic(&mut self, der: Vec<u8>) {\n        if der.len() > MAX_RESPONSE_BYTES {",
+        "    pub fn basic(&mut self, der: Vec<u8>) {\n        if false {",
+        # SURVIVED its first run, aimed at the test that reaches `basic` only
+        # through `response`, whose own check had already refused.
+        "a_basic_response_over_its_bound_is_refused_on_the_way_in_too",
+    ),
+    Mutation(
+        "revocation: ignore the CMS crls set",
+        "src/revocation.rs",
+        "        if let Some(choices) = &signed.crls {",
+        "        if let Some(choices) = None::<&cms::revocation::RevocationInfoChoices> {",
+        "a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute",
+    ),
+    Mutation(
+        "revocation: ignore the Adobe archival attribute",
+        "src/revocation.rs",
+        "        if let Some(attribute) = archival {",
+        "        if let Some(attribute) = archival.filter(|_| false) {",
+        "a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute",
+    ),
+    Mutation(
+        "revocation: read any other revocation format as a response",
+        "src/revocation.rs",
+        "                        if other.other_format.oid.to_string() == \"1.3.6.1.5.5.7.16.2\" {",
+        "                        if !other.other_format.oid.to_string().is_empty() {",
+        "a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute",
+    ),
+    Mutation(
+        "lt: read a filtered /DSS stream raw",
+        "src/docinfo.rs",
+        "            let content = if stream.dict.has(b\"Filter\") {",
+        "            let content = if false {",
+        "a_compressed_dss_stream_is_decoded_and_a_vri_past_its_bound_is_counted",
+    ),
+    Mutation(
+        "lt: walk every /VRI entry",
+        "src/docinfo.rs",
+        "            if at >= crate::revocation::MAX_VRI {",
+        "            if false {",
+        "a_compressed_dss_stream_is_decoded_and_a_vri_past_its_bound_is_counted",
+    ),
+    Mutation(
+        "lt: judge the signer now even with an attested moment",
+        "src/docinfo.rs",
+        "                crate::trust::of_blob_at(blob, extra, purpose, at, judging.anchors)",
+        "                crate::trust::of_blob_with(blob, extra, purpose, judging.now, judging.anchors)",
+        "a_b_lt_signature_is_judged_at_the_attested_time_with_the_documents_own_data",
+    ),
+    Mutation(
+        "lt: an untrusted authority attests a moment",
+        "src/docinfo.rs",
+        "    if !intact || !trusted || revoked {",
+        "    if !intact || revoked {",
+        "only_an_intact_token_from_a_trusted_unrevoked_authority_attests_a_moment",
+    ),
+    Mutation(
+        "lt: a weak or broken token attests a moment",
+        "src/docinfo.rs",
+        "    if !intact || !trusted || revoked {",
+        "    if !trusted || revoked {",
+        "only_an_intact_token_from_a_trusted_unrevoked_authority_attests_a_moment",
+    ),
+    Mutation(
+        "lt: a revoked authority attests a moment",
+        "src/docinfo.rs",
+        "    if !intact || !trusted || revoked {",
+        "    if !intact || !trusted {",
+        "an_authority_the_document_shows_revoked_leaves_the_signer_judged_now",
+    ),
+    Mutation(
+        "lt: a time outside the authority's dates is attested",
+        "src/docinfo.rs",
+        "    (matched && (from..=until).contains(&at)).then_some(at)",
+        "    matched.then_some(at)",
+        "a_time_outside_the_authoritys_own_dates_is_not_used",
+    ),
+    Mutation(
+        "lt: offer no /DSS certificate to the chain builder",
+        "src/docinfo.rs",
+        "        let extra = &judging.dss_certificates;",
+        "        let extra: &[Vec<u8>] = &[];",
+        "the_dss_certificates_complete_a_chain_the_signature_does_not_carry",
+    ),
+    Mutation(
+        "lt: refuse a genTime with a fraction",
+        "src/docinfo.rs",
+        "    let (whole, fraction) = match body.split_once('.') {",
+        "    let (whole, fraction) = match None::<(&str, &str)> {",
+        "a_gen_time_with_fractional_seconds_is_read_to_the_second",
+    ),
+    Mutation(
+        "lt: accept a fraction DER forbids",
+        "src/docinfo.rs",
+        "            || fraction.ends_with('0')",
+        "            || false",
+        "a_gen_time_with_fractional_seconds_is_read_to_the_second",
+    ),
+    Mutation(
+        "trust: judge an attested moment without the signer's own dates",
+        "src/trust.rs",
+        "    if at < from || at > until {",
+        "    if false {",
+        "a_certificate_not_in_force_at_the_attested_moment_is_refused_before_asking",
+    ),
+    Mutation(
+        "trust: an attested moment's chain need not pass",
+        "src/trust.rs",
+        "        Err(_) => return Trust::unchecked(Doubt::Unavailable),\n    };\n    if !evaluation.passed {\n        return answer(Standing::Untrusted, Some(evaluation.failure));\n    }\n    if !serves {\n        let doubt = match purpose {\n            Purpose::Documents => Doubt::Purpose,\n            Purpose::Timestamping => Doubt::Timestamping,\n        };\n        return answer(Standing::Untrusted, Some(doubt));\n    }\n    answer(Standing::TrustedAtTimestamp, None)",
+        "        Err(_) => return Trust::unchecked(Doubt::Unavailable),\n    };\n    if false && !evaluation.passed {\n        return answer(Standing::Untrusted, Some(evaluation.failure));\n    }\n    if !serves {\n        let doubt = match purpose {\n            Purpose::Documents => Doubt::Purpose,\n            Purpose::Timestamping => Doubt::Timestamping,\n        };\n        return answer(Standing::Untrusted, Some(doubt));\n    }\n    answer(Standing::TrustedAtTimestamp, None)",
+        "a_chain_refused_at_the_attested_moment_is_untrusted_with_that_reason_and_moment",
+    ),
+    Mutation(
+        "trust: offer no extra certificate at all",
+        "src/trust.rs",
+        "        if added == MAX_CERTIFICATES {",
+        "        if true {",
+        "dss_certificates_are_offered_within_their_own_bound",
+    ),
+    Mutation(
+        "trust: offer every extra certificate",
+        "src/trust.rs",
+        "        if added == MAX_CERTIFICATES {",
+        "        if false {",
+        "dss_certificates_are_offered_within_their_own_bound",
+    ),
+    Mutation(
+        "cli: a revocation before the moment passes --strict",
+        "src/cli/verify.rs",
+        "            .is_some_and(|r| r.standing == crate::revocation::Status::Revoked && !r.after_moment)",
+        "            .is_some_and(|r| false && r.standing == crate::revocation::Status::Revoked && !r.after_moment)",
+        "a_revocation_after_the_attested_time_does_not_fail_strict_and_one_before_does",
+    ),
+    Mutation(
+        "cli: a revocation after the moment fails --strict",
+        "src/cli/verify.rs",
+        "            .is_some_and(|r| r.standing == crate::revocation::Status::Revoked && !r.after_moment)",
+        "            .is_some_and(|r| r.standing == crate::revocation::Status::Revoked)",
+        "a_revocation_after_the_attested_time_does_not_fail_strict_and_one_before_does",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

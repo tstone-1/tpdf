@@ -77,8 +77,8 @@
 //! Whose key the authority's is. That is [`crate::trust`]'s question, asked with
 //! the timestamping purpose ([`crate::trust::Purpose::Timestamping`]) and only
 //! beside an `intact` or `weak` verdict --- the same rule the signer's trust
-//! follows. No revocation, and the signer's certificate is still judged at the
-//! present moment rather than at `genTime` (a later increment).
+//! follows. Revocation is [`crate::revocation`]'s, and whether `genTime` may
+//! stand for when the signer is judged is decided in `docinfo`.
 
 use der::Decode;
 use x509_cert::attr::Attributes;

@@ -4,11 +4,17 @@ import {
   COMPUTER,
   DOUBT,
   integrityRow,
-  REVOCATION_NOT_CHECKED,
+  GAP,
+  REASON,
+  revocationRow,
   TRUST_NOT_CHECKED,
   trustRow,
   WHY,
+  type Basis,
   type Doubt,
+  type Gap,
+  type Reason,
+  type Revocation,
   type Integrity,
   type Standing,
   type Store,
@@ -134,6 +140,7 @@ describe("the integrity row among the others", () => {
       timestamp: null,
       integrity: verdict("altered"),
       trust: null,
+      revocation: null,
     };
     const rows = signatureRows(signature, 1024);
     expect(rows[0]?.name).toBe("Integrity");
@@ -145,8 +152,13 @@ describe("the integrity row among the others", () => {
   });
 });
 
-function standing(s: Standing, why: Doubt | null = null, store: Store | null = "mac"): Trust {
-  return { standing: s, why, store };
+function standing(
+  s: Standing,
+  why: Doubt | null = null,
+  store: Store | null = "mac",
+  attested_at = "",
+): Trust {
+  return { standing: s, why, store, attested_at };
 }
 
 const EVERY_DOUBT = Object.keys(DOUBT) as Doubt[];
@@ -155,9 +167,13 @@ const EVERY_DOUBT = Object.keys(DOUBT) as Doubt[];
 function everyTrustRow() {
   const rows = (["mac", "windows"] as const).flatMap((store) => [
     trustRow(standing("trusted", null, store)),
+    trustRow(standing("trusted_at_timestamp", null, store, "2026-08-21 12:00:00 UTC")),
     trustRow(standing("expired", null, store), "2020-01-01", "2021-01-01"),
     trustRow(standing("not_yet_valid", null, store), "the first day", "the last day"),
     ...EVERY_DOUBT.map((why) => trustRow(standing("untrusted", why, store))),
+    ...EVERY_DOUBT.map((why) =>
+      trustRow(standing("untrusted", why, store, "2026-08-21 12:00:00 UTC")),
+    ),
     ...EVERY_DOUBT.map((why) => trustRow(standing("unchecked", why, null))),
   ]);
   return rows.map((row) => {
@@ -170,6 +186,9 @@ describe("trustRow", () => {
   it("leads each standing with its own word, so none reads as another", () => {
     const lead = (t: Trust) => trustRow(t)?.value.split(" — ")[0];
     expect(lead(standing("trusted"))).toBe("trusted");
+    expect(lead(standing("trusted_at_timestamp", null, "mac", "then"))).toBe(
+      "trusted at the timestamp",
+    );
     expect(lead(standing("expired"))).toBe("expired");
     expect(lead(standing("not_yet_valid"))).toBe("not yet in force");
     expect(lead(standing("untrusted", "root"))).toBe("not trusted");
@@ -193,10 +212,30 @@ describe("trustRow", () => {
     expect(COMPUTER.windows).toBe("this PC");
   });
 
-  it("says revocation was not checked wherever the chain reached a trusted root", () => {
-    for (const s of ["trusted", "expired", "not_yet_valid"] as const) {
-      expect(trustRow(standing(s))?.value).toContain(REVOCATION_NOT_CHECKED);
+  it("leaves revocation to its own row, and no longer speaks for it", () => {
+    // Since 2026-09-28 revocation is a row of its own, which says exactly
+    // what the document's data did and did not establish.
+    for (const row of everyTrustRow()) {
+      expect(row.value.toLowerCase()).not.toContain("revocation");
+      expect(row.value.toLowerCase()).not.toContain("revoked");
     }
+  });
+
+  it("says whose moment an attested judgement is, and that expiry since does not undo it", () => {
+    const at = "2026-08-21 12:00:00 UTC";
+    const row = trustRow(standing("trusted_at_timestamp", null, "mac", at));
+    expect(row?.value.split(" — ")[0]).toBe("trusted at the timestamp");
+    expect(row?.value).toContain(`at ${at}, the time a timestamp from an authority this Mac`);
+    expect(row?.value).toContain("run out since does not change that");
+    expect(row?.warn).toBeUndefined();
+    // An untrusted chain judged at that moment says so; one judged now does not.
+    expect(trustRow(standing("untrusted", "root", "mac", at))?.value).toContain(
+      `judged at ${at}, the time the timestamp attests`,
+    );
+    expect(trustRow(standing("untrusted", "root"))?.value).not.toContain("judged at");
+    expect(trustRow(standing("untrusted", "not_in_force", "mac", at))?.value).toContain(
+      "was not in force at the time the timestamp attests",
+    );
   });
 
   it("says an expired certificate may have been in force when used, and cannot tell", () => {
@@ -221,6 +260,7 @@ describe("trustRow", () => {
 
   it("marks everything but a trusted chain for a reader's attention", () => {
     expect(trustRow(standing("trusted"))?.warn).toBeUndefined();
+    expect(trustRow(standing("trusted_at_timestamp", null, "mac", "then"))?.warn).toBeUndefined();
     const rest = everyTrustRow().filter((row) => !row.value.startsWith("trusted"));
     expect(rest.length).toBeGreaterThan(0);
     for (const row of rest) expect(row.warn).toBe(true);
@@ -241,12 +281,17 @@ describe("trustRow", () => {
 });
 
 describe("the trust row among the others", () => {
-  function signature(integrity: Integrity, trust: Trust | null): Signature {
+  function signature(
+    integrity: Integrity,
+    trust: Trust | null,
+    revocation: Revocation | null = null,
+    kind = "ETSI.CAdES.detached",
+  ): Signature {
     return {
       field: "Signature1",
       signed: true,
       handler: "Adobe.PPKLite",
-      kind: "ETSI.CAdES.detached",
+      kind,
       name: "",
       reason: "",
       location: "",
@@ -275,6 +320,7 @@ describe("the trust row among the others", () => {
       timestamp: null,
       integrity,
       trust,
+      revocation,
     };
   }
 
@@ -292,9 +338,146 @@ describe("the trust row among the others", () => {
     expect(rows[0]?.value).toContain(TRUST_NOT_CHECKED);
   });
 
+  it("puts the revocation row under the trust row, the authority's for a document timestamp", () => {
+    const none = revocation("none");
+    const rows = signatureRows(signature(verdict("intact"), standing("trusted"), none), 1000);
+    expect(rows.map((row) => row.name).slice(0, 3)).toEqual([
+      "Integrity",
+      "Trust",
+      "Revocation",
+    ]);
+    const stamped = signatureRows(
+      signature(verdict("intact"), standing("trusted"), none, "ETSI.RFC3161"),
+      1000,
+    );
+    expect(stamped[2]?.name).toBe("Authority revocation");
+    expect(stamped[2]?.value).toContain("the authority's certificate");
+  });
+
   it("dates an expired standing from the certificate the dialog shows", () => {
     const rows = signatureRows(signature(verdict("intact"), standing("expired")), 1000);
     const row = rows.find((r) => r.name === "Trust");
     expect(row?.value).toContain("ran out on 2025-01-01 00:00:00 UTC");
+  });
+});
+
+const EVERY_GAP = Object.keys(GAP) as Gap[];
+const EVERY_REASON = Object.keys(REASON) as Reason[];
+const EVERY_BASIS: Basis[] = ["attested", "stated", "claimed", "now"];
+
+function revocation(
+  standing: Revocation["standing"],
+  more: Partial<Revocation> = {},
+): Revocation {
+  return {
+    standing,
+    why: null,
+    source: standing === "good" || standing === "revoked" || standing === "unknown" ? "ocsp" : null,
+    issued: standing === "none" || standing === "unchecked" ? "" : "2026-08-20 09:00:00 UTC",
+    next: standing === "none" || standing === "unchecked" ? "" : "2026-08-27 09:00:00 UTC",
+    revoked: standing === "revoked" ? "2026-08-01 00:00:00 UTC" : "",
+    reason: null,
+    basis: "attested",
+    moment: "2026-08-21 12:00:00 UTC",
+    after_moment: false,
+    ...more,
+  };
+}
+
+/** Every revocation row this module can render, for both certificates. */
+function everyRevocationRow() {
+  const shapes: Revocation[] = EVERY_BASIS.flatMap((basis) => [
+    revocation("none", { basis }),
+    revocation("good", { basis }),
+    revocation("good", { basis, source: "crl", next: "" }),
+    revocation("unknown", { basis }),
+    ...EVERY_GAP.map((why) => revocation("unchecked", { basis, why })),
+    ...EVERY_REASON.flatMap((reason) => [
+      revocation("revoked", { basis, reason }),
+      revocation("revoked", { basis, reason, after_moment: true, source: "crl" }),
+    ]),
+  ]);
+  return shapes.flatMap((shape) =>
+    [false, true].map((authority) => {
+      const row = revocationRow(shape, authority);
+      if (!row) throw new Error("every answer renders a row");
+      return { shape, row };
+    }),
+  );
+}
+
+describe("revocationRow", () => {
+  it("says a document carrying no revocation data was not checked, never that it is fine", () => {
+    for (const authority of [false, true]) {
+      const row = revocationRow(revocation("none"), authority);
+      expect(row?.value.split(" — ")[0]).toBe("not checked");
+      expect(row?.value).toContain("carries no revocation data");
+      expect(row?.value).toContain("does not fetch any");
+      expect(row?.value).not.toContain("not revoked");
+      expect(row?.warn).toBe(true);
+    }
+  });
+
+  it("leads each answer with its own words, so none reads as another", () => {
+    const lead = (r: Revocation) => revocationRow(r)?.value.split(" — ")[0];
+    expect(lead(revocation("good"))).toBe("not revoked");
+    expect(lead(revocation("revoked"))).toBe("revoked");
+    expect(lead(revocation("revoked", { after_moment: true }))).toBe("revoked after the timestamp");
+    expect(lead(revocation("unknown"))).toBe("unknown");
+    expect(lead(revocation("unchecked", { why: "stale" }))).toBe("not checked");
+    expect(lead(revocation("none"))).toBe("not checked");
+  });
+
+  it("says a revocation after an attested moment does not undo the signature, and only then", () => {
+    const after = revocationRow(revocation("revoked", { after_moment: true }))?.value ?? "";
+    expect(after).toContain("does not undo the signature");
+    const before = revocationRow(revocation("revoked"))?.value ?? "";
+    expect(before).toContain("already withdrawn when the signature was made");
+    for (const basis of ["stated", "claimed", "now"] as const) {
+      const value = revocationRow(revocation("revoked", { basis }))?.value ?? "";
+      expect(value, basis).toContain("cannot tell whether that was before then");
+    }
+  });
+
+  it("names whose clock the moment is", () => {
+    const at = "2026-08-21 12:00:00 UTC";
+    const said = (basis: Basis) => revocationRow(revocation("good", { basis }))?.value ?? "";
+    expect(said("attested")).toContain(`${at}, the time the timestamp attests`);
+    expect(said("stated")).toContain(`${at}, the time the timestamp states`);
+    expect(said("claimed")).toContain("which is their own claim");
+    expect(said("now")).toContain("the present moment");
+  });
+
+  it("gives each gap and each reason its own words", () => {
+    const gaps = new Set(EVERY_GAP.map((why) => GAP[why]("then")));
+    expect(gaps.size).toBe(EVERY_GAP.length);
+    const reasons = new Set(Object.values(REASON));
+    expect(reasons.size).toBe(EVERY_REASON.length);
+    for (const reason of EVERY_REASON) {
+      expect(revocationRow(revocation("revoked", { reason }))?.value).toContain(
+        `, for ${REASON[reason]}`,
+      );
+    }
+  });
+
+  it("marks everything but a good answer and a later revocation for a reader's attention", () => {
+    for (const { shape, row } of everyRevocationRow()) {
+      const calm =
+        shape.standing === "good" || (shape.standing === "revoked" && shape.after_moment);
+      expect(row.warn, JSON.stringify(shape)).toBe(calm ? undefined : true);
+    }
+  });
+
+  it("puts no verdict word into any answer", () => {
+    for (const { row } of everyRevocationRow()) {
+      const text = `${row.name} ${row.value}`.toLowerCase();
+      for (const word of VERDICT_WORDS) {
+        expect(text).not.toContain(word);
+      }
+    }
+  });
+
+  it("renders nothing when there is no answer", () => {
+    expect(revocationRow(null)).toBeNull();
   });
 });

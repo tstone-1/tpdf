@@ -45,6 +45,12 @@ lives inside an object stream, or a signed document at all.
   signed-p256, signed-p384, signed-pss, signed-sha1
                 One signature each by a scheme the integrity verdict has to
                 implement beyond RSA PKCS#1 v1.5 over SHA-256 (see VARIANTS).
+  incr-lt       A PAdES B-LT signature: a timestamp from a dummy authority, and a
+                /DSS pyHanko appended with the root, an OCSP response for the
+                signer and for the authority, and a revocation list -- all
+                three made offline here by `cryptography`, a producer that is
+                neither tpdf nor pyHanko. The root is in the /DSS and in no
+                store, so a test anchors it; see `sign_long_term`.
   signed-altered, signed-broken
                 incr-signed.pdf rewritten after pyhanko signed it: one covered
                 byte changed, or one bit of the signature value flipped. The
@@ -536,6 +542,171 @@ def sign_with_timestamp(source: bytes, out_path: str) -> bool:
     with open(out_path, "wb") as handle:
         signers.sign_pdf(
             writer, meta, signer=signer, timestamper=stamper, output=handle
+        )
+    return True
+
+
+def sign_long_term(source: bytes, out_path: str) -> bool:
+    """Signs `source` for long-term validation (PAdES B-LT), fully offline.
+
+    Increment C1 of Phase 6 step 3 reads the revocation data a document carries,
+    and every other fixture carries none. This one is written the way a real
+    B-LT signer writes it, by a producer that is not tpdf: pyHanko signs with a
+    timestamp from `DummyTimeStamper`, validates the signer and the authority
+    against a `ValidationContext` that may not fetch, and appends what that
+    validation used as a `/DSS` --- `/Certs`, `/OCSPs`, `/CRLs` and a `/VRI`.
+
+    The PKI is made here with `cryptography`: one root that issues the signer
+    (key usage digital signature and non-repudiation, which pyHanko's validator
+    requires), the authority (`id-kp-timeStamping`, critical and alone, as RFC
+    3161 section 2.3 requires) and signs one OCSP response for each and one
+    revocation list, all fresh at the moment of generation. **So the responses
+    and the list are a third party's**: neither tpdf's minter nor pyHanko's own
+    certomancer made them, which is what lets this fixture say anything about
+    tpdf's reader that tpdf's own tests could not.
+
+    The root is carried in the `/DSS` and trusted by no store; a test anchors it
+    by taking the one self-issued certificate there. `genTime` is not pinned:
+    the responses must reach it, and a pinned past time with fresh responses is
+    a shape no real signer produces.
+    """
+    try:
+        import io
+
+        from pyhanko.sign import fields, signers
+        from pyhanko.sign.timestamps import DummyTimeStamper
+        from pyhanko_certvalidator import ValidationContext
+    except ImportError:
+        return False
+
+    from datetime import datetime, timedelta, timezone
+
+    from asn1crypto import crl as asn1_crl
+    from asn1crypto import keys as asn1_keys
+    from asn1crypto import ocsp as asn1_ocsp
+    from asn1crypto import x509 as asn1_x509
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509 import ocsp
+
+    now = datetime.now(timezone.utc)
+
+    def usage(authority: bool):
+        return x509.KeyUsage(
+            digital_signature=True,
+            content_commitment=not authority,
+            key_encipherment=False,
+            data_encipherment=False,
+            key_agreement=False,
+            key_cert_sign=authority,
+            crl_sign=authority,
+            encipher_only=False,
+            decipher_only=False,
+        )
+
+    def issue(common_name, issuer=None, timestamping=False):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name)])
+        authority = issuer is None
+        builder = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name if authority else issuer[0].subject)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(days=30))
+            .not_valid_after(now + timedelta(days=3650))
+            .add_extension(x509.BasicConstraints(ca=authority, path_length=None), critical=True)
+        )
+        if timestamping:
+            builder = builder.add_extension(
+                x509.ExtendedKeyUsage([x509.ExtendedKeyUsageOID.TIME_STAMPING]), critical=True
+            )
+        else:
+            builder = builder.add_extension(usage(authority), critical=True)
+        return builder.sign(key if authority else issuer[1], hashes.SHA256()), key
+
+    root = issue("tpdf long-term test root")
+    signer = issue("tpdf long-term test signer", root)
+    authority = issue("tpdf long-term test timestamp authority", root, timestamping=True)
+
+    def response(cert) -> bytes:
+        built = (
+            ocsp.OCSPResponseBuilder()
+            .add_response(
+                cert=cert,
+                issuer=root[0],
+                algorithm=hashes.SHA1(),
+                cert_status=ocsp.OCSPCertStatus.GOOD,
+                this_update=now - timedelta(hours=1),
+                next_update=now + timedelta(days=7),
+                revocation_time=None,
+                revocation_reason=None,
+            )
+            .responder_id(ocsp.OCSPResponderEncoding.HASH, root[0])
+            .sign(root[1], hashes.SHA256())
+        )
+        return built.public_bytes(serialization.Encoding.DER)
+
+    revocation_list = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(root[0].subject)
+        .last_update(now - timedelta(hours=1))
+        .next_update(now + timedelta(days=7))
+        .add_extension(x509.CRLNumber(1), critical=False)
+        .sign(root[1], hashes.SHA256())
+        .public_bytes(serialization.Encoding.DER)
+    )
+
+    def certificate(cert):
+        return asn1_x509.Certificate.load(cert.public_bytes(serialization.Encoding.DER))
+
+    def private(key):
+        return asn1_keys.PrivateKeyInfo.load(
+            key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+
+    context = ValidationContext(
+        trust_roots=[certificate(root[0])],
+        allow_fetching=False,
+        ocsps=[
+            asn1_ocsp.OCSPResponse.load(response(signer[0])),
+            asn1_ocsp.OCSPResponse.load(response(authority[0])),
+        ],
+        crls=[asn1_crl.CertificateList.load(revocation_list)],
+    )
+
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+
+    writer = IncrementalPdfFileWriter(io.BytesIO(source))
+    fields.append_signature_field(
+        writer,
+        fields.SigFieldSpec(sig_field_name="Signature1", on_page=0, box=(60, 60, 260, 120)),
+    )
+    meta = signers.PdfSignatureMetadata(
+        field_name="Signature1",
+        embed_validation_info=True,
+        validation_context=context,
+        subfilter=signers.pdf_signer.SigSeedSubFilter.PADES,
+    )
+    with open(out_path, "wb") as handle:
+        signers.sign_pdf(
+            writer,
+            meta,
+            signer=signers.SimpleSigner(
+                signing_cert=certificate(signer[0]),
+                signing_key=private(signer[1]),
+                cert_registry=None,
+            ),
+            timestamper=DummyTimeStamper(
+                tsa_cert=certificate(authority[0]), tsa_key=private(authority[1])
+            ),
+            output=handle,
         )
     return True
 
@@ -1087,6 +1258,24 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[OK] incr-doc-timestamped.pdf ({os.path.getsize(document_path)} bytes)")
     else:
         print("[SKIP] incr-doc-timestamped.pdf: pyhanko not installed")
+
+    long_term_path = os.path.join(args.outdir, "incr-lt.pdf")
+    if sign_long_term(inline, long_term_path):
+        manifest["incr-lt.pdf"] = {
+            "role": "the only fixture carrying long-term validation data: a "
+            "PAdES B-LT signature, timestamped, whose /DSS pyHanko appended "
+            "with the root, an OCSP response for the signer and for the "
+            "authority, and a revocation list, all made offline by "
+            "`cryptography`. The root is in the /DSS and no store",
+            "pages": 2,
+            "bytes": os.path.getsize(long_term_path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 1,
+        }
+        print(f"[OK] incr-lt.pdf ({os.path.getsize(long_term_path)} bytes)")
+    else:
+        print("[SKIP] incr-lt.pdf: pyhanko not installed")
 
     two_path = os.path.join(args.outdir, "incr-two-signers.pdf")
     if sign_twice(inline, two_path):

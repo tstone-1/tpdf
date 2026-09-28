@@ -14893,8 +14893,11 @@ and the order is the order in which a claim can be made honestly.
    the document timestamp, their authority's standing, and a software authority the tests
    mint with. **Increment B --- asking an authority for a token when signing --- is done
    2026-09-28** (*Adding a timestamp when signing*, below): the application's second network
-   authority, built on A's reader and minter. What is left of step 3 is the `/DSS` and
-   revocation, long-term validation proper.
+   authority, built on A's reader and minter. **Increment C1 --- reading the revocation data
+   a document carries, and judging the signer at the attested time --- is done 2026-09-28**
+   (*Revocation, from the document's own data*, below), with no network in the read path, by
+   decision. What is left of step 3 is **C2**: fetching that data while signing and appending
+   the `/DSS`, and archive timestamps after it.
 
 #### Is the signature intact --- done 2026-09-26
 
@@ -15181,8 +15184,20 @@ the timestamp row stays a claim. (Asked since 2026-09-28, with the timestamping 
   until it has. A decision for the owner, not an engineering default.
 - **Which moment a timestamp authority is judged at.** Answered 2026-09-28 for increment A:
   the present, like the signer, because `genTime` is the authority's own statement --- below.
-  Judging the *signer* at `genTime` is the open half, and waits for revocation data, without
-  which an attested moment only moves the question.
+  ~~Judging the *signer* at `genTime` is the open half.~~ **Answered 2026-09-28 (C1)**: at
+  `genTime` instead of now, when the token is intact and its authority trusted and unrevoked ---
+  *Revocation, from the document's own data*, below.
+- **Revocation in the read path: fetched or carried?** **Answered by the owner 2026-09-28:
+  carried only**, never fetched while reading --- below.
+- **How fresh must revocation data be?** Open, since 2026-09-28. tpdf takes EN 319 102-1's
+  default (`nextUpdate` after the moment). The standard's NOTE 2 suggests zero freshness ---
+  issued after the signature --- once the signing time is known, and the three public
+  authorities' live OCSP answers all predate the request by hours to weeks, so that rule would
+  read every B-LT document made in the ordinary way `stale`, and would oblige C2 to wait for, or
+  ask for, a response issued after the timestamp. A policy for the owner, below.
+- **Should `verify --strict` fail `none`?** Decided no, 2026-09-28, and worth revisiting when C2
+  makes documents carrying revocation data common: a `--require-revocation` flag would be the
+  way to ask for it without failing every document there is today.
 - ~~**Step 2's splice** writes into a reserved span whose size must be chosen before the
   signature exists.~~ **Answered 2026-09-26**: 32 KiB, half of it for step 3's token --- above.
 
@@ -16027,6 +16042,209 @@ preview, which shows none. Windows: the code is the same and compiles (`scripts/
 no request has been made from a Windows machine, and whether the three authorities' roots are in
 a given machine's store before first use is not measured. The window's flow has not been driven
 with a real identity, for step 2's reason.
+
+#### Revocation, from the document's own data, and the signer at the attested time --- done 2026-09-28
+
+Phase 6 step 3, **increment C1**: the reading half of long-term validation. A document made
+for it (PAdES baseline B-LT) carries the revocation data it was signed against --- a `/DSS` of
+certificates, OCSP responses and revocation lists, the Adobe `adbe-revocationInfoArchival`
+signed attribute, the CMS `crls` set --- and tpdf now reads all three, judges what they say
+about the signer's certificate and a timestamp authority's, and judges the signer **at the
+time an intact timestamp from a trusted authority attests** rather than now. Increment C2 ---
+fetching that data while signing and appending the `/DSS` --- builds on this reader and its
+test minters.
+
+**Decided before building, by the owner, and recorded as given: reading and verifying never
+touch the network.** Checking revocation online while a document is opened would tell each
+certificate authority which signed documents the reader opens, and would put a network
+authority in the read path, which runs in a worker with `(deny network*)`. So revocation is
+judged **only from data the document carries**, and a document carrying none --- nearly all of
+them --- is *not checked* for it, said in those words.
+
+| Standing | What it claims about a certificate |
+|---|---|
+| `good` | An OCSP response or a list in the document, **checked**, says it had not been revoked, and reaches the moment judged. Checked: signed by the certificate's issuer --- found by name *and* by its key verifying the certificate --- or, for OCSP, by a responder the issuer issued with `id-kp-OCSPSigning` and in force when it answered; about this certificate (`CertID`'s serial, issuer-name hash and issuer-key hash; or the list's issuer and its `issuingDistributionPoint` scope); dates that hang together. |
+| `revoked` | Such data lists it as revoked, with the date and the reason. `after_moment` when that date is **after** a moment a trusted timestamp attests, which does not undo the signature --- the whole point of B-LT --- and only then. |
+| `unknown` | A checked OCSP response says its responder does not know it. |
+| `none` | The document carries nothing about it. **Not checked**, and every sentence says so. |
+| `unchecked` | Data was there and nothing followed, with the reason: `unreadable`, `bound`, `issuer` (not in the document, so nothing can be checked), `signature`, `unauthorised`, `algorithm`, `unsupported` (a delta or indirect list, a partial scope, an unknown critical extension), `stale`, `expired`, `dates`, `budget`. |
+
+| Half | Where | What it does |
+|---|---|---|
+| Reading | worker, `docinfo::read_dss`, `revocation::Material` | The `/DSS` arrays and each `/VRI` entry's, streams decoded at their kind's bound; the CMS `crls` set and the Adobe attribute of the signature's and the token's own `SignedData`. Counted, deduplicated, bounded. |
+| Checking | worker, `revocation::judge` | Parses once per document (`Pool`), finds the issuer, matches, checks each signature with `integrity::signed_by`, and combines. |
+| The moment | worker, `docinfo::attested_moment` | Decides whether the token earns an attested moment. |
+| The signer then | worker, `trust::of_blob_at` / `judge_at` | One evaluation at that moment; the `/DSS` certificates offered as candidate issuers. |
+| Words | `integrity.ts` `revocationRow`, `trustRow`; `cli/words.rs` | The *Revocation* and *Authority revocation* rows, held together by `wording.json`. |
+| Minters | `integrity/test_tsa.rs` | `TestCa`, `mint_ocsp`, `mint_crl`, `with_dss`, for these tests and C2's fake servers. |
+
+**Which moment, and whose clock it is --- always said.** The signer's revocation is judged at
+the attested time when there is one (`attested`); a timestamp authority's at the time its own
+token states (`stated`, the authority's word about itself, named as such); otherwise at the
+signer's `/M` (`claimed`, "the signing date the signer gave, which is their own claim"); and
+with no `/M` at all, the present (`now`).
+
+Decisions, each with its reason:
+
+- **Freshness is EN 319 102-1's default, not a stricter one.** ETSI EN 319 102-1 V1.3.1
+  §5.2.5.4 (read in the standard's own text, 2026-09-28): absent a policy value, the maximum
+  accepted freshness is the interval from `thisUpdate` to `nextUpdate`, and the data passes
+  when issued after *the moment minus that interval* --- which is **`nextUpdate` after the
+  moment**; with no `nextUpdate` it fails. Only the latest `good` is judged, as §5.2.6 takes the
+  latest. **Measured why the stricter reading was not taken**: the standard's NOTE 2 suggests a
+  freshness of zero once the signing time is known --- data issued after it --- and all three
+  public authorities' live OCSP answers for their own timestamping certificates, fetched at
+  10:00 UTC on 2026-09-28, were issued *before* that moment: GlobalSign's 3.2 hours, Sectigo's
+  3.5 days, DigiCert's 54 days. Under zero freshness a B-LT document signed that minute with
+  any of them reads `stale`, which would make C2's own output unreadable as `good`. The
+  stricter policy stays the owner's to choose; see open questions.
+- **A revocation stands whatever else is missing; a reassurance does not.** Any checked
+  revocation is the answer (the earliest if several: revoked stays revoked). But a `good` or a
+  `none` beside data that was dropped at a bound or would not read becomes `unchecked` (`bound`,
+  `unreadable`): what was not read might have said revoked.
+- **A `good` issued after the certificate expired counts only if it says it keeps expired
+  certificates** --- `expiredCertsOnCRL` or OCSP `archiveCutoff` at or before the certificate's
+  last day. Lists drop expired certificates; silence from one issued afterwards is not evidence.
+- **A list is read for its scope.** `issuingDistributionPoint`: a list of authorities only, of
+  end entities only, or a partition the certificate does not name among its own distribution
+  points says nothing about it; an indirect list, one for some reasons only, or a delta is
+  `unsupported`. DigiCert's real list carries a critical distribution point, and matches.
+- **The issuer is found by its key, not its name.** A candidate named as the issuer is the
+  issuer only if its key verifies the certificate's signature. Candidates: the signature's (or
+  token's) certificates, the `/DSS`'s, and the certificates inside OCSP responses. The chain the
+  OS assembled is not offered, so an issuer only the OS store holds reads `issuer`: C2 should
+  append every issuer it fetched for.
+- **A delegated responder's issuer name is not compared.** The issuer's key verifying the
+  responder's certificate says who issued it; a mutation removing the name comparison survived
+  and it was deleted. Its own revocation is not asked (`docs/THREAT-MODEL.md` residual 31).
+- **The attested moment is earned, and only one moment is asked.** The token `intact` (not
+  `weak`), its authority `trusted` now for timestamping, not shown `revoked` by the document,
+  and `genTime` inside the authority's certificate's dates --- the check increment A listed as
+  not done. Then the signer is asked about **at `genTime` instead of now**: one evaluation,
+  whose success is the new standing `trusted_at_timestamp` with the moment in `attested_at`, and
+  whose failure is `untrusted` with that evaluation's reason and the moment named --- or
+  `not_in_force` when the signer's certificate did not cover it, asked before the chain. A
+  signature that is timestamped and still in date reads `trusted_at_timestamp` too, not
+  `trusted`: it is the stronger statement, and one moment keeps the rule single. **This changes
+  increment A's answer for such signatures**, and `verify --strict` accepts both.
+- **`verify --strict` fails a revocation, and not its absence.** Revoked fails unless
+  `after_moment`; `none`, `unknown` and `unchecked` pass, because failing them would fail
+  nearly every signed document there is. `--strict` asks whether anything tpdf checked speaks
+  against the signature, not whether everything was checked.
+- **`x509-ocsp`, not hand-written structures: one package.** `cargo metadata` counts 617 before
+  and 618 after --- the crate itself, `Apache-2.0 OR MIT`, on the `der`/`x509-cert`/`spki`
+  generation already here. Hand-writing `OCSPResponse`, `BasicOCSPResponse`, `ResponseData`,
+  `SingleResponse`, `CertID` and the status choice with `der` derives would have cost nothing and
+  been a hundred lines of ASN.1 to be wrong in; the minter builds responses from the same types
+  the reader decodes.
+- **The verification is `integrity.rs`'s.** `integrity::signed_by` takes an X.509
+  `AlgorithmIdentifier` (hash and method from one OID, or PSS's parameters) and runs the same
+  `read_key` and `verify` a signature's verdict rests on. No second implementation.
+- **Revocation data is judged by tpdf, not handed to the OS.** The OS evaluation tpdf asks is
+  offline and would not consult a response it did not fetch; the `/DSS` *certificates* are
+  offered to it as candidate issuers, at most sixteen beside the signature's set.
+
+**The minters** (`src-tauri/src/integrity/test_tsa.rs`, one file included twice as increment A
+arranged):
+
+```text
+TestCa::new(name, seed) / TestCa::of_tsa() / TestCa::without_list_signing(name, seed)
+TestCa::issue(&self, subject, seed, serial, purposes: Option<&[&str]>) -> Issued
+TestCa::issue_dated(&self, subject, seed, serial, from, until) -> Issued
+TestCa::intermediate(&self, name, seed, serial) -> TestCa
+TestCa::responder(&self, seed) / responder_dated(&self, seed, from, until) -> Issued
+mint_ocsp(certificate: &[u8], issuer: &TestCa, status: Status, this_update: u64,
+          next_update: Option<u64>, responder: Responder<'_>, faults: &OcspFaults) -> Vec<u8>
+mint_crl(issuer: &TestCa, listed: &[Listed<'_>], this_update: u64,
+         next_update: Option<u64>, faults: &CrlFaults) -> Vec<u8>
+basic_of(response: &[u8]) -> Vec<u8>
+with_dss(bytes, certificates, responses, lists) -> Vec<u8>
+```
+
+`Status` is `Good`, `Revoked { at, reason }` or `Unknown`; `Responder` is `Issuer` (named by
+key) or `Delegated(&Issued)` (named by name, its certificate carried). `OcspFaults`:
+`wrong_cert_id`, `corrupt_signature`, `critical_extension`, `archive_cutoff`; a stale response
+is the caller's `this_update`/`next_update`, and an unauthorised responder is one issued
+without `OCSP_SIGNING` or by another `TestCa`. `CrlFaults`: `corrupt_signature`,
+`wrong_issuer`, `delta`, `expired_certs_on_crl`, `only_authorities`, `partition`. A mint
+returns a full `OCSPResponse` --- what an HTTP responder answers --- and `with_dss` appends one
+incremental revision the way a B-LT writer does. The responder certificate carries
+`id-pkix-ocsp-nocheck`, as the GlobalSign responder measured below does.
+
+**Measured**, macOS arm64 (macOS 27.0), 2026-09-28. Unit tests: 38 in `revocation::tests`
+(every standing and every reason, each asserted with its reason, plus two ignored instruments
+that write data for OpenSSL and judge real data), 16 in `docinfo::revocation_tests` through the
+whole scan (and a third ignored instrument writing B-LT documents) --- the attested moment earned and refused four ways, a signer not in force then,
+a revocation before and after it against `--strict`, `/DSS` certificates completing a chain,
+a `/VRI` entry, a compressed stream and a decompression past its bound, an authority whose
+issuer is absent, the fractional `genTime` below, and `incr-lt.pdf` --- and four in
+`trust::tests` for `judge_at`. `tests/cli.rs` has 233 checks, 7 new: a timestamped signature
+with a `/DSS` appended, read back by the built tool --- the authority's revocation `good` at the
+time its token states, the signer's `none` and worded *not checked*, a damaged response beside
+a sound list still `good`, one alone `unchecked`, signature --- and the tool agreeing with the
+in-process reader. Frontend: 13 new tests --- `revocationRow` in every shape, `trustRow`'s attested standing, the
+rows' order in the dialog --- and `cliwording.test.ts` comparing 520 revocation sentences and
+720 trust and 720 authority sentences with the Rust port.
+
+**Oracles on minted data.** OpenSSL 3.6.3, `openssl ocsp -respin` and `openssl crl -verify`
+over eleven minted responses and lists: good, revoked, unknown and delegated *verify OK* with
+the same status; the unauthorised responder *missing ocspsigning usage*; the corrupted
+response and list *signature failure*; the wrong `CertID` *No Status found*; the list naming
+another issuer *unable to get issuer certificate* --- each tpdf's answer (`none` for the last
+two). **pyHanko 0.37**'s own `verify_ocsp_response` and `verify_crl` agree on all eleven, mapping
+its indeterminate to tpdf's `unchecked`, `unknown` and `none` --- **after one disagreement**:
+the first minted responder carried no `id-pkix-ocsp-nocheck`, and pyHanko then asks for the
+responder's own revocation and reads indeterminate where OpenSSL and tpdf read good
+(`docs/TRAPS.md`). **pyHanko as producer**: `incr-lt.pdf`, below, which pyHanko validates as
+*INTACT:TRUSTED, TIMESTAMP_TOKEN<INTACT:TRUSTED>, EXTENDED_WITH_LTA_UPDATES* at its token's time
+with its `/DSS` as the only revocation data, and tpdf reads `trusted_at_timestamp`, `good`
+attested, the authority `good` stated. pyHanko's own `ades_lta_validation` was tried and not
+used: configured offline it reported the signer's chain indeterminate for want of revocation
+data it had been given.
+
+**Real data, once, not a gate.** The three timestamp authorities increment B uses, each asked
+for a token, then for an OCSP response about its own timestamping certificate and for the list
+that certificate names, with `openssl ocsp` and `curl`: DigiCert's response by the issuer
+(727 bytes) and list (929 bytes, a critical distribution point), Sectigo's by the issuer
+(766) and list (750), GlobalSign's by a delegated responder carrying `ocsp-nocheck` (1,737) and
+list (732). OpenSSL, given the system roots, *Response verify OK*, *good*, and *verify OK* on
+all six; tpdf, judging each alone at the present, `good` on all six, the delegated path
+included. A copy of one response and one list with a byte flipped: OpenSSL *Response Verify
+Failure* and *verify failure*, tpdf `unchecked`, signature, both. The timing that decided the
+freshness rule is above.
+
+**Proved able to fail**: 51 new mutations in `scripts/mutate_rust.py` (the `revocation:` and
+`lt:` entries, four `trust:` and two `cli:`) and nine in `scripts/mutate_frontend.py`, each
+caught by the test named for it; **one survived its first run** --- the size bound on a
+`BasicOCSPResponse`, which every test reached through the full response's own check --- and is
+caught since by a test of its own, which also walks the CMS path nothing had reached. Ten
+earlier mutations this change moved were re-aimed --- six Rust anchors, the README's not-built
+line, the untrusted-row warning, the CLI wording drift (now aimed at the *none* sentence), and
+increment A's `REVOCATION_NOT_CHECKED` mutation, whose sentence is gone: it now catches the
+trust row claiming *not revoked*.
+
+**A finding in increment A: a `genTime` with fractional seconds made the token unreadable.**
+RFC 3161 permits them and `der`'s `GeneralizedTime` refuses them, so a token from an authority
+stating milliseconds was counted in `timestamps_unread` and the signature read as untimestamped.
+pyHanko's own test authority writes microseconds, which is how `incr-lt.pdf` found it; the
+three public authorities write whole seconds. Read to the second since (`docs/TRAPS.md`).
+
+**`incr-lt.pdf`**, new: `make_incremental_pdf.py` makes a root, a signer and an authority with
+`cryptography`, has `cryptography` sign an OCSP response for each and a list, and hands them to
+pyHanko as the only revocation data a `ValidationContext` that may not fetch has; pyHanko signs
+with a `DummyTimeStamper` token and appends the `/DSS` its validation used (`/Certs`, `/OCSPs`,
+`/CRLs`, `/VRI`). So the data is neither tpdf's minter's nor pyHanko's. The root is in the
+`/DSS` and in no store; the test anchors the one self-issued certificate there.
+
+**Not done.** Fetching revocation data while signing and appending a `/DSS` (increment C2).
+Archive timestamps (PAdES B-LTA): a document timestamp over the validation data, which keeps a
+signature checkable after the authority's certificate expires --- until then an authority
+`expired` now attests no moment. Delta and indirect lists, `onlySomeReasons` partitions. A
+delegated responder's own revocation. Revocation of certificates above the signer's and the
+authority's. The chain the OS assembled as candidate issuers. OCSP responses with fractional
+seconds in their times, which `x509-ocsp` refuses and are counted unreadable. The Windows store
+asked about a signer at a past moment (the code is the call `trust.rs` already makes, with
+another time).
 
 ### Cross-cutting
 

@@ -6,7 +6,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::args::unknown;
-use super::report::{self, ErrorKind, FileError, IntegrityReport, TrustReport, SCHEMA};
+use super::report::{
+    self, ErrorKind, FileError, IntegrityReport, RevocationReport, TrustReport, SCHEMA,
+};
 use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo;
 use crate::save_outside::Declined;
@@ -85,8 +87,10 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
         standing: trust.standing,
         why: trust.why,
         store: trust.store,
+        attested_at: trust.attested_at.clone(),
         sentence: words::trust_sentence(trust, &from, &until),
     });
+    let document_timestamp = signature.kind == "ETSI.RFC3161";
     let name = |cn: &str, whole: &str| {
         if cn.is_empty() {
             whole.to_string()
@@ -116,7 +120,35 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
         timestamp: signature
             .timestamp
             .as_ref()
-            .map(|stamp| timestamp_report(stamp, signature.kind == "ETSI.RFC3161")),
+            .map(|stamp| timestamp_report(stamp, document_timestamp)),
+        // A document timestamp's signer is its authority, so its revocation
+        // is the authority's and is worded so.
+        revocation: signature
+            .revocation
+            .as_ref()
+            .map(|r| revocation_report(r, document_timestamp)),
+    }
+}
+
+/// One revocation answer, as the report shows it. `authority` says the
+/// certificate is a timestamp authority's.
+#[must_use]
+pub fn revocation_report(
+    revocation: &crate::revocation::Revocation,
+    authority: bool,
+) -> RevocationReport {
+    RevocationReport {
+        standing: revocation.standing,
+        why: revocation.why,
+        source: revocation.source,
+        issued: revocation.issued.clone(),
+        next: revocation.next.clone(),
+        revoked: revocation.revoked.clone(),
+        reason: revocation.reason,
+        basis: revocation.basis,
+        moment: revocation.moment.clone(),
+        after_moment: revocation.after_moment,
+        sentence: words::revocation_sentence(revocation, authority),
     }
 }
 
@@ -156,19 +188,37 @@ pub fn timestamp_report(stamp: &docinfo::Timestamp, document: bool) -> report::T
             standing: trust.standing,
             why: trust.why,
             store: trust.store,
+            attested_at: trust.attested_at.clone(),
             sentence: words::authority_sentence(trust, &from, &until),
         }),
+        revocation: stamp
+            .revocation
+            .as_ref()
+            .map(|r| revocation_report(r, true)),
     }
 }
 
-/// Whether a signature passes `--strict`: intact, and trusted.
+/// Whether a signature passes `--strict`: intact; trusted, now or at the
+/// time a trusted timestamp attests; and not shown revoked by the document's
+/// own data, unless after that attested time.
+///
+/// **`none` passes, and so do `unknown` and `unchecked`**: a document
+/// carrying no revocation data is the ordinary case, and failing it would
+/// fail nearly every signed document there is. `--strict` asks whether
+/// anything tpdf checked speaks against the signature, not whether
+/// everything was checked --- `docs/PLAN.md` records the decision.
 #[must_use]
 pub fn passes_strict(signature: &report::Signature) -> bool {
+    use crate::trust::Standing;
     signature.integrity.verdict == crate::integrity::Verdict::Intact
         && signature
             .trust
             .as_ref()
-            .is_some_and(|t| t.standing == crate::trust::Standing::Trusted)
+            .is_some_and(|t| matches!(t.standing, Standing::Trusted | Standing::TrustedAtTimestamp))
+        && !signature
+            .revocation
+            .as_ref()
+            .is_some_and(|r| r.standing == crate::revocation::Status::Revoked && !r.after_moment)
 }
 
 /// Reads one document's signatures through a worker.
@@ -313,10 +363,16 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
     if let Some(trust) = &signature.trust {
         lines.push(format!("    Trust: {}", trust.sentence));
     }
+    if let Some(revocation) = &signature.revocation {
+        lines.push(format!("    Revocation: {}", revocation.sentence));
+    }
     if let Some(stamp) = &signature.timestamp {
         lines.push(format!("    Timestamped: {}", stamp.integrity.sentence));
         if let Some(trust) = &stamp.trust {
             lines.push(format!("    Timestamp authority: {}", trust.sentence));
+        }
+        if let Some(revocation) = &stamp.revocation {
+            lines.push(format!("    Authority revocation: {}", revocation.sentence));
         }
     }
     lines.join("\n")

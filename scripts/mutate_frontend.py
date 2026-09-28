@@ -4496,8 +4496,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Long-term-validation signatures, certification signatures, and revocation checking.",
-        "- Long-term-validation signatures, <!-- built: file.print --> certification signatures, and revocation checking.",
+        "- Adding long-term-validation data when signing, and certification signatures. Signing",
+        "- Adding long-term-validation data when signing, <!-- built: file.print --> and certification signatures. Signing",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -5448,12 +5448,15 @@ MUTATIONS += [
         "follows the integrity row, and replaces its not-checked sentence",
     ),
     Mutation(
-        # Drop the one sentence that stops "trusted" meaning "not revoked".
-        "trust: call a chain trusted without saying revocation was not checked",
+        # Let "trusted" speak for revocation. Until 2026-09-28 this mutation
+        # dropped the sentence saying revocation was not checked; revocation is
+        # a row of its own since, and the defect worth catching is now the
+        # trust row claiming what only that row may say.
+        "trust: call a trusted chain unrevoked",
         "src/lib/integrity.ts",
-        "          `key belongs to the person the certificate names. ${REVOCATION_NOT_CHECKED}`,",
         "          `key belongs to the person the certificate names.`,",
-        "says revocation was not checked wherever the chain reached a trusted root",
+        "          `key belongs to the person the certificate names, and it has not been revoked.`,",
+        "leaves revocation to its own row, and no longer speaks for it",
     ),
     Mutation(
         # Say "trusts" without saying whose store.
@@ -5485,9 +5488,9 @@ MUTATIONS += [
         # An untrusted chain shown without the warning mark.
         "trust: leave an untrusted chain unmarked",
         "src/lib/integrity.ts",
-        """          `the person the certificate names.`,
+        """          `belongs to the person the certificate names.`,
         warn: true,""",
-        """          `the person the certificate names.`,""",
+        """          `belongs to the person the certificate names.`,""",
         "marks everything but a trusted chain for a reader's attention",
     ),
     Mutation(
@@ -8265,10 +8268,12 @@ MUTATIONS += [
 # each other. These change the application's side alone, which is the drift
 # that test exists for: the tool would go on printing the old words.
 MUTATIONS += [
-    Mutation("cli wording: the application drops the revocation caveat", "src/lib/integrity.ts",
-        '  "Revocation was not checked: tpdf does not fetch revocation data, so a certificate its " +',
-        '  "Revocation was not checked: tpdf does not fetch revocation data, so a certificate the " +',
-        "says each trust standing as the properties dialog does"),
+    # Re-aimed 2026-09-28: the revocation caveat left the trust row for a row
+    # of its own, and the application saying that row differently is the drift.
+    Mutation("cli wording: the application says none differently", "src/lib/integrity.ts",
+        "          `does not fetch any, so a certificate its issuer has since withdrawn reads the ` +",
+        "          `does not fetch any, so a certificate withdrawn since reads the ` +",
+        "says each revocation answer as the properties dialog does"),
     Mutation("cli wording: the application says intact differently", "src/lib/integrity.ts",
         "          `intact — the signed bytes are unchanged and the signature checks out ` +",
         "          `intact — the signed bytes are unchanged and the signature verifies ` +",
@@ -8563,6 +8568,79 @@ MUTATIONS += [
         "drops the signature and says nothing was written when the reader cancels"),
 ]
 
+
+# --- revocation, and the signer judged at an attested time ------------------
+#
+# `integrity.ts` and `properties.ts`, 2026-09-28 (Phase 6 step 3, increment
+# C1). The words are where a revocation answer goes wrong: `none` read as
+# reassurance, a later revocation read as undoing the signature, a moment
+# with nobody's clock named.
+MUTATIONS += [
+    Mutation(
+        "revocation: call a document with no revocation data not revoked",
+        "src/lib/integrity.ts",
+        "          `not checked — the document carries no revocation data for ${whose}, and tpdf ` +",
+        "          `not revoked — the document carries no revocation data for ${whose}, and tpdf ` +",
+        "says a document carrying no revocation data was not checked, never that it is fine",
+    ),
+    Mutation(
+        "revocation: let none pass without a warning",
+        "src/lib/integrity.ts",
+        """          `same as one it has not.`,
+        warn: true,""",
+        """          `same as one it has not.`,""",
+        "marks everything but a good answer and a later revocation for a reader's attention",
+    ),
+    Mutation(
+        "revocation: word every revocation as after the timestamp",
+        "src/lib/integrity.ts",
+        "      if (revocation.after_moment) {",
+        "      if (true) {",
+        "says a revocation after an attested moment does not undo the signature, and only then",
+    ),
+    Mutation(
+        "revocation: call the attested moment the authority's own statement",
+        "src/lib/integrity.ts",
+        "      return `${at}, the time the timestamp attests`;",
+        "      return `${at}, the time the timestamp states`;",
+        "names whose clock the moment is",
+    ),
+    Mutation(
+        "revocation: drop the revocation row",
+        "src/lib/properties.ts",
+        "  if (withdrawn) rows.push(withdrawn);",
+        "",
+        "puts the revocation row under the trust row, the authority's for a document timestamp",
+    ),
+    Mutation(
+        "revocation: word a document timestamp's revocation as the signer's",
+        "src/lib/properties.ts",
+        'revocationRow(signature.revocation, signature.kind === "ETSI.RFC3161");',
+        "revocationRow(signature.revocation, false);",
+        "puts the revocation row under the trust row, the authority's for a document timestamp",
+    ),
+    Mutation(
+        "revocation: drop the authority's revocation row",
+        "src/lib/properties.ts",
+        "    if (lapsed) rows.push(lapsed);",
+        "",
+        "puts the authority's revocation under its standing, and only beside one",
+    ),
+    Mutation(
+        "trust: say trusted at the timestamp without saying when",
+        "src/lib/integrity.ts",
+        "          `${computer} trusts at ${trust.attested_at}, the time a timestamp from an ` +",
+        "          `${computer} trusts at the time a timestamp from an ` +",
+        "says whose moment an attested judgement is, and that expiry since does not undo it",
+    ),
+    Mutation(
+        "trust: hide that an untrusted chain was judged at the attested moment",
+        "src/lib/integrity.ts",
+        "    ? `, judged at ${trust.attested_at}, the time the timestamp attests`",
+        '    ? ""',
+        "says whose moment an attested judgement is, and that expiry since does not undo it",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

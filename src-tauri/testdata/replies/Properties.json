@@ -102,9 +102,22 @@
         "trust": {
           "standing": "untrusted",
           "why": "timestamping",
-          "store": "mac"
+          "store": "mac",
+          "attested_at": ""
         },
-        "attested": true
+        "attested": true,
+        "revocation": {
+          "standing": "revoked",
+          "why": "stale",
+          "source": "crl",
+          "issued": "2026-01-03 00:00:00 UTC",
+          "next": "2026-01-10 00:00:00 UTC",
+          "revoked": "2026-01-02 12:00:00 UTC",
+          "reason": "key_compromise",
+          "basis": "attested",
+          "moment": "2026-01-02 03:04:06 UTC",
+          "after_moment": true
+        }
       },
       "integrity": {
         "verdict": "unchecked",
@@ -115,7 +128,20 @@
       "trust": {
         "standing": "untrusted",
         "why": "root",
-        "store": "mac"
+        "store": "mac",
+        "attested_at": "2026-01-02 03:04:06 UTC"
+      },
+      "revocation": {
+        "standing": "revoked",
+        "why": "stale",
+        "source": "crl",
+        "issued": "2026-01-03 00:00:00 UTC",
+        "next": "2026-01-10 00:00:00 UTC",
+        "revoked": "2026-01-02 12:00:00 UTC",
+        "reason": "key_compromise",
+        "basis": "attested",
+        "moment": "2026-01-02 03:04:06 UTC",
+        "after_moment": true
       }
     }
   ],
@@ -136,7 +162,9 @@
     "timestamps_unread": 3,
     "signatures_dropped": 4,
     "unreadable": 5,
-    "certificates_unread": 6
+    "certificates_unread": 6,
+    "revocation_unread": 7,
+    "revocation_dropped": 8
   },
   "scan_ms": 11.75
 }

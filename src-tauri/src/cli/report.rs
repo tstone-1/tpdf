@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::integrity::{Verdict, Why};
+use crate::revocation::{Basis, Gap, Reason, Source, Status};
 use crate::trust::{Doubt, Standing, Store};
 
 /// The schema number every document carries.
@@ -70,8 +71,10 @@ pub struct Verified {
     /// Always `"verify"`.
     pub command: String,
     /// Whether `--strict` would pass: every document read, each with at least
-    /// one signature, every signature `intact` and `trusted`. Present whether
-    /// or not `--strict` was given.
+    /// one signature, every signature `intact`, `trusted` or
+    /// `trusted_at_timestamp`, and none whose revocation is `revoked` other
+    /// than after an attested moment. Present whether or not `--strict` was
+    /// given.
     pub strict_passed: bool,
     /// One entry per document, in the order given.
     pub files: Vec<File>,
@@ -140,6 +143,10 @@ pub struct Signature {
     /// timestamp is; `null` for a signature with none. Added to schema 1 on
     /// 2026-09-28, which the schema's own rule permits: a new key.
     pub timestamp: Option<TimestampReport>,
+    /// What the document's own revocation data says about the signer's
+    /// certificate (a document timestamp's: its authority's); `null` exactly
+    /// when `trust` is. Added to schema 1 on 2026-09-28, a new key.
+    pub revocation: Option<RevocationReport>,
 }
 
 /// `docinfo::Timestamp`, with the sentences the application shows.
@@ -162,6 +169,10 @@ pub struct TimestampReport {
     /// `null` unless `attested`. `sentence` is the dialog's Timestamp
     /// authority row.
     pub trust: Option<TrustReport>,
+    /// What the document's revocation data says about the authority's
+    /// certificate, at the time the token states; `null` exactly when `trust`
+    /// is. Added 2026-09-28.
+    pub revocation: Option<RevocationReport>,
 }
 
 /// `integrity::Integrity`, with the sentence the application shows.
@@ -188,7 +199,42 @@ pub struct TrustReport {
     pub why: Option<Doubt>,
     /// `mac` or `windows`: whose store answered; `null` when none did.
     pub store: Option<Store>,
+    /// The moment the chain was judged at, `YYYY-MM-DD HH:MM:SS UTC`, when it
+    /// was the time a trusted timestamp attests; empty when it was judged
+    /// now. Added 2026-09-28.
+    pub attested_at: String,
     /// The properties dialog's Trust row, word for word.
+    pub sentence: String,
+}
+
+/// `revocation::Revocation`, with the sentence the application shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationReport {
+    /// `good`, `revoked`, `unknown`, `none` (the document carries nothing
+    /// about the certificate: **not checked**) or `unchecked`.
+    pub standing: Status,
+    /// Why nothing was concluded, for `unchecked`; `null` otherwise.
+    pub why: Option<Gap>,
+    /// `ocsp` or `crl`: which data answered, for `good`, `revoked` and
+    /// `unknown`; `null` otherwise.
+    pub source: Option<Source>,
+    /// When that data was issued, or empty.
+    pub issued: String,
+    /// When its issuer promised the next, or empty.
+    pub next: String,
+    /// When the certificate was revoked, for `revoked`; empty otherwise.
+    pub revoked: String,
+    /// The reason a revocation states, or `null`.
+    pub reason: Option<Reason>,
+    /// Whose clock `moment` is: `attested` (a trusted timestamp's),
+    /// `stated` (a token's own, for its authority), `claimed` (the signer's
+    /// `/M`) or `now`.
+    pub basis: Basis,
+    /// The moment judged, `YYYY-MM-DD HH:MM:SS UTC`.
+    pub moment: String,
+    /// `revoked` after an attested moment, which does not undo the signature.
+    pub after_moment: bool,
+    /// The properties dialog's Revocation row, word for word.
     pub sentence: String,
 }
 

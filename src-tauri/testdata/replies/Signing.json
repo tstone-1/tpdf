@@ -54,9 +54,22 @@
           "trust": {
             "standing": "trusted",
             "why": null,
-            "store": "mac"
+            "store": "mac",
+            "attested_at": ""
           },
-          "attested": true
+          "attested": true,
+          "revocation": {
+            "standing": "revoked",
+            "why": "stale",
+            "source": "crl",
+            "issued": "2026-01-03 00:00:00 UTC",
+            "next": "2026-01-10 00:00:00 UTC",
+            "revoked": "2026-01-02 12:00:00 UTC",
+            "reason": "key_compromise",
+            "basis": "attested",
+            "moment": "2026-01-02 03:04:06 UTC",
+            "after_moment": true
+          }
         }
       },
       {

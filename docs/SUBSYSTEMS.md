@@ -62,7 +62,9 @@ re-encoded and bounded, to the system store (`SecTrust` on macOS, `CertGetCertif
 on Windows) with the network off, and `judge` reads the answer --- now; again at the
 certificate's own last or first moment when it is out of date; then its extended key usage
 against `sign_cms::DOCUMENT_PURPOSES`. `Signature::trust` carries it; `integrity.ts`'s
-`trustRow` words it, naming the store and saying revocation was not checked;
+`trustRow` words it, naming the store; since 2026-09-28 revocation is a row of its own,
+`revocationRow`, from the data the document carries (`revocation.rs`), and a signature whose
+timestamp is intact from a trusted authority is judged at the time it attests (`judge_at`);
 `properties.ts` puts it directly under the integrity row, whose "owner not checked" sentence
 it then replaces. The store construction and the offline flags are shared with
 `keystore.rs`'s signing chain through `trust::platform`. Tests never touch a real store:

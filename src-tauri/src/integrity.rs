@@ -15,7 +15,8 @@
 //! minutes ago on the signer's own laptop passes exactly as a notary's does.
 //! Whose key it is, as far as the operating system's trust store can say, is
 //! [`crate::trust`]'s separate verdict, asked only on top of this one's
-//! `Intact` or `Weak`; revocation is Phase 6 step 3's (`docs/PLAN.md` §9).
+//! `Intact` or `Weak`; whether the key was withdrawn is [`crate::revocation`]'s,
+//! from the data the document carries.
 //!
 //! ## Why a verdict can be `Unchecked`, and why that is never `Intact`
 //!
@@ -309,8 +310,12 @@ fn decode_hex(digits: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// A digest algorithm this can compute.
+///
+/// Crate-visible since 2026-09-28 for [`crate::revocation`], which hashes an
+/// OCSP `CertID`'s issuer name and key under whatever algorithm the response
+/// chose --- the same five, computed by the same code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Hash {
+pub(crate) enum Hash {
     Sha1,
     Sha224,
     Sha256,
@@ -319,7 +324,7 @@ enum Hash {
 }
 
 impl Hash {
-    fn from_oid(oid: &str) -> Option<Self> {
+    pub(crate) fn from_oid(oid: &str) -> Option<Self> {
         Some(match oid {
             "1.3.14.3.2.26" => Hash::Sha1,
             "2.16.840.1.101.3.4.2.4" => Hash::Sha224,
@@ -341,7 +346,7 @@ impl Hash {
     }
 
     /// The digest of `pieces`, concatenated.
-    fn digest(self, pieces: &[&[u8]]) -> Vec<u8> {
+    pub(crate) fn digest(self, pieces: &[&[u8]]) -> Vec<u8> {
         fn run<D: sha2_10::Digest>(pieces: &[&[u8]]) -> Vec<u8> {
             let mut hasher = D::new();
             for piece in pieces {
@@ -614,7 +619,7 @@ fn method_of(info: &cms::signed_data::SignerInfo, hash: Result<Hash, Why>) -> Re
         "1.2.840.113549.1.1.11" => agrees(Hash::Sha256).map(|()| Method::Rsa),
         "1.2.840.113549.1.1.12" => agrees(Hash::Sha384).map(|()| Method::Rsa),
         "1.2.840.113549.1.1.13" => agrees(Hash::Sha512).map(|()| Method::Rsa),
-        "1.2.840.113549.1.1.10" => pss(info, hash),
+        "1.2.840.113549.1.1.10" => pss(&info.signature_algorithm, Some(hash)).map(|(_, m)| m),
         // id-ecPublicKey: the hash is the digest algorithm's.
         "1.2.840.10045.2.1" => Ok(Method::Ecdsa),
         "1.2.840.10045.4.1" => agrees(Hash::Sha1).map(|()| Method::Ecdsa),
@@ -630,10 +635,15 @@ fn method_of(info: &cms::signed_data::SignerInfo, hash: Result<Hash, Why>) -> Re
 ///
 /// `rsa` uses the message hash for MGF1 too, so a signature whose mask hash
 /// differs --- legal, and rare --- is refused rather than verified wrongly.
-/// The trailer field must be 1, the only value RFC 4055 defines.
-fn pss(info: &cms::signed_data::SignerInfo, hash: Hash) -> Result<Method, Why> {
-    let parameters = info
-        .signature_algorithm
+/// The trailer field must be 1, the only value RFC 4055 defines. `hash` is the
+/// hash the parameters must name, when something else already named one (a
+/// `SignerInfo`'s digest algorithm); `None` for an X.509 signature, where the
+/// parameters are the only place the hash is named.
+fn pss(
+    algorithm: &x509_cert::spki::AlgorithmIdentifierOwned,
+    hash: Option<Hash>,
+) -> Result<(Hash, Method), Why> {
+    let parameters = algorithm
         .parameters
         .as_ref()
         .ok_or(Why::Algorithm)?
@@ -648,16 +658,85 @@ fn pss(info: &cms::signed_data::SignerInfo, hash: Hash) -> Result<Method, Why> {
         .as_ref()
         .map(|inner| inner.oid.to_string());
     let mgf1 = params.mask_gen.oid.to_string() == "1.2.840.113549.1.1.8";
-    if named != hash
+    if hash.is_some_and(|hash| named != hash)
         || !mgf1
-        || mask.as_deref().and_then(Hash::from_oid) != Some(hash)
+        || mask.as_deref().and_then(Hash::from_oid) != Some(named)
         || params.trailer_field != rsa::pkcs1::TrailerField::BC
     {
         return Err(Why::Algorithm);
     }
-    Ok(Method::Pss {
-        salt: usize::from(params.salt_len),
+    Ok((
+        named,
+        Method::Pss {
+            salt: usize::from(params.salt_len),
+        },
+    ))
+}
+
+/// The hash and the method an X.509 `AlgorithmIdentifier` names --- the form
+/// a certificate, a CRL and an OCSP response are signed under, where one OID
+/// names both (`sha256WithRSAEncryption`, `ecdsa-with-SHA384`) or PSS's
+/// parameters do. A bare `rsaEncryption` names no hash and is refused: there
+/// is no digest algorithm beside it to borrow one from, as a `SignerInfo` has.
+fn x509_method(
+    algorithm: &x509_cert::spki::AlgorithmIdentifierOwned,
+) -> Result<(Hash, Method), Why> {
+    Ok(match algorithm.oid.to_string().as_str() {
+        "1.2.840.113549.1.1.5" => (Hash::Sha1, Method::Rsa),
+        "1.2.840.113549.1.1.14" => (Hash::Sha224, Method::Rsa),
+        "1.2.840.113549.1.1.11" => (Hash::Sha256, Method::Rsa),
+        "1.2.840.113549.1.1.12" => (Hash::Sha384, Method::Rsa),
+        "1.2.840.113549.1.1.13" => (Hash::Sha512, Method::Rsa),
+        "1.2.840.113549.1.1.10" => return pss(algorithm, None),
+        "1.2.840.10045.4.1" => (Hash::Sha1, Method::Ecdsa),
+        "1.2.840.10045.4.3.1" => (Hash::Sha224, Method::Ecdsa),
+        "1.2.840.10045.4.3.2" => (Hash::Sha256, Method::Ecdsa),
+        "1.2.840.10045.4.3.3" => (Hash::Sha384, Method::Ecdsa),
+        "1.2.840.10045.4.3.4" => (Hash::Sha512, Method::Ecdsa),
+        _ => return Err(Why::Algorithm),
     })
+}
+
+/// Whether `signature` is `signer`'s signature over the bytes `signed`, under
+/// the X.509 `algorithm` --- a certificate's over its `tbsCertificate`, a
+/// CRL's over its `tbsCertList`, an OCSP response's over its
+/// `tbsResponseData`.
+///
+/// **The one verification the revocation checks use, and it is this module's**:
+/// [`read_key`] and [`verify`] are the code a signature's own verdict rests
+/// on, so a response and a document are checked by the same arithmetic ---
+/// RSA PKCS#1 v1.5, RSA-PSS, ECDSA on P-256 and P-384 --- and there is no
+/// second implementation to drift. `Err` when the algorithm or the key is one
+/// this does not carry, which a caller reports as not checked rather than as
+/// a failed signature; `Ok(false)` only for arithmetic that was done and
+/// failed.
+///
+/// # Errors
+///
+/// [`Why::Algorithm`] or [`Why::Certificate`], as above.
+pub(crate) fn signed_by(
+    signer: &x509_cert::Certificate,
+    algorithm: &x509_cert::spki::AlgorithmIdentifierOwned,
+    signed: &[u8],
+    signature: &[u8],
+) -> Result<bool, Why> {
+    let (hash, method) = x509_method(algorithm)?;
+    let key = read_key(signer)?;
+    let compatible = matches!(
+        (&key, method),
+        (Key::Rsa(_), Method::Rsa | Method::Pss { .. })
+            | (Key::P256(_) | Key::P384(_), Method::Ecdsa)
+    );
+    if !compatible {
+        return Err(Why::Algorithm);
+    }
+    Ok(verify(
+        &key,
+        method,
+        hash,
+        &hash.digest(&[signed]),
+        signature,
+    ))
 }
 
 /// The one `messageDigest` value, with the content type checked beside it.

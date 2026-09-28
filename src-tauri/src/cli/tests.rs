@@ -408,9 +408,11 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
             standing,
             why: None,
             store: Some(TrustStore::Mac),
+            attested_at: String::new(),
             sentence: String::new(),
         }),
         timestamp: None,
+        revocation: None,
     }
 }
 
@@ -678,10 +680,14 @@ fn wording() -> serde_json::Value {
         Some(Doubt::Certificate),
         Some(Doubt::Unavailable),
         Some(Doubt::Timestamping),
+        Some(Doubt::NotInForce),
     ];
+    // Judged now, or at the time a trusted timestamp attests.
+    let moments = ["", "2026-08-21 12:00:00 UTC"];
     let mut trusts = Vec::new();
     for standing in [
         Standing::Trusted,
+        Standing::TrustedAtTimestamp,
         Standing::Expired,
         Standing::NotYetValid,
         Standing::Untrusted,
@@ -689,14 +695,18 @@ fn wording() -> serde_json::Value {
     ] {
         for store in [Some(TrustStore::Mac), Some(TrustStore::Windows), None] {
             for why in doubts {
-                for (from, until) in [
+                for ((from, until), attested_at) in [
                     ("", ""),
                     ("2026-01-02 03:04:05 UTC", "2027-01-02 03:04:05 UTC"),
-                ] {
+                ]
+                .into_iter()
+                .flat_map(|dates| moments.map(|m| (dates, m)))
+                {
                     let trust = Trust {
                         standing,
                         why,
                         store,
+                        attested_at: attested_at.into(),
                     };
                     trusts.push(serde_json::json!({
                         "trust": trust,
@@ -753,11 +763,13 @@ fn wording() -> serde_json::Value {
         standing: Standing::Trusted,
         why: None,
         store: Some(TrustStore::Mac),
+        attested_at: String::new(),
     };
     let stranger = Trust {
         standing: Standing::Untrusted,
         why: Some(Doubt::Root),
         store: Some(TrustStore::Windows),
+        attested_at: String::new(),
     };
     let stamps: [Option<(&str, Integrity, Option<Trust>)>; 5] = [
         None,
@@ -915,6 +927,7 @@ fn wording() -> serde_json::Value {
     let mut authorities = Vec::new();
     for standing in [
         Standing::Trusted,
+        Standing::TrustedAtTimestamp,
         Standing::Expired,
         Standing::NotYetValid,
         Standing::Untrusted,
@@ -922,14 +935,18 @@ fn wording() -> serde_json::Value {
     ] {
         for store in [Some(TrustStore::Mac), Some(TrustStore::Windows), None] {
             for why in doubts {
-                for (from, until) in [
+                for ((from, until), attested_at) in [
                     ("", ""),
                     ("2026-01-02 03:04:05 UTC", "2027-01-02 03:04:05 UTC"),
-                ] {
+                ]
+                .into_iter()
+                .flat_map(|dates| moments.map(|m| (dates, m)))
+                {
                     let trust = Trust {
                         standing,
                         why,
                         store,
+                        attested_at: attested_at.into(),
                     };
                     authorities.push(serde_json::json!({
                         "trust": trust,
@@ -942,11 +959,96 @@ fn wording() -> serde_json::Value {
         }
     }
 
+    // A revocation row: every standing, in the shapes each can take --- every
+    // reason a revocation gives, every gap, every basis, both sources --- for
+    // the signer's certificate and an authority's.
+    let mut revocations = Vec::new();
+    {
+        use crate::revocation::{Basis, Gap, Reason, Revocation, Source, Status};
+        let bases = [Basis::Attested, Basis::Stated, Basis::Claimed, Basis::Now];
+        let reasons = [
+            None,
+            Some(Reason::Unspecified),
+            Some(Reason::KeyCompromise),
+            Some(Reason::CaCompromise),
+            Some(Reason::AffiliationChanged),
+            Some(Reason::Superseded),
+            Some(Reason::CessationOfOperation),
+            Some(Reason::CertificateHold),
+            Some(Reason::RemoveFromCrl),
+            Some(Reason::PrivilegeWithdrawn),
+            Some(Reason::AaCompromise),
+        ];
+        let gaps = [
+            None,
+            Some(Gap::Unreadable),
+            Some(Gap::Bound),
+            Some(Gap::Issuer),
+            Some(Gap::Signature),
+            Some(Gap::Unauthorised),
+            Some(Gap::Algorithm),
+            Some(Gap::Unsupported),
+            Some(Gap::Stale),
+            Some(Gap::Expired),
+            Some(Gap::Dates),
+            Some(Gap::Budget),
+        ];
+        let at = |basis: Basis| Revocation {
+            basis,
+            moment: "2026-08-21 12:00:00 UTC".into(),
+            ..Revocation::default()
+        };
+        let answered = |basis: Basis, standing: Status, source: Source, next: &str| Revocation {
+            standing,
+            source: Some(source),
+            issued: "2026-08-20 09:00:00 UTC".into(),
+            next: next.into(),
+            ..at(basis)
+        };
+        let mut shapes = Vec::new();
+        for basis in bases {
+            shapes.push(at(basis));
+            for why in gaps {
+                shapes.push(Revocation {
+                    standing: Status::Unchecked,
+                    why,
+                    ..at(basis)
+                });
+            }
+            for source in [Source::Ocsp, Source::Crl] {
+                for next in ["", "2026-08-27 09:00:00 UTC"] {
+                    shapes.push(answered(basis, Status::Good, source, next));
+                    shapes.push(answered(basis, Status::Unknown, source, next));
+                }
+                for reason in reasons {
+                    for after_moment in [false, true] {
+                        shapes.push(Revocation {
+                            revoked: "2026-08-01 00:00:00 UTC".into(),
+                            reason,
+                            after_moment,
+                            ..answered(basis, Status::Revoked, source, "2026-08-27 09:00:00 UTC")
+                        });
+                    }
+                }
+            }
+        }
+        for shape in shapes {
+            for authority in [false, true] {
+                revocations.push(serde_json::json!({
+                    "revocation": shape,
+                    "authority": authority,
+                    "sentence": words::revocation_sentence(&shape, authority),
+                }));
+            }
+        }
+    }
+
     serde_json::json!({
         "integrity": integrities,
         "trust": trusts,
         "timestamp": timestamps,
         "authority": authorities,
+        "revocation": revocations,
         "after_signing": after,
         "after_redaction": after_redaction,
         // The window offers these by name and the tool takes their names:
@@ -961,6 +1063,7 @@ fn full_signature() -> report::Signature {
         standing: Standing::Untrusted,
         why: Some(Doubt::Root),
         store: Some(TrustStore::Mac),
+        attested_at: String::new(),
     };
     report::Signature {
         field: "Signature1".into(),
@@ -980,8 +1083,24 @@ fn full_signature() -> report::Signature {
             standing: trust.standing,
             why: trust.why,
             store: trust.store,
+            attested_at: trust.attested_at.clone(),
             sentence: words::trust_sentence(&trust, "", ""),
         }),
+        revocation: Some(super::verify::revocation_report(
+            &crate::revocation::Revocation {
+                standing: crate::revocation::Status::Good,
+                why: None,
+                source: Some(crate::revocation::Source::Ocsp),
+                issued: "2026-09-26 12:00:00 UTC".into(),
+                next: "2026-09-27 12:00:00 UTC".into(),
+                revoked: String::new(),
+                reason: None,
+                basis: crate::revocation::Basis::Claimed,
+                moment: "2026-09-26 18:20:13 UTC".into(),
+                after_moment: false,
+            },
+            false,
+        )),
         timestamp: Some(super::verify::timestamp_report(
             &crate::docinfo::Timestamp {
                 when: "2026-09-26 18:20:14 UTC".into(),
@@ -1000,8 +1119,14 @@ fn full_signature() -> report::Signature {
                     standing: Standing::Untrusted,
                     why: Some(Doubt::Root),
                     store: Some(TrustStore::Mac),
+                    attested_at: String::new(),
                 }),
                 attested: true,
+                revocation: Some(crate::revocation::Revocation {
+                    basis: crate::revocation::Basis::Stated,
+                    moment: "2026-09-26 18:20:14 UTC".into(),
+                    ..crate::revocation::Revocation::default()
+                }),
             },
             false,
         )),
@@ -1026,6 +1151,7 @@ fn bare_signature() -> report::Signature {
         },
         trust: None,
         timestamp: None,
+        revocation: None,
     }
 }
 

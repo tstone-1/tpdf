@@ -46,10 +46,11 @@
 //!
 //! ## Nothing here says a signature is valid
 //!
-//! This cannot say whether the certificate was revoked or whether it was in
-//! date when used, and has no trust store of its own: whether the signer chains
-//! to a root is the operating system's answer, asked by [`crate::trust`] and
-//! reported beside the integrity verdict as [`Signature::trust`].
+//! This fetches nothing and has no trust store of its own: whether the signer
+//! chains to a root is the operating system's answer, asked by [`crate::trust`]
+//! and reported beside the integrity verdict as [`Signature::trust`]; whether
+//! the certificate was revoked is judged only from the revocation data the
+//! document carries, by [`crate::revocation`], as [`Signature::revocation`].
 //! `docs/TRAPS.md` is explicit that the UI must never imply more than that.
 //!
 //! What it reports is what the document *claims* --- the signer's name, reason
@@ -315,8 +316,18 @@ pub struct Signature {
     /// **The second verdict, and it rests on the first**: `Some` only when
     /// [`Signature::integrity`] is intact or weak, because for any other answer
     /// there is nothing to attribute to anybody. See [`crate::trust`] for the
-    /// store it asks, and for what it does not check --- revocation above all.
+    /// store it asks. **Judged at the time a timestamp attests** when the
+    /// signature carries an intact token from an authority this computer
+    /// trusts, and now otherwise (`docs/PLAN.md` §9, since 2026-09-28).
     pub trust: Option<crate::trust::Trust>,
+    /// What the document's own revocation data says about the signer's
+    /// certificate --- or, for a document timestamp, its authority's.
+    ///
+    /// **The third verdict**, and it rests where the second does: `Some`
+    /// exactly when [`Signature::trust`] is. Nothing is fetched to reach it,
+    /// so `none` --- a document carrying no revocation data --- is the
+    /// ordinary answer and means *not checked*. See [`crate::revocation`].
+    pub revocation: Option<crate::revocation::Revocation>,
 }
 
 /// What the signing certificate says, as against what the signer typed.
@@ -407,8 +418,9 @@ pub struct Certificate {
 /// store about the authority with the timestamping purpose. The time is an
 /// attested one only when that verdict is `intact` or `weak`; a broken token's
 /// `genTime` is carried so the reader can see what it claimed, never shown as
-/// attested. No revocation is checked, and the signer's own certificate is
-/// still judged at the present moment rather than at this time.
+/// attested. Since 2026-09-28 the authority's revocation is judged from the
+/// document's own data ([`Timestamp::revocation`]), and an `intact` token from
+/// a trusted, unrevoked authority is the moment the signer is judged at.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Timestamp {
     /// `genTime` from the token's `TSTInfo`, formatted as every date here is.
@@ -437,6 +449,10 @@ pub struct Timestamp {
     /// `weak`. **Decided here, once, in the worker**, so the dialog and the
     /// command-line tool read one answer rather than each restating the rule.
     pub attested: bool,
+    /// What the document's revocation data says about the authority's
+    /// certificate, at the time the token states. `Some` exactly when
+    /// [`Timestamp::trust`] is. Since 2026-09-28.
+    pub revocation: Option<crate::revocation::Revocation>,
 }
 
 /// What could not be read, so nothing here is silently partial.
@@ -475,6 +491,16 @@ pub struct Limits {
     /// about tpdf, and reporting the second as the first would be tpdf agreeing
     /// with itself.
     pub certificates_unread: usize,
+    /// Revocation data --- in the `/DSS`, or in a signature's CMS --- present
+    /// and not readable: a stream that would not decode, a response that is
+    /// not a successful basic one, anything over its size bound. Counted for
+    /// the reason [`Limits::timestamps_unread`] is, and every revocation
+    /// answer that would have been *good* or *none* beside it reads as not
+    /// checked instead. Since 2026-09-28.
+    pub revocation_unread: usize,
+    /// Revocation data not read at a count bound ([`crate::revocation`]'s
+    /// constants), with the same consequence.
+    pub revocation_dropped: usize,
 }
 
 impl Limits {
@@ -488,6 +514,8 @@ impl Limits {
             || self.unreadable > 0
             || self.certificates_unread > 0
             || self.timestamps_unread > 0
+            || self.revocation_unread > 0
+            || self.revocation_dropped > 0
     }
 }
 
@@ -579,6 +607,43 @@ pub fn scan_from(
     page_count: u32,
     password: Option<&str>,
 ) -> Result<Properties, String> {
+    scan_judged(
+        document,
+        bytes,
+        page_count,
+        password,
+        crate::trust::Anchors::System,
+        now_seconds(),
+    )
+}
+
+/// [`scan`] with the roots and the present a test chooses: the seam the
+/// revocation and attested-moment tests reach the whole scan through, with
+/// their own authorities as the only anchors and no keychain touched.
+#[cfg(test)]
+pub(crate) fn scan_at(
+    bytes: &[u8],
+    anchors: crate::trust::Anchors<'_>,
+    now: u64,
+) -> Result<Properties, String> {
+    scan_judged(
+        &crate::encoding::load(bytes, None)?,
+        bytes,
+        1,
+        None,
+        anchors,
+        now,
+    )
+}
+
+fn scan_judged(
+    document: &Document,
+    bytes: &[u8],
+    page_count: u32,
+    password: Option<&str>,
+    anchors: crate::trust::Anchors<'_>,
+    now: u64,
+) -> Result<Properties, String> {
     let started = std::time::Instant::now();
 
     let mut limits = Limits::default();
@@ -623,12 +688,14 @@ pub fn scan_from(
     };
     let mut signatures = if readable {
         let mut budget = crate::integrity::MAX_HASHED;
+        let judging = Judging::of(document, &mut limits, anchors, now);
         read_signatures(
             document,
             bytes.len() as u64,
             bytes,
             &mut limits,
             &mut budget,
+            &judging,
         )
     } else {
         Vec::new()
@@ -1139,6 +1206,7 @@ fn read_signatures(
     bytes: &[u8],
     limits: &mut Limits,
     budget: &mut u64,
+    judging: &Judging<'_>,
 ) -> Vec<Signature> {
     // The traversal is `fields.rs`; what stays here is what to do with a node.
     // The two are separated because the same tree is walked by `redact.rs` with
@@ -1171,7 +1239,7 @@ fn read_signatures(
         // this reads the field *and* descends.
         if name_of(document, field, b"FT") == "Sig" {
             out.push(read_signature(
-                document, field, node.name, size, bytes, limits, budget,
+                document, field, node.name, size, bytes, limits, budget, judging,
             ));
         }
         fields::Flow::Descend
@@ -1187,6 +1255,7 @@ fn read_signatures(
 }
 
 /// Reads one signature field.
+#[allow(clippy::too_many_arguments)]
 fn read_signature(
     document: &Document,
     field: &Dictionary,
@@ -1195,6 +1264,7 @@ fn read_signature(
     bytes: &[u8],
     limits: &mut Limits,
     budget: &mut u64,
+    judging: &Judging<'_>,
 ) -> Signature {
     let text = |dict: &Dictionary, key: &[u8]| -> String { text_of(document, dict, key) };
     let mut out = Signature {
@@ -1220,7 +1290,8 @@ fn read_signature(
     out.name = text(sig, b"Name");
     out.reason = text(sig, b"Reason");
     out.location = text(sig, b"Location");
-    out.when = format_date(&text(sig, b"M"));
+    let claimed = text(sig, b"M");
+    out.when = format_date(&claimed);
 
     // Every entry an integer, or nothing: the verdict must not be computed over
     // a range from which a non-integer was quietly dropped, which shifts every
@@ -1281,35 +1352,126 @@ fn read_signature(
     // For a document timestamp this is the token's verdict: `integrity::check`
     // vouches for the range and hands the token to `integrity::token`.
     let integrity = integrity_of(document, sig, bytes, &strict, &out.kind, budget);
-    out.trust = attributable(&integrity).then(|| trust_of(document, sig, purpose));
+    let blob = signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread);
 
-    if let Some(blob) =
-        signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread)
-    {
-        out.timestamp = if document_timestamp {
-            match parse_timestamp_token(&blob) {
+    // What this signature's own CMS carries toward revocation, and its
+    // token's: the Adobe archival attribute, the `crls` sets, and both
+    // certificate sets as candidate issuers. Beside the `/DSS`, which every
+    // signature shares.
+    let mut own = crate::revocation::Material::default();
+    let mut token = None;
+    if let Some(blob) = &blob {
+        own.extend(&crate::revocation::Material::of_cms(blob));
+        if document_timestamp {
+            token = Some(blob.clone());
+        } else if let Some((timestamp, bytes)) = read_timestamp_token(
+            blob,
+            &mut limits.timestamps_unread,
+            budget,
+            judging.anchors,
+            judging.now,
+        ) {
+            own.extend(&crate::revocation::Material::of_cms(&bytes));
+            out.timestamp = Some(timestamp);
+            token = Some(bytes);
+        }
+    }
+    limits.revocation_unread += own.unread;
+    limits.revocation_dropped += own.dropped;
+    let own = crate::revocation::Pool::new(&own);
+    let pools = [&judging.dss, &own];
+
+    // The authority first, because whether the signer is judged at the time
+    // it attests depends on it: on its token being intact, its standing
+    // trusted, and its certificate neither revoked nor out of its dates then.
+    let stated = token.as_deref().and_then(gen_time_seconds);
+    if !document_timestamp {
+        if let (Some(timestamp), Some(token), Some(stated)) =
+            (out.timestamp.as_mut(), token.as_deref(), stated)
+        {
+            if timestamp.trust.is_some() {
+                timestamp.revocation = certificate_revocation(
+                    token,
+                    &pools,
+                    crate::revocation::Moment {
+                        basis: crate::revocation::Basis::Stated,
+                        at: stated,
+                    },
+                    judging.now,
+                    budget,
+                );
+            }
+        }
+    }
+    let attested = if document_timestamp {
+        None
+    } else {
+        out.timestamp
+            .as_ref()
+            .zip(token.as_deref())
+            .zip(stated)
+            .and_then(|((timestamp, token), at)| attested_moment(timestamp, token, at))
+    };
+
+    if attributable(&integrity) {
+        let extra = &judging.dss_certificates;
+        out.trust = Some(match (&blob, attested) {
+            (None, _) => crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
+            (Some(blob), Some(at)) => {
+                crate::trust::of_blob_at(blob, extra, purpose, at, judging.anchors)
+            }
+            (Some(blob), None) => {
+                crate::trust::of_blob_with(blob, extra, purpose, judging.now, judging.anchors)
+            }
+        });
+        // The moment the signer's revocation is judged at: the attested one
+        // when there is one; for a document timestamp, whose signer is the
+        // authority, the time its token states; otherwise the signer's `/M`,
+        // which is only their word, and failing that the present.
+        let moment = match (attested, document_timestamp.then_some(stated).flatten()) {
+            (Some(at), _) => crate::revocation::Moment {
+                basis: crate::revocation::Basis::Attested,
+                at,
+            },
+            (None, Some(at)) => crate::revocation::Moment {
+                basis: crate::revocation::Basis::Stated,
+                at,
+            },
+            (None, None) => match pdf_date_seconds(&claimed) {
+                Some(at) => crate::revocation::Moment {
+                    basis: crate::revocation::Basis::Claimed,
+                    at,
+                },
+                None => crate::revocation::Moment {
+                    basis: crate::revocation::Basis::Now,
+                    at: judging.now,
+                },
+            },
+        };
+        out.revocation = match &blob {
+            Some(blob) => certificate_revocation(blob, &pools, moment, judging.now, budget),
+            None => None,
+        };
+    }
+
+    if document_timestamp {
+        if let Some(blob) = &blob {
+            out.timestamp = match parse_timestamp_token(blob) {
                 // The field's own verdict and standing *are* the token's:
                 // copied, not computed twice, so the range is hashed once.
                 Some(timestamp) => Some(Timestamp {
                     attested: attributable(&integrity),
                     integrity: Some(integrity.clone()),
                     trust: out.trust.clone(),
+                    revocation: out.revocation.clone(),
                     ..timestamp
                 }),
                 None => {
                     limits.timestamps_unread += 1;
                     None
                 }
-            }
-        } else {
-            read_timestamp(
-                &blob,
-                &mut limits.timestamps_unread,
-                budget,
-                crate::trust::Anchors::System,
-                now_seconds(),
-            )
-        };
+            };
+        }
     }
     out.integrity = Some(integrity);
     out
@@ -1323,6 +1485,241 @@ fn purpose_of(kind: &str) -> crate::trust::Purpose {
     } else {
         crate::trust::Purpose::Documents
     }
+}
+
+/// What every signature in one document is judged with: the roots, the
+/// present, and the document's own `/DSS` --- read once, parsed once, shared.
+pub(crate) struct Judging<'a> {
+    pub(crate) anchors: crate::trust::Anchors<'a>,
+    pub(crate) now: u64,
+    /// The `/DSS`'s revocation data, parsed.
+    pub(crate) dss: crate::revocation::Pool,
+    /// The `/DSS`'s certificates, DER: candidate issuers for the chain the OS
+    /// builds, beside each signature's own set.
+    pub(crate) dss_certificates: Vec<Vec<u8>>,
+}
+
+impl<'a> Judging<'a> {
+    /// Reads the document's `/DSS`, counting into `limits` what it could not.
+    pub(crate) fn of(
+        document: &Document,
+        limits: &mut Limits,
+        anchors: crate::trust::Anchors<'a>,
+        now: u64,
+    ) -> Self {
+        let material = read_dss(document);
+        limits.revocation_unread += material.unread;
+        limits.revocation_dropped += material.dropped;
+        Judging {
+            anchors,
+            now,
+            dss: crate::revocation::Pool::new(&material),
+            dss_certificates: material.certificates.clone(),
+        }
+    }
+}
+
+/// The catalog's `/DSS` (PDF 2.0 §12.8.4.3, ETSI EN 319 142-1 §5.4.2): its
+/// `/Certs`, `/OCSPs` and `/CRLs` arrays of streams, and the same three under
+/// each `/VRI` entry (`/Cert`, `/OCSP`, `/CRL`), which name streams the
+/// top-level arrays usually hold as well --- duplicates are kept once.
+///
+/// **Bounded before anything is decoded**: each stream through
+/// `decompressed_content_with_limit` at its kind's size bound, so a
+/// 2 KB document declaring a gigabyte of revocation list costs nothing, and
+/// the counts are [`crate::revocation::Material`]'s. A stream with a filter
+/// that will not decode inside its bound is **unread**, never used raw ---
+/// raw content is only what an unfiltered stream holds. Attacker-chosen
+/// bytes, read in the worker like every other part of this scan.
+fn read_dss(document: &Document) -> crate::revocation::Material {
+    let mut out = crate::revocation::Material::default();
+    let Some(dss) = document
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"DSS").ok())
+        .and_then(|o| resolve(document, o).as_dict().ok())
+    else {
+        return out;
+    };
+    #[derive(Clone, Copy)]
+    enum Kind {
+        Certificate,
+        Response,
+        List,
+    }
+    let bound = |kind: Kind| match kind {
+        Kind::Certificate => crate::trust::MAX_CERTIFICATE_BYTES,
+        Kind::Response => crate::revocation::MAX_RESPONSE_BYTES,
+        Kind::List => crate::revocation::MAX_LIST_BYTES,
+    };
+    let take =
+        |dict: &Dictionary, key: &[u8], kind: Kind, out: &mut crate::revocation::Material| {
+            let Some(array) = dict
+                .get(key)
+                .ok()
+                .and_then(|o| resolve(document, o).as_array().ok())
+            else {
+                return;
+            };
+            for item in array {
+                let Ok(stream) = resolve(document, item).as_stream() else {
+                    out.unread += 1;
+                    continue;
+                };
+                let content = if stream.dict.has(b"Filter") {
+                    stream.decompressed_content_with_limit(bound(kind)).ok()
+                } else {
+                    Some(stream.content.clone())
+                };
+                let Some(content) = content else {
+                    out.unread += 1;
+                    continue;
+                };
+                match kind {
+                    Kind::Certificate => out.certificate(content),
+                    Kind::Response => out.response(&content),
+                    Kind::List => out.list(content),
+                }
+            }
+        };
+    take(dss, b"Certs", Kind::Certificate, &mut out);
+    take(dss, b"OCSPs", Kind::Response, &mut out);
+    take(dss, b"CRLs", Kind::List, &mut out);
+    if let Some(vri) = dss
+        .get(b"VRI")
+        .ok()
+        .and_then(|o| resolve(document, o).as_dict().ok())
+    {
+        for (at, (_, entry)) in vri.iter().enumerate() {
+            if at >= crate::revocation::MAX_VRI {
+                out.dropped += 1;
+                continue;
+            }
+            let Ok(entry) = resolve(document, entry).as_dict() else {
+                continue;
+            };
+            take(entry, b"Cert", Kind::Certificate, &mut out);
+            take(entry, b"OCSP", Kind::Response, &mut out);
+            take(entry, b"CRL", Kind::List, &mut out);
+        }
+    }
+    out
+}
+
+/// What the revocation data in `pools` says about the certificate `blob`'s
+/// `SignerInfo.sid` names --- a signature's signer, or a token's authority ---
+/// with the rest of `blob`'s certificates as candidate issuers. `None` when
+/// that certificate cannot be identified, which the trust standing beside it
+/// has already reported.
+fn certificate_revocation(
+    blob: &[u8],
+    pools: &[&crate::revocation::Pool],
+    moment: crate::revocation::Moment,
+    now: u64,
+    budget: &mut u64,
+) -> Option<crate::revocation::Revocation> {
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::SignedData;
+    use der::Decode;
+
+    let info = ContentInfo::from_der(blob).ok()?;
+    let signed: SignedData = info.content.decode_as().ok()?;
+    let (subject, matched) = signer_certificate(&signed)?;
+    if !matched {
+        return None;
+    }
+    let candidates: Vec<x509_cert::Certificate> =
+        certificates_of(&signed).into_iter().cloned().collect();
+    Some(crate::revocation::judge(
+        subject,
+        &candidates,
+        pools,
+        moment,
+        now,
+        budget,
+    ))
+}
+
+/// The time a timestamp attests, when it may stand for when the signature
+/// existed: the token `intact` (not `weak` --- SHA-1 does not show the time
+/// belongs to this signature), its authority `trusted` for timestamping by
+/// this computer's store, its certificate not revoked by the document's own
+/// data, and `at` inside that certificate's dates. Anything less and the
+/// signer is judged now, as before 2026-09-28.
+fn attested_moment(timestamp: &Timestamp, token: &[u8], at: u64) -> Option<u64> {
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::SignedData;
+    use der::Decode;
+
+    let intact = timestamp
+        .integrity
+        .as_ref()
+        .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact);
+    let trusted = timestamp
+        .trust
+        .as_ref()
+        .is_some_and(|t| t.standing == crate::trust::Standing::Trusted);
+    let revoked = timestamp
+        .revocation
+        .as_ref()
+        .is_some_and(|r| r.standing == crate::revocation::Status::Revoked);
+    if !intact || !trusted || revoked {
+        return None;
+    }
+    let info = ContentInfo::from_der(token).ok()?;
+    let signed: SignedData = info.content.decode_as().ok()?;
+    let (authority, matched) = signer_certificate(&signed)?;
+    let validity = &authority.tbs_certificate.validity;
+    let from = validity.not_before.to_unix_duration().as_secs();
+    let until = validity.not_after.to_unix_duration().as_secs();
+    (matched && (from..=until).contains(&at)).then_some(at)
+}
+
+/// A PDF date string (PDF 32000-1 §7.9.4) as seconds since the epoch, when
+/// it states at least a year and every part it states is in range. The
+/// offset is applied; one that is missing is read as UTC, as the
+/// specification's own default is "unknown" and a moment has to be somewhere.
+fn pdf_date_seconds(raw: &str) -> Option<u64> {
+    let body = raw.strip_prefix("D:").unwrap_or(raw);
+    let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
+    let part = |from: usize, len: usize, default: u8| -> Option<u8> {
+        match digits.get(from..from + len) {
+            Some(text) => text.parse().ok(),
+            None => Some(default),
+        }
+    };
+    let year: u16 = digits.get(..4)?.parse().ok()?;
+    let at = der::DateTime::new(
+        year,
+        part(4, 2, 1)?,
+        part(6, 2, 1)?,
+        part(8, 2, 0)?,
+        part(10, 2, 0)?,
+        part(12, 2, 0)?,
+    )
+    .ok()?
+    .unix_duration()
+    .as_secs();
+    let zone = &body[digits.len()..];
+    let offset = match zone.chars().next() {
+        Some(sign @ ('+' | '-')) => {
+            let numbers: Vec<u64> = zone[1..]
+                .split(|c: char| !c.is_ascii_digit())
+                .filter(|n| !n.is_empty())
+                .filter_map(|n| n.parse().ok())
+                .collect();
+            let hours = numbers.first().copied().unwrap_or(0);
+            let minutes = numbers.get(1).copied().unwrap_or(0);
+            let seconds = hours * 3_600 + minutes * 60;
+            if sign == '+' {
+                -(seconds as i64)
+            } else {
+                seconds as i64
+            }
+        }
+        _ => 0,
+    };
+    u64::try_from(at as i64 + offset).ok()
 }
 
 /// Seconds since the epoch, now: the moment every trust question is asked at.
@@ -1365,26 +1762,6 @@ fn integrity_of(
 fn attributable(integrity: &crate::integrity::Integrity) -> bool {
     use crate::integrity::Verdict;
     matches!(integrity.verdict, Verdict::Intact | Verdict::Weak)
-}
-
-/// Whether the signer's certificate chains to a root this OS trusts, now, for
-/// `purpose` --- signing documents, or attesting a time for a document
-/// timestamp, whose signer is the authority.
-///
-/// The same bounded preparation of the same blob the verdict was read from.
-/// Its refusal is not counted here, for the reason [`integrity_of`]'s is not:
-/// a blob that would not prepare has no `intact` verdict to reach this with.
-fn trust_of(
-    document: &Document,
-    sig: &Dictionary,
-    purpose: crate::trust::Purpose,
-) -> crate::trust::Trust {
-    match signature_contents(document, sig, MAX_SIG_BLOB, &mut 0) {
-        Some(blob) => {
-            crate::trust::of_blob_for(&blob, purpose, now_seconds(), crate::trust::Anchors::System)
-        }
-        None => crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
-    }
 }
 
 /// Reads the signer's certificate out of the `/Contents` blob.
@@ -1760,6 +2137,7 @@ fn authority(extensions: &[x509_cert::ext::Extension], unread: &mut u32) -> Opti
 /// signer's `signature` --- RFC 3161 Appendix A's imprint --- and its authority
 /// asked about at `now` under `anchors` when the verdict is `intact` or
 /// `weak`. `budget` is the document's; the imprint charges a few hundred bytes.
+#[cfg(test)]
 fn read_timestamp(
     blob: &[u8],
     unread: &mut usize,
@@ -1767,6 +2145,18 @@ fn read_timestamp(
     anchors: crate::trust::Anchors<'_>,
     now: u64,
 ) -> Option<Timestamp> {
+    read_timestamp_token(blob, unread, budget, anchors, now).map(|(timestamp, _)| timestamp)
+}
+
+/// [`read_timestamp`], with the token's own bytes beside it: the scan needs
+/// them for the authority's revocation and the time the token states.
+fn read_timestamp_token(
+    blob: &[u8],
+    unread: &mut usize,
+    budget: &mut u64,
+    anchors: crate::trust::Anchors<'_>,
+    now: u64,
+) -> Option<(Timestamp, Vec<u8>)> {
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
     use der::{Decode, Encode};
@@ -1797,14 +2187,15 @@ fn read_timestamp(
         *unread += 1;
         return None;
     };
-    Some(checked(
+    let checked = checked(
         timestamp,
         &token,
         crate::integrity::token::Target::Signature(signer.signature.as_bytes()),
         budget,
         anchors,
         now,
-    ))
+    );
+    Some((checked, token))
 }
 
 /// A read token with its verdict, its authority's standing, and whether its
@@ -1864,6 +2255,7 @@ pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
         integrity: None,
         trust: None,
         attested: false,
+        revocation: None,
     })
 }
 
@@ -1890,6 +2282,43 @@ pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
 /// to shift them reads as no time rather than as the wrong time --- the parse of
 /// the fifth value as a `GeneralizedTime` is what enforces that.
 fn read_gen_time(tst_info: &[u8]) -> Option<String> {
+    let at = gen_time_of(tst_info)?;
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        at.year(),
+        at.month(),
+        at.day(),
+        at.hour(),
+        at.minutes(),
+        at.seconds()
+    ))
+}
+
+/// `genTime` out of a token --- the whole `ContentInfo` --- as seconds since
+/// the epoch: what the token *states*, to be judged as such.
+fn gen_time_seconds(token: &[u8]) -> Option<u64> {
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::SignedData;
+    use der::Decode;
+
+    let info = ContentInfo::from_der(token).ok()?;
+    let signed: SignedData = info.content.decode_as().ok()?;
+    let content = signed.encap_content_info.econtent.as_ref()?;
+    let wrapped = content.decode_as::<der::asn1::OctetString>().ok()?;
+    Some(gen_time_of(wrapped.as_bytes())?.unix_duration().as_secs())
+}
+
+/// `genTime`, read by position as [`read_gen_time`] describes.
+///
+/// **Fractional seconds are read, and dropped.** RFC 3161 §2.4.2 permits them
+/// (`YYYYMMDDhhmmss[.s...]Z`), and `der`'s `GeneralizedTime` refuses them ---
+/// so until 2026-09-28 a token from an authority that states milliseconds was
+/// counted unreadable and its timestamp read as absent. pyHanko's own test
+/// authority writes microseconds, which is how `incr-lt.pdf` found it; the
+/// three public authorities measured that day write whole seconds. The
+/// seconds are what every date here shows and every comparison uses, and a
+/// moment rounded down is never later than the one attested.
+fn gen_time_of(tst_info: &[u8]) -> Option<der::DateTime> {
     use der::{Decode, Tagged as _};
 
     let mut outer = der::SliceReader::new(tst_info).ok()?;
@@ -1904,18 +2333,46 @@ fn read_gen_time(tst_info: &[u8]) -> Option<String> {
     for _ in 0..4 {
         der::asn1::AnyRef::decode(&mut inner).ok()?;
     }
-    let at = der::asn1::GeneralizedTime::decode(&mut inner)
-        .ok()?
-        .to_date_time();
-    Some(format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-        at.year(),
-        at.month(),
-        at.day(),
-        at.hour(),
-        at.minutes(),
-        at.seconds()
-    ))
+    let time = der::asn1::AnyRef::decode(&mut inner).ok()?;
+    if time.tag() != der::Tag::GeneralizedTime {
+        return None;
+    }
+    generalized_time(time.value())
+}
+
+/// A `GeneralizedTime`'s value in the form DER requires (X.690 §11.7): UTC,
+/// `Z`, seconds present, and a fraction only when it is not zero --- read to
+/// the second. Anything else is `None`, for the reason every positional read
+/// here refuses rather than guesses.
+fn generalized_time(value: &[u8]) -> Option<der::DateTime> {
+    let text = std::str::from_utf8(value).ok()?;
+    let body = text.strip_suffix('Z')?;
+    let (whole, fraction) = match body.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (body, None),
+    };
+    if let Some(fraction) = fraction {
+        // DER: at least one digit, and no trailing zero.
+        if fraction.is_empty()
+            || !fraction.bytes().all(|b| b.is_ascii_digit())
+            || fraction.ends_with('0')
+        {
+            return None;
+        }
+    }
+    if whole.len() != 14 || !whole.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let part = |from: usize, len: usize| whole[from..from + len].parse::<u16>().ok();
+    der::DateTime::new(
+        part(0, 4)?,
+        u8::try_from(part(4, 2)?).ok()?,
+        u8::try_from(part(6, 2)?).ok()?,
+        u8::try_from(part(8, 2)?).ok()?,
+        u8::try_from(part(10, 2)?).ok()?,
+        u8::try_from(part(12, 2)?).ok()?,
+    )
+    .ok()
 }
 
 /// The subject key identifier extension's octets, when the certificate has one.
@@ -2231,8 +2688,22 @@ fn kind_of(object: &Object) -> String {
 }
 
 #[cfg(test)]
+mod revocation_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What [`read_signatures`] judges with in a test that is about something
+    /// else: no roots, no `/DSS`, the tests' fixed present.
+    fn judging() -> Judging<'static> {
+        Judging {
+            anchors: crate::trust::Anchors::Only(&[]),
+            now: crate::sign_cms::testkeys::NOW,
+            dss: crate::revocation::Pool::new(&crate::revocation::Material::default()),
+            dss_certificates: Vec::new(),
+        }
+    }
     use lopdf::dictionary;
 
     /// An encrypted document says so, whether or not it asked for a password.
@@ -3005,11 +3476,25 @@ mod tests {
         // Read against a size the range does reach, and then against one it does
         // not --- the same document, so the only thing that moved is the file
         // length the range is compared with.
-        let covering = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let covering = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert!(covering[0].covers_whole_file);
         assert_eq!(covering[0].covered_bytes, 140);
 
-        let short = read_signatures(&parse(&bytes), 900, &[], &mut Limits::default(), &mut 0);
+        let short = read_signatures(
+            &parse(&bytes),
+            900,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert!(!short[0].covers_whole_file, "560 bytes lie past the range");
         assert_eq!(
             short[0].covered_bytes, 140,
@@ -3038,7 +3523,14 @@ mod tests {
             "Contents" => Object::string_literal("junk"),
         });
 
-        let appended = read_signatures(&parse(&bytes), 900, &[], &mut Limits::default(), &mut 0);
+        let appended = read_signatures(
+            &parse(&bytes),
+            900,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(appended[0].appended_bytes, 560, "900 - (300 + 40)");
         assert_eq!(
             900 - appended[0].covered_bytes - appended[0].appended_bytes,
@@ -3046,7 +3538,14 @@ mod tests {
             "the rest is the container gap, 100 to 300"
         );
 
-        let whole = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let whole = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(
             whole[0].appended_bytes, 0,
             "the range ends at the last byte, so nothing followed it"
@@ -3070,7 +3569,14 @@ mod tests {
             "Type" => "Sig",
             "ByteRange" => vec![0.into(), 100.into(), 300.into(), 40.into()],
         });
-        let read = read_signatures(&parse(&bytes), 200, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            200,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(read[0].appended_bytes, 0);
         assert!(!read[0].covers_whole_file);
     }
@@ -3083,7 +3589,14 @@ mod tests {
     #[test]
     fn a_signature_with_no_byte_range_reports_no_append() {
         let bytes = document_signed(dictionary! { "Type" => "Sig" });
-        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(read[0].appended_bytes, 0);
     }
 
@@ -3097,7 +3610,14 @@ mod tests {
             "Type" => "Sig",
             "ByteRange" => vec![8.into(), 92.into(), 300.into(), 40.into()],
         });
-        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert!(
             !read[0].covers_whole_file,
             "the first eight bytes are outside it"
@@ -3108,7 +3628,14 @@ mod tests {
     #[test]
     fn a_signature_with_no_byte_range_reports_nothing_covered() {
         let bytes = document_signed(dictionary! { "Type" => "Sig" });
-        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(read[0].covered_bytes, 0);
         assert!(!read[0].covers_whole_file);
     }
@@ -3135,7 +3662,14 @@ mod tests {
                 i64::MAX.into(),
             ],
         });
-        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(
             read[0].covered_bytes,
             u64::MAX,
@@ -3154,7 +3688,14 @@ mod tests {
             "Type" => "Sig",
             "ByteRange" => vec![0.into(), 100.into(), 300.into()],
         });
-        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         // 300 is an offset, never a length. Summing every number would give 400.
         assert_eq!(read[0].covered_bytes, 100);
     }
@@ -3183,7 +3724,14 @@ mod tests {
                 }),
             ],
         });
-        let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+        let read = read_signatures(
+            &parse(&bytes),
+            340,
+            &[],
+            &mut Limits::default(),
+            &mut 0,
+            &judging(),
+        );
         assert_eq!(
             read[0].certification, 1,
             "the DocMDP entry, not the first one"
@@ -3201,7 +3749,14 @@ mod tests {
                     "TransformParams" => dictionary! { "P" => level },
                 })],
             });
-            let read = read_signatures(&parse(&bytes), 340, &[], &mut Limits::default(), &mut 0);
+            let read = read_signatures(
+                &parse(&bytes),
+                340,
+                &[],
+                &mut Limits::default(),
+                &mut 0,
+                &judging(),
+            );
             assert_eq!(
                 read[0].certification, 0,
                 "level {level} is not one of the three"
@@ -3332,6 +3887,7 @@ mod tests {
             &bytes,
             &mut Limits::default(),
             &mut budget,
+            &judging(),
         );
         let verdicts: Vec<_> = read
             .iter()
@@ -3425,8 +3981,13 @@ mod tests {
             // **The second, since 2026-09-27**, and it rests on the first: a
             // type of its own in `trust.rs`, present only beside an intact or
             // weak verdict (`trust_is_asked_only_of_a_signature_with_a_signer`),
-            // naming the store it asked and never claiming revocation.
+            // naming the store it asked. Judged at an attested moment since
+            // 2026-09-28, when the signature's timestamp earns one.
             trust: _,
+            // **The third, since 2026-09-28**: a type of its own in
+            // `revocation.rs`, present exactly when `trust` is, judged only
+            // from data the document carries --- `none` means not checked.
+            revocation: _,
         } = signature;
     }
 

@@ -22,9 +22,11 @@ import wording from "../../src-tauri/testdata/cli/wording.json";
 import {
   authorityRow,
   integrityRow,
+  revocationRow,
   timestampRow,
   trustRow,
   type Integrity,
+  type Revocation,
   type Trust,
 } from "./integrity";
 import { afterRedaction } from "./recovery";
@@ -33,15 +35,22 @@ import { afterSigning, type Signed } from "./signing";
 describe("the command-line tool's wording", () => {
   it("covers every verdict, standing and closing sentence", () => {
     // 5 verdicts x 3 shapes, the unchecked one with 8 reasons more, each with
-    // and without an append and a trust row; 5 standings x 3 stores x 9
-    // reasons x 2 date pairs; the signing reports below.
+    // and without an append and a trust row; 6 standings x 3 stores x 10
+    // reasons x 2 date pairs x judged now or at an attested moment; the
+    // signing reports below.
     expect(wording.integrity.length).toBe((5 * 3 + 8) * 2 * 2);
-    expect(wording.trust.length).toBe(5 * 3 * 9 * 2);
+    expect(wording.trust.length).toBe(6 * 3 * 10 * 2 * 2);
+    expect(wording.trust.some((c) => c.trust.attested_at !== "")).toBe(true);
     // A timestamp: no verdict, or 5 verdicts x 2 shapes and the unchecked one
     // with 8 reasons, each named and unnamed, on a signature and a document;
     // its authority as the trust rows are.
     expect(wording.timestamp.length).toBe((1 + 5 * 2 + 8) * 2 * 2);
-    expect(wording.authority.length).toBe(5 * 3 * 9 * 2);
+    expect(wording.authority.length).toBe(6 * 3 * 10 * 2 * 2);
+    // A revocation row, for 4 bases: none, unchecked with no reason and 11,
+    // and for each of 2 sources good and unknown with and without a next
+    // update and revoked with 11 reasons before and after the moment; each
+    // for the signer and for an authority.
+    expect(wording.revocation.length).toBe(4 * (1 + 12 + 2 * (2 * 2 + 11 * 2)) * 2);
     // 7 signing reports, each with no timestamp and with four: sound, named
     // and trusted; sound from an authority nobody vouches for; sound and
     // unnamed; and one that does not check out.
@@ -79,6 +88,13 @@ describe("the command-line tool's wording", () => {
   it("says each timestamp authority's standing as the properties dialog does", () => {
     for (const c of wording.authority) {
       const row = authorityRow(c.trust as Trust, c.from, c.until);
+      expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
+    }
+  });
+
+  it("says each revocation answer as the properties dialog does", () => {
+    for (const c of wording.revocation) {
+      const row = revocationRow(c.revocation as Revocation, c.authority);
       expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
     }
   });

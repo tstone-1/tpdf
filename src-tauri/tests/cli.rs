@@ -107,7 +107,7 @@ fn main() {
     }
     // The order is load-bearing: 3 asserts this process has not mapped PDFium,
     // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 14] = [
+    let checks: [Check; 15] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -116,6 +116,10 @@ fn main() {
         (
             "a timestamp minted by the test authority reads back through the tool",
             timestamp_reads_back,
+        ),
+        (
+            "revocation data a document carries reads back through the tool",
+            revocation_reads_back,
         ),
         (
             "sign --timestamp asks a local authority, and writes nothing when it fails",
@@ -242,7 +246,9 @@ const SIGNED: [&str; 15] = [
 /// One signature's verdicts, as `(field, verdict, why, standing, doubt,
 /// timestamp)` --- the last the token's verdict, reason, whether its time is
 /// attested and its authority's standing, joined, or empty with no token.
-type Line = (String, String, String, String, String, String);
+/// A signature as both readers report it: field, verdict, reason, standing,
+/// doubt, the timestamp's line, and the revocation line (standing/basis).
+type Line = (String, String, String, String, String, String, String);
 
 fn in_process(path: &Path) -> Vec<Line> {
     use tpdf_lib::save::Verifier as _;
@@ -266,17 +272,30 @@ fn in_process(path: &Path) -> Vec<Line> {
                     text(serde_json::to_value(t.why).expect("json")),
                 )
             });
+            let revoked = |r: Option<tpdf_lib::revocation::Revocation>| {
+                r.map_or_else(String::new, |r| {
+                    revocation_line(
+                        &text(serde_json::to_value(r.standing).expect("json")),
+                        &text(serde_json::to_value(r.basis).expect("json")),
+                    )
+                })
+            };
             let stamp = s.timestamp.map_or_else(String::new, |t| {
                 let verdict = t.integrity.unwrap_or_default();
-                stamp_line(
-                    &text(serde_json::to_value(verdict.verdict).expect("json")),
-                    &text(serde_json::to_value(verdict.why).expect("json")),
-                    t.attested,
-                    &t.trust.map_or_else(String::new, |t| {
-                        text(serde_json::to_value(t.standing).expect("json"))
-                    }),
+                format!(
+                    "{}/{}",
+                    stamp_line(
+                        &text(serde_json::to_value(verdict.verdict).expect("json")),
+                        &text(serde_json::to_value(verdict.why).expect("json")),
+                        t.attested,
+                        &t.trust.map_or_else(String::new, |t| {
+                            text(serde_json::to_value(t.standing).expect("json"))
+                        }),
+                    ),
+                    revoked(t.revocation)
                 )
             });
+            let revocation = revoked(s.revocation);
             (
                 s.field,
                 text(serde_json::to_value(integrity.verdict).expect("json")),
@@ -284,6 +303,7 @@ fn in_process(path: &Path) -> Vec<Line> {
                 standing,
                 doubt,
                 stamp,
+                revocation,
             )
         })
         .collect()
@@ -297,14 +317,25 @@ fn from_json(file: &serde_json::Value) -> Vec<Line> {
         .iter()
         .map(|s| {
             let t = &s["timestamp"];
+            let revoked = |r: &serde_json::Value| {
+                if r.is_null() {
+                    String::new()
+                } else {
+                    revocation_line(&text(&r["standing"]), &text(&r["basis"]))
+                }
+            };
             let stamp = if t.is_null() {
                 String::new()
             } else {
-                stamp_line(
-                    &text(&t["integrity"]["verdict"]),
-                    &text(&t["integrity"]["why"]),
-                    t["attested"].as_bool().unwrap_or_default(),
-                    &text(&t["trust"]["standing"]),
+                format!(
+                    "{}/{}",
+                    stamp_line(
+                        &text(&t["integrity"]["verdict"]),
+                        &text(&t["integrity"]["why"]),
+                        t["attested"].as_bool().unwrap_or_default(),
+                        &text(&t["trust"]["standing"]),
+                    ),
+                    revoked(&t["revocation"])
                 )
             };
             (
@@ -314,9 +345,15 @@ fn from_json(file: &serde_json::Value) -> Vec<Line> {
                 text(&s["trust"]["standing"]),
                 text(&s["trust"]["why"]),
                 stamp,
+                revoked(&s["revocation"]),
             )
         })
         .collect()
+}
+
+/// A revocation answer's line, as both readers spell it.
+fn revocation_line(standing: &str, basis: &str) -> String {
+    format!("revocation={standing}@{basis}")
 }
 
 /// A token's line, as both readers spell it.
@@ -595,6 +632,152 @@ fn timestamp_reads_back(report: &mut Report) {
             ),
         );
     }
+}
+
+/// A timestamped signature with a `/DSS` appended the way a PAdES B-LT writer
+/// appends one --- the authority's root, a response about the authority's
+/// certificate, and a list from the root --- read back by the built tool.
+///
+/// The authority's root is in no store, so the authority reads untrusted and
+/// the signer is judged now, on its own claimed date. The authority's
+/// revocation is judged at the time its token states, from the document's
+/// data alone: `good`. The signer's certificate is the tool's test identity,
+/// about which the document carries nothing: `none`, which the sentence must
+/// call not checked. A response whose signature was damaged reads unchecked.
+fn revocation_reads_back(report: &mut Report) {
+    use test_tsa::{
+        mint, mint_crl, mint_ocsp, with_dss, CrlFaults, Imprint, OcspFaults, Responder, Status,
+        TestCa, TestTsa,
+    };
+
+    let now = now();
+    let dir = scratch("revocation");
+    let plain = dir.join("plain.pdf");
+    let signed = dir.join("signed.pdf");
+    std::fs::write(&plain, plain_pdf()).expect("input");
+    let store = TestStore {
+        certificate: certificate(now),
+        misdirected: false,
+    };
+    let s = |p: &Path| p.display().to_string();
+    let args = strings(&["sign", &s(&plain), "-o", &s(&signed), "--identity", SUBJECT]);
+    let (code, _, stderr) = signs(&args, &store, now);
+    if code != 0 {
+        report.check(
+            "the document to add validation data to is signed",
+            false,
+            &stderr,
+        );
+        return;
+    }
+    let tsa = TestTsa::new();
+    let root = TestCa::of_tsa();
+    let stamped = with_timestamp(&std::fs::read(&signed).expect("signed"), |value| {
+        mint(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(value),
+            None,
+            now,
+            &tsa,
+        )
+    });
+    let response = |faults: &OcspFaults| {
+        mint_ocsp(
+            &tsa.certificate,
+            &root,
+            Status::Good,
+            now - 3_600,
+            Some(now + 7 * 86_400),
+            Responder::Issuer,
+            faults,
+        )
+    };
+    let list = mint_crl(
+        &root,
+        &[],
+        now - 3_600,
+        Some(now + 7 * 86_400),
+        &CrlFaults::default(),
+    );
+    for (what, faults, expected) in [
+        ("a sound response and list", OcspFaults::default(), "good"),
+        (
+            "a response whose signature is damaged, beside a sound list",
+            OcspFaults {
+                corrupt_signature: true,
+                ..OcspFaults::default()
+            },
+            // The list still answers; a damaged response beside it is not a
+            // revocation, so the list's good stands.
+            "good",
+        ),
+    ] {
+        let path = dir.join(format!("b-lt-{}.pdf", faults.corrupt_signature));
+        std::fs::write(
+            &path,
+            with_dss(
+                &stamped,
+                std::slice::from_ref(&root.certificate),
+                &[response(&faults)],
+                std::slice::from_ref(&list),
+            ),
+        )
+        .expect("written");
+        let (code, stdout, stderr) = tool(&["verify", "--json", &s(&path)], &[]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+        let signature = &json["files"][0]["signatures"][0];
+        let authority = &signature["timestamp"]["revocation"];
+        report.check(
+            &format!(
+                "{what}: the authority's revocation reads {expected}, at the time its token states"
+            ),
+            code == 0 && authority["standing"] == expected && authority["basis"] == "stated",
+            &format!("exit {code}: {stderr}{authority}"),
+        );
+        report.check(
+            &format!(
+                "{what}: the signer's certificate, about which nothing is carried, reads none"
+            ),
+            signature["revocation"]["standing"] == "none"
+                && signature["revocation"]["sentence"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("not checked")),
+            &signature["revocation"].to_string(),
+        );
+        report.check(
+            &format!("{what}: the tool reads what the in-process reader reads"),
+            from_json(&json["files"][0]) == in_process(&path),
+            &format!(
+                "tool {:?}
+       here {:?}",
+                from_json(&json["files"][0]),
+                in_process(&path)
+            ),
+        );
+    }
+    // A response alone, damaged: nothing that checks out answers.
+    let path = dir.join("b-lt-damaged-alone.pdf");
+    std::fs::write(
+        &path,
+        with_dss(
+            &stamped,
+            std::slice::from_ref(&root.certificate),
+            &[response(&OcspFaults {
+                corrupt_signature: true,
+                ..OcspFaults::default()
+            })],
+            &[],
+        ),
+    )
+    .expect("written");
+    let (code, stdout, _) = tool(&["verify", "--json", &s(&path)], &[]);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    let authority = &json["files"][0]["signatures"][0]["timestamp"]["revocation"];
+    report.check(
+        "a damaged response alone reads unchecked, signature",
+        code == 0 && authority["standing"] == "unchecked" && authority["why"] == "signature",
+        &authority.to_string(),
+    );
 }
 
 // --- 2c: a timestamp asked for while signing --------------------------------

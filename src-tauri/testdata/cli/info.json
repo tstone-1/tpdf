@@ -90,6 +90,7 @@
               "standing": "untrusted",
               "why": "root",
               "store": "mac",
+              "attested_at": "",
               "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names."
             },
             "timestamp": {
@@ -107,8 +108,35 @@
                 "standing": "untrusted",
                 "why": "root",
                 "store": "mac",
+                "attested_at": "",
                 "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time."
+              },
+              "revocation": {
+                "standing": "none",
+                "why": null,
+                "source": null,
+                "issued": "",
+                "next": "",
+                "revoked": "",
+                "reason": null,
+                "basis": "stated",
+                "moment": "2026-09-26 18:20:14 UTC",
+                "after_moment": false,
+                "sentence": "not checked — the document carries no revocation data for the authority's certificate, and tpdf does not fetch any, so a certificate its issuer has since withdrawn reads the same as one it has not."
               }
+            },
+            "revocation": {
+              "standing": "good",
+              "why": null,
+              "source": "ocsp",
+              "issued": "2026-09-26 12:00:00 UTC",
+              "next": "2026-09-27 12:00:00 UTC",
+              "revoked": "",
+              "reason": null,
+              "basis": "claimed",
+              "moment": "2026-09-26 18:20:13 UTC",
+              "after_moment": false,
+              "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the signer's certificate had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
             }
           }
         ],
@@ -120,7 +148,9 @@
           "timestamps_unread": 0,
           "signatures_dropped": 0,
           "unreadable": 0,
-          "certificates_unread": 0
+          "certificates_unread": 0,
+          "revocation_unread": 0,
+          "revocation_dropped": 0
         }
       }
     },
@@ -182,7 +212,9 @@
           "timestamps_unread": 0,
           "signatures_dropped": 0,
           "unreadable": 0,
-          "certificates_unread": 0
+          "certificates_unread": 0,
+          "revocation_unread": 0,
+          "revocation_dropped": 0
         }
       }
     },
