@@ -75,6 +75,30 @@ fn no_os_chain(_: &[u8], _: &[Vec<u8>]) -> Vec<Vec<u8>> {
     Vec::new()
 }
 
+/// [`Vouch`] as a reader whose store trusts the test authority's root has it:
+/// the reader's own rule, that root the only anchor --- no keychain or
+/// certificate store is touched.
+fn anchored(token: &[u8], now: u64) -> crate::trust::Trust {
+    let root = crate::integrity::test_tsa::TestTsa::new().root;
+    crate::trust::of_blob_for(
+        token,
+        crate::trust::Purpose::Timestamping,
+        now,
+        crate::trust::Anchors::Only(std::slice::from_ref(&root)),
+    )
+}
+
+/// [`Vouch`] for a reader who trusts no root at all: an authority substituted
+/// by somebody on the path, as far as this computer can tell.
+fn stranger(token: &[u8], now: u64) -> crate::trust::Trust {
+    crate::trust::of_blob_for(
+        token,
+        crate::trust::Purpose::Timestamping,
+        now,
+        crate::trust::Anchors::Only(&[]),
+    )
+}
+
 /// The archive timestamp, from the test authority: a token over the pieces,
 /// now, as `tsa::ask_over_range` would return one.
 fn archive(pieces: &[&[u8]]) -> Result<Vec<u8>, String> {
@@ -97,6 +121,7 @@ fn extended(signed: &Sealed) -> Result<Vec<u8>, Refusal> {
         now(),
         &crate::save::Here,
         &no_os_chain,
+        &anchored,
         &mut quick,
         &mut archive,
     )
@@ -371,6 +396,7 @@ fn an_archive_timestamp_that_does_not_come_writes_nothing() {
             now(),
             &crate::save::Here,
             &no_os_chain,
+            &anchored,
             &mut quick,
             &mut |_: &[&[u8]]| answer.clone(),
         )
@@ -569,6 +595,7 @@ fn a_responder_that_is_down_silent_or_too_long_leaves_nothing_answered() {
         now(),
         &crate::save::Here,
         &no_os_chain,
+        &anchored,
         &mut |url: &url::Url, body: Option<(&str, Vec<u8>)>, limits: &tsa::Limits| {
             let mut elsewhere = url.clone();
             let _ = elsewhere.set_port(Some(dead));
@@ -966,6 +993,7 @@ fn a_revision_built_against_other_bytes_is_refused() {
         now(),
         &Elsewhere,
         &no_os_chain,
+        &anchored,
         &mut quick,
         &mut archive,
     )
@@ -1083,4 +1111,282 @@ fn a_cross_certificate_of_a_root_the_os_holds_ends_the_chain() {
         "the anchor is carried"
     );
     assert!(!carried.contains(&cross), "the cross-certificate is not");
+}
+
+// ------------------------------------------- the authority must be trusted
+
+/// Over `http://` anybody on the path can answer with a token from an
+/// authority of their own, whose certificate names addresses of their
+/// choosing --- here the fake PKI's, on this machine. Refused before anything
+/// is asked: no request reaches the server, and nothing is written.
+#[test]
+fn an_authority_this_computer_does_not_trust_is_refused_before_anything_is_fetched() {
+    let pki = Pki::start(good());
+    let signed = sealed(&pki);
+    let mut asked = 0usize;
+    let mut archived = 0usize;
+    let why = extend(
+        &signed.bytes,
+        &signed.cms,
+        &signed.field,
+        now(),
+        &crate::save::Here,
+        &no_os_chain,
+        &stranger,
+        &mut |url: &url::Url, body: Option<(&str, Vec<u8>)>, limits: &tsa::Limits| {
+            asked += 1;
+            quick(url, body, limits)
+        },
+        &mut |pieces: &[&[u8]]| {
+            archived += 1;
+            archive(pieces)
+        },
+    )
+    .expect_err("refused");
+    assert!(matches!(why, Refusal::Untrusted { .. }), "{why:?}");
+    assert!(
+        why.sentence().contains(&format!(
+            "the timestamp authority {} is not trusted by this computer, so tpdf will not \
+             fetch revocation data for it",
+            crate::integrity::test_tsa::AUTHORITY
+        )),
+        "{why:?}"
+    );
+    assert!(!why.revoked() && !why.tpdf_failed(), "{why:?}");
+    assert_eq!((asked, archived), (0, 0), "nothing was asked");
+    assert!(pki.paths().is_empty(), "{:?}", pki.paths());
+
+    // The control: the same signature, the authority's root trusted, gathers
+    // from the same server.
+    let bytes = extended(&signed).expect("extended");
+    assert!(bytes.len() > signed.bytes.len());
+    assert_eq!(pki.paths(), ["/ocsp/signer", "/ocsp/authority"]);
+}
+
+/// A token is attacker-shaped bytes from the network, and its certificates
+/// are what the OS parses in this process. More than the reader hands the OS
+/// is not a chain anybody vouched for; one fewer is.
+#[test]
+fn a_token_carrying_more_certificates_than_the_os_is_handed_is_not_vouched_for() {
+    use crate::integrity::test_tsa::{Published, TestCa, TestTsa};
+    let pki = Pki::start(good());
+    let stamped = |carried: usize| {
+        let mut tsa = TestTsa::publishing(&Published {
+            ocsp: vec![format!("{}/ocsp/authority", pki.base)],
+            ..Published::default()
+        });
+        for n in tsa.carried.len()..carried {
+            let n = u8::try_from(n).expect("small");
+            tsa.carried
+                .push(TestCa::new(&format!("tpdf test bystander {n}"), 0x80 + n).certificate);
+        }
+        let at = now();
+        let original = plain_pdf();
+        let unsigned = crate::sign_prepare::prepare(original.clone(), at, None).expect("prepared");
+        let made = crate::sign_cms::sign(
+            original,
+            unsigned,
+            at,
+            &pki.signer.certificate,
+            &pki.chain,
+            &Soft::p256(pki.signer.seed),
+        )
+        .expect("made");
+        let value = made.value().expect("a value");
+        let token = mint(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(&value),
+            None,
+            at,
+            &tsa,
+        );
+        made.stamped(&token).expect("stamped")
+    };
+    // One over: the reader's own rule refuses the lot, and nothing is asked.
+    let over = crate::trust::MAX_CERTIFICATES;
+    let why = vouched(&stamped(over), now(), &anchored).expect_err("refused");
+    assert!(
+        matches!(&why, Refusal::Untrusted { why, .. } if why.contains("could not be prepared")),
+        "{why:?}"
+    );
+    // At the bound --- the authority's own and fifteen more --- it is vouched
+    // for, so the cap and not the fixture is what refused the one above.
+    vouched(&stamped(over - 1), now(), &anchored).expect("vouched for");
+    assert!(pki.paths().is_empty());
+}
+
+/// The chain the OS assembles is asked of it in this process, over the
+/// token's certificates among others: at most the reader's count, none over
+/// its size, the signature's own first.
+#[test]
+fn the_os_is_handed_at_most_the_readers_bound_of_certificates() {
+    let big = vec![0x30; crate::trust::MAX_CERTIFICATE_BYTES + 1];
+    let mut others = vec![big.clone()];
+    others.extend((0..20u8).map(|n| vec![0x30, n]));
+    let mut handed = Vec::new();
+    let chain = os_chain_with(b"leaf", &others, |leaf, given| {
+        assert_eq!(leaf, b"leaf");
+        handed = given.to_vec();
+        Some(vec![b"found".to_vec()])
+    });
+    assert_eq!(chain, [b"found".to_vec()]);
+    let expected: Vec<Vec<u8>> = (0..16u8).map(|n| vec![0x30, n]).collect();
+    assert_eq!(handed.len(), crate::trust::MAX_CERTIFICATES);
+    assert_eq!(handed, expected, "the first sixteen, the oversized one out");
+    // A leaf over the size is not handed over at all.
+    let mut asked = false;
+    let chain = os_chain_with(&big, &others[1..], |_, _| {
+        asked = true;
+        Some(Vec::new())
+    });
+    assert!(chain.is_empty() && !asked);
+}
+
+// ----------------------------------------------- whose failure it is
+
+/// A worker that dies, or does not answer, at either of its two revisions.
+struct Dead {
+    at_validation: bool,
+}
+
+impl crate::save::Verifier for Dead {
+    fn scan(
+        &self,
+        _: &mut std::fs::File,
+        _: usize,
+        _: &[String],
+        _: Option<&str>,
+    ) -> Result<crate::verify::Report, String> {
+        Err("not asked".into())
+    }
+
+    fn signatures(
+        &self,
+        _: &mut std::fs::File,
+        _: usize,
+    ) -> Result<Vec<crate::docinfo::Signature>, String> {
+        Err("not asked".into())
+    }
+
+    fn validation(
+        &self,
+        signed: &[u8],
+        gathered: &Gathered,
+    ) -> Result<crate::sign_dss::Extended, String> {
+        if self.at_validation {
+            return Err("the worker did not answer within 30 s".into());
+        }
+        crate::save::Here.validation(signed, gathered)
+    }
+
+    fn document_timestamp(&self, signed: &[u8]) -> Result<crate::sign_prepare::Unsigned, String> {
+        if !self.at_validation {
+            return Err("the worker exited with signal 9".into());
+        }
+        crate::save::Here.document_timestamp(signed)
+    }
+}
+
+/// A worker that died is tpdf's failure, which the command line reports as
+/// exit 4 as its README says --- not exit 3, which is for what the document,
+/// an authority or a certificate authority refused.
+#[test]
+fn a_worker_that_dies_while_extending_is_tpdfs_failure() {
+    use crate::cli::Exit;
+    let pki = Pki::start(good());
+    let signed = sealed(&pki);
+    for at_validation in [true, false] {
+        let why = extend(
+            &signed.bytes,
+            &signed.cms,
+            &signed.field,
+            now(),
+            &Dead { at_validation },
+            &no_os_chain,
+            &anchored,
+            &mut quick,
+            &mut archive,
+        )
+        .expect_err("refused");
+        assert!(why.tpdf_failed(), "{at_validation}: {why:?}");
+        assert_eq!(
+            crate::cli::sign::long_term_failure(&why).exit,
+            Exit::Internal,
+            "{at_validation}"
+        );
+    }
+    // The control: a refusal of the certificate authority's is 3.
+    let pki = Pki::start(Plan {
+        signer_ocsp: Some(Serve::Unknown),
+        ..good()
+    });
+    let why = extended(&sealed(&pki)).expect_err("refused");
+    assert!(!why.tpdf_failed(), "{why:?}");
+    assert_eq!(
+        crate::cli::sign::long_term_failure(&why).exit,
+        Exit::Refused
+    );
+}
+
+// ------------------------------------ the command line's read-back
+
+/// The command line's check of the file it wrote holds the file to what
+/// [`check`] held the same bytes to before writing: the authority's answer
+/// and the chains above, not only the signer's.
+#[test]
+fn the_command_lines_read_back_asks_what_the_check_before_writing_asks() {
+    use crate::cli::sign::read_back_holds;
+    let pki = Pki::start(good());
+    let signed = sealed(&pki);
+    let at = now();
+    let tsa_root = crate::integrity::test_tsa::TestCa::of_tsa();
+    let certs = [pki.root.certificate.clone(), pki.tsa.root.clone()];
+    let ocsp = |certificate: &[u8], issuer: &crate::integrity::test_tsa::TestCa, says| {
+        mint_ocsp(
+            certificate,
+            issuer,
+            says,
+            at - 3_600,
+            Some(at + 86_400),
+            Responder::Issuer,
+            &OcspFaults::default(),
+        )
+    };
+    let found = |authority: Says| {
+        let bytes = with_dss(
+            &signed.bytes,
+            &certs,
+            &[
+                ocsp(&pki.signer.certificate, &pki.root, Says::Good),
+                ocsp(&pki.tsa.certificate, &tsa_root, authority),
+            ],
+            &[],
+        );
+        crate::docinfo::scan(&bytes, 1, None)
+            .expect("scanned")
+            .signatures
+    };
+    let good = found(Says::Good);
+    assert!(read_back_holds(&good, &signed.field, true, true));
+    // The signer's answer good and the authority's unknown: not what was
+    // written --- and without long-term data it would not matter, which is
+    // what makes the clause the thing that refuses.
+    let unknown = found(Says::Unknown);
+    assert!(!read_back_holds(&unknown, &signed.field, true, true));
+    assert!(read_back_holds(&unknown, &signed.field, true, false));
+    // A certificate above the authority's that is not good.
+    let mut above = good.clone();
+    let chain = above
+        .iter_mut()
+        .find(|s| s.field == signed.field)
+        .and_then(|s| s.timestamp.as_mut())
+        .and_then(|t| t.revocation_chain.as_mut())
+        .expect("a chain");
+    chain.certificates.push(crate::revocation::chain::Judged {
+        subject_cn: "tpdf test issuing authority".into(),
+        ..Default::default()
+    });
+    assert!(!read_back_holds(&above, &signed.field, true, true));
+    // Another field is not ours.
+    assert!(!read_back_holds(&good, "Signature9", true, true));
 }

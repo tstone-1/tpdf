@@ -232,6 +232,7 @@ fn conclude(
     checking: &dyn crate::save::Outside,
     pending: &Pending,
     archive_by: ArchiveBy,
+    vouch: Vouching,
 ) -> Result<Signing, String> {
     let waiting = |why: String, number: u64, stage: Waiting| Signing {
         signed: None,
@@ -277,6 +278,7 @@ fn conclude(
             now(),
             checking,
             &crate::longterm::os_chain,
+            &vouch,
             &mut crate::longterm::fetch_blocking,
             // The archive timestamp, from the authority that stamped the
             // signature.
@@ -326,6 +328,12 @@ fn conclude(
 /// pieces of the file, or the sentence saying why not. [`ask_archive`] in the
 /// application; a test's own authority in a test.
 type ArchiveBy = fn(&url::Url, &[&[u8]]) -> Result<Vec<u8>, String>;
+
+/// Whether the timestamp authority is trusted, before long-term data is
+/// fetched for it: [`crate::longterm::vouched_by_os`] in the application; the
+/// same rule over the test authority's root in a test, so no test touches the
+/// reader's store.
+type Vouching = fn(&[u8], u64) -> crate::trust::Trust;
 
 /// [`ArchiveBy`] for the application: `tsa::ask_over_range` against `url`.
 fn ask_archive(url: &url::Url, pieces: &[&[u8]]) -> Result<Vec<u8>, String> {
@@ -508,6 +516,7 @@ pub async fn sign_document(
             checking.as_ref(),
             &app.state::<Pending>(),
             ask_archive,
+            crate::longterm::vouched_by_os,
         )
     })
     .await
@@ -558,6 +567,7 @@ pub async fn sign_resume(
             checking.as_ref(),
             &held,
             ask_archive,
+            crate::longterm::vouched_by_os,
         )
     })
     .await
@@ -682,6 +692,18 @@ mod tests {
         ))
     }
 
+    /// [`Vouching`] for a test: the reader's rule, with the test authority's
+    /// root as the only anchor.
+    fn test_vouch(token: &[u8], now: u64) -> crate::trust::Trust {
+        let root = crate::integrity::test_tsa::TestTsa::new().root;
+        crate::trust::of_blob_for(
+            token,
+            crate::trust::Purpose::Timestamping,
+            now,
+            crate::trust::Anchors::Only(std::slice::from_ref(&root)),
+        )
+    }
+
     fn scratch(name: &str) -> (PathBuf, PathBuf) {
         let dir = std::env::temp_dir().join(format!("tpdf-conclude-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -714,6 +736,7 @@ mod tests {
             &crate::save::Here,
             &pending,
             test_archive,
+            test_vouch,
         )
         .expect("an answer");
         let waiting = answer.unstamped.expect("held");
@@ -740,6 +763,7 @@ mod tests {
             &crate::save::Here,
             &pending,
             test_archive,
+            test_vouch,
         )
         .expect("written");
         let signed = answer.signed.expect("signed");
@@ -770,6 +794,7 @@ mod tests {
             &crate::save::Here,
             &Pending::default(),
             test_archive,
+            test_vouch,
         )
         .expect("written");
         let signed = answer.signed.expect("signed");
@@ -801,6 +826,7 @@ mod tests {
             &crate::save::Here,
             &pending,
             test_archive,
+            test_vouch,
         ) {
             Err(why) => why,
             Ok(answer) => panic!("not refused: {answer:?}"),
@@ -811,6 +837,50 @@ mod tests {
         );
         assert!(pending.0.lock().is_none(), "a revoked signature was kept");
         assert!(!out.exists());
+    }
+
+    /// An authority this computer does not trust: held like any long-term
+    /// refusal --- *Try again*, *Sign without long-term data* --- with nothing
+    /// written and nothing asked of the certificate authorities.
+    #[test]
+    fn an_untrusted_authority_is_held_and_nothing_is_fetched() {
+        use crate::integrity::test_tsa::{Pki, Plan, Serve};
+        fn untrusted(token: &[u8], now: u64) -> crate::trust::Trust {
+            crate::trust::of_blob_for(
+                token,
+                crate::trust::Purpose::Timestamping,
+                now,
+                crate::trust::Anchors::Only(&[]),
+            )
+        }
+        let pki = Pki::start(Plan {
+            signer_ocsp: Some(Serve::Good),
+            authority_ocsp: Some(Serve::Good),
+            ..Plan::default()
+        });
+        let (source, out) = scratch("untrusted");
+        let pending = Pending::default();
+        let answer = conclude(
+            sealed(&pki),
+            None,
+            true,
+            source,
+            out.clone(),
+            &crate::save::Here,
+            &pending,
+            test_archive,
+            untrusted,
+        )
+        .expect("an answer");
+        let waiting = answer.unstamped.expect("held");
+        assert_eq!(waiting.stage, Waiting::LongTerm);
+        assert!(
+            waiting.why.contains("is not trusted by this computer"),
+            "{}",
+            waiting.why
+        );
+        assert!(answer.signed.is_none() && !out.exists(), "nothing written");
+        assert!(pki.paths().is_empty(), "{:?}", pki.paths());
     }
 
     #[test]

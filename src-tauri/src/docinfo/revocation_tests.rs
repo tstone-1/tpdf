@@ -856,6 +856,103 @@ fn a_compressed_dss_stream_is_decoded_and_a_vri_past_its_bound_is_counted() {
     assert_eq!((found.unread, found.dropped), (0, 1));
 }
 
+/// `plain_pdf()` with a `/DSS` whose `/CRLs` names `items` --- each the index
+/// of one of `streams` --- and whose one `/VRI` entry names them again.
+fn with_crls(streams: &[Vec<u8>], items: &[usize]) -> Document {
+    use lopdf::{dictionary, Object, Stream};
+    let mut document = Document::load_mem(&plain_pdf()).expect("a document");
+    let ids: Vec<lopdf::ObjectId> = streams
+        .iter()
+        .map(|deflated| {
+            document.add_object(Stream::new(
+                dictionary! { "Filter" => "FlateDecode" },
+                deflated.clone(),
+            ))
+        })
+        .collect();
+    let named: Vec<Object> = items.iter().map(|&n| Object::Reference(ids[n])).collect();
+    let dss = document.add_object(dictionary! {
+        "CRLs" => named.clone(),
+        "VRI" => dictionary! { "0000" => dictionary! { "CRL" => named } },
+    });
+    let root = document
+        .trailer
+        .get(b"Root")
+        .and_then(Object::as_reference)
+        .expect("a catalog");
+    document
+        .get_object_mut(root)
+        .and_then(Object::as_dict_mut)
+        .expect("a catalog")
+        .set("DSS", dss);
+    let mut bytes = Vec::new();
+    document.save_to(&mut bytes).expect("saved");
+    crate::encoding::load(&bytes, None).expect("loads")
+}
+
+/// `bytes` of zeros, deflated: a stream of a few kilobytes that inflates to
+/// `bytes`.
+fn inflating(bytes: usize) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut deflated = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    deflated.write_all(&vec![0; bytes]).expect("deflated");
+    deflated.finish().expect("deflated")
+}
+
+/// [`read_dss`], counting the streams decoded and the bytes they inflated to.
+fn decoding(document: &Document) -> (crate::revocation::Material, usize, usize) {
+    let (mut calls, mut inflated) = (0, 0);
+    let material = read_dss_with(document, &mut |stream, bound| {
+        calls += 1;
+        let content = dss_content(stream, bound);
+        inflated += content.as_ref().map_or(0, Vec::len);
+        content
+    });
+    (material, calls, inflated)
+}
+
+/// The counts bound the decoding, not only what is kept: one stream a
+/// thousand times over is decoded once, and past the most lists kept nothing
+/// more is decoded --- each counted dropped, which the scan reports.
+#[test]
+fn the_dss_counts_bound_the_decoding_and_what_they_drop_is_counted() {
+    const MIB: usize = 1024 * 1024;
+    // One small stream inflating to a mebibyte, named a thousand times in
+    // /CRLs and a thousand more under /VRI.
+    let bomb = with_crls(&[inflating(MIB)], &[0; 1000]);
+    let (material, calls, inflated) = decoding(&bomb);
+    assert_eq!((calls, inflated), (1, MIB), "decoded once");
+    assert_eq!(
+        (material.lists.len(), material.unread, material.dropped),
+        (1, 0, 0),
+        "kept once, and nothing dropped: the rest are the same object"
+    );
+
+    // Forty distinct streams: no more are decoded than lists are kept.
+    let many: Vec<Vec<u8>> = (0..40).map(|n| inflating(1024 + n)).collect();
+    let items: Vec<usize> = (0..40).collect();
+    let document = with_crls(&many, &items);
+    let (material, calls, _) = decoding(&document);
+    let kept = crate::revocation::MAX_LISTS;
+    assert_eq!(calls, kept);
+    assert_eq!(
+        (material.lists.len(), material.unread, material.dropped),
+        (kept, 0, 40 - kept)
+    );
+    // And the scan's limits say so.
+    let mut limits = Limits::default();
+    let _ = Judging::of(
+        &document,
+        &mut limits,
+        crate::trust::Anchors::Only(&[]),
+        NOW,
+    );
+    assert_eq!(
+        (limits.revocation_unread, limits.revocation_dropped),
+        (0, 40 - kept)
+    );
+}
+
 // ------------------------------------------------ archive timestamps (B-LTA)
 
 /// `bytes` with a document timestamp appended, its token minted by `tsa` at

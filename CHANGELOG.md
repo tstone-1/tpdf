@@ -37,7 +37,12 @@ have the binary.)
   timestamp, and your key is not asked for again. A certificate its authority
   says is revoked is refused outright. A certificate that says nowhere where its
   revocation data is published — a self-made one, say — cannot have it, and the
-  message says so; the timestamp alone still works with it.
+  message says so; the timestamp alone still works with it. Nothing is asked
+  unless this computer trusts the timestamp authority, because the addresses
+  asked come from its certificates: a timestamp somebody on the network swapped
+  for one from an authority of their own is refused before any request is made.
+  `tpdf sign --long-term` exits 4 rather than 3 when tpdf's own worker fails
+  while adding the data.
 - **A timestamp when you sign.** *Sign document…* can now ask a timestamp
   authority to confirm when the signature was made — DigiCert, Sectigo,
   GlobalSign, or another address you give — and `tpdf sign` does the same with

@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — eleven of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — eleven of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy, a filled copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
@@ -80,8 +80,9 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 **That first row said "No filesystem" flatly until 2026-08-17, and §T6.1 had contradicted it
 since 2026-08-16.** The webview holds no filesystem *plugin* permission — the granted list is
-`core:default`, `dialog:allow-open`, `dialog:allow-save`, `dialog:allow-message` and
-`updater:default`, plus `core:window:allow-destroy`. The last permission closes the
+`core:default`, `dialog:allow-open`, `dialog:allow-save`, `dialog:allow-message`,
+`updater:default` and `process:allow-restart` (§T9, since 26.9.17), plus
+`core:window:allow-destroy`. The last permission closes the
 window after the frontend has checked every open tab for unsaved edits. Tabs retain
 their document handles, worker pools and passwords until closed; only the active tab
 mounts a viewer. Resource limits remain per worker, not an aggregate limit across tabs.
@@ -91,7 +92,7 @@ permission provides the image-only redaction confirmation. But it can issue `sav
 `redact_copy`, `redact_document`, `redact_raster_copy`, `sign_document` and `sign_resume`, and all eleven write a file at the
 process's authority with a path the caller chose.
 <!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy sign_document sign_resume --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for ten specific writes; the flat version reads as the
+filesystem *itself* and can ask for eleven specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -133,6 +134,16 @@ different property, and the one the row now states. §T9 is the worked-out versi
 asks to be timestamped makes a second, from the coordinator, to the authority they chose
 (§T10). The webview names that authority as a string and gains no network reach for it --- no
 capability, the CSP unchanged --- which is the same distinction again.
+**And the row's last clause was false for the signing commands from the day they took an
+authority** (found by the 26.9.22 release audit). It said the webview had "no way to name an
+address that no document open in this process contains", while `sign_document` and
+`sign_resume` accept any `http` or `https` address the webview passes: the coordinator judges
+the scheme and refuses credentials (`tsa::authority`), and nothing else. A compromised webview
+can therefore make the coordinator send a timestamp request --- a hash and a nonce --- to any
+host, a loopback or private address included, and read nothing back beyond whether a token
+that checks out came. Private and loopback addresses are allowed on purpose: a company's own
+timestamp authority lives on its network. What long-term signing then fetches is bounded by
+§T10's gate, not by this row.
 
 Both corrections are the failure the release checklist's step 6 exists for: a row in a
 summary table that stopped agreeing with the section beneath it, in the direction that
@@ -2216,6 +2227,19 @@ attacker supplied --- a mail client, a browser --- and it is bounded by the re-e
 but it is a new reach from a document and is listed as residual risk 25. On Windows the parse
 is in-process, inside the worker's containment.
 
+**And, since 26.9.22, certificates from the network reach the OS in the coordinator.** A
+signing with long-term data hands the timestamp token's certificates --- bytes the authority,
+or anybody on an `http://` path, chose --- to `trust::platform` in the app process or
+`tpdf-cli`, not a worker, twice: for the gate that the authority is trusted for timestamping
+before anything is fetched for it (`longterm::vouched`, the reader's own
+`trust::of_blob_for`, so a set over 16 certificates or one over 64 KiB is `unchecked` and the
+signing refused), and for the offline chain the gathering looks for issuers in
+(`longterm::os_chain`, which hands over at most 16 others, each under 64 KiB). Each is decoded
+by `x509-cert` and re-encoded before the OS sees it, as in the worker. On macOS the evaluation
+is still `trustd`'s; what is new is that Security.framework's certificate parsing, and on
+Windows CryptoAPI's, meet network-supplied certificates in an uncontained process. Residual
+risk 25 carries it.
+
 **No network authority is added.** Fetching is off on both platforms, with the same flags the
 signing chain uses, now shared from `trust::platform`: no intermediate is downloaded, no OCSP
 responder or CRL is asked, and on Windows no root is auto-updated. The network authorities are
@@ -2246,9 +2270,12 @@ same code the window does, and nothing the window cannot.
 is an ordinary program on disk, with no listener, no service, no URL scheme and no IPC. So it
 widens nothing an attacker at the account's level did not have --- such an attacker can run
 the application too --- and the assets in §1 are reached exactly as the window reaches them.
-It contains no updater (§T9), and makes one network request only when `sign --timestamp`
-names an authority: the timestamp client's, from this process (§T10). Every other command,
-`verify` included, makes none.
+It contains no updater (§T9), and makes network requests only when `sign --timestamp`
+names an authority, all from this process (§T10): the timestamp request; and, with
+`--long-term`, up to 16 revocation requests to the certificate authorities
+(`longterm::MAX_REQUESTS`) --- made only once the authority is one this computer trusts --- and
+then the archive-timestamp request, a second request to the same authority. Every other
+command, `verify` included, makes none.
 
 **The control on the key is the operating system's prompt, and nothing works around it.**
 `tpdf sign` asks the store through `keystore.rs`, the application's module, and the OS decides
@@ -2466,7 +2493,14 @@ size bound --- a filtered stream that will not decode inside it is counted, neve
 certificates of at most 64 KiB, 64 `/VRI` entries --- and anything dropped at a bound or
 unreadable is counted in `Limits::revocation_dropped` / `revocation_unread`, and turns every
 answer that would have been *good* or *none* into *not checked*: what was not read might have
-said revoked. Every signature over a response, a list or a delegated responder's certificate
+said revoked. **The counts bound the decoding, not only what is kept** (since 26.9.22, found by
+its release audit): an indirect object is decoded once however many arrays and `/VRI` entries
+name it, and at most as many `/DSS` streams of each kind are decoded as are kept --- the next is
+counted dropped without being decoded (`docinfo::read_dss_with`). Before, every array item was
+inflated first and the counts applied afterwards, so a `/CRLs` array naming one small stream
+that inflates to 8 MiB a thousand times inflated 8 GB in the worker to keep one list; now the
+most a `/DSS` can make the worker inflate is its count bounds times its size bounds, about
+68 MiB. Every signature over a response, a list or a delegated responder's certificate
 is checked by `integrity::signed_by`, the arithmetic a signature's own verdict rests on, and
 charged to the document's `MAX_HASHED` before it is hashed; a list's check is memoised per
 issuer, so eight megabytes are hashed once however many certificates ask.
@@ -2726,7 +2760,8 @@ else, so this is the common case:
   **What stops it being mistaken for the chosen one** is that the authority's standing is part of
   every answer: the closing sentence after signing names the authority and says whether this
   computer trusts it, the properties dialog and `tpdf verify` do the same, and a substituted
-  authority reads *not trusted*. Residual 29.
+  authority reads *not trusted*. That is the plain B-T signing; a signing that also asks for
+  long-term data is refused at this point, before anything is fetched (below). Residual 29.
 
 **What a malicious authority can do** is what any trusted authority can: state any time for any
 imprint it is sent (residual 28). It cannot make tpdf write more than the reserved span
@@ -2787,6 +2822,19 @@ answer (a transport failure, an HTTP error, `tryLater`, bytes that are not a res
 only thing the list is asked after: an answer that fails its checks is never replaced by
 shopping for another from the same CA over the same path.
 
+**Only for an authority this computer trusts, since 26.9.22.** Before anything is fetched, the
+timestamp authority's certificate must chain to a root the OS store trusts for timestamping,
+now and offline (`longterm::vouched`: `trust::of_blob_for` with `Purpose::Timestamping`, the
+reader's own rule). Otherwise the signing is refused --- *the timestamp authority X is not
+trusted by this computer, so tpdf will not fetch revocation data for it* --- with nothing
+written and nothing asked, and the window holds the signature as for any other long-term
+refusal (*Try again*, *Sign without long-term data*). The signer's certificate needs no such
+gate: it comes from the reader's own keychain or certificate store, not from the network. The
+gate is where certificates from the network are first handed to the OS in the coordinator:
+the token's set, re-encoded, at most 16 of them each under 64 KiB, as the worker hands a
+document's (§T6.22); the offline chain the gathering then asks the OS for is held to the same
+bounds (`longterm::os_chain`).
+
 **Who writes, and what is checked before writing.** A worker, spawned over a snapshot of the
 signed bytes that are not written yet, builds the `/DSS` revision with `lopdf` and reads the
 result with `docinfo::scan`; the coordinator writes nothing unless that reading says the new
@@ -2796,7 +2844,16 @@ signature is intact, its timestamp intact, and the signer's and the authority's 
 **What an attacker can do.** On the path: read which certificates are being checked (above);
 deny service (nothing is written, and the reader may sign without the data); **replay an
 earlier response** still inside its validity window --- one signed before a revocation, saying
-`good` (residual 33). Not: forge a response, which is signed by the issuer or a responder it
+`good` (residual 33). **Choose the addresses asked, no longer**: the addresses come from the
+certificates, and the timestamp authority's certificates come from the network. Until 26.9.22
+an attacker on an `http://` path to the authority could substitute a token from an authority of
+its own (above) whose certificates named any `http` or `https` address --- loopback, the
+reader's LAN --- and the gathering would send up to 16 requests there from the reader's machine,
+reading back only whether an answer checked out: a blind request forgery. The gate above closes
+it: fetching happens only for an authority whose chain the OS trusts, and **a trusted chain is
+what makes those addresses the certificate authority's**. Loopback and private addresses are
+still allowed, on purpose: a company's own PKI publishes its responder on its network, and a
+CA the store trusts is trusted to name its own. Not: forge a response, which is signed by the issuer or a responder it
 authorised and checked twice, here and in the worker's reading. A malicious or compromised CA
 can answer `good` for a revoked certificate, as it can for every relying party.
 
@@ -4030,6 +4087,13 @@ which is what makes it evidence rather than a milestone.
     being the component every other program on the machine hands attacker-supplied
     certificates to. Not closed: closing it means not asking the OS, which is the decision the
     trust verdict rests on. Unmeasured on Windows, where the parse is in-process and contained.
+    **Widened 2026-09-28, at the 26.9.22 release audit** (§T6.22, §T10): a signing with
+    long-term data hands the OS certificates from the network --- the timestamp token's set ---
+    in the coordinator or `tpdf-cli`, which is not contained on either platform: once to judge
+    whether the authority is trusted before anything is fetched for it, and once for the
+    offline chain the gathering looks for issuers in. Held to the same bounds, sixteen
+    certificates each re-encoded and under 64 KiB, and asked only when the reader asks for
+    long-term data on one signing.
 
 26. **A key the reader allowed the command-line tool to use signs for anything running as
     them** (§T6.23), added 2026-09-27. *Always Allow* in the macOS keychain prompt is granted to
@@ -4061,25 +4125,36 @@ which is what makes it evidence rather than a milestone.
     at the time the token states, and a revoked authority no longer attests a moment for the
     signer. Not closed for the ordinary document, which carries none: that reads *not checked*,
     and fetching it would need the network in the read path, which was decided against.
+    **Narrowed again with archive timestamps (PAdES B-LTA, 2026-09-28):** a document timestamp
+    later in the file, sound and from an authority the store trusts, is the moment the
+    authorities before it are judged at, so an authority whose certificate has expired since is
+    judged inside its dates rather than read `expired`. The last archive's authority is still
+    judged now, and so is every authority in a document without one.
 29. **Over `http://`, an attacker on the path can substitute a timestamp from an authority of its
     own** (§T10), added 2026-09-28. It sees the imprint and the nonce in the request and can mint
     a token over both; the token checks out and is written. It cannot forge one from the
     authority the reader chose. Bounded by the authority's standing being said wherever the
     timestamp is --- the closing sentence after signing, the properties dialog, `tpdf verify` ---
     so a substituted authority reads *not trusted* rather than as the one chosen; and closed for
-    the one listed authority that serves HTTPS, Sectigo, which is asked over it. Not closed:
-    refusing to write a token whose authority the store does not trust would close it, at the
-    price of trust being asked in the coordinator on network bytes, and of refusing a real
-    authority whose root a Windows machine has not yet fetched --- a decision left open in
-    `docs/PLAN.md` §9, Phase 6's open questions.
+    the one listed authority that serves HTTPS, Sectigo, which is asked over it. **Closed for
+    long-term signing at the 26.9.22 release audit**: with long-term data, the authority must be
+    trusted for timestamping by the OS store before anything is fetched, so a substituted token
+    is refused, nothing written, and its certificates choose no address tpdf connects to
+    (§T10). That price was paid there --- trust is now asked in the coordinator on network
+    bytes (residual 25), and a real authority whose root a Windows machine has not yet fetched
+    is refused for long-term data until it has. Still open for a plain timestamped signing: a
+    substituted token without long-term data is written, and reads *not trusted* wherever it
+    is shown --- the decision left open in `docs/PLAN.md` §9, Phase 6's open questions.
 30. **A signer judged at an attested moment is judged with today's trust store** (§T6.25),
     added 2026-09-28. The OS store is asked whether the chain ended at a root it trusts *at*
     `genTime`, using the roots it holds now: a root distrusted since reads as not trusted, and a
     root added since as trusted --- the chain model EN 319 102-1 describes, with current anchors.
     And the moment is the authority's, trusted *now*: an authority compromised without its
     revocation reaching the document can attest any time. Bounded by the sentence naming both
-    the moment and whose clock it is. Not closed: archive timestamps, which re-attest the
-    validation data before an authority's certificate runs out, are not read.
+    the moment and whose clock it is. **Narrowed 2026-09-28**: archive timestamps are read (PAdES
+    B-LTA, §T6.25), so an authority followed by a sound archive from an authority the store
+    trusts is judged at that archive's moment rather than now. Not closed: every moment is
+    still judged with today's roots, and the last archive's authority is trusted *now*.
 31. **A delegated OCSP responder's own revocation is not asked** (§T6.25), added 2026-09-28.
     tpdf checks that the issuer issued the responder's certificate for `id-kp-OCSPSigning` and
     that it was in force when it answered; it does not look for revocation data about the

@@ -303,6 +303,7 @@ fn long_term_half(
         now,
         &tpdf_lib::save::Here,
         &longterm::os_chain,
+        &longterm::vouched_by_os,
         &mut longterm::fetch_blocking,
         &mut |_: &[&[u8]]| Err("the archive timestamp is not reached for this signer".into()),
     );

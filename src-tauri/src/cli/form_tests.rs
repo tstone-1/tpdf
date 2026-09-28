@@ -677,6 +677,7 @@ fn ran(line: &[String]) -> (i32, String, String) {
         library_dir: PathBuf::from("/nonexistent/no-workers-here"),
         now: 0,
         program: "tpdf".into(),
+        anchors: crate::trust::Anchors::Only(&[]),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run(line, &env, &mut out, &mut err);

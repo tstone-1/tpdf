@@ -15185,7 +15185,10 @@ the timestamp row stays a claim. (Asked since 2026-09-28, with the timestamping 
   before writing would close that, and costs two things: the OS store is then asked in the
   coordinator about certificates that arrived over the network (in the worker today), and on
   Windows a real authority whose root the machine has not fetched on demand would be refused
-  until it has. A decision for the owner, not an engineering default.
+  until it has. A decision for the owner, not an engineering default. **Answered for
+  long-term signing at the 26.9.22 release audit**: there the authority must be trusted
+  before anything is fetched for it, both costs accepted (*Long-term validation data when
+  signing*, below). Still open for a plain timestamped signing.
 - **Which moment a timestamp authority is judged at.** Answered 2026-09-28 for increment A:
   the present, like the signer, because `genTime` is the authority's own statement --- below.
   ~~Judging the *signer* at `genTime` is the open half.~~ **Answered 2026-09-28 (C1)**: at
@@ -16265,12 +16268,13 @@ intact, its timestamp intact, and the signer's and the authority's revocation `g
 
 | Half | Where | What it does |
 |---|---|---|
+| Whose chain may be asked about | app process, `longterm::vouched` | Since the 26.9.22 release audit: nothing is fetched unless the timestamp authority chains to a root the OS store trusts for timestamping, now and offline --- `trust::of_blob_for`, the reader's rule, over at most 16 of the token's certificates. Otherwise a refusal naming the authority. |
 | What to ask about | app process, `longterm::plan` | The signer's certificate and every one above it that is not a root, the authority's likewise. Issuers from the signature's certificates, the token's, and the chain the OS assembles offline (`trust::platform::evaluate`), each found by name *and* key. A certificate with `id-pkix-ocsp-nocheck` is skipped; a cross-certificate of a root the candidates hold ends the chain at that root. |
 | Fetching | app process, `longterm::gather`, `tsa::fetch` | OCSP first, a list only when no responder answered; `http`/`https` only, `ldap:` skipped. B's client: no redirect, 10 s connect, 30 s each; 64 KiB an OCSP answer, 4 MiB a list and everything together; 16 requests and 90 s in all. |
 | Checking each answer | app process, `revocation::judge` at the present | `good` kept; `revoked` a refusal naming the certificate, with no second choice; `unknown` or an answer that does not check out, a refusal. |
 | The revision | worker, `sign_dss::append` | `/DSS` with `/Certs`, `/OCSPs` (full `OCSPResponse`s), `/CRLs`, uncompressed streams; an earlier `/DSS`'s arrays kept and added to; no `/VRI`. Built with `lopdf` over a snapshot of the bytes not yet written (`Request::AppendValidation`, `save::InWorker::validation`). |
 | The check before writing | worker `sign_dss::extend` → app `longterm::check` | `docinfo::scan` over the finished bytes, answered with the revision; the app refuses unless intact, timestamp intact, both revocations `good`. |
-| The policy | `commands::sign::conclude`, `cli/sign.rs` | Nothing written on any refusal. Window: the **sealed, timestamped** signature held in `Pending` (stage `long_term`), *Try again* / *Sign without long-term data* / *Cancel*; a revocation keeps nothing. Tool: exit 3. |
+| The policy | `commands::sign::conclude`, `cli/sign.rs` | Nothing written on any refusal. Window: the **sealed, timestamped** signature held in `Pending` (stage `long_term`), *Try again* / *Sign without long-term data* / *Cancel*; a revocation keeps nothing. Tool: exit 3, or 4 when the failure is tpdf's own --- a worker that died or did not answer included (`Refusal::tpdf_failed`). |
 | The window | `signing.ts`, `signtimestamp.ts` | The checkbox, enabled only while an authority is chosen, unticked until ticked, remembered under `tpdf.signatureLongTerm`; `askAfterLongTermFailed`; the closing sentence adds the *Revocation* and *Authority revocation* rows when they read `good`. |
 
 Decisions the owner took before building, recorded as given: reading never goes online; opt-in
@@ -16388,6 +16392,38 @@ identity is `tabs_check.py --phase sign` (`BUILD.md`): the chooser, the refusal'
 without long-term data*, the remembered choice and *Cancel*, with the OS's key requests counted
 exactly at each step --- run green with the owner on 2026-09-28, macOS arm64: 46/46, the key requests
 +1, +1, +0 for *Sign without long-term data*, +1, +0 for *Cancel*.
+
+**Changed at the 26.9.22 release audit**, each with a test and a mutation that proved it:
+
+- **Only for an authority the OS trusts.** The addresses asked come from the certificates, and
+  the authority's come from the network: over `http://` an attacker on the path could
+  substitute a token from an authority of its own (threat model residual 29) whose
+  `authorityInfoAccess` and `cRLDistributionPoints` named any host --- loopback, the reader's
+  LAN --- and `gather` sent up to 16 requests there. Now `longterm::vouched` asks first, and an
+  authority the store does not trust for timestamping is refused: *the timestamp authority X
+  is not trusted by this computer, so tpdf will not fetch revocation data for it*, nothing
+  written, the signature held as for any long-term refusal. A trusted chain is what makes the
+  addresses the CA's, so **private and loopback addresses are not refused**: a company's own
+  PKI publishes its responder there. The signer's certificate needs no gate, as it comes from
+  the reader's own store. Measured offline: a substituted authority whose certificate names the
+  fake PKI's server is refused with **zero** requests reaching it, and the same signature with
+  the authority's root anchored gathers from it.
+- **Network certificates reach the OS in this process, bounded.** The gate and the offline
+  chain (`longterm::os_chain`) hand the OS the token's certificates in the app process or the
+  tool's, not a worker: at most `trust::MAX_CERTIFICATES` (16), each re-encoded and under
+  `MAX_CERTIFICATE_BYTES`. A token carrying 17 is refused by the gate as the reader leaves it
+  unchecked; one carrying 16 is vouched for. Threat model residual 25.
+- **A dead worker is exit 4.** `Refusal::Written` --- the worker's revision or its reading ---
+  included a worker that died or timed out, and the tool mapped every refusal to 3, while its
+  README says a worker that died is 4. `cli::sign::long_term_failure` now exits 4 for
+  `Refusal::tpdf_failed` (`Written`, `Unreadable`) and 3 for every refusal of the document's,
+  an authority's or a CA's.
+- **The tool's read-back asks what the check before writing asked.** It checked only the
+  signer's revocation after writing; `cli::sign::read_back_holds` now applies `longterm::check`
+  to the written file --- both revocations and the chains above them --- and exits 4 otherwise.
+- **The reader's `/DSS` counts bound the decoding** (`docinfo::read_dss_with`): one object is
+  decoded once whatever names it, and past a kind's count nothing more is decoded, each counted
+  dropped. A thousand references to one stream inflating to 1 MiB now inflate it once.
 
 #### The whole chain, from the document's own data --- done 2026-09-28
 

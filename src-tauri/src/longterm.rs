@@ -17,6 +17,18 @@
 //!   online** (increment C1's decision); only signing does, and only when the
 //!   reader asked for long-term data on this signing, which is offered only
 //!   together with a timestamp.
+//! - **Only for an authority this computer trusts** ([`vouched`]). Before
+//!   anything is fetched, the timestamp authority's certificate must chain to a
+//!   root the operating system trusts for timestamping, now and offline ---
+//!   `trust::judge_for` with `Purpose::Timestamping`, the reader's own rule,
+//!   over at most `trust::MAX_CERTIFICATES` of the token's certificates. The
+//!   token came from the network, and over `http://` anybody on the path can
+//!   answer with one from an authority of their own whose certificates name
+//!   addresses of their choosing; a chain the OS trusts is what makes those
+//!   addresses the certificate authority's. They may still be on a private
+//!   network or this machine, on purpose: a company's own PKI publishes its
+//!   responder there. The signer's certificate needs no such gate: it comes
+//!   from the reader's own keychain or certificate store, not from the network.
 //! - **What is asked about** ([`plan`]): the signer's certificate and every
 //!   certificate above it that is not a root, and the timestamp authority's
 //!   certificate and every one above it that is not a root. Roots need nothing:
@@ -75,7 +87,8 @@
 //! **Nothing is written, and the reader is told why** ([`Refusal::sentence`]).
 //! The window keeps the made, timestamped signature so the key is not asked
 //! for again, and offers trying again or signing without the long-term data;
-//! the command line exits 3. A revocation is the one refusal with no second
+//! the command line exits 3 --- or 4 where the failure is tpdf's own
+//! ([`Refusal::tpdf_failed`]). A revocation is the one refusal with no second
 //! choice ([`Refusal::revoked`]).
 
 use std::time::{Duration, Instant};
@@ -197,6 +210,14 @@ pub enum Refusal {
     NotPublished(String),
     /// The certificate that issued it is nowhere to be found.
     NoIssuer(String),
+    /// The timestamp authority's certificate does not chain to a root this
+    /// computer trusts for timestamping, so nothing is fetched for it.
+    Untrusted {
+        /// The authority, by its common name.
+        name: String,
+        /// Why not, as a clause.
+        why: String,
+    },
     /// Nobody answered: each attempt, as a clause.
     Unanswered {
         /// The certificate.
@@ -263,6 +284,10 @@ impl Refusal {
                 "tpdf could not find the certificate that issued {name}, so it cannot ask about \
                  its revocation"
             ),
+            Refusal::Untrusted { name, why } => format!(
+                "the timestamp authority {name} is not trusted by this computer, so tpdf will \
+                 not fetch revocation data for it: {why}"
+            ),
             Refusal::Unanswered { name, attempts } => format!(
                 "tpdf could not get revocation data for {name}: {}",
                 attempts.join("; ")
@@ -293,6 +318,17 @@ impl Refusal {
                  timestamp authority's own certificate expires, could not be added: {why}"
             ),
         }
+    }
+
+    /// Whether this refusal is tpdf's own failure rather than the document's,
+    /// an authority's or a certificate authority's: a signature or token tpdf
+    /// made that it cannot read, or a revision its own worker built or read
+    /// back --- including a worker that died or did not answer, which reaches
+    /// here as [`Refusal::Written`]. The command line exits 4 for these, as its
+    /// README says of a worker that died, and 3 for every other refusal.
+    #[must_use]
+    pub fn tpdf_failed(&self) -> bool {
+        matches!(self, Refusal::Unreadable(_) | Refusal::Written(_))
     }
 
     /// Whether this refusal is a certificate authority saying a certificate is
@@ -388,12 +424,98 @@ fn signer_of(signed: &cms::signed_data::SignedData) -> Option<Certificate> {
     }
 }
 
+/// The timestamp token a signature carries, DER: its first signer's
+/// `id-aa-timeStampToken` attribute.
+fn token_of(signed: &cms::signed_data::SignedData) -> Option<Vec<u8>> {
+    signed
+        .signer_infos
+        .0
+        .as_slice()
+        .first()
+        .and_then(|info| info.unsigned_attrs.as_ref())
+        .and_then(|attributes| {
+            attributes
+                .iter()
+                .find(|a| a.oid.to_string() == TIME_STAMP_TOKEN)
+        })
+        .and_then(|attribute| attribute.values.as_slice().first())
+        .and_then(|value| value.to_der().ok())
+}
+
+/// Who says whether the timestamp authority is trusted for timestamping,
+/// given its token (a CMS `ContentInfo`, DER) and the present: [`vouched_by_os`]
+/// in the application, the same rule over a test's own roots in a test.
+pub type Vouch<'a> = dyn Fn(&[u8], u64) -> crate::trust::Trust + 'a;
+
+/// [`Vouch`] for the application and the tool: the operating system's store,
+/// offline, for timestamping --- `trust::of_blob_for`, the rule the reader
+/// applies to every token, including its cap on how many certificates the OS
+/// is handed.
+#[must_use]
+pub fn vouched_by_os(token: &[u8], now: u64) -> crate::trust::Trust {
+    crate::trust::of_blob_for(
+        token,
+        crate::trust::Purpose::Timestamping,
+        now,
+        crate::trust::Anchors::System,
+    )
+}
+
+/// Refuses unless `vouch` says the authority that stamped `cms` is trusted
+/// for timestamping now --- asked before anything is fetched, so an
+/// authority nobody vouches for never chooses an address tpdf connects to.
+///
+/// **Trusted, and nothing less**: a store that could not be asked, or a
+/// token carrying more certificates than the OS is handed, is not a chain
+/// anybody vouched for, and an authority whose certificate is out of its
+/// dates cannot have stamped this signature soundly.
+///
+/// # Errors
+///
+/// [`Refusal::Untrusted`], naming the authority and why; a signature or
+/// token tpdf cannot read; no timestamp.
+pub fn vouched(cms: &[u8], now: u64, vouch: &Vouch<'_>) -> Result<(), Refusal> {
+    use crate::trust::Standing;
+    let signed = signed_data(cms).map_err(Refusal::Unreadable)?;
+    let token = token_of(&signed).ok_or(Refusal::NoTimestamp)?;
+    let trust = vouch(&token, now);
+    if trust.standing == Standing::Trusted {
+        return Ok(());
+    }
+    let computer = crate::cli::words::computer(trust.store);
+    let why = match (trust.standing, trust.why) {
+        (Standing::Expired | Standing::NotYetValid, _) => {
+            "its certificate is not in force now".to_string()
+        }
+        (_, Some(doubt)) => crate::cli::words::doubt_about(doubt, computer, "the authority's"),
+        (_, None) => "no reason was given".to_string(),
+    };
+    let name = signed_data(&token)
+        .ok()
+        .and_then(|token| signer_of(&token))
+        .map_or_else(
+            || "whose certificate is not identified".to_string(),
+            |certificate| {
+                let cn = crate::docinfo::common_name(&certificate.tbs_certificate.subject);
+                if cn.is_empty() {
+                    crate::docinfo::distinguished_name(&certificate.tbs_certificate.subject)
+                } else {
+                    cn
+                }
+            },
+        );
+    Err(Refusal::Untrusted { name, why })
+}
+
 /// What to ask about, and every certificate the `/DSS` should carry.
 ///
 /// `cms` is the timestamped signature just made. `os_chain` answers the chain
 /// the operating system assembles for a certificate from the ones given, DER,
 /// offline --- `trust::platform::evaluate`'s chain in the application, nothing
 /// in a test that wants none.
+///
+/// It does not ask whether the authority is trusted: [`extend`] asks that
+/// first ([`vouched`]), and nothing but a probe calls this without it.
 ///
 /// # Errors
 ///
@@ -430,20 +552,7 @@ fn planned(
     let signed = signed_data(cms).map_err(Refusal::Unreadable)?;
     let signer = signer_of(&signed)
         .ok_or_else(|| Refusal::Unreadable("its certificate is not identified".into()))?;
-    let token = signed
-        .signer_infos
-        .0
-        .as_slice()
-        .first()
-        .and_then(|info| info.unsigned_attrs.as_ref())
-        .and_then(|attributes| {
-            attributes
-                .iter()
-                .find(|a| a.oid.to_string() == TIME_STAMP_TOKEN)
-        })
-        .and_then(|attribute| attribute.values.as_slice().first())
-        .and_then(|value| value.to_der().ok())
-        .ok_or(Refusal::NoTimestamp)?;
+    let token = token_of(&signed).ok_or(Refusal::NoTimestamp)?;
     let token = signed_data(&token).map_err(Refusal::Unreadable)?;
     let authority = signer_of(&token).ok_or_else(|| {
         Refusal::Unreadable("the timestamp's certificate is not identified".into())
@@ -952,14 +1061,54 @@ pub fn check(signatures: &[crate::docinfo::Signature], field: &str) -> Result<()
 
 /// The chain the operating system assembles for `leaf` from `others`,
 /// offline, signer first --- or nothing where there is no store to ask.
+///
+/// **Held to the reader's bounds** ([`bounded`]): `others` includes the
+/// timestamp token's certificates, which came from the network, and they are
+/// parsed by the OS in this process rather than a worker's.
 #[must_use]
 pub fn os_chain(leaf: &[u8], others: &[Vec<u8>]) -> Vec<Vec<u8>> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    crate::trust::platform::evaluate(leaf, others, crate::trust::Anchors::System, now)
-        .map(|found| found.chain)
-        .unwrap_or_default()
+    os_chain_with(leaf, others, |leaf, others| {
+        crate::trust::platform::evaluate(leaf, others, crate::trust::Anchors::System, now)
+            .map(|found| found.chain)
+            .ok()
+    })
+}
+
+/// [`os_chain`], with `evaluate` the store: split so a test sees what the OS
+/// would be handed.
+fn os_chain_with(
+    leaf: &[u8],
+    others: &[Vec<u8>],
+    evaluate: impl FnOnce(&[u8], &[Vec<u8>]) -> Option<Vec<Vec<u8>>>,
+) -> Vec<Vec<u8>> {
+    let Some(others) = bounded(leaf, others) else {
+        return Vec::new();
+    };
+    evaluate(leaf, &others).unwrap_or_default()
+}
+
+/// What of `others` the OS is handed beside `leaf`: at most
+/// `trust::MAX_CERTIFICATES`, in order --- the signature's own first --- each
+/// no larger than `trust::MAX_CERTIFICATE_BYTES`. `None` when `leaf` itself is
+/// over that size, which nothing real is. The same bounds the reader holds a
+/// signature's set to in the worker (`trust::certificates_with`); one over
+/// the count is left out rather than refusing the lot, since a candidate a
+/// chain needed then reads as a missing link, which is what it is.
+fn bounded(leaf: &[u8], others: &[Vec<u8>]) -> Option<Vec<Vec<u8>>> {
+    if leaf.len() > crate::trust::MAX_CERTIFICATE_BYTES {
+        return None;
+    }
+    Some(
+        others
+            .iter()
+            .filter(|der| der.len() <= crate::trust::MAX_CERTIFICATE_BYTES)
+            .take(crate::trust::MAX_CERTIFICATES)
+            .cloned()
+            .collect(),
+    )
 }
 
 /// [`tsa::fetch`], waited for on the application's runtime: for a caller on
@@ -982,7 +1131,8 @@ pub fn fetch_blocking(
 /// revisions appended, when every step passed (PAdES B-LTA since 2026-09-28).
 ///
 /// `bytes` is the sealed B-T document; `cms` the timestamped signature in it;
-/// `field` its field.
+/// `field` its field. `vouch` says whether the authority is trusted, and is
+/// asked before anything else ([`vouched`]).
 ///
 /// # Errors
 ///
@@ -995,9 +1145,11 @@ pub fn extend(
     now: u64,
     worker: &dyn crate::save::Verifier,
     os_chain: &OsChain<'_>,
+    vouch: &Vouch<'_>,
     fetch: &mut Fetch<'_>,
     archive: &mut Archive<'_>,
 ) -> Result<Vec<u8>, Refusal> {
+    vouched(cms, now, vouch)?;
     let (subjects, certificates) = plan(cms, os_chain)?;
     let gathered = gather(&subjects, certificates, now, TOTAL, fetch)?;
     let extended = worker

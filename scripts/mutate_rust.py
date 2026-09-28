@@ -12754,8 +12754,8 @@ MUTATIONS += [
     Mutation(
         "lt: read a filtered /DSS stream raw",
         "src/docinfo.rs",
-        "            let content = if stream.dict.has(b\"Filter\") {",
-        "            let content = if false {",
+        "    if stream.dict.has(b\"Filter\") {",
+        "    if false {",
         "a_compressed_dss_stream_is_decoded_and_a_vri_past_its_bound_is_counted",
     ),
     Mutation(
@@ -13338,6 +13338,102 @@ MUTATIONS += [
     ),
 ]
 
+
+# --- the release audit for 26.9.22 (2026-09-28) ------------------------------
+#
+# `longterm.rs`, `cli/sign.rs` and `docinfo.rs`: fetching only for a
+# timestamp authority this computer trusts, the reader's bounds on what the OS
+# parses in the app process, whose failure a dead worker is, the command
+# line's read-back after long-term signing, and /DSS counts that bound the
+# decoding rather than only what is kept.
+MUTATIONS += [
+    Mutation(
+        "longterm: gather for an authority nobody vouched for",
+        "src/longterm.rs",
+        "    vouched(cms, now, vouch)?;",
+        "    let _ = vouch;",
+        "an_authority_this_computer_does_not_trust_is_refused_before_anything_is_fetched",
+    ),
+    Mutation(
+        "longterm: take an authority the store could not judge as vouched for",
+        "src/longterm.rs",
+        "    if trust.standing == Standing::Trusted {",
+        "    if trust.standing != Standing::Untrusted {",
+        "a_token_carrying_more_certificates_than_the_os_is_handed_is_not_vouched_for",
+    ),
+    Mutation(
+        "longterm: hand the OS every certificate the token carries",
+        "src/longterm.rs",
+        "            .take(crate::trust::MAX_CERTIFICATES)",
+        "            .take(usize::MAX)",
+        "the_os_is_handed_at_most_the_readers_bound_of_certificates",
+    ),
+    Mutation(
+        "longterm: hand the OS a candidate of any size",
+        "src/longterm.rs",
+        "            .filter(|der| der.len() <= crate::trust::MAX_CERTIFICATE_BYTES)",
+        "            .filter(|_| true)",
+        "the_os_is_handed_at_most_the_readers_bound_of_certificates",
+    ),
+    Mutation(
+        "longterm: hand the OS a leaf of any size",
+        "src/longterm.rs",
+        "    if leaf.len() > crate::trust::MAX_CERTIFICATE_BYTES {",
+        "    if false {",
+        "the_os_is_handed_at_most_the_readers_bound_of_certificates",
+    ),
+    Mutation(
+        "longterm: call a dead worker a refusal",
+        "src/longterm.rs",
+        "        matches!(self, Refusal::Unreadable(_) | Refusal::Written(_))",
+        "        matches!(self, Refusal::Unreadable(_))",
+        "a_worker_that_dies_while_extending_is_tpdfs_failure",
+    ),
+    Mutation(
+        "cli: exit 3 for tpdf's own long-term failure",
+        "src/cli/sign.rs",
+        "    let exit = if why.tpdf_failed() {",
+        "    let exit = if false {",
+        "a_long_term_failure_of_tpdfs_own_is_4_and_every_refusal_3",
+    ),
+    Mutation(
+        "cli: read back only the signer's revocation after long-term signing",
+        "src/cli/sign.rs",
+        "    }) && (!long_term || crate::longterm::check(signatures, field).is_ok())",
+        "    }) && (!long_term\n"
+        "        || signatures.iter().any(|s| {\n"
+        "            s.field == field\n"
+        "                && s.revocation\n"
+        "                    .as_ref()\n"
+        "                    .is_some_and(|r| r.standing == crate::revocation::Status::Good)\n"
+        "        }))",
+        "the_command_lines_read_back_asks_what_the_check_before_writing_asks",
+    ),
+    Mutation(
+        "sign: gather in the window without asking whether the authority is trusted",
+        "src/commands/sign.rs",
+        "            &vouch,",
+        "            &|_: &[u8], _: u64| crate::trust::Trust {\n"
+        "                standing: crate::trust::Standing::Trusted,\n"
+        "                ..crate::trust::Trust::default()\n"
+        "            },",
+        "an_untrusted_authority_is_held_and_nothing_is_fetched",
+    ),
+    Mutation(
+        "dss: decode one object as often as the arrays name it",
+        "src/docinfo.rs",
+        "                    if !seen.insert((kind, *id)) {",
+        "                    if !seen.insert((kind, *id)) && false {",
+        "the_dss_counts_bound_the_decoding_and_what_they_drop_is_counted",
+    ),
+    Mutation(
+        "dss: decode every stream an array names",
+        "src/docinfo.rs",
+        "                if *count >= most(kind) {",
+        "                if false {",
+        "the_dss_counts_bound_the_decoding_and_what_they_drop_is_counted",
+    ),
+]
 
 if __name__ == "__main__":
     sys.exit(main())

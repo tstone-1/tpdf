@@ -1113,7 +1113,8 @@ fn long_term_when_signing(report: &mut Report) {
     let plain = dir.join("plain.pdf");
     std::fs::write(&plain, plain_pdf()).expect("input");
     let s = |p: &Path| p.display().to_string();
-    let sign = |pki: &Pki, out: &Path, extra: &[&str]| {
+    let tsa_root = test_tsa::TestTsa::new().root;
+    let sign_under = |pki: &Pki, out: &Path, extra: &[&str], roots: &[Vec<u8>]| {
         let store = PkiStore {
             certificate: pki.signer.certificate.clone(),
             chain: pki.chain.clone(),
@@ -1137,7 +1138,10 @@ fn long_term_when_signing(report: &mut Report) {
             url,
         ];
         args.extend(extra.iter().map(|a| (*a).to_string()));
-        signs(&args, &store, now)
+        signs_under(&args, &store, now, tpdf_lib::trust::Anchors::Only(roots))
+    };
+    let sign = |pki: &Pki, out: &Path, extra: &[&str]| {
+        sign_under(pki, out, extra, std::slice::from_ref(&tsa_root))
     };
     let good = Plan {
         signer_ocsp: Some(Serve::Good),
@@ -1241,6 +1245,27 @@ fn long_term_when_signing(report: &mut Report) {
                          neither the signer's certificate nor the issuing certificate",
         ) && code == 0,
         &format!("exit {code}: {stdout}"),
+    );
+
+    // An authority this computer does not trust --- as one substituted on
+    // the path would be --- is refused before anything is fetched: its
+    // certificate names the fake PKI's server, and nothing reaches it.
+    let pki = Pki::start(good);
+    let out = dir.join("untrusted.pdf");
+    let (code, stdout, stderr) = sign_under(&pki, &out, &["--long-term"], &[]);
+    report.check(
+        "an untrusted authority: exit 3, nothing written, nothing fetched, and says so",
+        code == 3
+            && !out.exists()
+            && stdout.is_empty()
+            && pki.paths().is_empty()
+            && stderr.contains("is not trusted by this computer")
+            && stderr.contains("without --long-term"),
+        &format!(
+            "exit {code}, exists {}, asked {:?}: {stderr}",
+            out.exists(),
+            pki.paths()
+        ),
     );
 
     // Refusals: 3, nothing written, and the sentence says what to do.
@@ -1473,11 +1498,30 @@ fn plain_pdf() -> Vec<u8> {
 
 /// Runs `cli::run` in this process against `store`: exit code, stdout, stderr.
 fn signs(args: &[String], store: &dyn Store, now: u64) -> (i32, String, String) {
+    let root = test_tsa::TestTsa::new().root;
+    signs_under(
+        args,
+        store,
+        now,
+        tpdf_lib::trust::Anchors::Only(std::slice::from_ref(&root)),
+    )
+}
+
+/// [`signs`], with `anchors` the only roots a timestamp authority may chain
+/// to before `--long-term` fetches anything for it. [`signs`] anchors the
+/// test authority's root, as a reader whose store trusted it would have it.
+fn signs_under(
+    args: &[String],
+    store: &dyn Store,
+    now: u64,
+    anchors: tpdf_lib::trust::Anchors<'_>,
+) -> (i32, String, String) {
     let env = Env {
         store,
         library_dir: library_dir(),
         now,
         program: "tpdf".into(),
+        anchors,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = cli::run(args, &env, &mut out, &mut err);

@@ -1718,7 +1718,34 @@ impl<'a> Judging<'a> {
 /// that will not decode inside its bound is **unread**, never used raw ---
 /// raw content is only what an unfiltered stream holds. Attacker-chosen
 /// bytes, read in the worker like every other part of this scan.
+///
+/// **And the counts bound the decoding, not only what is kept** (2026-09-28).
+/// An indirect object is decoded once whichever arrays name it, and at most
+/// as many streams of each kind are decoded as `Material` keeps of that kind
+/// --- one more is counted dropped without being decoded. Before, every item
+/// was decoded and the counts applied afterwards, so an array naming one small
+/// stream that inflates to 8 MiB a thousand times inflated 8 GB to keep one
+/// list.
 fn read_dss(document: &Document) -> crate::revocation::Material {
+    read_dss_with(document, &mut dss_content)
+}
+
+/// One `/DSS` stream's content within `bound`: decoded when it has a filter,
+/// as it is when it has none, `None` when it will not decode inside the bound.
+fn dss_content(stream: &lopdf::Stream, bound: usize) -> Option<Vec<u8>> {
+    if stream.dict.has(b"Filter") {
+        stream.decompressed_content_with_limit(bound).ok()
+    } else {
+        Some(stream.content.clone())
+    }
+}
+
+/// [`read_dss`], with `decode` the one place a stream's content is had: split
+/// so a test can count the decoding.
+fn read_dss_with(
+    document: &Document,
+    decode: &mut dyn FnMut(&lopdf::Stream, usize) -> Option<Vec<u8>>,
+) -> crate::revocation::Material {
     let mut out = crate::revocation::Material::default();
     let Some(dss) = document
         .catalog()
@@ -1728,7 +1755,7 @@ fn read_dss(document: &Document) -> crate::revocation::Material {
     else {
         return out;
     };
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     enum Kind {
         Certificate,
         Response,
@@ -1739,7 +1766,16 @@ fn read_dss(document: &Document) -> crate::revocation::Material {
         Kind::Response => crate::revocation::MAX_RESPONSE_BYTES,
         Kind::List => crate::revocation::MAX_LIST_BYTES,
     };
-    let take =
+    let most = |kind: Kind| match kind {
+        Kind::Certificate => crate::revocation::MAX_DSS_CERTIFICATES,
+        Kind::Response => crate::revocation::MAX_RESPONSES,
+        Kind::List => crate::revocation::MAX_LISTS,
+    };
+    // What has been decoded, by kind and object, and how many of each kind.
+    let mut seen: std::collections::HashSet<(Kind, lopdf::ObjectId)> =
+        std::collections::HashSet::new();
+    let mut decoded: std::collections::HashMap<Kind, usize> = std::collections::HashMap::new();
+    let mut take =
         |dict: &Dictionary, key: &[u8], kind: Kind, out: &mut crate::revocation::Material| {
             let Some(array) = dict
                 .get(key)
@@ -1749,16 +1785,22 @@ fn read_dss(document: &Document) -> crate::revocation::Material {
                 return;
             };
             for item in array {
+                if let Object::Reference(id) = item {
+                    if !seen.insert((kind, *id)) {
+                        continue;
+                    }
+                }
                 let Ok(stream) = resolve(document, item).as_stream() else {
                     out.unread += 1;
                     continue;
                 };
-                let content = if stream.dict.has(b"Filter") {
-                    stream.decompressed_content_with_limit(bound(kind)).ok()
-                } else {
-                    Some(stream.content.clone())
-                };
-                let Some(content) = content else {
+                let count = decoded.entry(kind).or_insert(0);
+                if *count >= most(kind) {
+                    out.dropped += 1;
+                    continue;
+                }
+                *count += 1;
+                let Some(content) = decode(stream, bound(kind)) else {
                     out.unread += 1;
                     continue;
                 };

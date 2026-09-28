@@ -211,6 +211,10 @@ pub struct Env<'a> {
     pub now: u64,
     /// The name the program was run as, for the usage text.
     pub program: String,
+    /// The roots a timestamp authority's chain must end at before `sign
+    /// --long-term` fetches anything for it: `Anchors::System` in the tool,
+    /// a test's own roots in a test, so no test touches the reader's store.
+    pub anchors: crate::trust::Anchors<'a>,
 }
 
 /// Where the application's resources are, from where this executable sits.
@@ -279,6 +283,7 @@ pub fn main() -> i32 {
         library_dir: crate::library_dir_among(Some(resources)),
         now: now(),
         program,
+        anchors: crate::trust::Anchors::System,
     };
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();

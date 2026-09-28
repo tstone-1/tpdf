@@ -225,6 +225,50 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     })
 }
 
+/// How a long-term refusal ends the run: exit 3 for the document's, an
+/// authority's or a certificate authority's refusal, with the advice to sign
+/// without the data --- except after a revocation, which no signing should
+/// use --- and exit 4 when the failure is tpdf's own, a worker that died or
+/// did not answer included (`longterm::Refusal::tpdf_failed`).
+pub(crate) fn long_term_failure(why: &crate::longterm::Refusal) -> Failure {
+    let next = if why.revoked() {
+        " --- nothing was written"
+    } else {
+        " --- nothing was written; sign again without --long-term to sign without it"
+    };
+    let exit = if why.tpdf_failed() {
+        Exit::Internal
+    } else {
+        Exit::Refused
+    };
+    Failure::new(exit, format!("{}{next}", why.sentence()))
+}
+
+/// Whether the file just written reads back as it must: ours intact, its
+/// timestamp intact when one was asked for, and --- for long-term data ---
+/// everything `longterm::check` held the same bytes to before they were
+/// written: the signer's and the authority's revocation `good`, and every
+/// certificate above either.
+pub(crate) fn read_back_holds(
+    signatures: &[docinfo::Signature],
+    field: &str,
+    timestamp: bool,
+    long_term: bool,
+) -> bool {
+    let intact = |i: Option<&crate::integrity::Integrity>| {
+        i.is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
+    };
+    signatures.iter().any(|s| {
+        s.signed
+            && s.field == field
+            && intact(s.integrity.as_ref())
+            && (!timestamp
+                || s.timestamp
+                    .as_ref()
+                    .is_some_and(|t| intact(t.integrity.as_ref())))
+    }) && (!long_term || crate::longterm::check(signatures, field).is_ok())
+}
+
 /// A page number, counted from 1.
 fn page_number(text: &str) -> Result<u32, String> {
     match text.trim().parse::<u32>() {
@@ -441,6 +485,17 @@ fn run_sign(
             env.now,
             &worker,
             &crate::longterm::os_chain,
+            // The authority must be one this computer trusts before anything
+            // is fetched for it: `env.anchors` is the system's store, or a
+            // test's own roots.
+            &|token, now| {
+                crate::trust::of_blob_for(
+                    token,
+                    crate::trust::Purpose::Timestamping,
+                    now,
+                    env.anchors,
+                )
+            },
             &mut crate::longterm::fetch_blocking,
             // The archive timestamp, from the authority the line named.
             &mut |pieces| match sign.timestamp.as_ref() {
@@ -449,14 +504,7 @@ fn run_sign(
                 None => Err(crate::longterm::Refusal::NoTimestamp.sentence()),
             },
         )
-        .map_err(|why| {
-            let next = if why.revoked() {
-                " --- nothing was written"
-            } else {
-                " --- nothing was written; sign again without --long-term to sign without it"
-            };
-            Failure::new(Exit::Refused, format!("{}{next}", why.sentence()))
-        })?,
+        .map_err(|why| long_term_failure(&why))?,
         _ => bytes,
     };
     save::write_signed(&sign.input, &sign.output, &bytes)
@@ -523,25 +571,14 @@ fn run_sign(
     // Ours must read back intact, and --- when a timestamp was asked for ---
     // carry one that reads back intact too: a timestamp `seal` checked in the
     // bytes and a worker then did not find is a written file that disagrees
-    // with what was written, which is tpdf's failure (4).
-    let ours_intact = found.iter().any(|s| {
-        s.field == field
-            && s.integrity
-                .as_ref()
-                .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
-            && (sign.timestamp.is_none()
-                || s.timestamp.as_ref().is_some_and(|t| {
-                    t.integrity
-                        .as_ref()
-                        .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
-                }))
-            // And, for long-term data, the signer's revocation read back
-            // `good`: the check before writing said so of the same bytes.
-            && (!sign.long_term
-                || s.revocation
-                    .as_ref()
-                    .is_some_and(|r| r.standing == crate::revocation::Status::Good))
-    });
+    // with what was written, which is tpdf's failure (4). And for long-term
+    // data, all that the check before writing held the same bytes to.
+    let ours_intact = read_back_holds(
+        &properties.signatures,
+        &field,
+        sign.timestamp.is_some(),
+        sign.long_term,
+    );
     let report = report::Signed {
         schema: SCHEMA,
         command: "sign".into(),

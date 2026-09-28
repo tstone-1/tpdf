@@ -389,6 +389,61 @@ fn the_exit_codes_are_the_documented_numbers() {
     assert_eq!(codes, vec![0, 1, 2, 3, 4]);
 }
 
+/// A long-term refusal is exit 3 when the document, an authority or a
+/// certificate authority refused, and 4 when tpdf itself failed --- its own
+/// signature unreadable, or its worker's revision not what could be written,
+/// a worker that died included --- as the README's table says.
+#[test]
+fn a_long_term_failure_of_tpdfs_own_is_4_and_every_refusal_3() {
+    use super::sign::long_term_failure;
+    use crate::longterm::Refusal;
+    for ours in [
+        Refusal::Written("the worker did not answer within 30 s".into()),
+        Refusal::Unreadable("its certificate is not identified".into()),
+    ] {
+        assert_eq!(long_term_failure(&ours).exit, Exit::Internal, "{ours:?}");
+    }
+    let named = || "the signer's certificate (A)".to_string();
+    for theirs in [
+        Refusal::NoTimestamp,
+        Refusal::NotPublished(named()),
+        Refusal::NoIssuer(named()),
+        Refusal::Untrusted {
+            name: "A".into(),
+            why: "its chain ends at a root this Mac does not trust".into(),
+        },
+        Refusal::Unanswered {
+            name: named(),
+            attempts: Vec::new(),
+        },
+        Refusal::Unknown {
+            name: named(),
+            host: "ocsp.example".into(),
+        },
+        Refusal::DoesNotCheck {
+            name: named(),
+            by: "the OCSP response".into(),
+            why: "it is out of date".into(),
+        },
+        Refusal::Bound("would take more than 16 requests".into()),
+        Refusal::Archive("the authority did not answer".into()),
+    ] {
+        let failure = long_term_failure(&theirs);
+        assert_eq!(failure.exit, Exit::Refused, "{theirs:?}");
+        assert!(
+            failure.message.contains("without --long-term"),
+            "{theirs:?}"
+        );
+    }
+    let revoked = long_term_failure(&Refusal::Revoked {
+        name: named(),
+        at: String::new(),
+        by: "the OCSP response".into(),
+    });
+    assert_eq!(revoked.exit, Exit::Refused);
+    assert!(!revoked.message.contains("without --long-term"));
+}
+
 fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature {
     report::Signature {
         field: "Signature1".into(),
@@ -511,6 +566,7 @@ fn ran(line: &[String], store: &dyn Store) -> (i32, String, String) {
         library_dir: PathBuf::from("/nonexistent/no-workers-here"),
         now: NOW,
         program: "tpdf".into(),
+        anchors: crate::trust::Anchors::Only(&[]),
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run(line, &env, &mut out, &mut err);
