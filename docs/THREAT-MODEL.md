@@ -73,8 +73,8 @@ Five principals, each trusting only what is below it in the table; the command-l
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
 | **Webview** (Svelte) | Draws, receives tiles, issues commands — eleven of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own, no PDF parsing, and no way to name an address that no document open in this process contains |
-| **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
-| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy, a filled copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names (§T10) |
+| **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
+| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy, a filled copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -2725,6 +2725,60 @@ above, in `der` and pure-Rust public-key code, which is the smallest parse that 
 token --- the worker cannot make the request, and sending the answer to a worker to parse would
 add a process round trip for the one parse whose bytes the coordinator must itself splice.
 
+#### Revocation data fetched while signing, added 2026-09-28
+
+**What changed.** A timestamped signing can also carry long-term validation data (PAdES B-LT):
+after the signature is sealed, the coordinator (or the command-line tool) asks the certificate
+authorities about the signer's certificate, the timestamp authority's, and every certificate
+above either that is not a root, and a worker appends what they answered, with the
+certificates, as a `/DSS` revision (`longterm.rs`, `sign_dss.rs`; `docs/PLAN.md` §9, *Long-term
+validation data when signing*). The same network authority as the timestamp, widened to the
+certificate authorities the certificates name --- not a third one with its own switch: it is
+asked only when the reader ticks the box, or gives `--long-term`, and only together with a
+timestamp. **Reading and verifying still never go online** (§T6.25).
+
+**Who is asked, and what is sent.** For each certificate, the OCSP responders its
+`authorityInfoAccess` names, then --- only when no responder gave an answer --- the revocation
+lists its `cRLDistributionPoints` names; `http` and `https` only, judged by the `url` crate with
+no credentials, and every other scheme (`ldap:` above all) skipped, never asked. An OCSP
+request is a `POST` of one `CertID`: SHA-1 hashes of the issuer's name and key, and **the
+certificate's serial number**. A list is a plain `GET`. So each authority learns that **a
+certificate it issued is being used, at this moment, from this IP address** --- for the signer's
+CA, that its holder is signing now. Nothing of the document, the signature or the reader's
+other certificates is sent. Most public responders and list servers are plain HTTP (DigiCert,
+Sectigo and GlobalSign all serve their timestamping certificates' data over `http://`), so an
+observer on the path learns the same. No nonce is sent (the public responders serve
+pre-produced answers and ignore one); freshness is the response's own dates.
+
+**What is accepted, parsed where.** Answers are parsed **in the coordinator**, like the token:
+each read under a bound before it is parsed --- 64 KiB for an OCSP answer, 4 MiB for a list and
+for everything gathered together --- with a connect limit of 10 s and a total of 30 s per request,
+at most 16 requests and 90 s for the whole gathering, no redirect. Each answer is judged by
+increment C1's own reader (`revocation::judge`, `der`, `x509-cert`, `x509-ocsp`, the signature
+arithmetic `integrity.rs` uses) before it is kept: signed by the issuer or a responder it
+authorised, about this certificate, fresh. `good` is kept; **`revoked` refuses the signing
+outright** --- nothing is written, and nothing is held that could be written without the data;
+`unknown`, and an answer that does not check out, refuse it too. A responder that gives no
+answer (a transport failure, an HTTP error, `tryLater`, bytes that are not a response) is the
+only thing the list is asked after: an answer that fails its checks is never replaced by
+shopping for another from the same CA over the same path.
+
+**Who writes, and what is checked before writing.** A worker, spawned over a snapshot of the
+signed bytes that are not written yet, builds the `/DSS` revision with `lopdf` and reads the
+result with `docinfo::scan`; the coordinator writes nothing unless that reading says the new
+signature is intact, its timestamp intact, and the signer's and the authority's revocation
+`good`. The existing read-back after writing then runs as before.
+
+**What an attacker can do.** On the path: read which certificates are being checked (above);
+deny service (nothing is written, and the reader may sign without the data); **replay an
+earlier response** still inside its validity window --- one signed before a revocation, saying
+`good` (residual 33). Not: forge a response, which is signed by the issuer or a responder it
+authorised and checked twice, here and in the worker's reading. A malicious or compromised CA
+can answer `good` for a revoked certificate, as it can for every relying party.
+
+**Residual.** Residuals 32 and 33. And the coordinator parses more network bytes than for the
+token alone, with the same bound-then-parse rule and the same memory-safe parsers.
+
 ### T8 — The webview
 
 **The threat.** Content injected into the UI layer reaching Tauri's command surface.
@@ -3999,6 +4053,17 @@ which is what makes it evidence rather than a milestone.
     not to (RFC 6960 §4.2.2.2.1), and pyHanko, which does ask when that extension is absent,
     was the one oracle to disagree before the test responder carried it. Bounded by responder
     certificates being short-lived by practice. Not closed.
+32. **A B-LT signing tells each certificate authority that its certificate is in use** (§T10),
+    added 2026-09-28. Each OCSP request carries a serial number the responder can tie to its
+    holder, from the reader's IP address, over plain HTTP for most public responders. Bounded by
+    being asked only when the reader ticks the box for one signing, or gives `--long-term`, and
+    by the README saying so. Not closable by tpdf: it is what an OCSP request is.
+33. **A response replayed inside its validity window reads as current** (§T10), added
+    2026-09-28. No nonce is sent and the public responders ignore one, so an attacker on the
+    path can answer with an earlier `good` response signed before a revocation, as long as its
+    `nextUpdate` has not passed; tpdf writes it, and a later reader judges the same response.
+    Bounded by the response's own validity window (7 days on the test responders; hours to days
+    on the public ones, `docs/PLAN.md` §9) and by responses being signed. Not closed.
 
 ## 8. How to re-verify any of this
 

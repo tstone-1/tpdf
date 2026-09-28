@@ -365,6 +365,24 @@ impl DocumentGraph {
         }
     }
 
+    /// These bytes --- a signed copy --- with a `/DSS` revision of `gathered`
+    /// appended, and what `docinfo::scan` reads in the result. Uncached: a
+    /// question about bytes that are about to change.
+    ///
+    /// # Errors
+    ///
+    /// What `sign_dss::extend` refuses.
+    pub fn append_validation(
+        &self,
+        gathered: &crate::sign_dss::Gathered,
+        pages: u32,
+    ) -> Result<crate::sign_dss::Extended, String> {
+        let bytes = self
+            .bytes()
+            .ok_or_else(|| "the document's bytes could not be read".to_string())?;
+        crate::sign_dss::extend(&bytes, gathered, pages)
+    }
+
     /// Applies a plan to these bytes and serialises the whole document.
     ///
     /// The counterpart of [`DocumentGraph::append`] for every plan an append

@@ -353,14 +353,20 @@ export interface Commands {
       path: string;
       placement: Placement | null;
       timestamp: string | null;
+      /** Long-term validation data as well; refused without `timestamp`. */
+      longTerm: boolean;
     };
     reply: SignOutcome;
   };
   /**
-   * Writes the signature held after a timestamp did not come: stamped by
-   * `timestamp`, or without one for `null`. The OS is not asked again.
+   * Writes the signature held after a timestamp or long-term data did not
+   * come: stamped by `timestamp`, or without one for `null`, and with its
+   * long-term data gathered again for `longTerm`. The OS is not asked again.
    */
-  sign_resume: { args: { pending: number; timestamp: string | null }; reply: SignOutcome };
+  sign_resume: {
+    args: { pending: number; timestamp: string | null; longTerm: boolean };
+    reply: SignOutcome;
+  };
   /** Drops the held signature; nothing is written. */
   sign_discard: { args: { pending: number }; reply: void };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };

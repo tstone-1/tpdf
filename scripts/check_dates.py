@@ -66,6 +66,12 @@ EXEMPT: "dict[tuple[str, str], str]" = {
     # The command-line tool's samples, 2026-09-27. These reached CI unexempted:
     # the local gate run that preceded the commit saw the files untracked, and
     # this gate reads `git ls-files`, so they were invisible to it.
+    # Increment C1's revocation tests, found 2026-09-28 by the next increment's
+    # gate run: the file was committed with this date and no entry here.
+    (
+        "src-tauri/src/revocation/tests.rs",
+        "2040-01-01",
+    ): "the last moment of the test PKI's certificates (`test_tsa::UNTIL`)",
     (
         "src-tauri/src/cli/tests.rs",
         "2027-09-26",

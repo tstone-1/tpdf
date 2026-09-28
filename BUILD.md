@@ -1039,6 +1039,66 @@ TPDF_REVOCATION_REAL=<dir> cargo test --manifest-path src-tauri/Cargo.toml \
 # pyHanko with cryptography's responses); pyHanko's own reading of it is
 # validate_pdf_signature at its token's time with the /DSS as the only
 # revocation data, which says INTACT:TRUSTED with the root it carries anchored.
+# LONG-TERM VALIDATION DATA (Phase 6 step 3, increment C2). Offline first: an
+# ignored instrument writes B-LT files made against the fake PKI (OCSP, lists, an
+# intermediate), with every /DSS entry and the roots beside them.
+TPDF_LONG_TERM_OUT=/tmp/tpdf-long-term cargo test --manifest-path src-tauri/Cargo.toml \
+    --lib write_b_lt_documents_for_other_readers -- --ignored --nocapture
+cd /tmp/tpdf-long-term
+for f in b-lt-*.pdf; do qpdf --check "$f"; done
+openssl x509 -inform DER -in ocsp-root.der -out root.pem
+openssl x509 -inform DER -in ocsp-signer.der -out signer.pem
+openssl ocsp -respin ocsp-ocsp-0.der -issuer root.pem -cert signer.pem -CAfile root.pem -no_nonce
+# pyHanko, no fetching, revocation hard-fail, the test roots: the trust must come
+# from the /DSS. Save as lt.py and run `uv run --with pyhanko python lt.py <name> <pdf>`;
+# the control is the same file cut at its second-to-last %%EOF (no /DSS), which
+# must read UNTRUSTED.
+#   import sys
+#   from asn1crypto import x509, ocsp as O, crl as C
+#   from pyhanko.pdf_utils.reader import PdfFileReader
+#   from pyhanko.sign.validation import (validate_pdf_signature, DocumentSecurityStore,
+#                                        KeyUsageConstraints)
+#   from pyhanko_certvalidator import ValidationContext
+#   name, path = sys.argv[1:]
+#   load = lambda p: x509.Certificate.load(open(p, 'rb').read())
+#   roots = [load(f'{name}-root.der'), load(f'{name}-tsa-root.der')]
+#   r = PdfFileReader(open(path, 'rb'))
+#   try:
+#       d = DocumentSecurityStore.read_dss(r)
+#       certs = [x509.Certificate.load(x.get_object().data) for x in d.certs.values()]
+#       ocsps = [O.OCSPResponse.load(x.get_object().data) for x in d.ocsps]
+#       crls = [C.CertificateList.load(x.get_object().data) for x in d.crls]
+#   except Exception:
+#       certs, ocsps, crls = [], [], []
+#   vc = lambda: ValidationContext(trust_roots=roots, allow_fetching=False,
+#       revocation_mode='hard-fail', ocsps=ocsps, crls=crls, other_certs=certs)
+#   st = validate_pdf_signature(r.embedded_signatures[0], signer_validation_context=vc(),
+#       ts_validation_context=vc(), key_usage_settings=KeyUsageConstraints(key_usage=set()))
+#   print(st.summary())
+# 2026-09-28, pyHanko 0.37: all three INTACT:TRUSTED,TIMESTAMP_TOKEN<INTACT:TRUSTED>,
+# EXTENDED_WITH_LTA_UPDATES,ACCEPTABLE_MODIFICATIONS; the control INTACT:UNTRUSTED.
+# (The test signer states no key usage, hence the empty KeyUsageConstraints.)
+#
+# Then the real certificate authorities behind each timestamp authority, once, by
+# hand. The probe's signer is self-made, so the whole path must REFUSE it (checked),
+# and the authority's half is measured alone: its chain's real OCSP responders,
+# each request timed and sized, the /DSS appended and read back good. From a
+# folder of its own (the CoreFoundation trap under the timestamp block):
+cargo build --release --manifest-path src-tauri/Cargo.toml --example sign-probe
+mkdir -p /tmp/probe && cp src-tauri/target/release/examples/sign-probe /tmp/probe/
+for srv in digicert sectigo globalsign; do
+  /tmp/probe/sign-probe testdata/text-base14.pdf "/tmp/tpdf-sign-probe/lt-$srv" \
+      --key rsa --timestamp "$srv" --long-term
+done
+# 2026-09-28, 26/26 each: DigiCert 2 OCSP (727 B each), Sectigo 2 (766 B each),
+# GlobalSign 3 (1,737 / 1,713 / 1,691 B), 0.12 to 0.16 s gathered, a /DSS revision
+# of 7,034 / 7,066 / 12,450 B. pyHanko with the system roots (security
+# find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain),
+# no fetching, hard-fail, over authority-lt.pdf: the timestamp INTACT:TRUSTED, and
+# UNTRUSTED over the probe's B-T copy; openssl ocsp -respin over each dss-ocsp-<n>.der
+# with -CAfile the system roots and -verify_other the dss-cert-<n>.der: all seven
+# "Response verify OK", good. docs/PLAN.md says what this did not measure.
+#
 # The window check that would show a visible signature placed and written in the
 # real application does not exist, for the reason below: it needs an identity in
 # the reader's store. By hand: File > Sign document..., choose Visible, choose

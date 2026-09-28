@@ -14896,8 +14896,12 @@ and the order is the order in which a claim can be made honestly.
    authority, built on A's reader and minter. **Increment C1 --- reading the revocation data
    a document carries, and judging the signer at the attested time --- is done 2026-09-28**
    (*Revocation, from the document's own data*, below), with no network in the read path, by
-   decision. What is left of step 3 is **C2**: fetching that data while signing and appending
-   the `/DSS`, and archive timestamps after it.
+   decision. **Increment C2 --- fetching that data while signing and appending the `/DSS`,
+   PAdES B-LT --- is done 2026-09-28** (*Long-term validation data when signing*, below).
+   **Step 3 is complete up to B-LT.** What is not built is PAdES B-LTA: archive (document)
+   timestamps over the validation data, which keep a signature checkable once the timestamp
+   authority's own certificate has expired --- neither written nor read --- and adding
+   validation data to a signature already in a document.
 
 #### Is the signature intact --- done 2026-09-26
 
@@ -16236,8 +16240,8 @@ with a `DummyTimeStamper` token and appends the `/DSS` its validation used (`/Ce
 `/CRLs`, `/VRI`). So the data is neither tpdf's minter's nor pyHanko's. The root is in the
 `/DSS` and in no store; the test anchors the one self-issued certificate there.
 
-**Not done.** Fetching revocation data while signing and appending a `/DSS` (increment C2).
-Archive timestamps (PAdES B-LTA): a document timestamp over the validation data, which keeps a
+**Not done.** Fetching revocation data while signing and appending a `/DSS` (increment C2,
+done since, below). Archive timestamps (PAdES B-LTA): a document timestamp over the validation data, which keeps a
 signature checkable after the authority's certificate expires --- until then an authority
 `expired` now attests no moment. Delta and indirect lists, `onlySomeReasons` partitions. A
 delegated responder's own revocation. Revocation of certificates above the signer's and the
@@ -16245,6 +16249,141 @@ authority's. The chain the OS assembled as candidate issuers. OCSP responses wit
 seconds in their times, which `x509-ocsp` refuses and are counted unreadable. The Windows store
 asked about a signer at a past moment (the code is the call `trust.rs` already makes, with
 another time).
+
+#### Long-term validation data when signing --- done 2026-09-28
+
+Phase 6 step 3, **increment C2**: a timestamped signing can also carry the certificates and
+revocation data a verifier needs after the certificates expire --- PAdES baseline **B-LT**. The
+reader ticks *Keep it verifiable after the certificates expire* in the *Sign document* chooser,
+or gives `tpdf sign --timestamp X --long-term`. After the timestamped signature is sealed, the
+app process (or the tool's) asks the certificate authorities about every certificate that needs
+it, checks every answer with increment C1's reader, and a worker appends a `/DSS` revision and
+reads the finished bytes back; nothing is written unless that reading says the new signature is
+intact, its timestamp intact, and the signer's and the authority's revocation `good`.
+
+| Half | Where | What it does |
+|---|---|---|
+| What to ask about | app process, `longterm::plan` | The signer's certificate and every one above it that is not a root, the authority's likewise. Issuers from the signature's certificates, the token's, and the chain the OS assembles offline (`trust::platform::evaluate`), each found by name *and* key. A certificate with `id-pkix-ocsp-nocheck` is skipped; a cross-certificate of a root the candidates hold ends the chain at that root. |
+| Fetching | app process, `longterm::gather`, `tsa::fetch` | OCSP first, a list only when no responder answered; `http`/`https` only, `ldap:` skipped. B's client: no redirect, 10 s connect, 30 s each; 64 KiB an OCSP answer, 4 MiB a list and everything together; 16 requests and 90 s in all. |
+| Checking each answer | app process, `revocation::judge` at the present | `good` kept; `revoked` a refusal naming the certificate, with no second choice; `unknown` or an answer that does not check out, a refusal. |
+| The revision | worker, `sign_dss::append` | `/DSS` with `/Certs`, `/OCSPs` (full `OCSPResponse`s), `/CRLs`, uncompressed streams; an earlier `/DSS`'s arrays kept and added to; no `/VRI`. Built with `lopdf` over a snapshot of the bytes not yet written (`Request::AppendValidation`, `save::InWorker::validation`). |
+| The check before writing | worker `sign_dss::extend` → app `longterm::check` | `docinfo::scan` over the finished bytes, answered with the revision; the app refuses unless intact, timestamp intact, both revocations `good`. |
+| The policy | `commands::sign::conclude`, `cli/sign.rs` | Nothing written on any refusal. Window: the **sealed, timestamped** signature held in `Pending` (stage `long_term`), *Try again* / *Sign without long-term data* / *Cancel*; a revocation keeps nothing. Tool: exit 3. |
+| The window | `signing.ts`, `signtimestamp.ts` | The checkbox, enabled only while an authority is chosen, unticked until ticked, remembered under `tpdf.signatureLongTerm`; `askAfterLongTermFailed`; the closing sentence adds the *Revocation* and *Authority revocation* rows when they read `good`. |
+
+Decisions the owner took before building, recorded as given: reading never goes online; opt-in
+per signing, only together with a timestamp; never silently less than asked; the fetching in the
+app process or the tool's, never a worker or the webview; the worker writes the PDF.
+
+Decisions taken in building it, each with its reason:
+
+- **Zero packages, measured.** `cargo metadata` counts 618 before and 618 after. The OCSP request
+  is `x509-ocsp`'s types (C1's package), the fetch is B's `reqwest` client generalised to a `GET`
+  (`tsa::fetch`, every rule stated once), the `CertID` hashes are `sha1`'s, already in the tree.
+- **SHA-1 in the `CertID`.** It is what responders must understand (RFC 5019 §2.1.1) and what
+  OpenSSL and the public responders use. It is an identifier, not a signature: a response is
+  believed for the responder's signature over it and a serial under an issuer found by key.
+- **No nonce.** The public responders serve pre-produced answers and ignore one; freshness is
+  judged by the response's dates, as C1 judges every response. The replay this allows inside a
+  response's validity window is residual 33 of the threat model.
+- **The list only when the responder did not answer.** A transport failure, an HTTP error,
+  `tryLater` or bytes that are not a response fall back; an answer that fails its checks, says
+  `unknown` or says `revoked` does not. A response whose signature fails is an attacker or a
+  broken responder, and the list from the same CA over the same path would not settle which.
+- **Every answer is judged twice**: by `revocation::judge` in the app process as it arrives ---
+  which is also what names a refusal about an intermediate, which the worker's reading does not
+  judge --- and by the worker's `docinfo::scan` over the finished bytes. The first found one
+  mutation redundant for the signer and the authority and the only guard above them
+  (`docs/TRAPS.md`).
+- **A revoked certificate keeps nothing.** B's rule is that failing is never an unasked-for
+  weaker file; a revocation is stronger: the signature is refused with or without the data, the
+  window holds nothing to *sign without*, and the tool's sentence gives no such advice.
+- **A self-issued signer or authority is refused with what would work**: long-term data needs a
+  certificate from a CA that publishes revocation data, and the timestamp alone works. The same
+  sentence as a certificate naming no address.
+- **Every issuer goes into `/DSS /Certs`**, because C1's reader takes issuers only from the
+  document. **A cross-certificate of a root is replaced by the root**: the real authorities'
+  tokens carry their roots as cross-certificates, the chain a verifier builds ends at the
+  self-issued root, and pyHanko given both calls the root's own OCSP answer unauthorised
+  (`docs/TRAPS.md`, both measured below).
+- **No `/VRI`.** ETSI EN 319 142-1 §5.4.2 defines the `/DSS` keys --- `/Certs`, `/OCSPs`, `/CRLs`
+  and `/VRI` --- and the baseline B-LT level asks for the validation data in the `/DSS`; `/VRI`, an
+  index keyed by the SHA-1 of each signature's `/Contents`, is optional there. Readers (tpdf's,
+  pyHanko's) find data by matching certificates, which is what the index would say.
+- **4 MiB for a list, not C1's 8 MiB.** C1's bound is the reader's; the writer's is set by the
+  worker's answer, which carries the revision back as JSON --- up to four characters a byte ---
+  under `MAX_REPLY_BYTES`. A list near it is an end-entity list whose CA's responder should have
+  answered first.
+- **The held stage is a second `Pending` shape**, `Stage::Sealed { bytes, cms, field }`, and the
+  reply's `Unstamped` gains `stage` (`timestamp` or `long_term`), so the window asks the right
+  question and resumes without asking the authority for a second token.
+- **`plan_authority`** walks only the authority's chain, for `sign-probe`'s measurement; the
+  signing path never calls it.
+
+**Measured**, macOS arm64 (macOS 27.0), 2026-09-28. Offline, every gate: 24 tests in
+`longterm::tests` against a fake PKI on 127.0.0.1 (`integrity/test_tsa.rs` `Pki`: `TestCa`
+certificates publishing AIA and CDP addresses, OCSP and lists minted per request, one fault at a
+time) --- B-LT written and read back `good` for signer and authority with every issuer in
+`/Certs`; the request's SHA-1 `CertID` against the certificates; OCSP only, lists only, the list
+after HTTP 500, `tryLater` and garbage; `ldap:` skipped; an intermediate asked about and carried;
+a revoked signer (no list shopped for), a revoked authority by its list, a revoked intermediate;
+`unknown`; a corrupt signature and a stale answer (no fallback); nothing published, `ldap:`
+only, a self-issued signer; silent, over-long, 404 and nobody listening; the time, request, size
+and depth bounds; no timestamp; an issuer nowhere; `nocheck`; a cross-certificate; the check
+before writing in every refusal; a revision built against other bytes --- and one ignored
+instrument writing B-LT files for other readers. Three in `sign_dss::tests`, four new in
+`commands::sign::tests` (the data that did not come held and left out without a key or
+authority, the data that came written, a revocation holding nothing, the timestamp rule), one in
+`cli::tests`. `tests/cli.rs` has 242 checks, 9 new: `sign --timestamp --long-term` through the
+real worker, read back `good` by the built tool and the in-process reader alike; revoked,
+nothing published, `unknown` and a failing responder each exit 3 with nothing written; without
+`--timestamp` exit 2. Frontend: 9 new tests --- the sequence (asked only with a timestamp, its
+own question, retry and without, cancel, a timestamp retried), the checkbox (disabled with no
+authority, remembered, never answered without a timestamp), the remembered choice.
+
+**Oracles on minted data**: pyHanko 0.37 with the test roots, no fetching and revocation
+`hard-fail`, reads the three B-LT files the instrument writes (OCSP, lists, an intermediate)
+*INTACT:TRUSTED, TIMESTAMP_TOKEN<INTACT:TRUSTED>, EXTENDED_WITH_LTA_UPDATES,
+ACCEPTABLE_MODIFICATIONS*; the same signature with the `/DSS` revision cut off, *UNTRUSTED* on
+both --- so the trust comes from the data. `openssl ocsp -respin` (3.6.3): *Response verify OK*,
+*good*, for the signer, the authority and the intermediate; `openssl crl -verify`: *verify OK*
+for both lists. `qpdf --check`: no syntax or stream errors (one warning about the test document's
+page, which has no `/Resources`, and is there before signing).
+
+**Real servers, once, a measurement and not a gate** (`sign-probe --timestamp <each> --long-term`,
+`BUILD.md`). The probe's signer is a self-made certificate, so the **whole path is measured as a
+refusal** --- `longterm::extend` refuses it as publishing nothing and writes nothing --- and the
+**authority's half is measured on its own**: `plan_authority`, `gather` against the real
+responders, `sign_dss::extend`, read back. What was measured: DigiCert asked 2 OCSP responses
+(727 bytes each, 0.05--0.07 s each, 0.12 s in all), revision 7,034 bytes; Sectigo 2 (766 bytes
+each, 0.12 s), 7,066 bytes; GlobalSign 3 (1,737, 1,713, 1,691 bytes; 0.16 s), 12,450 bytes. tpdf
+reads each authority `good`, at the time its token states; the signer `none`; the signature
+intact. pyHanko, the system roots, no fetching, `hard-fail`: each timestamp *INTACT:TRUSTED* with
+the `/DSS`, *INTACT:UNTRUSTED* without. `openssl ocsp -respin`: all seven *Response verify OK*,
+*good*. `qpdf --check`: clean. **Two findings, both fixed and in `docs/TRAPS.md`**: DigiCert's
+and Sectigo's tokens carry their roots as cross-certificates, which first read as an issuer
+nowhere; and pyHanko given the cross-certificate beside the root called the root's answer
+unauthorised. What was **not** measured: a signer certificate from a real CA --- none is in this
+machine's store with a document-signing purpose, so the signer's half, its lists, and a real
+revoked or `unknown` answer were exercised only against the fake PKI; a real list (every real
+certificate here named an OCSP responder that answered); Windows.
+
+**Proved able to fail**: 29 new mutations in `scripts/mutate_rust.py` (the `longterm:`, `dss:`
+entries and three `sign:` and two `cli:`), each caught by the test named for it after one
+re-aim --- the list's judgement, above. Two of them were added after the real run found the
+cross-certificate. Ten in `scripts/mutate_frontend.py` (`long-term:`), each caught. Five earlier
+anchors re-aimed because the code under them moved: `cli: drop --timestamp`, the chooser's
+visible answer, the backend's authority, *try again* with the authority, and the README's
+not-built line.
+
+**Not done.** PAdES B-LTA: archive timestamps over the validation data, written or read ---
+until then a B-LT signature is checkable until its timestamp authority's certificate expires.
+Adding validation data to a signature already in a document, which the README lists as not
+built. Revocation of the certificates above the signer's and the authority's is gathered,
+checked and written, and still **not judged by the reader** (C1's limit). A signer certificate
+from a real CA, measured end to end. Windows: the code is the same and `scripts/check_windows.py`
+compiles it; no request has been made from a Windows machine. The window's flow has not been
+driven with a real identity, for step 2's reason.
 
 ### Cross-cutting
 

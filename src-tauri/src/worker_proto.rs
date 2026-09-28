@@ -228,6 +228,20 @@ pub enum Request {
         #[serde(default)]
         visible: Option<Box<crate::sign_prepare::Visible>>,
     },
+    /// Append a signature's long-term validation data to the mapped signed
+    /// copy, and read the result.
+    ///
+    /// Phase 6 step 3, increment C2. [`Request::PrepareSignature`]'s
+    /// counterpart after signing, and here for its reason: `sign_dss::extend`
+    /// parses the document. The mapped bytes are the signed copy the app
+    /// process has not written yet; the request carries certificates and
+    /// revocation data the app process fetched and checked --- DER a worker
+    /// could do nothing with outside the document it holds. The answer is a
+    /// revision and what `docinfo::scan` reads in the result.
+    AppendValidation {
+        /// What to put in the `/DSS`.
+        gathered: crate::sign_dss::Gathered,
+    },
     /// Draw a visible signature's appearance before anything is signed.
     ///
     /// [`Request::PrepareSignature`]'s sibling, answered with a picture rather
@@ -530,6 +544,9 @@ pub enum Reply {
     PreparedSignature(crate::sign_prepare::Unsigned),
     /// A visible signature's appearance, drawn as PNG.
     SignaturePreview(crate::sign_prepare::Preview),
+    /// A `/DSS` revision and what the signatures read as with it appended.
+    /// Boxed for [`Reply::Properties`]' reason: it carries signatures.
+    Validated(Box<crate::sign_dss::Extended>),
     /// How many bytes a rewrite wrote into the handed-over file.
     ///
     /// A length and nothing else: the document itself went down the output
@@ -881,6 +898,11 @@ mod tests {
                  of which a pooled worker has",
             ),
             (
+                "AppendValidation",
+                "asked by `save::InWorker` of a worker it spawned itself over the signed \
+                 copy, which is not written yet and so is in no document's pool",
+            ),
+            (
                 "Unlock",
                 "sent by whoever holds the password before its first real request, on \
                  both the pooled and the save path",
@@ -1210,6 +1232,11 @@ mod tests {
                 width: 480,
                 height: 160,
             }),
+            Reply::Validated(Box::new(crate::sign_dss::Extended {
+                update: vec![8, 9],
+                built_against: 777,
+                signatures: Vec::new(),
+            })),
             // The second confusable pair, and the same trick: `Reread` and
             // `Rewrote` are both one `usize`, so given the same number only the
             // tag separates a page count from a byte count.
@@ -1250,6 +1277,7 @@ mod tests {
                 | Reply::Append(_)
                 | Reply::PreparedSignature(_)
                 | Reply::SignaturePreview(_)
+                | Reply::Validated(_)
                 | Reply::Reread(_)
                 | Reply::Rewrote(_)
                 | Reply::Verified(_)

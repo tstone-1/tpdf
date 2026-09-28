@@ -18,7 +18,7 @@ use crate::sign_prepare::{Options, Visible};
 /// `sign`, registered.
 pub const COMMAND: Registered = Registered {
     name: "sign",
-    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]]\n        [--timestamp digicert|sectigo|globalsign|<url>] [--force] [--json]",
+    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
     summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given. --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
     parse: boxed,
 };
@@ -47,6 +47,9 @@ pub struct Sign {
     /// The timestamp authority `--timestamp` names, already judged by
     /// `tsa::authority`; `None` asks nobody for anything.
     pub timestamp: Option<url::Url>,
+    /// `--long-term`: gather and add long-term validation data. Only with a
+    /// timestamp, which the parse enforces.
+    pub long_term: bool,
     /// `--json`.
     pub json: bool,
     /// `--force`: replace an existing output file.
@@ -107,6 +110,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut reason: Option<String> = None;
     let mut location: Option<String> = None;
     let mut timestamp: Option<url::Url> = None;
+    let mut long_term = false;
     let mut json = false;
     let mut force = false;
 
@@ -131,6 +135,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
                         .map_err(|why| why.sentence(""))?,
                 );
             }
+            "--long-term" => long_term = true,
             "--json" => json = true,
             "--force" => force = true,
             flag if flag.starts_with('-') && flag != "-" => return Err(unknown("sign", flag)),
@@ -182,6 +187,15 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
             ));
         }
     }
+    // Long-term validation data rests on a timestamp (B-LT is B-T with the
+    // data added), so asking for it without one is a malformed line.
+    if long_term && timestamp.is_none() {
+        return Err(
+            "`--long-term` needs `--timestamp`: long-term validation data is added to a \
+             timestamped signature"
+                .into(),
+        );
+    }
     let placement = if visible {
         let rect = rect.ok_or(
             "`--visible` needs `--rect x,y,w,h`: where the signature goes, in points from the \
@@ -205,6 +219,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         reason: reason.unwrap_or_default(),
         location: location.unwrap_or_default(),
         timestamp,
+        long_term,
         json,
         force,
     })
@@ -409,9 +424,35 @@ fn run_sign(
             ),
         )
     })?;
+    let cms = stamped.clone();
     let bytes = made
         .seal(stamped)
         .map_err(|why| Failure::new(Exit::Refused, why))?;
+    // The long-term data, when it was asked for: after the seal, since it is
+    // about the certificates in the timestamped signature, and before anything
+    // is written. Refused is exit 3 with nothing written; the sentence says how
+    // to sign without it --- except for a revoked certificate, which no
+    // signing should use.
+    let bytes = match (sign.long_term, cms) {
+        (true, Some(cms)) => crate::longterm::extend(
+            &bytes,
+            &cms,
+            &field,
+            env.now,
+            &worker,
+            &crate::longterm::os_chain,
+            &mut crate::longterm::fetch_blocking,
+        )
+        .map_err(|why| {
+            let next = if why.revoked() {
+                " --- nothing was written"
+            } else {
+                " --- nothing was written; sign again without --long-term to sign without it"
+            };
+            Failure::new(Exit::Refused, format!("{}{next}", why.sentence()))
+        })?,
+        _ => bytes,
+    };
     save::write_signed(&sign.input, &sign.output, &bytes)
         .map_err(|why| Failure::new(Exit::Refused, why.message))?;
 
@@ -474,6 +515,12 @@ fn run_sign(
                         .as_ref()
                         .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
                 }))
+            // And, for long-term data, the signer's revocation read back
+            // `good`: the check before writing said so of the same bytes.
+            && (!sign.long_term
+                || s.revocation
+                    .as_ref()
+                    .is_some_and(|r| r.standing == crate::revocation::Status::Good))
     });
     let report = report::Signed {
         schema: SCHEMA,

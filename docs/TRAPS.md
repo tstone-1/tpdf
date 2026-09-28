@@ -255,6 +255,8 @@ hop through the index.
 - `der`'s `GeneralizedTime` refuses fractional seconds, and a token stating milliseconds read as no timestamp at all
 - Revocation data required to postdate the signature would call every real B-LT document stale
 - pyHanko asks about an OCSP responder's own revocation unless its certificate says not to
+- DigiCert's and Sectigo's tokens carry their roots as cross-certificates, and a walk to the issuer finds none
+- pyHanko resolves a responder named by key to a cross-certificate, and calls the root's own answer unauthorised
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -549,6 +551,7 @@ hop through the index.
 - A refusal type with no case for "locked" made a documented `locked` unreachable
 - A redaction's read-back looks for what was taken, so a match that could not be marked is invisible to it
 - A bound checked on the way in through one door is untested through the other
+- A list judged twice over the same two certificates hid a mutation of the first judgement
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -25135,3 +25138,54 @@ A guard reached through several entrances is covered only through the ones a tes
 `a_basic_response_over_its_bound_is_refused_on_the_way_in_too` walks the second, and
 `a_signatures_own_cms_carries_lists_responses_and_the_adobe_attribute` the path behind it.
 
+### DigiCert's and Sectigo's tokens carry their roots as cross-certificates, and a walk to the issuer finds none
+
+2026-09-28, the first run of `sign-probe --timestamp --long-term` against the real authorities.
+GlobalSign's half gathered; DigiCert's and Sectigo's refused, *tpdf could not find the certificate
+that issued the certificate above the timestamp authority's (DigiCert Trusted Root G4)*. Every
+unit test had passed, against a test PKI whose chains end at a self-issued root.
+
+The certificate named was not the root. The token carries *DigiCert Trusted Root G4* as a
+**cross-certificate** --- that name and that key, issued by the older *DigiCert Assured ID Root
+CA* --- and Sectigo's carries *Public Time Stamping Root R46* issued by USERTrust the same way (the
+shape increment B's OpenSSL finding already met in the ESS attribute). The walk asked for the
+cross-certificate's issuer, which the token does not carry and the OS chain does not return,
+because macOS builds the chain to the **self-issued** G4 in its store. A chain a verifier builds
+ends there too, so nothing above it needs revocation data.
+
+So a certificate with the name and key of a self-issued certificate among the candidates is an
+anchor, and the walk stops (`longterm::anchor_of`,
+`a_cross_certificate_of_a_root_the_os_holds_ends_the_chain`). A test PKI with only self-issued
+roots cannot produce this; the real authorities produce nothing else at the top.
+
+### pyHanko resolves a responder named by key to a cross-certificate, and calls the root's own answer unauthorised
+
+2026-09-28, the next finding of the same run. With the chain walk fixed, pyHanko --- no fetching,
+the system roots, revocation `hard-fail` --- read GlobalSign's B-LT timestamp *TRUSTED* and
+DigiCert's and Sectigo's *UNTRUSTED*, *Unable to verify OCSP response since response was signed by
+an unauthorized certificate*, about the intermediate. `openssl ocsp -respin` verified every one of
+the responses, and tpdf read them `good`.
+
+The intermediate's response is signed by the root's key, named by key hash. The `/DSS` then held
+the root **twice** --- the self-issued anchor and the cross-certificate --- and pyHanko resolved
+the responder ID to the cross-certificate, which is not the issuer on the path it built, so it
+asked for `id-kp-OCSPSigning` and found none. Given the same data without the cross-certificate,
+it reads *TRUSTED* for all three. The `/DSS` now carries the anchor in place of the
+cross-certificate; the token still carries the cross-certificate for anybody building that path.
+
+Worth knowing beyond pyHanko: two certificates with one key are one responder to OCSP and two
+parties to a path validator, and a store holding both answers by whichever it finds first.
+
+### A list judged twice over the same two certificates hid a mutation of the first judgement
+
+2026-09-28, the one mutation of increment C2's table that went red elsewhere on its first run:
+deleting the check of a fetched revocation list (`longterm::gather`) was aimed at *a revoked
+authority found by its list is refused*, which went on passing. The revoked list was kept, written
+into the `/DSS`, and refused a step later by `longterm::check`, whose reading of the finished bytes
+judges the signer and the authority again --- so for those two certificates the first judgement
+is redundant by design, and no test of them can isolate it.
+
+It is not redundant above them. The worker's reading judges nobody but the signer and the
+authority, so for an intermediate the gathering's check is the only one. The mutation is aimed at
+`a_revoked_intermediate_is_refused_before_anything_is_written` now. A check layered on another is
+covered only where the other does not reach.

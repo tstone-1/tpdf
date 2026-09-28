@@ -2438,6 +2438,18 @@ pub(crate) fn run_prepare_signature(
     document.graph().prepare_signature(at, visible)
 }
 
+/// Appends a signature's long-term validation data to the mapped signed copy
+/// and reads the result, on the render thread. See
+/// `crate::worker_proto::Request::AppendValidation`.
+pub(crate) fn run_append_validation(
+    document: &OpenDocument,
+    gathered: &crate::sign_dss::Gathered,
+) -> Result<crate::sign_dss::Extended, String> {
+    document
+        .graph()
+        .append_validation(gathered, document.page_count())
+}
+
 /// Draws a visible signature's appearance before anything is signed.
 ///
 /// `sign_prepare::preview` builds a one-page file holding exactly the revision

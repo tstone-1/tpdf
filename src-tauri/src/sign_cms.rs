@@ -157,6 +157,11 @@ pub struct Checked {
     /// told what the file says, not what was sent.
     #[serde(default)]
     pub timestamp: Option<crate::docinfo::Timestamp>,
+    /// What the file's own revocation data says about the signer's
+    /// certificate, as the worker read it back: `good` for a signing that
+    /// added long-term validation data, `none` for one that did not.
+    #[serde(default)]
+    pub revocation: Option<crate::revocation::Revocation>,
 }
 
 /// What signing reports: the new field, and every signature the written file
@@ -185,6 +190,7 @@ pub fn report(path: String, field: String, found: Vec<crate::docinfo::Signature>
             field: signature.field,
             integrity: signature.integrity,
             timestamp: signature.timestamp,
+            revocation: signature.revocation,
         })
         .collect();
     Signed {
@@ -880,6 +886,13 @@ pub fn sign(
 }
 
 impl Made {
+    /// The CMS as the key made it, with no timestamp: for a test that needs a
+    /// signature without one.
+    #[cfg(test)]
+    pub(crate) fn unstamped_blob(&self) -> Vec<u8> {
+        self.blob.clone()
+    }
+
     /// The value octets of the one `SignerInfo.signature`: what an RFC 3161
     /// timestamp's imprint is over (Appendix A), not the DER around it.
     ///

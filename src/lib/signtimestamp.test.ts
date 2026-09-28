@@ -3,12 +3,15 @@ import { describe, expect, it } from "vitest";
 import wording from "../../src-tauri/testdata/cli/wording.json";
 import {
   CHOICE_KEY,
+  LONG_TERM_KEY,
   MAX_URL_CHARS,
   SERVERS,
   addressProblem,
   noStamp,
+  readLongTerm,
   readStampChoice,
   stampUrl,
+  writeLongTerm,
   writeStampChoice,
 } from "./signtimestamp";
 
@@ -92,5 +95,32 @@ describe("another authority's address", () => {
     // is fixed, which `signing.test.ts` holds.
     expect(stampUrl({ server: "other", url: "ftp://x" })).toBeNull();
     expect(stampUrl({ server: "other", url: " https://tsa.example/ " })).toBe("https://tsa.example/");
+  });
+});
+
+describe("the remembered long-term choice", () => {
+  it("is unticked until written ticked, and reads back what was written", () => {
+    const store = new Map<string, string>();
+    const storage = () => ({
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+    });
+    expect(readLongTerm(storage)).toBe(false);
+    expect(writeLongTerm(true, storage)).toBe(true);
+    expect(readLongTerm(storage)).toBe(true);
+    expect(writeLongTerm(false, storage)).toBe(true);
+    expect(readLongTerm(storage)).toBe(false);
+  });
+
+  it("reads anything tpdf did not write, or storage that throws, as unticked", () => {
+    for (const raw of ["yes", "1", "TRUE", "{}"]) {
+      const storage = () => ({
+        getItem: (key: string) => (key === LONG_TERM_KEY ? raw : null),
+        setItem: () => {},
+      });
+      expect(readLongTerm(storage)).toBe(false);
+    }
+    expect(readLongTerm(holding(null, true))).toBe(false);
+    expect(writeLongTerm(true, holding(null, true))).toBe(false);
   });
 });

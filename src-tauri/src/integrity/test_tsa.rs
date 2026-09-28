@@ -165,6 +165,10 @@ pub struct TestTsa {
     /// The self-signed root that issued it, DER: the anchor a test hands
     /// `trust::Anchors::Only`.
     pub root: Vec<u8>,
+    /// Certificates the token carries beside the authority's own: none, as
+    /// pyHanko's dummy authority carries none; the root, for
+    /// [`TestTsa::publishing`], as the public authorities carry their chain.
+    pub carried: Vec<Vec<u8>>,
 }
 
 impl Default for TestTsa {
@@ -207,6 +211,48 @@ impl TestTsa {
         TestTsa {
             key,
             certificate,
+            root,
+            carried: Vec::new(),
+        }
+    }
+
+    /// The authority of [`TestTsa::new`] --- the same keys and root --- whose
+    /// certificate says where its revocation data is published, and whose
+    /// tokens carry the root, as a public authority's carry its chain: what a
+    /// B-LT signing needs to find the issuer it asks about.
+    #[must_use]
+    pub fn publishing(published: &Published) -> Self {
+        let root_key = key(0x51);
+        let key = key(0x52);
+        let root = certificate(&Spec {
+            subject: ROOT,
+            issuer: ROOT,
+            key: &root_key,
+            signer: &root_key,
+            serial: 1,
+            purposes: None,
+            authority: true,
+        });
+        let certificate = certificate_with(
+            &Spec {
+                subject: AUTHORITY,
+                issuer: ROOT,
+                key: &key,
+                signer: &root_key,
+                serial: 2,
+                purposes: Some(&[TIMESTAMPING]),
+                authority: false,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &published.extensions(),
+        );
+        TestTsa {
+            key,
+            certificate,
+            carried: vec![root.clone()],
             root,
         }
     }
@@ -362,10 +408,15 @@ pub fn mint_with(
                     .expect("content"),
             ),
         },
-        certificates: Some(
-            CertificateSet::try_from(vec![CertificateChoices::Certificate(authority)])
-                .expect("certificates"),
-        ),
+        certificates: Some({
+            let mut set = vec![CertificateChoices::Certificate(authority)];
+            for carried in &tsa.carried {
+                set.push(CertificateChoices::Certificate(
+                    Certificate::from_der(carried).expect("a carried certificate"),
+                ));
+            }
+            CertificateSet::try_from(set).expect("certificates")
+        }),
         crls: None,
         signer_infos: SignerInfos::try_from(vec![signer]).expect("signer infos"),
     };
@@ -1208,4 +1259,509 @@ fn crl_reason(code: u8) -> x509_cert::ext::pkix::CrlReason {
         10 => R::AaCompromise,
         _ => R::Unspecified,
     }
+}
+
+// ----------------------------------------------- a fake PKI on 127.0.0.1
+//
+// For the long-term validation data a signing gathers (increment C2): test
+// certificates that say where their revocation data is published --- an OCSP
+// responder in `authorityInfoAccess`, a list in `cRLDistributionPoints` ---
+// and a server on 127.0.0.1 answering at those addresses with what the
+// minters above make, one fault at a time. Same rule as everything here:
+// external crates and `std` only, so `tests/cli.rs` runs the same server.
+
+/// id-ad-ocsp, RFC 5280 §4.2.2.1: an `authorityInfoAccess` entry naming an
+/// OCSP responder.
+pub const ID_AD_OCSP: &str = "1.3.6.1.5.5.7.48.1";
+
+/// Where a certificate says its revocation data is published: OCSP
+/// responders and revocation lists, each a URI, in the order written.
+#[derive(Clone, Debug, Default)]
+pub struct Published {
+    /// `authorityInfoAccess` entries of the `id-ad-ocsp` method.
+    pub ocsp: Vec<String>,
+    /// `cRLDistributionPoints`, each a `fullName` of one URI.
+    pub crl: Vec<String>,
+    /// `id-pkix-ocsp-nocheck` as well: nobody need ask about this one.
+    pub no_check: bool,
+}
+
+impl Published {
+    /// The two extensions, non-critical as RFC 5280 requires; neither when
+    /// there is nothing in it.
+    fn extensions(&self) -> Vec<Extension> {
+        use x509_cert::ext::pkix::crl::dp::DistributionPoint;
+        use x509_cert::ext::pkix::name::{DistributionPointName, GeneralName};
+        use x509_cert::ext::pkix::{AccessDescription, AuthorityInfoAccessSyntax};
+        let uri = |text: &str| {
+            GeneralName::UniformResourceIdentifier(der::asn1::Ia5String::new(text).expect("a URI"))
+        };
+        let mut out = Vec::new();
+        if !self.ocsp.is_empty() {
+            let access = AuthorityInfoAccessSyntax(
+                self.ocsp
+                    .iter()
+                    .map(|url| AccessDescription {
+                        access_method: oid(ID_AD_OCSP),
+                        access_location: uri(url),
+                    })
+                    .collect(),
+            );
+            out.push(Extension {
+                extn_id: oid("1.3.6.1.5.5.7.1.1"),
+                critical: false,
+                extn_value: OctetString::new(access.to_der().expect("access")).expect("octets"),
+            });
+        }
+        if !self.crl.is_empty() {
+            let points = x509_cert::ext::pkix::CrlDistributionPoints(
+                self.crl
+                    .iter()
+                    .map(|url| DistributionPoint {
+                        distribution_point: Some(DistributionPointName::FullName(vec![uri(url)])),
+                        reasons: None,
+                        crl_issuer: None,
+                    })
+                    .collect(),
+            );
+            out.push(Extension {
+                extn_id: oid("2.5.29.31"),
+                critical: false,
+                extn_value: OctetString::new(points.to_der().expect("points")).expect("octets"),
+            });
+        }
+        if self.no_check {
+            out.push(Extension {
+                extn_id: oid(OCSP_NO_CHECK),
+                critical: false,
+                extn_value: OctetString::new(der::asn1::Null.to_der().expect("null"))
+                    .expect("octets"),
+            });
+        }
+        out
+    }
+}
+
+impl TestCa {
+    /// [`TestCa::issue`] with no stated purpose, saying where its revocation
+    /// data is published.
+    #[must_use]
+    pub fn issue_publishing(
+        &self,
+        subject: &str,
+        seed: u8,
+        serial: u8,
+        published: &Published,
+    ) -> Issued {
+        let key = key(seed);
+        let certificate = certificate_with(
+            &Spec {
+                subject,
+                issuer: &self.name,
+                key: &key,
+                signer: &self.key,
+                serial,
+                purposes: None,
+                authority: false,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &published.extensions(),
+        );
+        Issued {
+            key,
+            seed,
+            certificate,
+        }
+    }
+
+    /// A cross-certificate: `other`'s name and key, issued by this authority
+    /// --- the form DigiCert's and Sectigo's tokens carry their roots in.
+    #[must_use]
+    pub fn cross(&self, other: &TestCa, serial: u8) -> Vec<u8> {
+        certificate(&Spec {
+            subject: &other.name,
+            issuer: &self.name,
+            key: &other.key,
+            signer: &self.key,
+            serial,
+            purposes: None,
+            authority: true,
+        })
+    }
+
+    /// [`TestCa::intermediate`], saying where its own revocation data is.
+    #[must_use]
+    pub fn intermediate_publishing(
+        &self,
+        name: &str,
+        seed: u8,
+        serial: u8,
+        published: &Published,
+    ) -> TestCa {
+        let key = key(seed);
+        let certificate = certificate_with(
+            &Spec {
+                subject: name,
+                issuer: &self.name,
+                key: &key,
+                signer: &self.key,
+                serial,
+                purposes: None,
+                authority: true,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &published.extensions(),
+        );
+        TestCa {
+            key,
+            name: name.to_string(),
+            certificate,
+        }
+    }
+}
+
+/// How the fake PKI answers at one address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Serve {
+    /// A sound response or list saying the certificate is not revoked.
+    Good,
+    /// A sound response or list saying it was revoked a day ago, for key
+    /// compromise.
+    Revoked,
+    /// A sound OCSP response saying the responder does not know it. A list
+    /// has no such answer, and serves [`Serve::Good`].
+    Unknown,
+    /// A good answer with one bit of its signature flipped.
+    CorruptSignature,
+    /// A good answer whose `nextUpdate` passed three days ago.
+    Stale,
+    /// OCSP's `tryLater` status; for a list, HTTP 503.
+    TryLater,
+    /// This HTTP status, and no body.
+    Status(u16),
+    /// A body longer than any bound: 70 KiB at an OCSP address, 9 MiB at a
+    /// list's.
+    Long,
+    /// Reads the request and says nothing for ten seconds.
+    Silent,
+    /// `200 OK` with this many bytes of `0x30`.
+    Bytes(usize),
+    /// `200 OK` with bytes that are not DER.
+    Garbage,
+}
+
+/// What the fake PKI publishes and serves: `None` is an address the
+/// certificate does not name at all.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Plan {
+    /// The signer's OCSP responder.
+    pub signer_ocsp: Option<Serve>,
+    /// The list the signer's certificate names.
+    pub signer_crl: Option<Serve>,
+    /// Whether an intermediate authority stands between the signer and the
+    /// root.
+    pub intermediate: bool,
+    /// The intermediate's own responder, when there is one.
+    pub intermediate_ocsp: Option<Serve>,
+    /// The intermediate's own list, when there is one.
+    pub intermediate_crl: Option<Serve>,
+    /// The timestamp authority's responder.
+    pub authority_ocsp: Option<Serve>,
+    /// The timestamp authority's list.
+    pub authority_crl: Option<Serve>,
+    /// Every certificate names an `ldap:` list first, before any `http:` one.
+    pub ldap_first: bool,
+    /// The signer's certificate carries `id-pkix-ocsp-nocheck`.
+    pub signer_no_check: bool,
+}
+
+/// Every request the fake PKI has read, as `(path, body)`, shared with its
+/// threads.
+pub type Asked = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+/// A certificate authority, a signer it issued, and the publishing test
+/// timestamp authority, all saying where their revocation data is --- and a
+/// server on 127.0.0.1 answering there.
+pub struct Pki {
+    /// `http://127.0.0.1:<port>`.
+    pub base: String,
+    /// The signer's root.
+    pub root: TestCa,
+    /// The authority between them, when [`Plan::intermediate`].
+    pub intermediate: Option<TestCa>,
+    /// The signer, whose key is `Soft::p256(signer.seed)`.
+    pub signer: Issued,
+    /// Above the signer, as an OS chain API returns it: the intermediate,
+    /// when there is one, then the root.
+    pub chain: Vec<Vec<u8>>,
+    /// The timestamp authority, publishing ([`TestTsa::publishing`]).
+    pub tsa: TestTsa,
+    /// Every request the server has read, as `(path, body)`, in order.
+    pub asked: Asked,
+}
+
+/// The world `plan` describes at `base`, built the same way twice --- once
+/// for the test and once inside the server's thread --- since keys are not
+/// shared across it.
+fn pki_world(base: &str, plan: &Plan) -> (TestCa, Option<TestCa>, Issued, TestTsa) {
+    let names = |ocsp: Option<Serve>, crl: Option<Serve>, path: &str| {
+        let mut published = Published::default();
+        if ocsp.is_some() {
+            published.ocsp.push(format!("{base}/ocsp/{path}"));
+        }
+        if plan.ldap_first {
+            published
+                .crl
+                .push("ldap://127.0.0.1/cn=tpdf%20test,o=nobody?certificateRevocationList".into());
+        }
+        if crl.is_some() {
+            published.crl.push(format!("{base}/crl/{path}.crl"));
+        }
+        published
+    };
+    let root = TestCa::new("tpdf test PKI root", 0x71);
+    let intermediate = plan.intermediate.then(|| {
+        root.intermediate_publishing(
+            "tpdf test PKI intermediate",
+            0x72,
+            2,
+            &names(
+                plan.intermediate_ocsp,
+                plan.intermediate_crl,
+                "intermediate",
+            ),
+        )
+    });
+    let issuer = intermediate.as_ref().unwrap_or(&root);
+    let signer = issuer.issue_publishing(
+        "tpdf test PKI signer - not a real identity",
+        0x73,
+        5,
+        &Published {
+            no_check: plan.signer_no_check,
+            ..names(plan.signer_ocsp, plan.signer_crl, "signer")
+        },
+    );
+    let tsa = TestTsa::publishing(&names(plan.authority_ocsp, plan.authority_crl, "authority"));
+    (root, intermediate, signer, tsa)
+}
+
+impl Pki {
+    /// Starts the server, and returns the world it answers for.
+    ///
+    /// # Panics
+    ///
+    /// No port on 127.0.0.1.
+    #[must_use]
+    pub fn start(plan: Plan) -> Pki {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let port = listener.local_addr().expect("an address").port();
+        let base = format!("http://127.0.0.1:{port}");
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (root, intermediate, signer, tsa) = pki_world(&base, &plan);
+        let chain = intermediate
+            .iter()
+            .map(|ca| ca.certificate.clone())
+            .chain(std::iter::once(root.certificate.clone()))
+            .collect();
+        let world = std::sync::Arc::new(pki_world(&base, &plan));
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else {
+                    return;
+                };
+                let world = world.clone();
+                let seen = seen.clone();
+                std::thread::spawn(move || answer(stream, &world, &plan, &seen));
+            }
+        });
+        Pki {
+            base,
+            root,
+            intermediate,
+            signer,
+            chain,
+            tsa,
+            asked,
+        }
+    }
+
+    /// The paths asked so far, in order.
+    ///
+    /// # Panics
+    ///
+    /// A server thread panicked while holding the record.
+    #[must_use]
+    pub fn paths(&self) -> Vec<String> {
+        self.asked
+            .lock()
+            .expect("the record")
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+}
+
+/// Reads one request and answers it as `plan` says for its path.
+fn answer(
+    mut stream: std::net::TcpStream,
+    world: &(TestCa, Option<TestCa>, Issued, TestTsa),
+    plan: &Plan,
+    seen: &std::sync::Mutex<Vec<(String, Vec<u8>)>>,
+) {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let Ok(clone) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = std::io::BufReader::new(clone);
+    let mut first = String::new();
+    if reader.read_line(&mut first).unwrap_or(0) == 0 {
+        return;
+    }
+    let path = first.split_whitespace().nth(1).unwrap_or("").to_string();
+    let mut length = 0usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            return;
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                length = value.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+    let mut body = vec![0; length];
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
+    if let Ok(mut record) = seen.lock() {
+        record.push((path.clone(), body));
+    }
+
+    let (root, intermediate, signer, tsa) = world;
+    let tsa_root = TestCa::of_tsa();
+    let signer_issuer = intermediate.as_ref().unwrap_or(root);
+    let intermediate_certificate = intermediate
+        .as_ref()
+        .map(|ca| ca.certificate.clone())
+        .unwrap_or_default();
+    let (serve, ocsp, subject, issuer): (Option<Serve>, bool, &[u8], &TestCa) = match path.as_str()
+    {
+        "/ocsp/signer" => (plan.signer_ocsp, true, &signer.certificate, signer_issuer),
+        "/crl/signer.crl" => (plan.signer_crl, false, &signer.certificate, signer_issuer),
+        "/ocsp/intermediate" => (
+            plan.intermediate_ocsp,
+            true,
+            &intermediate_certificate,
+            root,
+        ),
+        "/crl/intermediate.crl" => (
+            plan.intermediate_crl,
+            false,
+            &intermediate_certificate,
+            root,
+        ),
+        "/ocsp/authority" => (plan.authority_ocsp, true, &tsa.certificate, &tsa_root),
+        "/crl/authority.crl" => (plan.authority_crl, false, &tsa.certificate, &tsa_root),
+        _ => (Some(Serve::Status(404)), true, &[], root),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    const DAY: u64 = 86_400;
+    let fresh = (now - 3_600, Some(now + 7 * DAY));
+    let mint = |status: Status, (this, next): (u64, Option<u64>), corrupt: bool| {
+        if ocsp {
+            mint_ocsp(
+                subject,
+                issuer,
+                status,
+                this,
+                next,
+                Responder::Issuer,
+                &OcspFaults {
+                    corrupt_signature: corrupt,
+                    ..OcspFaults::default()
+                },
+            )
+        } else {
+            let listed = [Listed {
+                certificate: subject,
+                at: now - DAY,
+                reason: Some(1),
+            }];
+            let revoked = matches!(status, Status::Revoked { .. });
+            mint_crl(
+                issuer,
+                if revoked { &listed } else { &[] },
+                this,
+                next,
+                &CrlFaults {
+                    corrupt_signature: corrupt,
+                    ..CrlFaults::default()
+                },
+            )
+        }
+    };
+    let revoked = Status::Revoked {
+        at: now - DAY,
+        reason: Some(1),
+    };
+    let reply: Result<Vec<u8>, u16> = match serve.unwrap_or(Serve::Status(404)) {
+        Serve::Good => Ok(mint(Status::Good, fresh, false)),
+        Serve::Revoked => Ok(mint(revoked, fresh, false)),
+        Serve::Unknown => Ok(mint(Status::Unknown, fresh, false)),
+        Serve::CorruptSignature => Ok(mint(Status::Good, fresh, true)),
+        Serve::Stale => Ok(mint(
+            Status::Good,
+            (now - 10 * DAY, Some(now - 3 * DAY)),
+            false,
+        )),
+        // OCSPResponse { responseStatus tryLater (3) }.
+        Serve::TryLater if ocsp => Ok(vec![0x30, 0x03, 0x0a, 0x01, 0x03]),
+        Serve::TryLater => Err(503),
+        Serve::Status(code) => Err(code),
+        Serve::Long => Ok(vec![0x30; if ocsp { 70 * 1024 } else { 9 << 20 }]),
+        Serve::Silent => {
+            std::thread::sleep(Duration::from_secs(10));
+            return;
+        }
+        Serve::Garbage => Ok(b"this is not DER".to_vec()),
+        Serve::Bytes(n) => Ok(vec![0x30; n]),
+    };
+    let kind = if ocsp {
+        "application/ocsp-response"
+    } else {
+        "application/pkix-crl"
+    };
+    let out = match reply {
+        Ok(body) => {
+            let mut out = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            out.extend(body);
+            out
+        }
+        Err(code) => {
+            format!("HTTP/1.1 {code} Nope\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .into_bytes()
+        }
+    };
+    let _ = stream.write_all(&out);
 }

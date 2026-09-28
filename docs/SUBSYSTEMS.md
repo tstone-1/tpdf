@@ -55,6 +55,15 @@ written. When the request fails the window holds the `Made` in `commands::sign::
 `tpdf sign --timestamp` exits 3. `docs/PLAN.md` §9, *Adding a timestamp when signing*, and
 `docs/THREAT-MODEL.md` §T10.
 
+**Long-term validation data when signing (2026-09-28)** follows the seal: `longterm::plan`
+finds every certificate to ask about in the timestamped CMS, `longterm::gather` fetches OCSP or
+a list for each through `tsa::fetch` (app process only) and judges it with `revocation::judge`,
+and a worker spawned over a snapshot of the unwritten bytes appends the `/DSS` and reads the
+result (`sign_dss.rs`, `Request::AppendValidation`, `save::Verifier::validation`);
+`longterm::check` refuses unless both revocations read `good`. On failure the window holds the
+sealed bytes as `Pending`'s `Sealed` stage; `tpdf sign --long-term` exits 3. `docs/PLAN.md` §9,
+*Long-term validation data when signing*.
+
 **Whether the OS trusts a signer (2026-09-27)** is asked in the worker, inside
 `docinfo::scan_from`, of every signature whose integrity verdict is intact or weak, and
 nowhere else: `trust.rs` hands the signer's certificate and the rest of the signature's set,

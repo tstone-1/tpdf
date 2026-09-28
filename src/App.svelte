@@ -2111,12 +2111,15 @@
               defaultPath: suggested,
               filters: [{ name: "PDF", extensions: ["pdf"] }],
             }),
-          sign: (identity, path, placement, timestamp) =>
-            call("sign_document", { doc, source, identity, path, placement, timestamp }),
-          // A timestamp that did not come: the question, then the signature the
-          // backend is holding written or dropped. The OS is not asked again.
+          sign: (identity, path, placement, timestamp, longTerm) =>
+            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm }),
+          // A timestamp or long-term data that did not come: the question, then
+          // the signature the backend is holding written or dropped. The OS is
+          // not asked again.
           stampFailed: (why) => signing.askAfterStampFailed(why),
-          resume: (pending, timestamp) => call("sign_resume", { pending, timestamp }),
+          longTermFailed: (why) => signing.askAfterLongTermFailed(why),
+          resume: (pending, timestamp, longTerm) =>
+            call("sign_resume", { pending, timestamp, longTerm }),
           discard: (pending) => call("sign_discard", { pending }),
         });
         if (said) say(said);

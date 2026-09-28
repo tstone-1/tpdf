@@ -2437,6 +2437,25 @@ pub trait Verifier: Send {
         file: &mut std::fs::File,
         len: usize,
     ) -> Result<Vec<crate::docinfo::Signature>, String>;
+
+    /// The `/DSS` revision carrying a signature's long-term validation data,
+    /// built over `signed` --- a signed copy not yet written --- and what the
+    /// signatures in the result read as (`sign_dss::extend`).
+    ///
+    /// **A parse of the document, so it is asked of a worker** wherever there
+    /// is one, for [`Verifier::signatures`]' reason: every revision before the
+    /// new ones is the reader's document verbatim. It is on this trait rather
+    /// than [`Rewriter`] because what the caller decides on is the reading;
+    /// the revision is bytes it appends and writes with `write_signed`.
+    ///
+    /// # Errors
+    ///
+    /// What `sign_dss::extend` refuses, or the worker failing.
+    fn validation(
+        &self,
+        signed: &[u8],
+        gathered: &crate::sign_dss::Gathered,
+    ) -> Result<crate::sign_dss::Extended, String>;
 }
 
 /// Re-reads in the coordinator, which is the process that just did the writing.
@@ -2483,6 +2502,15 @@ impl Verifier for Here {
         let bytes = read_whole(file, len).map_err(|e| e.to_string())?;
         let pages = u32::try_from(reread_pages(&bytes, None)?).unwrap_or(u32::MAX);
         crate::docinfo::scan(&bytes, pages, None).map(|found| found.signatures)
+    }
+
+    fn validation(
+        &self,
+        signed: &[u8],
+        gathered: &crate::sign_dss::Gathered,
+    ) -> Result<crate::sign_dss::Extended, String> {
+        let pages = u32::try_from(reread_pages(signed, None)?).unwrap_or(u32::MAX);
+        crate::sign_dss::extend(signed, gathered, pages)
     }
 }
 

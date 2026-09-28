@@ -1876,3 +1876,24 @@ fn json_output_is_ascii_and_means_the_same_text() {
     let back: serde_json::Value = serde_json::from_str(&text).expect("decodes");
     assert_eq!(back, value);
 }
+
+#[test]
+fn long_term_data_is_asked_for_only_with_a_timestamp() {
+    let line = |extra: &[&str]| {
+        let mut args: Vec<String> = ["a.pdf", "-o", "b.pdf", "--identity", "x"]
+            .iter()
+            .map(|a| (*a).to_string())
+            .collect();
+        args.extend(extra.iter().map(|a| (*a).to_string()));
+        super::sign::parse(&args)
+    };
+    let why = line(&["--long-term"]).expect_err("refused");
+    assert!(why.contains("--timestamp"), "{why}");
+    let sign = line(&["--timestamp", "digicert", "--long-term"]).expect("parsed");
+    assert!(sign.long_term && sign.timestamp.is_some());
+    assert!(
+        !line(&["--timestamp", "digicert"])
+            .expect("parsed")
+            .long_term
+    );
+}

@@ -19,7 +19,7 @@ import {
   type Signed,
   type SigningShell,
 } from "./signing";
-import { CHOICE_KEY } from "./signtimestamp";
+import { CHOICE_KEY, LONG_TERM_KEY } from "./signtimestamp";
 import { FakeElement, installFakeDom } from "./testdom";
 
 const choice: Choice = {
@@ -97,8 +97,12 @@ function shell(overrides: Partial<SigningShell> = {}) {
       asked.push(`stampFailed:${why}`);
       return null;
     },
-    resume: async (pending, timestamp) => {
-      asked.push(`resume:${pending}:${timestamp}`);
+    longTermFailed: async (why) => {
+      asked.push(`longTermFailed:${why}`);
+      return null;
+    },
+    resume: async (pending, timestamp, longTerm) => {
+      asked.push(`resume:${pending}:${timestamp}${longTerm ? ":long-term" : ""}`);
       return { signed, unstamped: null };
     },
     discard: async (pending) => {
@@ -406,14 +410,14 @@ describe("the chooser", () => {
     expect(first.radio("sign-appearance", "invisible").checked).toBe(true);
     expect(first.radio("sign-appearance", "visible").checked).toBe(false);
     first.button("Sign…").dispatch("click", {});
-    expect(await first.answer).toEqual({ identity: "abc", visible: false, timestamp: null });
+    expect(await first.answer).toEqual({ identity: "abc", visible: false, timestamp: null, longTerm: false });
     first.done();
 
     const second = open([choice]);
     second.radio("sign-appearance", "invisible").checked = false;
     second.radio("sign-appearance", "visible").checked = true;
     second.button("Sign…").dispatch("click", {});
-    expect(await second.answer).toEqual({ identity: "abc", visible: true, timestamp: null });
+    expect(await second.answer).toEqual({ identity: "abc", visible: true, timestamp: null, longTerm: false });
     second.done();
   });
 });
@@ -590,7 +594,7 @@ describe("the chooser's timestamp", () => {
     const c = open([choice], storage);
     expect(c.stamps().filter((r) => r.checked).map((r) => r.value)).toEqual(["none"]);
     c.sign.dispatch("click", {});
-    expect(await c.answer).toEqual({ identity: "abc", visible: false, timestamp: null });
+    expect(await c.answer).toEqual({ identity: "abc", visible: false, timestamp: null, longTerm: false });
     c.done();
   });
 
@@ -604,6 +608,7 @@ describe("the chooser's timestamp", () => {
       identity: "abc",
       visible: false,
       timestamp: "https://timestamp.sectigo.com",
+      longTerm: false,
     });
     first.done();
     expect(JSON.parse(store.get(CHOICE_KEY)!)).toEqual({ server: "sectigo", url: "" });
@@ -628,7 +633,216 @@ describe("the chooser's timestamp", () => {
       identity: "abc",
       visible: false,
       timestamp: "https://tsa.example/rfc3161",
+      longTerm: false,
     });
     c.done();
+  });
+});
+
+describe("long-term validation data", () => {
+  const url = "https://tsa.example/";
+  const good = {
+    standing: "good",
+    why: null,
+    source: "ocsp",
+    issued: "2026-09-28 09:00:00 UTC",
+    next: "2026-09-28 21:00:00 UTC",
+    revoked: "",
+    reason: null,
+    basis: "claimed",
+    moment: "2026-09-28 10:11:12 UTC",
+    after_moment: false,
+  } as const;
+  const withData: Signed = {
+    path: "/docs/report-signed.pdf",
+    field: "Signature1",
+    signatures: [
+      {
+        field: "Signature1",
+        integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "ECDSA P-256" },
+        ours: true,
+        revocation: good,
+      },
+    ],
+  };
+
+  it("is asked for only with a timestamp, and said when it reads back good", async () => {
+    const calls: string[] = [];
+    const { shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: false, timestamp: url, longTerm: true }),
+      sign: async (_identity, _path, _placement, timestamp, longTerm) => {
+        calls.push(`sign:${timestamp}:${longTerm}`);
+        return { signed: withData, unstamped: null };
+      },
+    });
+    const said = await signDocument(s);
+    expect(calls).toEqual([`sign:${url}:true`]);
+    expect(said).toContain(" Revocation: not revoked — an OCSP response in the document");
+
+    const without: string[] = [];
+    const { shell: t } = shell({
+      choose: async () => ({ identity: "abc", visible: false, timestamp: null, longTerm: true }),
+      sign: async (_identity, _path, _placement, timestamp, longTerm) => {
+        without.push(`sign:${timestamp}:${longTerm}`);
+        return { signed: withData, unstamped: null };
+      },
+    });
+    await signDocument(t);
+    expect(without).toEqual(["sign:null:false"]);
+  });
+
+  /** A shell whose first signing answers that the long-term data did not come. */
+  function failing(answers: AfterStampAnswer[]) {
+    const calls: string[] = [];
+    const { asked, shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: false, timestamp: url, longTerm: true }),
+      sign: async () => ({
+        signed: null,
+        unstamped: { why: "no revocation data", pending: 52, stage: "long_term" },
+      }),
+      stampFailed: async (why) => {
+        calls.push(`stampFailed:${why}`);
+        return null;
+      },
+      longTermFailed: async (why) => {
+        calls.push(`longTermFailed:${why}`);
+        return answers.shift() ?? null;
+      },
+      resume: async (pending, timestamp, longTerm) => {
+        calls.push(`resume:${pending}:${timestamp}:${longTerm}`);
+        return answers.length > 0
+          ? { signed: null, unstamped: { why: "still none", pending, stage: "long_term" } }
+          : { signed: withData, unstamped: null };
+      },
+    });
+    return { calls, asked, s };
+  }
+  type AfterStampAnswer = "retry" | "without" | null;
+
+  it("asks its own question when it does not come, and signs without it only when told", async () => {
+    const { calls, s } = failing(["without"]);
+    await signDocument(s);
+    expect(calls).toEqual(["longTermFailed:no revocation data", `resume:52:${url}:false`]);
+  });
+
+  it("gathers it again, keeping the timestamp, when the reader tries again", async () => {
+    const { calls, s } = failing(["retry", "without"]);
+    await signDocument(s);
+    expect(calls).toEqual([
+      "longTermFailed:no revocation data",
+      `resume:52:${url}:true`,
+      "longTermFailed:still none",
+      `resume:52:${url}:false`,
+    ]);
+  });
+
+  it("is asked again with a timestamp tried again, and never with none", async () => {
+    const calls: string[] = [];
+    let round = 0;
+    const { shell: s } = shell({
+      choose: async () => ({ identity: "abc", visible: false, timestamp: url, longTerm: true }),
+      sign: async () => ({
+        signed: null,
+        unstamped: { why: "tsa down", pending: 60, stage: "timestamp" },
+      }),
+      stampFailed: async () => {
+        round += 1;
+        return round === 1 ? "retry" : "without";
+      },
+      resume: async (pending, timestamp, longTerm) => {
+        calls.push(`resume:${pending}:${timestamp}:${longTerm}`);
+        return round === 1
+          ? { signed: null, unstamped: { why: "still down", pending, stage: "timestamp" } }
+          : { signed: withData, unstamped: null };
+      },
+    });
+    await signDocument(s);
+    expect(calls).toEqual([`resume:60:${url}:true`, "resume:60:null:false"]);
+  });
+
+  it("drops the signature when the reader cancels", async () => {
+    const { asked, s } = failing([null]);
+    expect(await signDocument(s)).toBe(NOT_WRITTEN);
+    expect(asked).toContain("discard:52");
+  });
+});
+
+describe("the chooser's long-term checkbox", () => {
+  function open(storage: () => Pick<Storage, "getItem" | "setItem">) {
+    const dom = installFakeDom();
+    const body = new FakeElement("body");
+    Object.assign(globalThis.document, { body, activeElement: null });
+    const create = document.createElement.bind(document);
+    const spy = vi.spyOn(document, "createElement").mockImplementation(((tag: string) => {
+      const node = create(tag) as unknown as FakeElement & Record<string, unknown>;
+      if (tag === "dialog") Object.assign(node, { showModal: () => {}, close: () => {} });
+      if (tag === "input")
+        Object.assign(node, { checked: false, disabled: false, focus: () => {}, value: "" });
+      if (tag === "label")
+        Object.assign(node, {
+          append: (...kids: unknown[]) => {
+            for (const kid of kids) if (typeof kid !== "string") node.appendChild(kid as FakeElement);
+          },
+        });
+      return node as unknown as HTMLElement;
+    }) as typeof document.createElement);
+    const answer = askIdentity([choice], storage);
+    const nodes = (root: FakeElement): FakeElement[] =>
+      root.children.flatMap((child) => [child, ...nodes(child)]);
+    const all = nodes(body) as (FakeElement & {
+      checked: boolean;
+      disabled: boolean;
+      value: string;
+      name: string;
+    })[];
+    const radio = (value: string) =>
+      all.find((n) => n.tagName === "input" && n.name === "sign-timestamp" && n.value === value)!;
+    const box = all.find((n) => n.tagName === "input" && n.name === "sign-long-term")!;
+    const sign = all.find((n) => n.tagName === "button" && n.textContent === "Sign…")!;
+    const done = () => {
+      spy.mockRestore();
+      dom.restore();
+    };
+    return { answer, radio, box, sign, done };
+  }
+
+  it("is unticked, and cannot be ticked, until an authority is chosen", async () => {
+    const { storage } = memory();
+    const c = open(storage);
+    expect(c.box.checked).toBe(false);
+    expect(c.box.disabled).toBe(true);
+    c.radio("none").checked = false;
+    c.radio("digicert").checked = true;
+    c.radio("digicert").dispatch("change", {});
+    expect(c.box.disabled).toBe(false);
+    c.sign.dispatch("click", {});
+    expect((await c.answer)?.longTerm).toBe(false);
+    c.done();
+  });
+
+  it("is remembered, and asked for only with a timestamp", async () => {
+    const { store, storage } = memory();
+    const first = open(storage);
+    first.radio("none").checked = false;
+    first.radio("sectigo").checked = true;
+    first.box.checked = true;
+    first.sign.dispatch("click", {});
+    expect(await first.answer).toEqual({
+      identity: "abc",
+      visible: false,
+      timestamp: "https://timestamp.sectigo.com",
+      longTerm: true,
+    });
+    first.done();
+    expect(store.get(LONG_TERM_KEY)).toBe("true");
+
+    const second = open(storage);
+    expect(second.box.checked).toBe(true);
+    // Ticked, and no authority: nothing more is asked of anybody.
+    second.radio("sectigo").checked = false;
+    second.radio("none").checked = true;
+    second.sign.dispatch("click", {});
+    expect((await second.answer)?.longTerm).toBe(false);
+    second.done();
   });
 });

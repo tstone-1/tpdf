@@ -40,6 +40,10 @@ pub mod keylayout;
 pub mod keystore;
 pub mod launch;
 pub mod links;
+/// Gathering long-term validation data while signing: OCSP responses and
+/// revocation lists fetched in the app process, never in a worker, and only
+/// when the reader asked (`docs/THREAT-MODEL.md` §T10).
+pub mod longterm;
 pub mod menu;
 pub mod merge;
 pub mod objects;
@@ -94,6 +98,7 @@ pub mod save_outside;
 pub mod search;
 pub mod session;
 pub mod sign_cms;
+pub mod sign_dss;
 pub mod sign_prepare;
 pub mod signature;
 pub mod signature_store;
@@ -1069,6 +1074,14 @@ mod tests {
             _len: usize,
         ) -> Result<Vec<crate::docinfo::Signature>, String> {
             Err("a redaction's read-back never asks for signatures".into())
+        }
+
+        fn validation(
+            &self,
+            _signed: &[u8],
+            _gathered: &crate::sign_dss::Gathered,
+        ) -> Result<crate::sign_dss::Extended, String> {
+            Err("a redaction's read-back never asks for validation data".into())
         }
     }
 

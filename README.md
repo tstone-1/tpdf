@@ -58,7 +58,11 @@ When you sign with a timestamp, and only then, tpdf sends the timestamp authorit
 a hash of the new signature and a random number — nothing of the document — along with the
 connection's IP address; DigiCert and GlobalSign are asked over plain HTTP, because that is all
 they offer, so anybody on the network path can see that you signed something at that moment.
-The authority's own privacy policy applies to that request.
+The authority's own privacy policy applies to that request. When you also ask to keep the
+signature verifiable after the certificates expire, tpdf asks the certificate authorities that
+issued your certificate and the timestamp authority's whether those certificates are revoked:
+each request carries a certificate's serial number, so its authority learns that the
+certificate is being used now. Most of those services are plain HTTP as well.
 Links in PDFs open in the browser only after confirmation, where the destination's
 privacy policy applies. Use **Disable automatic update checks** in
 the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
@@ -169,7 +173,17 @@ measured the Windows render constants come out 1.5–1.8x worse.
   you choose one, and tpdf then remembers it. It sends the authority a hash of the new
   signature and nothing of the document, checks the answer before anything is written, and
   writes nothing if no timestamp that checks out comes back: you can try again or sign
-  without one, and neither asks for your key again. A timestamp already on a signature you
+  without one, and neither asks for your key again. With a timestamp you can also tick
+  **Keep it verifiable after the certificates expire** (PAdES B-LT): tpdf then asks the
+  certificate authorities whether your certificate, the timestamp authority's and the ones
+  above them are revoked — OCSP first, the revocation list if there is no answer — checks each
+  answer, and adds the answers and the certificates to the document, so the signature can be
+  checked after the certificates expire and the authorities stop answering. It is unticked
+  until you tick it, and remembered. A certificate from a certificate authority that publishes
+  no revocation data — a self-made one, say — cannot have it, and the message says so; the
+  timestamp alone still works. If the data cannot be had or does not check out, nothing is
+  written, and you can try again or sign without it, which keeps the timestamp; a certificate
+  its authority says is revoked is refused outright. A timestamp already on a signature you
   open is checked, in the document's properties. Documents with unsaved edits, encrypted documents and
   documents certified against any change are refused. The same signing and checking is
   available from a terminal: see [Command-line tool](#command-line-tool).
@@ -481,7 +495,8 @@ properties**, the viewer's own text, its form filling and **Redact and save as�
 window, with the same code: the document is read only by the same sandboxed worker processes,
 the private key never leaves the operating system, and every signed, filled or redacted file is
 read back and checked before success is reported. Nothing is uploaded, and nothing goes online
-except the one request `sign --timestamp` makes to the timestamp authority you name.
+except the one request `sign --timestamp` makes to the timestamp authority you name, and the
+revocation requests `sign --long-term` makes to the certificate authorities.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
@@ -499,6 +514,7 @@ tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe"
 tpdf sign contract.pdf -o contract-signed.pdf --identity 2a144cdb…c74 \
     --visible --page 2 --rect 72,600,220,70 --reason "Approved" --location "Hamburg"
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp digicert
+tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp sectigo --long-term
 tpdf verify contract-signed.pdf other.pdf
 tpdf verify --strict --json *.pdf
 tpdf info report.pdf
@@ -564,7 +580,15 @@ the page as it is displayed:
   run it again without `--timestamp` to sign without one. Without `--timestamp` nothing is
   sent anywhere. The summary says whether the authority's certificate chains to a root this
   computer trusts — over plain `http://` somebody on the network could substitute a
-  timestamp from an authority of their own, which checks out and reads as not trusted.
+  timestamp from an authority of their own, which checks out and reads as not trusted. `--long-term`, which needs `--timestamp`, also fetches the revocation
+  data for the signer's certificate, the timestamp authority's and the certificates above them
+  from their certificate authorities, checks it, and adds it with those certificates to the
+  document (PAdES B-LT), so the signature stays checkable after the certificates expire; the
+  signature's `revocation` reads `good` afterwards, for the signer and for the authority. If a
+  certificate names nowhere its data is published, an authority does not answer, or an answer
+  does not check out, nothing is written, the exit code is 3, and the message says to run it
+  again without `--long-term`; a certificate its authority says is revoked is exit 3 too, and
+  no advice to sign without the data.
 - **`verify <file.pdf>...`** says, for every signature, whether it is intact and whether this
   computer trusts its signer, in the words of the application's properties dialog — and, for
   a signature carrying an RFC 3161 timestamp or a document timestamp, whether the timestamp
@@ -667,8 +691,8 @@ built.
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
 | 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. |
-| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, nothing for `redact` to remove, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
-| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, `--long-term` without `--timestamp`, nothing for `redact` to remove, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, revocation data that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
 
 Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
@@ -817,12 +841,11 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Adding long-term-validation data when signing, and certification signatures. Signing
-  exists, with a timestamp if you ask for one; reading a document's own revocation data and
-  judging a signer at the time a trusted timestamp attests exist too. What is not built is
-  gathering OCSP responses and revocation lists while signing and appending them to the
-  document, and archive timestamps that keep a signature checkable after its timestamp
-  authority's certificate runs out.
+- Adding long-term-validation data to a document that is already signed, archive timestamps,
+  and certification signatures. Signing adds long-term validation data when you ask for it
+  with a timestamp; what is not built is adding it later to a signature already in a
+  document, and archive timestamps (PAdES B-LTA) that keep a signature checkable after its
+  timestamp authority's certificate runs out.
   <!-- not-built: file.addValidationData -->
 - General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
   paragraph reflow and unsupported complex content streams.

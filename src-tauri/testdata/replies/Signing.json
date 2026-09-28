@@ -12,7 +12,8 @@
           "method": ""
         },
         "ours": false,
-        "timestamp": null
+        "timestamp": null,
+        "revocation": null
       },
       {
         "field": "Signature2",
@@ -70,18 +71,32 @@
             "moment": "2026-01-02 03:04:06 UTC",
             "after_moment": true
           }
+        },
+        "revocation": {
+          "standing": "revoked",
+          "why": "stale",
+          "source": "crl",
+          "issued": "2026-01-03 00:00:00 UTC",
+          "next": "2026-01-10 00:00:00 UTC",
+          "revoked": "2026-01-02 12:00:00 UTC",
+          "reason": "key_compromise",
+          "basis": "attested",
+          "moment": "2026-01-02 03:04:06 UTC",
+          "after_moment": true
         }
       },
       {
         "field": "Signature3",
         "integrity": null,
         "ours": false,
-        "timestamp": null
+        "timestamp": null,
+        "revocation": null
       }
     ]
   },
   "unstamped": {
     "why": "tpdf could not reach the timestamp authority at tsa.example: connection refused",
-    "pending": 7
+    "pending": 7,
+    "stage": "long_term"
   }
 }

@@ -82,11 +82,29 @@
 //!
 //! A measurement, run by hand: nothing a gate runs reaches the network.
 //!
+//! ## `--long-term`, with `--timestamp`
+//!
+//! Phase 6 step 3, increment C2, against the **real** certificate authorities
+//! behind the timestamp authority. The probe's signer is a self-made
+//! certificate that publishes no revocation data, so a whole B-LT signing is
+//! refused --- and that refusal is the first check: `longterm::extend`, the
+//! path the window and `tpdf sign --long-term` take, must say the certificate
+//! does not say where its revocation data is published, and write nothing.
+//! Then the **authority's half** is measured on its own:
+//! `longterm::plan_authority` finds the timestamp authority's certificate and
+//! every non-root one above it, `longterm::gather` asks their real OCSP
+//! responders (or lists) through `tsa::fetch`, each request timed and sized,
+//! and `sign_dss::extend` --- the worker's code, here in-process --- appends the
+//! `/DSS`. tpdf must read the authority's revocation back `good`, at the time
+//! its token states, and the signer's `none`. The file is left in the scratch
+//! folder for pyHanko and `qpdf --check` (`BUILD.md`), and every response and
+//! list as `dss-ocsp-<n>.der` / `dss-crl-<n>.der` for `openssl ocsp -respin`.
+//!
 //! Usage:
 //!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384]
 //!       [--visible [--rect l,t,r,b] [--lines label,name,date] [--reason TEXT]
 //!        [--location TEXT] [--no-image]]
-//!       [--timestamp digicert|sectigo|globalsign|URL]
+//!       [--timestamp digicert|sectigo|globalsign|URL [--long-term]]
 //!
 //! Needs `openssl` (3.x) and `uv`. Either missing is `[FAIL]`, never a pass.
 
@@ -244,7 +262,19 @@ fn main() {
             std::process::exit(2);
         })
     });
-    match probe(&input, &scratch, kind, visible.as_ref(), timestamp.as_ref()) {
+    let long_term = args.iter().any(|a| a == "--long-term");
+    if long_term && timestamp.is_none() {
+        eprintln!("--long-term needs --timestamp");
+        std::process::exit(2);
+    }
+    match probe(
+        &input,
+        &scratch,
+        kind,
+        visible.as_ref(),
+        timestamp.as_ref(),
+        long_term,
+    ) {
         Ok(true) => {}
         Ok(false) => std::process::exit(1),
         Err(e) => {
@@ -252,6 +282,119 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// `--long-term`: the whole path refused for the self-made signer, then the
+/// authority's half measured against its real certificate authorities.
+fn long_term_half(
+    report: &mut Report,
+    bytes: &[u8],
+    cms: &[u8],
+    field: &str,
+    now: u64,
+    scratch: &Path,
+) -> Result<(), String> {
+    use tpdf_lib::longterm;
+    let whole = longterm::extend(
+        bytes,
+        cms,
+        field,
+        now,
+        &tpdf_lib::save::Here,
+        &longterm::os_chain,
+        &mut longterm::fetch_blocking,
+    );
+    report.check(
+        "long-term, the whole path: the self-made signer is refused, nothing to write",
+        matches!(&whole, Err(longterm::Refusal::NotPublished(name)) if name.starts_with("the signer's")),
+        &format!("{:?}", whole.as_ref().map(Vec::len)),
+    );
+
+    let (subjects, certificates) =
+        longterm::plan_authority(cms, &longterm::os_chain).map_err(|why| why.sentence())?;
+    println!(
+        "long-term: asking about {} certificate(s): {}",
+        subjects.len(),
+        subjects
+            .iter()
+            .map(tpdf_lib::longterm::Subject::name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let started = std::time::Instant::now();
+    let mut timed =
+        |url: &url::Url, body: Option<(&str, Vec<u8>)>, limits: &tpdf_lib::tsa::Limits| {
+            let at = std::time::Instant::now();
+            let kind = if body.is_some() { "OCSP" } else { "list" };
+            let answer = longterm::fetch_blocking(url, body, limits);
+            println!(
+                "  {kind} {url}: {} in {:.2} s",
+                match &answer {
+                    Ok(bytes) => format!("{} bytes", bytes.len()),
+                    Err(why) => why.sentence(url.host_str().unwrap_or_default()),
+                },
+                at.elapsed().as_secs_f64()
+            );
+            answer
+        };
+    let gathered = longterm::gather(&subjects, certificates, now, longterm::TOTAL, &mut timed)
+        .map_err(|why| why.sentence())?;
+    println!(
+        "long-term: gathered in {:.2} s: {} certificates, {} responses, {} lists, {} bytes",
+        started.elapsed().as_secs_f64(),
+        gathered.certificates.len(),
+        gathered.responses.len(),
+        gathered.lists.len(),
+        gathered.bytes()
+    );
+    for (n, der) in gathered.responses.iter().enumerate() {
+        std::fs::write(scratch.join(format!("dss-ocsp-{n}.der")), der)
+            .map_err(|e| e.to_string())?;
+    }
+    for (n, der) in gathered.lists.iter().enumerate() {
+        std::fs::write(scratch.join(format!("dss-crl-{n}.der")), der).map_err(|e| e.to_string())?;
+    }
+    for (n, der) in gathered.certificates.iter().enumerate() {
+        std::fs::write(scratch.join(format!("dss-cert-{n}.der")), der)
+            .map_err(|e| e.to_string())?;
+    }
+    let extended = tpdf_lib::sign_dss::extend(bytes, &gathered, 1)?;
+    let whole = [bytes, extended.update.as_slice()].concat();
+    let out = scratch.join("authority-lt.pdf");
+    std::fs::write(&out, &whole).map_err(|e| e.to_string())?;
+    println!(
+        "long-term: {} + {} bytes of /DSS revision -> {}",
+        bytes.len(),
+        extended.update.len(),
+        out.display()
+    );
+    let found = tpdf_lib::docinfo::scan(&whole, 1, None)?;
+    let ours = found
+        .signatures
+        .iter()
+        .find(|s| s.field == field)
+        .ok_or("our signature is not in the extended file")?;
+    let authority = ours.timestamp.as_ref().and_then(|t| t.revocation.as_ref());
+    println!("long-term: the authority reads {authority:?}");
+    report.check(
+        "long-term: the authority's revocation reads good, at the time its token states",
+        authority.is_some_and(|r| {
+            r.standing == tpdf_lib::revocation::Status::Good
+                && r.basis == tpdf_lib::revocation::Basis::Stated
+        }),
+        &format!("{authority:?}"),
+    );
+    report.check(
+        "long-term: the signer, about whom nothing was gathered, reads none",
+        ours.revocation.as_ref().map(|r| r.standing) == Some(tpdf_lib::revocation::Status::None),
+        &format!("{:?}", ours.revocation),
+    );
+    report.check(
+        "long-term: the signature is still intact under its revision",
+        ours.integrity.as_ref().map(|i| i.verdict) == Some(Verdict::Intact),
+        &format!("{:?}", ours.integrity),
+    );
+    Ok(())
 }
 
 /// A 64 x 32 signature raster: a dark blue bar across the middle, transparent
@@ -800,6 +943,7 @@ fn probe(
     kind: &str,
     visible: Option<&Visible>,
     timestamp: Option<&url::Url>,
+    long_term: bool,
 ) -> Result<bool, String> {
     std::fs::create_dir_all(scratch).map_err(|e| e.to_string())?;
     let mut report = Report {
@@ -837,6 +981,7 @@ fn probe(
         tpdf_lib::tsa::ask_blocking(url, value, &tpdf_lib::tsa::LIMITS)
     })
     .map_err(|why| why.sentence(timestamp.and_then(url::Url::host_str).unwrap_or("")))?;
+    let cms = stamped.clone();
     if let (Some(url), Some(blob)) = (timestamp, stamped.as_ref()) {
         println!(
             "timestamped by {url} in {:.2} s: {} bytes of CMS with the token, of {} reserved",
@@ -1013,6 +1158,11 @@ fn probe(
             openssl_ts_verifies(&token, &other, scratch, Anchors::Named).is_err(),
             "accepted a token over bytes it is not of",
         );
+    }
+
+    // --------------------------------------------- the long-term data
+    if let (true, Some(cms)) = (long_term, cms.as_ref()) {
+        long_term_half(&mut report, &bytes, cms, &field, now, scratch)?;
     }
 
     // ------------------------------------------------ control: wrong offset

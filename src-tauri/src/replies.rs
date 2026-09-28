@@ -684,6 +684,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                         }),
                         ours: false,
                         timestamp: None,
+                        revocation: None,
                     },
                     crate::sign_cms::Checked {
                         field: "Signature2".into(),
@@ -714,12 +715,14 @@ fn samples() -> BTreeMap<&'static str, String> {
                             attested: true,
                             revocation: Some(revocation_sample()),
                         }),
+                        revocation: Some(revocation_sample()),
                     },
                     crate::sign_cms::Checked {
                         field: "Signature3".into(),
                         integrity: None,
                         ours: false,
                         timestamp: None,
+                        revocation: None,
                     },
                 ],
             }),
@@ -728,6 +731,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                       connection refused"
                     .into(),
                 pending: 7,
+                stage: crate::commands::sign::Waiting::LongTerm,
             }),
         },
     );

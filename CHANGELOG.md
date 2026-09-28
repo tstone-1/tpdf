@@ -21,6 +21,23 @@ have the binary.)
 
 ### Added
 
+- **Keep a signature verifiable after its certificates expire.** When you sign
+  with a timestamp you can now also tick *Keep it verifiable after the
+  certificates expire* (or give `tpdf sign` `--long-term`). tpdf then asks the
+  certificate authorities whether your certificate, the timestamp authority's
+  and the ones above them have been revoked, checks every answer, and adds the
+  answers and the certificates to the signed document (PAdES B-LT) — so the
+  signature can still be checked once the certificates have expired and the
+  authorities no longer answer. The properties dialog and `tpdf verify` then read
+  the revocation of the signer and of the timestamp authority as checked from the
+  document. It is unticked until you tick it, and remembered. Each request tells
+  a certificate authority that one of its certificates is being used now; it is
+  made only when you ask for this. If the data cannot be had, or does not check
+  out, nothing is written: you can try again, or sign without it and keep the
+  timestamp, and your key is not asked for again. A certificate its authority
+  says is revoked is refused outright. A certificate that says nowhere where its
+  revocation data is published — a self-made one, say — cannot have it, and the
+  message says so; the timestamp alone still works with it.
 - **A timestamp when you sign.** *Sign document…* can now ask a timestamp
   authority to confirm when the signature was made — DigiCert, Sectigo,
   GlobalSign, or another address you give — and `tpdf sign` does the same with

@@ -145,3 +145,37 @@ export function stampUrl(choice: StampChoice): string | null {
   }
   return SERVERS.find((s) => s.name === choice.server)?.url ?? null;
 }
+
+/**
+ * Where the long-term choice lives: whether a signing with a timestamp also
+ * gathers the certificates' revocation data and adds it to the document
+ * (PAdES B-LT, `longterm.rs`). Unticked until the reader ticks it, and only
+ * ever asked for together with a timestamp.
+ */
+export const LONG_TERM_KEY = "tpdf.signatureLongTerm";
+
+/**
+ * The remembered long-term choice, or `false`. Only the exact value tpdf
+ * writes reads as ticked: anything else --- storage that throws, a value tpdf
+ * did not write --- is the default, which asks nobody for anything more.
+ */
+export function readLongTerm(storage: () => Store = () => window.localStorage): boolean {
+  try {
+    return storage().getItem(LONG_TERM_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+/** Keeps the long-term choice; `false` when storage refused. */
+export function writeLongTerm(
+  longTerm: boolean,
+  storage: () => Store = () => window.localStorage,
+): boolean {
+  try {
+    storage().setItem(LONG_TERM_KEY, longTerm ? "true" : "false");
+    return true;
+  } catch {
+    return false;
+  }
+}

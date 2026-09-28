@@ -259,7 +259,9 @@ carries (`revocation.rs`, worker only): **one package, itself**, 617 to 618, on 
 **That plugin was the only network authority in the application until 2026-09-28, and it changed
 a property that had held until 26.8.2: tpdf made no request at all.** The second is the timestamp
 client, reached only when the reader asks for a timestamp on one signing, from the app process or
-the command-line tool's and never a worker --- `docs/THREAT-MODEL.md` §T10. It is spent narrowly — one check per
+the command-line tool's and never a worker --- `docs/THREAT-MODEL.md` §T10; since increment C2
+(2026-09-28) the same client also asks the certificate authorities for revocation data when the
+reader asks for long-term validation data with that timestamp, with no package added. It is spent narrowly — one check per
 launch, issued after every spike and check entry point has returned, so every harness here still
 runs offline; nothing downloads or installs without a click; and the payload's signature is
 verified against a compiled-in public key before anything is unpacked, which is what keeps those

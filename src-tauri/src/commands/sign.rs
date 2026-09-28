@@ -24,6 +24,18 @@
 //! of them: a second PIN on a smart card, because a server was down, would be
 //! tpdf's cost made the reader's. Signing without one is always the reader's
 //! explicit second choice, never what a failure turns into.
+//!
+//! ## Long-term validation data, and the same promise
+//!
+//! When the reader also asked for long-term validation data (PAdES B-LT, only
+//! ever together with a timestamp), this process gathers it after the
+//! timestamped signature is sealed and a worker appends it (`longterm.rs`).
+//! If that fails, nothing is written and the **sealed, timestamped** signature
+//! is what [`Pending`] keeps: trying again gathers again, and signing without
+//! the data writes the B-T file --- neither asks the key or the timestamp
+//! authority again. The one failure with no second choice is a certificate
+//! authority saying a certificate is revoked: nothing is kept and nothing is
+//! written, with or without the data.
 
 use std::path::{Path, PathBuf};
 
@@ -105,9 +117,32 @@ pub struct Pending(parking_lot::Mutex<Option<Held>>);
 /// What [`Pending`] holds: the signature, and where it was to be written.
 struct Held {
     number: u64,
-    made: sign_cms::Made,
+    stage: Stage,
     source: PathBuf,
     out: PathBuf,
+}
+
+/// How far a held signature got.
+enum Stage {
+    /// Made by the key; its timestamp did not come.
+    Made(sign_cms::Made),
+    /// Made, timestamped and sealed; its long-term validation data did not
+    /// come. `cms` is the timestamped signature, which says what to ask about.
+    Sealed {
+        bytes: Vec<u8>,
+        cms: Vec<u8>,
+        field: String,
+    },
+}
+
+/// What a held signature is waiting for, as the window reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Waiting {
+    /// The timestamp.
+    Timestamp,
+    /// The long-term validation data, with the timestamp already in it.
+    LongTerm,
 }
 
 /// What `sign_document` and `sign_resume` answer: exactly one of the two is
@@ -121,23 +156,26 @@ pub struct Signing {
     pub unstamped: Option<Unstamped>,
 }
 
-/// A signing whose timestamp did not come.
+/// A signing whose timestamp, or whose long-term validation data, did not
+/// come.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Unstamped {
     /// Why, as a sentence.
     pub why: String,
     /// The kept signature, for [`sign_resume`] and [`sign_discard`].
     pub pending: u64,
+    /// Which of the two did not come, which decides what the reader is asked.
+    pub stage: Waiting,
 }
 
 impl Pending {
-    fn keep(&self, made: sign_cms::Made, source: PathBuf, out: PathBuf) -> u64 {
+    fn keep(&self, stage: Stage, source: PathBuf, out: PathBuf) -> u64 {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let number = NEXT.fetch_add(1, Ordering::Relaxed);
         *self.0.lock() = Some(Held {
             number,
-            made,
+            stage,
             source,
             out,
         });
@@ -168,39 +206,74 @@ fn authority_of(timestamp: Option<&str>) -> Result<Option<url::Url>, String> {
         .transpose()
 }
 
-/// The rest of a signing, from a made signature: the timestamp when one was
-/// asked for, the seal, the write and the read-back --- or, when the timestamp
-/// did not come, the signature kept and the reason. On a blocking thread: the
-/// request, the write and the read-back all wait.
+/// The rest of a signing, from a made or sealed signature: the timestamp when
+/// one was asked for, the seal, the long-term data when it was asked for, the
+/// write and the read-back --- or, when the timestamp or the data did not
+/// come, the signature kept and the reason. On a blocking thread: the
+/// requests, the write and the read-back all wait.
+#[allow(clippy::too_many_arguments)]
 fn conclude(
-    made: sign_cms::Made,
+    stage: Stage,
     authority: Option<&url::Url>,
+    long_term: bool,
     source: PathBuf,
     out: PathBuf,
     checking: &dyn crate::save::Outside,
     pending: &Pending,
 ) -> Result<Signing, String> {
-    let stamped = match crate::tsa::stamp(&made, authority, |url, value| {
-        crate::tsa::ask_blocking(url, value, &crate::tsa::LIMITS)
-    }) {
-        Ok(stamped) => stamped,
-        Err(why) => {
-            let host = authority
-                .and_then(url::Url::host_str)
-                .unwrap_or_default()
-                .to_string();
-            let number = pending.keep(made, source, out);
-            return Ok(Signing {
-                signed: None,
-                unstamped: Some(Unstamped {
-                    why: why.sentence(&host),
-                    pending: number,
-                }),
-            });
-        }
+    let waiting = |why: String, number: u64, stage: Waiting| Signing {
+        signed: None,
+        unstamped: Some(Unstamped {
+            why,
+            pending: number,
+            stage,
+        }),
     };
-    let field = made.field.clone();
-    let bytes = made.seal(stamped)?;
+    let (bytes, cms, field) = match stage {
+        Stage::Made(made) => {
+            let stamped = match crate::tsa::stamp(&made, authority, |url, value| {
+                crate::tsa::ask_blocking(url, value, &crate::tsa::LIMITS)
+            }) {
+                Ok(stamped) => stamped,
+                Err(why) => {
+                    let host = authority
+                        .and_then(url::Url::host_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let number = pending.keep(Stage::Made(made), source, out);
+                    return Ok(waiting(why.sentence(&host), number, Waiting::Timestamp));
+                }
+            };
+            let field = made.field.clone();
+            let cms = stamped.clone();
+            (made.seal(stamped)?, cms, field)
+        }
+        Stage::Sealed { bytes, cms, field } => (bytes, Some(cms), field),
+    };
+    let bytes = match (long_term, cms) {
+        (false, _) => bytes,
+        (true, None) => return Err(crate::longterm::Refusal::NoTimestamp.sentence()),
+        (true, Some(cms)) => match crate::longterm::extend(
+            &bytes,
+            &cms,
+            &field,
+            now(),
+            checking,
+            &crate::longterm::os_chain,
+            &mut crate::longterm::fetch_blocking,
+        ) {
+            Ok(extended) => extended,
+            // A revoked certificate: nothing is kept to be written without
+            // the data, because that would be the same revoked signature.
+            Err(why) if why.revoked() => {
+                return Err(format!("{} --- nothing was written", why.sentence()))
+            }
+            Err(why) => {
+                let number = pending.keep(Stage::Sealed { bytes, cms, field }, source, out);
+                return Ok(waiting(why.sentence(), number, Waiting::LongTerm));
+            }
+        },
+    };
     save::write_signed(&source, &out, &bytes).map_err(|why| why.message)?;
 
     // Read back by a worker, through the handle of the file just written:
@@ -215,6 +288,15 @@ fn conclude(
         signed: Some(sign_cms::report(out.display().to_string(), field, found)),
         unstamped: None,
     })
+}
+
+/// The long-term choice, judged against the timestamp: long-term data is
+/// offered only with one, and the webview is not trusted to have kept to that.
+fn long_term_of(long_term: bool, authority: Option<&url::Url>) -> Result<bool, String> {
+    if long_term && authority.is_none() {
+        return Err(crate::longterm::Refusal::NoTimestamp.sentence());
+    }
+    Ok(long_term)
 }
 
 /// Seconds since the epoch, now.
@@ -300,9 +382,10 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
 ///
 /// `timestamp` is the authority the reader chose for this signing, or `None`
 /// for none --- in which case no request is made to anybody. It is judged here
-/// before anything else is asked.
-// Nine because a Tauri command's arguments are its IPC shape: three are the
-// states Tauri injects, and bundling the six the frontend sends into a struct
+/// before anything else is asked. `long_term` asks for long-term validation
+/// data as well, and is refused without a timestamp.
+// Ten because a Tauri command's arguments are its IPC shape: three are the
+// states Tauri injects, and bundling the seven the frontend sends into a struct
 // would change `ipc.ts`'s mirror for no reader's benefit.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -316,8 +399,10 @@ pub async fn sign_document(
     path: String,
     placement: Option<Placement>,
     timestamp: Option<String>,
+    long_term: Option<bool>,
 ) -> Result<Signing, String> {
     let authority = authority_of(timestamp.as_deref())?;
+    let long_term = long_term_of(long_term.unwrap_or(false), authority.as_ref())?;
     {
         use tauri::Manager as _;
         app.state::<Pending>().clear();
@@ -369,8 +454,9 @@ pub async fn sign_document(
             &identity,
         )?;
         conclude(
-            made,
+            Stage::Made(made),
             authority.as_ref(),
+            long_term,
             PathBuf::from(source),
             PathBuf::from(path),
             checking.as_ref(),
@@ -383,6 +469,9 @@ pub async fn sign_document(
 
 /// Finishes a signing whose timestamp did not come, as the reader chose: with
 /// `timestamp` to try that authority again, or `None` to write it without one.
+/// For one whose long-term data did not come, `long_term` gathers it again, and
+/// `false` writes the timestamped signature without it; `timestamp` is not
+/// asked again then, as the token is already in the signature.
 /// **The OS is not asked for anything**: the signature is the one already made.
 ///
 /// # Errors
@@ -395,20 +484,28 @@ pub async fn sign_resume(
     service: tauri::State<'_, RenderService>,
     pending: u64,
     timestamp: Option<String>,
+    long_term: Option<bool>,
 ) -> Result<Signing, String> {
     let authority = authority_of(timestamp.as_deref())?;
+    let long_term = long_term.unwrap_or(false);
     let checking = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager as _;
         let held = app.state::<Pending>();
         let Held {
-            made, source, out, ..
+            stage, source, out, ..
         } = held
             .take(pending)
             .ok_or("this signature is no longer held --- sign the document again".to_string())?;
+        // A made signature needs the timestamp for the data; a sealed one
+        // already carries it, and `timestamp` is not asked again.
+        if matches!(stage, Stage::Made(_)) {
+            long_term_of(long_term, authority.as_ref())?;
+        }
         conclude(
-            made,
+            stage,
             authority.as_ref(),
+            long_term,
             source,
             out,
             checking.as_ref(),
@@ -461,5 +558,168 @@ mod tests {
             placement.visible(1, "A. Signer".into()).options,
             sign_prepare::Options::default()
         );
+    }
+
+    /// A signature from the fake PKI's signer, timestamped and sealed: the
+    /// stage `Pending` holds after its long-term data did not come.
+    fn sealed(pki: &crate::integrity::test_tsa::Pki) -> Stage {
+        use crate::integrity::test_tsa::{mint, Imprint};
+        use crate::sign_cms::testkeys::{plain_pdf, Soft};
+        let at = now();
+        let original = plain_pdf();
+        let unsigned = sign_prepare::prepare(original.clone(), at, None).expect("prepared");
+        let made = sign_cms::sign(
+            original,
+            unsigned,
+            at,
+            &pki.signer.certificate,
+            &pki.chain,
+            &Soft::p256(pki.signer.seed),
+        )
+        .expect("made");
+        let value = made.value().expect("a value");
+        let token = mint(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(&value),
+            None,
+            at,
+            &pki.tsa,
+        );
+        let cms = made.stamped(&token).expect("stamped");
+        let field = made.field.clone();
+        let bytes = made.seal(Some(cms.clone())).expect("sealed");
+        Stage::Sealed { bytes, cms, field }
+    }
+
+    fn scratch(name: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("tpdf-conclude-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory");
+        let source = dir.join("source.pdf");
+        std::fs::write(&source, b"%PDF-1.7 the original").expect("a source");
+        (source, dir.join("signed.pdf"))
+    }
+
+    /// Long-term data that did not come: nothing written, the sealed
+    /// signature held, and signing without the data writes the timestamped
+    /// signature --- with nothing asked of the key or the authority, since
+    /// the stage holds neither a key nor a request.
+    #[test]
+    fn long_term_data_that_did_not_come_is_held_and_can_be_left_out() {
+        use crate::integrity::test_tsa::{Pki, Plan, Serve};
+        let pki = Pki::start(Plan {
+            signer_ocsp: None,
+            authority_ocsp: Some(Serve::Good),
+            ..Plan::default()
+        });
+        let (source, out) = scratch("held");
+        let pending = Pending::default();
+        let answer = conclude(
+            sealed(&pki),
+            None,
+            true,
+            source.clone(),
+            out.clone(),
+            &crate::save::Here,
+            &pending,
+        )
+        .expect("an answer");
+        let waiting = answer.unstamped.expect("held");
+        assert_eq!(waiting.stage, Waiting::LongTerm);
+        assert!(
+            waiting.why.contains("A timestamp alone works"),
+            "{}",
+            waiting.why
+        );
+        assert!(answer.signed.is_none() && !out.exists(), "nothing written");
+
+        let Held {
+            stage, source, out, ..
+        } = pending.take(waiting.pending).expect("held");
+        let answer = conclude(
+            stage,
+            None,
+            false,
+            source,
+            out.clone(),
+            &crate::save::Here,
+            &pending,
+        )
+        .expect("written");
+        let signed = answer.signed.expect("signed");
+        let ours = signed.signatures.iter().find(|s| s.ours).expect("ours");
+        assert!(ours.timestamp.is_some(), "the timestamp was kept");
+        assert_eq!(
+            ours.revocation.as_ref().map(|r| r.standing),
+            Some(crate::revocation::Status::None)
+        );
+        assert!(out.exists());
+    }
+
+    #[test]
+    fn long_term_data_that_came_is_written_and_read_back_good() {
+        use crate::integrity::test_tsa::{Pki, Plan, Serve};
+        let pki = Pki::start(Plan {
+            signer_ocsp: Some(Serve::Good),
+            authority_ocsp: Some(Serve::Good),
+            ..Plan::default()
+        });
+        let (source, out) = scratch("good");
+        let answer = conclude(
+            sealed(&pki),
+            None,
+            true,
+            source,
+            out,
+            &crate::save::Here,
+            &Pending::default(),
+        )
+        .expect("written");
+        let signed = answer.signed.expect("signed");
+        let ours = signed.signatures.iter().find(|s| s.ours).expect("ours");
+        assert_eq!(
+            ours.revocation.as_ref().map(|r| r.standing),
+            Some(crate::revocation::Status::Good)
+        );
+    }
+
+    /// A revoked certificate: refused outright, and nothing held that could
+    /// be written without the data.
+    #[test]
+    fn a_revoked_certificate_is_refused_and_nothing_is_held() {
+        use crate::integrity::test_tsa::{Pki, Plan, Serve};
+        let pki = Pki::start(Plan {
+            signer_ocsp: Some(Serve::Revoked),
+            authority_ocsp: Some(Serve::Good),
+            ..Plan::default()
+        });
+        let (source, out) = scratch("revoked");
+        let pending = Pending::default();
+        let why = match conclude(
+            sealed(&pki),
+            None,
+            true,
+            source,
+            out.clone(),
+            &crate::save::Here,
+            &pending,
+        ) {
+            Err(why) => why,
+            Ok(answer) => panic!("not refused: {answer:?}"),
+        };
+        assert!(
+            why.contains("revoked") && why.contains("nothing was written"),
+            "{why}"
+        );
+        assert!(pending.0.lock().is_none(), "a revoked signature was kept");
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn long_term_data_is_refused_without_a_timestamp() {
+        assert!(long_term_of(true, None).is_err());
+        assert_eq!(long_term_of(false, None), Ok(false));
+        let url = url::Url::parse("http://127.0.0.1/").expect("a URL");
+        assert_eq!(long_term_of(true, Some(&url)), Ok(true));
     }
 }

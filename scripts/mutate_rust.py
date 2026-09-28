@@ -233,6 +233,14 @@ FILTERS = [
     # Added 2026-09-28 with revocation (increment C1), in the same edit as its
     # mutations. "docinfo::" already reaches `docinfo::revocation_tests`.
     "revocation::",
+    # Added 2026-09-28 with long-term validation data (increment C2), in the
+    # same edit as its mutations: the fake PKI's tests are in `longterm::tests`,
+    # the `/DSS` writer's in `sign_dss::tests`, and the held stage's in
+    # `commands::sign::tests` --- which `tests::` reaches today only by the
+    # accident the notes above refuse to rely on.
+    "longterm::",
+    "sign_dss::",
+    "commands::sign::",
 ]
 
 
@@ -12492,8 +12500,8 @@ MUTATIONS += [
         # timestamped goes out without one.
         "cli: drop --timestamp",
         "src/cli/sign.rs",
-        "        timestamp,\n        json,\n",
-        "        timestamp: None,\n        json,\n",
+        "        timestamp,\n        long_term,\n",
+        "        timestamp: None,\n        long_term,\n",
         "a_timestamp_authority_is_named_or_given_and_judged_before_anything_runs",
     ),
 ]
@@ -12865,6 +12873,230 @@ MUTATIONS += [
         "            .is_some_and(|r| r.standing == crate::revocation::Status::Revoked && !r.after_moment)",
         "            .is_some_and(|r| r.standing == crate::revocation::Status::Revoked)",
         "a_revocation_after_the_attested_time_does_not_fail_strict_and_one_before_does",
+    ),
+]
+
+
+# --- long-term validation data when signing (increment C2) ------------------
+#
+# `longterm.rs`, `sign_dss.rs`, `commands/sign.rs` and `cli/sign.rs`,
+# 2026-09-28. Each removes one check the gathering, the `/DSS` revision or the
+# refusal policy rests on, and names the test built so only that check fails
+# it: the fake PKI in `integrity/test_tsa.rs` serves one fault at a time.
+MUTATIONS += [
+    Mutation(
+        "longterm: fetch revocation data over any scheme",
+        "src/longterm.rs",
+        '    let fine = matches!(url.scheme(), "http" | "https")',
+        "    let fine = true",
+        "a_certificate_that_publishes_nothing_is_refused_with_what_would_work",
+    ),
+    Mutation(
+        "longterm: ask about a certificate that says it needs no check",
+        "src/longterm.rs",
+        "            if !no_check(&current) {",
+        "            if true {",
+        "a_certificate_that_needs_no_check_is_not_asked_about",
+    ),
+    Mutation(
+        "longterm: ask about a root",
+        "src/longterm.rs",
+        "            if anchor.is_some() {\n                if whose == own {",
+        "            if false {\n                if whose == own {",
+        "a_b_lt_signature_is_written_and_reads_back_good_for_signer_and_authority",
+    ),
+    Mutation(
+        # Found by the real run against DigiCert and Sectigo (docs/PLAN.md).
+        "longterm: walk past a cross-certificate of a root the OS holds",
+        "src/longterm.rs",
+        "            let anchor = anchor_of(&current, &candidates);\n",
+        "            let anchor = anchor_of(&current, &candidates).filter(|_| root(&current));\n",
+        "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
+    ),
+    Mutation(
+        "longterm: carry a cross-certificate in place of its anchor",
+        "src/longterm.rs",
+        "            if let Ok(der) = anchor.unwrap_or(&current).to_der() {",
+        "            if let Ok(der) = current.to_der() {",
+        "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
+    ),
+    Mutation(
+        "longterm: let a self-issued signer pass with nothing asked",
+        "src/longterm.rs",
+        "                if whose == own {",
+        "                if false {",
+        "a_self_issued_signer_publishes_nothing_and_says_so",
+    ),
+    Mutation(
+        "longterm: take no issuer from the OS chain",
+        "src/longterm.rs",
+        "        for found in os_chain(&der, &known.clone()) {",
+        "        for found in Vec::<Vec<u8>>::new() {",
+        "an_issuer_nowhere_to_be_found_is_refused",
+    ),
+    Mutation(
+        "longterm: plan a chain of any depth",
+        "src/longterm.rs",
+        "        if subjects.len() > MAX_SUBJECTS {",
+        "        if false {",
+        "a_chain_deeper_than_any_real_one_is_refused",
+    ),
+    Mutation(
+        # C1's note: the reader takes issuers only from the document.
+        "longterm: leave the certificates out of the /DSS",
+        "src/longterm.rs",
+        "    let mut gathered = Gathered {\n        certificates,\n",
+        "    let mut gathered = Gathered {\n        certificates: { let _ = certificates; Vec::new() },\n",
+        "a_b_lt_signature_is_written_and_reads_back_good_for_signer_and_authority",
+    ),
+    Mutation(
+        "longterm: make any number of requests",
+        "src/longterm.rs",
+        "        if requests > MAX_REQUESTS {",
+        "        if false {",
+        "the_requests_are_bounded_whatever_a_certificate_lists",
+    ),
+    Mutation(
+        "longterm: gather for as long as the servers take",
+        "src/longterm.rs",
+        "        if left.is_zero() {",
+        "        if false {",
+        "the_whole_gathering_is_bounded_in_time",
+    ),
+    Mutation(
+        "longterm: gather any amount of data",
+        "src/longterm.rs",
+        "        if gathered.bytes() + more > MAX_GATHERED {",
+        "        if false {",
+        "the_data_is_bounded_in_size_before_it_is_read",
+    ),
+    Mutation(
+        "longterm: read an OCSP answer of any length",
+        "src/longterm.rs",
+        "    body: crate::revocation::MAX_RESPONSE_BYTES,",
+        "    body: 16 * 1024 * 1024,",
+        "a_responder_that_is_down_silent_or_too_long_leaves_nothing_answered",
+    ),
+    Mutation(
+        # `tryLater` is not an answer, and the list is still asked.
+        "longterm: take a responder's non-answer as its answer",
+        "src/longterm.rs",
+        "                Ok(OcspResponseStatus::Successful) => {}",
+        "                Ok(_) => {}",
+        "a_list_is_fetched_when_the_responder_does_not_answer",
+    ),
+    Mutation(
+        # The OCSP response kept whatever it says: revoked, unknown, forged.
+        "longterm: keep an OCSP response without judging it",
+        "src/longterm.rs",
+        "            room(&gathered, answer.len())?;\n            judged(subject, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
+        "            room(&gathered, answer.len())?;\n            gathered.responses.push(answer);",
+        "a_revoked_signer_is_refused_and_no_list_is_shopped_for",
+    ),
+    Mutation(
+        # Shopping: an answer that does not check out, and a list asked instead.
+        "longterm: ask the list after an answer that does not check out",
+        "src/longterm.rs",
+        "            room(&gathered, answer.len())?;\n            judged(subject, &candidates, &material, &by, &host, now)?;\n            gathered.responses.push(answer);",
+        "            room(&gathered, answer.len())?;\n            if judged(subject, &candidates, &material, &by, &host, now).is_err() {\n                continue;\n            }\n            gathered.responses.push(answer);",
+        "an_answer_that_does_not_check_out_is_refused",
+    ),
+    Mutation(
+        "longterm: keep a list without judging it",
+        "src/longterm.rs",
+        "            room(&gathered, answer.len())?;\n            judged(subject, &candidates, &material, &by, &host, now)?;\n            gathered.lists.push(answer);",
+        "            room(&gathered, answer.len())?;\n            gathered.lists.push(answer);",
+        # Re-aimed after its first run: for the signer and the authority the
+        # worker's reading refuses a revoked list anyway (the named test went
+        # on passing), so only a certificate above them reaches this alone.
+        "a_revoked_intermediate_is_refused_before_anything_is_written",
+    ),
+    Mutation(
+        "longterm: write a signature that does not read back intact",
+        "src/longterm.rs",
+        "    if ours.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {",
+        "    if false {",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        "longterm: write a timestamp that does not read back intact",
+        "src/longterm.rs",
+        "    if stamp.integrity.as_ref().map(|i| i.verdict) != Some(Verdict::Intact) {",
+        "    if false {",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        # `none` is B-T, which is not what the reader asked for.
+        "longterm: write a signature whose revocation reads none",
+        "src/longterm.rs",
+        "            Status::Good => {}",
+        "            Status::Good | Status::None => {}",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        "longterm: append a revision built against other bytes",
+        "src/longterm.rs",
+        "    if extended.built_against != bytes.len() {",
+        "    if false {",
+        "a_revision_built_against_other_bytes_is_refused",
+    ),
+    Mutation(
+        "dss: write a /DSS with no revocation data in it",
+        "src/sign_dss.rs",
+        "    if gathered.responses.is_empty() && gathered.lists.is_empty() {",
+        "    if false {",
+        "nothing_to_add_or_too_much_is_refused",
+    ),
+    Mutation(
+        "dss: take any amount of data",
+        "src/sign_dss.rs",
+        "    if gathered.bytes() > MAX_BYTES {",
+        "    if false {",
+        "nothing_to_add_or_too_much_is_refused",
+    ),
+    Mutation(
+        "dss: drop what an earlier /DSS held",
+        "src/sign_dss.rs",
+        '        (carried(b"Certs")?, carried(b"OCSPs")?, carried(b"CRLs")?);',
+        "        (Vec::new(), Vec::new(), Vec::new());",
+        "an_earlier_dss_is_kept_and_added_to",
+    ),
+    Mutation(
+        # The reader who must never get a signature with a revoked certificate
+        # is offered one without the data.
+        "sign: hold a revoked signature for writing without the data",
+        "src/commands/sign.rs",
+        "            Err(why) if why.revoked() => {",
+        "            Err(why) if false => {",
+        "a_revoked_certificate_is_refused_and_nothing_is_held",
+    ),
+    Mutation(
+        "sign: ask for long-term data without a timestamp",
+        "src/commands/sign.rs",
+        "    if long_term && authority.is_none() {",
+        "    if false {",
+        "long_term_data_is_refused_without_a_timestamp",
+    ),
+    Mutation(
+        "sign: write the held signature without the data it waited for",
+        "src/commands/sign.rs",
+        "        (false, _) => bytes,",
+        "        (false | true, _) => bytes,",
+        "long_term_data_that_came_is_written_and_read_back_good",
+    ),
+    Mutation(
+        "cli: take --long-term without --timestamp",
+        "src/cli/sign.rs",
+        "    if long_term && timestamp.is_none() {",
+        "    if false {",
+        "long_term_data_is_asked_for_only_with_a_timestamp",
+    ),
+    Mutation(
+        "cli: drop --long-term",
+        "src/cli/sign.rs",
+        "        long_term,\n        json,\n",
+        "        long_term: false,\n        json,\n",
+        "long_term_data_is_asked_for_only_with_a_timestamp",
     ),
 ]
 

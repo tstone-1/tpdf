@@ -665,6 +665,12 @@ fn handle(
                 Err(e) => Response::err(e),
             }
         }
+        Request::AppendValidation { gathered } => {
+            match render::run_append_validation(document, gathered) {
+                Ok(extended) => Response::reply(Reply::Validated(Box::new(extended))),
+                Err(e) => Response::err(e),
+            }
+        }
         Request::SignaturePreview { at, visible } => {
             match render::run_signature_preview(bindings, *at, visible) {
                 Ok(preview) => Response::reply(Reply::SignaturePreview(preview)),

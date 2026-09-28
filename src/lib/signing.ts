@@ -46,11 +46,25 @@
  * backend holds the signature it already made meanwhile, so none of the three
  * asks the OS for the key again. Signing without a timestamp is only ever that
  * second, explicit answer.
+ *
+ * ## Long-term validation data, only with a timestamp
+ *
+ * Beside the timestamp, a checkbox asks whether to keep the signature
+ * verifiable after the certificates expire (PAdES B-LT): the backend then
+ * fetches the certificates' revocation data and adds it to the document
+ * (`longterm.rs`). It can be ticked only while an authority is chosen, is
+ * unticked until the reader ticks it, and is remembered like the timestamp.
+ * When the data does not come, **nothing has been written**, and the reader
+ * chooses again: try again, sign without it --- the timestamped signature,
+ * with nothing asked of the key or the authority again --- or cancel
+ * ({@link askAfterLongTermFailed}). A certificate its authority says is
+ * revoked is not offered that choice: the backend refuses outright.
  */
 
 import { basename } from "./paths";
 import type { Integrity } from "./integrity";
-import { WHY, authorityRow, timestampRow } from "./integrity";
+import { WHY, authorityRow, revocationRow, timestampRow } from "./integrity";
+import type { Revocation } from "./integrity";
 import type { Timestamp } from "./properties";
 import type { PageId } from "./pages";
 import type { SignatureImage } from "./signature";
@@ -58,8 +72,10 @@ import type { Appearance, AppearanceOptions } from "./signappearance";
 import {
   SERVERS,
   addressProblem,
+  readLongTerm,
   readStampChoice,
   stampUrl,
+  writeLongTerm,
   writeStampChoice,
   type StampChoice,
 } from "./signtimestamp";
@@ -96,6 +112,8 @@ export interface Checked {
   ours: boolean;
   /** Its timestamp as the worker read it back, or `null` for none. */
   timestamp?: Timestamp | null;
+  /** The signer's revocation, as the file's own data says: `good` after long-term data. */
+  revocation?: Revocation | null;
 }
 
 /** What `sign_document` answers. Mirrors `sign_cms::Signed`. */
@@ -105,12 +123,17 @@ export interface Signed {
   signatures: Checked[];
 }
 
-/** A signing whose timestamp did not come. Mirrors `commands::sign::Unstamped`. */
+/**
+ * A signing whose timestamp, or whose long-term data, did not come. Mirrors
+ * `commands::sign::Unstamped`.
+ */
 export interface Unstamped {
   /** Why, as a sentence. */
   why: string;
   /** The signature the backend holds, for `sign_resume` and `sign_discard`. */
   pending: number;
+  /** Which did not come: the timestamp, or the long-term data after it. */
+  stage?: "timestamp" | "long_term";
 }
 
 /**
@@ -131,9 +154,11 @@ export interface Chosen {
   identity: string;
   visible: boolean;
   timestamp: string | null;
+  /** Long-term validation data as well; only ever with a timestamp. */
+  longTerm?: boolean;
 }
 
-/** What the reader chose after a timestamp did not come. */
+/** What the reader chose after a timestamp, or the long-term data, did not come. */
 export type AfterStamp = "retry" | "without" | null;
 
 /** What is said when the reader cancels after a timestamp did not come. */
@@ -246,6 +271,17 @@ export function afterSigning(signed: Signed): string {
     const authority = authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
     if (authority) text += ` Timestamp authority: ${authority.value}`;
   }
+  // Long-term data: said only when the file's own data answers `good`, which
+  // is what a signing that added it must read back as. A signing that added
+  // none reads `none`, and says nothing more than it did before.
+  if (ours.revocation?.standing === "good") {
+    const signer = revocationRow(ours.revocation);
+    if (signer) text += ` Revocation: ${signer.value}`;
+    const authority = revocationRow(stamp?.revocation ?? null, true);
+    if (authority && stamp?.revocation?.standing === "good") {
+      text += ` Authority revocation: ${authority.value}`;
+    }
+  }
   if (earlier.length > 0) {
     const listed = earlier.map((s) => `${s.field} ${verdict(s.integrity)}`).join(", ");
     text += ` Earlier signature${earlier.length === 1 ? "" : "s"}: ${listed}.`;
@@ -273,18 +309,24 @@ export interface SigningShell {
   saveAs(suggested: string): Promise<string | null>;
   /**
    * `sign_document`, with `null` for an invisible signature and `null` for no
-   * timestamp.
+   * timestamp, and whether to add long-term validation data.
    */
   sign(
     identity: string,
     path: string,
     placement: Placement | null,
     timestamp: string | null,
+    longTerm: boolean,
   ): Promise<SignOutcome>;
   /** The question after a timestamp did not come, with the reason. */
   stampFailed(why: string): Promise<AfterStamp>;
-  /** `sign_resume`: the held signature, stamped by `timestamp` or, for `null`, not. */
-  resume(pending: number, timestamp: string | null): Promise<SignOutcome>;
+  /** The question after the long-term data did not come, with the reason. */
+  longTermFailed(why: string): Promise<AfterStamp>;
+  /**
+   * `sign_resume`: the held signature, stamped by `timestamp` or, for `null`,
+   * not --- and, with `longTerm`, its long-term data gathered again.
+   */
+  resume(pending: number, timestamp: string | null, longTerm: boolean): Promise<SignOutcome>;
   /** `sign_discard`: the held signature is dropped, and nothing is written. */
   discard(pending: number): Promise<void>;
 }
@@ -315,17 +357,29 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
   }
   const path = await shell.saveAs(signedName(shell.openPath));
   if (!path) return null;
-  let outcome = await shell.sign(chosen.identity, path, placement, chosen.timestamp);
-  // A timestamp that did not come: nothing is written until the reader says
-  // what to do, and signing without one is only ever that answer.
+  // Long-term data only ever with a timestamp: the backend refuses it without
+  // one, and this never asks.
+  const longTerm = chosen.longTerm === true && chosen.timestamp !== null;
+  let outcome = await shell.sign(chosen.identity, path, placement, chosen.timestamp, longTerm);
+  // A timestamp or long-term data that did not come: nothing is written until
+  // the reader says what to do, and signing without either is only ever that
+  // answer.
   while (outcome.unstamped) {
-    const { why, pending } = outcome.unstamped;
-    const next = await shell.stampFailed(why);
+    const { why, pending, stage } = outcome.unstamped;
+    const afterLongTerm = stage === "long_term";
+    const next = afterLongTerm ? await shell.longTermFailed(why) : await shell.stampFailed(why);
     if (next === null) {
       await shell.discard(pending);
       return NOT_WRITTEN;
     }
-    outcome = await shell.resume(pending, next === "retry" ? chosen.timestamp : null);
+    outcome = afterLongTerm
+      ? // The timestamp is already in the held signature; only the data is asked again.
+        await shell.resume(pending, chosen.timestamp, next === "retry")
+      : await shell.resume(
+          pending,
+          next === "retry" ? chosen.timestamp : null,
+          next === "retry" && longTerm,
+        );
   }
   if (!outcome.signed) throw new Error("The signing answered neither a signature nor a reason.");
   return afterSigning(outcome.signed);
@@ -431,6 +485,26 @@ export function askIdentity(
   const problem = document.createElement("p");
   problem.setAttribute("role", "alert");
   stamps.append(otherUrl, problem);
+  // Long-term data: a checkbox, ticked only as the reader last left it, and
+  // only while an authority is chosen --- it rests on the timestamp.
+  const longTerm = document.createElement("input");
+  longTerm.type = "checkbox";
+  longTerm.name = "sign-long-term";
+  longTerm.checked = readLongTerm(storage);
+  const longTermLabel = document.createElement("label");
+  longTermLabel.append(
+    longTerm,
+    " Keep it verifiable after the certificates expire — tpdf also asks the " +
+      "certificate authorities whether the certificates are revoked and adds their " +
+      "answers to the document. Needs a timestamp.",
+  );
+  stamps.append(longTermLabel);
+  const noneStamp = stampRadios[0];
+  const syncLongTerm = () => {
+    longTerm.disabled = noneStamp?.checked === true;
+  };
+  for (const radio of stampRadios) radio.addEventListener("change", syncLongTerm);
+  syncLongTerm();
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
   const cancel = document.createElement("button");
@@ -468,7 +542,14 @@ export function askIdentity(
         }
       }
       writeStampChoice(chosenStamp, storage);
-      finish({ identity, visible: visible.checked, timestamp: stampUrl(chosenStamp) });
+      writeLongTerm(longTerm.checked, storage);
+      const timestamp = stampUrl(chosenStamp);
+      finish({
+        identity,
+        visible: visible.checked,
+        timestamp,
+        longTerm: longTerm.checked && timestamp !== null,
+      });
     });
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
@@ -490,27 +571,69 @@ export function askIdentity(
  * they asked for.
  */
 export function askAfterStampFailed(why: string): Promise<AfterStamp> {
+  return askAfter({
+    className: "sign-timestamp-dialog",
+    label: "No timestamp",
+    heading: "The timestamp could not be added",
+    why,
+    help:
+      "Nothing has been written. The signature is made; you can try the timestamp again, " +
+      "or save it without a timestamp, and the key is not asked for again either way.",
+    without: "Sign without a timestamp",
+  });
+}
+
+/**
+ * The question after the long-term data did not come: try again, sign without
+ * it, or cancel --- {@link askAfterStampFailed}'s question one step later.
+ * Without it, the signature keeps its timestamp; neither the key nor the
+ * authority is asked again. Cancel is the default, and Escape is Cancel.
+ */
+export function askAfterLongTermFailed(why: string): Promise<AfterStamp> {
+  return askAfter({
+    className: "sign-long-term-dialog",
+    label: "No long-term validation data",
+    heading: "The long-term validation data could not be added",
+    why,
+    help:
+      "Nothing has been written. The signature is made and timestamped; you can try again, " +
+      "or save it without the long-term data — it keeps its timestamp. The key is not asked " +
+      "for again either way.",
+    without: "Sign without long-term data",
+  });
+}
+
+/** What {@link askAfter} shows. */
+interface AfterQuestion {
+  className: string;
+  label: string;
+  heading: string;
+  why: string;
+  help: string;
+  without: string;
+}
+
+/** The dialog both questions are: the reason, then Cancel, without, or Try again. */
+function askAfter(question: AfterQuestion): Promise<AfterStamp> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
-  dialog.className = "sign-timestamp-dialog";
-  dialog.setAttribute("aria-label", "No timestamp");
+  dialog.className = question.className;
+  dialog.setAttribute("aria-label", question.label);
   dialog.style.cssText =
     "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
     "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
-  heading.textContent = "The timestamp could not be added";
+  heading.textContent = question.heading;
   const reason = document.createElement("p");
-  reason.textContent = `${why}.`;
+  reason.textContent = `${question.why}.`;
   const help = document.createElement("p");
-  help.textContent =
-    "Nothing has been written. The signature is made; you can try the timestamp again, " +
-    "or save it without a timestamp, and the key is not asked for again either way.";
+  help.textContent = question.help;
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
   const cancel = document.createElement("button");
   cancel.textContent = "Cancel";
   const without = document.createElement("button");
-  without.textContent = "Sign without a timestamp";
+  without.textContent = question.without;
   const retry = document.createElement("button");
   retry.textContent = "Try again";
   footer.append(cancel, without, retry);

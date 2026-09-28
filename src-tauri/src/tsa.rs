@@ -517,6 +517,28 @@ fn client(limits: &Limits) -> Result<reqwest::Client, Refusal> {
 
 /// Posts `body` to `url` and reads at most `limits.body` bytes of the answer.
 async fn post(url: &url::Url, body: Vec<u8>, limits: &Limits) -> Result<Vec<u8>, Refusal> {
+    fetch(url, Some(("application/timestamp-query", body)), limits).await
+}
+
+/// One exchange with `url` under `limits`: a `POST` of `body` with its content
+/// type, or a `GET` for `None`, and at most `limits.body` bytes of the answer.
+///
+/// **Every request tpdf makes while signing comes through here**: the
+/// timestamp above, and the OCSP responses and revocation lists `longterm.rs`
+/// gathers --- so the rules are one set, stated once: no redirect, a connect
+/// and a total timeout, an answer bounded by what is read, HTTP 200 or a
+/// refusal. The caller has judged the address (`authority`,
+/// `longterm::address`) before it gets here.
+///
+/// # Errors
+///
+/// [`Refusal::Unreachable`], [`Refusal::TimedOut`], [`Refusal::Http`] and
+/// [`Refusal::TooLarge`].
+pub(crate) async fn fetch(
+    url: &url::Url,
+    body: Option<(&str, Vec<u8>)>,
+    limits: &Limits,
+) -> Result<Vec<u8>, Refusal> {
     let failed = |e: reqwest::Error| {
         if e.is_timeout() {
             Refusal::TimedOut
@@ -524,13 +546,15 @@ async fn post(url: &url::Url, body: Vec<u8>, limits: &Limits) -> Result<Vec<u8>,
             Refusal::Unreachable(without_url(&e))
         }
     };
-    let mut response = client(limits)?
-        .post(url.clone())
-        .header("Content-Type", "application/timestamp-query")
-        .body(body)
-        .send()
-        .await
-        .map_err(failed)?;
+    let client = client(limits)?;
+    let request = match body {
+        Some((kind, body)) => client
+            .post(url.clone())
+            .header("Content-Type", kind)
+            .body(body),
+        None => client.get(url.clone()),
+    };
+    let mut response = request.send().await.map_err(failed)?;
     if response.status() != reqwest::StatusCode::OK {
         return Err(Refusal::Http(response.status().as_u16()));
     }

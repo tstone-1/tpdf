@@ -107,7 +107,7 @@ fn main() {
     }
     // The order is load-bearing: 3 asserts this process has not mapped PDFium,
     // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 15] = [
+    let checks: [Check; 16] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -124,6 +124,10 @@ fn main() {
         (
             "sign --timestamp asks a local authority, and writes nothing when it fails",
             timestamp_when_signing,
+        ),
+        (
+            "sign --long-term gathers from a local PKI, and writes nothing when it fails",
+            long_term_when_signing,
         ),
         ("the tool's process never maps PDFium", never_maps_pdfium),
         ("the tool's workers are sandboxed", workers_are_sandboxed),
@@ -818,6 +822,11 @@ fn asked(request: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// A fake authority on 127.0.0.1 answering one request: its URL.
 fn authority(answer: Answer) -> String {
+    authority_by(answer, test_tsa::TestTsa::new())
+}
+
+/// [`authority`], minting as `tsa`.
+fn authority_by(answer: Answer, tsa: test_tsa::TestTsa) -> String {
     use std::io::{BufRead as _, Read as _, Write as _};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
     let port = listener.local_addr().expect("an address").port();
@@ -847,7 +856,6 @@ fn authority(answer: Answer) -> String {
         let Some((digest, nonce)) = asked(&body) else {
             return;
         };
-        let tsa = test_tsa::TestTsa::new();
         let mint = |faults: &test_tsa::Faults, nonce: &[u8]| {
             test_tsa::mint_with(
                 test_tsa::Imprint::Sha256,
@@ -1037,6 +1045,191 @@ fn timestamp_when_signing(report: &mut Report) {
     report.check(
         "control: an ftp: authority is exit 2 and nothing is written",
         code == 2 && !out.exists(),
+        &format!("exit {code}: {stderr}"),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// --- 2d: long-term validation data asked for while signing ----------------
+
+/// The store for the fake PKI's signer: its certificate, the chain above it,
+/// and its key.
+struct PkiStore {
+    certificate: Vec<u8>,
+    chain: Vec<Vec<u8>>,
+    seed: u8,
+}
+
+impl Store for PkiStore {
+    fn identities(&self) -> Result<Vec<Held>, String> {
+        let key = p256::ecdsa::SigningKey::from_bytes(&[self.seed; 32].into())
+            .map_err(|e| e.to_string())?;
+        Ok(vec![Held {
+            certificate: self.certificate.clone(),
+            chain: self.chain.clone(),
+            key: Box::new(Soft(key)),
+        }])
+    }
+
+    fn saved_image(&self) -> Result<Option<tpdf_lib::signature::Image>, String> {
+        Ok(None)
+    }
+}
+
+const PKI_SUBJECT: &str = "tpdf test PKI signer - not a real identity";
+
+fn long_term_when_signing(report: &mut Report) {
+    use test_tsa::{Pki, Plan, Serve};
+    let now = now();
+    let dir = scratch("long-term");
+    let plain = dir.join("plain.pdf");
+    std::fs::write(&plain, plain_pdf()).expect("input");
+    let s = |p: &Path| p.display().to_string();
+    let sign = |pki: &Pki, out: &Path, extra: &[&str]| {
+        let store = PkiStore {
+            certificate: pki.signer.certificate.clone(),
+            chain: pki.chain.clone(),
+            seed: pki.signer.seed,
+        };
+        let url = authority_by(
+            Answer::Token(test_tsa::Faults::default()),
+            test_tsa::TestTsa::publishing(&test_tsa::Published {
+                ocsp: vec![format!("{}/ocsp/authority", pki.base)],
+                ..test_tsa::Published::default()
+            }),
+        );
+        let mut args = vec![
+            "sign".to_string(),
+            s(&plain),
+            "-o".into(),
+            s(out),
+            "--identity".into(),
+            PKI_SUBJECT.into(),
+            "--timestamp".into(),
+            url,
+        ];
+        args.extend(extra.iter().map(|a| (*a).to_string()));
+        signs(&args, &store, now)
+    };
+    let good = Plan {
+        signer_ocsp: Some(Serve::Good),
+        authority_ocsp: Some(Serve::Good),
+        ..Plan::default()
+    };
+
+    // Sound: written through the real worker, and read back good by the tool.
+    let pki = Pki::start(good);
+    let out = dir.join("b-lt.pdf");
+    let (code, _, stderr) = sign(&pki, &out, &["--long-term", "--json"]);
+    report.check(
+        "long-term data from a sound PKI: sign exits 0",
+        code == 0,
+        &format!("exit {code}: {stderr}"),
+    );
+    match read_back(&out) {
+        Err(why) => report.check("long-term data: the tool reads it back", false, &why),
+        Ok((_, json)) => {
+            let signature = &json["files"][0]["signatures"][0];
+            report.check(
+                "long-term data: the signer's and the authority's revocation read back good",
+                signature["integrity"]["verdict"] == "intact"
+                    && signature["revocation"]["standing"] == "good"
+                    && signature["timestamp"]["revocation"]["standing"] == "good",
+                &signature.to_string(),
+            );
+            report.check(
+                "long-term data: the tool reads what the in-process reader reads",
+                from_json(&json["files"][0]) == in_process(&out),
+                &format!(
+                    "{:?} / {:?}",
+                    from_json(&json["files"][0]),
+                    in_process(&out)
+                ),
+            );
+        }
+    }
+    report.check(
+        "long-term data: the PKI was asked about the signer and the authority",
+        pki.paths() == ["/ocsp/signer", "/ocsp/authority"],
+        &format!("{:?}", pki.paths()),
+    );
+
+    // Refusals: 3, nothing written, and the sentence says what to do.
+    for (what, plan, words, without) in [
+        (
+            "a revoked signer",
+            Plan {
+                signer_ocsp: Some(Serve::Revoked),
+                ..good
+            },
+            "will not write a signature made with a revoked certificate",
+            false,
+        ),
+        (
+            "a certificate that publishes nothing",
+            Plan {
+                signer_ocsp: None,
+                ..good
+            },
+            "certificate authority that publishes revocation data",
+            true,
+        ),
+        (
+            "an unknown answer",
+            Plan {
+                signer_ocsp: Some(Serve::Unknown),
+                ..good
+            },
+            "does not know",
+            true,
+        ),
+        (
+            "a responder that fails with no list",
+            Plan {
+                signer_ocsp: Some(Serve::Status(500)),
+                ..good
+            },
+            "HTTP status 500",
+            true,
+        ),
+    ] {
+        let pki = Pki::start(plan);
+        let out = dir.join("refused.pdf");
+        let (code, stdout, stderr) = sign(&pki, &out, &["--long-term"]);
+        report.check(
+            &format!("{what}: exit 3, nothing written, and says so"),
+            code == 3
+                && !out.exists()
+                && stdout.is_empty()
+                && stderr.contains("nothing was written")
+                && stderr.contains(words)
+                && stderr.contains("without --long-term") == without,
+            &format!("exit {code}, exists {}: {stderr}", out.exists()),
+        );
+    }
+
+    // Control: without a timestamp it is a malformed line.
+    let out = dir.join("no-timestamp.pdf");
+    let (code, _, stderr) = signs(
+        &strings(&[
+            "sign",
+            &s(&plain),
+            "-o",
+            &s(&out),
+            "--identity",
+            PKI_SUBJECT,
+            "--long-term",
+        ]),
+        &PkiStore {
+            certificate: pki.signer.certificate.clone(),
+            chain: pki.chain.clone(),
+            seed: pki.signer.seed,
+        },
+        now,
+    );
+    report.check(
+        "control: --long-term without --timestamp is exit 2 and nothing is written",
+        code == 2 && !out.exists() && stderr.contains("--timestamp"),
         &format!("exit {code}: {stderr}"),
     );
     let _ = std::fs::remove_dir_all(&dir);

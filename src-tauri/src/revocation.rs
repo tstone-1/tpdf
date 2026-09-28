@@ -735,7 +735,10 @@ pub fn judge(
 /// verifies its signature. A name alone is not enough --- two certificates may
 /// share one, and the one whose key the subject's signature does not verify
 /// under did not issue it.
-fn issuer_of<'a>(subject: &Certificate, candidates: &[&'a Certificate]) -> Option<&'a Certificate> {
+pub(crate) fn issuer_of<'a>(
+    subject: &Certificate,
+    candidates: &[&'a Certificate],
+) -> Option<&'a Certificate> {
     let wanted = subject.tbs_certificate.issuer.to_der().ok()?;
     let signed = subject.tbs_certificate.to_der().ok()?;
     let value = subject.signature.as_bytes()?;

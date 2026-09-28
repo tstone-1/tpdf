@@ -213,6 +213,41 @@ impl Verifier for InWorker {
         let rx = asked_on_a_thread(worker, Self::ask_signatures);
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
+
+    fn validation(
+        &self,
+        signed: &[u8],
+        gathered: &crate::sign_dss::Gathered,
+    ) -> Result<crate::sign_dss::Extended, String> {
+        // **A snapshot of the bytes, not a file**: the signed copy is not
+        // written until this answer says it may be, so the worker is handed
+        // exactly the bytes that will be --- `raster_snapshot`'s shape, for a
+        // document that has no handle yet.
+        let mut mapped = Shm::create(signed.len())?;
+        mapped.as_mut_slice().copy_from_slice(signed);
+        let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)?;
+        let pid = worker.pid();
+        let request = Request::AppendValidation {
+            gathered: gathered.clone(),
+        };
+        let rx = asked_on_a_thread(worker, move |worker| {
+            let answered = worker.call(&request)?;
+            if !answered.ok {
+                return Err(answered.error);
+            }
+            match answered.reply {
+                Some(Reply::Validated(extended)) => Ok(*extended),
+                other => Err(format!(
+                    "the worker answered the validation data with {}",
+                    match other {
+                        Some(reply) => format!("{reply:?}"),
+                        None => "no payload at all".to_string(),
+                    }
+                )),
+            }
+        });
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
 }
 
 impl InWorker {
