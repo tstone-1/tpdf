@@ -981,6 +981,28 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe --
     --reason "Geprüft und freigegeben" --location "Köln-Mülheim"
 # signature-probe --mode agree on a visibly signed incr-two-signers: 19/19, PDFium
 # reading the same three signatures; --mode integrity 7/7; qpdf --check passes.
+#
+# --timestamp (Phase 6 step 3, increment B): the signature stamped by a REAL
+# timestamp authority through tsa::stamp and Made::seal, the window's and the
+# tool's path, network included --- a measurement run by hand, never a gate.
+# Four checks more: tpdf reads the token intact and attested, its time within
+# five minutes of this clock, its authority trusted by the system store; pyHanko
+# intact and valid; `openssl ts -verify -data <value octets>` OK, anchored at the
+# system root the token's own chain names (every system root is printed too and
+# not counted: Sectigo's ESS lists a cross-signed root, and OpenSSL given every
+# root builds the other chain --- docs/TRAPS.md); and the same token over other
+# bytes refused. macOS arm64, 2026-09-28, text-base14 --key rsa, 22/22 each:
+#   digicert    token 6,006 B, CMS with it 7,440 B, authority trusted, openssl OK
+#   sectigo     token 6,633 B, CMS with it 8,067 B, authority trusted, openssl OK
+#               anchored at USERTrust RSA (every root: ess cert id not found)
+#   globalsign  token 7,658 B, CMS with it 9,092 B, authority trusted, openssl OK
+# The time it prints for the request includes building the HTTP client, which
+# from target/debug/examples is 3 to 28 s of CoreFoundation listing that folder
+# (docs/TRAPS.md); from a folder of its own, DigiCert's whole request was 0.43 s.
+for srv in digicert sectigo globalsign; do
+  cargo run --release --manifest-path src-tauri/Cargo.toml --example sign-probe -- \
+      testdata/text-base14.pdf "/tmp/tpdf-sign-probe/timestamp-$srv" --key rsa --timestamp "$srv"
+done
 # The window check that would show a visible signature placed and written in the
 # real application does not exist, for the reason below: it needs an identity in
 # the reader's store. By hand: File > Sign document..., choose Visible, choose
@@ -5393,14 +5415,18 @@ the record.
   process on the same regions, for that document, a document whose shared form the removal
   leaves, `text-base14.pdf` and `text-marked.pdf`; and the refusals --- an existing output, the
   input under a hard link, XFA, a signed document (and `--invalidate-signatures`), a locked one
-  (and its password). Its containment runs a dry run and a write under `DYLD_PRINT_LIBRARIES`,
+  (and its password). `sign --timestamp` against a fake authority on 127.0.0.1 that mints a
+  token over what the request carried: sound, read back intact and attested by the built tool
+  and the in-process reader alike; and six failures --- another imprint, another nonce, an SHA-1
+  signature, a refusal carrying a token, an answer too long, nobody listening --- each exit 3
+  with nothing written, and an `ftp:` address exit 2. Its containment runs a dry run and a write under `DYLD_PRINT_LIBRARIES`,
   where the processes beside the PDFium workers that map none are the OCR worker and a spare
   that ended without a document. The parts that bind PDFium in
   this process run after the one asserting it has not. Without generated fixtures (*Test
   fixtures*) the fixture parts say `[SKIP]`.
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 194 checks, ~100 s debug
+cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 226 checks, ~100 s debug
 cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clitool::
 ```
 
@@ -5492,6 +5518,18 @@ the application calls every copy verified  -> 7 red: three documents' verdicts a
   (redact_copy_asked)                         and text-marked.pdf's own reason; shared-form.pdf
                                              stays green, because the tool's search of the copy
                                              finds the word and withholds the verdict itself
+```
+
+For `sign --timestamp`, 2026-09-28, against 226 checks, the same way (`cli/sign.rs`'s SHA-256
+equal before and after). The fake authority is a `TcpListener` on 127.0.0.1 in the test:
+
+```
+sign asks no authority whatever          -> 9 red: the sound case exits 4 --- the read-back's
+  --timestamp said                          own rule, a timestamp asked for and not in the
+                                           file --- and says nothing attested; and all six
+                                           failures exit 4 with the file written, since
+                                           nothing was asked that could fail
+a failed request exits 4, not 3           -> 6 red: every failure, nothing written in each
 ```
 
 **Against the real keychain, by hand, never by an agent.** `identities` reads certificates only

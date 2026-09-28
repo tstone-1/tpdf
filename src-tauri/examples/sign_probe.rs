@@ -62,10 +62,31 @@
 //! **pyHanko** reads out of `/Reason` and `/Location`, and their absence as its
 //! reading none.
 //!
+//! ## `--timestamp <digicert | sectigo | globalsign | URL>`
+//!
+//! Phase 6 step 3, increment B, against a **real** timestamp authority: the
+//! signature is stamped through `tsa::stamp` and `tsa::ask_blocking` --- the
+//! path the window and `tpdf sign --timestamp` take, network and all --- and
+//! sealed by `Made::seal`, which refuses a token its own reader would not call
+//! intact. Then the token is judged by three readers again:
+//!
+//! - **tpdf**: the new signature's timestamp `intact` and attested, its time
+//!   within five minutes of this machine's clock, and the authority's standing
+//!   through the system store printed (and required to be `trusted`: all three
+//!   listed authorities chain to roots macOS ships);
+//! - **pyHanko**: the token `intact` and `valid`;
+//! - **OpenSSL**: `openssl ts -verify -data <signature value octets>` over the
+//!   token cut out of the written file, with this Mac's system roots as
+//!   `-CAfile` --- and, the control, the same token refused over the value
+//!   with one byte changed.
+//!
+//! A measurement, run by hand: nothing a gate runs reaches the network.
+//!
 //! Usage:
 //!   sign-probe <input.pdf> <scratch-dir> [--key rsa|p256|p384]
 //!       [--visible [--rect l,t,r,b] [--lines label,name,date] [--reason TEXT]
 //!        [--location TEXT] [--no-image]]
+//!       [--timestamp digicert|sectigo|globalsign|URL]
 //!
 //! Needs `openssl` (3.x) and `uv`. Either missing is `[FAIL]`, never a pass.
 
@@ -217,7 +238,13 @@ fn main() {
         image,
         options,
     });
-    match probe(&input, &scratch, kind, visible.as_ref()) {
+    let timestamp = value("--timestamp").map(|text| {
+        tpdf_lib::tsa::authority(&text).unwrap_or_else(|why| {
+            eprintln!("--timestamp: {}", why.sentence(""));
+            std::process::exit(2);
+        })
+    });
+    match probe(&input, &scratch, kind, visible.as_ref(), timestamp.as_ref()) {
         Ok(true) => {}
         Ok(false) => std::process::exit(1),
         Err(e) => {
@@ -633,11 +660,146 @@ fn openssl_verifies(bytes: &[u8], range: [u64; 4], scratch: &Path) -> Result<(),
     .map(|_| ())
 }
 
+/// The token the signature at `range` carries, DER, and the value octets of
+/// that signature --- cut out of the written file as a reader would.
+fn token_of(bytes: &[u8], range: [u64; 4]) -> Result<(Vec<u8>, Vec<u8>), String> {
+    use der::{Decode as _, Encode as _};
+    let [_, first, second, _] = range.map(|n| n as usize);
+    let raw: Vec<u8> = bytes[first + 1..second - 1]
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap_or("zz"), 16))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("the hole is not hex: {e}"))?;
+    let mut reader = der::SliceReader::new(&raw).map_err(|e| e.to_string())?;
+    let info = cms::content_info::ContentInfo::decode(&mut reader).map_err(|e| e.to_string())?;
+    let signed: cms::signed_data::SignedData =
+        info.content.decode_as().map_err(|e| e.to_string())?;
+    let signer = signed
+        .signer_infos
+        .0
+        .as_slice()
+        .first()
+        .ok_or("no signer")?;
+    let attribute = signer
+        .unsigned_attrs
+        .as_ref()
+        .and_then(|attributes| {
+            attributes
+                .iter()
+                .find(|a| a.oid.to_string() == "1.2.840.113549.1.9.16.2.14")
+        })
+        .ok_or("the signature carries no timestamp")?;
+    let token = attribute
+        .values
+        .as_slice()
+        .first()
+        .ok_or("an empty timestamp attribute")?
+        .to_der()
+        .map_err(|e| e.to_string())?;
+    Ok((token, signer.signature.as_bytes().to_vec()))
+}
+
+/// Which roots `openssl ts -verify` is handed.
+#[derive(Clone, Copy, Debug)]
+enum Anchors {
+    /// Every root this Mac ships.
+    System,
+    /// Only the system root the token's own chain names at its top --- the
+    /// issuer of the one certificate in the token nothing else there issued.
+    ///
+    /// Needed for Sectigo, measured 2026-09-28: its token's ESS attribute lists
+    /// the signer, its CA **and the cross-signed** time-stamping root, and
+    /// OpenSSL requires every listed certificate in the chain it builds. Given
+    /// every system root it builds the shorter chain to the self-signed copy of
+    /// that root, and refuses (`ess cert id not found`); given the root the
+    /// token names, it builds the chain the token lists and accepts.
+    Named,
+}
+
+/// The common name of the issuer at the top of `token`'s certificate set.
+fn top_issuer(token: &[u8]) -> Result<String, String> {
+    use der::Decode as _;
+    let info = cms::content_info::ContentInfo::from_der(token).map_err(|e| e.to_string())?;
+    let signed: cms::signed_data::SignedData =
+        info.content.decode_as().map_err(|e| e.to_string())?;
+    let certificates: Vec<x509_cert::Certificate> = signed
+        .certificates
+        .map(|set| {
+            set.0
+                .into_vec()
+                .into_iter()
+                .filter_map(|c| match c {
+                    cms::cert::CertificateChoices::Certificate(c) => Some(c),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let top = certificates
+        .iter()
+        .find(|c| {
+            !certificates.iter().any(|other| {
+                other.tbs_certificate.subject == c.tbs_certificate.issuer
+                    && other.tbs_certificate.subject != c.tbs_certificate.subject
+            })
+        })
+        .ok_or("the token carries no certificate")?;
+    let issuer = &top.tbs_certificate.issuer;
+    issuer
+        .0
+        .iter()
+        .flat_map(|rdn| rdn.0.iter())
+        .find(|atv| atv.oid.to_string() == "2.5.4.3")
+        .and_then(|atv| {
+            der::asn1::PrintableStringRef::try_from(&atv.value)
+                .map(|s| s.to_string())
+                .or_else(|_| der::asn1::Utf8StringRef::try_from(&atv.value).map(|s| s.to_string()))
+                .ok()
+        })
+        .ok_or_else(|| format!("no common name in {issuer}"))
+}
+
+/// `openssl ts -verify` over `token`, with `data` the bytes its imprint must be
+/// of and the system roots `anchors` chooses as the trust anchors.
+fn openssl_ts_verifies(
+    token: &[u8],
+    data: &[u8],
+    scratch: &Path,
+    anchors: Anchors,
+) -> Result<String, String> {
+    let (token_path, data_path, roots) = (
+        scratch.join("ts-token.der"),
+        // Not `value.bin`, which the openssl key above signs into.
+        scratch.join("ts-data.bin"),
+        scratch.join("roots.pem"),
+    );
+    std::fs::write(&token_path, token).map_err(|e| e.to_string())?;
+    std::fs::write(&data_path, data).map_err(|e| e.to_string())?;
+    let mut find = Command::new("security");
+    find.args(["find-certificate", "-a", "-p"]);
+    if let Anchors::Named = anchors {
+        find.args(["-c", &top_issuer(token)?]);
+    }
+    let pem = run(find.arg("/System/Library/Keychains/SystemRootCertificates.keychain"))?;
+    if !pem.contains("BEGIN CERTIFICATE") {
+        return Err(format!("no system root for {anchors:?}"));
+    }
+    std::fs::write(&roots, pem).map_err(|e| e.to_string())?;
+    run(Command::new("openssl")
+        .args(["ts", "-verify", "-token_in", "-in"])
+        .arg(&token_path)
+        .arg("-data")
+        .arg(&data_path)
+        .arg("-CAfile")
+        .arg(&roots))
+}
+
 fn probe(
     input: &Path,
     scratch: &Path,
     kind: &str,
     visible: Option<&Visible>,
+    timestamp: Option<&url::Url>,
 ) -> Result<bool, String> {
     std::fs::create_dir_all(scratch).map_err(|e| e.to_string())?;
     let mut report = Report {
@@ -662,7 +824,7 @@ fn probe(
     };
     let range = unsigned.range;
     let field = unsigned.field.clone();
-    let bytes = sign_cms::finish(
+    let made = sign_cms::sign(
         original.clone(),
         unsigned.clone(),
         now,
@@ -670,6 +832,20 @@ fn probe(
         &[],
         &key,
     )?;
+    let asked = std::time::Instant::now();
+    let stamped = tpdf_lib::tsa::stamp(&made, timestamp, |url, value| {
+        tpdf_lib::tsa::ask_blocking(url, value, &tpdf_lib::tsa::LIMITS)
+    })
+    .map_err(|why| why.sentence(timestamp.and_then(url::Url::host_str).unwrap_or("")))?;
+    if let (Some(url), Some(blob)) = (timestamp, stamped.as_ref()) {
+        println!(
+            "timestamped by {url} in {:.2} s: {} bytes of CMS with the token, of {} reserved",
+            asked.elapsed().as_secs_f64(),
+            blob.len(),
+            sign_prepare::RESERVED
+        );
+    }
+    let bytes = made.seal(stamped)?;
     let stem = input
         .file_stem()
         .map_or("document".into(), |s| s.to_string_lossy().into_owned());
@@ -760,6 +936,84 @@ fn probe(
         verified.is_ok(),
         &verified.err().unwrap_or_default(),
     );
+
+    // ------------------------------------------------------- the timestamp
+    if timestamp.is_some() {
+        let found = tpdf_lib::docinfo::scan(&written, 1, None)?;
+        let ours = found
+            .signatures
+            .iter()
+            .find(|s| s.field == field)
+            .ok_or("our signature is not in the file")?;
+        let stamp = ours.timestamp.as_ref().ok_or("no timestamp read back")?;
+        let authority = stamp
+            .authority
+            .as_ref()
+            .map_or(String::new(), |c| c.subject_cn.clone());
+        println!(
+            "tpdf reads: {} by {authority}, {:?}, attested={}, authority {:?}",
+            stamp.when, stamp.integrity, stamp.attested, stamp.trust
+        );
+        report.check(
+            "tpdf: the timestamp is intact and its time attested",
+            stamp.integrity.as_ref().map(|i| i.verdict) == Some(Verdict::Intact) && stamp.attested,
+            &format!("{stamp:?}"),
+        );
+        let clock = utc(now);
+        report.check(
+            "tpdf: the attested time is this machine's clock, give or take five minutes",
+            stamp.when.get(..15) == clock.get(..15)
+                || minutes_apart(&stamp.when, &clock).is_some_and(|m| m <= 5),
+            &format!("attested {}, clock {clock}", stamp.when),
+        );
+        report.check(
+            "tpdf: the system store trusts the authority, for timestamping",
+            stamp.trust.as_ref().map(|t| t.standing) == Some(tpdf_lib::trust::Standing::Trusted),
+            &format!("{:?}", stamp.trust),
+        );
+        let entry = theirs
+            .iter()
+            .find(|v| v.get("field").and_then(|f| f.as_str()) == Some(field.as_str()))
+            .and_then(|v| v.get("timestamp"))
+            .cloned()
+            .unwrap_or_default();
+        report.check(
+            "pyHanko: the timestamp is intact and valid",
+            entry.get("intact").and_then(serde_json::Value::as_bool) == Some(true)
+                && entry.get("valid").and_then(serde_json::Value::as_bool) == Some(true),
+            &entry.to_string(),
+        );
+        let (token, value) = token_of(&written, range)?;
+        println!("the token is {} bytes", token.len());
+        // Every system root first, printed and not counted: whether OpenSSL
+        // accepts it there depends on which chain it builds (`Anchors::Named`).
+        let everything = openssl_ts_verifies(&token, &value, scratch, Anchors::System);
+        println!(
+            "openssl ts -verify, every system root: {}",
+            match &everything {
+                Ok(_) => "OK".to_string(),
+                Err(why) => why.lines().last().unwrap_or_default().to_string(),
+            }
+        );
+        let accepted = openssl_ts_verifies(&token, &value, scratch, Anchors::Named);
+        report.check(
+            &format!(
+                "openssl ts -verify over the signature's value octets, anchored at {}: OK",
+                top_issuer(&token).unwrap_or_default()
+            ),
+            accepted
+                .as_ref()
+                .is_ok_and(|out| out.contains("Verification: OK")),
+            &format!("{accepted:?}"),
+        );
+        let mut other = value.clone();
+        other[0] ^= 0x01;
+        report.check(
+            "control: openssl ts -verify refuses the token over other bytes",
+            openssl_ts_verifies(&token, &other, scratch, Anchors::Named).is_err(),
+            "accepted a token over bytes it is not of",
+        );
+    }
 
     // ------------------------------------------------ control: wrong offset
     let mut late = unsigned.update.clone();
@@ -897,4 +1151,35 @@ fn probe(
 
     println!("\n{} passed, {} failed", report.passed, report.failed);
     Ok(report.failed == 0 && report.passed > 0)
+}
+
+/// Minutes between two `YYYY-MM-DD HH:MM:SS UTC` times on the same day.
+fn minutes_apart(a: &str, b: &str) -> Option<i64> {
+    let minutes = |t: &str| -> Option<i64> {
+        if t.get(..10)? != a.get(..10)? {
+            return None;
+        }
+        let hours: i64 = t.get(11..13)?.parse().ok()?;
+        let mins: i64 = t.get(14..16)?.parse().ok()?;
+        Some(hours * 60 + mins)
+    };
+    Some((minutes(a)? - minutes(b)?).abs())
+}
+
+/// `seconds` since the epoch as `YYYY-MM-DD HH:MM:SS UTC`, the form tpdf writes.
+fn utc(seconds: u64) -> String {
+    der::DateTime::from_unix_duration(std::time::Duration::from_secs(seconds)).map_or_else(
+        |_| String::new(),
+        |t| {
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                t.year(),
+                t.month(),
+                t.day(),
+                t.hour(),
+                t.minutes(),
+                t.seconds()
+            )
+        },
+    )
 }

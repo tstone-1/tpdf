@@ -144,7 +144,7 @@ pub fn named(der: &[u8]) -> String {
 }
 
 /// One signature in the file just written, as the worker's verifier read it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Checked {
     /// The field's name.
     pub field: String,
@@ -152,11 +152,16 @@ pub struct Checked {
     pub integrity: Option<crate::integrity::Integrity>,
     /// Whether this is the signature just made.
     pub ours: bool,
+    /// Its timestamp, as the worker read it back: verdict, authority and
+    /// whether the time is attested --- so the reader who asked for one is
+    /// told what the file says, not what was sent.
+    #[serde(default)]
+    pub timestamp: Option<crate::docinfo::Timestamp>,
 }
 
 /// What signing reports: the new field, and every signature the written file
 /// holds, checked after writing.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Signed {
     /// Where the signed copy was written.
     pub path: String,
@@ -179,6 +184,7 @@ pub fn report(path: String, field: String, found: Vec<crate::docinfo::Signature>
             ours: signature.field == field,
             field: signature.field,
             integrity: signature.integrity,
+            timestamp: signature.timestamp,
         })
         .collect();
     Signed {
@@ -780,6 +786,18 @@ pub fn splice(
             blob.len()
         ));
     }
+    write_hex(update, built_against, range, blob)
+}
+
+/// The splice itself, for a blob already known to fit: [`splice`]'s after its
+/// bound, and [`Made::seal`]'s for a timestamped blob, which [`Made::stamped`]
+/// has held to the whole of [`RESERVED`] instead.
+fn write_hex(
+    update: &mut [u8],
+    built_against: usize,
+    range: [u64; 4],
+    blob: &[u8],
+) -> Result<(), String> {
     let at = usize::try_from(range[1]).map_err(|e| e.to_string())? + 1 - built_against;
     for (index, byte) in blob.iter().enumerate() {
         let digits = format!("{byte:02X}");
@@ -788,12 +806,37 @@ pub fn splice(
     Ok(())
 }
 
-/// Signs a prepared revision and returns the whole signed file.
+/// id-aa-timeStampToken, RFC 3161 Appendix A: where a signature carries the
+/// token that says when it existed.
+const TIME_STAMP_TOKEN: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
+
+/// A signature the OS has made and nothing has written yet.
 ///
-/// `original` is the file as read, and is extended in place into the result so
-/// that a large document is not held twice. The steps, in the order the module
-/// note gives: [`usable`] at `at`, [`check`], [`build`], [`splice`], then
-/// `integrity::check` over the finished bytes, which must say `Intact`.
+/// **Why it is a value and not a step inside [`finish`].** A timestamp is
+/// requested *after* the signature exists --- its imprint is over the
+/// signature's value --- and the request can fail for reasons that are nobody's
+/// fault: a server that is down, a network that is not there. When it does, the
+/// reader decides whether to try again or to sign without one, and neither
+/// answer should ask the OS for the key a second time: on a smart card that is a
+/// second PIN. So the made signature is kept, whole, until [`Made::seal`]
+/// writes it; the window holds one for exactly that choice
+/// (`commands::sign::Pending`).
+///
+/// It holds the file as read, so a large document is held once here and not
+/// again; it is not `Clone` on purpose.
+pub struct Made {
+    original: Vec<u8>,
+    update: Vec<u8>,
+    built_against: usize,
+    range: [u64; 4],
+    blob: Vec<u8>,
+    /// The new signature's field.
+    pub field: String,
+}
+
+/// Signs a prepared revision: everything [`finish`] does except writing the
+/// value into the file.
 ///
 /// **[`usable`] is applied here and not only where certificates are listed.**
 /// The listing is advice to whoever picks; the pick arrives by identity, and the
@@ -805,8 +848,289 @@ pub fn splice(
 ///
 /// # Errors
 ///
-/// A certificate [`usable`] refuses, everything [`check`], [`build`] and
-/// [`splice`] refuse, and tpdf's own verifier not calling the result intact.
+/// A certificate [`usable`] refuses, and everything [`check`] and [`build`]
+/// refuse.
+pub fn sign(
+    original: Vec<u8>,
+    unsigned: Unsigned,
+    at: u64,
+    certificate: &[u8],
+    chain: &[Vec<u8>],
+    key: &dyn Key,
+) -> Result<Made, String> {
+    usable(certificate, at)
+        .map_err(|why| format!("tpdf will not sign with this certificate: {why}"))?;
+    let digest = check(&original, &unsigned)?;
+    let blob = build(&digest, certificate, chain, key)?;
+    let Unsigned {
+        update,
+        built_against,
+        range,
+        field,
+        ..
+    } = unsigned;
+    Ok(Made {
+        original,
+        update,
+        built_against,
+        range,
+        blob,
+        field,
+    })
+}
+
+impl Made {
+    /// The value octets of the one `SignerInfo.signature`: what an RFC 3161
+    /// timestamp's imprint is over (Appendix A), not the DER around it.
+    ///
+    /// # Errors
+    ///
+    /// The CMS [`build`] produced does not decode, which it always does.
+    pub fn value(&self) -> Result<Vec<u8>, String> {
+        let (_, signed) = decoded(&self.blob)?;
+        let [signer] = signed.signer_infos.0.as_slice() else {
+            return Err("the signature just made does not have one signer".into());
+        };
+        Ok(signer.signature.as_bytes().to_vec())
+    }
+
+    /// The CMS with `token` added as the signer's `id-aa-timeStampToken`
+    /// unsigned attribute.
+    ///
+    /// **Unsigned, and so outside everything the key signed.** Only
+    /// `unsignedAttrs` changes: the signed attributes, the value and the
+    /// certificates are decoded and encoded again, and DER has one encoding for
+    /// each, so they are the bytes the OS signed --- a test holds that byte for
+    /// byte. The token itself is not judged here: that is [`tsa::accept`]'s
+    /// job before, and [`Made::seal`]'s over the written bytes after.
+    ///
+    /// [`tsa::accept`]: crate::tsa::accept
+    ///
+    /// # Errors
+    ///
+    /// The token is not one DER value, or the result does not fit
+    /// [`RESERVED`] --- the whole span the revision set aside, half of which
+    /// [`STEP_TWO_LIMIT`] kept free for exactly this.
+    pub fn stamped(&self, token: &[u8]) -> Result<Vec<u8>, String> {
+        let (content_type, mut signed) = decoded(&self.blob)?;
+        let [signer] = signed.signer_infos.0.as_slice() else {
+            return Err("the signature just made does not have one signer".into());
+        };
+        let mut signer = signer.clone();
+        let value = der::Any::from_der(token)
+            .map_err(|e| format!("the timestamp is not one DER value: {e}"))?;
+        let attribute = x509_cert::attr::Attribute {
+            oid: TIME_STAMP_TOKEN,
+            values: der::asn1::SetOfVec::try_from(vec![value]).map_err(|e| e.to_string())?,
+        };
+        signer.unsigned_attrs =
+            Some(der::asn1::SetOfVec::try_from(vec![attribute]).map_err(|e| e.to_string())?);
+        signed.signer_infos =
+            cms::signed_data::SignerInfos::try_from(vec![signer]).map_err(|e| e.to_string())?;
+        let blob = cms::content_info::ContentInfo {
+            content_type,
+            content: der::Any::encode_from(&signed).map_err(|e| e.to_string())?,
+        }
+        .to_der()
+        .map_err(|e| format!("the timestamped signature could not be encoded: {e}"))?;
+        if blob.len() > RESERVED {
+            return Err(format!(
+                "the signature with its timestamp takes {} bytes, and the space this \
+                 document set aside for it holds {RESERVED}",
+                blob.len()
+            ));
+        }
+        Ok(blob)
+    }
+
+    /// Writes the signature into the revision and returns the whole signed
+    /// file, or refuses.
+    ///
+    /// `stamped` is `None` for a signature with no timestamp, which is
+    /// [`splice`]d under [`STEP_TWO_LIMIT`] exactly as before timestamps
+    /// existed; or what [`Made::stamped`] returned. Then `integrity::check`
+    /// over the finished bytes must say `Intact` --- and, for a timestamped
+    /// one, the token read back **out of those bytes** must be `Intact` under
+    /// `integrity::token` as well, over the value it is attached to. A token
+    /// that was sound when it arrived and is not in the file is the case this
+    /// last check exists for: nothing is written that tpdf's own reader would
+    /// not call an attested time.
+    ///
+    /// # Errors
+    ///
+    /// [`splice`]'s bound, and tpdf's own verifier not calling the signature,
+    /// or its timestamp, intact.
+    pub fn seal(self, stamped: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+        let Made {
+            original,
+            mut update,
+            built_against,
+            range,
+            blob,
+            ..
+        } = self;
+        let timestamped = stamped.is_some();
+        let written = match stamped {
+            None => {
+                splice(&mut update, built_against, range, &blob)?;
+                blob
+            }
+            Some(stamped) => {
+                write_hex(&mut update, built_against, range, &stamped)?;
+                stamped
+            }
+        };
+
+        let mut bytes = original;
+        bytes.extend_from_slice(&update);
+        let mut contents = written.clone();
+        contents.resize(RESERVED, 0);
+        let numbers = range.map(|n| i64::try_from(n).unwrap_or(i64::MAX));
+        let verdict = crate::integrity::check(
+            &bytes,
+            &numbers,
+            &contents,
+            Some(&written),
+            "ETSI.CAdES.detached",
+            &mut crate::integrity::MAX_HASHED.clone(),
+        );
+        if verdict.verdict != crate::integrity::Verdict::Intact {
+            return Err(format!(
+                "tpdf's own check of the signature it just made did not find it intact \
+                 ({:?}{}), so nothing was written",
+                verdict.verdict,
+                verdict
+                    .why
+                    .map(|why| format!(", {why:?}"))
+                    .unwrap_or_default()
+            ));
+        }
+        if timestamped {
+            let token = timestamp_in(&bytes, range)?;
+            if token.verdict != crate::integrity::Verdict::Intact {
+                return Err(format!(
+                    "tpdf's own check of the timestamp in the signature it just made did not \
+                     find it intact ({:?}{}), so nothing was written",
+                    token.verdict,
+                    token
+                        .why
+                        .map(|why| format!(", {why:?}"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+        Ok(bytes)
+    }
+}
+
+/// The `ContentInfo`'s type and its `SignedData`.
+fn decoded(blob: &[u8]) -> Result<(ObjectIdentifier, cms::signed_data::SignedData), String> {
+    let info = cms::content_info::ContentInfo::from_der(blob)
+        .map_err(|e| format!("the signature just made does not decode: {e}"))?;
+    let signed = info
+        .content
+        .decode_as::<cms::signed_data::SignedData>()
+        .map_err(|e| format!("the signature just made does not decode: {e}"))?;
+    Ok((info.content_type, signed))
+}
+
+/// `blob` with its signer's unsigned attributes taken away, re-encoded --- or
+/// `blob` itself when it does not decode. Two blobs that differ in nothing
+/// else compare equal through this, which is how a test holds the signed part
+/// of a timestamped blob to the bytes the key signed.
+#[cfg(test)]
+fn blob_without_token(blob: &[u8]) -> Vec<u8> {
+    let Ok((content_type, mut signed)) = decoded(blob) else {
+        return blob.to_vec();
+    };
+    let signers: Vec<_> = signed
+        .signer_infos
+        .0
+        .as_slice()
+        .iter()
+        .cloned()
+        .map(|mut signer| {
+            signer.unsigned_attrs = None;
+            signer
+        })
+        .collect();
+    let Ok(infos) = cms::signed_data::SignerInfos::try_from(signers) else {
+        return blob.to_vec();
+    };
+    signed.signer_infos = infos;
+    der::Any::encode_from(&signed)
+        .and_then(|content| {
+            cms::content_info::ContentInfo {
+                content_type,
+                content,
+            }
+            .to_der()
+        })
+        .unwrap_or_else(|_| blob.to_vec())
+}
+
+/// The verdict on the timestamp token the signature at `range` in `bytes`
+/// carries, read out of the hex in the file as any reader of it would read
+/// it: the hole decoded, the CMS ended where its structure ends, the one
+/// `id-aa-timeStampToken` value taken, and checked by `integrity::token`
+/// against the value octets of the signature it is attached to.
+///
+/// # Errors
+///
+/// The hole does not hold a CMS carrying exactly one token.
+fn timestamp_in(bytes: &[u8], range: [u64; 4]) -> Result<crate::integrity::Integrity, String> {
+    let unreadable = || "the timestamp just written could not be read back".to_string();
+    let [_, first, second, _] = range.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    let hex = bytes
+        .get(first.saturating_add(1)..second.saturating_sub(1))
+        .ok_or_else(unreadable)?;
+    let raw: Vec<u8> = hex
+        .chunks(2)
+        .map(|pair| {
+            std::str::from_utf8(pair)
+                .ok()
+                .and_then(|digits| u8::from_str_radix(digits, 16).ok())
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(unreadable)?;
+    let mut reader = der::SliceReader::new(&raw).map_err(|_| unreadable())?;
+    let info = cms::content_info::ContentInfo::decode(&mut reader).map_err(|_| unreadable())?;
+    let signed: cms::signed_data::SignedData =
+        info.content.decode_as().map_err(|_| unreadable())?;
+    let [signer] = signed.signer_infos.0.as_slice() else {
+        return Err(unreadable());
+    };
+    let mut found = signer
+        .unsigned_attrs
+        .iter()
+        .flat_map(|attributes| attributes.iter())
+        .filter(|attribute| attribute.oid == TIME_STAMP_TOKEN);
+    let (Some(attribute), None) = (found.next(), found.next()) else {
+        return Err(unreadable());
+    };
+    let [token] = attribute.values.as_slice() else {
+        return Err(unreadable());
+    };
+    let token = token.to_der().map_err(|_| unreadable())?;
+    Ok(crate::integrity::token::check(
+        &token,
+        crate::integrity::token::Target::Signature(signer.signature.as_bytes()),
+        &mut crate::integrity::MAX_HASHED.clone(),
+    ))
+}
+
+/// Signs a prepared revision and returns the whole signed file, with no
+/// timestamp.
+///
+/// `original` is the file as read, and is extended in place into the result so
+/// that a large document is not held twice. The steps, in the order the module
+/// note gives: [`sign`] ([`usable`] at `at`, [`check`], [`build`]), then
+/// [`Made::seal`] ([`splice`], and `integrity::check` over the finished bytes,
+/// which must say `Intact`).
+///
+/// # Errors
+///
+/// Everything [`sign`] and [`Made::seal`] refuse.
 pub fn finish(
     original: Vec<u8>,
     unsigned: Unsigned,
@@ -815,43 +1139,7 @@ pub fn finish(
     chain: &[Vec<u8>],
     key: &dyn Key,
 ) -> Result<Vec<u8>, String> {
-    usable(certificate, at)
-        .map_err(|why| format!("tpdf will not sign with this certificate: {why}"))?;
-    let digest = check(&original, &unsigned)?;
-    let blob = build(&digest, certificate, chain, key)?;
-    let Unsigned {
-        mut update,
-        built_against,
-        range,
-        ..
-    } = unsigned;
-    splice(&mut update, built_against, range, &blob)?;
-
-    let mut bytes = original;
-    bytes.extend_from_slice(&update);
-    let mut contents = blob.clone();
-    contents.resize(RESERVED, 0);
-    let numbers = range.map(|n| i64::try_from(n).unwrap_or(i64::MAX));
-    let verdict = crate::integrity::check(
-        &bytes,
-        &numbers,
-        &contents,
-        Some(&blob),
-        "ETSI.CAdES.detached",
-        &mut crate::integrity::MAX_HASHED.clone(),
-    );
-    if verdict.verdict != crate::integrity::Verdict::Intact {
-        return Err(format!(
-            "tpdf's own check of the signature it just made did not find it intact \
-             ({:?}{}), so nothing was written",
-            verdict.verdict,
-            verdict
-                .why
-                .map(|why| format!(", {why:?}"))
-                .unwrap_or_default()
-        ));
-    }
-    Ok(bytes)
+    sign(original, unsigned, at, certificate, chain, key)?.seal(None)
 }
 
 #[cfg(test)]

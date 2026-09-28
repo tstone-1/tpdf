@@ -251,6 +251,7 @@ hop through the index.
 - PDFDocEncoding agrees with Latin-1 only from 0xA1, and a Latin-1 string can begin with a byte-order mark
 - An appearance drawn where its rectangle sits cannot be previewed as the same bytes
 - pyHanko's timestamp verdict folds the imprint into `intact`, and accepts a token OpenSSL refuses
+- OpenSSL refused Sectigo's timestamp given every system root, and accepted it given the one root the token names
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -309,6 +310,7 @@ hop through the index.
 - `json!` widens an `f32` to the cast's `f64`, and the serializer writes the `f32`'s own digits
 - `mod forms;` in `tests/cli.rs` looks for `tests/forms.rs`, which cargo would also build as a test of its own
 
+- The first HTTP client a test process builds took twenty seconds, and the time was a directory listing
 ## Measuring: what a number can and cannot say
 - A documented count that is one sample of a race makes an honest run look like a defect
 - The harness prints the count so nobody has to derive it, and it was derived anyway
@@ -25001,3 +25003,55 @@ tokens agree) and would have passed a token checker that ignored imprint hashes 
 entirely. OpenSSL is the oracle that disagrees with pyHanko on the binding, and it agrees with tpdf
 on every minted fault but the SHA-1 one --- which is policy, not arithmetic.
 
+### The first HTTP client a test process builds took twenty seconds, and the time was a directory listing
+
+2026-09-28, building the timestamp client (`tsa.rs`). The test that a silent authority is given up
+on within the client's one-second limit failed with the right answer, `TimedOut`, after **16.8 s**,
+and the same test alone took 19.7 s. The request was not slow: an `#[ignore]`d instrument timed
+`reqwest::Client::builder().build()` alone at **20.3 s** on the first call in a fresh test binary,
+**3.8 s** on the first call of every later run of the same binary, and 0.1 ms on every call after
+the first in a process --- while the same builder with `.no_proxy()` took 0.1 ms. So the time was
+reading the system's proxy settings, which `reqwest` does once per process through
+`SCDynamicStoreCreate`.
+
+A Swift program making the same two SystemConfiguration calls took **1 ms**, which ruled out
+`configd`. `sample` on the test binary during the stall said where it was:
+`SCDynamicStoreCreateWithOptions` → `_SC_getApplicationBundleID` → `CFBundleGetMainBundle` →
+`_CFBundleGetBundleVersionForURL` → `_CFIterateDirectory` → `readdir`. **CoreFoundation lists the
+directory the executable sits in** to decide whether it is a bundle, and a test binary sits in
+`target/debug/deps`, an example in `target/debug/examples` --- the latter held **1,179,452
+entries** on this Mac. The same `sign-probe` binary copied into a folder of its own made the whole
+DigiCert request, client included, in **0.43 s**; from `target/debug/examples` it took 20 to 28 s
+on a fresh build and about 3.3 s after.
+
+Two things follow. **A timing assertion on the first network call in a test process measures the
+build directory**, so `a_server_that_never_answers_is_given_up_on_within_the_limit` builds a
+client before its clock starts, and says why. And **a request time measured from a debug build is
+not the application's**: the shipped executables sit in `Contents/MacOS` beside one other file, and
+the network's own share --- 0.36 s DigiCert, 2.1 s Sectigo, 0.39 s GlobalSign by `curl` --- is what
+a reader waits for. The first `SecTrust` call's 5 to 19 s (*The first Security-framework call in a
+process can cost seconds*) may be the same listing; that was not measured.
+
+### OpenSSL refused Sectigo's timestamp given every system root, and accepted it given the one root the token names
+
+2026-09-28, the first real-server run of `sign-probe --timestamp`. tpdf read Sectigo's token
+`intact`, its authority `trusted` through the system store, and pyHanko agreed; `openssl ts -verify
+-data <value octets> -CAfile <every root in SystemRootCertificates.keychain>` refused it with *ESS
+routines: ess cert id not found*. DigiCert's and GlobalSign's passed the same command.
+
+The token's ESS `signingCertificate` (v1) lists **three** certificates by SHA-1: the signer, *Sectigo
+Public Time Stamping CA R41*, and *Sectigo Public Time Stamping Root R46* **as cross-signed by
+USERTrust RSA Certification Authority** --- the copy the token carries. OpenSSL requires every
+listed certificate to be in the chain it built, and given every system root it builds the shorter
+chain, ending at the **self-signed** R46 the store also holds, whose hash is not the one listed.
+Given only the USERTrust root --- the issuer of the top certificate in the token --- it builds the
+chain the token lists and prints *Verification: OK*. So `sign-probe` now hands OpenSSL the root the
+token's own chain names (`Anchors::Named`) for the counted check, and prints the every-root result
+beside it rather than counting it.
+
+tpdf is not wrong to accept it. RFC 5035 §3 makes the **first** `ESSCertID` the signer's and the
+rest optional hints, and `integrity/token.rs` binds exactly the first, by hash, to the certificate
+the token's `sid` names; the chain is `trust.rs`'s question, which the OS answers by whichever path
+it finds. What the incident is worth knowing for is the direction of the error: an oracle that
+refuses a sound token looks, on the first run against a real server, exactly like tpdf accepting a
+bad one --- and it was the anchor set, not the token, that decided it.

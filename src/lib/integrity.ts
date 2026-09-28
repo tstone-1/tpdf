@@ -37,8 +37,8 @@
  * Adobe's list alone reads here as ending at a root this computer does not
  * trust. It is evaluated at the present moment, so a certificate that has run
  * out since is `expired` rather than trusted or not. And every standing that
- * reached a trusted root ends with {@link REVOCATION_NOT_CHECKED}: tpdf does not
- * go online, so revocation is never asked.
+ * reached a trusted root ends with {@link REVOCATION_NOT_CHECKED}: tpdf fetches no
+ * revocation data, so revocation is never asked.
  *
  * ## A timestamp, and the time it is allowed to call attested
  *
@@ -140,11 +140,13 @@ export const COMPUTER: Record<Store, string> = {
 /**
  * Said after every standing that says the chain reached a trusted root.
  *
- * tpdf does not go online, so no revocation list or OCSP responder is asked.
+ * tpdf fetches no revocation data, so no revocation list or OCSP responder is asked.
+ * It said "does not go online" until 2026-09-28, when asking a timestamp authority
+ * for a token while signing made that false as a general statement.
  * Stated once and reused, for the reason {@link TRUST_NOT_CHECKED} is.
  */
 export const REVOCATION_NOT_CHECKED =
-  "Revocation was not checked: tpdf does not go online, so a certificate its " +
+  "Revocation was not checked: tpdf does not fetch revocation data, so a certificate its " +
   "issuer has since withdrawn reads the same as one it has not.";
 
 /**

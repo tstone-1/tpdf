@@ -18,8 +18,8 @@ use crate::sign_prepare::{Options, Visible};
 /// `sign`, registered.
 pub const COMMAND: Registered = Registered {
     name: "sign",
-    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]]\n        [--force] [--json]",
-    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given.",
+    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]]\n        [--timestamp digicert|sectigo|globalsign|<url>] [--force] [--json]",
+    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given. --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
     parse: boxed,
 };
 
@@ -44,6 +44,9 @@ pub struct Sign {
     pub reason: String,
     /// `/Location`, drawn and written; empty for none.
     pub location: String,
+    /// The timestamp authority `--timestamp` names, already judged by
+    /// `tsa::authority`; `None` asks nobody for anything.
+    pub timestamp: Option<url::Url>,
     /// `--json`.
     pub json: bool,
     /// `--force`: replace an existing output file.
@@ -103,6 +106,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut lines: Option<Lines> = None;
     let mut reason: Option<String> = None;
     let mut location: Option<String> = None;
+    let mut timestamp: Option<url::Url> = None;
     let mut json = false;
     let mut force = false;
 
@@ -118,6 +122,15 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
             "--lines" => lines = Some(line_list(value(arg, &mut rest)?)?),
             "--reason" => reason = Some(value(arg, &mut rest)?.clone()),
             "--location" => location = Some(value(arg, &mut rest)?.clone()),
+            // Judged here, so an address tpdf will not ask --- `ftp:`, a
+            // typo, a URL with a password in it --- is a malformed line and
+            // exit 2, before any worker, key or socket.
+            "--timestamp" => {
+                timestamp = Some(
+                    crate::tsa::authority(value(arg, &mut rest)?)
+                        .map_err(|why| why.sentence(""))?,
+                );
+            }
             "--json" => json = true,
             "--force" => force = true,
             flag if flag.starts_with('-') && flag != "-" => return Err(unknown("sign", flag)),
@@ -191,6 +204,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         lines: lines.unwrap_or_default(),
         reason: reason.unwrap_or_default(),
         location: location.unwrap_or_default(),
+        timestamp,
         json,
         force,
     })
@@ -363,7 +377,7 @@ fn run_sign(
     let original = save::read_to_sign(&sign.input, &opened_as)
         .map_err(|why| Failure::new(Exit::Refused, why.message))?;
     let field = unsigned.field.clone();
-    let bytes = sign_cms::finish(
+    let made = sign_cms::sign(
         original,
         unsigned,
         env.now,
@@ -372,6 +386,32 @@ fn run_sign(
         chosen.key.as_ref(),
     )
     .map_err(|why| Failure::new(Exit::Refused, why))?;
+    // The timestamp, when one was asked for: after the OS has signed, since it
+    // is over the signature's value, and before anything is written. A request
+    // that fails is exit 3 with nothing written --- the authority refused or
+    // could not be reached, which is neither tpdf's failure nor a reason to
+    // write a signature the reader did not ask for. There is nobody here to
+    // offer "sign without one" to; running again without `--timestamp` is it.
+    let stamped = crate::tsa::stamp(&made, sign.timestamp.as_ref(), |url, value| {
+        crate::tsa::ask_blocking(url, value, &crate::tsa::LIMITS)
+    })
+    .map_err(|why| {
+        let host = sign
+            .timestamp
+            .as_ref()
+            .and_then(url::Url::host_str)
+            .unwrap_or_default();
+        Failure::new(
+            Exit::Refused,
+            format!(
+                "{} --- nothing was written; sign again without --timestamp to sign without one",
+                why.sentence(host)
+            ),
+        )
+    })?;
+    let bytes = made
+        .seal(stamped)
+        .map_err(|why| Failure::new(Exit::Refused, why))?;
     save::write_signed(&sign.input, &sign.output, &bytes)
         .map_err(|why| Failure::new(Exit::Refused, why.message))?;
 
@@ -400,6 +440,11 @@ fn run_sign(
         || sign.output.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
+    let timestamp = found
+        .iter()
+        .find(|s| s.field == field)
+        .and_then(|s| s.timestamp.as_ref())
+        .map(|stamp| super::verify::timestamp_report(stamp, false));
     let summary = words::after_signing(
         &name,
         &field,
@@ -407,12 +452,28 @@ fn run_sign(
             .iter()
             .map(|s| (s.field.clone(), s.field == field, s.integrity.clone()))
             .collect::<Vec<_>>(),
+        timestamp.as_ref().map(|t| {
+            (
+                t.integrity.sentence.as_str(),
+                t.trust.as_ref().map(|trust| trust.sentence.as_str()),
+            )
+        }),
     );
+    // Ours must read back intact, and --- when a timestamp was asked for ---
+    // carry one that reads back intact too: a timestamp `seal` checked in the
+    // bytes and a worker then did not find is a written file that disagrees
+    // with what was written, which is tpdf's failure (4).
     let ours_intact = found.iter().any(|s| {
         s.field == field
             && s.integrity
                 .as_ref()
                 .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
+            && (sign.timestamp.is_none()
+                || s.timestamp.as_ref().is_some_and(|t| {
+                    t.integrity
+                        .as_ref()
+                        .is_some_and(|i| i.verdict == crate::integrity::Verdict::Intact)
+                }))
     });
     let report = report::Signed {
         schema: SCHEMA,

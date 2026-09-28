@@ -117,6 +117,23 @@ caseless = "0.2.2"
 # attacker-chosen bytes. `docs/THREAT-MODEL.md` §T9 is the worked-out version.
 tauri-plugin-updater = "2.11"
 
+# The timestamp authority's HTTP client, `tsa.rs`: Phase 6 step 3, increment B.
+# **Zero packages** --- 617 before and 617 after over the whole tree, counted
+# with `cargo metadata` on 2026-09-28 rather than assumed --- because both are
+# the updater's own: `reqwest` 0.13 with `rustls-no-provider`, and `rustls`
+# with the `ring` provider the updater installs. No feature is asked for that
+# the tree did not already resolve, so nothing new is compiled either. The
+# client is driven on `tauri::async_runtime` rather than through reqwest's
+# `blocking` feature, which would have been a second runtime per request for
+# no reader's benefit.
+#
+# It is the **second network authority** in the application beside the updater,
+# reached only when the reader asks for a timestamp on one signing, and only
+# from the app process or the command-line tool's --- never a worker, which has
+# `(deny network*)`. `docs/THREAT-MODEL.md` §T10 is the worked-out version.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
 # Ending this process and starting it again, which is the second half of an
 # update on macOS: the plugin there replaces the `.app` on disk and leaves this
 # process running the old code, so without a relaunch the reader has to quit and

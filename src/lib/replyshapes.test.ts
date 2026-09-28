@@ -76,7 +76,7 @@ import type { PageMapping, PageMatches } from "./search";
 import type { Session } from "./session";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
-import type { Choices, Signed } from "./signing";
+import type { Choices, SignOutcome } from "./signing";
 import type { SignaturePreview } from "./signappearance";
 
 import Applied_ from "../../src-tauri/testdata/replies/Applied.json";
@@ -98,7 +98,7 @@ import ScrollBenchConfig_ from "../../src-tauri/testdata/replies/ScrollBenchConf
 import Session_ from "../../src-tauri/testdata/replies/Session.json";
 import Split_ from "../../src-tauri/testdata/replies/Split.json";
 import Choices_ from "../../src-tauri/testdata/replies/Choices.json";
-import Signed_ from "../../src-tauri/testdata/replies/Signed.json";
+import Signing_ from "../../src-tauri/testdata/replies/Signing.json";
 import Preview_ from "../../src-tauri/testdata/replies/Preview.json";
 
 /**
@@ -284,11 +284,12 @@ const SCHEMA = {
     usable: ["array"],
     skipped: ["array"],
   } satisfies Shape<Choices>,
-  Signed: {
-    path: ["string"],
-    field: ["string"],
-    signatures: ["array"],
-  } satisfies Shape<Signed>,
+  // `sign_document`'s answer: the signing read back, or the timestamp that
+  // did not come. The sample sets both; anything sent sets one.
+  Signing: {
+    signed: ["object"],
+    unstamped: ["object"],
+  } satisfies Shape<SignOutcome>,
   Preview: {
     png: ["array"],
     width: ["number"],
@@ -327,7 +328,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Session: Session_ satisfies Widen<Session>,
   Split: Split_ satisfies Widen<Split>,
   Choices: Choices_ satisfies Widen<Choices>,
-  Signed: Signed_ satisfies Widen<Signed>,
+  Signing: Signing_ satisfies Widen<SignOutcome>,
   Preview: Preview_ satisfies Widen<SignaturePreview>,
 };
 

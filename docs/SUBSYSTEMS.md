@@ -45,6 +45,16 @@ earlier ones, which `sign-probe` shows pyHanko agreeing with. Unsaved edits, enc
 documents and DocMDP `/P 1` are refused. `docs/PLAN.md` §9 has the decisions and the
 measurements; `BUILD.md` has `sign-probe` and the keystore tests.
 
+**A timestamp when signing (2026-09-28)** sits between the signature and the write:
+`sign_cms::sign` makes the signature into a `Made` without writing it, `tsa::stamp` asks the
+authority the reader chose (app process only; the worker keeps no network) and checks the token
+with `integrity::token`, `Made::stamped` adds it as an unsigned attribute, and `Made::seal`
+splices and checks the signature **and** the token in the finished bytes before anything is
+written. When the request fails the window holds the `Made` in `commands::sign::Pending` and
+`sign_resume` writes it with another try or with none, without asking the OS again;
+`tpdf sign --timestamp` exits 3. `docs/PLAN.md` §9, *Adding a timestamp when signing*, and
+`docs/THREAT-MODEL.md` §T10.
+
 **Whether the OS trusts a signer (2026-09-27)** is asked in the worker, inside
 `docinfo::scan_from`, of every signature whose integrity verdict is intact or weak, and
 nowhere else: `trust.rs` hands the signer's certificate and the rest of the signature's set,

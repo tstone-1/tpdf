@@ -11,8 +11,21 @@
 //! copy is written (`save::write_signed`), and a **worker** holding the written
 //! file reports every signature in it --- which is the answer the reader is
 //! shown.
+//!
+//! ## A timestamp, and the signature kept while the reader decides
+//!
+//! When the reader asked for a timestamp, this process asks the authority for
+//! one after the OS has signed and before anything is written (`tsa.rs`). If
+//! that fails, **nothing is written** and the answer is [`Signing::unstamped`]:
+//! the reason, and a number for the made signature, which is kept here in
+//! [`Pending`]. The reader then chooses --- try again ([`sign_resume`] with the
+//! authority), sign without a timestamp ([`sign_resume`] with none), or cancel
+//! ([`sign_discard`]) --- and **the OS is not asked for the key again** for any
+//! of them: a second PIN on a smart card, because a server was down, would be
+//! tpdf's cost made the reader's. Signing without one is always the reader's
+//! explicit second choice, never what a failure turns into.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{await_reply, outside_of, reply_channel};
 use crate::docmodel::PageSource;
@@ -76,6 +89,132 @@ pub fn baseline_page(plan: &edits::Plan, id: u64) -> Result<u32, String> {
         ),
         None => Err("the page chosen for the signature is no longer in the document".into()),
     }
+}
+
+/// A signature made and not written, while the reader chooses what to do about
+/// the timestamp that did not come.
+///
+/// **One at a time.** A new signing replaces whatever was held, and a held one
+/// is only ever reached by the number it was handed out with, so an answer to
+/// an old question cannot write a newer signature. It holds the whole file as
+/// read (up to `save::APPEND_MAX_BYTES`) and is dropped by the reader's choice,
+/// by the next signing, or when the application quits.
+#[derive(Default)]
+pub struct Pending(parking_lot::Mutex<Option<Held>>);
+
+/// What [`Pending`] holds: the signature, and where it was to be written.
+struct Held {
+    number: u64,
+    made: sign_cms::Made,
+    source: PathBuf,
+    out: PathBuf,
+}
+
+/// What `sign_document` and `sign_resume` answer: exactly one of the two is
+/// set. A struct of two options rather than an enum because it is a reply
+/// payload, and `replies.rs` pins a payload by one sample with every key set.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Signing {
+    /// Written and read back.
+    pub signed: Option<sign_cms::Signed>,
+    /// The timestamp asked for did not come, and nothing was written.
+    pub unstamped: Option<Unstamped>,
+}
+
+/// A signing whose timestamp did not come.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Unstamped {
+    /// Why, as a sentence.
+    pub why: String,
+    /// The kept signature, for [`sign_resume`] and [`sign_discard`].
+    pub pending: u64,
+}
+
+impl Pending {
+    fn keep(&self, made: sign_cms::Made, source: PathBuf, out: PathBuf) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let number = NEXT.fetch_add(1, Ordering::Relaxed);
+        *self.0.lock() = Some(Held {
+            number,
+            made,
+            source,
+            out,
+        });
+        number
+    }
+
+    /// Drops whatever is held: a new signing has begun, and an answer to the
+    /// old question has nothing left to write.
+    fn clear(&self) {
+        drop(self.0.lock().take());
+    }
+
+    fn take(&self, number: u64) -> Option<Held> {
+        let mut held = self.0.lock();
+        if held.as_ref().is_some_and(|h| h.number == number) {
+            held.take()
+        } else {
+            None
+        }
+    }
+}
+
+/// The authority the frontend named, judged again here: the webview is not
+/// trusted to have kept to `http` and `https`.
+fn authority_of(timestamp: Option<&str>) -> Result<Option<url::Url>, String> {
+    timestamp
+        .map(|text| crate::tsa::authority(text).map_err(|why| why.sentence("")))
+        .transpose()
+}
+
+/// The rest of a signing, from a made signature: the timestamp when one was
+/// asked for, the seal, the write and the read-back --- or, when the timestamp
+/// did not come, the signature kept and the reason. On a blocking thread: the
+/// request, the write and the read-back all wait.
+fn conclude(
+    made: sign_cms::Made,
+    authority: Option<&url::Url>,
+    source: PathBuf,
+    out: PathBuf,
+    checking: &dyn crate::save::Outside,
+    pending: &Pending,
+) -> Result<Signing, String> {
+    let stamped = match crate::tsa::stamp(&made, authority, |url, value| {
+        crate::tsa::ask_blocking(url, value, &crate::tsa::LIMITS)
+    }) {
+        Ok(stamped) => stamped,
+        Err(why) => {
+            let host = authority
+                .and_then(url::Url::host_str)
+                .unwrap_or_default()
+                .to_string();
+            let number = pending.keep(made, source, out);
+            return Ok(Signing {
+                signed: None,
+                unstamped: Some(Unstamped {
+                    why: why.sentence(&host),
+                    pending: number,
+                }),
+            });
+        }
+    };
+    let field = made.field.clone();
+    let bytes = made.seal(stamped)?;
+    save::write_signed(&source, &out, &bytes).map_err(|why| why.message)?;
+
+    // Read back by a worker, through the handle of the file just written:
+    // the verdict the reader is shown is the one the properties dialog would
+    // give, computed where every other parse of the file happens.
+    let mut written = std::fs::File::open(&out)
+        .map_err(|e| format!("the signed file was written and could not be reopened: {e}"))?;
+    let found = checking
+        .signatures(&mut written, bytes.len())
+        .map_err(|e| format!("the signed file was written and could not be checked: {e}"))?;
+    Ok(Signing {
+        signed: Some(sign_cms::report(out.display().to_string(), field, found)),
+        unstamped: None,
+    })
 }
 
 /// Seconds since the epoch, now.
@@ -158,8 +297,12 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
 ///
 /// The OS may show its own prompt while signing --- keychain access, a smart
 /// card's PIN. That is the OS asking, and tpdf never sees the answer.
-// Eight because a Tauri command's arguments are its IPC shape: three are the
-// states Tauri injects, and bundling the five the frontend sends into a struct
+///
+/// `timestamp` is the authority the reader chose for this signing, or `None`
+/// for none --- in which case no request is made to anybody. It is judged here
+/// before anything else is asked.
+// Nine because a Tauri command's arguments are its IPC shape: three are the
+// states Tauri injects, and bundling the six the frontend sends into a struct
 // would change `ipc.ts`'s mirror for no reader's benefit.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -172,7 +315,13 @@ pub async fn sign_document(
     identity: String,
     path: String,
     placement: Option<Placement>,
-) -> Result<sign_cms::Signed, String> {
+    timestamp: Option<String>,
+) -> Result<Signing, String> {
+    let authority = authority_of(timestamp.as_deref())?;
+    {
+        use tauri::Manager as _;
+        app.state::<Pending>().clear();
+    }
     sign_cms::refuse_unsaved(edits.state(doc)?.dirty)?;
     let opened_as = edits.plan(doc)?.opened_as.ok_or_else(|| {
         "tpdf could not record what this file looked like when it was opened, so it \
@@ -207,12 +356,11 @@ pub async fn sign_document(
 
     let checking = outside_of(&app, service.backend());
     tauri::async_runtime::spawn_blocking(move || {
-        let source = Path::new(&source);
-        let out = Path::new(&path);
-        let original = save::read_to_sign(source, &opened_as).map_err(|why| why.message)?;
+        use tauri::Manager as _;
+        let original =
+            save::read_to_sign(Path::new(&source), &opened_as).map_err(|why| why.message)?;
         let identity = keystore::find(&identity)?;
-        let field = unsigned.field.clone();
-        let bytes = sign_cms::finish(
+        let made = sign_cms::sign(
             original,
             unsigned,
             at,
@@ -220,20 +368,62 @@ pub async fn sign_document(
             &identity.chain,
             &identity,
         )?;
-        save::write_signed(source, out, &bytes).map_err(|why| why.message)?;
-
-        // Read back by a worker, through the handle of the file just written:
-        // the verdict the reader is shown is the one the properties dialog
-        // would give, computed where every other parse of the file happens.
-        let mut written = std::fs::File::open(out)
-            .map_err(|e| format!("the signed file was written and could not be reopened: {e}"))?;
-        let found = checking
-            .signatures(&mut written, bytes.len())
-            .map_err(|e| format!("the signed file was written and could not be checked: {e}"))?;
-        Ok(sign_cms::report(path.clone(), field, found))
+        conclude(
+            made,
+            authority.as_ref(),
+            PathBuf::from(source),
+            PathBuf::from(path),
+            checking.as_ref(),
+            &app.state::<Pending>(),
+        )
     })
     .await
     .map_err(|e| format!("the signing did not run: {e}"))?
+}
+
+/// Finishes a signing whose timestamp did not come, as the reader chose: with
+/// `timestamp` to try that authority again, or `None` to write it without one.
+/// **The OS is not asked for anything**: the signature is the one already made.
+///
+/// # Errors
+///
+/// `pending` is not the signature held --- it was cancelled, or a later
+/// signing replaced it --- and everything writing it can refuse.
+#[tauri::command]
+pub async fn sign_resume(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, RenderService>,
+    pending: u64,
+    timestamp: Option<String>,
+) -> Result<Signing, String> {
+    let authority = authority_of(timestamp.as_deref())?;
+    let checking = outside_of(&app, service.backend());
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager as _;
+        let held = app.state::<Pending>();
+        let Held {
+            made, source, out, ..
+        } = held
+            .take(pending)
+            .ok_or("this signature is no longer held --- sign the document again".to_string())?;
+        conclude(
+            made,
+            authority.as_ref(),
+            source,
+            out,
+            checking.as_ref(),
+            &held,
+        )
+    })
+    .await
+    .map_err(|e| format!("the signing did not run: {e}"))?
+}
+
+/// Drops a signature whose timestamp did not come: the reader cancelled.
+/// Nothing was written, and nothing is.
+#[tauri::command]
+pub fn sign_discard(held: tauri::State<'_, Pending>, pending: u64) {
+    drop(held.take(pending));
 }
 
 #[cfg(test)]

@@ -54,6 +54,11 @@ including the connection's IP address and request metadata, to GitHub. Downloadi
 and installing an update requires a click, and finishing it is another: tpdf restarts only
 when asked, and asks first if an open document has unsaved changes. GitHub's handling of those requests is
 covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+When you sign with a timestamp, and only then, tpdf sends the timestamp authority you chose
+a hash of the new signature and a random number — nothing of the document — along with the
+connection's IP address; DigiCert and GlobalSign are asked over plain HTTP, because that is all
+they offer, so anybody on the network path can see that you signed something at that moment.
+The authority's own privacy policy applies to that request.
 Links in PDFs open in the browser only after confirmation, where the destination's
 privacy policy applies. Use **Disable automatic update checks** in
 the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
@@ -158,9 +163,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   signatures already in the document stay intact, and the written file is read back and
   its signatures checked before you are told it worked. It can be invisible, or drawn on
   the page where you place it — your saved signature image, the signer's name, the date,
-  and a reason and location if you give them. It carries no timestamp, so its time is the
-  one your computer's clock said. A timestamp already on a signature you open is checked,
-  in the document's properties. Documents with unsaved edits, encrypted documents and
+  and a reason and location if you give them. Without a timestamp its time is the one your
+  computer's clock said; **with one**, a timestamp authority you choose — DigiCert, Sectigo,
+  GlobalSign or another address — confirms when it existed (PAdES B-T). None is chosen until
+  you choose one, and tpdf then remembers it. It sends the authority a hash of the new
+  signature and nothing of the document, checks the answer before anything is written, and
+  writes nothing if no timestamp that checks out comes back: you can try again or sign
+  without one, and neither asks for your key again. A timestamp already on a signature you
+  open is checked, in the document's properties. Documents with unsaved edits, encrypted documents and
   documents certified against any change are refused. The same signing and checking is
   available from a terminal: see [Command-line tool](#command-line-tool).
   <!-- built: file.signDocument -->
@@ -470,7 +480,8 @@ both.
 properties**, the viewer's own text, its form filling and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
 the private key never leaves the operating system, and every signed, filled or redacted file is
-read back and checked before success is reported. Nothing is uploaded and nothing goes online.
+read back and checked before success is reported. Nothing is uploaded, and nothing goes online
+except the one request `sign --timestamp` makes to the timestamp authority you name.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
@@ -487,6 +498,7 @@ tpdf identities
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe"
 tpdf sign contract.pdf -o contract-signed.pdf --identity 2a144cdb…c74 \
     --visible --page 2 --rect 72,600,220,70 --reason "Approved" --location "Hamburg"
+tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp digicert
 tpdf verify contract-signed.pdf other.pdf
 tpdf verify --strict --json *.pdf
 tpdf info report.pdf
@@ -544,7 +556,15 @@ the page as it is displayed:
   beside the words unless `--no-image` is given, `--lines label,name,date` chooses which of
   the three lines appear, and `--reason` and `--location` are drawn and written into the
   signature. Those options need `--visible`, and are refused without it rather than
-  dropped.
+  dropped. `--timestamp` adds an RFC 3161 timestamp from `digicert`, `sectigo`,
+  `globalsign` or an `http://` or `https://` address you give: tpdf sends that authority a
+  hash of the new signature and a random number, nothing of the document, and writes the
+  signed copy only if a timestamp comes back whose own signature checks out, covers this
+  signature and answers this request. Otherwise nothing is written and the exit code is 3;
+  run it again without `--timestamp` to sign without one. Without `--timestamp` nothing is
+  sent anywhere. The summary says whether the authority's certificate chains to a root this
+  computer trusts — over plain `http://` somebody on the network could substitute a
+  timestamp from an authority of their own, which checks out and reads as not trusted.
 - **`verify <file.pdf>...`** says, for every signature, whether it is intact and whether this
   computer trusts its signer, in the words of the application's properties dialog — and, for
   a signature carrying an RFC 3161 timestamp or a document timestamp, whether the timestamp
@@ -641,8 +661,8 @@ built.
 |---|---|
 | 0 | Done. For `verify`, every document was read, whatever the verdicts. |
 | 1 | `verify --strict`: a document with no signature, or a signature that is not both intact and trusted. `redact`: the copy was written and could not be proved clean — it is kept, and every reason is reported. |
-| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, nothing for `redact` to remove, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
-| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
+| 2 | The command line is malformed: a missing `-o` or `--values`, an output that names the input or the answers or regions file, a bad `--rect` or `--pages`, a `--timestamp` that is not a listed authority or an `http`/`https` address without a password in it, nothing for `redact` to remove, a `--pattern` that does not compile or a query that can match nothing, an unknown option, or a `--password-env` naming a variable that is not set. |
+| 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
 
 Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
@@ -776,13 +796,13 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Adding a timestamp when signing, long-term-validation signatures, certification
-  signatures, and revocation checking. Signing exists, and so does asking this computer's
-  trust store about a signer, and a timestamp already on a signature is checked; what a
-  signature proves stops at the document being unchanged since it was signed by the key in
-  its certificate, and whether an issuer this computer trusts vouches for that certificate
-  today — not on the date a timestamp attests.
-  <!-- not-built: file.timestampSignature -->
+- Long-term-validation signatures, certification signatures, and revocation checking.
+  Signing exists, with a timestamp if you ask for one, and so does asking this computer's
+  trust store about a signer and a timestamp's authority; what a signature proves stops at
+  the document being unchanged since it was signed by the key in its certificate, and
+  whether an issuer this computer trusts vouches for that certificate today — not on the
+  date a timestamp attests.
+  <!-- not-built: file.addValidationData -->
 - General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
   paragraph reflow and unsupported complex content streams.
 

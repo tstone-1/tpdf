@@ -227,7 +227,7 @@ export const NOT_CHECKED =
   "tpdf checks that the bytes a signature covers are unchanged, that the " +
   "signature matches the key in its certificate, and whether that certificate " +
   "chains to a root this computer's own trust store trusts, which is not " +
-  "Adobe's list most signed PDFs are made against. It does not go online, so it " +
+  "Adobe's list most signed PDFs are made against. It fetches nothing to check a signature, so it " +
   "looks for no revocation and fetches no missing certificate, and it cannot " +
   "tell whether the certificate was in date when it was used, because the " +
   "signing date is the signer's own claim. What a certificate states its key " +

@@ -665,3 +665,117 @@ fn no_private_key_type_is_named_outside_the_tests() {
     assert!(files.len() > 100, "only {} source files", files.len());
     assert_eq!(shipped, Vec::<&std::path::PathBuf>::new());
 }
+
+// ------------------------------------------------ a timestamp on the signature
+
+/// A signature made over the plain test document, not yet written.
+fn made() -> Made {
+    let original = testkeys::plain_pdf();
+    let key = Soft::p256(3);
+    let cert = own(&key, "Signer");
+    let unsigned = crate::sign_prepare::prepare(original.clone(), NOW, None).expect("prepared");
+    sign(original, unsigned, NOW, &cert, &[], &key).expect("made")
+}
+
+/// A token from the test authority over `made`'s signature value, as an
+/// authority answers a request for it.
+fn token_for(made: &Made, faults: &crate::integrity::test_tsa::Faults) -> Vec<u8> {
+    use crate::integrity::test_tsa::{mint_with, Imprint, TestTsa};
+    let value = made.value().expect("a value");
+    mint_with(
+        Imprint::Sha256,
+        &Imprint::Sha256.digest(&value),
+        Some(&[7; 8]),
+        NOW,
+        &TestTsa::new(),
+        faults,
+    )
+}
+
+#[test]
+fn a_timestamped_signature_is_written_intact_with_its_time_attested() {
+    let signature = made();
+    let token = token_for(&signature, &Default::default());
+    let stamped = signature.stamped(&token).expect("stamped");
+    let bytes = signature.seal(Some(stamped)).expect("sealed");
+    // Read as the properties dialog reads it: the signature intact, and its
+    // timestamp a verdict of its own, intact and attested.
+    let found = crate::docinfo::scan(&bytes, 1, None).expect("scanned");
+    let ours = found.signatures.iter().find(|s| s.signed).expect("one");
+    assert_eq!(
+        ours.integrity.as_ref().map(|i| i.verdict),
+        Some(Verdict::Intact)
+    );
+    let stamp = ours.timestamp.as_ref().expect("a timestamp");
+    assert_eq!(
+        stamp.integrity.as_ref().map(|i| i.verdict),
+        Some(Verdict::Intact),
+        "{stamp:?}"
+    );
+    assert!(stamp.attested);
+}
+
+#[test]
+fn stamping_changes_nothing_the_key_signed() {
+    // The token is an *unsigned* attribute: decoded and encoded again, every
+    // other byte of the CMS --- the signed attributes, the value, the
+    // certificates --- is the one the OS signed.
+    let signature = made();
+    let token = token_for(&signature, &Default::default());
+    let stamped = signature.stamped(&token).expect("stamped");
+    assert_ne!(stamped, signature.blob, "the token is not in it");
+    assert_eq!(blob_without_token(&stamped), signature.blob);
+    let (_, decoded) = super::decoded(&stamped).expect("decodes");
+    let signer = &decoded.signer_infos.0.as_slice()[0];
+    let unsigned = signer.unsigned_attrs.as_ref().expect("unsigned attributes");
+    assert_eq!(unsigned.len(), 1);
+    assert_eq!(
+        unsigned.iter().next().map(|a| a.oid),
+        Some(TIME_STAMP_TOKEN)
+    );
+}
+
+#[test]
+fn a_timestamp_that_does_not_check_out_in_the_written_bytes_is_not_written() {
+    // `tsa::accept` refuses these before they get here; this is the last check,
+    // over the finished file, and it must refuse them on its own.
+    use crate::integrity::test_tsa::Faults;
+    for faults in [
+        Faults {
+            corrupt_signature: true,
+            ..Faults::default()
+        },
+        Faults {
+            wrong_imprint: true,
+            ..Faults::default()
+        },
+        Faults {
+            sha1_signature: true,
+            ..Faults::default()
+        },
+    ] {
+        let signature = made();
+        let token = token_for(&signature, &faults);
+        let stamped = signature.stamped(&token).expect("stamped");
+        let why = signature.seal(Some(stamped)).expect_err("refused");
+        assert!(
+            why.contains("timestamp") && why.contains("nothing was written"),
+            "{faults:?}: {why}"
+        );
+    }
+}
+
+#[test]
+fn a_timestamp_past_the_reserved_span_is_refused() {
+    // Any one DER value serves: an OCTET STRING the size of the whole span.
+    let signature = made();
+    let mut huge = vec![0x04, 0x82, 0x80, 0x00];
+    huge.extend(vec![0u8; 0x8000]);
+    let why = signature.stamped(&huge).expect_err("refused");
+    assert!(why.contains("set aside"), "{why}");
+    // And the span holds what a real authority's answer needs, measured at
+    // 6 to 8 KiB with its certificates: 16 KiB of anything still fits.
+    let mut fits = vec![0x04, 0x82, 0x40, 0x00];
+    fits.extend(vec![0u8; 0x4000]);
+    signature.stamped(&fits).expect("fits");
+}

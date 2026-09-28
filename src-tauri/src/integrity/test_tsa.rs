@@ -71,7 +71,7 @@ pub const TIMESTAMPING: &str = "1.3.6.1.5.5.7.3.8";
 /// id-kp-emailProtection: a purpose that is not timestamping, for the refusal.
 pub const EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
 
-/// 2020-01-01 and 2040-01-01, the certificates' dates.
+/// The first moments of 2020 and of 2040, the certificates' dates.
 pub const FROM: u64 = 1_577_836_800;
 pub const UNTIL: u64 = 2_208_988_800;
 

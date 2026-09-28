@@ -152,6 +152,38 @@ fn an_appearance_option_without_visible_is_refused_rather_than_dropped() {
 }
 
 #[test]
+fn a_timestamp_authority_is_named_or_given_and_judged_before_anything_runs() {
+    let named = signed("sign in.pdf -o out.pdf --identity Me --timestamp digicert");
+    assert_eq!(
+        named.timestamp.as_ref().map(url::Url::as_str),
+        Some("http://timestamp.digicert.com/")
+    );
+    let given = signed("sign in.pdf -o out.pdf --identity Me --timestamp https://tsa.example/x");
+    assert_eq!(
+        given.timestamp.as_ref().map(url::Url::as_str),
+        Some("https://tsa.example/x")
+    );
+    // Nothing asked unless asked for.
+    assert_eq!(
+        signed("sign in.pdf -o out.pdf --identity Me").timestamp,
+        None
+    );
+    // An address tpdf will not ask is a malformed line, exit 2, before a
+    // worker, a key or a socket: `refused` runs the parser alone.
+    for bad in [
+        "ftp://tsa.example/",
+        "file:///tmp/x",
+        "http://user:pw@tsa.example/",
+        "verisign",
+    ] {
+        let why = refused(&format!(
+            "sign in.pdf -o out.pdf --identity Me --timestamp {bad}"
+        ));
+        assert!(why.starts_with("tpdf does not ask"), "{bad}: {why}");
+    }
+}
+
+#[test]
 fn every_other_malformed_line_is_refused_with_its_reason() {
     let cases = [
         ("sign -o b.pdf --identity A", "needs the document"),
@@ -714,24 +746,101 @@ fn wording() -> serde_json::Value {
         )],
         vec![("Signature1".into(), false, Some(intact.clone()))],
     ];
+    // The same signings, each again with a timestamp on the new signature:
+    // sound and named, sound and unnamed, and one that does not check out ---
+    // whose words are the properties dialog's, whatever the verdict.
+    let trusted = Trust {
+        standing: Standing::Trusted,
+        why: None,
+        store: Some(TrustStore::Mac),
+    };
+    let stranger = Trust {
+        standing: Standing::Untrusted,
+        why: Some(Doubt::Root),
+        store: Some(TrustStore::Windows),
+    };
+    let stamps: [Option<(&str, Integrity, Option<Trust>)>; 5] = [
+        None,
+        Some((
+            "Acme Time Authority",
+            integrity(Verdict::Intact, None, "SHA-256", "ECDSA P-256"),
+            Some(trusted),
+        )),
+        // Checks out, from an authority nobody vouches for: what a token
+        // substituted over plain HTTP looks like, and it must say so.
+        Some((
+            "Somebody Else",
+            integrity(Verdict::Intact, None, "SHA-256", "RSA"),
+            Some(stranger),
+        )),
+        Some(("", integrity(Verdict::Intact, None, "SHA-256", "RSA"), None)),
+        Some((
+            "Acme Time Authority",
+            integrity(Verdict::Broken, None, "", ""),
+            None,
+        )),
+    ];
     let mut after = Vec::new();
-    for (n, signatures) in cases.into_iter().enumerate() {
-        let field = signatures
-            .iter()
-            .find(|(_, ours, _)| *ours)
-            .map_or("Signature2".to_string(), |(f, _, _)| f.clone());
-        let path = format!("/tmp/signed-{n}.pdf");
-        let name = format!("signed-{n}.pdf");
-        after.push(serde_json::json!({
-            "signed": {
-                "path": path,
-                "field": field,
-                "signatures": signatures.iter().map(|(f, ours, i)| serde_json::json!({
-                    "field": f, "ours": ours, "integrity": i,
-                })).collect::<Vec<_>>(),
-            },
-            "sentence": words::after_signing(&name, &field, &signatures),
-        }));
+    for (stamp_at, stamp) in stamps.iter().enumerate() {
+        for (n, signatures) in cases.iter().enumerate() {
+            let field = signatures
+                .iter()
+                .find(|(_, ours, _)| *ours)
+                .map_or("Signature2".to_string(), |(f, _, _)| f.clone());
+            let path = format!("/tmp/signed-{stamp_at}-{n}.pdf");
+            let name = format!("signed-{stamp_at}-{n}.pdf");
+            let when = "2026-09-28 10:11:12 UTC";
+            // Past dates, for `scripts/check_dates.py`: only the expired and
+            // not-yet-valid sentences show them, and neither is among these.
+            let (from, until) = ("2025-01-02 03:04:05 UTC", "2026-01-02 03:04:05 UTC");
+            let stamp_json = stamp.as_ref().map(|(by, i, trust)| {
+                serde_json::json!({
+                    "when": when,
+                    "authority": if by.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::json!({
+                            "subject": format!("CN={by}"),
+                            "subject_cn": by,
+                            "from": from,
+                            "until": until,
+                        })
+                    },
+                    "integrity": i,
+                    "trust": trust,
+                    "attested": matches!(i.verdict, Verdict::Intact | Verdict::Weak),
+                })
+            });
+            let sentences = stamp.as_ref().map(|(by, i, trust)| {
+                let (from, until) = if by.is_empty() {
+                    ("", "")
+                } else {
+                    (from, until)
+                };
+                (
+                    words::timestamp_sentence(when, by, Some(i), false),
+                    trust
+                        .as_ref()
+                        .map(|trust| words::authority_sentence(trust, from, until)),
+                )
+            });
+            after.push(serde_json::json!({
+                "signed": {
+                    "path": path,
+                    "field": field,
+                    "signatures": signatures.iter().map(|(f, ours, i)| serde_json::json!({
+                        "field": f, "ours": ours, "integrity": i,
+                        "timestamp": if *ours { stamp_json.clone() } else { None },
+                    })).collect::<Vec<_>>(),
+                },
+                "sentence": words::after_signing(
+                    &name,
+                    &field,
+                    signatures,
+                    sentences.as_ref().map(|(t, a)| (t.as_str(), a.as_deref())),
+                ),
+            }));
+        }
     }
 
     // Every shape `afterRedaction` has: verified or not, one or several of
@@ -840,6 +949,9 @@ fn wording() -> serde_json::Value {
         "authority": authorities,
         "after_signing": after,
         "after_redaction": after_redaction,
+        // The window offers these by name and the tool takes their names:
+        // `signtimestamp.test.ts` holds its list to this one.
+        "timestamp_servers": crate::tsa::SERVERS,
     })
 }
 
@@ -969,6 +1081,7 @@ fn samples() -> Vec<(&'static str, String)> {
                 Some(integrity(Verdict::Intact, None, "SHA-256", "RSA")),
             ),
         ],
+        None,
     );
     let sign = report::Signed {
         schema: report::SCHEMA,

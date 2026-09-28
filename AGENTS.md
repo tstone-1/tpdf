@@ -233,8 +233,8 @@ heavy work while the webview does the UI.
 
 **Dependencies beyond the table** — the two search crates, the certificate and XMP readers, the signature checkers,
 `fax`, and the four Tauri plugins — are listed with their licences and package costs in
-[`docs/DETAIL.md`](docs/DETAIL.md) *Stack*. `tauri-plugin-updater` is the application's only
-network authority (`docs/THREAT-MODEL.md` §T9). Check every new dependency against the
+[`docs/DETAIL.md`](docs/DETAIL.md) *Stack*. The network authorities are two: `tauri-plugin-updater`,
+and `tsa.rs` when a signing asks for a timestamp (`docs/THREAT-MODEL.md` §T9, §T10). Check every new dependency against the
 licensing constraint with `cargo metadata` over the whole tree, never from its README.
 
 ### What each library is, and is not

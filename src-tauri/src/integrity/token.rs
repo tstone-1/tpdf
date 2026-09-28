@@ -106,10 +106,14 @@ pub enum Target<'a> {
 }
 
 /// `MessageImprint`, RFC 3161 §2.4.1.
+///
+/// Crate-visible because a request carries one too: `tsa.rs` writes the same
+/// structure into a `TimeStampReq` and reads the answer's back with
+/// [`imprint_of`], so what is asked and what is checked are one type.
 #[derive(Clone, Debug, der::Sequence)]
-struct MessageImprint {
-    hash_algorithm: AlgorithmIdentifierOwned,
-    hashed_message: der::asn1::OctetString,
+pub(crate) struct MessageImprint {
+    pub(crate) hash_algorithm: AlgorithmIdentifierOwned,
+    pub(crate) hashed_message: der::asn1::OctetString,
 }
 
 /// `SigningCertificate`, RFC 2634 §5.4.
@@ -249,7 +253,7 @@ fn content_type(token: &[u8]) -> Option<String> {
 /// by a missing or extra field reads as unreadable rather than yielding some
 /// other `SEQUENCE` as an imprint. Trailing bytes after the `TSTInfo` refuse
 /// it for the same reason.
-fn imprint_of(tst_info: &[u8]) -> Option<MessageImprint> {
+pub(crate) fn imprint_of(tst_info: &[u8]) -> Option<MessageImprint> {
     use der::{Reader as _, Tagged as _};
 
     let mut outer = der::SliceReader::new(tst_info).ok()?;

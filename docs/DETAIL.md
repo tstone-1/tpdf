@@ -249,10 +249,15 @@ extreme — **one crate**, two commands over `AppHandle`, and no transitive of i
 there because finishing an update on macOS needs a relaunch: the updater replaces the `.app`
 on disk and leaves the process running the old code, so without it the reader has to quit and
 reopen by hand. The capability list names `process:allow-restart` alone rather than
-`process:default`, which would also hand the webview `exit`. All permissive, swept as below.
+`process:default`, which would also hand the webview `exit`. And, since 2026-09-28, `reqwest`
+and `rustls` declared directly for the timestamp client (`tsa.rs`): **zero packages**, 617
+before and after, because both are the updater's own with the features it already resolves. All
+permissive, swept as below.
 
-**That plugin is also the only network authority in the application, and it changed a property
-that had held until 26.8.2: tpdf made no request at all.** It is spent narrowly — one check per
+**That plugin was the only network authority in the application until 2026-09-28, and it changed
+a property that had held until 26.8.2: tpdf made no request at all.** The second is the timestamp
+client, reached only when the reader asks for a timestamp on one signing, from the app process or
+the command-line tool's and never a worker --- `docs/THREAT-MODEL.md` §T10. It is spent narrowly — one check per
 launch, issued after every spike and check entry point has returned, so every harness here still
 runs offline; nothing downloads or installs without a click; and the payload's signature is
 verified against a compiled-in public key before anything is unpacked, which is what keeps those

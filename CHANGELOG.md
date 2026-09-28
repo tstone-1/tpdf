@@ -21,6 +21,19 @@ have the binary.)
 
 ### Added
 
+- **A timestamp when you sign.** *Sign document…* can now ask a timestamp
+  authority to confirm when the signature was made — DigiCert, Sectigo,
+  GlobalSign, or another address you give — and `tpdf sign` does the same with
+  `--timestamp`. Nothing is chosen until you choose it, and the window remembers
+  your choice. tpdf sends the authority a hash of the new signature and a random
+  number, nothing of the document, and checks the answer before anything is
+  written: its own signature, that it is a timestamp of this signature, and that
+  it answers this request. If none that checks out comes back, nothing is
+  written; in the window you can try again or sign without a timestamp, and
+  neither asks for your key a second time. The message after signing says when
+  the timestamp says the signature existed, and whether this computer trusts the
+  authority. This is the only request tpdf makes besides the update check, and it
+  is made only when you ask for a timestamp.
 - **Timestamps on signatures are checked.** A signature carrying a timestamp
   from a timestamp authority used to show that time with the note that tpdf
   does not check it. The properties dialog and `tpdf verify` now say whether

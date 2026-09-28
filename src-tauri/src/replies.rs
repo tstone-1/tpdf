@@ -641,38 +641,68 @@ fn samples() -> BTreeMap<&'static str, String> {
         },
     );
 
+    // `sign_document`'s answer. Exactly one half is set in anything it sends;
+    // both are set here, for the reason every `Option` in these samples is.
     put(
-        "Signed",
-        &crate::sign_cms::Signed {
-            path: "/tmp/one-signed.pdf".into(),
-            field: "Signature2".into(),
-            signatures: vec![
-                crate::sign_cms::Checked {
-                    field: "Signature1".into(),
-                    integrity: Some(crate::integrity::Integrity {
-                        verdict: crate::integrity::Verdict::Unchecked,
-                        why: Some(crate::integrity::Why::Range),
-                        digest: String::new(),
-                        method: String::new(),
-                    }),
-                    ours: false,
-                },
-                crate::sign_cms::Checked {
-                    field: "Signature2".into(),
-                    integrity: Some(crate::integrity::Integrity {
-                        verdict: crate::integrity::Verdict::Intact,
-                        why: None,
-                        digest: "SHA-256".into(),
-                        method: "ECDSA P-256".into(),
-                    }),
-                    ours: true,
-                },
-                crate::sign_cms::Checked {
-                    field: "Signature3".into(),
-                    integrity: None,
-                    ours: false,
-                },
-            ],
+        "Signing",
+        &crate::commands::sign::Signing {
+            signed: Some(crate::sign_cms::Signed {
+                path: "/tmp/one-signed.pdf".into(),
+                field: "Signature2".into(),
+                signatures: vec![
+                    crate::sign_cms::Checked {
+                        field: "Signature1".into(),
+                        integrity: Some(crate::integrity::Integrity {
+                            verdict: crate::integrity::Verdict::Unchecked,
+                            why: Some(crate::integrity::Why::Range),
+                            digest: String::new(),
+                            method: String::new(),
+                        }),
+                        ours: false,
+                        timestamp: None,
+                    },
+                    crate::sign_cms::Checked {
+                        field: "Signature2".into(),
+                        integrity: Some(crate::integrity::Integrity {
+                            verdict: crate::integrity::Verdict::Intact,
+                            why: None,
+                            digest: "SHA-256".into(),
+                            method: "ECDSA P-256".into(),
+                        }),
+                        ours: true,
+                        // The one just made, with the timestamp the reader asked
+                        // for, every key set for the reason `Properties`' is.
+                        timestamp: Some(docinfo::Timestamp {
+                            when: "2026-01-02T03:04:06Z".into(),
+                            authority: Some(certificate()),
+                            integrity: Some(crate::integrity::Integrity {
+                                verdict: crate::integrity::Verdict::Intact,
+                                why: None,
+                                digest: "SHA-256".into(),
+                                method: "RSA".into(),
+                            }),
+                            trust: Some(crate::trust::Trust {
+                                standing: crate::trust::Standing::Trusted,
+                                why: None,
+                                store: Some(crate::trust::Store::Mac),
+                            }),
+                            attested: true,
+                        }),
+                    },
+                    crate::sign_cms::Checked {
+                        field: "Signature3".into(),
+                        integrity: None,
+                        ours: false,
+                        timestamp: None,
+                    },
+                ],
+            }),
+            unstamped: Some(crate::commands::sign::Unstamped {
+                why: "tpdf could not reach the timestamp authority at tsa.example: \
+                      connection refused"
+                    .into(),
+                pending: 7,
+            }),
         },
     );
 

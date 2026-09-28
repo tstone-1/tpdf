@@ -34,7 +34,7 @@ describe("the command-line tool's wording", () => {
   it("covers every verdict, standing and closing sentence", () => {
     // 5 verdicts x 3 shapes, the unchecked one with 8 reasons more, each with
     // and without an append and a trust row; 5 standings x 3 stores x 9
-    // reasons x 2 date pairs; 7 signing reports.
+    // reasons x 2 date pairs; the signing reports below.
     expect(wording.integrity.length).toBe((5 * 3 + 8) * 2 * 2);
     expect(wording.trust.length).toBe(5 * 3 * 9 * 2);
     // A timestamp: no verdict, or 5 verdicts x 2 shapes and the unchecked one
@@ -42,7 +42,13 @@ describe("the command-line tool's wording", () => {
     // its authority as the trust rows are.
     expect(wording.timestamp.length).toBe((1 + 5 * 2 + 8) * 2 * 2);
     expect(wording.authority.length).toBe(5 * 3 * 9 * 2);
-    expect(wording.after_signing.length).toBe(7);
+    // 7 signing reports, each with no timestamp and with four: sound, named
+    // and trusted; sound from an authority nobody vouches for; sound and
+    // unnamed; and one that does not check out.
+    expect(wording.after_signing.length).toBe(7 * 5);
+    expect(
+      wording.after_signing.filter((c) => c.sentence.includes(" Timestamp: ")).length,
+    ).toBeGreaterThan(0);
     // 3 count pairs x 3 reason lists x changed or not.
     expect(wording.after_redaction.length).toBe(3 * 3 * 2);
     expect(wording.after_redaction.some((c) => c.applied.verified)).toBe(true);

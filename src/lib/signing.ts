@@ -34,15 +34,35 @@
  * 6. **The result is what a worker read back from the written file**, one line
  *    per signature, the new one first. Its words are `integrity.ts`'s, so a
  *    signature the reader just made is described exactly as the properties
- *    dialog would describe it.
+ *    dialog would describe it --- its timestamp too, when it carries one.
+ *
+ * ## A timestamp, asked for in the chooser
+ *
+ * The chooser also asks whether to add an RFC 3161 timestamp, and from which
+ * authority (`signtimestamp.ts`): none by default, the reader's choice
+ * remembered. The request is the backend's, made after the OS has signed. When
+ * it fails, **nothing has been written**, and the reader chooses: try again,
+ * sign without a timestamp, or cancel ({@link askAfterStampFailed}). The
+ * backend holds the signature it already made meanwhile, so none of the three
+ * asks the OS for the key again. Signing without a timestamp is only ever that
+ * second, explicit answer.
  */
 
 import { basename } from "./paths";
 import type { Integrity } from "./integrity";
-import { WHY } from "./integrity";
+import { WHY, authorityRow, timestampRow } from "./integrity";
+import type { Timestamp } from "./properties";
 import type { PageId } from "./pages";
 import type { SignatureImage } from "./signature";
 import type { Appearance, AppearanceOptions } from "./signappearance";
+import {
+  SERVERS,
+  addressProblem,
+  readStampChoice,
+  stampUrl,
+  writeStampChoice,
+  type StampChoice,
+} from "./signtimestamp";
 
 /** A certificate the chooser may offer. Mirrors `sign_cms::Choice`. */
 export interface Choice {
@@ -74,6 +94,8 @@ export interface Checked {
   field: string;
   integrity: Integrity | null;
   ours: boolean;
+  /** Its timestamp as the worker read it back, or `null` for none. */
+  timestamp?: Timestamp | null;
 }
 
 /** What `sign_document` answers. Mirrors `sign_cms::Signed`. */
@@ -83,11 +105,39 @@ export interface Signed {
   signatures: Checked[];
 }
 
-/** What the chooser answers: the certificate, and whether the signature shows. */
+/** A signing whose timestamp did not come. Mirrors `commands::sign::Unstamped`. */
+export interface Unstamped {
+  /** Why, as a sentence. */
+  why: string;
+  /** The signature the backend holds, for `sign_resume` and `sign_discard`. */
+  pending: number;
+}
+
+/**
+ * What `sign_document` and `sign_resume` answer. Mirrors `commands::sign::Signing`:
+ * exactly one half is set --- written and read back, or a timestamp that did not
+ * come, with nothing written and the made signature held.
+ */
+export interface SignOutcome {
+  signed: Signed | null;
+  unstamped: Unstamped | null;
+}
+
+/**
+ * What the chooser answers: the certificate, whether the signature shows, and
+ * the timestamp authority to ask --- `null` for none, which asks nobody.
+ */
 export interface Chosen {
   identity: string;
   visible: boolean;
+  timestamp: string | null;
 }
+
+/** What the reader chose after a timestamp did not come. */
+export type AfterStamp = "retry" | "without" | null;
+
+/** What is said when the reader cancels after a timestamp did not come. */
+export const NOT_WRITTEN = "Not signed: nothing was written.";
 
 /** Where a visible signature goes. Mirrors `commands::sign::Placement`. */
 export interface Placement {
@@ -186,6 +236,16 @@ export function afterSigning(signed: Signed): string {
     );
   }
   let text = `Signed as ${signed.field} and saved to ${name}. Read back after writing, the signature is intact.`;
+  // The authority's standing too: over plain HTTP a token from an authority
+  // other than the one asked can arrive and check out, and it must not read
+  // like the one the reader chose (`docs/THREAT-MODEL.md` §T10).
+  const stamp = ours.timestamp;
+  if (stamp) {
+    const by = stamp.authority?.subject_cn || stamp.authority?.subject || "";
+    text += ` Timestamp: ${timestampRow(stamp.when, by, stamp.integrity, false).value}`;
+    const authority = authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
+    if (authority) text += ` Timestamp authority: ${authority.value}`;
+  }
   if (earlier.length > 0) {
     const listed = earlier.map((s) => `${s.field} ${verdict(s.integrity)}`).join(", ");
     text += ` Earlier signature${earlier.length === 1 ? "" : "s"}: ${listed}.`;
@@ -211,8 +271,22 @@ export interface SigningShell {
   place(): Promise<{ page: PageId; rect: [number, number, number, number] } | null>;
   /** The save panel, suggesting `suggested`: a path, or `null` for Cancel. */
   saveAs(suggested: string): Promise<string | null>;
-  /** `sign_document`, with `null` for an invisible signature. */
-  sign(identity: string, path: string, placement: Placement | null): Promise<Signed>;
+  /**
+   * `sign_document`, with `null` for an invisible signature and `null` for no
+   * timestamp.
+   */
+  sign(
+    identity: string,
+    path: string,
+    placement: Placement | null,
+    timestamp: string | null,
+  ): Promise<SignOutcome>;
+  /** The question after a timestamp did not come, with the reason. */
+  stampFailed(why: string): Promise<AfterStamp>;
+  /** `sign_resume`: the held signature, stamped by `timestamp` or, for `null`, not. */
+  resume(pending: number, timestamp: string | null): Promise<SignOutcome>;
+  /** `sign_discard`: the held signature is dropped, and nothing is written. */
+  discard(pending: number): Promise<void>;
 }
 
 /**
@@ -241,16 +315,34 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
   }
   const path = await shell.saveAs(signedName(shell.openPath));
   if (!path) return null;
-  return afterSigning(await shell.sign(chosen.identity, path, placement));
+  let outcome = await shell.sign(chosen.identity, path, placement, chosen.timestamp);
+  // A timestamp that did not come: nothing is written until the reader says
+  // what to do, and signing without one is only ever that answer.
+  while (outcome.unstamped) {
+    const { why, pending } = outcome.unstamped;
+    const next = await shell.stampFailed(why);
+    if (next === null) {
+      await shell.discard(pending);
+      return NOT_WRITTEN;
+    }
+    outcome = await shell.resume(pending, next === "retry" ? chosen.timestamp : null);
+  }
+  if (!outcome.signed) throw new Error("The signing answered neither a signature nor a reason.");
+  return afterSigning(outcome.signed);
 }
 
 /**
- * The chooser: one radio button per certificate, the first selected.
+ * The chooser: one radio button per certificate, the first selected; the
+ * appearance, invisible selected; and the timestamp, as the reader last chose
+ * it, which is none until they choose one (`signtimestamp.ts`).
  *
  * A modal on the same surface as the signed-save warning. Built from
  * `textContent` only, since a certificate's subject is somebody else's text.
  */
-export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
+export function askIdentity(
+  choices: Choice[],
+  storage?: () => Pick<Storage, "getItem" | "setItem">,
+): Promise<Chosen | null> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
   dialog.className = "sign-identity-dialog";
@@ -302,6 +394,43 @@ export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
     "Visible — choose what it shows, with a preview, then drag a rectangle on a page",
     false,
   );
+  // The timestamp: as last chosen, and none until a reader chooses one. No
+  // server is ever preselected --- choosing one is what lets tpdf ask it.
+  const remembered = readStampChoice(storage);
+  const stamps = document.createElement("div");
+  stamps.setAttribute("role", "radiogroup");
+  stamps.setAttribute("aria-label", "Timestamp");
+  stamps.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:12px 0";
+  const stampNote = document.createElement("p");
+  stampNote.textContent =
+    "A timestamp authority can confirm when the signature was made. tpdf sends it a " +
+    "hash of the new signature — nothing of the document — and writes nothing if " +
+    "no timestamp that checks out comes back.";
+  stamps.append(stampNote);
+  const stamp = (value: string, text: string) => {
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "sign-timestamp";
+    radio.value = value;
+    radio.checked = remembered.server === value;
+    const label = document.createElement("label");
+    label.append(radio, ` ${text}`);
+    stamps.append(label);
+    return radio;
+  };
+  const stampRadios = [
+    stamp("none", "No timestamp — the time is your computer's clock"),
+    ...SERVERS.map((server) => stamp(server.name, `Timestamp from ${server.label}`)),
+    stamp("other", "Timestamp from another authority:"),
+  ];
+  const otherUrl = document.createElement("input");
+  otherUrl.type = "url";
+  otherUrl.value = remembered.url;
+  otherUrl.placeholder = "https://";
+  otherUrl.setAttribute("aria-label", "Timestamp authority address");
+  const problem = document.createElement("p");
+  problem.setAttribute("role", "alert");
+  stamps.append(otherUrl, problem);
   const footer = document.createElement("div");
   footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
   const cancel = document.createElement("button");
@@ -309,7 +438,7 @@ export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
   const next = document.createElement("button");
   next.textContent = "Sign…";
   footer.append(cancel, next);
-  dialog.append(heading, help, list, shows, footer);
+  dialog.append(heading, help, list, shows, stamps, footer);
   document.body.append(dialog);
   return new Promise((resolve) => {
     let settled = false;
@@ -324,7 +453,22 @@ export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
     cancel.addEventListener("click", () => finish(null));
     next.addEventListener("click", () => {
       const identity = radios.find((radio) => radio.checked)?.value;
-      finish(identity === undefined ? null : { identity, visible: visible.checked });
+      if (identity === undefined) return finish(null);
+      const chosenStamp: StampChoice = {
+        server: stampRadios.find((radio) => radio.checked)?.value ?? "none",
+        url: otherUrl.value,
+      };
+      // *Other* with an address tpdf would not ask holds the chooser open: a
+      // typo must not turn into a signing with no timestamp.
+      if (chosenStamp.server === "other") {
+        const wrong = addressProblem(chosenStamp.url);
+        if (wrong !== null) {
+          problem.textContent = wrong;
+          return;
+        }
+      }
+      writeStampChoice(chosenStamp, storage);
+      finish({ identity, visible: visible.checked, timestamp: stampUrl(chosenStamp) });
     });
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
@@ -334,5 +478,64 @@ export function askIdentity(choices: Choice[]): Promise<Chosen | null> {
     dialog.addEventListener("keydown", (event) => event.stopPropagation());
     dialog.showModal();
     radios[0]?.focus();
+  });
+}
+
+/**
+ * The question after a timestamp did not come: try again, sign without one, or
+ * cancel. **Nothing has been written**, and the dialog says so --- and the
+ * signature already made is what either of the first two writes, so the OS is
+ * not asked again. Cancel is the default, and Escape is Cancel: a reader who
+ * reads nothing gets no file rather than a signature without the timestamp
+ * they asked for.
+ */
+export function askAfterStampFailed(why: string): Promise<AfterStamp> {
+  const previous = document.activeElement as HTMLElement | null;
+  const dialog = document.createElement("dialog");
+  dialog.className = "sign-timestamp-dialog";
+  dialog.setAttribute("aria-label", "No timestamp");
+  dialog.style.cssText =
+    "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
+    "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
+  const heading = document.createElement("h2");
+  heading.textContent = "The timestamp could not be added";
+  const reason = document.createElement("p");
+  reason.textContent = `${why}.`;
+  const help = document.createElement("p");
+  help.textContent =
+    "Nothing has been written. The signature is made; you can try the timestamp again, " +
+    "or save it without a timestamp, and the key is not asked for again either way.";
+  const footer = document.createElement("div");
+  footer.style.cssText = "display:flex;gap:10px;justify-content:flex-end";
+  const cancel = document.createElement("button");
+  cancel.textContent = "Cancel";
+  const without = document.createElement("button");
+  without.textContent = "Sign without a timestamp";
+  const retry = document.createElement("button");
+  retry.textContent = "Try again";
+  footer.append(cancel, without, retry);
+  dialog.append(heading, reason, help, footer);
+  document.body.append(dialog);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (answer: AfterStamp) => {
+      if (settled) return;
+      settled = true;
+      dialog.close();
+      dialog.remove();
+      previous?.focus();
+      resolve(answer);
+    };
+    cancel.addEventListener("click", () => finish(null));
+    without.addEventListener("click", () => finish("without"));
+    retry.addEventListener("click", () => finish("retry"));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish(null);
+    });
+    dialog.addEventListener("close", () => finish(null));
+    dialog.addEventListener("keydown", (event) => event.stopPropagation());
+    dialog.showModal();
+    cancel.focus();
   });
 }

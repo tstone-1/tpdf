@@ -14891,8 +14891,10 @@ and the order is the order in which a claim can be made honestly.
    on its own. **Increment A, checking the tokens documents already carry, needs none and is
    done 2026-09-28** (*Is the timestamp intact*, below): the signature-attribute token and
    the document timestamp, their authority's standing, and a software authority the tests
-   mint with. Increment B --- asking an authority for a token when signing --- is the one
-   that adds the network, and builds on A's reader and minter.
+   mint with. **Increment B --- asking an authority for a token when signing --- is done
+   2026-09-28** (*Adding a timestamp when signing*, below): the application's second network
+   authority, built on A's reader and minter. What is left of step 3 is the `/DSS` and
+   revocation, long-term validation proper.
 
 #### Is the signature intact --- done 2026-09-26
 
@@ -15161,7 +15163,22 @@ the timestamp row stays a claim. (Asked since 2026-09-28, with the timestamping 
   time one attests. That is a second network authority beside the updater and is the one
   real change to the threat model this phase makes. **Narrowed 2026-09-28**: *checking* a
   token a document already carries needs no network and is done (*Is the timestamp intact*,
-  below); making one and checking revocation still do, and are increment B's and later.
+  below); **making one is done the same day** (*Adding a timestamp when signing*, below,
+  and `docs/THREAT-MODEL.md` §T10). Checking revocation still needs it, and is later.
+- ~~**Which timestamp authorities, and how the reader picks one.**~~ **Answered by the owner
+  2026-09-28**: a short list --- DigiCert, Sectigo, GlobalSign --- plus the reader's own
+  address, nothing preselected, the choice remembered. Below.
+- **Should a token be written only when its authority is trusted?** Open, since 2026-09-28.
+  Today a token is written when its own arithmetic holds --- its signature, its `TSTInfo`,
+  its binding, an imprint of this signature and this request's nonce --- and its authority's
+  standing is *reported* (after signing, in the properties dialog, by `tpdf verify`) but not
+  required. Over `http://`, which two of the three listed authorities alone serve, an
+  attacker on the path can therefore substitute a token from an authority of its own; it is
+  written and reads *not trusted* (`docs/THREAT-MODEL.md` residual 29). Requiring `trusted`
+  before writing would close that, and costs two things: the OS store is then asked in the
+  coordinator about certificates that arrived over the network (in the worker today), and on
+  Windows a real authority whose root the machine has not fetched on demand would be refused
+  until it has. A decision for the owner, not an engineering default.
 - **Which moment a timestamp authority is judged at.** Answered 2026-09-28 for increment A:
   the present, like the signer, because `genTime` is the authority's own statement --- below.
   Judging the *signer* at `genTime` is the open half, and waits for revocation data, without
@@ -15872,14 +15889,144 @@ through the system store --- and, anchored at itself, it would be `untrusted`, t
 `incr-doc-timestamped.pdf` is new: the same input with a pyHanko document timestamp, which
 reads `intact`, attested, `untrusted` root.
 
-**Not done.** Requesting a token (increment B). Revocation, for the authority as for the
-signer. Judging the signer's certificate at `genTime` rather than now: the attested moment is
+**Not done.** Requesting a token (increment B) --- done 2026-09-28, next. Revocation, for the
+authority as for the signer. Judging the signer's certificate at `genTime` rather than now: the attested moment is
 there to use, and without revocation data from then it would only move the question. Checking
 that `genTime` falls inside the authority's certificate's dates. The `TSTInfo`'s `tsa` name,
 `accuracy` and `ordering` are not read, nor its version; a nonce means nothing in a stored token.
 A timestamp on a document timestamp (archive timestamps) and `/DSS`. The Windows store has not
 been asked about an authority on Windows, though the code is the same call the signer's trust
 makes.
+
+#### Adding a timestamp when signing --- done 2026-09-28
+
+Phase 6 step 3, **increment B**: a signing can carry an RFC 3161 timestamp over its signature,
+PAdES baseline B-T. The reader asks for one in the *Sign document* chooser --- *No timestamp*,
+DigiCert, Sectigo, GlobalSign, or another address --- or with `tpdf sign --timestamp`. After the
+OS has signed, the app process (or the tool's) asks that authority for a token over the
+signature's value, checks the answer with increment A's reader, adds it to the signature as an
+unsigned attribute, and writes the file only if the token also checks out **in the finished
+bytes**. It is the application's second network authority beside the updater
+(`docs/THREAT-MODEL.md` §T10).
+
+| Half | Where | What it does |
+|---|---|---|
+| The signature, kept | app process, `sign_cms::sign` → `Made` | `finish` split in two: `usable`, `check`, `build` make the signature; nothing is written yet, so a timestamp can be asked for over it and the made signature kept while the reader decides. |
+| The request | app process, `tsa::ask` | A DER `TimeStampReq` --- SHA-256 over the value octets of `SignerInfo.signature`, a 128-bit nonce, `certReq TRUE` --- posted with `reqwest`; 64 KiB read at most, 10 s to connect, 30 s in all, no redirect. |
+| The answer | app process, `tsa::accept` | Granted or granted-with-modifications; the token's verdict under `integrity::token::check` `intact`; its imprint SHA-256 of this value; its nonce the one sent. |
+| The token, added | app process, `Made::stamped` | Decodes the CMS, adds `id-aa-timeStampToken` as the one unsigned attribute, re-encodes; refused past `RESERVED`. |
+| The seal | app process, `Made::seal` | Splices, then `integrity::check` must say `intact` and the token read back **out of the finished bytes** must say `intact` too, or nothing is written. |
+| The policy | `tsa::stamp` | Not asked: nothing requested. Asked and failed: an error, **never** a signature without one. Window and tool both go through it. |
+| The window | `signing.ts`, `signtimestamp.ts`, `commands::sign` | The chooser's control, the remembered choice, and --- when the request fails --- *Try again*, *Sign without a timestamp* or *Cancel* over the signature held in `Pending`. |
+| The tool | `cli/sign.rs` | `--timestamp <name or URL>`, judged at parse time; a failed request is exit 3, nothing written. |
+
+Decisions the owner took on 2026-09-28, recorded as given:
+
+- **Opt-in for each signing.** No request unless the reader asked for a timestamp on this
+  signing.
+- **A short list plus the reader's own URL, nothing preselected, the choice remembered.** The
+  list, measured live that day with `openssl ts -query` and `curl`, each *Granted* with a token
+  carrying its certificates (6,006 / 6,636 / 7,660 bytes), each authority's certificate naming
+  `id-kp-timeStamping`, critical and alone: DigiCert `http://timestamp.digicert.com` (HTTPS does
+  not connect), Sectigo `https://timestamp.sectigo.com` (HTTP works too; HTTPS preferred),
+  GlobalSign `http://timestamp.globalsign.com/tsa/r6advanced1` (HTTPS does not connect).
+- **`http://` is accepted**, because two of the three offer nothing else; the token is a
+  signature, checked before anything is written. What plain HTTP exposes, and the one thing it
+  lets an attacker on the path do that HTTPS would not --- substitute a token from an authority
+  of its own, which is written and reads *not trusted* --- is in the threat model, and whether
+  to refuse such a token is the open question above.
+- **The request is the app process's (or the tool's), never a worker's.** The worker keeps
+  `(deny network*)`; the webview gains no capability and its CSP is unchanged.
+- **`reqwest`, already in the tree through the updater**, driven on `tauri::async_runtime`.
+
+Decisions taken in building it, each with its reason:
+
+- **Zero packages, measured.** `reqwest` 0.13 with `rustls-no-provider` and `rustls` with
+  `ring`, declared directly: `cargo metadata` counts 617 packages before and 617 after. The
+  `blocking` feature was not taken; `tsa::ask_blocking` is `block_on` over the async client on
+  the application's runtime, from a blocking thread. `ring`'s provider is installed if none is,
+  idempotently, as the updater does --- `reqwest` panics without one.
+- **The OS is not asked twice.** A failed request leaves a signature that is already made, over
+  a file already read; asking the key again for it would be a second PIN on a smart card because
+  a server was down. So `Made` is a value, and the window keeps one in `commands::sign::Pending`
+  --- one at a time, reached only by the number handed out with it, dropped by *Cancel*, the next
+  signing or exit --- and `sign_resume` writes it with a new timestamp or none. **Signing without
+  a timestamp is only ever that second, explicit answer**: `tsa::stamp` has no path from a failed
+  request to `Ok(None)`, and a mutation giving it one turns its test red. The tool has nobody to
+  ask, so it exits **3** --- refused: an authority that declined or could not be reached is
+  neither tpdf's failure (4) nor a malformed line (2) --- and says to run again without
+  `--timestamp`. An address tpdf will not ask is exit 2, at parse time, before any key or socket.
+- **The imprint is compared as bytes, and not by its algorithm.** `accept` first compared the
+  algorithm identifier too; a mutation removing that comparison survived, because an `intact`
+  verdict already means the imprint is the value's digest under the token's own algorithm, so
+  equal to SHA-256 of the value means the algorithm is SHA-256. Deleted, with the reason in a
+  comment. The bytes comparison is not redundant: an SHA-384 token over the same value is
+  `intact` and refused only by it.
+- **SHA-1 is refused for a new signature**, not written as `weak`: a reader would see `weak`
+  beside a signature made today.
+- **The nonce is compared as a number**, leading zeros dropped: an `INTEGER`'s encoding is the
+  authority's, and the value is what was sent.
+- **The token is checked twice**, in the answer and in the written bytes. The second is the one
+  that holds whatever happens between them --- the splice, the re-encoding --- to the reader a
+  properties dialog would run.
+- **The closing sentence names the authority's standing**, both in the window and in `tpdf sign`'s
+  summary (`Timestamp authority: ...`, the properties dialog's row): over `http://` a token from
+  another authority than the one chosen can arrive and check out, and it must not read like the
+  chosen one.
+- **"tpdf does not go online" was corrected** to "tpdf does not fetch revocation data" in the
+  revocation caveat and the properties dialog's disclaimer, and the README's *nothing goes
+  online* got its one exception, the day it stopped being true as a general statement.
+- **The reply is a struct of two options** (`Signing { signed, unstamped }`) rather than an enum,
+  because `replies.rs` pins a payload by one sample with every key set; `Signed.json` became
+  `Signing.json`.
+
+**Measured**, macOS arm64 (macOS 27.0), 2026-09-28. Offline, every one of them: 23 tests in
+`tsa::tests` against a fake authority --- a `TcpListener` on 127.0.0.1 speaking HTTP/1.1 and
+minting, with `integrity/test_tsa.rs`, over the imprint and nonce the request actually carried
+--- covering a sound answer, granted-with-modifications, a declining status carrying a token, a
+grant without one, an answer that is not a response, a broken, other-imprint, SHA-1-signed and
+unbound token, SHA-384 over the right value, another nonce and none, the nonce as a number, an
+answer over 64 KiB with and without a length, a server that never answers (refused inside the
+limit), a refused connection, HTTP 500, a redirect not followed, the address rules and no socket
+opened for a non-web scheme, the list by name, the request against a hand-written DER vector
+(`openssl ts -query -text` reads it as version 1, sha256, the nonce, *Certificate required:
+yes*), and the never-silently rule. Four in `sign_cms::tests`: a timestamped signature read
+intact and attested by `docinfo::scan`; the stamped CMS equal to the one the key signed once its
+unsigned attributes are taken away; a broken, other-imprint or SHA-1 token refused by the seal on
+its own; and a token past the reserved span refused. `tests/cli.rs` has 226 checks, 11 new:
+`sign --timestamp` against a fake authority, read back intact and attested by the built tool and
+the in-process reader alike; six failures each exit 3 with nothing written; an `ftp:` address
+exit 2. Frontend: the chooser preselects none, remembers the choice, holds on a mistyped address;
+the sequence writes nothing until the reader answers, retries the same authority, signs without
+only when told, and drops the held signature on *Cancel*.
+
+**Against the three real authorities** (`sign-probe --timestamp`, `BUILD.md`), the probe's RSA
+key, `text-base14.pdf`, 22/22 each: tpdf reads each token `intact`, attested, its time this
+machine's to the minute, its authority `trusted` through the system store; pyHanko reads each
+`intact` and `valid`; `openssl ts -verify -data <value octets>` accepts each, anchored at the
+system root the token's own chain names, and refuses each over other bytes. DigiCert's token is
+6,006 bytes and the CMS with it 7,440; Sectigo's 6,633 and 8,067; GlobalSign's 7,658 and 9,092
+--- all well inside the 32,768 reserved, as step 2's half-and-half split assumed. The network's
+share, by `curl`: 0.36 s DigiCert, 2.1 s Sectigo, 0.39 s GlobalSign. **Two findings**, both in
+`docs/TRAPS.md`: OpenSSL given *every* system root refuses Sectigo's token (*ess cert id not
+found*), because the token's ESS attribute lists a cross-signed root and OpenSSL builds the
+chain to the self-signed one; and the first HTTP client a debug binary builds costs 3 to 28 s of
+CoreFoundation listing the binary's directory (`target/debug/examples` held 1,179,452 entries),
+against 0.43 s for the whole request from a folder of its own.
+
+**Proved able to fail**: 19 mutations in `scripts/mutate_rust.py` (the `tsa:` block, three
+`sign:` and one `cli:`), each caught by the test named for it after one re-aim --- the algorithm
+comparison above, which survived and was deleted. Eight in `scripts/mutate_frontend.py`
+(`timestamp:`), each caught. Two hand mutations of `cli/sign.rs`, which only `tests/cli.rs`
+reaches, listed in `BUILD.md`. One earlier anchor re-aimed: the chooser's visible-or-not
+answer, which the timestamp joined.
+
+**Not done.** Refusing a token whose authority is not trusted (the open question above).
+Revocation data and the `/DSS` (long-term validation). A timestamp on a visible signature's
+preview, which shows none. Windows: the code is the same and compiles (`scripts/check_windows.py`);
+no request has been made from a Windows machine, and whether the three authorities' roots are in
+a given machine's store before first use is not measured. The window's flow has not been driven
+with a real identity, for step 2's reason.
 
 ### Cross-cutting
 

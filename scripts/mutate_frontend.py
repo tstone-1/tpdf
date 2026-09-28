@@ -4415,8 +4415,8 @@ MUTATIONS += [
         # anything can go red about it.
         "release-notes: call a shipped command unbuilt",
         ".github/workflows/release.yml",
-        "          <!-- not-built: file.timestampSignature -->",
-        "          <!-- not-built: file.timestampSignature edit.insertPages -->",
+        "          <!-- not-built: file.addValidationData -->",
+        "          <!-- not-built: file.addValidationData edit.insertPages -->",
         "calls nothing unbuilt that the application registers",
     ),
     Mutation(
@@ -4435,8 +4435,8 @@ MUTATIONS += [
         # nothing, which is also the only shape this can fail as.
         "release-notes: claim something the README does not",
         ".github/workflows/release.yml",
-        "          <!-- not-built: file.timestampSignature -->",
-        "          <!-- not-built: file.timestampSignature edit.editTextBox -->",
+        "          <!-- not-built: file.addValidationData -->",
+        "          <!-- not-built: file.addValidationData edit.editTextBox -->",
         "agrees with the README about what is not built",
     ),
     Mutation(
@@ -4457,7 +4457,7 @@ MUTATIONS += [
         # it.
         "readme: say a shipped command is not built",
         "README.md",
-        "  <!-- not-built: file.timestampSignature -->",
+        "  <!-- not-built: file.addValidationData -->",
         "  <!-- not-built: edit.stamp.approved -->",
         "claims nothing absent that the application registers",
     ),
@@ -4496,8 +4496,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Adding a timestamp when signing, long-term-validation signatures, certification",
-        "- Adding a timestamp when signing, <!-- built: file.print --> long-term-validation signatures, certification",
+        "- Long-term-validation signatures, certification signatures, and revocation checking.",
+        "- Long-term-validation signatures, <!-- built: file.print --> certification signatures, and revocation checking.",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -5603,6 +5603,9 @@ TEST_FILES = [
     # Added 2026-09-27 with the signature appearance panel, in the same edit as
     # its mutations.
     "src/lib/signappearance.test.ts",
+    # Added 2026-09-28 with the timestamp chooser, in the same edit as its
+    # mutations.
+    "src/lib/signtimestamp.test.ts",
     "src/lib/tablabels.test.ts",
     "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",
@@ -8263,8 +8266,8 @@ MUTATIONS += [
 # that test exists for: the tool would go on printing the old words.
 MUTATIONS += [
     Mutation("cli wording: the application drops the revocation caveat", "src/lib/integrity.ts",
-        '  "Revocation was not checked: tpdf does not go online, so a certificate its " +',
-        '  "Revocation was not checked: tpdf does not go online, so a certificate the " +',
+        '  "Revocation was not checked: tpdf does not fetch revocation data, so a certificate its " +',
+        '  "Revocation was not checked: tpdf does not fetch revocation data, so a certificate the " +',
         "says each trust standing as the properties dialog does"),
     Mutation("cli wording: the application says intact differently", "src/lib/integrity.ts",
         "          `intact — the signed bytes are unchanged and the signature checks out ` +",
@@ -8389,8 +8392,8 @@ MUTATIONS += [
         "    placement = { ...placed, image: null, options: appearance.options };",
         "asks what a visible signature shows, then where, then the file, then signs"),
     Mutation("signing: answer visible from the chooser whatever was picked", "src/lib/signing.ts",
-        "      finish(identity === undefined ? null : { identity, visible: visible.checked });",
-        "      finish(identity === undefined ? null : { identity, visible: true });",
+        "      finish({ identity, visible: visible.checked, timestamp: stampUrl(chosenStamp) });",
+        "      finish({ identity, visible: true, timestamp: stampUrl(chosenStamp) });",
         "answers an invisible signature unless the reader picks a visible one"),
     Mutation("signing: open the chooser with neither appearance picked", "src/lib/signing.ts",
         '  appearance("invisible", "Invisible — the signature is in the file, not on a page", true);',
@@ -8519,6 +8522,47 @@ MUTATIONS += [
         "    this.heading.textContent = words.title;\n", "",
         "is called what the signing panel asks, and what it was built for the next time"),
 ]
+
+# --- a timestamp when signing (Phase 6 step 3, increment B, 2026-09-28) -------
+# `signtimestamp.ts` holds the list, the remembered choice and the address
+# check; `signing.ts` asks in the chooser and answers a timestamp that did not
+# come. Each mutation removes one promise the owner's decision rests on.
+MUTATIONS += [
+    Mutation("timestamp: preselect an authority for a reader who never chose one",
+        "src/lib/signing.ts",
+        "    radio.checked = remembered.server === value;",
+        '    radio.checked = value === "digicert";',
+        "preselects no authority for a reader who has never chosen, and asks nobody"),
+    Mutation("timestamp: forget the reader's choice", "src/lib/signing.ts",
+        "      writeStampChoice(chosenStamp, storage);\n", "",
+        "remembers the reader's choice and offers it next time"),
+    Mutation("timestamp: sign with none when another authority's address is mistyped",
+        "src/lib/signing.ts",
+        "        if (wrong !== null) {", "        if (false) {",
+        "holds the chooser open on another authority's address it would not ask"),
+    Mutation("timestamp: trust a remembered authority tpdf never lists",
+        "src/lib/signtimestamp.ts",
+        '  if (typeof server !== "string" || !known(server)) return noStamp();',
+        '  if (typeof server !== "string") return noStamp();',
+        "falls back to none, whole, for anything tpdf did not write"),
+    Mutation("timestamp: hand the backend no authority", "src/lib/signing.ts",
+        "  let outcome = await shell.sign(chosen.identity, path, placement, chosen.timestamp);",
+        "  let outcome = await shell.sign(chosen.identity, path, placement, null);",
+        "is asked of the chosen authority, and the closing sentence says what it attests"),
+    Mutation("timestamp: leave the attested time out of the closing sentence",
+        "src/lib/signing.ts",
+        "  if (stamp) {", "  if (false) {",
+        "is asked of the chosen authority, and the closing sentence says what it attests"),
+    Mutation("timestamp: try again without the authority", "src/lib/signing.ts",
+        '    outcome = await shell.resume(pending, next === "retry" ? chosen.timestamp : null);',
+        "    outcome = await shell.resume(pending, null);",
+        "asks the same authority again when the reader tries again"),
+    Mutation("timestamp: keep the signature held after the reader cancels",
+        "src/lib/signing.ts",
+        "      await shell.discard(pending);\n", "",
+        "drops the signature and says nothing was written when the reader cancels"),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())

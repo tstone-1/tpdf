@@ -100,6 +100,9 @@ pub mod sweep;
 pub mod text;
 pub mod textcache;
 pub mod trust;
+// Asking a timestamp authority for a token when signing: the application's
+// second network authority, in the app process only (`docs/THREAT-MODEL.md`).
+pub mod tsa;
 pub mod verify;
 
 /// Helpers shared by this crate's own tests. Not compiled into any binary.
@@ -644,6 +647,9 @@ pub fn run() {
         // library directory --- and because `RunEvent::Opened` can fire before
         // the hook runs, which is the trap the render service works around.
         .manage(edits::Edits::default())
+        // A signature made and not yet written, while the reader decides about
+        // a timestamp that did not come (`commands::sign::Pending`).
+        .manage(commands::sign::Pending::default())
         // The addresses behind a document's web links, which the webview is
         // given a token for and never receives. Managed on the builder for the
         // same reason the edit models are: it needs nothing from the app, and a
@@ -862,6 +868,8 @@ pub fn run() {
             sign_identities,
             sign_preview,
             sign_document,
+            sign_resume,
+            sign_discard,
             keyboard_positions,
             set_menu,
             set_menu_enabled,

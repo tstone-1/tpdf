@@ -25,6 +25,14 @@
 //!    SHA-1 and unbound, it reads broken, altered, weak and unchecked, the
 //!    time attested only for the two that earn it. The in-process reader
 //!    agrees on every one.
+//!    **And a timestamp asked for while signing** (`timestamp_when_signing`):
+//!    `sign --timestamp` against a fake authority on 127.0.0.1 that mints a
+//!    token over the imprint and nonce the request carried. Sound, it reads
+//!    back intact and attested from the built tool, and the in-process reader
+//!    agrees; every fault --- another imprint, another nonce, an SHA-1
+//!    signature, a refusal, an answer too long, nobody listening --- exits 3
+//!    and writes nothing. Control: an address that is not `http`/`https` is
+//!    exit 2, before anything is asked.
 //! 3. **The tool's own process never maps PDFium, and its workers do** (macOS:
 //!    `DYLD_PRINT_LIBRARIES` on the built binary, separated by pid; both
 //!    platforms: this process's own module list after `cli::run` has verified a
@@ -99,7 +107,7 @@ fn main() {
     }
     // The order is load-bearing: 3 asserts this process has not mapped PDFium,
     // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 13] = [
+    let checks: [Check; 14] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -108,6 +116,10 @@ fn main() {
         (
             "a timestamp minted by the test authority reads back through the tool",
             timestamp_reads_back,
+        ),
+        (
+            "sign --timestamp asks a local authority, and writes nothing when it fails",
+            timestamp_when_signing,
         ),
         ("the tool's process never maps PDFium", never_maps_pdfium),
         ("the tool's workers are sandboxed", workers_are_sandboxed),
@@ -583,6 +595,268 @@ fn timestamp_reads_back(report: &mut Report) {
             ),
         );
     }
+}
+
+// --- 2c: a timestamp asked for while signing --------------------------------
+
+/// What the fake authority does with one request.
+enum Answer {
+    /// A token minted over what was asked, with these faults, granted.
+    Token(test_tsa::Faults),
+    /// A sound token over what was asked carrying another nonce.
+    OtherNonce,
+    /// A sound token under a rejection status.
+    Rejected,
+    /// A body longer than any timestamp.
+    Long,
+}
+
+/// The imprint and nonce a `TimeStampReq` carries, read by walking its DER
+/// by hand: this binary cannot see the library's own request type, and a
+/// reader that shares no code with the writer is the better check anyway.
+fn asked(request: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    use der::{Decode as _, Reader as _, Tagged as _};
+    let outer = der::asn1::AnyRef::from_der(request).ok()?;
+    let mut fields = der::SliceReader::new(outer.value()).ok()?;
+    let _version = der::asn1::AnyRef::decode(&mut fields).ok()?;
+    let imprint = der::asn1::AnyRef::decode(&mut fields).ok()?;
+    let mut inner = der::SliceReader::new(imprint.value()).ok()?;
+    let _algorithm = der::asn1::AnyRef::decode(&mut inner).ok()?;
+    let digest = der::asn1::OctetStringRef::decode(&mut inner).ok()?;
+    let mut nonce = None;
+    while !fields.is_finished() {
+        let field = der::asn1::AnyRef::decode(&mut fields).ok()?;
+        if field.tag() == der::Tag::Integer {
+            nonce = Some(field.value().to_vec());
+        }
+    }
+    Some((digest.as_bytes().to_vec(), nonce?))
+}
+
+/// A fake authority on 127.0.0.1 answering one request: its URL.
+fn authority(answer: Answer) -> String {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+    let port = listener.local_addr().expect("an address").port();
+    std::thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut reader = std::io::BufReader::new(stream.try_clone().expect("a clone"));
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            let line = line.trim_end().to_ascii_lowercase();
+            if line.is_empty() {
+                break;
+            }
+            if let Some(n) = line.strip_prefix("content-length:") {
+                length = n.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0; length];
+        if reader.read_exact(&mut body).is_err() {
+            return;
+        }
+        let Some((digest, nonce)) = asked(&body) else {
+            return;
+        };
+        let tsa = test_tsa::TestTsa::new();
+        let mint = |faults: &test_tsa::Faults, nonce: &[u8]| {
+            test_tsa::mint_with(
+                test_tsa::Imprint::Sha256,
+                &digest,
+                Some(nonce),
+                now(),
+                &tsa,
+                faults,
+            )
+        };
+        let reply = match answer {
+            Answer::Token(faults) => test_tsa::granted(&mint(&faults, &nonce)),
+            Answer::OtherNonce => {
+                let mut other = nonce.clone();
+                other[0] ^= 0x01;
+                test_tsa::granted(&mint(&test_tsa::Faults::default(), &other))
+            }
+            Answer::Rejected => {
+                // PKIStatusInfo { status 2 }, then the token.
+                let token = mint(&test_tsa::Faults::default(), &nonce);
+                let mut out = vec![0x30, 0x82, 0, 0, 0x30, 0x03, 0x02, 0x01, 0x02];
+                out.extend(&token);
+                let len = out.len() - 4;
+                out[2] = (len >> 8) as u8;
+                out[3] = len as u8;
+                out
+            }
+            Answer::Long => vec![0x30; 70 * 1024],
+        };
+        let mut stream = stream;
+        let _ = stream.write_all(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/timestamp-reply\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            )
+            .as_bytes(),
+        );
+        let _ = stream.write_all(&reply);
+    });
+    format!("http://127.0.0.1:{port}/tsa")
+}
+
+fn timestamp_when_signing(report: &mut Report) {
+    let now = now();
+    let dir = scratch("stamping");
+    let plain = dir.join("plain.pdf");
+    std::fs::write(&plain, plain_pdf()).expect("input");
+    let store = TestStore {
+        certificate: certificate(now),
+        misdirected: false,
+    };
+    let s = |p: &Path| p.display().to_string();
+
+    // Sound: written, and read back with an attested time.
+    let out = dir.join("stamped.pdf");
+    let url = authority(Answer::Token(test_tsa::Faults::default()));
+    let (code, stdout, stderr) = signs(
+        &strings(&[
+            "sign",
+            &s(&plain),
+            "-o",
+            &s(&out),
+            "--identity",
+            SUBJECT,
+            "--timestamp",
+            &url,
+            "--json",
+        ]),
+        &store,
+        now,
+    );
+    report.check(
+        "a sound timestamp: sign exits 0",
+        code == 0,
+        &format!("exit {code}: {stderr}"),
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    report.check(
+        "a sound timestamp: the summary says the time is attested",
+        json["summary"]
+            .as_str()
+            .is_some_and(|t| t.contains(" Timestamp: ") && t.contains("attested by")),
+        &stdout,
+    );
+    match read_back(&out) {
+        Err(why) => report.check("a sound timestamp: the tool reads it back", false, &why),
+        Ok((_, json)) => {
+            let signature = &json["files"][0]["signatures"][0];
+            let stamp = &signature["timestamp"];
+            report.check(
+                "a sound timestamp: the signature is intact and its timestamp intact and attested",
+                signature["integrity"]["verdict"] == "intact"
+                    && stamp["integrity"]["verdict"] == "intact"
+                    && stamp["attested"] == true
+                    && stamp["authority"] == test_tsa::AUTHORITY,
+                &signature.to_string(),
+            );
+            report.check(
+                "a sound timestamp: the tool reads what the in-process reader reads",
+                from_json(&json["files"][0]) == in_process(&out),
+                &format!(
+                    "{:?} / {:?}",
+                    from_json(&json["files"][0]),
+                    in_process(&out)
+                ),
+            );
+        }
+    }
+
+    // Every failure: 3, and nothing written.
+    let refused = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+    let nobody = format!(
+        "http://127.0.0.1:{}/",
+        refused.local_addr().expect("an address").port()
+    );
+    drop(refused);
+    let failures: Vec<(&str, String)> = vec![
+        (
+            "a token of another signature",
+            authority(Answer::Token(test_tsa::Faults {
+                wrong_imprint: true,
+                ..test_tsa::Faults::default()
+            })),
+        ),
+        (
+            "a token answering another request",
+            authority(Answer::OtherNonce),
+        ),
+        (
+            "a token signed under SHA-1",
+            authority(Answer::Token(test_tsa::Faults {
+                sha1_signature: true,
+                ..test_tsa::Faults::default()
+            })),
+        ),
+        ("a refusal carrying a token", authority(Answer::Rejected)),
+        (
+            "an answer longer than any timestamp",
+            authority(Answer::Long),
+        ),
+        ("nobody listening", nobody),
+    ];
+    for (n, (what, url)) in failures.iter().enumerate() {
+        let out = dir.join(format!("refused-{n}.pdf"));
+        let (code, stdout, stderr) = signs(
+            &strings(&[
+                "sign",
+                &s(&plain),
+                "-o",
+                &s(&out),
+                "--identity",
+                SUBJECT,
+                "--timestamp",
+                url,
+            ]),
+            &store,
+            now,
+        );
+        report.check(
+            &format!("{what}: exit 3, nothing written, and says so"),
+            code == 3
+                && !out.exists()
+                && stdout.is_empty()
+                && stderr.contains("nothing was written")
+                && stderr.contains("127.0.0.1"),
+            &format!("exit {code}, exists {}: {stderr}", out.exists()),
+        );
+    }
+
+    // Control: an address tpdf does not ask is a malformed line.
+    let out = dir.join("ftp.pdf");
+    let (code, _, stderr) = signs(
+        &strings(&[
+            "sign",
+            &s(&plain),
+            "-o",
+            &s(&out),
+            "--identity",
+            SUBJECT,
+            "--timestamp",
+            "ftp://127.0.0.1/",
+        ]),
+        &store,
+        now,
+    );
+    report.check(
+        "control: an ftp: authority is exit 2 and nothing is written",
+        code == 2 && !out.exists(),
+        &format!("exit {code}: {stderr}"),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // --- 2 ----------------------------------------------------------------------

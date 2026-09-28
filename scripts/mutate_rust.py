@@ -227,6 +227,9 @@ FILTERS = [
     # Added 2026-09-27 with `tpdf text`, in the same edit as its mutations:
     # `reading.rs` restates `reading.ts` for the command line.
     "reading::",
+    # Added 2026-09-28 with the timestamp client, in the same edit as its
+    # mutations: the fake authority on 127.0.0.1 is in `tsa::tests`.
+    "tsa::",
 ]
 
 
@@ -12324,6 +12327,165 @@ MUTATIONS += [
         "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
     ),
 ]
+
+# --- asking a timestamp authority when signing (Phase 6 step 3, increment B) ---
+#
+# `tsa.rs`, `sign_cms.rs` and `cli/sign.rs`, 2026-09-28. Each removes one check
+# a token must pass before it is written, or one bound on the request, and
+# names the test built so only that check can fail it: the fake authority in
+# `tsa::tests` mints over what the request carried, one fault at a time.
+MUTATIONS += [
+    Mutation(
+        # Any status: an authority that said no, with a token beside it, is
+        # read as having said yes.
+        "tsa: take a token under a status that declined",
+        "src/tsa.rs",
+        "    if response.status.status > 1 {",
+        "    if false {",
+        "a_declining_status_is_refused_even_with_a_token_beside_it",
+    ),
+    Mutation(
+        "tsa: refuse a grant with modifications",
+        "src/tsa.rs",
+        "    if response.status.status > 1 {",
+        "    if response.status.status > 0 {",
+        "granted_with_modifications_is_granted",
+    ),
+    Mutation(
+        # Use the token whatever increment A's reader calls it.
+        "tsa: use a token whose own signature fails",
+        "src/tsa.rs",
+        "    if verdict.verdict != Verdict::Intact {",
+        "    if false {",
+        "a_token_whose_own_signature_fails_is_refused",
+    ),
+    Mutation(
+        "tsa: accept a weak token for a new signature",
+        "src/tsa.rs",
+        "    if verdict.verdict != Verdict::Intact {",
+        "    if !matches!(verdict.verdict, Verdict::Intact | Verdict::Weak) {",
+        "a_token_whose_own_signature_rests_on_sha1_is_refused_for_a_new_signature",
+    ),
+    Mutation(
+        # The verdict accepts any hash; only this says it is the one asked.
+        "tsa: never compare the imprint with the one asked for",
+        "src/tsa.rs",
+        "    if imprint.hashed_message.as_bytes() != asked {",
+        "    if false {",
+        "a_token_under_another_hash_than_the_one_asked_for_is_refused",
+    ),
+    Mutation(
+        # A replayed answer to an earlier request over the same signature.
+        "tsa: never compare the nonce",
+        "src/tsa.rs",
+        "    if nonce_of(&statement) != Some(unpadded(nonce)) {",
+        "    if false {",
+        "a_token_carrying_another_nonce_or_none_is_refused",
+    ),
+    Mutation(
+        "tsa: accept a token that carries no nonce",
+        "src/tsa.rs",
+        "    if nonce_of(&statement) != Some(unpadded(nonce)) {",
+        "    if nonce_of(&statement).is_some_and(|n| n != unpadded(nonce)) {",
+        "a_token_carrying_another_nonce_or_none_is_refused",
+    ),
+    Mutation(
+        "tsa: send the same nonce every time",
+        "src/tsa.rs",
+        """        .fill(&mut nonce)
+        .map_err(|_| Refusal::Unreachable("the system's random source failed".into()))?;""",
+        """        .fill(&mut [0u8; 16])
+        .map_err(|_| Refusal::Unreachable("the system's random source failed".into()))?;""",
+        "every_request_carries_a_nonce_of_its_own",
+    ),
+    Mutation(
+        # Ask for a timestamp of something other than the signature's value.
+        "tsa: ask for the imprint of other bytes",
+        "src/tsa.rs",
+        "    let digest: [u8; 32] = sha2_10::Sha256::digest(value).into();",
+        "    let digest: [u8; 32] = sha2_10::Sha256::digest(&value[1..]).into();",
+        "a_sound_answer_to_this_request_is_accepted",
+    ),
+    Mutation(
+        "tsa: read an answer of any length",
+        "src/tsa.rs",
+        "        if answer.len() + chunk.len() > limits.body {",
+        "        if false {",
+        "an_answer_longer_than_the_bound_is_refused_whether_or_not_it_says_so",
+    ),
+    Mutation(
+        # A signing that waits for a silent server for as long as it stays up.
+        "tsa: wait for a server with no limit",
+        "src/tsa.rs",
+        "        .timeout(limits.total)\n",
+        "\n",
+        "a_server_that_never_answers_is_given_up_on_within_the_limit",
+    ),
+    Mutation(
+        "tsa: follow a redirect to an address nobody chose",
+        "src/tsa.rs",
+        "        .redirect(reqwest::redirect::Policy::none())",
+        "        .redirect(reqwest::redirect::Policy::limited(3))",
+        "an_http_error_or_a_redirect_is_refused_and_the_redirect_is_not_followed",
+    ),
+    Mutation(
+        "tsa: ask an authority over any scheme",
+        "src/tsa.rs",
+        '    if !matches!(url.scheme(), "http" | "https") {',
+        "    if false {",
+        "only_http_and_https_addresses_with_a_host_and_no_credentials_are_asked",
+    ),
+    Mutation(
+        "tsa: ask an address with a password in it",
+        "src/tsa.rs",
+        "    if !url.username().is_empty() || url.password().is_some() {",
+        "    if false {",
+        "only_http_and_https_addresses_with_a_host_and_no_credentials_are_asked",
+    ),
+    Mutation(
+        # The failure this increment exists to forbid: a reader who asked for
+        # a timestamp handed a signature without one, in silence.
+        "tsa: sign without a timestamp when the request fails",
+        "src/tsa.rs",
+        "    let token = ask(url, &value)?;",
+        "    let Ok(token) = ask(url, &value) else {\n        return Ok(None);\n    };",
+        "a_timestamp_asked_for_and_not_had_is_an_error_never_a_signature_without_one",
+    ),
+    Mutation(
+        "sign: write a timestamp past the reserved span",
+        "src/sign_cms.rs",
+        "        if blob.len() > RESERVED {",
+        "        if false {",
+        "a_timestamp_past_the_reserved_span_is_refused",
+    ),
+    Mutation(
+        # The token goes where the key's signature covers it: the signature
+        # the OS made is no longer over its own signed attributes.
+        "sign: put the token among the signed attributes",
+        "src/sign_cms.rs",
+        "        signer.unsigned_attrs =\n",
+        "        signer.signed_attrs =\n",
+        "stamping_changes_nothing_the_key_signed",
+    ),
+    Mutation(
+        # The last check: the token as a reader of the written file finds it.
+        "sign: never check the timestamp in the written bytes",
+        "src/sign_cms.rs",
+        "            if token.verdict != crate::integrity::Verdict::Intact {",
+        "            if false {",
+        "a_timestamp_that_does_not_check_out_in_the_written_bytes_is_not_written",
+    ),
+    Mutation(
+        # `--timestamp` parsed and dropped: a signing the reader asked to be
+        # timestamped goes out without one.
+        "cli: drop --timestamp",
+        "src/cli/sign.rs",
+        "        timestamp,\n        json,\n",
+        "        timestamp: None,\n        json,\n",
+        "a_timestamp_authority_is_named_or_given_and_judged_before_anything_runs",
+    ),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())

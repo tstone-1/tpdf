@@ -27,7 +27,7 @@ pub const TRUST_NOT_CHECKED: &str =
 /// Said after every standing that says the chain reached a trusted root.
 /// `integrity.ts`'s `REVOCATION_NOT_CHECKED`.
 pub const REVOCATION_NOT_CHECKED: &str =
-    "Revocation was not checked: tpdf does not go online, so a certificate its \
+    "Revocation was not checked: tpdf does not fetch revocation data, so a certificate its \
      issuer has since withdrawn reads the same as one it has not.";
 
 /// Why a signature was not checked, as a clause that follows "not checked —".
@@ -324,12 +324,22 @@ pub fn verdict_briefly(integrity: Option<&Integrity>) -> String {
 /// The sentence after signing: `signing.ts`'s `afterSigning(signed)`.
 ///
 /// `name` is the written file's base name; `signatures` is every signed field
-/// the read-back found, as `(field, ours, integrity)`.
+/// the read-back found, as `(field, ours, integrity)`; `timestamp` the new
+/// signature's Timestamped row as the properties dialog words it
+/// ([`timestamp_sentence`]) and its Timestamp authority row
+/// ([`authority_sentence`], when the authority was asked about), when it
+/// carries one --- said right after the signature, because a timestamp the
+/// reader asked for is the half of this signing they most need confirmed.
+/// **The authority's standing is part of it on purpose**: over plain HTTP a
+/// token from another authority than the one asked can arrive and check out,
+/// and it must not read like the one the reader chose (`docs/THREAT-MODEL.md`
+/// §T10).
 #[must_use]
 pub fn after_signing(
     name: &str,
     field: &str,
     signatures: &[(String, bool, Option<Integrity>)],
+    timestamp: Option<(&str, Option<&str>)>,
 ) -> String {
     let ours = signatures.iter().find(|(_, ours, _)| *ours);
     let earlier: Vec<_> = signatures.iter().filter(|(_, ours, _)| !ours).collect();
@@ -351,6 +361,12 @@ pub fn after_signing(
     let mut text = format!(
         "Signed as {field} and saved to {name}. Read back after writing, the signature is intact."
     );
+    if let Some((timestamp, authority)) = timestamp {
+        text.push_str(&format!(" Timestamp: {timestamp}"));
+        if let Some(authority) = authority {
+            text.push_str(&format!(" Timestamp authority: {authority}"));
+        }
+    }
     if !earlier.is_empty() {
         let listed: Vec<String> = earlier
             .iter()

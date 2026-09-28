@@ -66,7 +66,7 @@ import type {
   SearchOptions,
 } from "./search";
 import type { Place, Session } from "./session";
-import type { Choices, Placement, Signed } from "./signing";
+import type { Choices, Placement, SignOutcome } from "./signing";
 import type { AppearanceOptions, SignaturePreview } from "./signappearance";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
@@ -342,10 +342,27 @@ export interface Commands {
    * the result to `path`, a new file. See `signing.ts`.
    */
   sign_document: {
-    /** `placement` is `null` for an invisible signature. */
-    args: { doc: number; source: string; identity: string; path: string; placement: Placement | null };
-    reply: Signed;
+    /**
+     * `placement` is `null` for an invisible signature; `timestamp` the
+     * authority to ask, or `null` to ask nobody.
+     */
+    args: {
+      doc: number;
+      source: string;
+      identity: string;
+      path: string;
+      placement: Placement | null;
+      timestamp: string | null;
+    };
+    reply: SignOutcome;
   };
+  /**
+   * Writes the signature held after a timestamp did not come: stamped by
+   * `timestamp`, or without one for `null`. The OS is not asked again.
+   */
+  sign_resume: { args: { pending: number; timestamp: string | null }; reply: SignOutcome };
+  /** Drops the held signature; nothing is written. */
+  sign_discard: { args: { pending: number }; reply: void };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };
   /** The reply is the event name the menu emits on, or null when none was built. */
   set_menu: { args: { sections: SectionSpec[] }; reply: string | null };

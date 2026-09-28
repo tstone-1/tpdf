@@ -1,0 +1,74 @@
+{
+  "signed": {
+    "path": "/tmp/one-signed.pdf",
+    "field": "Signature2",
+    "signatures": [
+      {
+        "field": "Signature1",
+        "integrity": {
+          "verdict": "unchecked",
+          "why": "range",
+          "digest": "",
+          "method": ""
+        },
+        "ours": false,
+        "timestamp": null
+      },
+      {
+        "field": "Signature2",
+        "integrity": {
+          "verdict": "intact",
+          "why": null,
+          "digest": "SHA-256",
+          "method": "ECDSA P-256"
+        },
+        "ours": true,
+        "timestamp": {
+          "when": "2026-01-02T03:04:06Z",
+          "authority": {
+            "subject": "CN=A. Signer,O=Example",
+            "subject_cn": "A. Signer",
+            "issuer": "CN=Example CA,O=Example",
+            "issuer_cn": "Example CA",
+            "serial": "0a0b0c",
+            "from": "2025-01-01T00:00:00Z",
+            "until": "2026-01-01T00:00:00Z",
+            "self_issued": false,
+            "chain": 2,
+            "matched_signer": true,
+            "key_usage": [
+              "digitalSignature"
+            ],
+            "extended_usage": [
+              "1.2.840.113583.1.1.5"
+            ],
+            "authority": false,
+            "extensions_unread": 1
+          },
+          "integrity": {
+            "verdict": "intact",
+            "why": null,
+            "digest": "SHA-256",
+            "method": "RSA"
+          },
+          "trust": {
+            "standing": "trusted",
+            "why": null,
+            "store": "mac"
+          },
+          "attested": true
+        }
+      },
+      {
+        "field": "Signature3",
+        "integrity": null,
+        "ours": false,
+        "timestamp": null
+      }
+    ]
+  },
+  "unstamped": {
+    "why": "tpdf could not reach the timestamp authority at tsa.example: connection refused",
+    "pending": 7
+  }
+}
