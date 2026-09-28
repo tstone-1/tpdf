@@ -160,12 +160,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "Windows" ]; then
-            curl -fsSL -o qpdf.zip https://github.com/qpdf/qpdf/releases/download/v12.4.1/qpdf-12.4.1-msvc64.zip
+            # Into the runner's temp directory, not the checkout: an archive in
+            # the repository root is an untracked file, and the `untracked`
+            # gate refuses a run over one (first seen 2026-09-28).
+            curl -fsSL -o "$RUNNER_TEMP/qpdf.zip" https://github.com/qpdf/qpdf/releases/download/v12.4.1/qpdf-12.4.1-msvc64.zip
             # Python rather than `unzip`, which Git Bash on the Windows image
             # does not promise, and rather than PowerShell's Expand-Archive,
             # which would mean a second shell inside a bash step. The
             # interpreter is the one `setup-python` pinned above.
-            python -c "import sys, zipfile; zipfile.ZipFile('qpdf.zip').extractall(sys.argv[1])" "$RUNNER_TEMP"
+            python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[2]).extractall(sys.argv[1])" "$RUNNER_TEMP" "$RUNNER_TEMP/qpdf.zip"
             echo "$RUNNER_TEMP/qpdf-12.4.1-msvc64/bin" >> "$GITHUB_PATH"
           else
             brew install qpdf

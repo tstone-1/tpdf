@@ -16,9 +16,11 @@ to call a run green while the two differ. `git add` the new files (or ignore
 them) and run again.
 
 Ignored files are not reported --- `git status --porcelain` leaves them out ---
-so build output, generated fixtures and `.mutations/` do not trip this. On a CI
-checkout nothing is untracked, and the fixture generator writes only ignored
-paths, so this gate is green there by construction.
+so build output, generated fixtures and `.mutations/` do not trip this. On CI it
+holds only while every step before the gates writes outside the checkout or to
+an ignored path. That was assumed on the day this was written and was wrong:
+the first Windows run found `qpdf.zip`, which the qpdf step downloaded into the
+repository root, and the step now downloads to `$RUNNER_TEMP`.
 
 A git that cannot answer is a failure, not a clean tree: an empty listing is
 the healthy answer here, so a listing that failed must not be read as one.

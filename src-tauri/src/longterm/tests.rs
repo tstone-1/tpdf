@@ -449,7 +449,11 @@ fn a_responder_that_is_down_silent_or_too_long_leaves_nothing_answered() {
         &mut |url: &url::Url, body: Option<(&str, Vec<u8>)>, limits: &tsa::Limits| {
             let mut elsewhere = url.clone();
             let _ = elsewhere.set_port(Some(dead));
-            quick(&elsewhere, body, limits)
+            // The shipped limits, not `quick`'s one second: Windows reports a
+            // closed local port only after about two seconds of retries, so
+            // the shorter total read it as a silent server (first Windows CI
+            // run, 2026-09-28; `tsa::tests::a_refused_connection_is_unreachable`).
+            fetch_blocking(&elsewhere, body, limits)
         },
     )
     .expect_err("refused");

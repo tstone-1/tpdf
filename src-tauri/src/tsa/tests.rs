@@ -413,7 +413,19 @@ fn a_refused_connection_is_unreachable() {
     let port = listener.local_addr().expect("an address").port();
     drop(listener);
     let url = url::Url::parse(&format!("http://127.0.0.1:{port}/")).expect("a URL");
-    match ask_blocking(&url, VALUE, &QUICK) {
+    // Not `QUICK`: Windows answers a connection to a closed local port by
+    // retrying the SYN for about two seconds before it reports the refusal, so
+    // QUICK's one-second total expired first and this read `TimedOut` on the
+    // first Windows CI run (2026-09-28). The shipped limits are ten seconds to
+    // connect and thirty in total, which is why the product was right and only
+    // this test was not. The limits here leave that delay room and still bound
+    // the test.
+    let refused = Limits {
+        connect: Duration::from_secs(10),
+        total: Duration::from_secs(10),
+        ..QUICK
+    };
+    match ask_blocking(&url, VALUE, &refused) {
         Err(Refusal::Unreachable(_)) => {}
         other => panic!("{other:?}"),
     }
