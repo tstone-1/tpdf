@@ -5770,6 +5770,39 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.21 verification, macOS arm64, 2026-09-27:** all 26 gates passed on the final tree and
+`check_windows.py` type-checked the Windows tree. Tauri 2.12 and its plugins, wry 0.57 and
+tao 0.37 were taken this cycle; the RustCrypto majors stay held because `cms` 0.3 and `rsa`
+0.10 have no stable release. Every mutation selected `--since v26.9.20` ran: 372 frontend,
+all caught, and 1,248 Rust in a separate worktree, 1,247 caught. The survivor, *save: two
+spellings of one path are two files*, named a `same_file` branch the file-identity check had
+made unreachable; the branch was removed and the mutation retargeted (`e7dd612`). The window
+phases passed on macOS against the Tauri 2.12 checks build: viewer 316 text-heavy and 221
+vector-heavy, `forms` 18, `signatures` 21, `import` 28, `redact-pages` 34 (with a new fourth
+pass that must come back verified) and `tabs` 20. The first run found two expectations
+behind the application --- *Close all tabs* in the tab menu since 26.9.18, and the
+command-line tool pair needing no document --- and both were corrected. A read-only audit of
+this cycle's threat-model additions found two code defects, fixed before the tag: the window's
+invisible signing never applied the certificate rule, and `tpdf-cli` would search the working
+directory for its engine when it could not find its own install. `release.yml` changed (the
+Windows installer check and the notes), so it was rehearsed as `v26.9.21-rc1`: the new step
+printed *both installers carry tpdf-cli.exe, and the MSI's copy runs: tpdf 26.9.21*, the draft
+carried 8 assets, and draft and tag were deleted by id. The release commit's own CI run failed
+first on Windows: `tauri-build` 2.7 left the fuzz targets linking no C runtime (see the trap
+of that name), fixed in `e7dd612`.
+
+**Not run before the tag:** the 57 window mutations `--since` selected, every Windows window
+phase, `print-probe` and `redact-reach-probe`, the external smoke test of the normal bundle
+(step 8) and the hand-applied update (step 12). CI's `windows-2025` gate leg and the release
+build's installer check are the Windows evidence for this release.
+
+Published 2026-09-28 from `7313840`, after `ci.yml` and the audit passed on that commit. The
+release run skipped its gates through `proven` and passed its other jobs, and the draft carried
+8 assets under the tag. Its *New in this release* paragraph still described 26.9.20 and was
+corrected on the draft before publishing, and on `main` (`eaf075b`). The published release is
+Latest. Fetched without an account, the `.dmg`, `.msi`, `-setup.exe` and `latest.json` answered
+200, and `latest.json` offers 26.9.21 for `darwin-aarch64` and `windows-x86_64`.
+
 **26.9.20 verification, macOS arm64, 2026-09-26:** all 26 gates passed on the code being
 released (`392d525`), and CI passed both legs on it; after the version bump, `traps`, `dates`,
 `docs`, `workflows` and `fixtures` passed, and `check_windows.py` type-checked the Windows
