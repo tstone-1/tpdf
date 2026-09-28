@@ -105,6 +105,12 @@ and puts the bytes back, with a `.mutations/types-inflight.json` recovery for a
 run that is killed between the two. Do not run it and a mutation harness at the
 same time, for the same reason two harnesses cannot share a checkout.
 
+`untracked` runs first and refuses a tree holding a file that is neither
+tracked nor ignored. `dates` and the other gates that take their population from
+`git ls-files` cannot see such a file, so a local run over it reports green for a
+commit that will be red; that is how cca0e57 reached `main` on 2026-09-28. `git
+add` first, then run the gates.
+
 `corpora` is the same shape aimed at a different list: which `testdata/*.pdf`
 files `viewer_check.py` is run against. That list had no home until 2026-08-16 --
 it lived in whatever shell loop somebody typed -- and on that day it acquired
@@ -151,6 +157,15 @@ def npm() -> str:
 def gates() -> "list[tuple[str, list[str], str]]":
     """Returns the gate list. A function, so npm is resolved at run time."""
     return [
+        (
+            # First, because every gate below that reads `git ls-files` is
+            # blind to a new file nobody has added yet, and a green run over
+            # such a tree does not describe the commit. It happened twice, the
+            # second time as commit cca0e57, green locally and red at HEAD.
+            "untracked",
+            [sys.executable, str(ROOT / "scripts" / "check_untracked.py")],
+            "a file on disk is neither tracked nor ignored, so git-listing gates cannot see it",
+        ),
         (
             "toolchain",
             [sys.executable, str(ROOT / "scripts" / "check_toolchain.py")],

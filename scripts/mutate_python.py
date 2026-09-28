@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Break each gate's subject on purpose, and require the gate to notice.
 
-`scripts/gates.py` runs sixteen gates whose implementation is a Python script.
+`scripts/gates.py` runs seventeen gates whose implementation is a Python script.
 Every one of them was proved able to fail on the day it was written, by hand, and
 until 2026-09-02 **nothing re-proved any of them afterwards**: no test file named
 one, and neither `mutate_rust.py` nor `mutate_frontend.py` carried a mutation
@@ -38,7 +38,8 @@ and is wrong, and the mutation that separates it from the correct walk is a
 carrying the count, because a green run on its own is also what a gate that
 stopped looking produces.
 
-WHAT IS COVERED: fifteen of the sixteen Python-backed gates, as of 2026-09-02.
+WHAT IS COVERED: sixteen of the seventeen Python-backed gates (fifteen of sixteen on
+2026-09-02; `untracked` joined on 2026-09-28, covered from its first day).
 The exception is `bundleshare`, and the reason is measured rather than assumed.
 It needs two things this harness does not do. Its subject is the *built* bundle,
 so a mutation would have to run `npm run build` between the edit and the gate ---
@@ -478,6 +479,19 @@ MUTATIONS = [
         "",
         red=True,
         says="listed no file at all",
+        env={"GIT_INDEX_FILE": "/tmp/tpdf-no-such-index"},
+    ),
+    # The same empty index, aimed at `untracked`: with no index, every file in
+    # the tree is untracked, which is the defect the gate exists to report. No
+    # file is created, so a killed run leaves nothing behind.
+    Mutation(
+        "untracked: every file on disk untracked",
+        "untracked",
+        "",
+        "",
+        "",
+        red=True,
+        says="untracked file(s) that are not ignored",
         env={"GIT_INDEX_FILE": "/tmp/tpdf-no-such-index"},
     ),
     # --- the emptiness controls, fired ----------------------------------------
