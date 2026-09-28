@@ -6052,6 +6052,13 @@ phase, `print-probe` and `redact-reach-probe`, a timestamp or long-term request 
 a signer certificate from a real CA, the external smoke test of the normal bundle (step 8) and
 the hand-applied update (step 12). CI's `windows-2025` gate leg is the Windows evidence.
 
+Published 2026-09-28 from `1978cad`, after `audit.yml` and `ci.yml` passed both legs on that
+commit. The release run skipped its gates through `proven` and passed its other jobs, the draft
+carried 8 assets under the tag, and its *New in this release* paragraph described 26.9.22. The
+published release is Latest. Fetched without an account, the `.dmg`, `.msi`, `-setup.exe` and
+`latest.json` answered 200, and `latest.json` offers 26.9.22 for `darwin-aarch64` and
+`windows-x86_64`.
+
 **26.9.21 verification, macOS arm64, 2026-09-27:** all 26 gates passed on the final tree and
 `check_windows.py` type-checked the Windows tree. Tauri 2.12 and its plugins, wry 0.57 and
 tao 0.37 were taken this cycle; the RustCrypto majors stay held because `cms` 0.3 and `rsa`
