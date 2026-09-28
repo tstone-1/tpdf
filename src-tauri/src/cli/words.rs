@@ -1,7 +1,8 @@
 //! The sentences the command-line tool says about a signature: the app's own.
 //!
 //! **A port, held to its original by a test, not a second author.** The words
-//! live in `src/lib/integrity.ts` (`integrityRow`, `trustRow`, `WHY`, `DOUBT`)
+//! live in `src/lib/integrity.ts` (`integrityRow`, `trustRow`, `timestampRow`,
+//! `authorityRow`, `WHY`, `DOUBT`)
 //! and `src/lib/signing.ts` (`afterSigning`), where the properties dialog and
 //! the signing panel say them. The command-line tool has no webview to ask, so
 //! the functions are restated here --- and `words_sample` writes every case this
@@ -48,6 +49,10 @@ pub fn why(why: Why) -> &'static str {
         Why::Budget => {
             "the document's signatures together cover more data than tpdf checks at once"
         }
+        Why::Binding => {
+            "it does not name the certificate it was made with, as a timestamp must, or it \
+             names another one"
+        }
     }
 }
 
@@ -64,9 +69,16 @@ pub fn computer(store: Option<Store>) -> &'static str {
 /// Why the store does not vouch, as a clause. `integrity.ts`'s `DOUBT`.
 #[must_use]
 pub fn doubt(doubt: Doubt, computer: &str) -> String {
+    doubt_about(doubt, computer, "the signer's")
+}
+
+/// [`doubt`], naming whose certificate the chain starts from: `"the signer's"`
+/// or `"the authority's"`. `integrity.ts`'s `DOUBT` with its second argument.
+#[must_use]
+pub fn doubt_about(doubt: Doubt, computer: &str, whose: &str) -> String {
     match doubt {
         Doubt::Incomplete => format!(
-            "a certificate between the signer's and a root is in neither the signature \
+            "a certificate between {whose} and a root is in neither the signature \
              nor on {computer}, and tpdf does not look it up"
         ),
         Doubt::Root => format!(
@@ -74,10 +86,11 @@ pub fn doubt(doubt: Doubt, computer: &str) -> String {
              issued to themselves reads this way, and so does one whose root only \
              Adobe's trust list carries"
         ),
-        Doubt::Dates => "a certificate above the signer's is outside its dates".into(),
+        Doubt::Dates => format!("a certificate above {whose} is outside its dates"),
         Doubt::Purpose => {
             "the signer's certificate was issued for something other than signing documents".into()
         }
+        Doubt::Timestamping => "the authority's certificate was not issued for timestamping".into(),
         Doubt::Rejected => format!("{computer} refused its chain"),
         Doubt::Certificate => {
             "the signature's certificates could not be prepared for the check".into()
@@ -128,6 +141,105 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
         Standing::Unchecked => {
             format!("not checked — {why}. This says nothing either way about who holds the key.")
         }
+    }
+}
+
+/// The timestamp row's value: `integrity.ts`'s
+/// `timestampRow(when, by, integrity, document).value`.
+///
+/// `when` is the time the token states; `by` the authority as named, empty
+/// for one that names none; `document` says the token is a document
+/// timestamp, whose imprint covers the signed bytes rather than a signature.
+/// **The time is called attested only for `intact` and `weak`**, the rule
+/// `docinfo::Timestamp::attested` states; every other sentence names it as
+/// what the token states, and says it is not attested.
+#[must_use]
+pub fn timestamp_sentence(
+    when: &str,
+    by: &str,
+    integrity: Option<&Integrity>,
+    document: bool,
+) -> String {
+    let by = if by.is_empty() {
+        "an unnamed authority"
+    } else {
+        by
+    };
+    let subject = if document {
+        "the signed bytes of this document"
+    } else {
+        "this signature"
+    };
+    let Some(integrity) = integrity else {
+        return format!("{when} by {by} — a separate party's claim, which tpdf did not check.");
+    };
+    let how = how(integrity);
+    match integrity.verdict {
+        Verdict::Intact => format!(
+            "{when}, attested by {by} — the timestamp checks out under the key in its \
+             certificate and covers {subject}{how}."
+        ),
+        Verdict::Weak => format!(
+            "{when}, by {by}, under SHA-1 only — the timestamp checks out and covers \
+             {subject}{how}, but SHA-1 collisions can be manufactured, so this does not show \
+             the time belongs to {subject}."
+        ),
+        Verdict::Altered => format!(
+            "not attested — a timestamp by {by} states {when} and checks out, but it covers \
+             something other than {subject}{how}, so it attests nothing about {subject}."
+        ),
+        Verdict::Broken => format!(
+            "not attested — a timestamp naming {by} states {when}, but its own signature does \
+             not check out{how}, so nothing it states can be relied on, the time included."
+        ),
+        Verdict::Unchecked => format!(
+            "not attested — a timestamp naming {by} states {when}, and was not checked: {}.",
+            integrity.why.map_or("no reason was given", why)
+        ),
+    }
+}
+
+/// The timestamp authority's row: `integrity.ts`'s
+/// `authorityRow(trust, from, until).value`. `from` and `until` are the
+/// authority's certificate's dates, empty when unknown.
+#[must_use]
+pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
+    let computer = computer(trust.store);
+    let why = trust.why.map_or_else(
+        || "no reason was given".to_string(),
+        |d| doubt_about(d, computer, "the authority's"),
+    );
+    let chained = format!("the authority's certificate chains to a root {computer} trusts");
+    match trust.standing {
+        Standing::Trusted => format!(
+            "trusted — {chained} and is issued for timestamping. It is judged at the present \
+             moment, not at the time it attests. {REVOCATION_NOT_CHECKED}"
+        ),
+        Standing::Expired => format!(
+            "expired — {chained}, and it ran out{}. tpdf judges it at the present moment, so \
+             it cannot tell whether it was in force when the timestamp was made. \
+             {REVOCATION_NOT_CHECKED}",
+            if until.is_empty() {
+                String::new()
+            } else {
+                format!(" on {until}")
+            }
+        ),
+        Standing::NotYetValid => format!(
+            "not yet in force — {chained}, but it only comes into force{}. \
+             {REVOCATION_NOT_CHECKED}",
+            if from.is_empty() {
+                " later".to_string()
+            } else {
+                format!(" on {from}")
+            }
+        ),
+        Standing::Untrusted => {
+            format!("not trusted — {why}. So nothing establishes who attests this time.")
+        }
+        Standing::Unchecked => format!(
+            "not checked — {why}. This says nothing either way about who attests this time."
+        ),
     }
 }
 

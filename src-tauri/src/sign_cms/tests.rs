@@ -639,7 +639,12 @@ fn no_private_key_type_is_named_outside_the_tests() {
     );
     let test_only = |path: &std::path::Path| {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        name == "tests.rs" || name == "testkeys.rs" || name.ends_with("_tests.rs")
+        // `test_tsa.rs` is the software timestamp authority: `#[cfg(test)]` in
+        // the library and included by path into `tests/cli.rs`, never shipped.
+        name == "tests.rs"
+            || name == "testkeys.rs"
+            || name == "test_tsa.rs"
+            || name.ends_with("_tests.rs")
     };
     let naming = |path: &std::path::Path| {
         let text = std::fs::read_to_string(path).expect("source");

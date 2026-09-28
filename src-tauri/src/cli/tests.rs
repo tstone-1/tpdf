@@ -378,6 +378,7 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
             store: Some(TrustStore::Mac),
             sentence: String::new(),
         }),
+        timestamp: None,
     }
 }
 
@@ -603,6 +604,7 @@ fn wording() -> serde_json::Value {
         Why::Algorithm,
         Why::Attributes,
         Why::Budget,
+        Why::Binding,
     ];
     let mut integrities = Vec::new();
     for verdict in [
@@ -643,6 +645,7 @@ fn wording() -> serde_json::Value {
         Some(Doubt::Rejected),
         Some(Doubt::Certificate),
         Some(Doubt::Unavailable),
+        Some(Doubt::Timestamping),
     ];
     let mut trusts = Vec::new();
     for standing in [
@@ -764,9 +767,77 @@ fn wording() -> serde_json::Value {
         }
     }
 
+    // A timestamp's row: every verdict in the three shapes, the unchecked one
+    // with every reason; with no verdict at all; named and unnamed; attached
+    // to a signature and a document timestamp.
+    let mut timestamps = Vec::new();
+    let mut stamp_shapes: Vec<Option<Integrity>> = vec![None];
+    for verdict in [
+        Verdict::Intact,
+        Verdict::Weak,
+        Verdict::Altered,
+        Verdict::Broken,
+        Verdict::Unchecked,
+    ] {
+        stamp_shapes.push(Some(integrity(verdict, None, "SHA-256", "ECDSA P-256")));
+        stamp_shapes.push(Some(integrity(verdict, None, "", "")));
+        if verdict == Verdict::Unchecked {
+            stamp_shapes.extend(
+                whys.iter()
+                    .map(|w| Some(integrity(verdict, Some(*w), "", ""))),
+            );
+        }
+    }
+    for shape in &stamp_shapes {
+        for by in ["Acme Time Authority", ""] {
+            for document in [false, true] {
+                let when = "2026-08-21 12:00:00 UTC";
+                timestamps.push(serde_json::json!({
+                    "when": when,
+                    "by": by,
+                    "integrity": shape,
+                    "document": document,
+                    "sentence": words::timestamp_sentence(when, by, shape.as_ref(), document),
+                }));
+            }
+        }
+    }
+    // The authority's row: every standing, store and reason, both date pairs.
+    let mut authorities = Vec::new();
+    for standing in [
+        Standing::Trusted,
+        Standing::Expired,
+        Standing::NotYetValid,
+        Standing::Untrusted,
+        Standing::Unchecked,
+    ] {
+        for store in [Some(TrustStore::Mac), Some(TrustStore::Windows), None] {
+            for why in doubts {
+                for (from, until) in [
+                    ("", ""),
+                    ("2026-01-02 03:04:05 UTC", "2027-01-02 03:04:05 UTC"),
+                ] {
+                    let trust = Trust {
+                        standing,
+                        why,
+                        store,
+                    };
+                    authorities.push(serde_json::json!({
+                        "trust": trust,
+                        "from": from,
+                        "until": until,
+                        "sentence": words::authority_sentence(&trust, from, until),
+                    }));
+                }
+            }
+        }
+    }
+
     serde_json::json!({
         "integrity": integrities,
         "trust": trusts,
+        "timestamp": timestamps,
+        "authority": authorities,
         "after_signing": after,
         "after_redaction": after_redaction,
     })
@@ -799,6 +870,29 @@ fn full_signature() -> report::Signature {
             store: trust.store,
             sentence: words::trust_sentence(&trust, "", ""),
         }),
+        timestamp: Some(super::verify::timestamp_report(
+            &crate::docinfo::Timestamp {
+                when: "2026-09-26 18:20:14 UTC".into(),
+                authority: Some(crate::docinfo::Certificate {
+                    subject: "CN=Acme Time Authority".into(),
+                    subject_cn: "Acme Time Authority".into(),
+                    ..crate::docinfo::Certificate::default()
+                }),
+                integrity: Some(Integrity {
+                    verdict: Verdict::Intact,
+                    why: None,
+                    digest: "SHA-256".into(),
+                    method: "ECDSA P-256".into(),
+                }),
+                trust: Some(Trust {
+                    standing: Standing::Untrusted,
+                    why: Some(Doubt::Root),
+                    store: Some(TrustStore::Mac),
+                }),
+                attested: true,
+            },
+            false,
+        )),
     }
 }
 
@@ -819,6 +913,7 @@ fn bare_signature() -> report::Signature {
             sentence: words::integrity_sentence(&integrity, 0, false),
         },
         trust: None,
+        timestamp: None,
     }
 }
 
@@ -1030,6 +1125,7 @@ fn every_json_key_is_described_in_the_readme() {
         "written",
         "signatures_invalidated",
         "form_text_removals",
+        "attested",
     ] {
         assert!(
             all.contains(known),

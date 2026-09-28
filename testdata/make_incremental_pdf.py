@@ -540,6 +540,60 @@ def sign_with_timestamp(source: bytes, out_path: str) -> bool:
     return True
 
 
+def timestamp_document(source: bytes, out_path: str) -> bool:
+    """Adds a *document* timestamp to `source`: a field whose token is the whole value.
+
+    `incr-timestamped.pdf` carries a token as an attribute on a signature, whose
+    imprint is over that signature's value. A document timestamp is the other
+    shape PDF 2.0 section 12.8.5 defines -- `/SubFilter /ETSI.RFC3161`, the token
+    itself in `/Contents`, its imprint over the `/ByteRange` bytes exactly as a
+    detached signature's digest is. `integrity/token.rs` checks both, and this is
+    the fixture that reaches the second through a real writer and a real reader
+    (pyHanko's `validate_pdf_timestamp`, which `check_signature.py --json` maps).
+
+    The same pinned instant and the same kind of dummy authority as
+    `sign_with_timestamp`, so the structure is real and the trust is nil: the
+    authority's certificate is its own root and states no purpose.
+    """
+    try:
+        import io
+
+        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+        from pyhanko.sign.signers.pdf_signer import PdfTimeStamper
+        from pyhanko.sign.timestamps import DummyTimeStamper
+    except ImportError:
+        return False
+
+    from datetime import datetime
+
+    from asn1crypto import keys as asn1_keys
+    from asn1crypto import x509 as asn1_x509
+    from cryptography.hazmat.primitives import serialization
+
+    cert, key = _chain(
+        "tpdf dummy timestamp authority",
+        not_before=datetime.fromisoformat(TSA_FROM),
+        not_after=datetime.fromisoformat(TSA_UNTIL),
+    )
+    stamper = DummyTimeStamper(
+        tsa_cert=asn1_x509.Certificate.load(cert.public_bytes(serialization.Encoding.DER)),
+        tsa_key=asn1_keys.PrivateKeyInfo.load(
+            key.private_bytes(
+                serialization.Encoding.DER,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        ),
+        fixed_dt=datetime.fromisoformat(TIMESTAMP_AT),
+    )
+    writer = IncrementalPdfFileWriter(io.BytesIO(source))
+    with open(out_path, "wb") as handle:
+        PdfTimeStamper(stamper, field_name="DocTimeStamp1").timestamp_pdf(
+            writer, "sha256", output=handle
+        )
+    return True
+
+
 # The signers that exercise each branch of `integrity.rs`, one fixture apiece.
 #
 # `integrity.rs` implements three signature schemes over five digests, and
@@ -1011,6 +1065,28 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"[OK] incr-timestamped.pdf ({os.path.getsize(stamped_path)} bytes)")
     else:
         print("[SKIP] incr-timestamped.pdf: pyhanko not installed")
+
+    document_path = os.path.join(args.outdir, "incr-doc-timestamped.pdf")
+    if timestamp_document(inline, document_path):
+        manifest["incr-doc-timestamped.pdf"] = {
+            "role": "the only fixture with a document timestamp -- a field whose "
+            "/SubFilter is ETSI.RFC3161 and whose /Contents is the token itself, "
+            "its imprint over the /ByteRange bytes. genTime is pinned to "
+            + TIMESTAMP_AT
+            + " and the authority is the same kind of dummy as "
+            "incr-timestamped.pdf's: its certificate is its own root and names "
+            "no purpose, so the token is intact and its authority not trusted",
+            "pages": 2,
+            "bytes": os.path.getsize(document_path),
+            "xref": "table",
+            "docmdp": None,
+            "signatures": 1,
+            "timestamp": TIMESTAMP_AT,
+            "timestamp_authority": "tpdf dummy timestamp authority",
+        }
+        print(f"[OK] incr-doc-timestamped.pdf ({os.path.getsize(document_path)} bytes)")
+    else:
+        print("[SKIP] incr-doc-timestamped.pdf: pyhanko not installed")
 
     two_path = os.path.join(args.outdir, "incr-two-signers.pdf")
     if sign_twice(inline, two_path):

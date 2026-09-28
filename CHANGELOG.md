@@ -19,6 +19,23 @@ have the binary.)
 
 ## [26.9.22] - Unreleased
 
+### Added
+
+- **Timestamps on signatures are checked.** A signature carrying a timestamp
+  from a timestamp authority used to show that time with the note that tpdf
+  does not check it. The properties dialog and `tpdf verify` now say whether
+  the timestamp's own signature holds, whether it really is a timestamp of
+  this signature, and whether this computer trusts the authority that made
+  it for timestamping. The time is shown as attested only when the timestamp
+  checks out; a timestamp that does not is shown with the time it states and
+  the reason it is not believed. A document timestamp — a signature field that
+  is only a timestamp of the document — is checked the same way instead of
+  being reported as a format tpdf does not check. Revocation is still not
+  checked, and the signer's certificate is still judged as it stands today,
+  not on the date the timestamp gives. `tpdf verify --json` and
+  `tpdf info --json` carry the result as a new `timestamp` key on each
+  signature.
+
 ### Fixed
 
 - **`tpdf` JSON reads correctly in PowerShell.** A script that captured

@@ -19,17 +19,29 @@
 import { describe, expect, it } from "vitest";
 
 import wording from "../../src-tauri/testdata/cli/wording.json";
-import { integrityRow, trustRow, type Integrity, type Trust } from "./integrity";
+import {
+  authorityRow,
+  integrityRow,
+  timestampRow,
+  trustRow,
+  type Integrity,
+  type Trust,
+} from "./integrity";
 import { afterRedaction } from "./recovery";
 import { afterSigning, type Signed } from "./signing";
 
 describe("the command-line tool's wording", () => {
   it("covers every verdict, standing and closing sentence", () => {
-    // 5 verdicts x 3 shapes, the unchecked one with 7 reasons more, each with
-    // and without an append and a trust row; 5 standings x 3 stores x 8
+    // 5 verdicts x 3 shapes, the unchecked one with 8 reasons more, each with
+    // and without an append and a trust row; 5 standings x 3 stores x 9
     // reasons x 2 date pairs; 7 signing reports.
-    expect(wording.integrity.length).toBe((5 * 3 + 7) * 2 * 2);
-    expect(wording.trust.length).toBe(5 * 3 * 8 * 2);
+    expect(wording.integrity.length).toBe((5 * 3 + 8) * 2 * 2);
+    expect(wording.trust.length).toBe(5 * 3 * 9 * 2);
+    // A timestamp: no verdict, or 5 verdicts x 2 shapes and the unchecked one
+    // with 8 reasons, each named and unnamed, on a signature and a document;
+    // its authority as the trust rows are.
+    expect(wording.timestamp.length).toBe((1 + 5 * 2 + 8) * 2 * 2);
+    expect(wording.authority.length).toBe(5 * 3 * 9 * 2);
     expect(wording.after_signing.length).toBe(7);
     // 3 count pairs x 3 reason lists x changed or not.
     expect(wording.after_redaction.length).toBe(3 * 3 * 2);
@@ -47,6 +59,20 @@ describe("the command-line tool's wording", () => {
   it("says each trust standing as the properties dialog does", () => {
     for (const c of wording.trust) {
       const row = trustRow(c.trust as Trust, c.from, c.until);
+      expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
+    }
+  });
+
+  it("says each timestamp as the properties dialog does", () => {
+    for (const c of wording.timestamp) {
+      const row = timestampRow(c.when, c.by, c.integrity as Integrity | null, c.document);
+      expect(row.value, JSON.stringify(c)).toBe(c.sentence);
+    }
+  });
+
+  it("says each timestamp authority's standing as the properties dialog does", () => {
+    for (const c of wording.authority) {
+      const row = authorityRow(c.trust as Trust, c.from, c.until);
       expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
     }
   });

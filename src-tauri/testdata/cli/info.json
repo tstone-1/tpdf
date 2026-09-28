@@ -91,6 +91,24 @@
               "why": "root",
               "store": "mac",
               "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes that the key belongs to the person the certificate names."
+            },
+            "timestamp": {
+              "time": "2026-09-26 18:20:14 UTC",
+              "authority": "Acme Time Authority",
+              "attested": true,
+              "integrity": {
+                "verdict": "intact",
+                "why": null,
+                "digest": "SHA-256",
+                "method": "ECDSA P-256",
+                "sentence": "2026-09-26 18:20:14 UTC, attested by Acme Time Authority — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, ECDSA P-256)."
+              },
+              "trust": {
+                "standing": "untrusted",
+                "why": "root",
+                "store": "mac",
+                "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time."
+              }
             }
           }
         ],

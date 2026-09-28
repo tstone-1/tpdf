@@ -6864,14 +6864,13 @@ MUTATIONS += [
         # which is the ordinary case and therefore the reassuring one.
         "docinfo: read an unreadable timestamp token as an absent one",
         "src/docinfo.rs",
-        """    match parse_timestamp_token(&token) {
-        Some(timestamp) => Some(timestamp),
-        None => {
-            *unread += 1;
-            None
-        }
-    }""",
-        "    parse_timestamp_token(&token)",
+        """    let Some(timestamp) = parse_timestamp_token(&token) else {
+        *unread += 1;
+        return None;
+    };""",
+        """    let Some(timestamp) = parse_timestamp_token(&token) else {
+        return None;
+    };""",
         "a_token_that_will_not_parse_is_counted_rather_than_read_as_absent",
     ),
     Mutation(
@@ -10605,7 +10604,7 @@ MUTATIONS += [
         # Check every subfilter with the detached computation.
         "integrity: check a subfilter it does not implement",
         "src/integrity.rs",
-        '    if !matches!(kind, "adbe.pkcs7.detached" | "ETSI.CAdES.detached") {',
+        '    if !document_timestamp && !matches!(kind, "adbe.pkcs7.detached" | "ETSI.CAdES.detached") {',
         "    if kind.is_empty() && false {",
         "a_subfilter_this_does_not_check_is_not_checked",
     ),
@@ -10697,6 +10696,228 @@ MUTATIONS += [
                 &mut budget.clone(),
             ));""",
         "the_hashing_budget_is_shared_by_every_signature_of_a_document",
+    ),
+]
+
+
+# --- whether a timestamp token is sound and covers what it is attached to ---
+#
+# `integrity/token.rs`, `docinfo.rs` and `trust.rs`, 2026-09-28. Each removes
+# one check the token verdict, the attested time or the authority's standing
+# rests on, and names the test built so only that check can fail it --- the
+# tokens come from `integrity/test_tsa.rs`, one fault apiece.
+MUTATIONS += [
+    Mutation(
+        # Never compare the imprint: a sound token of different data reads as
+        # a timestamp of this signature.
+        "token: never compare the imprint",
+        "src/integrity/token.rs",
+        "    if hash.digest(&pieces) != imprint.hashed_message.as_bytes() {",
+        "    if false {",
+        "a_token_of_different_data_is_altered",
+    ),
+    Mutation(
+        # Believe a `TSTInfo` whatever it hashes to: the statement in hand is
+        # not the one the authority signed, and reads as the one it did.
+        "token: believe a TSTInfo that is not the one signed",
+        "src/integrity/token.rs",
+        "    let own = signer.judge(&[content.as_slice()], budget);",
+        "    let own = { let o = signer.judge(&[content.as_slice()], budget); if o.verdict == Verdict::Altered { Integrity { verdict: Verdict::Intact, ..o } } else { o } };",
+        "a_tst_info_changed_after_signing_is_broken_not_altered",
+    ),
+    Mutation(
+        # Report a changed `TSTInfo` as a timestamp of different data, which
+        # says the token is the authority's when it is not.
+        "token: call a changed TSTInfo altered rather than broken",
+        "src/integrity/token.rs",
+        """            return Integrity {
+                verdict: Verdict::Broken,
+                ..own
+            };""",
+        """            return own;""",
+        "a_tst_info_changed_after_signing_is_broken_not_altered",
+    ),
+    Mutation(
+        # Never test the token's own signature.
+        "token: ignore the token's own signature",
+        "src/integrity/token.rs",
+        "    let own = signer.judge(&[content.as_slice()], budget);",
+        "    let own = { let o = signer.judge(&[content.as_slice()], budget); if o.verdict == Verdict::Broken { Integrity { verdict: Verdict::Intact, ..o } } else { o } };",
+        "a_corrupted_token_signature_is_broken",
+    ),
+    Mutation(
+        # Read the imprint before the signature is known to hold: a forged
+        # token of other data then reads as merely altered.
+        "token: judge the imprint before the token's signature",
+        "src/integrity/token.rs",
+        "    let own = signer.judge(&[content.as_slice()], budget);",
+        "    if imprint_of(&content).is_some_and(|i| match target { Target::Signature(v) => Hash::from_oid(&i.hash_algorithm.oid.to_string()).is_some_and(|h| h.digest(&[v]) != i.hashed_message.as_bytes()), Target::Range(_) => false }) { return Integrity { verdict: Verdict::Altered, ..Integrity::default() }; }\n    let own = signer.judge(&[content.as_slice()], budget);",
+        "a_broken_token_is_broken_even_when_its_imprint_is_also_wrong",
+    ),
+    Mutation(
+        # Skip the ESS binding altogether.
+        "token: skip the ESS binding",
+        "src/integrity/token.rs",
+        "    if let Err(why) = binds(attributes.as_ref(), certificate.as_deref()) {",
+        "    if let Err(why) = Ok::<(), Why>(()).and(Ok(drop((attributes, certificate)))) {",
+        "a_token_with_no_ess_binding_is_not_checked",
+    ),
+    Mutation(
+        # Accept a token that carries neither form of the binding.
+        "token: accept a token with no binding at all",
+        "src/integrity/token.rs",
+        "    if v1.is_none() && v2.is_none() {",
+        "    if false {",
+        "a_token_with_no_ess_binding_is_not_checked",
+    ),
+    Mutation(
+        # Accept a binding whose hash names another certificate.
+        "token: accept a binding naming another certificate",
+        "src/integrity/token.rs",
+        "    if hash.digest(&[certificate]) == stated {",
+        "    if true {",
+        "a_binding_naming_another_certificate_is_not_checked",
+    ),
+    Mutation(
+        # Call an SHA-1 imprint intact.
+        "token: treat an SHA-1 imprint as strong",
+        "src/integrity/token.rs",
+        "    let weak = sha1_signed || hash == Hash::Sha1;",
+        "    let weak = sha1_signed;",
+        "an_sha1_imprint_is_weak_and_never_intact",
+    ),
+    Mutation(
+        # Call a token signed over SHA-1 intact.
+        "token: treat an SHA-1 token signature as strong",
+        "src/integrity/token.rs",
+        "    let weak = sha1_signed || hash == Hash::Sha1;",
+        "    let weak = hash == Hash::Sha1;",
+        "an_sha1_token_signature_is_weak_and_names_sha1",
+    ),
+    Mutation(
+        # Read any CMS as a token, whatever its content type says it carries.
+        "token: read a CMS that is not a token as one",
+        "src/integrity/token.rs",
+        "    if content_type(token).as_deref() != Some(TST_INFO) {",
+        "    if content_type(token).is_none() {",
+        "a_cms_that_is_not_a_token_is_not_read_as_one",
+    ),
+    Mutation(
+        # Hash a document timestamp's whole range whatever the budget says.
+        "token: ignore the hashing budget",
+        "src/integrity/token.rs",
+        "    if cost > *budget {",
+        "    if false {",
+        "a_budget_smaller_than_the_target_refuses_before_hashing",
+    ),
+    Mutation(
+        # Check a document timestamp over whatever range it states, without
+        # the rule that the hole is exactly its own value.
+        "integrity: check a document timestamp over a range nobody vouched for",
+        "src/integrity.rs",
+        """    let Some(pieces) = covered(bytes, range, contents) else {
+        return Integrity::unchecked(Why::Range);
+    };""",
+        """    let Some(pieces) = covered(bytes, range, contents).or_else(|| {
+        let [_, first, second, last] = range else { return None };
+        let (first, second, last) = (usize::try_from(*first).ok()?, usize::try_from(*second).ok()?, usize::try_from(*last).ok()?);
+        (document_timestamp && second + last <= bytes.len()).then(|| [&bytes[..first], &bytes[second..second + last]])
+    }) else {
+        return Integrity::unchecked(Why::Range);
+    };""",
+        "a_document_timestamp_whose_range_does_not_frame_its_value_is_not_checked",
+    ),
+    Mutation(
+        # Check a document timestamp with the detached computation.
+        "integrity: check a document timestamp as a detached signature",
+        "src/integrity.rs",
+        "    if document_timestamp {\n        return token::check(",
+        "    if false {\n        return token::check(",
+        "a_document_timestamp_over_its_range_is_intact",
+    ),
+    Mutation(
+        # Call every token's time attested: the verdict is computed and then
+        # not consulted before the time is believed.
+        "docinfo: call a broken token's time attested",
+        "src/docinfo.rs",
+        "    let attested = attributable(&integrity);",
+        "    let attested = true;",
+        "a_broken_tokens_time_is_not_attested_and_its_authority_not_asked",
+    ),
+    Mutation(
+        # Ask about the authority of a token nothing vouches for.
+        "docinfo: ask about a broken token's authority",
+        "src/docinfo.rs",
+        "    let trust = attested.then(|| {",
+        "    let trust = Some(()).map(|()| {",
+        "a_broken_tokens_time_is_not_attested_and_its_authority_not_asked",
+    ),
+    Mutation(
+        # The same rule on the document timestamp's path, which copies the
+        # field's verdict rather than computing it twice.
+        "docinfo: call a document timestamp's time attested whatever its verdict",
+        "src/docinfo.rs",
+        "                    attested: attributable(&integrity),",
+        "                    attested: true,",
+        "a_document_timestamp_over_changed_bytes_attests_nothing",
+    ),
+    Mutation(
+        # Ask about a document timestamp's authority as a document signer.
+        "docinfo: judge a document timestamp's authority for signing documents",
+        "src/docinfo.rs",
+        '    if kind == "ETSI.RFC3161" {',
+        "    if false {",
+        "a_document_timestamps_signer_is_trusted_for_timestamping",
+    ),
+    Mutation(
+        # Check the token against the signature's DER, tag and length and all,
+        # rather than the value octets RFC 3161 Appendix A names.
+        "docinfo: imprint the signature's DER rather than its value",
+        "src/docinfo.rs",
+        "        crate::integrity::token::Target::Signature(signer.signature.as_bytes()),",
+        "        crate::integrity::token::Target::Signature(&signer.signature.to_der().unwrap_or_default()),",
+        "a_sound_token_over_the_signature_value_attests_its_time",
+    ),
+    Mutation(
+        # Trust an authority for timestamping whatever purpose it names.
+        "trust: accept any purpose for a timestamp authority",
+        "src/trust.rs",
+        "                && matches!(usage.0.as_slice(), [only] if only.to_string() == TIMESTAMPING)",
+        "                && !usage.0.is_empty()",
+        "a_timestamp_authority_must_name_timestamping_alone_and_critical",
+    ),
+    Mutation(
+        # Accept timestamping named among other purposes, as pyHanko does.
+        "trust: accept timestamping among other purposes",
+        "src/trust.rs",
+        "                && matches!(usage.0.as_slice(), [only] if only.to_string() == TIMESTAMPING)",
+        "                && usage.0.iter().any(|named| named.to_string() == TIMESTAMPING)",
+        "a_timestamp_authority_must_name_timestamping_alone_and_critical",
+    ),
+    Mutation(
+        # Accept a timestamping purpose the certificate does not mark critical.
+        "trust: accept a timestamping purpose not marked critical",
+        "src/trust.rs",
+        "            extension.critical\n",
+        "            true\n",
+        "a_timestamp_authority_must_name_timestamping_alone_and_critical",
+    ),
+    Mutation(
+        # Let a timestamp authority's certificate state no purpose, as a
+        # document signer's may.
+        "trust: let a timestamp authority state no purpose",
+        "src/trust.rs",
+        "        return Some(purpose == Purpose::Documents);",
+        "        return Some(true);",
+        "a_timestamp_authority_must_name_timestamping_alone_and_critical",
+    ),
+    Mutation(
+        # Give an authority's refusal the document signer's reason.
+        "trust: say an authority is not a document signer",
+        "src/trust.rs",
+        "            Purpose::Timestamping => Doubt::Timestamping,",
+        "            Purpose::Timestamping => Doubt::Purpose,",
+        "a_timestamp_authority_must_name_timestamping_alone_and_critical",
     ),
 ]
 
@@ -11046,7 +11267,7 @@ MUTATIONS += [
         # Never ask what the certificate was issued for.
         "trust: trust a web server's certificate for signing",
         "src/trust.rs",
-        "    if !purpose {",
+        "    if !serves {",
         "    if false {",
         "a_certificate_issued_only_for_web_servers_is_not_trusted_for_signing",
     ),
@@ -11054,8 +11275,8 @@ MUTATIONS += [
         # The same rule through the scripted path, so it is not left to one OS.
         "trust: accept every extended key usage",
         "src/trust.rs",
-        "            crate::sign_cms::DOCUMENT_PURPOSES.contains(&purpose.to_string().as_str())",
-        "            !purpose.to_string().is_empty()",
+        "crate::sign_cms::DOCUMENT_PURPOSES.contains(&named.to_string().as_str())",
+        "!named.to_string().is_empty()",
         "the_purpose_is_asked_of_a_trusted_chain_and_an_expired_one",
     ),
     Mutation(
@@ -11160,8 +11381,8 @@ MUTATIONS += [
         # Ask trust of every signature, altered and broken ones included.
         "docinfo: attribute an altered signature to its signer",
         "src/docinfo.rs",
-        "    out.trust = attributable(&integrity).then(|| trust_of(document, sig));",
-        "    out.trust = Some(trust_of(document, sig));",
+        "    out.trust = attributable(&integrity).then(|| trust_of(document, sig, purpose));",
+        "    out.trust = Some(trust_of(document, sig, purpose));",
         "trust_is_asked_only_of_a_signature_with_a_signer",
     ),
     Mutation(

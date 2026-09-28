@@ -16,7 +16,9 @@ import {
   type Certificate,
   type Properties,
   type Signature,
+  type Timestamp,
 } from "./properties";
+import type { Integrity } from "./integrity";
 
 /** A document that states nothing, so each test adds only what it is about. */
 function blank(): Properties {
@@ -703,18 +705,76 @@ describe("the signing certificate", () => {
 });
 
 describe("a timestamp on a signature", () => {
-  it("names the authority beside the time, and says it is unchecked", () => {
+  /** A token with this verdict, named by `authority`, and no standing. */
+  function stamp(verdict: Integrity["verdict"], authority: Certificate | null = null): Timestamp {
+    return {
+      when: "2026-08-21 12:00:00 UTC",
+      authority,
+      integrity: {
+        verdict,
+        why: verdict === "unchecked" ? "binding" : null,
+        digest: "SHA-256",
+        method: "ECDSA P-256",
+      },
+      trust: null,
+      attested: verdict === "intact" || verdict === "weak",
+    };
+  }
+
+  it("names the authority beside the time, and says the time is attested", () => {
     const authority = certificate();
     authority.subject_cn = "Acme Time Authority";
     const sig = signed();
-    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority };
+    sig.timestamp = stamp("intact", authority);
 
     const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamped");
     expect(row?.value).toContain("2026-08-21 12:00:00 UTC");
-    expect(row?.value).toContain("Acme Time Authority");
-    // A time with no attester named is a number a reader cannot weigh, and a
-    // time presented without the disclaimer reads as tpdf agreeing.
-    expect(row?.value).toContain("does not check");
+    expect(row?.value).toContain("attested by Acme Time Authority");
+    expect(row?.value).toContain("covers this signature");
+    expect(row?.warn).toBeFalsy();
+  });
+
+  it("calls the time attested only when the token is intact or weak", () => {
+    // The worker tests the token before its time is believed, and the words
+    // must not undo that: a broken token's time is what it states, not what
+    // anybody attests. Each verdict, and the time still shown on every one.
+    for (const verdict of ["intact", "weak", "altered", "broken", "unchecked"] as const) {
+      const sig = signed();
+      sig.timestamp = stamp(verdict);
+      const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamped");
+      expect(row?.value, verdict).toContain("2026-08-21 12:00:00 UTC");
+      const attested = verdict === "intact" || verdict === "weak";
+      expect(row?.value.startsWith("not attested"), verdict).toBe(!attested);
+      expect(row?.warn ?? false, verdict).toBe(verdict !== "intact");
+    }
+  });
+
+  it("says a document timestamp covers the document, not a signature", () => {
+    const sig = signed();
+    sig.kind = "ETSI.RFC3161";
+    sig.timestamp = stamp("intact");
+    const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamped");
+    expect(row?.value).toContain("covers the signed bytes of this document");
+    expect(row?.value).not.toContain("this signature");
+  });
+
+  it("puts the authority's standing under the time, and only when there is one", () => {
+    const sig = signed();
+    sig.timestamp = {
+      ...stamp("intact"),
+      trust: { standing: "untrusted", why: "timestamping", store: "mac" },
+    };
+    const names = signatureRows(sig, 1024).map((r) => r.name);
+    expect(names).toContain("Timestamped");
+    expect(names).toContain("Timestamp authority");
+    expect(names.indexOf("Timestamped")).toBeLessThan(names.indexOf("Timestamp authority"));
+    const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamp authority");
+    expect(row?.value).toContain("not issued for timestamping");
+
+    // The control: no standing, no row --- which is every token that is not
+    // intact or weak, because the backend does not ask about those.
+    sig.timestamp = stamp("broken");
+    expect(signatureRows(sig, 1024).find((r) => r.name === "Timestamp authority")).toBeUndefined();
   });
 
   it("puts the attested time under the signer's own date, not over it", () => {
@@ -723,7 +783,7 @@ describe("a timestamp on a signature", () => {
     // document itself states, the authority's under it as the second source.
     const sig = signed();
     sig.when = "2026-08-21 16:58:20 +02:00";
-    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority: null };
+    sig.timestamp = stamp("intact");
 
     const names = signatureRows(sig, 1024).map((r) => r.name);
     // Both must be present before the comparison means anything: `indexOf`
@@ -740,7 +800,7 @@ describe("a timestamp on a signature", () => {
     // beside it is worth less and is not worth nothing, and dropping the row
     // would report the signature as untimestamped.
     const sig = signed();
-    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority: null };
+    sig.timestamp = stamp("intact", null);
 
     const row = signatureRows(sig, 1024).find((r) => r.name === "Timestamped");
     expect(row?.value).toContain("an unnamed authority");
@@ -763,7 +823,7 @@ describe("a timestamp on a signature", () => {
     const authority = certificate();
     authority.subject_cn = "Verified Genuine Timestamps Ltd";
     const sig = signed();
-    sig.timestamp = { when: "2026-08-21 12:00:00 UTC", authority };
+    sig.timestamp = stamp("intact", authority);
 
     for (const row of signatureRows(sig, 1024)) {
       for (const word of VERDICT_WORDS) {

@@ -250,6 +250,7 @@ hop through the index.
 - A visible signature field after a certification is a violation to pyHanko, and an invisible one is not
 - PDFDocEncoding agrees with Latin-1 only from 0xA1, and a Latin-1 string can begin with a byte-order mark
 - An appearance drawn where its rectangle sits cannot be previewed as the same bytes
+- pyHanko's timestamp verdict folds the imprint into `intact`, and accepts a token OpenSSL refuses
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -24969,3 +24970,34 @@ empty file on the path and the same 128 errors; CI caches this one. And naming `
 explicitly finds the same empty file. Any new package that depends on `tpdf` and links a binary
 on Windows will need the same flags; the list is `tauri-build`'s `static_vcruntime.rs`, kept in
 step by hand.
+
+### pyHanko's timestamp verdict folds the imprint into `intact`, and accepts a token OpenSSL refuses
+
+2026-09-28, holding `integrity/token.rs` against its two oracles. pyHanko reports a signature's
+timestamp as a `TimestampSignatureStatus` with `intact` and `valid`, the same two words it uses for
+the signature, and `signature-probe --mode integrity` was extended to map them the same way. Three
+things that mapping cannot see, each measured on a token minted by `integrity/test_tsa.rs` and
+spliced into a signed file:
+
+- **`intact` is two checks.** It is false both when the token's `TSTInfo` no longer hashes to the
+  digest its authority signed and when the token's imprint is not of this signature. tpdf keeps
+  them apart --- the first is `broken`, because the statement in hand is not the one the authority
+  made; the second is `altered`, a sound timestamp of different data --- so a probe that maps
+  `intact=no` to one of them is right about one fault and silently wrong about the other. The
+  mapping chose `altered`; no fixture has the other shape, and the unit test
+  `a_tst_info_changed_after_signing_is_broken_not_altered` is what holds it.
+- **An SHA-1 imprint reads as `intact`**, with no `CRYPTO_CONSTRAINTS_FAILURE`: pyHanko's
+  algorithm policy is applied to the token's own signature and not to the imprint hash. tpdf says
+  `weak` for the reason it says so of an SHA-1 signature --- a collision lets a token for one thing
+  pass as a token for another. OpenSSL 3.6 `ts -verify` accepts it too.
+- **A token with no ESS `signingCertificate` reads as `intact`.** RFC 3161 §2.4.1 requires the
+  binding, OpenSSL refuses the token (*missing signing certificate attribute*), and tpdf calls it
+  `unchecked`, binding. So on this one question pyHanko is the forgiving reader, and a green
+  pyHanko comparison says nothing about whether the binding is checked.
+
+The general lesson is the one *An oracle more forgiving than the thing it stands in for cannot
+fail* states, arriving in a new place: the probe's mapping is exact on the fixtures (both pyHanko
+tokens agree) and would have passed a token checker that ignored imprint hashes and bindings
+entirely. OpenSSL is the oracle that disagrees with pyHanko on the binding, and it agrees with tpdf
+on every minted fault but the SHA-1 one --- which is policy, not arithmetic.
+

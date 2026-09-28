@@ -57,6 +57,16 @@
 //! of the reader's own certificates tpdf offers for signing: a certificate
 //! tpdf would refuse to sign with is not one it calls trusted for signing.
 //!
+//! ## A timestamp authority is asked about the same way, for another purpose
+//!
+//! Since 2026-09-28 a timestamp token that [`crate::integrity::token`] finds
+//! intact or weak has its authority asked about too, through the same store,
+//! at the same present moment, with [`Purpose::Timestamping`]: RFC 3161 §2.3
+//! requires the authority's certificate to name `id-kp-timeStamping`, so there
+//! a certificate stating no purpose fails ([`Doubt::Timestamping`]) where a
+//! document signer's passes. Now and not the token's `genTime`, because that
+//! time is the authority's own statement; `docs/PLAN.md` §9 records it.
+//!
 //! ## Where this runs
 //!
 //! In the **worker**, inside `docinfo::scan_from`, beside the integrity check.
@@ -148,6 +158,9 @@ pub enum Doubt {
     /// The signer's certificate names only purposes a document signature does
     /// not serve.
     Purpose,
+    /// A timestamp authority's certificate does not name timestamping among
+    /// its purposes, which RFC 3161 §2.3 requires of it --- or names none.
+    Timestamping,
     /// The operating system refused the chain for another reason.
     Rejected,
     /// The signature's certificates could not be prepared for the store:
@@ -168,6 +181,24 @@ impl Trust {
             store: None,
         }
     }
+}
+
+/// What the certificate is being trusted **for**.
+///
+/// A basic X.509 policy checks no usage, so the purpose is asked here, and it
+/// is asked differently for the two parties a signature can name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// Signing documents: a certificate stating no extended key usage
+    /// restricts nothing and passes, and one stating some must name a purpose
+    /// in `sign_cms::DOCUMENT_PURPOSES`.
+    Documents,
+    /// Attesting a time. RFC 3161 §2.3: the authority's certificate **must**
+    /// carry the extended key usage `id-kp-timeStamping`, so a certificate
+    /// stating none fails here where it would pass for a document. It must also
+    /// be critical and the only purpose named, as §2.3 says and
+    /// `openssl ts -verify` enforces (pyHanko does not).
+    Timestamping,
 }
 
 /// Which roots the chain may end at.
@@ -206,13 +237,24 @@ pub struct Evaluation {
 /// rest of the set is offered to the chain builder as candidate issuers.
 #[must_use]
 pub fn of_blob(blob: &[u8], now: u64, anchors: Anchors<'_>) -> Trust {
+    of_blob_for(blob, Purpose::Documents, now, anchors)
+}
+
+/// [`of_blob`] for a stated purpose: a timestamp token's authority is asked
+/// about with [`Purpose::Timestamping`], through the same store and at the
+/// same moment --- `now`, not the token's `genTime`, for the reason
+/// `docs/PLAN.md` §9 records: `genTime` is the authority's own statement, so
+/// judging the authority at it would let the party under question choose the
+/// moment it is judged at.
+#[must_use]
+pub fn of_blob_for(blob: &[u8], purpose: Purpose, now: u64, anchors: Anchors<'_>) -> Trust {
     let Some((leaf, others)) = certificates(blob) else {
         return Trust::unchecked(Doubt::Certificate);
     };
     let Ok(parsed) = Certificate::from_der(&leaf) else {
         return Trust::unchecked(Doubt::Certificate);
     };
-    judge(&parsed, now, |at| {
+    judge_for(&parsed, purpose, now, |at| {
         platform::evaluate(&leaf, &others, anchors, at)
     })
 }
@@ -261,6 +303,17 @@ fn certificates(blob: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
 pub fn judge(
     signer: &Certificate,
     now: u64,
+    evaluate: impl FnMut(u64) -> Result<Evaluation, String>,
+) -> Trust {
+    judge_for(signer, Purpose::Documents, now, evaluate)
+}
+
+/// [`judge`] for a stated purpose. The order of the questions is the same;
+/// only the purpose asked last differs, and so does the doubt it answers with.
+pub fn judge_for(
+    signer: &Certificate,
+    purpose: Purpose,
+    now: u64,
     mut evaluate: impl FnMut(u64) -> Result<Evaluation, String>,
 ) -> Trust {
     let store = platform::STORE;
@@ -269,7 +322,7 @@ pub fn judge(
         why,
         store,
     };
-    let Some(purpose) = serves_documents(signer) else {
+    let Some(serves) = serves(signer, purpose) else {
         return Trust::unchecked(Doubt::Certificate);
     };
 
@@ -305,34 +358,57 @@ pub fn judge(
     if !evaluation.passed {
         return answer(Standing::Untrusted, Some(evaluation.failure));
     }
-    if !purpose {
-        return answer(Standing::Untrusted, Some(Doubt::Purpose));
+    if !serves {
+        let doubt = match purpose {
+            Purpose::Documents => Doubt::Purpose,
+            Purpose::Timestamping => Doubt::Timestamping,
+        };
+        return answer(Standing::Untrusted, Some(doubt));
     }
     answer(standing, None)
 }
 
-/// Whether the signer's extended key usage admits signing documents.
+/// Whether the certificate's extended key usage admits `purpose`.
 ///
-/// `Some(true)` for a certificate stating none, which restricts nothing, and
-/// for one naming a purpose in `sign_cms::DOCUMENT_PURPOSES`. `None` for an
-/// extension that is present and will not decode: a usage nobody can read is
-/// neither a restriction nor its absence.
-fn serves_documents(signer: &Certificate) -> Option<bool> {
-    let extensions = signer.tbs_certificate.extensions.as_deref().unwrap_or(&[]);
+/// For documents, `Some(true)` for a certificate stating none, which restricts
+/// nothing, and for one naming a purpose in `sign_cms::DOCUMENT_PURPOSES`. For
+/// timestamping, `Some(true)` only for an extension marked critical that names
+/// `id-kp-timeStamping` and nothing else: RFC 3161 §2.3 says the authority's
+/// certificate "MUST" carry exactly that, critical, and OpenSSL enforces it.
+/// Stating none is `Some(false)`, because there the extension is a
+/// requirement rather than a restriction. Every live authority measured on
+/// 2026-09-28 (DigiCert, Sectigo, GlobalSign) meets the strict form, so it
+/// refuses nothing real. `None` either way for an extension that is
+/// present and will not decode: a usage nobody can read is neither a
+/// restriction nor its absence.
+fn serves(certificate: &Certificate, purpose: Purpose) -> Option<bool> {
+    let extensions = certificate
+        .tbs_certificate
+        .extensions
+        .as_deref()
+        .unwrap_or(&[]);
     let Some(extension) = extensions
         .iter()
         .find(|extension| extension.extn_id.to_string() == "2.5.29.37")
     else {
-        return Some(true);
+        return Some(purpose == Purpose::Documents);
     };
     let usage =
         x509_cert::ext::pkix::ExtendedKeyUsage::from_der(extension.extn_value.as_bytes()).ok()?;
-    Some(
-        usage.0.iter().any(|purpose| {
-            crate::sign_cms::DOCUMENT_PURPOSES.contains(&purpose.to_string().as_str())
-        }),
-    )
+    Some(match purpose {
+        Purpose::Documents => usage
+            .0
+            .iter()
+            .any(|named| crate::sign_cms::DOCUMENT_PURPOSES.contains(&named.to_string().as_str())),
+        Purpose::Timestamping => {
+            extension.critical
+                && matches!(usage.0.as_slice(), [only] if only.to_string() == TIMESTAMPING)
+        }
+    })
 }
+
+/// id-kp-timeStamping, RFC 5280 §4.2.1.12.
+pub const TIMESTAMPING: &str = "1.3.6.1.5.5.7.3.8";
 
 /// Whether a certificate's subject and issuer are the same name.
 fn self_issued(der: &[u8]) -> bool {

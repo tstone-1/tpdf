@@ -391,6 +391,2708 @@
       }
     }
   ],
+  "authority": [
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this Mac trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this PC trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the authority's certificate chains to a root this computer trusts and is issued for timestamping. It is judged at the present moment, not at the time it attests. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the authority's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. tpdf judges it at the present moment, so it cannot tell whether it was in force when the timestamp was made. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the authority's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — no reason was given. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — no reason was given. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate above the authority's is outside its dates. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate above the authority's is outside its dates. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — this Mac refused its chain. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — this Mac refused its chain. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — no reason was given. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — no reason was given. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate above the authority's is outside its dates. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate above the authority's is outside its dates. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — this PC refused its chain. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — this PC refused its chain. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — no reason was given. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — no reason was given. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this computer, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate between the authority's and a root is in neither the signature nor on this computer, and tpdf does not look it up. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — a certificate above the authority's is outside its dates. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — a certificate above the authority's is outside its dates. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signer's certificate was issued for something other than signing documents. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — this computer refused its chain. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — this computer refused its chain. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the signature's certificates could not be prepared for the check. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the operating system's trust check could not be run. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes who attests this time.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — no reason was given. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — no reason was given. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate between the authority's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate between the authority's and a root is in neither the signature nor on this Mac, and tpdf does not look it up. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — its chain ends at a root this Mac does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate above the authority's is outside its dates. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate above the authority's is outside its dates. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — this Mac refused its chain. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — this Mac refused its chain. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — no reason was given. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — no reason was given. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate between the authority's and a root is in neither the signature nor on this PC, and tpdf does not look it up. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — its chain ends at a root this PC does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate above the authority's is outside its dates. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate above the authority's is outside its dates. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — this PC refused its chain. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — this PC refused its chain. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — no reason was given. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": null
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — no reason was given. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": null
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate between the authority's and a root is in neither the signature nor on this computer, and tpdf does not look it up. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate between the authority's and a root is in neither the signature nor on this computer, and tpdf does not look it up. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "incomplete"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "root"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — its chain ends at a root this computer does not trust. A certificate somebody issued to themselves reads this way, and so does one whose root only Adobe's trust list carries. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "root"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — a certificate above the authority's is outside its dates. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "dates"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — a certificate above the authority's is outside its dates. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "dates"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signer's certificate was issued for something other than signing documents. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "purpose"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — this computer refused its chain. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — this computer refused its chain. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "rejected"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the signature's certificates could not be prepared for the check. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "certificate"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the operating system's trust check could not be run. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who attests this time.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    }
+  ],
   "integrity": [
     {
       "appended": 0,
@@ -1359,6 +4061,944 @@
       },
       "sentence": "not checked — the document's signatures together cover more data than tpdf checks at once. This says nothing either way about whether the document changed.",
       "trust_follows": true
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not checked — it does not name the certificate it was made with, as a timestamp must, or it names another one. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 0,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not checked — it does not name the certificate it was made with, as a timestamp must, or it names another one. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not checked — it does not name the certificate it was made with, as a timestamp must, or it names another one. This says nothing either way about whether the document changed.",
+      "trust_follows": false
+    },
+    {
+      "appended": 9101,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not checked — it does not name the certificate it was made with, as a timestamp must, or it names another one. This says nothing either way about whether the document changed.",
+      "trust_follows": true
+    }
+  ],
+  "timestamp": [
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": null,
+      "sentence": "2026-08-21 12:00:00 UTC by Acme Time Authority — a separate party's claim, which tpdf did not check.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": null,
+      "sentence": "2026-08-21 12:00:00 UTC by Acme Time Authority — a separate party's claim, which tpdf did not check.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": null,
+      "sentence": "2026-08-21 12:00:00 UTC by an unnamed authority — a separate party's claim, which tpdf did not check.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": null,
+      "sentence": "2026-08-21 12:00:00 UTC by an unnamed authority — a separate party's claim, which tpdf did not check.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by Acme Time Authority — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, ECDSA P-256).",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by Acme Time Authority — the timestamp checks out under the key in its certificate and covers the signed bytes of this document (SHA-256, ECDSA P-256).",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by an unnamed authority — the timestamp checks out under the key in its certificate and covers this signature (SHA-256, ECDSA P-256).",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by an unnamed authority — the timestamp checks out under the key in its certificate and covers the signed bytes of this document (SHA-256, ECDSA P-256).",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by Acme Time Authority — the timestamp checks out under the key in its certificate and covers this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by Acme Time Authority — the timestamp checks out under the key in its certificate and covers the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by an unnamed authority — the timestamp checks out under the key in its certificate and covers this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "intact",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, attested by an unnamed authority — the timestamp checks out under the key in its certificate and covers the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by Acme Time Authority, under SHA-1 only — the timestamp checks out and covers this signature (SHA-256, ECDSA P-256), but SHA-1 collisions can be manufactured, so this does not show the time belongs to this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by Acme Time Authority, under SHA-1 only — the timestamp checks out and covers the signed bytes of this document (SHA-256, ECDSA P-256), but SHA-1 collisions can be manufactured, so this does not show the time belongs to the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by an unnamed authority, under SHA-1 only — the timestamp checks out and covers this signature (SHA-256, ECDSA P-256), but SHA-1 collisions can be manufactured, so this does not show the time belongs to this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by an unnamed authority, under SHA-1 only — the timestamp checks out and covers the signed bytes of this document (SHA-256, ECDSA P-256), but SHA-1 collisions can be manufactured, so this does not show the time belongs to the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by Acme Time Authority, under SHA-1 only — the timestamp checks out and covers this signature, but SHA-1 collisions can be manufactured, so this does not show the time belongs to this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by Acme Time Authority, under SHA-1 only — the timestamp checks out and covers the signed bytes of this document, but SHA-1 collisions can be manufactured, so this does not show the time belongs to the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by an unnamed authority, under SHA-1 only — the timestamp checks out and covers this signature, but SHA-1 collisions can be manufactured, so this does not show the time belongs to this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "weak",
+        "why": null
+      },
+      "sentence": "2026-08-21 12:00:00 UTC, by an unnamed authority, under SHA-1 only — the timestamp checks out and covers the signed bytes of this document, but SHA-1 collisions can be manufactured, so this does not show the time belongs to the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by Acme Time Authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than this signature (SHA-256, ECDSA P-256), so it attests nothing about this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by Acme Time Authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than the signed bytes of this document (SHA-256, ECDSA P-256), so it attests nothing about the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by an unnamed authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than this signature (SHA-256, ECDSA P-256), so it attests nothing about this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by an unnamed authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than the signed bytes of this document (SHA-256, ECDSA P-256), so it attests nothing about the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by Acme Time Authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than this signature, so it attests nothing about this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by Acme Time Authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than the signed bytes of this document, so it attests nothing about the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by an unnamed authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than this signature, so it attests nothing about this signature.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "altered",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp by an unnamed authority states 2026-08-21 12:00:00 UTC and checks out, but it covers something other than the signed bytes of this document, so it attests nothing about the signed bytes of this document.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out (SHA-256, ECDSA P-256), so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out (SHA-256, ECDSA P-256), so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out (SHA-256, ECDSA P-256), so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out (SHA-256, ECDSA P-256), so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out, so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out, so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out, so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "broken",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, but its own signature does not check out, so nothing it states can be relied on, the time included.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "SHA-256",
+        "method": "ECDSA P-256",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": null
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: no reason was given.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf does not check signatures in this format.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf does not check signatures in this format.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf does not check signatures in this format.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "format"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: tpdf does not check signatures in this format.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "range"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the signed range does not leave out exactly this signature's own value, so the signature does not protect the document the way it should.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the signature's data could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the signature's data could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the signature's data could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "unreadable"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the signature's data could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the certificate the signature names is not in it, or its key could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the certificate the signature names is not in it, or its key could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the certificate the signature names is not in it, or its key could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "certificate"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the certificate the signature names is not in it, or its key could not be read.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "algorithm"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: it uses an algorithm tpdf does not implement.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: its signed attributes are not in the form the CMS standard requires.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: its signed attributes are not in the form the CMS standard requires.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: its signed attributes are not in the form the CMS standard requires.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "attributes"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: its signed attributes are not in the form the CMS standard requires.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the document's signatures together cover more data than tpdf checks at once.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: the document's signatures together cover more data than tpdf checks at once.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the document's signatures together cover more data than tpdf checks at once.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "budget"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: the document's signatures together cover more data than tpdf checks at once.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: it does not name the certificate it was made with, as a timestamp must, or it names another one.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "Acme Time Authority",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not attested — a timestamp naming Acme Time Authority states 2026-08-21 12:00:00 UTC, and was not checked: it does not name the certificate it was made with, as a timestamp must, or it names another one.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": false,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: it does not name the certificate it was made with, as a timestamp must, or it names another one.",
+      "when": "2026-08-21 12:00:00 UTC"
+    },
+    {
+      "by": "",
+      "document": true,
+      "integrity": {
+        "digest": "",
+        "method": "",
+        "verdict": "unchecked",
+        "why": "binding"
+      },
+      "sentence": "not attested — a timestamp naming an unnamed authority states 2026-08-21 12:00:00 UTC, and was not checked: it does not name the certificate it was made with, as a timestamp must, or it names another one.",
+      "when": "2026-08-21 12:00:00 UTC"
     }
   ],
   "trust": [
@@ -1524,6 +5164,26 @@
     },
     {
       "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this Mac trusts, so an issuer this Mac trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
       "trust": {
         "standing": "trusted",
@@ -1684,6 +5344,26 @@
     },
     {
       "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this PC trusts, so an issuer this PC trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
       "trust": {
         "standing": "trusted",
@@ -1839,6 +5519,26 @@
         "standing": "trusted",
         "store": null,
         "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "trusted — the signer's certificate chains to a root this computer trusts, so an issuer this computer trusts vouches that the key belongs to the person the certificate names. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "trusted",
+        "store": null,
+        "why": "timestamping"
       },
       "until": "2027-01-02 03:04:05 UTC"
     },
@@ -2004,6 +5704,26 @@
     },
     {
       "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this Mac trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
       "trust": {
         "standing": "expired",
@@ -2159,6 +5879,26 @@
         "standing": "expired",
         "store": "windows",
         "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this PC trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": "windows",
+        "why": "timestamping"
       },
       "until": "2027-01-02 03:04:05 UTC"
     },
@@ -2324,6 +6064,26 @@
     },
     {
       "from": "",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "expired — the signer's certificate chains to a root this computer trusts, and it ran out on 2027-01-02 03:04:05 UTC. The date a signature gives is the signer's own claim, so tpdf cannot tell whether it was made before then. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "expired",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
       "trust": {
         "standing": "not_yet_valid",
@@ -2484,6 +6244,26 @@
     },
     {
       "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this Mac trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
       "trust": {
         "standing": "not_yet_valid",
@@ -2644,6 +6424,26 @@
     },
     {
       "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this PC trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
       "trust": {
         "standing": "not_yet_valid",
@@ -2799,6 +6599,26 @@
         "standing": "not_yet_valid",
         "store": null,
         "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force later. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not yet in force — the signer's certificate chains to a root this computer trusts, but it only comes into force on 2026-01-02 03:04:05 UTC. Revocation was not checked: tpdf does not go online, so a certificate its issuer has since withdrawn reads the same as one it has not.",
+      "trust": {
+        "standing": "not_yet_valid",
+        "store": null,
+        "why": "timestamping"
       },
       "until": "2027-01-02 03:04:05 UTC"
     },
@@ -2964,6 +6784,26 @@
     },
     {
       "from": "",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "not trusted — no reason was given. So nothing establishes that the key belongs to the person the certificate names.",
       "trust": {
         "standing": "untrusted",
@@ -3119,6 +6959,26 @@
         "standing": "untrusted",
         "store": "windows",
         "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": "windows",
+        "why": "timestamping"
       },
       "until": "2027-01-02 03:04:05 UTC"
     },
@@ -3284,6 +7144,26 @@
     },
     {
       "from": "",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not trusted — the authority's certificate was not issued for timestamping. So nothing establishes that the key belongs to the person the certificate names.",
+      "trust": {
+        "standing": "untrusted",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
       "trust": {
         "standing": "unchecked",
@@ -3439,6 +7319,26 @@
         "standing": "unchecked",
         "store": "mac",
         "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "mac",
+        "why": "timestamping"
       },
       "until": "2027-01-02 03:04:05 UTC"
     },
@@ -3604,6 +7504,26 @@
     },
     {
       "from": "",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": "windows",
+        "why": "timestamping"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
       "sentence": "not checked — no reason was given. This says nothing either way about who holds the key.",
       "trust": {
         "standing": "unchecked",
@@ -3759,6 +7679,26 @@
         "standing": "unchecked",
         "store": null,
         "why": "unavailable"
+      },
+      "until": "2027-01-02 03:04:05 UTC"
+    },
+    {
+      "from": "",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "timestamping"
+      },
+      "until": ""
+    },
+    {
+      "from": "2026-01-02 03:04:05 UTC",
+      "sentence": "not checked — the authority's certificate was not issued for timestamping. This says nothing either way about who holds the key.",
+      "trust": {
+        "standing": "unchecked",
+        "store": null,
+        "why": "timestamping"
       },
       "until": "2027-01-02 03:04:05 UTC"
     }

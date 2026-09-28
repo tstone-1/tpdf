@@ -37,7 +37,14 @@
  * read as a verdict about the signer.
  */
 
-import { integrityRow, trustRow, type Integrity, type Trust } from "./integrity";
+import {
+  authorityRow,
+  integrityRow,
+  timestampRow,
+  trustRow,
+  type Integrity,
+  type Trust,
+} from "./integrity";
 
 /** One `/Info` entry, as `docinfo.rs` reports it. */
 export interface Field {
@@ -107,12 +114,21 @@ export interface Signature {
  * What a timestamp authority attested, as `docinfo::Timestamp` reports it.
  *
  * A signature's own date is whatever the signer's computer clock read. This is
- * a different party's statement, and it is still unverified --- see
- * [`NOT_CHECKED`].
+ * a different party's statement, checked in the worker since 2026-09-28:
+ * `integrity` says whether the token is sound and covers this signature,
+ * `trust` whether the store vouches for the authority, and `attested` whether
+ * `when` is anything more than what the token states.
  */
 export interface Timestamp {
+  /** The time the token states. Attested only when `attested` is true. */
   when: string;
   authority: Certificate | null;
+  /** The token's verdict; `null` only for a token nothing checked. */
+  integrity: Integrity | null;
+  /** The authority's standing, for timestamping; `null` unless `attested`. */
+  trust: Trust | null;
+  /** Whether the verdict is intact or weak, decided in the worker. */
+  attested: boolean;
 }
 
 /**
@@ -215,9 +231,11 @@ export const NOT_CHECKED =
   "looks for no revocation and fetches no missing certificate, and it cannot " +
   "tell whether the certificate was in date when it was used, because the " +
   "signing date is the signer's own claim. What a certificate states its key " +
-  "is for is the issuer's own word. Nor is a timestamp checked: its own " +
-  "signature, the authority behind it, and whether it covers this signature " +
-  "at all are all unexamined. Nothing here means the signature is valid.";
+  "is for is the issuer's own word. A timestamp's own signature and whether " +
+  "it covers this signature are checked, and its authority is asked about as " +
+  "the signer is, but the signer's certificate is still judged at the present " +
+  "moment rather than at the time the timestamp attests. Nothing here means " +
+  "the signature is valid.";
 
 /**
  * Words that would read as a verdict on a signature.
@@ -626,15 +644,15 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   // `/M` is written by the machine doing the signing and nothing checks it,
   // while a token is a third party's statement. Naming the authority is the
   // whole value of the row --- an attested time with no attester named is a
-  // number a reader has no way to weigh.
+  // number a reader has no way to weigh --- and the verdict is in the same
+  // sentence, because a time and whether it is attested are one answer.
   const stamp = signature.timestamp;
   if (stamp?.when) {
-    const by =
-      stamp.authority?.subject_cn || stamp.authority?.subject || "an unnamed authority";
-    rows.push({
-      name: "Timestamped",
-      value: `${stamp.when} by ${by} — a separate party's claim, which tpdf does not check`,
-    });
+    const by = stamp.authority?.subject_cn || stamp.authority?.subject || "";
+    const document = signature.kind === "ETSI.RFC3161";
+    rows.push(timestampRow(stamp.when, by, stamp.integrity, document));
+    const authority = authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
+    if (authority) rows.push(authority);
   }
   rows.push(coverageOf(signature, bytes));
   // Directly under Covers, which is the row it completes: that one says how much

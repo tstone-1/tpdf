@@ -201,7 +201,7 @@ mod platform_tests {
                     let v = &c.tbs_certificate.validity;
                     v.not_before.to_unix_duration().as_secs() < now
                         && now < v.not_after.to_unix_duration().as_secs()
-                        && serves_documents(&c) == Some(true)
+                        && serves(&c, Purpose::Documents) == Some(true)
                 })
             })
             .expect("a system root in its dates");
@@ -280,6 +280,67 @@ mod platform_tests {
             of_blob(&blob_of_any(&whole), NOW, Anchors::System),
             untrusted(Doubt::Root)
         );
+    }
+}
+
+// ---------------------------------------------- timestamp tokens' authorities
+
+#[cfg(any(target_os = "macos", windows))]
+mod authority_tests {
+    use super::*;
+    use crate::integrity::test_tsa::{mint, Imprint, TestTsa, EMAIL_PROTECTION};
+
+    fn token(tsa: &TestTsa) -> Vec<u8> {
+        mint(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(b"x"),
+            None,
+            NOW,
+            tsa,
+        )
+    }
+
+    #[test]
+    fn a_minted_authority_chains_to_its_root_for_timestamping() {
+        // The control: the minter's authority, anchored at its own root, is
+        // what increment B's fake timestamp authority will present.
+        let tsa = TestTsa::new();
+        let roots = std::slice::from_ref(&tsa.root);
+        assert_eq!(
+            of_blob_for(
+                &token(&tsa),
+                Purpose::Timestamping,
+                NOW,
+                Anchors::Only(roots)
+            ),
+            trusted()
+        );
+        // And with no anchor the chain stops short: the token carries the
+        // authority's certificate and not the root, so the root's absence is
+        // a missing link rather than an untrusted root (`docs/TRAPS.md`, *A
+        // signature that does not carry its root reads as a missing link*).
+        assert_eq!(
+            of_blob_for(&token(&tsa), Purpose::Timestamping, NOW, Anchors::Only(&[])),
+            untrusted(Doubt::Incomplete)
+        );
+    }
+
+    #[test]
+    fn an_authority_not_issued_for_timestamping_is_not_trusted_for_it() {
+        for purposes in [None, Some(&[EMAIL_PROTECTION][..])] {
+            let tsa = TestTsa::with_purposes(purposes);
+            let roots = std::slice::from_ref(&tsa.root);
+            assert_eq!(
+                of_blob_for(
+                    &token(&tsa),
+                    Purpose::Timestamping,
+                    NOW,
+                    Anchors::Only(roots)
+                ),
+                untrusted(Doubt::Timestamping),
+                "{purposes:?}"
+            );
+        }
     }
 }
 
@@ -375,6 +436,69 @@ fn the_purpose_is_asked_of_a_trusted_chain_and_an_expired_one() {
             trusted()
         );
     }
+}
+
+#[test]
+fn a_timestamp_authority_must_name_timestamping_alone_and_critical() {
+    // RFC 3161 §2.3 makes the purpose a requirement, not a restriction: the
+    // certificate that restricts nothing is trusted for documents and not for
+    // timestamping, which is the one case where the two purposes part.
+    let ask = |purposes: Option<Vec<&'static str>>, purpose: Purpose| {
+        judge_for(
+            &leaf(NOW - DAY, NOW + DAY, purposes),
+            purpose,
+            NOW,
+            scripted(|_| true, Doubt::Rejected),
+        )
+    };
+    let stamping = "1.3.6.1.5.5.7.3.8";
+    assert_eq!(ask(Some(vec![stamping]), Purpose::Timestamping), trusted());
+    // Among others is not enough: RFC 3161 §2.3 asks for it alone, and
+    // OpenSSL enforces that.
+    assert_eq!(
+        ask(
+            Some(vec!["1.3.6.1.5.5.7.3.4", stamping]),
+            Purpose::Timestamping
+        ),
+        untrusted(Doubt::Timestamping)
+    );
+    // Alone but not critical is not enough either, for the same section.
+    let mut relaxed = leaf(NOW - DAY, NOW + DAY, Some(vec![stamping]));
+    for extension in relaxed.tbs_certificate.extensions.iter_mut().flatten() {
+        if extension.extn_id.to_string() == "2.5.29.37" {
+            extension.critical = false;
+        }
+    }
+    assert_eq!(
+        judge_for(
+            &relaxed,
+            Purpose::Timestamping,
+            NOW,
+            scripted(|_| true, Doubt::Rejected),
+        ),
+        untrusted(Doubt::Timestamping)
+    );
+    assert_eq!(
+        ask(None, Purpose::Timestamping),
+        untrusted(Doubt::Timestamping)
+    );
+    assert_eq!(
+        ask(Some(vec!["1.3.6.1.5.5.7.3.4"]), Purpose::Timestamping),
+        untrusted(Doubt::Timestamping)
+    );
+    // `anyExtendedKeyUsage` names no purpose in particular, and a timestamp
+    // authority is required to name this one.
+    assert_eq!(
+        ask(Some(vec!["2.5.29.37.0"]), Purpose::Timestamping),
+        untrusted(Doubt::Timestamping)
+    );
+    // The same certificates, for documents: no stated purpose restricts
+    // nothing, and a timestamping-only certificate is not one to sign with.
+    assert_eq!(ask(None, Purpose::Documents), trusted());
+    assert_eq!(
+        ask(Some(vec![stamping]), Purpose::Documents),
+        untrusted(Doubt::Purpose)
+    );
 }
 
 #[test]

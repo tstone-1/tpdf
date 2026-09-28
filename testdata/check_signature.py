@@ -33,6 +33,13 @@ against it:
 
 `intact` and `valid` are pyhanko's two halves of what tpdf calls intact: the
 digest over the byte range, and the signature over the signed attributes.
+`timestamp` is `null` for a signature carrying no RFC 3161 token, and otherwise
+the same two halves for the token --- `intact` covering both its own content
+digest and its imprint of the signature, which pyHanko does not separate ---
+with `time`, `md` and `crypto_constraints`. `document_timestamp` is true for a
+field whose `/Contents` is itself a token (`/SubFilter /ETSI.RFC3161`), which
+pyHanko reads with `validate_pdf_timestamp`; its `intact` and `valid` are the
+token's.
 `crypto_constraints` is pyhanko's `CRYPTO_CONSTRAINTS_FAILURE` --- an algorithm
 its policy disallows, which for these fixtures is SHA-1. `reason` and `location`
 are the signature dictionary's `/Reason` and `/Location` as pyhanko decodes them
@@ -114,7 +121,11 @@ def verdicts(path: str) -> "list[dict[str, object]]":
     and the signature value, never whether a throwaway key chains to anything.
     """
     from pyhanko.pdf_utils.reader import PdfFileReader
-    from pyhanko.sign.validation import validate_pdf_signature
+    from pyhanko.sign.validation import validate_pdf_signature, validate_pdf_timestamp
+
+    def constrained(status: object) -> bool:
+        indicator = getattr(status, "trust_problem_indic", None)
+        return getattr(indicator, "name", "") == "CRYPTO_CONSTRAINTS_FAILURE"
 
     with open(path, "rb") as handle:
         reader = PdfFileReader(handle, strict=False)
@@ -125,10 +136,14 @@ def verdicts(path: str) -> "list[dict[str, object]]":
             reader.decrypt("")
         out = []
         for sig in reader.embedded_signatures:
-            status = validate_pdf_signature(sig)
-            indicator = getattr(status, "trust_problem_indic", None)
+            document_timestamp = sig.sig_object_type == "/DocTimeStamp"
+            if document_timestamp:
+                status = validate_pdf_timestamp(sig)
+            else:
+                status = validate_pdf_signature(sig)
             reason = sig.sig_object.get("/Reason")
             location = sig.sig_object.get("/Location")
+            token = getattr(status, "timestamp_validity", None)
             out.append(
                 {
                     "field": sig.field_name,
@@ -137,10 +152,19 @@ def verdicts(path: str) -> "list[dict[str, object]]":
                     "coverage": getattr(status.coverage, "name", str(status.coverage)),
                     "md": str(status.md_algorithm),
                     "mechanism": str(status.pkcs7_signature_mechanism),
-                    "crypto_constraints": getattr(indicator, "name", "")
-                    == "CRYPTO_CONSTRAINTS_FAILURE",
+                    "crypto_constraints": constrained(status),
                     "reason": None if reason is None else str(reason),
                     "location": None if location is None else str(location),
+                    "document_timestamp": document_timestamp,
+                    "timestamp": None
+                    if token is None
+                    else {
+                        "intact": bool(token.intact),
+                        "valid": bool(token.valid),
+                        "time": token.timestamp.isoformat(),
+                        "md": str(token.md_algorithm),
+                        "crypto_constraints": constrained(token),
+                    },
                 }
             )
         return out

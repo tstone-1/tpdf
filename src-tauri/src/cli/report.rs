@@ -136,6 +136,32 @@ pub struct Signature {
     /// Whether the OS trust store vouches for the signer; `null` unless
     /// `integrity.verdict` is `intact` or `weak`.
     pub trust: Option<TrustReport>,
+    /// The RFC 3161 timestamp the signature carries, or that a document
+    /// timestamp is; `null` for a signature with none. Added to schema 1 on
+    /// 2026-09-28, which the schema's own rule permits: a new key.
+    pub timestamp: Option<TimestampReport>,
+}
+
+/// `docinfo::Timestamp`, with the sentences the application shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimestampReport {
+    /// The time the token states, `YYYY-MM-DD HH:MM:SS UTC`. **Attested only
+    /// when [`TimestampReport::attested`] is true.**
+    pub time: String,
+    /// The authority, from its certificate (common name, or whole name), or
+    /// empty when the token carries none.
+    pub authority: String,
+    /// Whether the time is attested: the token checks out and covers what it
+    /// is attached to (`integrity.verdict` is `intact` or `weak`).
+    pub attested: bool,
+    /// Whether the token is sound and covers this signature, or for a
+    /// document timestamp the signed bytes; `sentence` is the properties
+    /// dialog's Timestamped row, word for word.
+    pub integrity: IntegrityReport,
+    /// Whether the OS trust store vouches for the authority, for timestamping;
+    /// `null` unless `attested`. `sentence` is the dialog's Timestamp
+    /// authority row.
+    pub trust: Option<TrustReport>,
 }
 
 /// `integrity::Integrity`, with the sentence the application shows.

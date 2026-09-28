@@ -4496,8 +4496,8 @@ MUTATIONS += [
         # prose too and this is the only check that can go red.
         "readme: claim a command as built inside the not-built list",
         "README.md",
-        "- Timestamped and long-term-validation signatures, certification signatures, and",
-        "- Timestamped and long-term-validation signatures, <!-- built: file.print --> certification signatures, and",
+        "- Adding a timestamp when signing, long-term-validation signatures, certification",
+        "- Adding a timestamp when signing, <!-- built: file.print --> long-term-validation signatures, certification",
         "keeps the absence claims out of the prose and the built claims out of the list",
     ),
     Mutation(
@@ -6337,13 +6337,39 @@ MUTATIONS += [
         "puts a claim in the file section of the readout",
     ),
     Mutation(
-        # Show the attested time with no authority named and no disclaimer. It
-        # then reads as tpdf vouching for the moment.
+        # Show the attested time with no authority named and nothing said
+        # about what was checked. It then reads as a bare fact.
         "timestamp: state an attested time as a bare fact",
+        "src/lib/integrity.ts",
+        """          `${when}, attested by ${authority} — the timestamp checks out under the key ` +
+          `in its certificate and covers ${subject}${how(integrity)}.`,""",
+        "          when,",
+        "names the authority beside the time, and says the time is attested",
+    ),
+    Mutation(
+        # Call a broken token's time attested: the words undo the verdict the
+        # worker reached before it believed the time.
+        "timestamp: call a broken token's time attested",
+        "src/lib/integrity.ts",
+        "          `not attested — a timestamp naming ${authority} states ${when}, but its own ` +",
+        "          `${when}, attested by ${authority} — but its own ` +",
+        "calls the time attested only when the token is intact or weak",
+    ),
+    Mutation(
+        # Leave the authority's standing out of the readout.
+        "timestamp: drop the authority's standing",
         "src/lib/properties.ts",
-        '      value: `${stamp.when} by ${by} — a separate party\'s claim, which tpdf does not check`,',
-        "      value: stamp.when,",
-        "names the authority beside the time, and says it is unchecked",
+        "    if (authority) rows.push(authority);",
+        "",
+        "puts the authority's standing under the time, and only when there is one",
+    ),
+    Mutation(
+        # Word a document timestamp as a signature's.
+        "timestamp: word a document timestamp as a signature's",
+        "src/lib/properties.ts",
+        '    const document = signature.kind === "ETSI.RFC3161";',
+        "    const document = false;",
+        "says a document timestamp covers the document, not a signature",
     ),
     Mutation(
         # Drop the row when the token names no authority. A time worth less is

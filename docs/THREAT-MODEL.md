@@ -2388,6 +2388,49 @@ modules), against a positive control in which a process that loads the DLL read 
 The workers refused the module query after their first moments, which is consistent with their
 token and is not evidence about what they map.
 
+#### T6.24 — Checking a timestamp token, added 2026-09-28
+
+**What changed.** A signature's RFC 3161 token (the unsigned attribute
+1.2.840.113549.1.9.16.2.14) and a document timestamp's `/Contents` were read for their time
+and their authority's certificate and nothing else. `integrity/token.rs` now checks them:
+the token's own CMS signature, its `messageDigest` against its `TSTInfo`, its ESS binding to the
+authority's certificate, and its `messageImprint` against the signature's value octets or a
+document timestamp's range (`docs/PLAN.md` §9, *Is the timestamp intact*). Its authority is
+then asked about through the OS store (§T6.22) with the timestamping purpose.
+
+**Where it runs, and what bounds it.** In the worker, from `docinfo::scan_from`, on bytes that
+went through the same bounded preparation as the signature's: the token is inside the
+`/Contents` blob `signature_contents` already capped at `MAX_SIG_BLOB` and walked to definite
+length, or it *is* that blob for a document timestamp. New parsing on attacker-chosen bytes,
+all of it in the worker: the token's `SignedData` (`cms`), the `TSTInfo`'s first three fields
+read positionally with each type checked, and the ESS attributes (`der`'s derived decoders). The
+public-key operations are the ones `integrity.rs` already performs, under the same key-size
+ceilings. Hashing is charged to the document's `MAX_HASHED` before it happens --- a document
+timestamp's imprint is over nearly the whole file --- so a token cannot make the worker hash
+more than a signature could. A document timestamp's range passes `integrity::covered` before
+anything is hashed, the rule that refuses the wrapping attack's shape for a signature.
+
+**What reaches the OS store.** For a token that is `intact` or `weak` only, its certificate
+set, re-encoded and bounded exactly as a signer's is --- so residual 25 now covers a second
+set of certificates per timestamped signature, not a new kind of exposure.
+
+**What a verdict claims.** `intact` and `weak` make the token's `genTime` an attested time:
+the authority whose key the token names said this signature (or these bytes) existed then.
+`attested` is set in the worker and read by the dialog and the command-line tool, so a broken
+token's time --- which is the token's word and nothing more --- is never shown as attested. It
+does not claim the authority is anybody in particular: that is the standing, `trusted` only
+when the store vouches for its certificate **for timestamping** and **now**. It does not claim
+the signer's certificate was in force at `genTime`: the signer is still judged at the present.
+
+**No network authority is added.** Checking reads only what the file carries; the updater stays
+the only network authority (§T9). Requesting a token is Phase 6 step 3's increment B and is
+where that changes.
+
+**Residual: an attacker who holds a key a trusted issuer certified for timestamping** can mint
+a token stating any time, for any signature, and it reads `intact` and `trusted`. That is what
+trusting a timestamp authority means, and the same is true of every reader of RFC 3161 tokens;
+listed as residual risk 28 together with the moment the authority is judged at.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -3771,6 +3814,16 @@ which is what makes it evidence rather than a milestone.
     everything. Bounded by the contract: 0 is
     the only code that means proved clean, the README's table says so, and the report's
     `verified` is `null`, `false` or `true`, never absent. Not closable by tpdf.
+
+28. **A timestamp's time is attested by whoever holds a timestamping key the store trusts, and
+    the authority is judged now** (§T6.24), added 2026-09-28. A token that checks out is the
+    authority's statement, and the authority can state any time; that is what a timestamp is.
+    tpdf judges the authority's certificate at the present moment, with no revocation data, so
+    a timestamping key compromised and revoked since reads the same as one that never was, and
+    an authority whose certificate has expired since reads `expired` even when the token was
+    made well inside its dates. Bounded by the standing's own words --- judged now, revocation
+    not checked --- and by the time being called attested only beside a sound token. Not closed:
+    closing it is long-term validation, revocation data from `genTime`, which needs the network.
 
 ## 8. How to re-verify any of this
 

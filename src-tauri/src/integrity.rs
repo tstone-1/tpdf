@@ -67,6 +67,15 @@
 //! `/Contents`. Anything else is [`Why::Range`], never a verdict about bytes the
 //! signature does not protect.
 //!
+//! ## Timestamp tokens
+//!
+//! An RFC 3161 token is itself a CMS signature, over a `TSTInfo` rather than
+//! the document, so [`token`] checks one with this module's signer machinery
+//! ([`Signer`] read as `Shape::Token`) and then asks what only a token asks:
+//! whether its imprint is of the thing it is attached to, and whether it binds
+//! its authority's certificate. A document timestamp (`ETSI.RFC3161`) reaches
+//! it through [`check`], after the same range rule as a detached signature.
+//!
 //! ## Where this runs
 //!
 //! In the worker, like every other parser here: [`crate::docinfo::scan_from`]
@@ -77,6 +86,14 @@
 use cms::content_info::ContentInfo;
 use cms::signed_data::SignedData;
 use der::{Decode, Encode};
+
+pub mod token;
+
+// The software timestamp authority the tests mint tokens with. Test-only, and
+// not a crate module in a release build at all; `tests/cli.rs` includes the
+// same file by path, which is how both reach it the same way (see its note).
+#[cfg(test)]
+pub(crate) mod test_tsa;
 
 /// The most bytes hashed for all the signatures of one document together.
 ///
@@ -163,6 +180,11 @@ pub enum Why {
     /// The document's signatures together asked for more hashing than
     /// [`MAX_HASHED`].
     Budget,
+    /// A timestamp token that does not bind itself to the certificate it
+    /// carries: no ESS `signingCertificate` or `signingCertificateV2`
+    /// attribute, or one naming a different certificate. RFC 3161 §2.4.1
+    /// requires it. Only ever a token's reason; see [`token`].
+    Binding,
 }
 
 impl Integrity {
@@ -194,18 +216,27 @@ pub fn check(
     budget: &mut u64,
 ) -> Integrity {
     // The detached CMS subfilters are the ones where the blob signs the bytes
-    // of the range directly. Every other one needs a different computation,
+    // of the range directly. A document timestamp's blob is a token whose
+    // imprint is over those same bytes --- a different computation, done in
+    // [`token`]. Every other one needs a computation this does not carry,
     // and a signature checked by the wrong computation is not checked.
-    if !matches!(kind, "adbe.pkcs7.detached" | "ETSI.CAdES.detached") {
+    let document_timestamp = kind == "ETSI.RFC3161";
+    if !document_timestamp && !matches!(kind, "adbe.pkcs7.detached" | "ETSI.CAdES.detached") {
         return Integrity::unchecked(Why::Format);
     }
+    // The same vouching rule for both: a token's imprint over a range that
+    // leaves something else uncovered would be a timestamp of bytes the field
+    // does not protect, exactly as a detached signature's digest would be.
     let Some(pieces) = covered(bytes, range, contents) else {
         return Integrity::unchecked(Why::Range);
     };
     let Some(blob) = blob else {
         return Integrity::unchecked(Why::Unreadable);
     };
-    let Some(signer) = Signer::read(blob) else {
+    if document_timestamp {
+        return token::check(blob, token::Target::Range(&pieces), budget);
+    }
+    let Some(signer) = Signer::read(blob, Shape::Detached) else {
         return Integrity::unchecked(Why::Unreadable);
     };
     signer.judge(&pieces, budget)
@@ -339,6 +370,20 @@ enum Method {
     Ecdsa,
 }
 
+/// What the blob is expected to be.
+///
+/// A PDF signature is a **detached** `SignedData`: it carries no content, and
+/// its `messageDigest` is over the range's bytes. A timestamp token is the
+/// opposite shape: an **encapsulated** `TSTInfo`, which its `messageDigest`
+/// is over. One reader for both, so the token's signature is checked by the
+/// same arithmetic as the document's, and the only difference is where the
+/// digested bytes come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    Detached,
+    Token,
+}
+
 /// Everything about the signer that the verdict needs, read out of the blob.
 struct Signer {
     /// The digest algorithm the covered bytes and the signed attributes use.
@@ -352,6 +397,14 @@ struct Signer {
     signature: Vec<u8>,
     /// The signer's public key, as its `SubjectPublicKeyInfo` holds it.
     key: Result<Key, Why>,
+    /// The encapsulated content's octets, for a [`Shape::Token`]; `None` for a
+    /// detached signature, and for a token that carries none.
+    content: Option<Vec<u8>>,
+    /// The signed attributes, parsed, for the ESS binding a token must carry.
+    attributes: Option<x509_cert::attr::Attributes>,
+    /// The DER of the certificate `SignerInfo.sid` names, when it names one in
+    /// the blob --- what that binding's hash is compared against.
+    certificate: Option<Vec<u8>>,
 }
 
 /// A public key this can verify with.
@@ -380,7 +433,7 @@ impl Signer {
     /// field rather than returned, so a blob that is a signature is never
     /// reported as unreadable because one part of it was. [`Signer::judge`]
     /// reports them in a fixed order --- digest, method, attributes, key.
-    fn read(blob: &[u8]) -> Option<Self> {
+    fn read(blob: &[u8], shape: Shape) -> Option<Self> {
         let info = ContentInfo::from_der(blob).ok()?;
         // 1.2.840.113549.1.7.2, signed data. Anything else is not a signature.
         if info.content_type.to_string() != "1.2.840.113549.1.7.2" {
@@ -400,14 +453,23 @@ impl Signer {
 
         // A detached signature carries no content of its own. One that does is
         // signing something other than the range, and checking the range
-        // against it would be checking the wrong thing.
+        // against it would be checking the wrong thing. A token is the mirror
+        // image: its content *is* the statement, and one without it states
+        // nothing.
         let detached = signed.encap_content_info.econtent.is_none();
+        let wanted = match shape {
+            Shape::Detached => detached,
+            Shape::Token => !detached,
+        };
 
         let (signed_bytes, claimed) = match &info.signed_attrs {
-            None if detached => (None, Ok(None)),
+            // Only a detached signature may sign the digest directly. A token
+            // must carry signed attributes, because the ESS binding RFC 3161
+            // requires is one of them.
+            None if detached && shape == Shape::Detached => (None, Ok(None)),
             None => (None, Err(Why::Attributes)),
             Some(attributes) => {
-                let claimed = if detached {
+                let claimed = if wanted {
                     message_digest(attributes, &signed.encap_content_info.econtent_type)
                 } else {
                     Err(Why::Attributes)
@@ -421,10 +483,19 @@ impl Signer {
             (_, _, claimed) => claimed,
         };
 
-        let key = crate::docinfo::signer_certificate(&signed)
+        let named = crate::docinfo::signer_certificate(&signed)
             .filter(|(_, matched)| *matched)
-            .ok_or(Why::Certificate)
-            .and_then(|(certificate, _)| read_key(certificate));
+            .map(|(certificate, _)| certificate);
+        let key = named.ok_or(Why::Certificate).and_then(read_key);
+        let content = match shape {
+            Shape::Detached => None,
+            Shape::Token => signed
+                .encap_content_info
+                .econtent
+                .as_ref()
+                .and_then(|any| any.decode_as::<der::asn1::OctetString>().ok())
+                .map(|octets| octets.as_bytes().to_vec()),
+        };
 
         Some(Signer {
             hash,
@@ -433,6 +504,9 @@ impl Signer {
             claimed,
             signature: info.signature.as_bytes().to_vec(),
             key,
+            content,
+            attributes: info.signed_attrs.clone(),
+            certificate: named.and_then(|certificate| certificate.to_der().ok()),
         })
     }
 
@@ -444,11 +518,15 @@ impl Signer {
             claimed: Err(why),
             signature: Vec::new(),
             key: Err(why),
+            content: None,
+            attributes: None,
+            certificate: None,
         }
     }
 
-    /// The verdict, given the covered pieces of the file.
-    fn judge(self, pieces: &[&[u8]; 2], budget: &mut u64) -> Integrity {
+    /// The verdict, given the bytes the `messageDigest` is over: the covered
+    /// pieces of the file for a signature, the `TSTInfo` for a token.
+    fn judge(self, pieces: &[&[u8]], budget: &mut u64) -> Integrity {
         let hash = match self.hash {
             Ok(hash) => hash,
             Err(why) => return Integrity::unchecked(why),
@@ -919,6 +997,8 @@ mod tests {
             "incr-certified-3-indirect.pdf",
             "incr-timestamped.pdf",
             "incr-two-signers.pdf",
+            // A document timestamp: the token itself, checked over the range.
+            "incr-doc-timestamped.pdf",
         ] {
             let Some(bytes) = fixture(name) else { continue };
             let all = verdicts(&bytes);
@@ -1177,9 +1257,8 @@ mod tests {
     #[test]
     fn a_subfilter_this_does_not_check_is_not_checked() {
         // The raw PKCS#1 and the SHA-1-wrapped PKCS#7 sign something other
-        // than the range's bytes directly, and a document timestamp is a token
-        // rather than a signer. Checked with the detached computation, any of
-        // them would be checked wrongly.
+        // than the range's bytes directly. Checked with the detached
+        // computation, either would be checked wrongly.
         let Some(bytes) = fixture("incr-signed.pdf") else {
             return;
         };
@@ -1187,7 +1266,7 @@ mod tests {
         let raw = decode_hex(&bytes[first + 1..second - 1]).expect("hex");
         let blob = crate::ber::to_definite_length(&raw);
         let range = [start, first, second, last].map(|n| n as i64);
-        for kind in ["adbe.x509.rsa_sha1", "adbe.pkcs7.sha1", "ETSI.RFC3161", ""] {
+        for kind in ["adbe.x509.rsa_sha1", "adbe.pkcs7.sha1", ""] {
             let verdict = check(
                 &bytes,
                 &range,
@@ -1202,6 +1281,21 @@ mod tests {
                 "{kind}"
             );
         }
+        // A document timestamp is checked since 2026-09-28, as a token: so a
+        // detached signature's blob under that name is not a token and is
+        // unreadable as one --- neither `Format` nor the detached verdict.
+        let verdict = check(
+            &bytes,
+            &range,
+            &raw,
+            blob.as_deref(),
+            "ETSI.RFC3161",
+            &mut MAX_HASHED.clone(),
+        );
+        assert_eq!(
+            (verdict.verdict, verdict.why),
+            (Verdict::Unchecked, Some(Why::Unreadable))
+        );
         // And the control: the same inputs under the subfilter they were
         // written with, so the refusals above are about the name alone.
         let verdict = check(
@@ -1213,6 +1307,99 @@ mod tests {
             &mut MAX_HASHED.clone(),
         );
         assert_eq!(verdict.verdict, Verdict::Intact);
+    }
+
+    // ----------------------------------------------------- document timestamps
+
+    /// A file whose one hole holds a token minted over the bytes around it,
+    /// and the range that frames it --- a document timestamp, in miniature.
+    fn document_timestamp(faults: &test_tsa::Faults) -> (Vec<u8>, Vec<i64>, Vec<u8>) {
+        use test_tsa::{mint_with, Imprint, TestTsa};
+        let (head, tail) = (&b"%PDF-1.7 before the value "[..], &b" after the value"[..]);
+        let covered = [head, tail].concat();
+        let token = mint_with(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(&covered),
+            None,
+            1_788_220_800,
+            &TestTsa::new(),
+            faults,
+        );
+        let (file, range) = framed(head, &token, tail);
+        (file, range, token)
+    }
+
+    #[test]
+    fn a_document_timestamp_over_its_range_is_intact() {
+        // The control for the three below.
+        let (file, range, token) = document_timestamp(&Default::default());
+        let verdict = check(
+            &file,
+            &range,
+            &token,
+            Some(&token),
+            "ETSI.RFC3161",
+            &mut MAX_HASHED.clone(),
+        );
+        assert_eq!(
+            (verdict.verdict, verdict.why),
+            (Verdict::Intact, None),
+            "{verdict:?}"
+        );
+        assert_eq!(verdict.method, "ECDSA P-256");
+    }
+
+    #[test]
+    fn a_changed_byte_under_a_document_timestamp_is_altered() {
+        let (mut file, range, token) = document_timestamp(&Default::default());
+        file[3] ^= 0x20;
+        let verdict = check(
+            &file,
+            &range,
+            &token,
+            Some(&token),
+            "ETSI.RFC3161",
+            &mut MAX_HASHED.clone(),
+        );
+        assert_eq!((verdict.verdict, verdict.why), (Verdict::Altered, None));
+    }
+
+    #[test]
+    fn a_document_timestamp_whose_range_does_not_frame_its_value_is_not_checked() {
+        // One byte of the head moved into the hole, so it would go uncovered.
+        // Without the vouching rule the token would be checked over the
+        // shorter head and read as altered; the range is refused first.
+        let (file, mut range, token) = document_timestamp(&Default::default());
+        range[1] -= 1;
+        let verdict = check(
+            &file,
+            &range,
+            &token,
+            Some(&token),
+            "ETSI.RFC3161",
+            &mut MAX_HASHED.clone(),
+        );
+        assert_eq!(
+            (verdict.verdict, verdict.why),
+            (Verdict::Unchecked, Some(Why::Range))
+        );
+    }
+
+    #[test]
+    fn a_broken_document_timestamp_is_broken() {
+        let (file, range, token) = document_timestamp(&test_tsa::Faults {
+            corrupt_signature: true,
+            ..Default::default()
+        });
+        let verdict = check(
+            &file,
+            &range,
+            &token,
+            Some(&token),
+            "ETSI.RFC3161",
+            &mut MAX_HASHED.clone(),
+        );
+        assert_eq!((verdict.verdict, verdict.why), (Verdict::Broken, None));
     }
 
     #[test]

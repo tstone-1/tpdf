@@ -835,13 +835,49 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-pro
 #                                       its invented range fails the `<`...`>`
 #                                       framing first; only the unit test
 #                                       reaches that rule
+#
+# TIMESTAMPS (Phase 6 step 3, increment A, 2026-09-28). The same mode compares a
+# signature's RFC 3161 token too: check_signature.py --json reports pyHanko's
+# TimestampSignatureStatus, and a document timestamp is read with
+# validate_pdf_timestamp. Mapped as the signature is, but pyHanko's token
+# `intact` also covers the imprint, so intact=no -> altered. Two disagreements
+# are expected and are NOT on these fixtures: pyHanko calls an SHA-1 imprint
+# intact (tpdf: weak) and accepts a token with no ESS binding (tpdf: unchecked,
+# binding; OpenSSL refuses it too) -- docs/TRAPS.md has both. 2026-09-28:
+#   incr-timestamped       6/6   signature intact; token intact, same time
+#   incr-doc-timestamped   4/4   the document timestamp intact
 for f in incr-signed incr-certified-1 incr-certified-2 incr-certified-3 \
-         incr-certified-3-indirect incr-timestamped incr-two-signers \
-         signed-p256 signed-p384 signed-pss signed-sha1 signed-altered \
-         signed-broken signed-nested-field; do
+         incr-certified-3-indirect incr-timestamped incr-doc-timestamped \
+         incr-two-signers signed-p256 signed-p384 signed-pss signed-sha1 \
+         signed-altered signed-broken signed-nested-field; do
   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
       "testdata/$f.pdf" --mode integrity
 done
+
+# TIMESTAMP TOKENS AGAINST OPENSSL. The minted tokens' verdicts, held against
+# `openssl ts -verify`. The ignored unit test writes each fault's token, the
+# data they are over and the authority's root; OpenSSL then checks each. It
+# insists on an ESS binding and on an authority certificate whose extended key
+# usage is timeStamping, critical and alone, and accepts SHA-1. 2026-09-28,
+# OpenSSL 3.6.3, every line tpdf's verdict or standing except the two SHA-1
+# tokens (tpdf: weak; OpenSSL: OK):
+#   intact OK | sha1-imprint OK | sha1-signature OK | wrong-imprint "message
+#   imprint mismatch" | corrupt-signature "signature failure" | altered-content
+#   "digest failure" | no-binding "missing signing certificate attribute" |
+#   other-binding "ess cert id wrong order" | no-purpose "unsuitable
+#   certificate purpose"
+T=$(mktemp -d)
+TPDF_TOKEN_DIR="$T" cargo test --manifest-path src-tauri/Cargo.toml --lib -- \
+    --ignored write_tokens_for_openssl --nocapture
+openssl x509 -inform DER -in "$T/root.der" -out "$T/root.pem"
+for f in intact sha1-imprint sha1-signature wrong-imprint corrupt-signature \
+         altered-content no-binding other-binding; do
+  echo "--- $f"
+  openssl ts -verify -data "$T/data.bin" -in "$T/$f.tst" -token_in -CAfile "$T/root.pem"
+done
+openssl x509 -inform DER -in "$T/no-purpose-root.der" -out "$T/no-purpose-root.pem"
+openssl ts -verify -data "$T/data.bin" -in "$T/no-purpose.tst" -token_in \
+    -CAfile "$T/no-purpose-root.pem"
 
 # SIGNING (Phase 6 step 2, 2026-09-26): does what tpdf signs verify under readers
 # that did not write it? sign-probe signs through the production path ---

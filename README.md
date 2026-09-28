@@ -159,7 +159,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   its signatures checked before you are told it worked. It can be invisible, or drawn on
   the page where you place it — your saved signature image, the signer's name, the date,
   and a reason and location if you give them. It carries no timestamp, so its time is the
-  one your computer's clock said. Documents with unsaved edits, encrypted documents and
+  one your computer's clock said. A timestamp already on a signature you open is checked,
+  in the document's properties. Documents with unsaved edits, encrypted documents and
   documents certified against any change are refused. The same signing and checking is
   available from a terminal: see [Command-line tool](#command-line-tool).
   <!-- built: file.signDocument -->
@@ -545,7 +546,9 @@ the page as it is displayed:
   signature. Those options need `--visible`, and are refused without it rather than
   dropped.
 - **`verify <file.pdf>...`** says, for every signature, whether it is intact and whether this
-  computer trusts its signer, in the words of the application's properties dialog.
+  computer trusts its signer, in the words of the application's properties dialog — and, for
+  a signature carrying an RFC 3161 timestamp or a document timestamp, whether the timestamp
+  checks out and covers it, and whether this computer trusts the authority that made it.
   `--strict` makes the exit code 1 unless every document has at least one signature and every
   signature is both intact and trusted.
 - **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
@@ -730,7 +733,18 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   (for `unchecked`, else `null`), `digest`, `method` and `sentence`; and `trust`, `null`
   unless the verdict is `intact` or `weak`, with `standing` (`trusted`, `expired`,
   `not_yet_valid`, `untrusted`, `unchecked`), `why`, `store` (`mac`, `windows`, or `null`)
-  and `sentence`. Each `sentence` is the properties dialog's row, word for word.
+  and `sentence`; and `timestamp`, `null` for a signature with no timestamp, otherwise with
+  `time` (the time the timestamp states, `YYYY-MM-DD HH:MM:SS UTC`), `authority` (who made
+  it, from its certificate, empty when none could be read), `attested` (whether the time is
+  vouched for: `true` exactly when the timestamp's own verdict is `intact` or `weak` — any
+  other time is only what the timestamp states), `integrity` (as above, for the timestamp:
+  its own signature, and whether it covers this signature or, for a document timestamp, the
+  signed bytes; `why` may also be `binding`, a timestamp that does not name the certificate
+  it was made with) and `trust` (as above, for the authority and for timestamping, `null`
+  unless `attested`; `why` may also be `timestamping`, an authority whose certificate was
+  not issued for it). Revocation is not checked, and the signer's certificate is judged at
+  the present moment, not at the time a timestamp attests. Each `sentence` is the properties
+  dialog's row, word for word.
 
 Committed samples of each document are in
 [`src-tauri/testdata/cli/`](src-tauri/testdata/cli/), and a test holds this description to
@@ -762,11 +776,12 @@ unbuilt while they shipped.
   of text is on almost every page, so taking those would damage nearly every redaction. The
   same goes for a picture or a drawing sitting inside a reusable block, and for a block drawn
   inside another block. A picture on the page itself is removed, bytes included.
-- Timestamped and long-term-validation signatures, certification signatures, and
-  revocation checking. Signing exists, and so does asking this computer's trust store about
-  a signer; what a signature proves stops at the document being unchanged since it was
-  signed by the key in its certificate, and whether an issuer this computer trusts vouches
-  for that certificate today.
+- Adding a timestamp when signing, long-term-validation signatures, certification
+  signatures, and revocation checking. Signing exists, and so does asking this computer's
+  trust store about a signer, and a timestamp already on a signature is checked; what a
+  signature proves stops at the document being unchanged since it was signed by the key in
+  its certificate, and whether an issuer this computer trusts vouches for that certificate
+  today — not on the date a timestamp attests.
   <!-- not-built: file.timestampSignature -->
 - General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
   paragraph reflow and unsupported complex content streams.

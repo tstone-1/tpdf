@@ -62,7 +62,9 @@
 //! and does not claim --- above all, that "intact" is about the bytes and the
 //! key, never about who holds the key. [`Signature::trust`], since 2026-09-27,
 //! is the second, confined the same way to [`crate::trust`] and present only
-//! on top of an intact or weak first. Every other field stays a claim, and
+//! on top of an intact or weak first. A signature's timestamp carries the
+//! same two for its token and its authority since 2026-09-28
+//! ([`Timestamp`]). Every other field stays a claim, and
 //! `no_signature_field_may_carry_a_verdict` is still the compile error that
 //! makes adding one a decision rather than a drift.
 
@@ -397,13 +399,22 @@ pub struct Certificate {
 /// the same question from different places, and only one of them is anything
 /// but the signer's own word.
 ///
-/// **Still not verified.** tpdf does not check the token's own signature, build
-/// a chain to a TSA it trusts, or compare the token's message imprint against
-/// the signature it claims to cover. So this is a second claim, not a check;
-/// `properties.ts` says so where it renders it.
+/// **Checked since 2026-09-28, and [`Timestamp::when`] is still only the
+/// token's word until [`Timestamp::attested`] says otherwise.** The worker
+/// tests the token's own signature, its `messageDigest` against its `TSTInfo`,
+/// its ESS binding to the authority's certificate, and its imprint against
+/// what it is attached to --- [`crate::integrity::token`] --- and asks the OS
+/// store about the authority with the timestamping purpose. The time is an
+/// attested one only when that verdict is `intact` or `weak`; a broken token's
+/// `genTime` is carried so the reader can see what it claimed, never shown as
+/// attested. No revocation is checked, and the signer's own certificate is
+/// still judged at the present moment rather than at this time.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Timestamp {
     /// `genTime` from the token's `TSTInfo`, formatted as every date here is.
+    ///
+    /// **What the token states**, whatever its verdict. Read
+    /// [`Timestamp::attested`] before treating it as a time anybody vouched for.
     pub when: String,
     /// The certificate the token itself is signed with --- the authority's.
     ///
@@ -412,6 +423,20 @@ pub struct Timestamp {
     /// authority is its signer. No second implementation, which is what stops
     /// the two drifting into disagreeing about what a certificate says.
     pub authority: Option<Certificate>,
+    /// Whether the token is sound and covers what it is attached to: the
+    /// signature's value, or a document timestamp's signed range.
+    ///
+    /// `None` only from [`parse_timestamp_token`] on its own, which reads a
+    /// token without anything to check it against; the scan always sets it.
+    pub integrity: Option<crate::integrity::Integrity>,
+    /// Whether the authority's certificate chains to a root this OS trusts,
+    /// for timestamping. `Some` only beside an `intact` or `weak` verdict, by
+    /// the rule [`Signature::trust`] follows.
+    pub trust: Option<crate::trust::Trust>,
+    /// Whether [`Timestamp::when`] is attested: the verdict is `intact` or
+    /// `weak`. **Decided here, once, in the worker**, so the dialog and the
+    /// command-line tool read one answer rather than each restating the rule.
+    pub attested: bool,
 }
 
 /// What could not be read, so nothing here is silently partial.
@@ -1240,34 +1265,71 @@ fn read_signature(
         out.covers_whole_file = end == Some(size) && numbers.first() == Some(&0);
     }
 
-    out.certification = certification_of(document, sig);
-    out.certificate = read_certificate(document, sig, limits);
-    let integrity = integrity_of(document, sig, bytes, &strict, &out.kind, budget);
-    out.trust = attributable(&integrity).then(|| trust_of(document, sig));
-    out.integrity = Some(integrity);
-
     // A *document* timestamp is a signature whose `/Contents` is the token
     // itself rather than a CMS carrying one as an attribute --- PDF 2.0
     // §12.8.5, `/SubFilter /ETSI.RFC3161`. Its signer is the authority, so the
     // certificate read above is the TSA's; the timestamp is the whole point of
-    // the field rather than an attribute on something else.
+    // the field rather than an attribute on something else. So its trust is
+    // asked with the timestamping purpose: an authority's certificate is
+    // issued for that and nothing else, and judged for signing documents it
+    // would read as issued for the wrong thing.
     let document_timestamp = out.kind == "ETSI.RFC3161";
+    let purpose = purpose_of(&out.kind);
+
+    out.certification = certification_of(document, sig);
+    out.certificate = read_certificate(document, sig, limits);
+    // For a document timestamp this is the token's verdict: `integrity::check`
+    // vouches for the range and hands the token to `integrity::token`.
+    let integrity = integrity_of(document, sig, bytes, &strict, &out.kind, budget);
+    out.trust = attributable(&integrity).then(|| trust_of(document, sig, purpose));
+
     if let Some(blob) =
         signature_contents(document, sig, MAX_SIG_BLOB, &mut limits.timestamps_unread)
     {
         out.timestamp = if document_timestamp {
             match parse_timestamp_token(&blob) {
-                Some(timestamp) => Some(timestamp),
+                // The field's own verdict and standing *are* the token's:
+                // copied, not computed twice, so the range is hashed once.
+                Some(timestamp) => Some(Timestamp {
+                    attested: attributable(&integrity),
+                    integrity: Some(integrity.clone()),
+                    trust: out.trust.clone(),
+                    ..timestamp
+                }),
                 None => {
                     limits.timestamps_unread += 1;
                     None
                 }
             }
         } else {
-            read_timestamp(&blob, &mut limits.timestamps_unread)
+            read_timestamp(
+                &blob,
+                &mut limits.timestamps_unread,
+                budget,
+                crate::trust::Anchors::System,
+                now_seconds(),
+            )
         };
     }
+    out.integrity = Some(integrity);
     out
+}
+
+/// What a field's signer is trusted **for**: attesting a time for a document
+/// timestamp, whose signer is the authority, and signing documents otherwise.
+fn purpose_of(kind: &str) -> crate::trust::Purpose {
+    if kind == "ETSI.RFC3161" {
+        crate::trust::Purpose::Timestamping
+    } else {
+        crate::trust::Purpose::Documents
+    }
+}
+
+/// Seconds since the epoch, now: the moment every trust question is asked at.
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// Whether the signature still covers the bytes it was made over.
@@ -1305,17 +1367,22 @@ fn attributable(integrity: &crate::integrity::Integrity) -> bool {
     matches!(integrity.verdict, Verdict::Intact | Verdict::Weak)
 }
 
-/// Whether the signer's certificate chains to a root this OS trusts, now.
+/// Whether the signer's certificate chains to a root this OS trusts, now, for
+/// `purpose` --- signing documents, or attesting a time for a document
+/// timestamp, whose signer is the authority.
 ///
 /// The same bounded preparation of the same blob the verdict was read from.
 /// Its refusal is not counted here, for the reason [`integrity_of`]'s is not:
 /// a blob that would not prepare has no `intact` verdict to reach this with.
-fn trust_of(document: &Document, sig: &Dictionary) -> crate::trust::Trust {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
+fn trust_of(
+    document: &Document,
+    sig: &Dictionary,
+    purpose: crate::trust::Purpose,
+) -> crate::trust::Trust {
     match signature_contents(document, sig, MAX_SIG_BLOB, &mut 0) {
-        Some(blob) => crate::trust::of_blob(&blob, now, crate::trust::Anchors::System),
+        Some(blob) => {
+            crate::trust::of_blob_for(&blob, purpose, now_seconds(), crate::trust::Anchors::System)
+        }
         None => crate::trust::Trust::unchecked(crate::trust::Doubt::Certificate),
     }
 }
@@ -1688,7 +1755,18 @@ fn authority(extensions: &[x509_cert::ext::Extension], unread: &mut u32) -> Opti
 /// cannot happen --- a token whose `genTime` will not read is reported through
 /// `unread` and returns nothing, because a timestamp with no time is not a
 /// weaker claim, it is no claim.
-fn read_timestamp(blob: &[u8], unread: &mut usize) -> Option<Timestamp> {
+///
+/// A token that reads is then **checked** against the value octets of the
+/// signer's `signature` --- RFC 3161 Appendix A's imprint --- and its authority
+/// asked about at `now` under `anchors` when the verdict is `intact` or
+/// `weak`. `budget` is the document's; the imprint charges a few hundred bytes.
+fn read_timestamp(
+    blob: &[u8],
+    unread: &mut usize,
+    budget: &mut u64,
+    anchors: crate::trust::Anchors<'_>,
+    now: u64,
+) -> Option<Timestamp> {
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
     use der::{Decode, Encode};
@@ -1715,12 +1793,41 @@ fn read_timestamp(blob: &[u8], unread: &mut usize) -> Option<Timestamp> {
         *unread += 1;
         return None;
     };
-    match parse_timestamp_token(&token) {
-        Some(timestamp) => Some(timestamp),
-        None => {
-            *unread += 1;
-            None
-        }
+    let Some(timestamp) = parse_timestamp_token(&token) else {
+        *unread += 1;
+        return None;
+    };
+    Some(checked(
+        timestamp,
+        &token,
+        crate::integrity::token::Target::Signature(signer.signature.as_bytes()),
+        budget,
+        anchors,
+        now,
+    ))
+}
+
+/// A read token with its verdict, its authority's standing, and whether its
+/// time is attested --- in that order, and the order is the rule: nothing
+/// about the time is decided until the verdict is.
+fn checked(
+    timestamp: Timestamp,
+    token: &[u8],
+    target: crate::integrity::token::Target<'_>,
+    budget: &mut u64,
+    anchors: crate::trust::Anchors<'_>,
+    now: u64,
+) -> Timestamp {
+    let integrity = crate::integrity::token::check(token, target, budget);
+    let attested = attributable(&integrity);
+    let trust = attested.then(|| {
+        crate::trust::of_blob_for(token, crate::trust::Purpose::Timestamping, now, anchors)
+    });
+    Timestamp {
+        integrity: Some(integrity),
+        trust,
+        attested,
+        ..timestamp
     }
 }
 
@@ -1754,6 +1861,9 @@ pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
     Some(Timestamp {
         when,
         authority: parse_certificate(token),
+        integrity: None,
+        trust: None,
+        attested: false,
     })
 }
 
@@ -3297,6 +3407,10 @@ mod tests {
             // A struct of its own, with a guard of its own ---
             // `no_certificate_field_may_carry_a_verdict`.
             certificate: _,
+            // Carries the token's own verdict and its authority's standing
+            // since 2026-09-28 --- the same two types as the signature's, and
+            // the same rule: the standing only beside intact or weak, and the
+            // time attested only then (`Timestamp::attested`).
             timestamp: _,
             // Object counts and the names the file uses for them. It says what
             // an append contains, never whether the append was legitimate --
@@ -4511,6 +4625,29 @@ mod tests {
              the signer's certificate goes through"
         );
         assert_eq!(properties.limits.timestamps_unread, 0);
+        // pyHanko's dummy authority writes a sound token over this signature,
+        // bound by ESS v1: intact, and so attested. Its certificate is its own
+        // root and names no purpose, so the store is asked, and says no.
+        let integrity = timestamp.integrity.as_ref().expect("a verdict");
+        assert_eq!(
+            (integrity.verdict, integrity.why),
+            (crate::integrity::Verdict::Intact, None),
+            "{integrity:?}"
+        );
+        assert_eq!(integrity.digest, "SHA-256");
+        assert_eq!(integrity.method, "RSA");
+        assert!(timestamp.attested);
+        let trust = timestamp
+            .trust
+            .as_ref()
+            .expect("the authority is asked about");
+        if cfg!(any(target_os = "macos", windows)) {
+            assert_eq!(
+                trust.standing,
+                crate::trust::Standing::Untrusted,
+                "{trust:?}"
+            );
+        }
     }
 
     /// The attested time and the signer's own clock are two different answers.
@@ -4699,7 +4836,7 @@ mod tests {
 
         // The control first: as it stands, one value, and it reads.
         assert!(
-            read_timestamp(&blob, &mut unread).is_some(),
+            read_token(&blob, &mut unread).is_some(),
             "the unaltered blob carries a readable token"
         );
         assert_eq!(unread, 0);
@@ -4707,7 +4844,7 @@ mod tests {
         let doubled = with_a_second_timestamp_value(&blob);
         let mut unread = 0;
         assert!(
-            read_timestamp(&doubled, &mut unread).is_none(),
+            read_token(&doubled, &mut unread).is_none(),
             "two values leave nothing to choose between"
         );
         assert_eq!(unread, 1, "and the refusal is counted, not silent");
@@ -4724,12 +4861,262 @@ mod tests {
         let broken = with_broken_timestamp_attribute(&blob);
         let mut unread = 0;
 
-        assert!(read_timestamp(&broken, &mut unread).is_none());
+        assert!(read_token(&broken, &mut unread).is_none());
         assert_eq!(
             unread, 1,
             "a token nobody could read is a failure worth reporting; a \
              signature nobody timestamped is not"
         );
+    }
+
+    /// [`read_timestamp`] with the document's whole budget, no roots at all
+    /// and the tests' fixed present --- for the tests about *reading* a token,
+    /// which the verdict and the standing do not enter into.
+    fn read_token(blob: &[u8], unread: &mut usize) -> Option<Timestamp> {
+        read_timestamp(
+            blob,
+            unread,
+            &mut crate::integrity::MAX_HASHED.clone(),
+            crate::trust::Anchors::Only(&[]),
+            crate::sign_cms::testkeys::NOW,
+        )
+    }
+
+    // ------------------------------------------ the token's verdict, in place
+
+    /// The fixture's signature blob with its token replaced by `token`.
+    fn with_token(blob: &[u8], token: &[u8]) -> Vec<u8> {
+        rebuilt_with(blob, |values| {
+            *values = Default::default();
+            values
+                .insert(<der::Any as der::Decode>::from_der(token).expect("a token"))
+                .expect("one value");
+        })
+    }
+
+    /// The value octets of the fixture's `SignerInfo.signature`: what RFC 3161
+    /// Appendix A says a signature's token is an imprint of.
+    fn signature_value(blob: &[u8]) -> Vec<u8> {
+        use cms::content_info::ContentInfo;
+        use cms::signed_data::SignedData;
+        use der::Decode as _;
+        let info = ContentInfo::from_der(blob).expect("a CMS");
+        let signed: SignedData = info.content.decode_as().expect("signed data");
+        signed.signer_infos.0.as_slice()[0]
+            .signature
+            .as_bytes()
+            .to_vec()
+    }
+
+    /// The fixture's blob, with a minted token over its signature value, read
+    /// with the minting authority's root as the only one.
+    fn stamped(faults: &crate::integrity::test_tsa::Faults) -> Option<Timestamp> {
+        use crate::integrity::test_tsa::{mint_with, Imprint, TestTsa};
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return None;
+        };
+        let blob = timestamped_blob(&bytes);
+        let value = signature_value(&blob);
+        let tsa = TestTsa::new();
+        let token = mint_with(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(&value),
+            None,
+            // 2026-09-01 00:00:00 UTC.
+            1_788_220_800,
+            &tsa,
+            faults,
+        );
+        let mut unread = 0;
+        let found = read_timestamp(
+            &with_token(&blob, &token),
+            &mut unread,
+            &mut crate::integrity::MAX_HASHED.clone(),
+            crate::trust::Anchors::Only(std::slice::from_ref(&tsa.root)),
+            crate::sign_cms::testkeys::NOW,
+        );
+        assert_eq!(unread, 0, "a minted token reads");
+        Some(found.expect("a token"))
+    }
+
+    #[test]
+    fn a_sound_token_over_the_signature_value_attests_its_time() {
+        // The control for the two below: the same fixture, a token that is of
+        // this signature, and its authority's root as the anchor.
+        let Some(found) = stamped(&Default::default()) else {
+            return;
+        };
+        assert_eq!(found.when, "2026-09-01 00:00:00 UTC");
+        let integrity = found.integrity.expect("a verdict");
+        assert_eq!(
+            (integrity.verdict, integrity.why),
+            (crate::integrity::Verdict::Intact, None)
+        );
+        assert!(found.attested, "an intact token's time is attested");
+        let trust = found.trust.expect("the authority is asked about");
+        if cfg!(any(target_os = "macos", windows)) {
+            assert_eq!(trust.standing, crate::trust::Standing::Trusted, "{trust:?}");
+        }
+    }
+
+    #[test]
+    fn a_broken_tokens_time_is_not_attested_and_its_authority_not_asked() {
+        // The verdict is decided before anything about the time is: a token
+        // whose own signature fails states a time nobody vouched for.
+        let Some(found) = stamped(&crate::integrity::test_tsa::Faults {
+            corrupt_signature: true,
+            ..Default::default()
+        }) else {
+            return;
+        };
+        assert_eq!(
+            found.integrity.expect("a verdict").verdict,
+            crate::integrity::Verdict::Broken
+        );
+        assert_eq!(
+            found.when, "2026-09-01 00:00:00 UTC",
+            "what it states is kept"
+        );
+        assert!(!found.attested, "and it is not called attested");
+        assert_eq!(found.trust, None, "nor is its authority asked about");
+    }
+
+    #[test]
+    fn a_token_of_another_signature_attests_nothing_about_this_one() {
+        let Some(found) = stamped(&crate::integrity::test_tsa::Faults {
+            wrong_imprint: true,
+            ..Default::default()
+        }) else {
+            return;
+        };
+        assert_eq!(
+            found.integrity.expect("a verdict").verdict,
+            crate::integrity::Verdict::Altered
+        );
+        assert!(!found.attested);
+        assert_eq!(found.trust, None);
+    }
+
+    #[test]
+    fn an_authority_not_issued_for_timestamping_is_not_trusted_for_it() {
+        // Through the whole path: the purpose the scan asks a token's authority
+        // about is timestamping, not signing documents --- a certificate with
+        // no stated purpose would pass the second and fails the first.
+        use crate::integrity::test_tsa::{mint, Imprint, TestTsa};
+        if !cfg!(any(target_os = "macos", windows)) {
+            return;
+        }
+        let Ok(bytes) = std::fs::read("../testdata/incr-timestamped.pdf") else {
+            println!("[SKIP] incr-timestamped.pdf: not generated");
+            return;
+        };
+        let blob = timestamped_blob(&bytes);
+        let value = signature_value(&blob);
+        let tsa = TestTsa::with_purposes(None);
+        let token = mint(
+            Imprint::Sha256,
+            &Imprint::Sha256.digest(&value),
+            None,
+            1_788_220_800,
+            &tsa,
+        );
+        let found = read_timestamp(
+            &with_token(&blob, &token),
+            &mut 0,
+            &mut crate::integrity::MAX_HASHED.clone(),
+            crate::trust::Anchors::Only(std::slice::from_ref(&tsa.root)),
+            crate::sign_cms::testkeys::NOW,
+        )
+        .expect("a token");
+        assert!(found.attested, "the token itself is sound");
+        let trust = found.trust.expect("so its authority is asked about");
+        assert_eq!(
+            (trust.standing, trust.why),
+            (
+                crate::trust::Standing::Untrusted,
+                Some(crate::trust::Doubt::Timestamping)
+            )
+        );
+    }
+
+    // ------------------------------------------------- document timestamps
+
+    #[test]
+    fn a_document_timestamp_is_checked_as_a_token_over_its_range() {
+        // pyHanko's document timestamp: the field's own verdict is the token's,
+        // and the timestamp carries the same verdict and the time, attested.
+        let Ok(bytes) = std::fs::read("../testdata/incr-doc-timestamped.pdf") else {
+            println!("[SKIP] incr-doc-timestamped.pdf: not generated");
+            return;
+        };
+        let properties = scan(&bytes, 2, None).expect("the fixture must parse");
+        let [signature] = properties.signatures.as_slice() else {
+            panic!("one field: {:?}", properties.signatures);
+        };
+        assert_eq!(signature.kind, "ETSI.RFC3161");
+        let integrity = signature.integrity.as_ref().expect("a verdict");
+        assert_eq!(
+            (integrity.verdict, integrity.why),
+            (crate::integrity::Verdict::Intact, None),
+            "{integrity:?}"
+        );
+        let stamp = signature.timestamp.as_ref().expect("the token's time");
+        assert_eq!(stamp.when, "2026-08-21 12:00:00 UTC");
+        assert_eq!(
+            stamp.integrity.as_ref(),
+            Some(integrity),
+            "one verdict, not two"
+        );
+        assert!(stamp.attested);
+        assert_eq!(stamp.trust, signature.trust, "one standing, not two");
+        assert!(signature.trust.is_some(), "the authority is asked about");
+        assert_eq!(properties.limits.timestamps_unread, 0);
+    }
+
+    #[test]
+    fn a_document_timestamp_over_changed_bytes_attests_nothing() {
+        // One byte of the covered range changed, outside the token: the token
+        // is sound and is of different bytes, so the time is not attested and
+        // its authority is not asked about.
+        let Ok(mut bytes) = std::fs::read("../testdata/incr-doc-timestamped.pdf") else {
+            println!("[SKIP] incr-doc-timestamped.pdf: not generated");
+            return;
+        };
+        // The header's comment line, covered and read by nothing else.
+        let at = bytes
+            .iter()
+            .position(|b| *b == b'\n')
+            .expect("a header line")
+            + 2;
+        bytes[at] ^= 0x01;
+        let properties = scan(&bytes, 2, None).expect("still parses");
+        let signature = &properties.signatures[0];
+        assert_eq!(
+            signature.integrity.as_ref().map(|i| i.verdict),
+            Some(crate::integrity::Verdict::Altered)
+        );
+        let stamp = signature.timestamp.as_ref().expect("the token's time");
+        assert!(
+            !stamp.attested,
+            "a time of other bytes is not this document's"
+        );
+        assert_eq!(stamp.trust, None);
+        assert_eq!(signature.trust, None);
+    }
+
+    #[test]
+    fn a_document_timestamps_signer_is_trusted_for_timestamping() {
+        // The authority's certificate is issued for timestamping and nothing
+        // else, so judged for signing documents it would read as issued for
+        // the wrong thing --- and the reverse for an ordinary signature.
+        assert_eq!(
+            purpose_of("ETSI.RFC3161"),
+            crate::trust::Purpose::Timestamping
+        );
+        for kind in ["ETSI.CAdES.detached", "adbe.pkcs7.detached", ""] {
+            assert_eq!(purpose_of(kind), crate::trust::Purpose::Documents, "{kind}");
+        }
     }
 
     /// The `/Contents` blob of the timestamped fixture.

@@ -1,5 +1,6 @@
 //! `tpdf verify <file.pdf>... [--strict] [--json]`: every signature's
-//! integrity verdict and trust standing, in the properties dialog's words.
+//! integrity verdict and trust standing, and its timestamp's, in the
+//! properties dialog's words.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -112,6 +113,51 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
             ),
         },
         trust,
+        timestamp: signature
+            .timestamp
+            .as_ref()
+            .map(|stamp| timestamp_report(stamp, signature.kind == "ETSI.RFC3161")),
+    }
+}
+
+/// One timestamp, as the report shows it. `document` says it is a document
+/// timestamp, whose imprint covers the signed bytes rather than a signature.
+#[must_use]
+pub fn timestamp_report(stamp: &docinfo::Timestamp, document: bool) -> report::TimestampReport {
+    let authority = stamp.authority.as_ref();
+    let by = authority.map_or_else(String::new, |c| {
+        if c.subject_cn.is_empty() {
+            c.subject.clone()
+        } else {
+            c.subject_cn.clone()
+        }
+    });
+    let (from, until) = authority.map_or((String::new(), String::new()), |c| {
+        (c.from.clone(), c.until.clone())
+    });
+    let integrity = stamp.integrity.clone().unwrap_or_default();
+    report::TimestampReport {
+        time: stamp.when.clone(),
+        authority: by.clone(),
+        attested: stamp.attested,
+        integrity: IntegrityReport {
+            verdict: integrity.verdict,
+            why: integrity.why,
+            digest: integrity.digest.clone(),
+            method: integrity.method.clone(),
+            sentence: words::timestamp_sentence(
+                &stamp.when,
+                &by,
+                stamp.integrity.as_ref(),
+                document,
+            ),
+        },
+        trust: stamp.trust.as_ref().map(|trust| TrustReport {
+            standing: trust.standing,
+            why: trust.why,
+            store: trust.store,
+            sentence: words::authority_sentence(trust, &from, &until),
+        }),
     }
 }
 
@@ -266,6 +312,12 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
     lines.push(format!("    Integrity: {}", signature.integrity.sentence));
     if let Some(trust) = &signature.trust {
         lines.push(format!("    Trust: {}", trust.sentence));
+    }
+    if let Some(stamp) = &signature.timestamp {
+        lines.push(format!("    Timestamped: {}", stamp.integrity.sentence));
+        if let Some(trust) = &stamp.trust {
+            lines.push(format!("    Timestamp authority: {}", trust.sentence));
+        }
     }
     lines.join("\n")
 }

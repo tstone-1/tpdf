@@ -400,13 +400,18 @@ fn read(ours: &Properties, theirs: &[Theirs]) {
         // as well --- and it is the one line that says a token was found in a
         // *real* signature rather than in a fixture we wrote ourselves.
         if let Some(timestamp) = &signature.timestamp {
+            let verdict = timestamp.integrity.clone().unwrap_or_default();
             println!(
-                "    timestamped: {} by {}",
+                "    timestamped: {} by {} --- token {:?} why={:?} attested={} authority {:?}",
                 timestamp.when,
                 timestamp
                     .authority
                     .as_ref()
-                    .map_or("(unnamed)", |cert| cert.subject_cn.as_str())
+                    .map_or("(unnamed)", |cert| cert.subject_cn.as_str()),
+                verdict.verdict,
+                verdict.why,
+                timestamp.attested,
+                timestamp.trust.as_ref().map(|t| (t.standing, t.why)),
             );
         }
     }
@@ -666,6 +671,29 @@ fn expected(theirs: &serde_json::Value) -> (Verdict, Option<Why>) {
     }
 }
 
+/// The verdict tpdf must give a signature's timestamp token, for what pyHanko
+/// found about it.
+///
+/// pyHanko's token `intact` covers both the token's own content digest and its
+/// imprint of the signature, so `intact=no` maps to `altered` --- the imprint
+/// case --- and a `TSTInfo` changed after signing, which tpdf calls `broken`,
+/// would read here as a disagreement. No fixture or minted token in the
+/// oracle run has that shape (`docs/PLAN.md` §9 records it). pyHanko also
+/// accepts a token with no ESS binding, which tpdf does not; those are the
+/// two places the two readers are expected to part.
+fn expected_token(theirs: &serde_json::Value) -> Verdict {
+    let flag = |key: &str| theirs.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+    if !flag("valid") {
+        Verdict::Broken
+    } else if !flag("intact") {
+        Verdict::Altered
+    } else if flag("crypto_constraints") {
+        Verdict::Weak
+    } else {
+        Verdict::Intact
+    }
+}
+
 fn integrity(ours: &Properties, file: &Path) -> bool {
     let mut report = Report {
         passed: 0,
@@ -715,6 +743,35 @@ fn integrity(ours: &Properties, file: &Path) -> bool {
                 got.verdict, got.why, verdict, why, entry
             ),
         );
+        // The timestamp token, when either reader finds one: both must, and
+        // pyHanko's answer about it must map to tpdf's.
+        let token = entry.get("timestamp").filter(|t| !t.is_null());
+        report.check(
+            &at("both readers find a timestamp token, or neither does"),
+            token.is_some() == ours.timestamp.is_some() || ours.kind == "ETSI.RFC3161",
+            &format!("tpdf {:?}, pyHanko {token:?}", ours.timestamp.is_some()),
+        );
+        if let (Some(token), Some(stamp)) = (token, &ours.timestamp) {
+            let verdict = stamp.integrity.clone().unwrap_or_default();
+            let wanted = expected_token(token);
+            report.check(
+                &at("the token's verdict pyHanko's answer maps to"),
+                verdict.verdict == wanted,
+                &format!(
+                    "tpdf {:?}/{:?}, expected {wanted:?} from pyHanko {token}",
+                    verdict.verdict, verdict.why
+                ),
+            );
+            let time = token
+                .get("time")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            report.check(
+                &at("the same attested time"),
+                time.replace('T', " ").replace("+00:00", " UTC") == stamp.when,
+                &format!("tpdf {:?}, pyHanko {time:?}", stamp.when),
+            );
+        }
         // The digest names only where tpdf got far enough to choose one.
         if !got.digest.is_empty() {
             let md = entry

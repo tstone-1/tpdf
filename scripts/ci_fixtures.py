@@ -164,6 +164,9 @@ SIGNED: list[tuple[str, list[str]]] = [
         "incr-certified-3",
         "incr-certified-3-indirect",
         "incr-timestamped",
+        # A document timestamp, 2026-09-28: the token is the field's whole
+        # value, and `integrity/token.rs` checks its imprint over the range.
+        "incr-doc-timestamped",
         "incr-two-signers",
         "incr-ber",
         "signed-nested-field",

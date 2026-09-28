@@ -92,7 +92,19 @@
           ],
           "authority": false,
           "extensions_unread": 1
-        }
+        },
+        "integrity": {
+          "verdict": "unchecked",
+          "why": "binding",
+          "digest": "SHA-256",
+          "method": "ECDSA P-256"
+        },
+        "trust": {
+          "standing": "untrusted",
+          "why": "timestamping",
+          "store": "mac"
+        },
+        "attested": true
       },
       "integrity": {
         "verdict": "unchecked",

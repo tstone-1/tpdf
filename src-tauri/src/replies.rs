@@ -216,9 +216,23 @@ fn samples() -> BTreeMap<&'static str, String> {
                 }),
                 certification: 1,
                 certificate: Some(certificate()),
+                // Every key set, for the reason the verdict below is: a
+                // `None` writes a `null` the mirror cannot tell from a typo.
                 timestamp: Some(docinfo::Timestamp {
                     when: "2026-01-02T03:04:06Z".into(),
                     authority: Some(certificate()),
+                    integrity: Some(crate::integrity::Integrity {
+                        verdict: crate::integrity::Verdict::Unchecked,
+                        why: Some(crate::integrity::Why::Binding),
+                        digest: "SHA-256".into(),
+                        method: "ECDSA P-256".into(),
+                    }),
+                    trust: Some(crate::trust::Trust {
+                        standing: crate::trust::Standing::Untrusted,
+                        why: Some(crate::trust::Doubt::Timestamping),
+                        store: Some(crate::trust::Store::Mac),
+                    }),
+                    attested: true,
                 }),
                 // `Unchecked` with a reason, so the sample carries every key the
                 // mirror has --- `why` is `null` on every other verdict, and a

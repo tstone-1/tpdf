@@ -18,6 +18,13 @@
 //!    an earlier signature too. The key is this file's; nothing touches a
 //!    keychain or a certificate store. Controls: a key that signs the wrong
 //!    digest is refused and writes nothing; so is an encrypted document.
+//!    **And a timestamp on it** (`timestamp_reads_back`): a token minted by
+//!    the software authority `src/integrity/test_tsa.rs` --- included here by
+//!    path --- spliced in as a timestamp authority's answer would be, reads
+//!    intact and attested from the built tool; damaged, of another signature,
+//!    SHA-1 and unbound, it reads broken, altered, weak and unchecked, the
+//!    time attested only for the two that earn it. The in-process reader
+//!    agrees on every one.
 //! 3. **The tool's own process never maps PDFium, and its workers do** (macOS:
 //!    `DYLD_PRINT_LIBRARIES` on the built binary, separated by pid; both
 //!    platforms: this process's own module list after `cli::run` has verified a
@@ -75,6 +82,11 @@ mod forms;
 // `redact`, for the same reason.
 #[path = "cli/redact.rs"]
 mod redact;
+// The software timestamp authority the library's unit tests mint tokens with,
+// included by path because this binary links the library as a release
+// consumer does and cannot see a `#[cfg(test)]` module (`test_tsa.rs`'s note).
+#[path = "../src/integrity/test_tsa.rs"]
+mod test_tsa;
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
@@ -87,11 +99,15 @@ fn main() {
     }
     // The order is load-bearing: 3 asserts this process has not mapped PDFium,
     // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 12] = [
+    let checks: [Check; 13] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
             sign_reads_back,
+        ),
+        (
+            "a timestamp minted by the test authority reads back through the tool",
+            timestamp_reads_back,
         ),
         ("the tool's process never maps PDFium", never_maps_pdfium),
         ("the tool's workers are sandboxed", workers_are_sandboxed),
@@ -193,8 +209,9 @@ fn tool(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
 
 // --- 1 ----------------------------------------------------------------------
 
-const SIGNED: [&str; 14] = [
+const SIGNED: [&str; 15] = [
     "incr-signed.pdf",
+    "incr-doc-timestamped.pdf",
     "incr-two-signers.pdf",
     "incr-certified-1.pdf",
     "incr-certified-2.pdf",
@@ -210,8 +227,10 @@ const SIGNED: [&str; 14] = [
     "signed-sha1.pdf",
 ];
 
-/// One signature's verdicts, as `(field, verdict, why, standing, doubt)`.
-type Line = (String, String, String, String, String);
+/// One signature's verdicts, as `(field, verdict, why, standing, doubt,
+/// timestamp)` --- the last the token's verdict, reason, whether its time is
+/// attested and its authority's standing, joined, or empty with no token.
+type Line = (String, String, String, String, String, String);
 
 fn in_process(path: &Path) -> Vec<Line> {
     use tpdf_lib::save::Verifier as _;
@@ -235,12 +254,24 @@ fn in_process(path: &Path) -> Vec<Line> {
                     text(serde_json::to_value(t.why).expect("json")),
                 )
             });
+            let stamp = s.timestamp.map_or_else(String::new, |t| {
+                let verdict = t.integrity.unwrap_or_default();
+                stamp_line(
+                    &text(serde_json::to_value(verdict.verdict).expect("json")),
+                    &text(serde_json::to_value(verdict.why).expect("json")),
+                    t.attested,
+                    &t.trust.map_or_else(String::new, |t| {
+                        text(serde_json::to_value(t.standing).expect("json"))
+                    }),
+                )
+            });
             (
                 s.field,
                 text(serde_json::to_value(integrity.verdict).expect("json")),
                 text(serde_json::to_value(integrity.why).expect("json")),
                 standing,
                 doubt,
+                stamp,
             )
         })
         .collect()
@@ -253,15 +284,32 @@ fn from_json(file: &serde_json::Value) -> Vec<Line> {
         .expect("signatures")
         .iter()
         .map(|s| {
+            let t = &s["timestamp"];
+            let stamp = if t.is_null() {
+                String::new()
+            } else {
+                stamp_line(
+                    &text(&t["integrity"]["verdict"]),
+                    &text(&t["integrity"]["why"]),
+                    t["attested"].as_bool().unwrap_or_default(),
+                    &text(&t["trust"]["standing"]),
+                )
+            };
             (
                 text(&s["field"]),
                 text(&s["integrity"]["verdict"]),
                 text(&s["integrity"]["why"]),
                 text(&s["trust"]["standing"]),
                 text(&s["trust"]["why"]),
+                stamp,
             )
         })
         .collect()
+}
+
+/// A token's line, as both readers spell it.
+fn stamp_line(verdict: &str, why: &str, attested: bool, standing: &str) -> String {
+    format!("{verdict}/{why}/attested={attested}/{standing}")
 }
 
 fn verify_agrees(report: &mut Report) {
@@ -349,6 +397,192 @@ fn verify_agrees(report: &mut Report) {
         code == 1 && stdout.contains("\"strict_passed\": false"),
         &format!("exit {code}"),
     );
+}
+
+// --- 2b: a timestamp through the tool ----------------------------------------
+
+/// The one signature's `/ByteRange` numbers in `bytes`.
+fn byte_range(bytes: &[u8]) -> [usize; 4] {
+    // tpdf writes `/ByteRange[` with no space, pyHanko with one.
+    let at = bytes
+        .windows(10)
+        .position(|w| w == b"/ByteRange")
+        .expect("a /ByteRange");
+    let open = at + bytes[at..].iter().position(|b| *b == b'[').expect("[");
+    let close = open + bytes[open..].iter().position(|b| *b == b']').expect("]");
+    let numbers: Vec<usize> = std::str::from_utf8(&bytes[open + 1..close])
+        .expect("ascii")
+        .split_whitespace()
+        .map(|n| n.parse().expect("an integer"))
+        .collect();
+    numbers.try_into().expect("four numbers")
+}
+
+/// `bytes`, one signature, with `token` added as that signature's
+/// `id-aa-timeStampToken` unsigned attribute --- where a timestamp authority's
+/// answer goes, and outside everything the signature covers, so the signature
+/// is untouched. `token_for` is handed the signature value and mints the token.
+fn with_timestamp(bytes: &[u8], token_for: impl FnOnce(&[u8]) -> Vec<u8>) -> Vec<u8> {
+    use cms::content_info::ContentInfo;
+    use cms::signed_data::{SignedData, SignerInfos};
+    use der::{Decode as _, Encode as _};
+
+    let [_, first, second, _] = byte_range(bytes);
+    let hex = &bytes[first + 1..second - 1];
+    let raw: Vec<u8> = hex
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).expect("hex"), 16).expect("hex"))
+        .collect();
+    let mut reader = der::SliceReader::new(&raw).expect("a reader");
+    let info = ContentInfo::decode(&mut reader).expect("a CMS, then padding");
+    let mut signed: SignedData = info.content.decode_as().expect("signed data");
+    let mut signer = signed.signer_infos.0.as_slice()[0].clone();
+    let token = token_for(signer.signature.as_bytes());
+    let attribute = x509_cert::attr::Attribute {
+        oid: ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14"),
+        values: der::asn1::SetOfVec::try_from(vec![der::Any::from_der(&token).expect("a token")])
+            .expect("a set"),
+    };
+    signer.unsigned_attrs = Some(der::asn1::SetOfVec::try_from(vec![attribute]).expect("a set"));
+    signed.signer_infos = SignerInfos::try_from(vec![signer]).expect("signer infos");
+    let mut encoded = ContentInfo {
+        content_type: info.content_type,
+        content: der::Any::encode_from(&signed).expect("signed data"),
+    }
+    .to_der()
+    .expect("a CMS");
+    assert!(
+        encoded.len() <= raw.len(),
+        "the token fits the reserved span"
+    );
+    encoded.resize(raw.len(), 0);
+    let digits: String = encoded.iter().map(|b| format!("{b:02X}")).collect();
+    let mut out = bytes.to_vec();
+    out[first + 1..second - 1].copy_from_slice(digits.as_bytes());
+    out
+}
+
+/// A token minted by `test_tsa` on a signature `cli::run` made, spliced in as
+/// the authority's answer would be, and read back by the built tool.
+///
+/// What a later increment will do over the network, done here by hand, so the
+/// reading half is proved before the requesting half exists: the tool reports
+/// the token intact and its time attested, the in-process reader agrees, and
+/// a token whose own signature was damaged reads broken with no attested time
+/// and no authority standing. The authority's root is in no store, so its
+/// standing through the system store is a missing link --- the token carries
+/// the authority's certificate and not the root.
+fn timestamp_reads_back(report: &mut Report) {
+    use test_tsa::{mint_with, Faults, Imprint, TestTsa};
+
+    let now = now();
+    let dir = scratch("timestamp");
+    let plain = dir.join("plain.pdf");
+    let signed = dir.join("signed.pdf");
+    std::fs::write(&plain, plain_pdf()).expect("input");
+    let store = TestStore {
+        certificate: certificate(now),
+        misdirected: false,
+    };
+    let s = |p: &Path| p.display().to_string();
+    let args = strings(&["sign", &s(&plain), "-o", &s(&signed), "--identity", SUBJECT]);
+    let (code, _, stderr) = signs(&args, &store, now);
+    if code != 0 {
+        report.check("the document to timestamp is signed", false, &stderr);
+        return;
+    }
+    let bytes = std::fs::read(&signed).expect("signed");
+    let tsa = TestTsa::new();
+    let sha256 = Imprint::Sha256;
+    let cases = [
+        ("a sound token", sha256, Faults::default(), "intact", true),
+        (
+            "a token whose own signature is damaged",
+            sha256,
+            Faults {
+                corrupt_signature: true,
+                ..Faults::default()
+            },
+            "broken",
+            false,
+        ),
+        (
+            "a token of another signature",
+            sha256,
+            Faults {
+                wrong_imprint: true,
+                ..Faults::default()
+            },
+            "altered",
+            false,
+        ),
+        (
+            "a token whose imprint is SHA-1",
+            Imprint::Sha1,
+            Faults::default(),
+            "weak",
+            true,
+        ),
+        (
+            "a token that does not bind its certificate",
+            sha256,
+            Faults {
+                binding: test_tsa::Binding::Neither,
+                ..Faults::default()
+            },
+            "unchecked",
+            false,
+        ),
+    ];
+    for (n, (what, hash, faults, verdict, attested)) in cases.iter().enumerate() {
+        let stamped = dir.join(format!("stamped-{n}.pdf"));
+        std::fs::write(
+            &stamped,
+            with_timestamp(&bytes, |value| {
+                mint_with(
+                    *hash,
+                    &hash.digest(value),
+                    Some(&[0x5a; 8]),
+                    now,
+                    &tsa,
+                    faults,
+                )
+            }),
+        )
+        .expect("stamped");
+        let (code, stdout, stderr) = tool(&["verify", "--json", &s(&stamped)], &[]);
+        let json: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+        let signature = &json["files"][0]["signatures"][0];
+        let stamp = &signature["timestamp"];
+        report.check(
+            &format!("{what}: the signature itself is still intact"),
+            code == 0 && signature["integrity"]["verdict"] == "intact",
+            &format!("exit {code}: {stderr}{stdout}"),
+        );
+        report.check(
+            &format!("{what}: the token reads {verdict}, attested={attested}"),
+            stamp["integrity"]["verdict"] == *verdict && stamp["attested"] == *attested,
+            &stamp.to_string(),
+        );
+        report.check(
+            &format!("{what}: its authority is asked about exactly when the time is attested"),
+            if *attested {
+                stamp["trust"]["standing"] == "untrusted" && stamp["trust"]["why"] == "incomplete"
+            } else {
+                stamp["trust"].is_null()
+            },
+            &stamp["trust"].to_string(),
+        );
+        report.check(
+            &format!("{what}: the tool reads what the in-process reader reads"),
+            from_json(&json["files"][0]) == in_process(&stamped),
+            &format!(
+                "tool {:?}\n       here {:?}",
+                from_json(&json["files"][0]),
+                in_process(&stamped)
+            ),
+        );
+    }
 }
 
 // --- 2 ----------------------------------------------------------------------

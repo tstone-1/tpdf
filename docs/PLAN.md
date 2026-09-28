@@ -14888,7 +14888,11 @@ and the order is the order in which a claim can be made honestly.
    and a `/DSS` of certificates and revocation data appended afterwards. Both need the
    **network**, which the application today reaches for exactly one thing --- the updater
    (`docs/THREAT-MODEL.md` §T9) --- so this step adds a network authority and is decided
-   on its own.
+   on its own. **Increment A, checking the tokens documents already carry, needs none and is
+   done 2026-09-28** (*Is the timestamp intact*, below): the signature-attribute token and
+   the document timestamp, their authority's standing, and a software authority the tests
+   mint with. Increment B --- asking an authority for a token when signing --- is the one
+   that adds the network, and builds on A's reader and minter.
 
 #### Is the signature intact --- done 2026-09-26
 
@@ -14960,7 +14964,8 @@ disagreement is confined to the shape only a rewriting generator produces.
 **Not done, and deliberately.** `adbe.pkcs7.sha1`, `adbe.x509.rsa_sha1` and a document
 timestamp (`ETSI.RFC3161`) are `unchecked`, format: each signs something other than the
 range's bytes directly, and checking one with the detached computation would be checking it
-wrongly. No fixture here writes any of them. Ed25519 and curves other than P-256 and P-384
+wrongly. No fixture here writes any of them. (The document timestamp is checked since
+2026-09-28, by its own computation --- *Is the timestamp intact*, below.) Ed25519 and curves other than P-256 and P-384
 are `unchecked`, algorithm. A PSS signature whose mask hash differs from its message hash is
 refused rather than verified, because `rsa` uses one hash for both.
 
@@ -15144,7 +15149,8 @@ certificate beside an e-mail certificate. None needs a login session and none is
 step 3's. The Windows implementation compiles (`scripts/check_windows.py`) and **has never
 run**; its first execution will be the Windows CI job's `cargo test`. Key usage on the signer's
 certificate is not asked. The trust of a timestamp authority's own chain is not asked either:
-the timestamp row stays a claim.
+the timestamp row stays a claim. (Asked since 2026-09-28, with the timestamping purpose ---
+*Is the timestamp intact*, below.)
 
 **Open questions for steps 2 and 3.**
 
@@ -15153,7 +15159,13 @@ the timestamp row stays a claim.
   --- above. All three real signed documents to hand are that case.
 - **Timestamps need the network**, both to make one (step 3) and to check revocation at the
   time one attests. That is a second network authority beside the updater and is the one
-  real change to the threat model this phase makes.
+  real change to the threat model this phase makes. **Narrowed 2026-09-28**: *checking* a
+  token a document already carries needs no network and is done (*Is the timestamp intact*,
+  below); making one and checking revocation still do, and are increment B's and later.
+- **Which moment a timestamp authority is judged at.** Answered 2026-09-28 for increment A:
+  the present, like the signer, because `genTime` is the authority's own statement --- below.
+  Judging the *signer* at `genTime` is the open half, and waits for revocation data, without
+  which an attested moment only moves the question.
 - ~~**Step 2's splice** writes into a reserved span whose size must be chosen before the
   signature exists.~~ **Answered 2026-09-26**: 32 KiB, half of it for step 3's token --- above.
 
@@ -15700,6 +15712,174 @@ removed, 5/8, 6/7 and exit 1 with the OCR reason. The other `text-base14` lines 
 verified* for a reason that is not the gate's --- a path object overlaps them --- which is the
 application's verdict too. So "Exit 0 has not been observed" above no longer holds on this
 machine; `tests/cli.rs` has not been re-run against it here.
+
+#### Is the timestamp intact --- done 2026-09-28
+
+Phase 6 step 3, **increment A**: the RFC 3161 tokens documents already carry are checked, in
+the worker, beside the integrity check in `docinfo::scan_from`, because a token is
+attacker-chosen bytes like the signature around it. Until now `docinfo::Timestamp` was a
+second claim --- the time a token stated, shown with *which tpdf does not check* --- and a
+document timestamp (`/SubFilter /ETSI.RFC3161`) was `unchecked`, format. No network is
+involved: the token is in the file, and its authority is asked about through the same offline
+store the signer is. **Increment B**, asking an authority for a token when signing, is the part
+that adds a network authority and builds on this one's reader and its test minter.
+
+| Verdict | What it claims about a token |
+|---|---|
+| `intact` | Its own signature checks out under the key in the certificate its `sid` names; its `TSTInfo` hashes to the `messageDigest` that key signed; an ESS `signingCertificate`/`signingCertificateV2` binds that certificate; and its `messageImprint` is the digest of what it is attached to --- the **value octets** of the signer's `signature` (RFC 3161 Appendix A), or a document timestamp's `/ByteRange` bytes. Only then is `genTime` an attested time. |
+| `weak` | All of that, with SHA-1 in the imprint or in the token's own signature. The time is attested and not shown to belong to this signature. |
+| `altered` | The token is sound and its imprint is of something else: a genuine timestamp **of different data**, attesting nothing about this signature. |
+| `broken` | Its own signature fails, **or** its `TSTInfo` is not the one the authority signed. Either way the statement in hand is not the authority's, the time least of all. |
+| `unchecked` | With the reason: unreadable (not a token at all included), an algorithm tpdf does not carry, a certificate it does not name, the budget, or **binding** --- no ESS attribute, or one naming another certificate. |
+
+| Half | Where | What it does |
+|---|---|---|
+| Token verdict | worker, `integrity/token.rs` | `integrity.rs`'s signer machinery run on the token (`Shape::Token`: encapsulated content, signed attributes required), then the imprint, then the binding. |
+| Document timestamp | worker, `integrity::check` | The `ETSI.RFC3161` branch: the range vouched for by `covered` first, then the token over its pieces. The field's verdict **is** the token's. |
+| Attested time | worker, `docinfo::Timestamp::attested` | Decided once, from the verdict, so the dialog and the tool read one answer. |
+| Authority's standing | worker, `trust::of_blob_for(.., Purpose::Timestamping, ..)` | The store, asked only beside `intact` or `weak`, for timestamping. |
+| Words | `integrity.ts` `timestampRow`/`authorityRow`, `cli/words.rs` | The *Timestamped* and *Timestamp authority* rows, held together by `wording.json`. |
+| Minter | `integrity/test_tsa.rs` | A software authority for the tests, reached by unit and integration tests alike. |
+
+Decisions, each with its reason:
+
+- **The verdict before the time.** `genTime` is inside the `TSTInfo`, so until the token's
+  signature and its `messageDigest` both hold it is only the token's word --- `integrity.rs`'s
+  rule for `messageDigest`, one level down. A broken token's time is still carried, so the
+  reader sees what it claimed, and the row begins *not attested*. `attested` is a field the
+  worker sets rather than a rule each reader restates, so the dialog and the command line
+  cannot disagree about it.
+- **A changed `TSTInfo` is `broken`, not `altered`.** For a signature, digest-mismatch-under-a-
+  good-signature means the *document* changed after signing. For a token the digested bytes are
+  the statement itself, so a mismatch means the time and the imprint in hand are not what the
+  authority signed. `altered` is kept for the case where it means something to a reader: a
+  sound token of different data.
+- **The imprint is over the signature's value octets**, not its DER and not the document. That
+  is RFC 3161 Appendix A, and measured rather than read: OpenSSL `ts -verify -data` over the
+  value octets of `incr-timestamped.pdf`'s signature accepts pyHanko's token, and over one other
+  byte string refuses it.
+- **A document timestamp is vouched for by the signature's own range rule.** The hole must be
+  exactly this field's `/Contents`, before a byte is hashed; the imprint over a range leaving
+  anything else uncovered would be a timestamp of bytes the field does not protect, which is
+  the wrapping attack again. The field's integrity and trust rows are the token's, and the
+  timestamp carries copies of the same two values --- the range is hashed once.
+- **A missing or foreign binding is `unchecked`, binding --- and tested last.** Without ESS the
+  token binds a key, not a certificate, so which certificate the trust question is about is
+  exactly what is missing; the key's arithmetic still holds, so it is not `broken`. OpenSSL
+  refuses such a token outright. It is tested *after* the imprint, so a token of other data
+  reads `altered` whether bound or not: that answer needs only the key. The binding's issuer
+  and serial are read and not compared, because the hash is over the whole certificate and a
+  comparison after a matching hash cannot fail. ESS v1's SHA-1 is not `weak`: it is compared
+  against a certificate whose key has just verified the signature, and RFC 5816 permits it.
+- **SHA-1 anywhere the time rests on is `weak`**: in the imprint (a collision passes a token
+  for one thing off as a token for another) or in the token's own signature. The digest the
+  verdict names is the imprint's, or SHA-1 when the token's signature is the weaker link.
+- **The authority's purpose is trust, not integrity.** `trust.rs` already treats the signer's
+  extended key usage as part of whether the store vouches *for signing*; the authority's is the
+  same question for timestamping, so it is `trust::Purpose::Timestamping` and a new doubt,
+  `timestamping`. The difference in rule is RFC 3161 §2.3's: `id-kp-timeStamping` is
+  **required**, so a certificate stating no purpose fails here where it passes for a document.
+  It must also be **critical and alone**, as §2.3 says and OpenSSL enforces (pyHanko does
+  not): the three public authorities measured on 2026-09-28 --- DigiCert, Sectigo and
+  GlobalSign --- all issue exactly that, so the strict rule refuses nothing real, and a looser
+  one would call trusted a key its issuer also vouched for other purposes. A document
+  timestamp's field is judged the same way
+  (`docinfo::purpose_of`), since its signer is the authority.
+- **The authority is judged at the present moment, not at `genTime`.** `genTime` is the
+  authority's own statement: evaluating its certificate at that moment would let the party under
+  question choose when it is judged. The present is the only moment tpdf has evidence for,
+  and it is the rule the signer's trust already follows --- so an authority whose certificate
+  has run out since reads `expired`, with the sentence saying tpdf cannot tell whether it was in
+  force when the token was made. Validating at `genTime` needs revocation data from then, which
+  is long-term validation's.
+- **Charged to the same budget.** A document timestamp's imprint is over nearly the whole file,
+  so it is charged to `MAX_HASHED` before hashing like a signature's range; a signature
+  token's imprint is a few hundred bytes.
+- **The minter is one file included twice**, `#[cfg(test)]` in the library and by `#[path]`
+  in `tests/cli.rs`, so a unit test and an integration test --- and increment B's fake
+  authority --- reach the same code without a Cargo feature a release build could turn on or a
+  `pub` module in the shipped library. Its price is that it may name external crates only.
+  `sign_cms::tests::no_private_key_type_is_named_outside_the_tests` lists it by name.
+
+**The minter.** `src-tauri/src/integrity/test_tsa.rs`:
+`mint(imprint_hash: Imprint, imprint: &[u8], nonce: Option<&[u8]>, gen_time: u64, tsa: &TestTsa) -> Vec<u8>`
+returns a DER `ContentInfo`/`SignedData` over a `TSTInfo` --- exactly what a `TimeStampReq`
+asks for --- and `mint_with(.., faults: &Faults)` the wrong ones: `wrong_imprint`,
+`sha1_signature`, `corrupt_signature`, `altered_content`, and `binding` (`V2`, `V1`, `Both`,
+`Neither`, `Other`). `TestTsa::new()` is a P-256 authority whose certificate names
+`id-kp-timeStamping`, critical and alone, issued by `TestTsa::root`, the anchor a test hands
+`trust::Anchors::Only`; `TestTsa::with_purposes` states other purposes or none. `granted(token)`
+wraps a token as a `TimeStampResp`. Both certificates run 2020--2040, so a test at the real
+present is inside them.
+
+**Measured**, macOS arm64 (macOS 27.0, 26A428), 2026-09-28. Thirty new unit tests: sixteen in
+`integrity::token` over minted tokens, one fault each and the verdict **and** the reason asserted
+(plus one ignored instrument that writes the tokens for OpenSSL); four document timestamps in
+miniature in `integrity` (intact, a changed byte, a range not framing its value, a broken
+token); seven in `docinfo` --- a minted token spliced into `incr-timestamped.pdf`'s signature in
+place of pyHanko's, read through `read_timestamp` with the minter's root as the only anchor
+(intact, attested, `trusted`; broken, not attested, authority not asked; of another signature,
+`altered`; an authority naming no purpose, `untrusted`, timestamping), the two fixtures through
+`scan`, and the purpose a document timestamp's field is judged for; three in `trust`, the
+purpose rule scripted and the minter's authority anchored and not. `tests/cli.rs` has 215
+checks, 21 new: `incr-doc-timestamped.pdf` among the signed fixtures `verify` must agree with
+the in-process reader on --- the comparison now includes each timestamp's verdict, reason,
+`attested` and standing --- and a signature made through `cli::run` with minted tokens spliced
+in as an authority's answer would be, read back by the built tool: sound (`intact`, attested,
+the authority `untrusted`, incomplete, since the token carries no root), damaged (`broken`),
+of another signature (`altered`), an SHA-1 imprint (`weak`, attested) and unbound
+(`unchecked`), the signature itself `intact` under every one. The frontend holds the words:
+`properties.test.ts` asserts the time is called attested for exactly `intact` and `weak`, and
+`cliwording.test.ts` compares 76 timestamp and 270 authority sentences with the Rust port.
+
+**Oracles.** **OpenSSL 3.6.3 `ts -verify`** over nine minted tokens and the fixtures' two:
+intact, SHA-1 imprint and SHA-1 token signature *Verification: OK*; the imprint of other data
+*message imprint mismatch*; the corrupted signature *signature failure*; the changed `TSTInfo`
+*digest failure*; no binding *missing signing certificate attribute*; a binding naming the root
+*ess cert id wrong order*; an authority stating no purpose *unsuitable certificate purpose*.
+Each is tpdf's verdict or standing but one: tpdf calls both SHA-1 cases `weak` where OpenSSL
+accepts --- policy, not arithmetic. `incr-timestamped.pdf`'s token verifies over the signature's
+value octets and not over other bytes; `incr-doc-timestamped.pdf`'s over its `/ByteRange` bytes
+and not over those bytes with one more. **pyHanko** (`signature-probe --mode integrity`, whose
+`check_signature.py --json` now reports the token and reads a document timestamp with
+`validate_pdf_timestamp`) agrees on both fixtures --- the signature and its token intact, the
+same time, the document timestamp intact --- and on minted tokens spliced into a signed file,
+intact, broken and altered. It disagrees twice, both expected and both written up in
+`docs/TRAPS.md`: an SHA-1 imprint it calls intact (its algorithm policy does not reach the
+imprint), and a token with no binding it accepts (OpenSSL does not). Its token `intact` also
+folds the `TSTInfo` digest into the imprint, so the probe maps `intact=no` to `altered`.
+
+**Proved able to fail**: 22 new mutations in `scripts/mutate_rust.py` (the `token:` block
+and its `integrity:`, `docinfo:` and `trust:` neighbours) and three in `scripts/mutate_frontend.py`
+(`timestamp:`), each caught by the test named for it, none surviving: the imprint comparison,
+the token's own signature, a `TSTInfo` believed or called `altered` after it changed, the
+imprint read before the signature, the binding skipped, absent or naming another certificate,
+SHA-1 in the imprint and in the signature, a CMS that is not a token, the budget, a document
+timestamp over an unvouched range or by the detached computation, a broken token's time called
+attested or its authority asked (both paths), a document timestamp's authority judged for
+documents, the imprint over the signature's DER rather than its value, and the timestamping
+purpose accepted for anything, for nothing, or answered with the signer's reason. Seven earlier
+anchors this change moved --- five Rust, the README's not-built line, and the timestamp row's
+bare-fact mutation, now aimed at `timestampRow` --- were re-aimed and are caught again. One comparison was deleted rather than
+tested: the binding's issuer and serial, which no input can make disagree with a hash that
+matched.
+
+**`incr-timestamped.pdf`**, which the generator has made since 2026-08-21: one RSA SHA-256
+signature carrying pyHanko's dummy-authority token, `genTime` pinned to 2026-08-21 12:00:00 UTC,
+ESS v1, the authority's certificate its own root with no extended key usage. It now reads:
+signature `intact`; token `intact` (SHA-256, RSA) and attested; the authority `untrusted`, root,
+through the system store --- and, anchored at itself, it would be `untrusted`, timestamping.
+`incr-doc-timestamped.pdf` is new: the same input with a pyHanko document timestamp, which
+reads `intact`, attested, `untrusted` root.
+
+**Not done.** Requesting a token (increment B). Revocation, for the authority as for the
+signer. Judging the signer's certificate at `genTime` rather than now: the attested moment is
+there to use, and without revocation data from then it would only move the question. Checking
+that `genTime` falls inside the authority's certificate's dates. The `TSTInfo`'s `tsa` name,
+`accuracy` and `ordering` are not read, nor its version; a nonce means nothing in a stored token.
+A timestamp on a document timestamp (archive timestamps) and `/DSS`. The Windows store has not
+been asked about an authority on Windows, though the code is the same call the signer's trust
+makes.
 
 ### Cross-cutting
 
