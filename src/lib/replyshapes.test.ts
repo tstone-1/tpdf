@@ -76,7 +76,7 @@ import type { PageMapping, PageMatches } from "./search";
 import type { Session } from "./session";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
-import type { Choices, SignOutcome } from "./signing";
+import type { Choices, SignOutcome, SignRecord } from "./signing";
 import type { SignaturePreview } from "./signappearance";
 
 import Applied_ from "../../src-tauri/testdata/replies/Applied.json";
@@ -100,6 +100,7 @@ import Split_ from "../../src-tauri/testdata/replies/Split.json";
 import Choices_ from "../../src-tauri/testdata/replies/Choices.json";
 import Signing_ from "../../src-tauri/testdata/replies/Signing.json";
 import Preview_ from "../../src-tauri/testdata/replies/Preview.json";
+import SignRecord_ from "../../src-tauri/testdata/replies/SignRecord.json";
 
 /**
  * A mirror type with every literal widened the way a JSON import widens.
@@ -295,6 +296,11 @@ const SCHEMA = {
     width: ["number"],
     height: ["number"],
   } satisfies Shape<SignaturePreview>,
+  // `sign_record`'s answer, read by the checks build's signing phase alone.
+  SignRecord: {
+    key_requests: ["number"],
+    held: ["string", "null"],
+  } satisfies Shape<SignRecord>,
 } as const;
 
 /**
@@ -330,6 +336,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Choices: Choices_ satisfies Widen<Choices>,
   Signing: Signing_ satisfies Widen<SignOutcome>,
   Preview: Preview_ satisfies Widen<SignaturePreview>,
+  SignRecord: SignRecord_ satisfies Widen<SignRecord>,
 };
 
 /**

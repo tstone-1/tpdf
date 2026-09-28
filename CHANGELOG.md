@@ -76,8 +76,11 @@ have the binary.)
   signature's timestamp checks out and this computer trusts the authority that
   made it, the signer's certificate is judged at the time the timestamp gives,
   so a certificate that has run out since, or been revoked since, no longer
-  makes an old signature look doubtful. The properties dialog says which time
-  was used and whose clock it is. `tpdf verify --strict` now also fails a
+  makes an old signature look doubtful. The properties dialog and `tpdf verify`
+  say which time was used and whose clock it is, once and next to the answer
+  it belongs to — *not trusted, judged at …, the time the timestamp attests —*
+  followed by the reason — rather than after the reason, where it read as part
+  of it. `tpdf verify --strict` now also fails a
   signature whose certificate the document shows revoked before that time, and
   still passes one carrying no revocation data. The JSON gains `revocation` on
   each signature and each timestamp, and `attested_at` on each trust answer.

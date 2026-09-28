@@ -359,6 +359,78 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase im
 python3 testdata/make_redact_pages_pdf.py
 uv run scripts/tabs_check.py <checks-binary> testdata/redact-pages.pdf --phase redact-pages
 
+# Signing with a certificate, through the window a reader signs in
+# (`src/lib/signingcheck.ts`). NEVER in scripts/gates.py or in CI, and never
+# started by an agent: it signs with a real key from the login keychain, so
+# macOS asks the person at the machine, and it asks DigiCert and Sectigo over
+# the network. RAN 2026-09-28 with the owner at the machine,
+# macOS arm64, the test identity: 46/46, three keychain prompts, the key
+# requests +1, +1, +0 (Sign without long-term data), +1, +0 (Cancel), and on disk
+# digicert.pdf and sectigo.pdf written, cancelled.pdf not. The first run that day
+# was 45/47, both failures in the phase itself: the message area's text carries a
+# trailing space, and two checks shared a name; fixed in signingcheck.ts and
+# signphase.ts.
+#   NEEDS: a checks bundle; the test identity (A TEST SIGNING IDENTITY, under
+#   the signing probes above) or another self-issued one --- the refusal it
+#   expects at step 4 is the one a certificate that publishes no revocation data
+#   gets; the network; an unlocked, visible screen.
+#   --identity is the certificate's SHA-256, lower-case hex; there is no default
+#   and the phase refuses to start without one. `tpdf-cli identities --json`
+#   prints it as `id`.
+#   WHAT THE PERSON CLICKS: the keychain's "tpdf Checks wants to sign using
+#   key..." prompt, three times --- steps 2, 4 and the Cancel path each make a
+#   new signature. Click "Allow" each time: a FOURTH prompt is a second key
+#   request, the defect step 5 exists to catch, and the phase's count goes red
+#   with it. "Always Allow" answers all three at once and leaves only the count.
+#   Nothing else: every other click is the phase's.
+#   THE STEPS, all through the palette opened from the toolbar, the chooser's
+#   own controls and the question's own buttons; only the save panel is
+#   answered by a path (`src/lib/saveanswer.ts`), because no phase drives one.
+#     1  text-base14 copy open; Sign document...; the identity; Invisible.
+#     2  no authority preselected, long-term disabled; DigiCert, long-term
+#        unticked; Sign. The closing sentence names the file, intact, the
+#        timestamp attested by DigiCert, the authority trusted, and no
+#        revocation. The save panel would have suggested <name>-signed.pdf.
+#     3  the saved copy's Document properties: intact; timestamp attested by
+#        DigiCert; authority trusted; signer not trusted, its chain ending at an
+#        untrusted root, judged at the time the timestamp attests; every
+#        revocation row "not checked".
+#     4  the original again: DigiCert remembered; Sectigo, long-term ticked;
+#        refused with the question naming the unpublished revocation data and
+#        offering Try again / Sign without long-term data / Cancel; the
+#        signature held, waiting for its long-term data.
+#     5  Sign without long-term data: written, closing sentence as in 2 for
+#        Sectigo, nothing held.
+#     6  Sign document... again: Sectigo and long-term remembered. Then the
+#        Cancel path: refused again, Cancel, "Not signed: nothing was written.",
+#        nothing held.
+#   THE KEY COUNT. `sign_record` answers how many times this process asked the
+#   OS to sign (`keystore::KEY_REQUESTS`, counted by `keystore::Counted` around
+#   the identity `sign_document` signs with) and what `Pending` holds. Checked
+#   exactly at every step: +1 at 2, at 4 and on the Cancel path, +0 at 5 and at
+#   Cancel. The +1 steps are the control: a count that stopped counting fails
+#   step 2 before step 5's +0 can mean anything.
+#   AFTERWARDS tabs_check.py reads the disk itself: digicert.pdf and
+#   sectigo.pdf written, cancelled.pdf not.
+#   FAILURE SHAPES. "the identity ... is not in the chooser" --- the keychain
+#   holds no such identity, or it expired (the test one is good for 30 days).
+#   A hang to the 900 s timeout at step 2 or 4 --- the keychain prompt was never
+#   answered, or is behind another window. "refused with a question, not a
+#   message" red with a network sentence --- the authority did not answer; run
+#   it again. Everything else red is a finding.
+#   PROVED ABLE TO FAIL without a window: what the phase concludes is
+#   `signphase.ts` (five mutations in mutate_frontend.py, each red in
+#   signphase.test.ts), the save answer `saveanswer.ts` (one), the counter
+#   `keystore::Counted` and the held state (two in mutate_rust.py). By hand,
+#   in the window, not yet run: `sign_document` handing `sign_cms::sign` the
+#   identity instead of the counted one turns step 2's +1 red; `signing.ts`
+#   answering "without" after long-term data with `shell.sign` rather than
+#   `shell.resume` turns step 5's +0 red and raises a fourth prompt;
+#   `App.svelte` dropping `discard` from the shell turns "Cancel drops the held
+#   signature" red.
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase sign \
+    --identity 2a144cdb0facc6919f9163d7776c3c2f7f35bbd23021c002d61c29c7f0819c74
+
 # Character boxes still land on the ink they describe. Run it on a *small* text
 # fixture: on testdata/text-heavy.pdf the wrong convention also scores 70%, so
 # that page cannot discriminate and the probe fails rather than reporting a pass.
@@ -1109,8 +1181,8 @@ done
 # INTACT:TRUSTED, coverage ENTIRE_FILE, on all three; qpdf --check clean.
 #
 # The window check that would show a visible signature placed and written in the
-# real application does not exist, for the reason below: it needs an identity in
-# the reader's store. By hand: File > Sign document..., choose Visible, choose
+# real application does not exist: `tabs_check.py --phase sign` (above, with the
+# window checks) signs invisibly only. By hand: File > Sign document..., choose Visible, choose
 # what it shows in the Signature appearance panel (the preview redraws on each
 # change), drag a rectangle, save; then signature-probe <copy> --mode integrity,
 # uv run --with pyhanko testdata/check_signature.py --json <copy> for the reason
@@ -1169,10 +1241,12 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib keystore::tests::the_windo
 # worked around: creating a keychain file (`security create-keychain`,
 # SecKeychainCreate) adds it to the user's keychain search list.
 #
-# No window check drives signing end to end, and the reason is the same one: the
-# real app signs only with an identity in the reader's store, so a harness phase
-# would need one put there. By hand, on a machine whose store already holds a
-# signing identity: a build of the app, any PDF, File > Sign document..., then
+# The window check that drives signing end to end is `tabs_check.py --phase
+# sign`, above with the other window checks: it signs with an identity already
+# in the reader's store, named by --identity, and the person at the machine
+# answers the keychain. Built and run green 2026-09-28 (46/46). By hand, on a machine
+# whose store already holds a signing identity: a build of the app, any PDF,
+# File > Sign document..., then
 #   cargo run --release --manifest-path src-tauri/Cargo.toml --example signature-probe -- \
 #       <the signed copy> --mode integrity
 # which holds tpdf's verdict on the written file against pyHanko's.

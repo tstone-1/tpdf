@@ -10,6 +10,42 @@ fn an_identity_is_named_by_the_sha256_of_its_certificate() {
     );
 }
 
+/// Every request made of a key is counted once, the refused one included,
+/// and the key's answer passes through unchanged.
+#[test]
+fn a_counted_key_counts_each_request_and_passes_the_answer_on() {
+    use crate::integrity::Verdict;
+    use crate::sign_cms::testkeys::{self, certificate, signed, verdicts, Refusing, Soft, Spec};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let soft = Soft::p256(52);
+    let cert = certificate(&soft, &Spec::new("Counted signer"));
+    let count = AtomicU64::new(0);
+    let counted = Counted {
+        key: &soft,
+        count: &count,
+    };
+    let bytes = signed(&testkeys::plain_pdf(), &cert, &[], &counted).expect("signed");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        1,
+        "one signature, one request"
+    );
+    assert_eq!(verdicts(&bytes)[0].1.verdict, Verdict::Intact);
+
+    let refused = Counted {
+        key: &Refusing,
+        count: &count,
+    };
+    let why = signed(&testkeys::plain_pdf(), &cert, &[], &refused).expect_err("refused");
+    assert!(why.contains("cancelled"), "{why}");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        2,
+        "a refused request is a request"
+    );
+}
+
 /// The macOS signing primitive, with a key that lives in no keychain.
 ///
 /// **Not the temporary-keychain test the plan asked for, and why.** Creating

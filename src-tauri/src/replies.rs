@@ -771,6 +771,16 @@ fn samples() -> BTreeMap<&'static str, String> {
         },
     );
 
+    // `sign_record`'s answer, which only the checks build's signing phase
+    // asks for: something held, so `held` carries a value.
+    put(
+        "SignRecord",
+        &crate::commands::sign::SignRecord {
+            key_requests: 3,
+            held: Some(crate::commands::sign::Waiting::LongTerm),
+        },
+    );
+
     put(
         "Preview",
         &crate::sign_prepare::Preview {

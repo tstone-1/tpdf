@@ -87,9 +87,9 @@ pub fn doubt_about(doubt: Doubt, computer: &str, whose: &str) -> String {
             "the signer's certificate was issued for something other than signing documents".into()
         }
         Doubt::Timestamping => "the authority's certificate was not issued for timestamping".into(),
-        Doubt::NotInForce => {
-            "the signer's certificate was not in force at the time the timestamp attests".into()
-        }
+        // Only ever said with the moment in the verdict's own words, which is
+        // where "then" points: the moment is stated once, as the verdict's.
+        Doubt::NotInForce => format!("{whose} certificate was not in force then"),
         Doubt::Rejected => format!("{computer} refused its chain"),
         Doubt::Certificate => {
             "the signature's certificates could not be prepared for the check".into()
@@ -110,6 +110,8 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
         .why
         .map_or_else(|| "no reason was given".to_string(), |d| doubt(d, computer));
     let chained = format!("the signer's certificate chains to a root {computer} trusts");
+    // The moment is the whole verdict's, so it goes beside the verdict's word
+    // and nowhere else: after the reason it read as the reason's last clause.
     let judged = if trust.attested_at.is_empty() {
         String::new()
     } else {
@@ -150,7 +152,7 @@ pub fn trust_sentence(trust: &Trust, from: &str, until: &str) -> String {
             }
         ),
         Standing::Untrusted => format!(
-            "not trusted — {why}{judged}. So nothing establishes that the key belongs to the \
+            "not trusted{judged} — {why}. So nothing establishes that the key belongs to the \
              person the certificate names."
         ),
         Standing::Unchecked => {
@@ -503,18 +505,25 @@ pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
         |d| doubt_about(d, computer, "the authority's"),
     );
     let chained = format!("the authority's certificate chains to a root {computer} trusts");
+    // Judged at the moment an archive timestamp later in the document attests
+    // (PAdES B-LTA), which then vouches for the time --- said beside the
+    // verdict's word, as the signer's is, because the moment is the verdict's.
+    let judged = if trust.attested_at.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", judged at {}, the time an archive timestamp later in this document attests",
+            trust.attested_at
+        )
+    };
     match trust.standing {
         Standing::Trusted => format!(
             "trusted — {chained} and is issued for timestamping. It is judged at the present \
              moment, not at the time it attests."
         ),
-        // An authority judged at the moment an archive timestamp later in the
-        // document attests (PAdES B-LTA), which then vouches for the time.
-        Standing::TrustedAtTimestamp => format!(
-            "trusted — {chained} and is issued for timestamping, judged at {}, the time \
-             an archive timestamp later in this document attests.",
-            trust.attested_at
-        ),
+        Standing::TrustedAtTimestamp => {
+            format!("trusted{judged} — {chained} and is issued for timestamping.")
+        }
         Standing::Expired => format!(
             "expired — {chained}, and it ran out{}. tpdf judges it at the present moment, so \
              it cannot tell whether it was in force when the timestamp was made.",
@@ -533,7 +542,7 @@ pub fn authority_sentence(trust: &Trust, from: &str, until: &str) -> String {
             }
         ),
         Standing::Untrusted => {
-            format!("not trusted — {why}. So nothing establishes who attests this time.")
+            format!("not trusted{judged} — {why}. So nothing establishes who attests this time.")
         }
         Standing::Unchecked => format!(
             "not checked — {why}. This says nothing either way about who attests this time."

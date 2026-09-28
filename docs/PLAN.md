@@ -15259,8 +15259,8 @@ none-outside red for both, the stamp control included on a turned page.
 **Not done.** A preview of the appearance while dragging: the rectangle is outlined, and what
 goes in it is drawn by the worker. Visible signatures on certified documents. Scripts beyond
 Latin-1, which need an embedded font. Resizing or moving the placed rectangle before signing.
-The window harness has no signing phase, for step 2's reason: the real app signs only with an
-identity in the reader's store.
+The window harness's signing phase (`tabs_check.py --phase sign`, 2026-09-28) signs invisibly
+only; run green with the owner on 2026-09-28, 46/46.
 
 #### What a visible signature shows --- done 2026-09-27
 
@@ -15314,7 +15314,8 @@ red, and a preview ignoring the options turns the agreement check red.
 **Not done.** Choosing the preview's shape: it is one representative rectangle, and a tall
 rectangle lays the image above the words where the preview shows it beside them. Reason and
 location on an invisible signature. Scripts beyond Latin-1 on the page. Fonts, colours and
-borders, deliberately out of scope. The window harness still has no signing phase.
+borders, deliberately out of scope. The window harness's signing phase does not place a visible
+one.
 
 #### Signing and verifying from the command line --- done 2026-09-27
 
@@ -16382,8 +16383,11 @@ not-built line.
 built. Revocation of the certificates above the signer's and the authority's is gathered,
 checked and written, and judged by the reader since *The whole chain*, below. A signer certificate
 from a real CA, measured end to end. Windows: the code is the same and `scripts/check_windows.py`
-compiles it; no request has been made from a Windows machine. The window's flow has not been
-driven with a real identity, for step 2's reason.
+compiles it; no request has been made from a Windows machine. The window's flow with a real
+identity is `tabs_check.py --phase sign` (`BUILD.md`): the chooser, the refusal's question, *Sign
+without long-term data*, the remembered choice and *Cancel*, with the OS's key requests counted
+exactly at each step --- run green with the owner on 2026-09-28, macOS arm64: 46/46, the key requests
++1, +1, +0 for *Sign without long-term data*, +1, +0 for *Cancel*.
 
 #### The whole chain, from the document's own data --- done 2026-09-28
 

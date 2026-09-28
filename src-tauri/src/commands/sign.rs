@@ -191,6 +191,14 @@ impl Pending {
         drop(self.0.lock().take());
     }
 
+    /// What the held signature, if any, is waiting for.
+    fn waiting(&self) -> Option<Waiting> {
+        self.0.lock().as_ref().map(|held| match held.stage {
+            Stage::Made(_) => Waiting::Timestamp,
+            Stage::Sealed { .. } => Waiting::LongTerm,
+        })
+    }
+
     fn take(&self, number: u64) -> Option<Held> {
         let mut held = self.0.lock();
         if held.as_ref().is_some_and(|h| h.number == number) {
@@ -486,7 +494,10 @@ pub async fn sign_document(
             at,
             &identity.certificate,
             &identity.chain,
-            &identity,
+            &keystore::Counted {
+                key: &identity,
+                count: &keystore::KEY_REQUESTS,
+            },
         )?;
         conclude(
             Stage::Made(made),
@@ -551,6 +562,32 @@ pub async fn sign_resume(
     })
     .await
     .map_err(|e| format!("the signing did not run: {e}"))?
+}
+
+/// What signing has done in this process, as the checks build reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct SignRecord {
+    /// How many times the OS has been asked to sign with a key:
+    /// [`keystore::KEY_REQUESTS`].
+    pub key_requests: u64,
+    /// What the held signature is waiting for, or `None` when none is held.
+    pub held: Option<Waiting>,
+}
+
+/// How many times the OS was asked for a key, and what is held.
+///
+/// Nothing in the shipped window asks this. The checks build's signing phase
+/// does (`src/lib/signingcheck.ts`), at each step, because the two facts it
+/// needs are ones the screen cannot show: that *Sign without long-term data*
+/// wrote the signature already made rather than asking for the key again, and
+/// that *Cancel* dropped the held one. It reveals a count and a state, and
+/// nothing about a key or a document.
+#[tauri::command]
+pub fn sign_record(held: tauri::State<'_, Pending>) -> SignRecord {
+    SignRecord {
+        key_requests: keystore::KEY_REQUESTS.load(std::sync::atomic::Ordering::Relaxed),
+        held: held.waiting(),
+    }
 }
 
 /// Drops a signature whose timestamp did not come: the reader cancelled.
@@ -687,10 +724,13 @@ mod tests {
             waiting.why
         );
         assert!(answer.signed.is_none() && !out.exists(), "nothing written");
+        // What `sign_record` tells the window's signing phase.
+        assert_eq!(pending.waiting(), Some(Waiting::LongTerm));
 
         let Held {
             stage, source, out, ..
         } = pending.take(waiting.pending).expect("held");
+        assert_eq!(pending.waiting(), None, "taken, nothing is held");
         let answer = conclude(
             stage,
             None,

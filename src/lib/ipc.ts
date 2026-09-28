@@ -66,7 +66,7 @@ import type {
   SearchOptions,
 } from "./search";
 import type { Place, Session } from "./session";
-import type { Choices, Placement, SignOutcome } from "./signing";
+import type { Choices, Placement, SignOutcome, SignRecord } from "./signing";
 import type { AppearanceOptions, SignaturePreview } from "./signappearance";
 import type { PageText } from "./text";
 import type { PreparedImport } from "./pendingimport";
@@ -369,6 +369,8 @@ export interface Commands {
   };
   /** Drops the held signature; nothing is written. */
   sign_discard: { args: { pending: number }; reply: void };
+  /** How often the OS was asked for a key, and what is held. The checks build's alone. */
+  sign_record: { args: NoArgs; reply: SignRecord };
   keyboard_positions: { args: NoArgs; reply: Record<string, string> };
   /** The reply is the event name the menu emits on, or null when none was built. */
   set_menu: { args: { sections: SectionSpec[] }; reply: string | null };

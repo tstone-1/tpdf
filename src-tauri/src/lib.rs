@@ -878,6 +878,7 @@ pub fn run() {
             sign_document,
             sign_resume,
             sign_discard,
+            sign_record,
             keyboard_positions,
             set_menu,
             set_menu_enabled,

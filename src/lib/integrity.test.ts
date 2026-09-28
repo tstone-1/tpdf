@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  authorityRow,
   chainRow,
   COMPUTER,
   DOUBT,
@@ -237,8 +238,22 @@ describe("trustRow", () => {
     );
     expect(trustRow(standing("untrusted", "root"))?.value).not.toContain("judged at");
     expect(trustRow(standing("untrusted", "not_in_force", "mac", at))?.value).toContain(
-      "was not in force at the time the timestamp attests",
+      "the signer's certificate was not in force then",
     );
+  });
+
+  it("states the attested moment once, as the whole verdict's and not the reason's", () => {
+    // `tpdf verify`, 2026-09-28: after the reason, "judged at ..." read as the
+    // last clause of the Adobe sentence rather than as the verdict's moment.
+    const at = "2026-08-21 12:00:00 UTC";
+    const moment = `judged at ${at}, the time the timestamp attests`;
+    for (const why of EVERY_DOUBT) {
+      const value = trustRow(standing("untrusted", why, "mac", at))?.value ?? "";
+      const [lead, ...rest] = value.split(" — ");
+      expect(lead).toBe(`not trusted, ${moment}`);
+      expect(rest.join(" — ")).not.toContain(at);
+      expect(rest.join(" — ")).not.toContain("the time the timestamp attests");
+    }
   });
 
   it("says an expired certificate may have been in force when used, and cannot tell", () => {
@@ -570,5 +585,32 @@ describe("chainRow", () => {
     );
     expect(row?.value).toContain("does not undo the signature");
     expect(row?.warn).toBeUndefined();
+  });
+});
+
+describe("authorityRow", () => {
+  const archive = "the time an archive timestamp later in this document attests";
+
+  it("states the archive's moment once, beside the verdict's word", () => {
+    const at = "2026-08-21 12:00:00 UTC";
+    const trusted = authorityRow(standing("trusted_at_timestamp", null, "mac", at))?.value ?? "";
+    expect(trusted.split(" — ")[0]).toBe(`trusted, judged at ${at}, ${archive}`);
+    expect(trusted.split(at).length).toBe(2);
+    for (const why of EVERY_DOUBT) {
+      const value = authorityRow(standing("untrusted", why, "mac", at))?.value ?? "";
+      const [lead, ...rest] = value.split(" — ");
+      expect(lead).toBe(`not trusted, judged at ${at}, ${archive}`);
+      expect(rest.join(" — ")).not.toContain(at);
+    }
+    // Judged now, it names no moment.
+    expect(authorityRow(standing("untrusted", "root"))?.value).not.toContain("judged at");
+  });
+
+  it("says an authority out of its dates is the authority's certificate, not the signer's", () => {
+    const value =
+      authorityRow(standing("untrusted", "not_in_force", "mac", "2026-08-21 12:00:00 UTC"))
+        ?.value ?? "";
+    expect(value).toContain("the authority's certificate was not in force then");
+    expect(value).not.toContain("signer");
   });
 });

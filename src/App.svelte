@@ -71,6 +71,7 @@
   import { APPEARANCE_WORDS, SignatureDialog } from "./lib/signaturedialog";
   import { askAppearance, PREVIEW_SIZE } from "./lib/signappearance";
   import { loadSignature } from "./lib/signaturestore";
+  import { SaveAnswers } from "./lib/saveanswer";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
   import {
@@ -444,6 +445,10 @@
   let palette: Palette | null = null;
   let sidebar: Sidebar | null = null;
   let signatureDialog: SignatureDialog | null = null;
+  // The signing's save panel, answered by the checks build's signing phase,
+  // which cannot drive a native panel (`signingcheck.ts`). `null` in a normal
+  // build, where the panel call below compiles to the panel alone.
+  const signSaves = __TPDF_CHECKS__ ? new SaveAnswers() : null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
@@ -2105,12 +2110,17 @@
             say(signing.PLACE);
             return await viewer.armPlacement();
           },
-          saveAs: async (suggested) =>
-            await saveDialog({
-              title: "Save the signed document",
-              defaultPath: suggested,
-              filters: [{ name: "PDF", extensions: ["pdf"] }],
-            }),
+          saveAs: async (suggested) => {
+            const panel = () =>
+              saveDialog({
+                title: "Save the signed document",
+                defaultPath: suggested,
+                filters: [{ name: "PDF", extensions: ["pdf"] }],
+              });
+            return __TPDF_CHECKS__ && signSaves
+              ? await signSaves.ask(suggested, panel)
+              : await panel();
+          },
           sign: (identity, path, placement, timestamp, longTerm) =>
             call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm }),
           // A timestamp or long-term data that did not come: the question, then
@@ -3048,6 +3058,8 @@
           close: closeTab,
           run: (id) => { commands.run(id); },
           importPages: (path) => importPagesFrom(path),
+          answerSave: (path) => signSaves?.queue(path),
+          saveSuggestions: () => signSaves?.asked ?? [],
           pendingImport: () => pendingImports.current(edits?.doc ?? null),
           idle: async () => { await pendingEdit; await formLayer?.settle(); await textEditor?.settle(); await documentTasks.idle(); await tick(); },
         })

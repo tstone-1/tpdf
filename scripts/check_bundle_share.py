@@ -34,16 +34,23 @@ ENTRY_POINTS = {
 # shared printer every unattended check writes through, so it ships for exactly
 # the same reason they do and belongs in the same total.
 # Helpers reached through those entry points, including the signature workflow.
-SHARED = {"checkreport.ts", "signaturecheck.ts"}
+# `signingcheck.ts` is the certificate-signing phase and `signphase.ts` what it
+# concludes. `saveanswer.ts` is constructed in `App.svelte` only under
+# `__TPDF_CHECKS__`, so a normal build must drop it too --- which this asserts
+# rather than assumes.
+SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.ts", "saveanswer.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 
 # Dynamic runtime imports in the wrapper; type-only references do not count.
 ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 
-# Cost ceilings apply only to the explicit native-check build.
+# Cost ceilings apply only to the explicit native-check build. Raised from
+# 200,000 on 2026-09-28 for the certificate-signing phase: the family stood at
+# 197,743 units and the phase adds 9,375 (`signingcheck.ts` 6,894,
+# `signphase.ts` 2,247, `saveanswer.ts` 234), none of it in a normal build.
 SHARE_CEILING = 40.0
-BYTES_CEILING = 200_000
+BYTES_CEILING = 215_000
 
 BASE64 = {c: i for i, c in enumerate(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

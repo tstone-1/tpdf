@@ -49,6 +49,16 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase sign signs with a certificate through the window a reader signs in:
+Sign document... from the palette, the chooser, a DigiCert timestamp, the saved
+copy's properties, Sectigo with long-term data refused, Sign without long-term
+data, the remembered choice, and Cancel. NEVER in the gates or in CI: it signs
+with a real key from the keychain, so macOS asks the person at the machine to
+allow it (three times with "Allow", once with "Always Allow"), and it asks two
+timestamp authorities over the network. It refuses to run without --identity,
+the SHA-256 of the signing certificate; there is no default. BUILD.md has the
+test identity, the command and what the person clicks.
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase sign --identity <sha256>
 """
 
 import argparse
@@ -67,11 +77,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "import", "redact-pages"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "import", "redact-pages", "sign"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
-    parser.add_argument("--timeout", type=float, default=90)
+    parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
+    # 90 s by default; the signing phase waits on a person answering the
+    # keychain's prompt three times and on two authorities, so it gets 900.
+    parser.add_argument("--timeout", type=float, default=None)
     parser.add_argument("--saved-copy", type=Path, help="Keep the first saved PDF for independent readback")
     args = parser.parse_args()
+    if (args.phase == "sign") != (args.identity is not None):
+        parser.error("--identity is required by --phase sign, and taken by nothing else")
+    if args.timeout is None:
+        args.timeout = 900 if args.phase == "sign" else 90
     if args.saved_copy:
         args.saved_copy.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tpdf-tabs-") as directory:
@@ -95,6 +112,13 @@ def main() -> int:
             for extra in ("third.pdf", "fourth.pdf"):
                 shutil.copyfile(args.pdf, room / extra)
                 copies.append(room / extra)
+        if args.phase == "sign":
+            # The fixture, a directory of its own for the signed copies, and the
+            # identity; the copy itself is signed and never written.
+            signed = room / "signed"
+            signed.mkdir()
+            copies = [first, signed]
+            copies.append(args.identity)
         joined = "|".join(str(copy) for copy in copies)
         env = dict(os.environ, TPDF_OPENCHECK=f"{args.phase}:{joined}",
                    TPDF_SESSION_FILE=str(room / "session.json"))
@@ -132,9 +156,30 @@ def main() -> int:
                 code = 1
         passed = report(log.read_text(encoding="utf-8", errors="replace"), code, phase=args.phase)
         passed = check_worker_exit(process, args.binary) and passed
+        if args.phase == "sign":
+            passed = signed_files(room / "signed") and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
+
+
+def signed_files(directory: Path) -> bool:
+    """What the signing phase left on disk, read from outside the app.
+
+    The app's own checks read the sentences; whether each file exists is a fact
+    about the disk that the webview cannot see. Written by the first two
+    signings, and nothing at all by the cancelled one.
+    """
+    ok = True
+    for name, wanted in (("digicert.pdf", True), ("sectigo.pdf", True), ("cancelled.pdf", False)):
+        path = directory / name
+        present = path.is_file() and path.read_bytes()[:5] == b"%PDF-"
+        good = present == wanted
+        ok = ok and good
+        verdict = "written" if present else "not written"
+        print(f"[{'OK' if good else 'FAIL'}]   the {name} signing: {verdict}"
+              f" ({path.stat().st_size if path.exists() else 0} bytes)")
+    return ok
 
 
 if __name__ == "__main__":

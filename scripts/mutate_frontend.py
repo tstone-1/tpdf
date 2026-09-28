@@ -5609,6 +5609,10 @@ TEST_FILES = [
     # Added 2026-09-28 with the timestamp chooser, in the same edit as its
     # mutations.
     "src/lib/signtimestamp.test.ts",
+    # Added 2026-09-28 with the window's signing phase, in the same edit as
+    # their mutations.
+    "src/lib/signphase.test.ts",
+    "src/lib/saveanswer.test.ts",
     "src/lib/tablabels.test.ts",
     "src/lib/toolbar.test.ts",
     "src/lib/marknibs.test.ts",
@@ -8732,6 +8736,79 @@ MUTATIONS += [
         "    ? `, judged at ${trust.attested_at}, the time the timestamp attests`",
         '    ? ""',
         "says whose moment an attested judgement is, and that expiry since does not undo it",
+    ),
+    # `tpdf verify`, 2026-09-28: the moment after the reason read as the
+    # reason's last clause --- the Adobe sentence's, for a self-made root.
+    Mutation(
+        "trust: say the attested moment after the reason again",
+        "src/lib/integrity.ts",
+        "          `not trusted${judged} — ${why}. So nothing establishes that the key ` +",
+        "          `not trusted — ${why}${judged}. So nothing establishes that the key ` +",
+        "states the attested moment once, as the whole verdict's and not the reason's",
+    ),
+    Mutation(
+        "authority: hide that an untrusted authority was judged at the archive's moment",
+        "src/lib/integrity.ts",
+        "        value: `not trusted${judged} — ${why}. So nothing establishes who attests this time.`,",
+        "        value: `not trusted — ${why}. So nothing establishes who attests this time.`,",
+        "states the archive's moment once, beside the verdict's word",
+    ),
+    Mutation(
+        "authority: call an authority out of its dates the signer's certificate",
+        "src/lib/integrity.ts",
+        '  not_in_force: (_computer, whose = "the signer\'s") => `${whose} certificate was not in force then`,',
+        '  not_in_force: () => "the signer\'s certificate was not in force then",',
+        "says an authority out of its dates is the authority's certificate, not the signer's",
+    ),
+]
+
+# --- the window's signing phase, and what it concludes ----------------------
+#
+# `signphase.ts` and `saveanswer.ts`, 2026-09-28. The phase itself needs a
+# screen, a keychain prompt and the network, so it runs by hand; what it
+# concludes from the screen is here, and each rule has to go red on its own.
+MUTATIONS += [
+    Mutation(
+        "sign phase: accept a timestamp from whoever answered",
+        "src/lib/signphase.ts",
+        "    ok: stamped.includes(\", attested by \") && stamped.includes(authority),",
+        "    ok: stamped.includes(\", attested by \"),",
+        "fails a timestamp that is not attested, or is another authority's",
+    ),
+    Mutation(
+        "sign phase: call every revocation row not checked when there is none",
+        "src/lib/signphase.ts",
+        "      revocations.length >= 2 &&",
+        "      revocations.length >= 0 &&",
+        "fails revocation data the signing did not add, and a revocation row gone missing",
+    ),
+    Mutation(
+        "sign phase: pass a key asked for more often than the step allows",
+        "src/lib/signphase.ts",
+        "    ok: after - before === expected,",
+        "    ok: after - before >= expected,",
+        "holds the count to exactly what the step asked for, both ways",
+    ),
+    Mutation(
+        "sign phase: sign with whatever identity was named",
+        "src/lib/signphase.ts",
+        "  if (!/^[0-9a-f]{64}$/.test(id)) {",
+        "  if (id === \"\") {",
+        "refuses to run without an identity, or with a name for one",
+    ),
+    Mutation(
+        "sign phase: pass a signer judged now",
+        "src/lib/signphase.ts",
+        "    ok: /^not trusted, judged at [^—]+, the time the timestamp attests —/.test(trust),",
+        "    ok: trust.startsWith(\"not trusted\"),",
+        "fails a signer read as trusted, or judged now rather than at the timestamp",
+    ),
+    Mutation(
+        "save answer: answer every later panel with the same path",
+        "src/lib/saveanswer.ts",
+        "    this.queued = null;\n    return path;",
+        "    return path;",
+        "answers a queued path once, without the panel, then shows it again",
     ),
 ]
 

@@ -70,6 +70,37 @@ impl Key for Identity {
     }
 }
 
+/// How many times this process has asked the OS to sign with a reader's key.
+///
+/// **The window's evidence that a signing asked for the key once**, and that
+/// finishing a held one --- *Try again*, *Sign without* --- asked for nothing:
+/// the OS prompt is the only other trace of a request, and a prompt answered
+/// with *Always Allow* leaves none. Counted per request rather than per
+/// signature, before the OS answers, so a refused prompt counts too. Read by
+/// `sign_record`, which the checks build's signing phase compares across each
+/// step (`src/lib/signingcheck.ts`).
+pub static KEY_REQUESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A key that counts each request made of it in `count`, then passes it on.
+///
+/// `sign_document` hands `sign_cms::sign` one of these over the reader's
+/// [`Identity`] and [`KEY_REQUESTS`]; a test hands it a key and a count of its
+/// own, so parallel tests cannot move each other's.
+pub struct Counted<'a> {
+    /// The key asked.
+    pub key: &'a dyn Key,
+    /// Where each request is counted.
+    pub count: &'a std::sync::atomic::AtomicU64,
+}
+
+impl Key for Counted<'_> {
+    fn sign_digest(&self, kind: KeyKind, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
+        self.count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.key.sign_digest(kind, digest)
+    }
+}
+
 /// Every certificate in the reader's store that has a private key behind it.
 ///
 /// Unfiltered: whether each one can sign is `sign_cms::usable`'s question,

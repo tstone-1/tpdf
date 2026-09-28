@@ -27,6 +27,7 @@ import { call } from "./ipc";
 import { filePage } from "./pages";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
+import { signingCheck } from "./signingcheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
@@ -90,6 +91,13 @@ export interface OpenCheckHost {
   importPages: (path: string) => Promise<void>;
   /** The file waiting for its pages to be named, as the palette sees it. */
   pendingImport: () => PendingImport | null;
+  /**
+   * The path the signing's next save panel answers with, since no phase can
+   * drive a native panel; everything around the panel stays the window's.
+   */
+  answerSave: (path: string) => void;
+  /** Every name a signing's save panel was asked to suggest, in order. */
+  saveSuggestions: () => readonly string[];
   idle: () => Promise<void>;
 }
 
@@ -985,6 +993,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       break;
     }
     case "signatures": await signatureCheck(host, expected, report); break;
+    case "sign": await signingCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
       const [first, second] = expected.split("|");

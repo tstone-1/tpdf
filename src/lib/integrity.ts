@@ -174,8 +174,9 @@ export const DOUBT: Record<Doubt, (computer: string, whose?: string) => string> 
   certificate: () => "the signature's certificates could not be prepared for the check",
   unavailable: () => "the operating system's trust check could not be run",
   timestamping: () => "the authority's certificate was not issued for timestamping",
-  not_in_force: () =>
-    "the signer's certificate was not in force at the time the timestamp attests",
+  // Only ever said with the moment in the verdict's own words, which is
+  // where "then" points: the moment is stated once, as the verdict's.
+  not_in_force: (_computer, whose = "the signer's") => `${whose} certificate was not in force then`,
 };
 
 /**
@@ -196,6 +197,8 @@ export function trustRow(
   const computer = trust.store ? COMPUTER[trust.store] : "this computer";
   const why = trust.why ? DOUBT[trust.why](computer) : "no reason was given";
   const chained = `the signer's certificate chains to a root ${computer} trusts`;
+  // The moment is the whole verdict's, so it goes beside the verdict's word
+  // and nowhere else: after the reason it read as the reason's last clause.
   const judged = trust.attested_at
     ? `, judged at ${trust.attested_at}, the time the timestamp attests`
     : "";
@@ -240,7 +243,7 @@ export function trustRow(
       return {
         name,
         value:
-          `not trusted — ${why}${judged}. So nothing establishes that the key ` +
+          `not trusted${judged} — ${why}. So nothing establishes that the key ` +
           `belongs to the person the certificate names.`,
         warn: true,
       };
@@ -419,6 +422,12 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
   const computer = trust.store ? COMPUTER[trust.store] : "this computer";
   const why = trust.why ? DOUBT[trust.why](computer, "the authority's") : "no reason was given";
   const chained = `the authority's certificate chains to a root ${computer} trusts`;
+  // Judged at the moment an archive timestamp later in the document attests
+  // (PAdES B-LTA), which then vouches for the time --- said beside the
+  // verdict's word, as the signer's is, because the moment is the verdict's.
+  const judged = trust.attested_at
+    ? `, judged at ${trust.attested_at}, the time an archive timestamp later in this document attests`
+    : "";
   switch (trust.standing) {
     case "trusted":
       return {
@@ -427,14 +436,10 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
           `trusted — ${chained} and is issued for timestamping. It is judged at the ` +
           `present moment, not at the time it attests.`,
       };
-    // An authority judged at the moment an archive timestamp later in the
-    // document attests (PAdES B-LTA), which then vouches for the time.
     case "trusted_at_timestamp":
       return {
         name,
-        value:
-          `trusted — ${chained} and is issued for timestamping, judged at ` +
-          `${trust.attested_at}, the time an archive timestamp later in this document attests.`,
+        value: `trusted${judged} — ${chained} and is issued for timestamping.`,
       };
     case "expired":
       return {
@@ -456,7 +461,7 @@ export function authorityRow(trust: Trust | null, from = "", until = ""): Row | 
     case "untrusted":
       return {
         name,
-        value: `not trusted — ${why}. So nothing establishes who attests this time.`,
+        value: `not trusted${judged} — ${why}. So nothing establishes who attests this time.`,
         warn: true,
       };
     case "unchecked":

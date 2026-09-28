@@ -139,6 +139,17 @@ export interface Unstamped {
 }
 
 /**
+ * What signing has done in this process. Mirrors `commands::sign::SignRecord`;
+ * read by the checks build's signing phase alone, never by the window.
+ */
+export interface SignRecord {
+  /** How many times the OS was asked to sign with a key. */
+  key_requests: number;
+  /** What the held signature is waiting for, or `null` when none is held. */
+  held: "timestamp" | "long_term" | null;
+}
+
+/**
  * What `sign_document` and `sign_resume` answer. Mirrors `commands::sign::Signing`:
  * exactly one half is set --- written and read back, or a timestamp that did not
  * come, with nothing written and the made signature held.
