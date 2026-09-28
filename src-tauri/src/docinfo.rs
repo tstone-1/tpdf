@@ -328,6 +328,12 @@ pub struct Signature {
     /// so `none` --- a document carrying no revocation data --- is the
     /// ordinary answer and means *not checked*. See [`crate::revocation`].
     pub revocation: Option<crate::revocation::Revocation>,
+    /// What the same data says about every certificate from the signer's up
+    /// to its root, judged at the same moment, and which certificate decides
+    /// the answer. `Some` exactly when [`Signature::revocation`] is; its
+    /// first certificate is the signer's, with that answer. See
+    /// [`crate::revocation::chain`]. Since 2026-09-28.
+    pub revocation_chain: Option<crate::revocation::chain::Chain>,
 }
 
 /// What the signing certificate says, as against what the signer typed.
@@ -453,6 +459,9 @@ pub struct Timestamp {
     /// certificate, at the time the token states. `Some` exactly when
     /// [`Timestamp::trust`] is. Since 2026-09-28.
     pub revocation: Option<crate::revocation::Revocation>,
+    /// The same, for every certificate from the authority's up to its root.
+    /// `Some` exactly when [`Timestamp::revocation`] is. Since 2026-09-28.
+    pub revocation_chain: Option<crate::revocation::chain::Chain>,
 }
 
 /// What could not be read, so nothing here is silently partial.
@@ -1381,25 +1390,56 @@ fn read_signature(
     let own = crate::revocation::Pool::new(&own);
     let pools = [&judging.dss, &own];
 
+    // Whose certificates each chain is judged over: the signer's, as its
+    // `sid` names it, and the authority's --- and, as candidate issuers for
+    // both, the signature's certificate set and its token's, beside the
+    // pools' own. One population for every certificate on both chains, so a
+    // certificate whose data checked out has its issuer on the walk too.
+    let signer = blob.as_deref().and_then(identified);
+    let authority = token.as_deref().and_then(identified);
+    let mut population: Vec<x509_cert::Certificate> = Vec::new();
+    for certificate in signer
+        .iter()
+        .chain(authority.iter())
+        .flat_map(|(_, set)| set.iter())
+    {
+        if !population.contains(certificate) {
+            population.push(certificate.clone());
+        }
+    }
+    let judged = |leaf: &x509_cert::Certificate,
+                  moment: crate::revocation::Moment,
+                  budget: &mut u64| {
+        let own = crate::revocation::judge(leaf, &population, &pools, moment, judging.now, budget);
+        let chain = crate::revocation::chain::chain(
+            leaf,
+            &own,
+            &population,
+            &pools,
+            moment,
+            judging.now,
+            budget,
+        );
+        (own, chain)
+    };
+
     // The authority first, because whether the signer is judged at the time
     // it attests depends on it: on its token being intact, its standing
-    // trusted, and its certificate neither revoked nor out of its dates then.
+    // trusted, and neither its certificate nor any above it revoked, nor out
+    // of its dates then.
     let stated = token.as_deref().and_then(gen_time_seconds);
     if !document_timestamp {
-        if let (Some(timestamp), Some(token), Some(stated)) =
-            (out.timestamp.as_mut(), token.as_deref(), stated)
+        if let (Some(timestamp), Some((leaf, _)), Some(stated)) =
+            (out.timestamp.as_mut(), authority.as_ref(), stated)
         {
             if timestamp.trust.is_some() {
-                timestamp.revocation = certificate_revocation(
-                    token,
-                    &pools,
-                    crate::revocation::Moment {
-                        basis: crate::revocation::Basis::Stated,
-                        at: stated,
-                    },
-                    judging.now,
-                    budget,
-                );
+                let moment = crate::revocation::Moment {
+                    basis: crate::revocation::Basis::Stated,
+                    at: stated,
+                };
+                let (own, chain) = judged(leaf, moment, budget);
+                timestamp.revocation = Some(own);
+                timestamp.revocation_chain = Some(chain);
             }
         }
     }
@@ -1448,10 +1488,11 @@ fn read_signature(
                 },
             },
         };
-        out.revocation = match &blob {
-            Some(blob) => certificate_revocation(blob, &pools, moment, judging.now, budget),
-            None => None,
-        };
+        if let Some((leaf, _)) = &signer {
+            let (own, chain) = judged(leaf, moment, budget);
+            out.revocation = Some(own);
+            out.revocation_chain = Some(chain);
+        }
     }
 
     if document_timestamp {
@@ -1464,6 +1505,7 @@ fn read_signature(
                     integrity: Some(integrity.clone()),
                     trust: out.trust.clone(),
                     revocation: out.revocation.clone(),
+                    revocation_chain: out.revocation_chain.clone(),
                     ..timestamp
                 }),
                 None => {
@@ -1606,18 +1648,11 @@ fn read_dss(document: &Document) -> crate::revocation::Material {
     out
 }
 
-/// What the revocation data in `pools` says about the certificate `blob`'s
-/// `SignerInfo.sid` names --- a signature's signer, or a token's authority ---
-/// with the rest of `blob`'s certificates as candidate issuers. `None` when
+/// The certificate `blob`'s `SignerInfo.sid` names --- a signature's signer,
+/// or a token's authority --- with `blob`'s whole certificate set. `None` when
 /// that certificate cannot be identified, which the trust standing beside it
 /// has already reported.
-fn certificate_revocation(
-    blob: &[u8],
-    pools: &[&crate::revocation::Pool],
-    moment: crate::revocation::Moment,
-    now: u64,
-    budget: &mut u64,
-) -> Option<crate::revocation::Revocation> {
+fn identified(blob: &[u8]) -> Option<(x509_cert::Certificate, Vec<x509_cert::Certificate>)> {
     use cms::content_info::ContentInfo;
     use cms::signed_data::SignedData;
     use der::Decode;
@@ -1628,23 +1663,16 @@ fn certificate_revocation(
     if !matched {
         return None;
     }
-    let candidates: Vec<x509_cert::Certificate> =
-        certificates_of(&signed).into_iter().cloned().collect();
-    Some(crate::revocation::judge(
-        subject,
-        &candidates,
-        pools,
-        moment,
-        now,
-        budget,
-    ))
+    let subject = subject.clone();
+    let set = certificates_of(&signed).into_iter().cloned().collect();
+    Some((subject, set))
 }
 
 /// The time a timestamp attests, when it may stand for when the signature
 /// existed: the token `intact` (not `weak` --- SHA-1 does not show the time
 /// belongs to this signature), its authority `trusted` for timestamping by
-/// this computer's store, its certificate not revoked by the document's own
-/// data, and `at` inside that certificate's dates. Anything less and the
+/// this computer's store, neither its certificate nor any above it revoked by
+/// the document's own data, and `at` inside that certificate's dates. Anything less and the
 /// signer is judged now, as before 2026-09-28.
 fn attested_moment(timestamp: &Timestamp, token: &[u8], at: u64) -> Option<u64> {
     use cms::content_info::ContentInfo;
@@ -1659,10 +1687,16 @@ fn attested_moment(timestamp: &Timestamp, token: &[u8], at: u64) -> Option<u64> 
         .trust
         .as_ref()
         .is_some_and(|t| t.standing == crate::trust::Standing::Trusted);
+    // The authority's own certificate, or any above it: an issuing authority
+    // the document shows revoked vouches for nothing below it.
     let revoked = timestamp
         .revocation
         .as_ref()
-        .is_some_and(|r| r.standing == crate::revocation::Status::Revoked);
+        .is_some_and(|r| r.standing == crate::revocation::Status::Revoked)
+        || timestamp
+            .revocation_chain
+            .as_ref()
+            .is_some_and(|c| c.standing == crate::revocation::Status::Revoked);
     if !intact || !trusted || revoked {
         return None;
     }
@@ -2256,6 +2290,7 @@ pub fn parse_timestamp_token(token: &[u8]) -> Option<Timestamp> {
         trust: None,
         attested: false,
         revocation: None,
+        revocation_chain: None,
     })
 }
 
@@ -2482,7 +2517,7 @@ pub(crate) fn certificate_date(time: &x509_cert::time::Time) -> String {
 }
 
 /// Uppercase hex, which is how every other tool prints a serial.
-fn hex_of(bytes: &[u8]) -> String {
+pub(crate) fn hex_of(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes.iter().take(MAX_VALUE_CHARS / 2) {
@@ -3988,6 +4023,9 @@ mod tests {
             // `revocation.rs`, present exactly when `trust` is, judged only
             // from data the document carries --- `none` means not checked.
             revocation: _,
+            // The same verdict for every certificate above the signer's, in
+            // `revocation/chain.rs`, present exactly when `revocation` is.
+            revocation_chain: _,
         } = signature;
     }
 

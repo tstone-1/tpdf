@@ -41,10 +41,12 @@
 
 import {
   authorityRow,
+  chainRow,
   integrityRow,
   revocationRow,
   timestampRow,
   trustRow,
+  type Chain,
   type Integrity,
   type Revocation,
   type Trust,
@@ -118,6 +120,11 @@ export interface Signature {
    * when `trust` is.
    */
   revocation: Revocation | null;
+  /**
+   * The same, for every certificate from the signer's up to its root, and
+   * which one decides it; `null` exactly when `revocation` is.
+   */
+  revocation_chain: Chain | null;
 }
 
 /**
@@ -141,6 +148,8 @@ export interface Timestamp {
   attested: boolean;
   /** The authority's revocation, at the time the token states; `null` unless `trust`. */
   revocation: Revocation | null;
+  /** The same, for the authority's whole chain; `null` exactly when `revocation` is. */
+  revocation_chain: Chain | null;
 }
 
 /**
@@ -642,6 +651,10 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   // revocation data says. A document timestamp's signer is its authority.
   const withdrawn = revocationRow(signature.revocation, signature.kind === "ETSI.RFC3161");
   if (withdrawn) rows.push(withdrawn);
+  // Then the certificates above it, which it stands or falls with: shown only
+  // when there is one, or the chain ran past what tpdf follows.
+  const above = chainRow(signature.revocation_chain ?? null, signature.kind === "ETSI.RFC3161");
+  if (above) rows.push(above);
 
   // The certificate goes above what the signer typed, because a reader opening
   // this asks who signed it and these are two different answers to that. Which
@@ -671,6 +684,8 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
     // A document timestamp's authority revocation is the field's own row above.
     const lapsed = document ? null : revocationRow(stamp.revocation ?? null, true);
     if (lapsed) rows.push(lapsed);
+    const lapsedAbove = document ? null : chainRow(stamp.revocation_chain ?? null, true);
+    if (lapsedAbove) rows.push(lapsedAbove);
   }
   rows.push(coverageOf(signature, bytes));
   // Directly under Covers, which is the row it completes: that one says how much

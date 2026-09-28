@@ -21,10 +21,14 @@ import { describe, expect, it } from "vitest";
 import wording from "../../src-tauri/testdata/cli/wording.json";
 import {
   authorityRow,
+  chainRow,
+  chainSentence,
   integrityRow,
+  issuingCertificate,
   revocationRow,
   timestampRow,
   trustRow,
+  type Chain,
   type Integrity,
   type Revocation,
   type Trust,
@@ -51,6 +55,13 @@ describe("the command-line tool's wording", () => {
     // update and revoked with 11 reasons before and after the moment; each
     // for the signer and for an authority.
     expect(wording.revocation.length).toBe(4 * (1 + 12 + 2 * (2 * 2 + 11 * 2)) * 2);
+    // A chain row: each of those revocation shapes on the certificate above
+    // the leaf; five answers on the leaf, above a good issuer, alone at a
+    // root and alone short of one; a lone good leaf; a longer good chain;
+    // three past the bound; two unnamed issuers two ways --- each for the
+    // signer and for an authority.
+    expect(wording.chain.length).toBe((4 * (1 + 12 + 2 * (2 * 2 + 11 * 2)) + 5 * 3 + 5 + 4) * 2);
+    expect(wording.chain.some((c) => c.chain.dropped > 0)).toBe(true);
     // 7 signing reports, each with no timestamp and with four: sound, named
     // and trusted; sound from an authority nobody vouches for; sound and
     // unnamed; and one that does not check out.
@@ -97,6 +108,25 @@ describe("the command-line tool's wording", () => {
       const row = revocationRow(c.revocation as Revocation, c.authority);
       expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
     }
+  });
+
+  it("says each chain's answer as the properties dialog does", () => {
+    let shown = 0;
+    for (const c of wording.chain) {
+      const chain = c.chain as Chain;
+      expect(chainSentence(chain, c.authority), JSON.stringify(c)).toBe(c.sentence);
+      const row = chainRow(chain, c.authority);
+      if (row) {
+        shown += 1;
+        expect(row.value).toBe(c.sentence);
+      }
+      // And each certificate above the leaf, as the JSON words it.
+      chain.certificates.slice(1).forEach((judged, at) => {
+        const said = revocationRow(judged.revocation, c.authority, issuingCertificate(judged));
+        expect(said?.value, JSON.stringify(judged)).toBe(c.issuers[at]);
+      });
+    }
+    expect(shown).toBeGreaterThan(0);
   });
 
   it("reports a redaction as the window does", () => {

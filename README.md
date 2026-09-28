@@ -120,7 +120,9 @@ the tpdf menu on macOS or command palette to remember an opt-out on this device.
   certificate, its issuer and its validity, read out of the signature itself. Two things
   are checked rather than read: whether each signature still covers the bytes it was made
   over, and whether your computer's own trust store vouches for the signer's certificate
-  (without going online, so revocation is not checked).
+  (without going online). Revocation is judged only from the data the document itself
+  carries, for the signer's certificate and every one above it; a document carrying none
+  says it was not checked.
   <!-- built: file.properties -->
 - Printing through the system print panel, on both platforms — and every print job is read
   back through the operating system's own PDF parser before the panel opens, which is a
@@ -593,14 +595,16 @@ the page as it is displayed:
   computer trusts its signer, in the words of the application's properties dialog — and, for
   a signature carrying an RFC 3161 timestamp or a document timestamp, whether the timestamp
   checks out and covers it, and whether this computer trusts the authority that made it —
-  and what the revocation data the document itself carries says about each certificate.
+  and what the revocation data the document itself carries says about each certificate, and
+  about every certificate above the signer's and the authority's.
   Nothing is fetched to check a signature, so a document carrying no revocation data is
   reported as not checked for it. When a signature carries an intact timestamp from an
   authority this computer trusts, its signer is judged at the time that timestamp attests
   rather than now. `--strict` makes the exit code 1 unless every document has at least one
-  signature and every signature is intact, trusted (now or at an attested time), and not
-  shown revoked by the document's own data before that time. A document carrying no
-  revocation data still passes, as nearly every signed document would otherwise fail.
+  signature and every signature is intact, trusted (now or at an attested time), and neither
+  its certificate nor any above it is shown revoked by the document's own data before that
+  time. A document carrying no revocation data still passes, as nearly every signed document
+  would otherwise fail.
 - **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
   and their sizes, PDF version, the metadata in its `/Info` dictionary, encryption and what it
   permits, whether it is tagged, the conformance its XMP metadata claims (PDF/A, PDF/UA, PDF/X
@@ -798,7 +802,17 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `key_compromise`, or `null`), `basis` (whose clock `moment` is: `attested`, `stated` — the
   time a timestamp states, for its own authority — `claimed`, the signer's own date, or
   `now`), `moment`, `after_moment` (revoked after an attested time, which does not undo the
-  signature) and `sentence`; and `timestamp`, `null` for a signature with no timestamp, otherwise with
+  signature) and `sentence`; `revocation_chain`, `null` exactly when `revocation` is, the same
+  data's answer for every certificate from the signer's up to its root, judged at the same
+  moment: `standing` (`revoked` when any certificate on it is revoked, `good` when every one
+  is good, otherwise the most telling of `unknown`, `unchecked`, `none` and a revocation after
+  the attested time), `after_moment`, `decided_by` (the index in `certificates` of the
+  certificate that decides `standing`, or `null` when every one is good or the chain was too
+  long to follow), `dropped` (certificates past the eight tpdf judges; any makes a chain that
+  would read `good` or `none` read `unchecked`), `end` (`root`, `no_issuer` — the next
+  certificate up is not in the document — or `loop`), `certificates` (the signer's first, then
+  each above it but the root, each with `subject`, `serial` and `revocation` as above) and
+  `sentence`; and `timestamp`, `null` for a signature with no timestamp, otherwise with
   `time` (the time the timestamp states, `YYYY-MM-DD HH:MM:SS UTC`), `authority` (who made
   it, from its certificate, empty when none could be read), `attested` (whether the time is
   vouched for: `true` exactly when the timestamp's own verdict is `intact` or `weak` — any
@@ -807,9 +821,9 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   signed bytes; `why` may also be `binding`, a timestamp that does not name the certificate
   it was made with) and `trust` (as above, for the authority and for timestamping, `null`
   unless `attested`; `why` may also be `timestamping`, an authority whose certificate was
-  not issued for it) and `revocation` (as above, for the authority's certificate at the time
-  the timestamp states, `null` unless `trust` is set). Each `sentence` is the properties
-  dialog's row, word for word.
+  not issued for it), `revocation` (as above, for the authority's certificate at the time
+  the timestamp states, `null` unless `trust` is set) and `revocation_chain` (as above, for the
+  authority's chain). Each `sentence` is the properties dialog's row, word for word.
 
 Committed samples of each document are in
 [`src-tauri/testdata/cli/`](src-tauri/testdata/cli/), and a test holds this description to

@@ -131,6 +131,33 @@ fn revocation_sample() -> crate::revocation::Revocation {
     }
 }
 
+/// A chain with every key set: two certificates, the second deciding, the
+/// walk ended short of a root and a certificate past the bound --- a shape, as
+/// [`revocation_sample`] is.
+fn chain_sample() -> crate::revocation::chain::Chain {
+    crate::revocation::chain::Chain {
+        certificates: vec![
+            crate::revocation::chain::Judged {
+                subject: "CN=A. Signer".into(),
+                subject_cn: "A. Signer".into(),
+                serial: "05".into(),
+                revocation: revocation_sample(),
+            },
+            crate::revocation::chain::Judged {
+                subject: "CN=An Issuing CA".into(),
+                subject_cn: "An Issuing CA".into(),
+                serial: "07".into(),
+                revocation: revocation_sample(),
+            },
+        ],
+        standing: crate::revocation::Status::Revoked,
+        after_moment: true,
+        decided_by: Some(1),
+        dropped: 1,
+        end: crate::revocation::chain::End::NoIssuer,
+    }
+}
+
 fn samples() -> BTreeMap<&'static str, String> {
     let mut out: BTreeMap<&'static str, String> = BTreeMap::new();
     let mut put = |name: &'static str, value: &dyn erased::Sample| {
@@ -253,6 +280,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     }),
                     attested: true,
                     revocation: Some(revocation_sample()),
+                    revocation_chain: Some(chain_sample()),
                 }),
                 // `Unchecked` with a reason, so the sample carries every key the
                 // mirror has --- `why` is `null` on every other verdict, and a
@@ -273,6 +301,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     attested_at: "2026-01-02 03:04:06 UTC".into(),
                 }),
                 revocation: Some(revocation_sample()),
+                revocation_chain: Some(chain_sample()),
             }],
             tagged: Some(true),
             language: "en-GB".into(),
@@ -714,6 +743,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                             }),
                             attested: true,
                             revocation: Some(revocation_sample()),
+                            revocation_chain: Some(chain_sample()),
                         }),
                         revocation: Some(revocation_sample()),
                     },

@@ -299,7 +299,13 @@ fn in_process(path: &Path) -> Vec<Line> {
                     revoked(t.revocation)
                 )
             });
-            let revocation = revoked(s.revocation);
+            let chain = s.revocation_chain.map_or_else(String::new, |c| {
+                chain_line(
+                    &text(serde_json::to_value(c.standing).expect("json")),
+                    c.decided_by,
+                )
+            });
+            let revocation = format!("{}{chain}", revoked(s.revocation));
             (
                 s.field,
                 text(serde_json::to_value(integrity.verdict).expect("json")),
@@ -349,10 +355,29 @@ fn from_json(file: &serde_json::Value) -> Vec<Line> {
                 text(&s["trust"]["standing"]),
                 text(&s["trust"]["why"]),
                 stamp,
-                revoked(&s["revocation"]),
+                format!(
+                    "{}{}",
+                    revoked(&s["revocation"]),
+                    if s["revocation_chain"].is_null() {
+                        String::new()
+                    } else {
+                        chain_line(
+                            &text(&s["revocation_chain"]["standing"]),
+                            s["revocation_chain"]["decided_by"]
+                                .as_u64()
+                                .and_then(|at| usize::try_from(at).ok()),
+                        )
+                    }
+                ),
             )
         })
         .collect()
+}
+
+/// A chain's answer, as both readers spell it: its standing and which
+/// certificate decides it.
+fn chain_line(standing: &str, decided_by: Option<usize>) -> String {
+    format!("/chain={standing}:{decided_by:?}")
 }
 
 /// A revocation answer's line, as both readers spell it.
@@ -1152,6 +1177,59 @@ fn long_term_when_signing(report: &mut Report) {
         "long-term data: the PKI was asked about the signer and the authority",
         pki.paths() == ["/ocsp/signer", "/ocsp/authority"],
         &format!("{:?}", pki.paths()),
+    );
+
+    // Under an intermediate: what the gathering asked about is what the
+    // reading judges, so the whole chain reads back good --- through the real
+    // worker, the tool's JSON and its text alike.
+    let pki = Pki::start(Plan {
+        intermediate: true,
+        intermediate_ocsp: Some(Serve::Good),
+        ..good
+    });
+    let out = dir.join("b-lt-chain.pdf");
+    let (code, _, stderr) = sign(&pki, &out, &["--long-term"]);
+    report.check(
+        "long-term data under an intermediate: sign exits 0",
+        code == 0,
+        &format!("exit {code}: {stderr}"),
+    );
+    match read_back(&out) {
+        Err(why) => report.check(
+            "long-term data under an intermediate: read back",
+            false,
+            &why,
+        ),
+        Ok((_, json)) => {
+            let chain = &json["files"][0]["signatures"][0]["revocation_chain"];
+            report.check(
+                "long-term data under an intermediate: the signer's whole chain reads back good",
+                chain["standing"] == "good"
+                    && chain["certificates"].as_array().map(Vec::len) == Some(2)
+                    && chain["certificates"][1]["revocation"]["standing"] == "good"
+                    && chain["end"] == "root",
+                &chain.to_string(),
+            );
+            report.check(
+                "long-term data under an intermediate: the tool reads what the in-process \
+                 reader reads",
+                from_json(&json["files"][0]) == in_process(&out),
+                &format!(
+                    "{:?} / {:?}",
+                    from_json(&json["files"][0]),
+                    in_process(&out)
+                ),
+            );
+        }
+    }
+    let (code, stdout, _) = tool(&["verify", &s(&out)], &[]);
+    report.check(
+        "long-term data under an intermediate: verify says the chain is not revoked",
+        stdout.contains(
+            "    Chain revocation: not revoked — the document's revocation data says \
+                         neither the signer's certificate nor the issuing certificate",
+        ) && code == 0,
+        &format!("exit {code}: {stdout}"),
     );
 
     // Refusals: 3, nothing written, and the sentence says what to do.

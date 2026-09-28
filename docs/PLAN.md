@@ -16245,7 +16245,8 @@ done since, below). Archive timestamps (PAdES B-LTA): a document timestamp over 
 signature checkable after the authority's certificate expires --- until then an authority
 `expired` now attests no moment. Delta and indirect lists, `onlySomeReasons` partitions. A
 delegated responder's own revocation. Revocation of certificates above the signer's and the
-authority's. The chain the OS assembled as candidate issuers. OCSP responses with fractional
+authority's (done since, *The whole chain*, below). The chain the OS assembled as candidate
+issuers (decided against there). OCSP responses with fractional
 seconds in their times, which `x509-ocsp` refuses and are counted unreadable. The Windows store
 asked about a signer at a past moment (the code is the call `trust.rs` already makes, with
 another time).
@@ -16380,10 +16381,130 @@ not-built line.
 until then a B-LT signature is checkable until its timestamp authority's certificate expires.
 Adding validation data to a signature already in a document, which the README lists as not
 built. Revocation of the certificates above the signer's and the authority's is gathered,
-checked and written, and still **not judged by the reader** (C1's limit). A signer certificate
+checked and written, and judged by the reader since *The whole chain*, below. A signer certificate
 from a real CA, measured end to end. Windows: the code is the same and `scripts/check_windows.py`
 compiles it; no request has been made from a Windows machine. The window's flow has not been
 driven with a real identity, for step 2's reason.
+
+#### The whole chain, from the document's own data --- done 2026-09-28
+
+Phase 6 step 3, after increments C1 and C2: **the reader judges the revocation of every
+certificate on the signer's chain and the timestamp authority's, not only the two leaves.** An
+issuing authority whose own certificate has been revoked vouches for nothing it issued, so a
+revoked intermediate undoes a signature exactly as a revoked signer does --- and until this, C2
+fetched, checked and wrote the data about intermediates into `/DSS`, and C1's reader never
+looked at it, so a document showing its signer's issuing CA revoked read as sound.
+
+| Half | Where | What it does |
+|---|---|---|
+| The walk | `revocation::chain::walk` | From the leaf up: each issuer found by name and key (`issuer_of`); a root, or a cross-certificate of a root among the candidates, ends it; a certificate met twice ends it; at most `MAX_CHAIN` (8) kept, the rest counted. **One implementation**: `longterm::plan` walks it to decide what to ask the authorities about, the worker to decide what to judge. |
+| Judging | `revocation::chain::chain`, from `docinfo::read_signature` | Every certificate on the walk but the root and any carrying `id-pkix-ocsp-nocheck`, judged by C1's `judge` at the leaf's moment, with the leaf's own answer reused as the first. |
+| Combining | `revocation::chain::combine` | The rule below. |
+| Consequences | `docinfo::attested_moment`, `cli::verify::passes_strict`, `longterm::check` | A revoked certificate above the authority's earns no attested moment; above the signer's, fails `--strict`; either, and anything but `good`, refuses a B-LT write. |
+| Words | `integrity.ts` `chainRow`, `chainSentence`, `issuingCertificate`; `cli/words.rs` | The *Chain revocation* and *Authority chain revocation* rows, held together by `wording.json` (568 cases). |
+
+**The rule, decided and recorded.** Any certificate on the chain revoked before the moment
+revokes the chain and is named. Otherwise every certificate `good` makes it good. Otherwise the
+chain reads as its most telling answer, in this order: `unknown` (a responder says it does not
+know the certificate --- a statement against it), `unchecked` (data was there and failed), `none`
+(nothing was there), and a revocation **after** an attested moment, which does not undo the
+signature and so outweighs only `good`. Among equals the certificate nearest the leaf decides.
+Past the bound, a chain that would read `good`, `none` or revoked-after reads `unchecked`, naming
+no certificate: what was not judged might have been revoked before. Why this order and not
+"weakest": `none`, `unchecked` and `unknown` all pass `--strict` and all read *not checked* or
+*unknown*, so the order only chooses which certificate the sentence names --- and the one a reader
+should look at first is the one something was said against.
+
+Decisions, each with its reason:
+
+- **The JSON stays additive: the leaf's `revocation` is kept as it was, and `revocation_chain`
+  sits beside it** on every signature and every timestamp (README's rule: a new key is schema 1).
+  Making `revocation` the chain's would have changed what an existing key means to a script that
+  already reads it. `revocation_chain` carries `standing`, `after_moment`, `decided_by` (an index
+  into `certificates`, `null` when every one is good or the bound decided), `dropped`, `end`
+  (`root`, `no_issuer`, `loop`), `certificates` (the leaf first, each with `subject`, `serial`
+  and its own `revocation`) and `sentence`.
+- **The dialog shows the chain's row only when there is a certificate above the leaf, or one past
+  the bound.** A signer issued straight by a root has a chain of one, and a second row saying
+  what the first said would train a reader to skip both. When the leaf itself decides, the row
+  says so and points at the row above instead of repeating it; when an issuing certificate
+  decides, the row is that certificate's own sentence with its name in place of *the signer's
+  certificate* --- *the issuing certificate X was revoked on ...*.
+- **The OS-built chain is not offered as candidates.** `trust.rs` builds one, and passing it
+  out of the evaluation would have cost little. It was left out because a revocation answer is a
+  property of the file and should read the same on every computer, which a chain completed from
+  one computer's store would not; because a B-LT document carries its certificates (EN 319 142-1
+  §5.4.2) and tpdf's own writer puts every issuer and the self-issued anchor in its `/DSS`; and
+  because a walk that cannot continue reads *not checked*, the safe direction. The price is
+  residual 34 of `docs/THREAT-MODEL.md`: a third-party `/DSS` ending at a cross-certificate
+  reads *not checked* for it. Offering the OS chain's roots as anchors only would close that half.
+- **One candidate population for both chains of a signature**: the signature's certificates and
+  its token's, beside the pools' (`/DSS`, OCSP responders). It is exactly the population `judge`
+  looks for an issuer in, so a certificate whose data checked out always has its issuer on the
+  walk. **This widens C1's answer for the leaves**: the signer's issuer may now be found among
+  the token's certificates and the authority's among the signature's --- a certificate that read
+  `unchecked`, reason `issuer`, for want of an issuer the other set carried now reads what its
+  data says. No fixture or real document measured here changes answer.
+- **The authority's chain decides the attested moment, as its leaf did.** C1 refused a moment
+  whose authority read `revoked`; a revoked certificate above it now refuses it too. At the
+  `stated` basis a revocation after the token's time still counts, as C1's leaf rule does. **This
+  changes C1's semantics** for such documents: their signer is judged at `/M` or now instead of
+  at the token's time.
+- **`longterm::check` asks for every certificate above the leaves `good`**, and none past the
+  bound. The worker's reading of a B-LT file now judges the intermediates, so the check before
+  writing does too: the answer a properties dialog gives the file. It and `--strict` look only
+  **above** the leaf, whose own clause is unchanged: two clauses over the leaf made each
+  unfalsifiable (`docs/TRAPS.md`). This also made the gathering's own judgement of an
+  intermediate a second check, so its test now asserts which layer refused.
+- **Zero packages**: `cargo metadata` counts 618 before and after.
+
+**Measured**, macOS arm64 (macOS 27.0), 2026-09-28. Unit tests: 14 in `revocation::chain::tests`
+--- an intermediate good, revoked before and after the moment, by its list, with no data, with
+data that does not check out, its root absent from the document, a cross-certificate of a root
+in the document (and the control without the twin), a chain of eleven certificates below its
+root (eight judged, three counted, and a revocation among the eight still standing), two
+authorities certifying each other, an intermediate carrying `ocsp-nocheck`, a self-issued leaf,
+and the rule and the bound over every ordering. Three new in `docinfo::revocation_tests` through
+the whole scan --- the chain judged at the attested moment with the leaf's answer as its first,
+an intermediate revoked before (fails `--strict`) and after (passes), an intermediate with no
+data (`none`, passes) --- and the attested-moment test extended with a revoked chain above the
+authority. One new in `longterm::tests`, the round trip: a B-LT signing under an intermediate,
+gathered from the fake PKI and read back `good` for the whole chain; the check before writing
+extended with a revoked and a `none` chain on either side. `tests/cli.rs` has 246 checks, 4 new:
+the same signing through the real worker and the built tool, the chain `good` in `--json`, the
+tool agreeing with the in-process reader (which now compares the chains' standings and deciding
+certificates too), and `verify`'s text naming the chain. Frontend: 9 new tests --- `chainRow` in
+every shape, the rows' order in the dialog, and `cliwording.test.ts` comparing 568 chain
+sentences and each issuing certificate's sentence with the Rust port.
+
+**Oracle: pyHanko could not be configured offline to judge the minted chains, and no agreement
+is claimed.** The C1 instrument (`write_b_lt_documents_for_pyhanko`) now also writes the three
+intermediate documents, and tpdf reads them `good`, `revoked` naming the intermediate, and
+`revoked` after the moment. pyHanko 0.37 --- `validate_pdf_signature` and `CertificateValidator`
+over the `/DSS` data, no fetching, the moment set to the token's time --- read **every** file,
+the leaf-revoked control included, *INTACT:TRUSTED* under `hard-fail`, which pyHanko applies only
+to certificates naming a revocation source (the minted ones name none); and under `require`,
+with and without `retroactive_revinfo` and at four moments, *no revocation information could be
+found* for the good control as for the revoked cases. A reader that cannot tell the controls from
+the cases is no oracle, so after three configurations it was stopped. C2's fake PKI, whose
+certificates do name their responders and which pyHanko read *TRUSTED* in C2, cannot produce a
+revoked intermediate through the writer, which refuses it --- a file carrying one would have to be
+built by hand, the next step if an outside judgement of the revoked case is wanted.
+
+**Proved able to fail**: 15 new mutations in `scripts/mutate_rust.py` (twelve `chain:` and three
+`longterm:`) and 5 in `scripts/mutate_frontend.py` (`chain:`), each caught by the test named for
+it. Seven `longterm:` anchors were re-aimed at the shared walk, three of them into
+`revocation/chain.rs`. `--since HEAD` ran 146 Rust mutations over every touched file; **two
+survived on the first run**, both C1's and C2's checks of the leaf, which the new chain checks
+made redundant (`docs/TRAPS.md`); the chain checks now look only above the leaf, and both are
+caught since, with the two mutations added for the new branches of `longterm::check`.
+
+**Not done.** The OS chain's roots as anchors (residual 34). A delegated responder's own
+revocation (residual 31) --- a responder that answers for an intermediate is walked no further
+than one that answers for a leaf. The signing panel's closing sentence names the leaves'
+revocation and not the chains'. A real CA's intermediate read revoked: none is to hand, so the
+revoked chain is exercised only against minted data. Windows: the code is the same and
+`scripts/check_windows.py` compiles it.
 
 ### Cross-cutting
 

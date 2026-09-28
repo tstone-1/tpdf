@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use super::args::unknown;
 use super::report::{
-    self, ErrorKind, FileError, IntegrityReport, RevocationReport, TrustReport, SCHEMA,
+    self, ChainCertificate, ChainReport, ErrorKind, FileError, IntegrityReport, RevocationReport,
+    TrustReport, SCHEMA,
 };
 use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo;
@@ -127,7 +128,58 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
             .revocation
             .as_ref()
             .map(|r| revocation_report(r, document_timestamp)),
+        revocation_chain: signature
+            .revocation_chain
+            .as_ref()
+            .map(|c| chain_report(c, document_timestamp)),
     }
+}
+
+/// One chain's answer, as the report shows it. `authority` says the chain is
+/// a timestamp authority's.
+#[must_use]
+pub fn chain_report(chain: &crate::revocation::chain::Chain, authority: bool) -> ChainReport {
+    ChainReport {
+        standing: chain.standing,
+        after_moment: chain.after_moment,
+        decided_by: chain.decided_by,
+        dropped: chain.dropped,
+        end: chain.end,
+        certificates: chain
+            .certificates
+            .iter()
+            .enumerate()
+            .map(|(at, judged)| ChainCertificate {
+                subject: if judged.subject_cn.is_empty() {
+                    judged.subject.clone()
+                } else {
+                    judged.subject_cn.clone()
+                },
+                serial: judged.serial.clone(),
+                revocation: RevocationReport {
+                    sentence: if at == 0 {
+                        words::revocation_sentence(&judged.revocation, authority)
+                    } else {
+                        words::revocation_sentence_about(
+                            &judged.revocation,
+                            authority,
+                            &words::issuing_certificate(judged),
+                        )
+                    },
+                    ..revocation_report(&judged.revocation, authority)
+                },
+            })
+            .collect(),
+        sentence: words::chain_sentence(chain, authority),
+    }
+}
+
+/// Whether a chain's own row is shown: it holds a certificate above the leaf,
+/// or one past the bound. Otherwise the leaf's row already says all of it.
+/// `integrity.ts`'s `chainRow` returns nothing on the same rule.
+#[must_use]
+pub fn chain_shown(chain: &ChainReport) -> bool {
+    chain.certificates.len() > 1 || chain.dropped > 0
 }
 
 /// One revocation answer, as the report shows it. `authority` says the
@@ -195,12 +247,17 @@ pub fn timestamp_report(stamp: &docinfo::Timestamp, document: bool) -> report::T
             .revocation
             .as_ref()
             .map(|r| revocation_report(r, true)),
+        revocation_chain: stamp
+            .revocation_chain
+            .as_ref()
+            .map(|c| chain_report(c, true)),
     }
 }
 
 /// Whether a signature passes `--strict`: intact; trusted, now or at the
-/// time a trusted timestamp attests; and not shown revoked by the document's
-/// own data, unless after that attested time.
+/// time a trusted timestamp attests; and neither its certificate nor any above
+/// it shown revoked by the document's own data, unless after that attested
+/// time.
 ///
 /// **`none` passes, and so do `unknown` and `unchecked`**: a document
 /// carrying no revocation data is the ordinary case, and failing it would
@@ -219,6 +276,17 @@ pub fn passes_strict(signature: &report::Signature) -> bool {
             .revocation
             .as_ref()
             .is_some_and(|r| r.standing == crate::revocation::Status::Revoked && !r.after_moment)
+        // A certificate above the signer's, revoked before the moment, undoes
+        // the signature as the signer's own would: nothing it issued stands.
+        // Above only: the chain's first certificate is the signer's, which the
+        // clause before this one has answered for --- two clauses asking the
+        // same question would leave either one's deletion unnoticed.
+        && !signature.revocation_chain.as_ref().is_some_and(|c| {
+            c.certificates.iter().skip(1).any(|above| {
+                above.revocation.standing == crate::revocation::Status::Revoked
+                    && !above.revocation.after_moment
+            })
+        })
 }
 
 /// Reads one document's signatures through a worker.
@@ -366,6 +434,13 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
     if let Some(revocation) = &signature.revocation {
         lines.push(format!("    Revocation: {}", revocation.sentence));
     }
+    if let Some(chain) = signature
+        .revocation_chain
+        .as_ref()
+        .filter(|c| chain_shown(c))
+    {
+        lines.push(format!("    Chain revocation: {}", chain.sentence));
+    }
     if let Some(stamp) = &signature.timestamp {
         lines.push(format!("    Timestamped: {}", stamp.integrity.sentence));
         if let Some(trust) = &stamp.trust {
@@ -373,6 +448,12 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
         }
         if let Some(revocation) = &stamp.revocation {
             lines.push(format!("    Authority revocation: {}", revocation.sentence));
+        }
+        if let Some(chain) = stamp.revocation_chain.as_ref().filter(|c| chain_shown(c)) {
+            lines.push(format!(
+                "    Authority chain revocation: {}",
+                chain.sentence
+            ));
         }
     }
     lines.join("\n")

@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::integrity::{Verdict, Why};
+use crate::revocation::chain::End as ChainEnd;
 use crate::revocation::{Basis, Gap, Reason, Source, Status};
 use crate::trust::{Doubt, Standing, Store};
 
@@ -72,9 +73,9 @@ pub struct Verified {
     pub command: String,
     /// Whether `--strict` would pass: every document read, each with at least
     /// one signature, every signature `intact`, `trusted` or
-    /// `trusted_at_timestamp`, and none whose revocation is `revoked` other
-    /// than after an attested moment. Present whether or not `--strict` was
-    /// given.
+    /// `trusted_at_timestamp`, and none whose revocation, or whose chain's,
+    /// is `revoked` other than after an attested moment. Present whether or
+    /// not `--strict` was given.
     pub strict_passed: bool,
     /// One entry per document, in the order given.
     pub files: Vec<File>,
@@ -147,6 +148,10 @@ pub struct Signature {
     /// certificate (a document timestamp's: its authority's); `null` exactly
     /// when `trust` is. Added to schema 1 on 2026-09-28, a new key.
     pub revocation: Option<RevocationReport>,
+    /// What the same data says about every certificate from the signer's up
+    /// to its root; `null` exactly when `revocation` is. Added to schema 1 on
+    /// 2026-09-28, a new key.
+    pub revocation_chain: Option<ChainReport>,
 }
 
 /// `docinfo::Timestamp`, with the sentences the application shows.
@@ -173,6 +178,9 @@ pub struct TimestampReport {
     /// certificate, at the time the token states; `null` exactly when `trust`
     /// is. Added 2026-09-28.
     pub revocation: Option<RevocationReport>,
+    /// The same, for every certificate from the authority's up to its root;
+    /// `null` exactly when `revocation` is. Added 2026-09-28.
+    pub revocation_chain: Option<ChainReport>,
 }
 
 /// `integrity::Integrity`, with the sentence the application shows.
@@ -236,6 +244,41 @@ pub struct RevocationReport {
     pub after_moment: bool,
     /// The properties dialog's Revocation row, word for word.
     pub sentence: String,
+}
+
+/// `revocation::chain::Chain`, with the sentence the application shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainReport {
+    /// The chain's answer: `revoked` when any certificate on it is (named by
+    /// `decided_by`), `good` when every one is, otherwise the most telling of
+    /// `unknown`, `unchecked`, `none` and a revocation after the moment.
+    pub standing: Status,
+    /// `revoked` after an attested moment, which does not undo the signature.
+    pub after_moment: bool,
+    /// The index in `certificates` of the certificate that decides
+    /// `standing`, or `null` when every one is `good` or the bound decided it.
+    pub decided_by: Option<usize>,
+    /// Certificates on the chain past the ones tpdf judges, not judged.
+    pub dropped: usize,
+    /// How the chain ended: `root`, `no_issuer` (the next certificate up is
+    /// not in the document) or `loop`.
+    pub end: ChainEnd,
+    /// Every certificate judged, the leaf first; roots and certificates that
+    /// need no check are not listed.
+    pub certificates: Vec<ChainCertificate>,
+    /// The properties dialog's Chain revocation row, word for word.
+    pub sentence: String,
+}
+
+/// One certificate on a chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainCertificate {
+    /// Whom it names (its common name, or its whole name).
+    pub subject: String,
+    /// Its serial number, uppercase hex.
+    pub serial: String,
+    /// What the document's data says about it, as `revocation` above.
+    pub revocation: RevocationReport,
 }
 
 /// `tpdf sign --json`.

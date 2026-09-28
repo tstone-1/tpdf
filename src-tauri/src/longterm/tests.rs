@@ -268,6 +268,29 @@ fn an_ldap_point_is_skipped_and_the_http_one_asked() {
 }
 
 #[test]
+fn a_b_lt_signature_under_an_intermediate_reads_back_good_for_the_whole_chain() {
+    // The round trip that proves the writer and the reader walk one chain:
+    // what the gathering asked about is what the reading judges.
+    let pki = Pki::start(Plan {
+        intermediate: true,
+        intermediate_ocsp: Some(Serve::Good),
+        ..good()
+    });
+    let bytes = extended(&sealed(&pki)).expect("extended");
+    let signature = read(&bytes);
+    let chain = signature.revocation_chain.expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.certificates.len(), chain.end),
+        (
+            crate::revocation::Status::Good,
+            2,
+            crate::revocation::chain::End::Root
+        ),
+        "{chain:?}"
+    );
+}
+
+#[test]
 fn an_intermediate_is_asked_about_and_carried() {
     let pki = Pki::start(Plan {
         intermediate: true,
@@ -328,11 +351,17 @@ fn a_revoked_intermediate_is_refused_before_anything_is_written() {
         ..good()
     });
     let why = extended(&sealed(&pki)).expect_err("refused");
+    // Refused by the gathering, naming where the list came from --- not
+    // later, by the reading of a file already built: that one would say "the
+    // revocation list in the document", and the list would have been written.
     assert!(
         why.revoked()
             && why
                 .sentence()
-                .contains("the certificate above the signer's"),
+                .contains("the certificate above the signer's")
+            && why
+                .sentence()
+                .contains("the revocation list from 127.0.0.1"),
         "{why:?}"
     );
 }
@@ -587,6 +616,66 @@ fn the_check_before_writing_wants_good_for_both_and_names_a_revocation() {
     );
     // Another field is not ours.
     assert!(check(&found(Says::Good, Says::Good), "Signature9").is_err());
+    // A certificate above either, read back revoked or not good: the chain
+    // the reader judges is refused as the leaf would be.
+    for authority in [false, true] {
+        for (standing, is_revoked) in [
+            (crate::revocation::Status::Revoked, true),
+            (crate::revocation::Status::None, false),
+        ] {
+            let mut above = found(Says::Good, Says::Good);
+            let ours = above
+                .iter_mut()
+                .find(|s| s.field == signed.field)
+                .expect("ours");
+            let chain = if authority {
+                ours.timestamp
+                    .as_mut()
+                    .and_then(|t| t.revocation_chain.as_mut())
+            } else {
+                ours.revocation_chain.as_mut()
+            }
+            .expect("a chain");
+            chain.certificates.push(crate::revocation::chain::Judged {
+                subject_cn: "tpdf test issuing authority".into(),
+                revocation: crate::revocation::Revocation {
+                    standing,
+                    revoked: "2026-09-01 00:00:00 UTC".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            chain.standing = standing;
+            chain.decided_by = Some(1);
+            let why = check(&above, &signed.field).expect_err("refused");
+            let whose = if authority {
+                "the certificate above the timestamp authority's (tpdf test issuing authority)"
+            } else {
+                "the certificate above the signer's (tpdf test issuing authority)"
+            };
+            assert_eq!(why.revoked(), is_revoked, "{why:?}");
+            assert!(why.sentence().contains(whose), "{why:?}");
+        }
+        // A chain past what the reader judges is not a chain read good.
+        let mut long = found(Says::Good, Says::Good);
+        let ours = long
+            .iter_mut()
+            .find(|s| s.field == signed.field)
+            .expect("ours");
+        let chain = if authority {
+            ours.timestamp
+                .as_mut()
+                .and_then(|t| t.revocation_chain.as_mut())
+        } else {
+            ours.revocation_chain.as_mut()
+        }
+        .expect("a chain");
+        chain.dropped = 1;
+        assert!(matches!(
+            check(&long, &signed.field),
+            Err(Refusal::Written(_))
+        ));
+    }
     // A signature, or its timestamp, that does not read as intact.
     let mut broken = found(Says::Good, Says::Good);
     for s in &mut broken {

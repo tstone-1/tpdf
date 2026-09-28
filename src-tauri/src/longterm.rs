@@ -25,9 +25,11 @@
 //!   delegated responder's, which is trusted for the life of the certificate).
 //!   The issuers are found among the signature's own certificates, the token's,
 //!   and the chain the operating system assembles offline --- and **every one of
-//!   them goes into `/DSS /Certs`**, because increment C1's reader does not offer
-//!   the OS chain as candidate issuers, so an issuer not in the document reads
-//!   as `unchecked`, reason `issuer`.
+//!   them goes into `/DSS /Certs`**, because the reader does not offer the OS
+//!   chain as candidate issuers, so an issuer not in the document reads as
+//!   `unchecked`, reason `issuer`. The walk itself is the reader's
+//!   (`revocation::chain::walk`), so what is asked about here is exactly what
+//!   the reader judges in the file written.
 //! - **How** ([`gather`]): OCSP first --- a `POST` of `application/ocsp-request`
 //!   to each `id-ad-ocsp` address in the certificate's `authorityInfoAccess`, in
 //!   the order written --- and the revocation list from its
@@ -49,8 +51,8 @@
 //!   hands it the signed bytes and the DER, and it answers the revision and
 //!   `docinfo::scan` over the result. [`check`] then refuses unless the new
 //!   signature is intact, its timestamp intact, and the signer's and the
-//!   authority's revocation standings **`good`** --- the answer a properties
-//!   dialog would give the file.
+//!   authority's revocation standings **`good`**, for their whole chains ---
+//!   the answer a properties dialog would give the file.
 //!
 //! ## Why the `CertID` hashes with SHA-1
 //!
@@ -82,6 +84,7 @@ use der::{Decode as _, Encode as _};
 use x509_cert::Certificate;
 use x509_ocsp::{OcspResponse, OcspResponseStatus};
 
+use crate::revocation::chain::{walk, End};
 use crate::revocation::{Basis, Moment, Source, Status};
 use crate::sign_dss::Gathered;
 use crate::tsa;
@@ -92,8 +95,6 @@ const ID_AD_OCSP: &str = "1.3.6.1.5.5.7.48.1";
 const AUTHORITY_INFO_ACCESS: &str = "1.3.6.1.5.5.7.1.1";
 /// id-ce-cRLDistributionPoints.
 const CRL_DISTRIBUTION_POINTS: &str = "2.5.29.31";
-/// id-pkix-ocsp-nocheck, RFC 6960 §4.2.2.2.1.
-const OCSP_NO_CHECK: &str = "1.3.6.1.5.5.7.48.1.5";
 /// id-aa-timeStampToken.
 const TIME_STAMP_TOKEN: &str = "1.2.840.113549.1.9.16.2.14";
 /// id-sha1, for the `CertID`.
@@ -364,32 +365,6 @@ fn lists(certificate: &Certificate) -> Vec<url::Url> {
         .collect()
 }
 
-/// Whether the certificate says nobody need ask about its own revocation.
-fn no_check(certificate: &Certificate) -> bool {
-    extension(certificate, OCSP_NO_CHECK).is_some()
-}
-
-/// Whether `certificate` is a root: self-issued, and verified by its own key.
-fn root(certificate: &Certificate) -> bool {
-    certificate.tbs_certificate.subject == certificate.tbs_certificate.issuer
-        && crate::revocation::issuer_of(certificate, &[certificate]).is_some()
-}
-
-/// A root among `candidates` that `certificate` is the same authority as:
-/// self-issued, with its name and its key. `certificate` itself when it is a
-/// root; the self-issued twin when it is a cross-certificate.
-fn anchor_of<'a>(
-    certificate: &Certificate,
-    candidates: &'a [Certificate],
-) -> Option<&'a Certificate> {
-    candidates.iter().find(|candidate| {
-        candidate.tbs_certificate.subject == certificate.tbs_certificate.subject
-            && candidate.tbs_certificate.subject_public_key_info
-                == certificate.tbs_certificate.subject_public_key_info
-            && root(candidate)
-    })
-}
-
 /// A CMS `SignedData` and its signer's certificate.
 fn signed_data(blob: &[u8]) -> Result<cms::signed_data::SignedData, String> {
     let info = cms::content_info::ContentInfo::from_der(blob).map_err(|e| e.to_string())?;
@@ -497,6 +472,13 @@ fn planned(
 
     let mut subjects: Vec<Subject> = Vec::new();
     let mut carried: Vec<Vec<u8>> = Vec::new();
+    let mut carry = |certificate: &Certificate| {
+        if let Ok(der) = certificate.to_der() {
+            if !carried.contains(&der) {
+                carried.push(der);
+            }
+        }
+    };
     for (leaf, own, above) in [
         (&signer, Whose::Signer, Whose::SignerIssuer),
         (&authority, Whose::Authority, Whose::AuthorityIssuer),
@@ -504,56 +486,58 @@ fn planned(
         if own == Whose::Signer && !with_signer {
             continue;
         }
-        let mut current = leaf.clone();
-        let mut whose = own;
-        for _ in 0..=MAX_SUBJECTS {
-            // A root needs nothing --- unless it is the signer or the
-            // authority itself, which then has nobody to vouch for it, and
-            // says so the way a certificate with no addresses does. Nor does
-            // a **cross-certificate of a root**: the same name and key as a
-            // self-issued certificate the token or the OS holds, issued by
-            // another root. DigiCert's and Sectigo's tokens carry their
-            // timestamping roots in that form, and the chain a verifier builds
-            // ends at the self-issued one (measured 2026-09-28, `docs/PLAN.md`).
-            //
-            // **The anchor is carried, and the cross-certificate is not.**
-            // Given both, pyHanko resolves an OCSP response signed by the
-            // root's key to the cross-certificate, which is not the issuer on
-            // its path, and calls the response unauthorised --- measured on
-            // DigiCert's and Sectigo's real data (`docs/TRAPS.md`). The token
-            // still carries the cross-certificate for whoever builds that path.
-            let anchor = anchor_of(&current, &candidates);
-            if let Ok(der) = anchor.unwrap_or(&current).to_der() {
-                if !carried.contains(&der) {
-                    carried.push(der);
-                }
-            }
-            if anchor.is_some() {
-                if whose == own {
-                    return Err(Refusal::NotPublished(named(&current, whose)));
-                }
-                break;
-            }
-            let issuer = crate::revocation::issuer_of(&current, &everyone)
-                .cloned()
-                .ok_or_else(|| Refusal::NoIssuer(named(&current, whose)))?;
-            if !no_check(&current) {
-                let der = current.to_der().unwrap_or_default();
-                if !subjects
-                    .iter()
-                    .any(|s| s.certificate.to_der().ok().as_deref() == Some(&der[..]))
-                {
-                    subjects.push(Subject {
-                        certificate: current.clone(),
-                        issuer: issuer.clone(),
-                        whose,
-                    });
-                }
-            }
-            current = issuer;
-            whose = above;
+        // The walk is the reader's (`revocation::chain::walk`), so what is
+        // asked about here is what the reader judges in the file written.
+        // A root needs nothing --- unless it is the signer or the authority
+        // itself, which then has nobody to vouch for it, and says so the way
+        // a certificate with no addresses does. Nor does a **cross-certificate
+        // of a root**, which the walk ends at too: DigiCert's and Sectigo's
+        // tokens carry their timestamping roots in that form (measured
+        // 2026-09-28, `docs/PLAN.md`).
+        //
+        // **The anchor is carried, and the cross-certificate is not.** Given
+        // both, pyHanko resolves an OCSP response signed by the root's key to
+        // the cross-certificate, which is not the issuer on its path, and calls
+        // the response unauthorised --- measured on DigiCert's and Sectigo's
+        // real data (`docs/TRAPS.md`). The token still carries the
+        // cross-certificate for whoever builds that path.
+        let walked = walk(leaf, &everyone);
+        if walked.links.is_empty() {
+            return Err(Refusal::NotPublished(named(leaf, own)));
         }
-        if subjects.len() > MAX_SUBJECTS {
+        for (at, link) in walked.links.iter().enumerate() {
+            let whose = if at == 0 { own } else { above };
+            carry(&link.certificate);
+            let Some(issuer) = &link.issuer else {
+                return Err(Refusal::NoIssuer(named(&link.certificate, whose)));
+            };
+            if link.no_check {
+                continue;
+            }
+            let der = link.certificate.to_der().unwrap_or_default();
+            if !subjects
+                .iter()
+                .any(|s| s.certificate.to_der().ok().as_deref() == Some(&der[..]))
+            {
+                subjects.push(Subject {
+                    certificate: link.certificate.clone(),
+                    issuer: issuer.clone(),
+                    whose,
+                });
+            }
+        }
+        match (&walked.end, &walked.anchor) {
+            (End::Root, Some(anchor)) => carry(anchor),
+            (End::Loop, _) => {
+                return Err(Refusal::Bound(
+                    "would follow a chain of certificates that loops back on itself, which no \
+                     verifier can end at a root"
+                        .into(),
+                ))
+            }
+            _ => {}
+        }
+        if walked.dropped > 0 || subjects.len() > MAX_SUBJECTS {
             return Err(Refusal::Bound(format!(
                 "would cover more than {MAX_SUBJECTS} certificates, more than any real chain has"
             )));
@@ -836,7 +820,8 @@ pub fn gather(
 
 /// Refuses unless the worker's reading of the finished bytes says what a B-LT
 /// signing must: the new signature `field` intact, its timestamp intact, and
-/// the signer's and the authority's revocation standings `good`.
+/// the signer's and the authority's revocation standings `good` --- theirs and
+/// their chains', since the reader judges the whole chain (2026-09-28).
 ///
 /// # Errors
 ///
@@ -903,6 +888,50 @@ pub fn check(signatures: &[crate::docinfo::Signature], field: &str) -> Result<()
                         .unwrap_or_default()
                 )))
             }
+        }
+    }
+    // And every certificate above them, as the reader judges the file: the
+    // ones the gathering asked about, each read back `good`, and none past
+    // the bound. Above only --- the chain's first certificate is the leaf,
+    // answered for above, and a second check of it would hide either one.
+    for (chain, above) in [
+        (ours.revocation_chain.as_ref(), "the signer's"),
+        (stamp.revocation_chain.as_ref(), "the timestamp authority's"),
+    ] {
+        let Some(chain) = chain else {
+            return written("no revocation answer for a chain");
+        };
+        let name = |judged: &crate::revocation::chain::Judged| {
+            format!("the certificate above {above} ({})", judged.subject_cn)
+        };
+        let issuers = chain.certificates.iter().skip(1);
+        if let Some(judged) = issuers
+            .clone()
+            .find(|c| c.revocation.standing == Status::Revoked)
+        {
+            return Err(Refusal::Revoked {
+                name: name(judged),
+                at: judged.revocation.revoked.clone(),
+                by: match judged.revocation.source {
+                    Some(Source::Crl) => "the revocation list in the document".into(),
+                    _ => "the OCSP response in the document".into(),
+                },
+            });
+        }
+        if let Some(judged) = issuers
+            .clone()
+            .find(|c| c.revocation.standing != Status::Good)
+        {
+            return Err(Refusal::Written(format!(
+                "{} reads {}",
+                name(judged),
+                format!("{:?}", judged.revocation.standing).to_lowercase()
+            )));
+        }
+        if chain.dropped > 0 {
+            return Err(Refusal::Written(format!(
+                "the chain above {above} certificate is longer than tpdf judges"
+            )));
         }
     }
     Ok(())

@@ -450,6 +450,7 @@ describe("a timestamp", () => {
           trust: null,
           attested: true,
           revocation: null,
+          revocation_chain: null,
         },
       },
     ],

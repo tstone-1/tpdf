@@ -567,9 +567,15 @@ export function momentPhrase(revocation: Revocation): string {
   }
 }
 
+/** The signer's or the authority's certificate, as the sentences name it. */
+function leafHolder(authority: boolean): string {
+  return authority ? "the authority's certificate" : "the signer's certificate";
+}
+
 /**
  * The row that says what the document's own revocation data says about a
- * certificate: the signer's, or a timestamp authority's (`authority`).
+ * certificate: the signer's, or a timestamp authority's (`authority`) --- or,
+ * named by `whose`, a certificate above either on its chain.
  *
  * `null` when there is no answer, which is wherever there is no trust
  * standing. **`none` is worded as not checked**: tpdf fetches no revocation
@@ -578,10 +584,13 @@ export function momentPhrase(revocation: Revocation): string {
  * confident false statement. Only `good` and a revocation after an attested
  * moment are shown without a warning.
  */
-export function revocationRow(revocation: Revocation | null, authority = false): Row | null {
+export function revocationRow(
+  revocation: Revocation | null,
+  authority = false,
+  whose: string = leafHolder(authority),
+): Row | null {
   if (!revocation) return null;
   const name = authority ? "Authority revocation" : "Revocation";
-  const whose = authority ? "the authority's certificate" : "the signer's certificate";
   const made = authority ? "the timestamp" : "the signature";
   const moment = momentPhrase(revocation);
   const source =
@@ -654,4 +663,138 @@ export function revocationRow(revocation: Revocation | null, authority = false):
         warn: true,
       };
   }
+}
+
+/** How a chain's walk ended. Mirrors `revocation::chain::End`. */
+export type ChainEnd = "root" | "no_issuer" | "loop";
+
+/** One certificate on a chain. Mirrors `revocation::chain::Judged`. */
+export interface Judged {
+  subject: string;
+  subject_cn: string;
+  serial: string;
+  revocation: Revocation;
+}
+
+/**
+ * What the document's revocation data says about a whole chain, the leaf
+ * first. Mirrors `revocation::chain::Chain`; present exactly where the leaf's
+ * {@link Revocation} is.
+ */
+export interface Chain {
+  certificates: Judged[];
+  standing: RevocationStatus;
+  after_moment: boolean;
+  decided_by: number | null;
+  dropped: number;
+  end: ChainEnd;
+}
+
+/** The most certificates tpdf judges on one chain: `revocation::chain::MAX_CHAIN`. */
+export const MAX_CHAIN = 8;
+
+/** A certificate above the leaf, as the sentences name it. */
+export function issuingCertificate(judged: Judged): string {
+  const name = judged.subject_cn || judged.subject;
+  return name ? `the issuing certificate ${name}` : "an issuing certificate with no readable name";
+}
+
+/** "1 certificate", "3 certificates". */
+function certificates(n: number): string {
+  return n === 1 ? "1 certificate" : `${n} certificates`;
+}
+
+/** The first words of a chain's answer, when the leaf's own decides it. */
+function chainHead(chain: Chain): string {
+  switch (chain.standing) {
+    case "revoked":
+      return chain.after_moment ? "revoked after the timestamp" : "revoked";
+    case "unknown":
+      return "unknown";
+    case "good":
+      return "not revoked";
+    case "none":
+    case "unchecked":
+      return "not checked";
+  }
+}
+
+/**
+ * The row that says what the document's revocation data says about the whole
+ * chain from the signer's certificate --- or a timestamp authority's --- up to
+ * its root, naming the certificate that decides it (`revocation/chain.rs`).
+ *
+ * `null` when there is no chain, and when the chain holds nothing above the
+ * leaf and nothing past the bound: the leaf's own row then says all of it.
+ * A revocation of an issuing certificate before the moment is worded as the
+ * leaf's would be, with the certificate named, because it undoes the signature
+ * exactly as the leaf's own would.
+ */
+export function chainRow(chain: Chain | null, authority = false): Row | null {
+  if (!chain) return null;
+  if (chain.certificates.length <= 1 && chain.dropped === 0) return null;
+  const name = authority ? "Authority chain revocation" : "Chain revocation";
+  const warn = !(chain.standing === "good" || (chain.standing === "revoked" && chain.after_moment));
+  const row = (value: string): Row => (warn ? { name, value, warn } : { name, value });
+  return row(chainSentence(chain, authority));
+}
+
+/**
+ * {@link chainRow}'s value, for every chain: the command-line tool's JSON
+ * carries a sentence even where the dialog shows no row.
+ */
+export function chainSentence(chain: Chain, authority = false): string {
+  const whose = leafHolder(authority);
+  const above = Math.max(chain.certificates.length - 1, 0);
+  const unjudged =
+    chain.dropped === 0
+      ? ""
+      : ` ${certificates(chain.dropped)} further up ${chain.dropped === 1 ? "was" : "were"} not judged.`;
+  const decided = chain.decided_by;
+  if (decided === null) {
+    if (chain.standing === "good") {
+      const first = chain.certificates[0];
+      const moment = first ? momentPhrase(first.revocation) : "";
+      const last = chain.certificates[chain.certificates.length - 1];
+      const top = last ? issuingCertificate(last) : "";
+      if (above === 0) {
+        return `not revoked — the same as the row above: no certificate stands between ${whose} and a root.`;
+      }
+      if (above === 1) {
+        return (
+          `not revoked — the document's revocation data says neither ${whose} nor ${top} ` +
+          `had been revoked, and it reaches ${moment}.`
+        );
+      }
+      return (
+        `not revoked — the document's revocation data says none of the ` +
+        `${certificates(above + 1)} from ${whose} up to ${top} had been revoked, and it ` +
+        `reaches ${moment}.`
+      );
+    }
+    return (
+      `not checked — the chain from ${whose} to its root is longer than the ${MAX_CHAIN} ` +
+      `certificates tpdf follows, so ${certificates(chain.dropped)} further up ` +
+      `${chain.dropped === 1 ? "was not judged" : "were not judged"}, and ` +
+      `${chain.dropped === 1 ? "it" : "any of them"} might have been revoked.`
+    );
+  }
+  if (decided === 0) {
+    if (above === 0) {
+      const why =
+        chain.end === "root"
+          ? `no certificate stands between ${whose} and a root`
+          : `the certificate that issued ${whose} is not in the document`;
+      return `${chainHead(chain)} — the same as the row above: ${why}.${unjudged}`;
+    }
+    const those = above === 1 ? "the certificate" : `the ${certificates(above)}`;
+    return (
+      `${chainHead(chain)} — decided by ${whose} itself, in the row above; nothing about ` +
+      `${those} above it reads worse.${unjudged}`
+    );
+  }
+  const judged = chain.certificates[decided];
+  if (!judged) return "";
+  const said = revocationRow(judged.revocation, authority, issuingCertificate(judged));
+  return `${said?.value ?? ""}${unjudged}`;
 }

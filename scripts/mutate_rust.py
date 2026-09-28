@@ -12894,37 +12894,39 @@ MUTATIONS += [
     Mutation(
         "longterm: ask about a certificate that says it needs no check",
         "src/longterm.rs",
-        "            if !no_check(&current) {",
-        "            if true {",
+        "            if link.no_check {",
+        "            if false && link.no_check {",
         "a_certificate_that_needs_no_check_is_not_asked_about",
     ),
     Mutation(
+        # The walk is shared with the reader since 2026-09-28
+        # (`revocation/chain.rs`): a root no longer ends it, so it loops.
         "longterm: ask about a root",
-        "src/longterm.rs",
-        "            if anchor.is_some() {\n                if whose == own {",
-        "            if false {\n                if whose == own {",
+        "src/revocation/chain.rs",
+        "        if let Some(anchor) = anchor_of(&current, candidates) {",
+        "        if let Some(anchor) = anchor_of(&current, candidates).filter(|_| false) {",
         "a_b_lt_signature_is_written_and_reads_back_good_for_signer_and_authority",
     ),
     Mutation(
         # Found by the real run against DigiCert and Sectigo (docs/PLAN.md).
         "longterm: walk past a cross-certificate of a root the OS holds",
-        "src/longterm.rs",
-        "            let anchor = anchor_of(&current, &candidates);\n",
-        "            let anchor = anchor_of(&current, &candidates).filter(|_| root(&current));\n",
+        "src/revocation/chain.rs",
+        "    candidates.iter().copied().find(|candidate| {",
+        "    candidates.iter().copied().filter(|_| false).find(|candidate| {",
         "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
     ),
     Mutation(
         "longterm: carry a cross-certificate in place of its anchor",
-        "src/longterm.rs",
-        "            if let Ok(der) = anchor.unwrap_or(&current).to_der() {",
-        "            if let Ok(der) = current.to_der() {",
+        "src/revocation/chain.rs",
+        "                anchor: Some(anchor.clone()),",
+        "                anchor: Some(current.clone()),",
         "a_cross_certificate_of_a_root_the_os_holds_ends_the_chain",
     ),
     Mutation(
         "longterm: let a self-issued signer pass with nothing asked",
         "src/longterm.rs",
-        "                if whose == own {",
-        "                if false {",
+        "        if walked.links.is_empty() {",
+        "        if false {",
         "a_self_issued_signer_publishes_nothing_and_says_so",
     ),
     Mutation(
@@ -12937,7 +12939,7 @@ MUTATIONS += [
     Mutation(
         "longterm: plan a chain of any depth",
         "src/longterm.rs",
-        "        if subjects.len() > MAX_SUBJECTS {",
+        "        if walked.dropped > 0 || subjects.len() > MAX_SUBJECTS {",
         "        if false {",
         "a_chain_deeper_than_any_real_one_is_refused",
     ),
@@ -13029,8 +13031,8 @@ MUTATIONS += [
         # `none` is B-T, which is not what the reader asked for.
         "longterm: write a signature whose revocation reads none",
         "src/longterm.rs",
-        "            Status::Good => {}",
-        "            Status::Good | Status::None => {}",
+        "        match revocation.standing {\n            Status::Good => {}",
+        "        match revocation.standing {\n            Status::Good | Status::None => {}",
         "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
     ),
     Mutation(
@@ -13099,6 +13101,123 @@ MUTATIONS += [
         "long_term_data_is_asked_for_only_with_a_timestamp",
     ),
 ]
+
+# --- the whole chain, read (2026-09-28) --------------------------------------
+#
+# `revocation/chain.rs`, `docinfo.rs`, `cli/verify.rs`, `cli/words.rs` and
+# `longterm.rs`: the reader judging every certificate above the signer's and
+# the authority's. Each removes one rule of the walk or the combination, and
+# names the test built so only that rule fails it.
+MUTATIONS += [
+    Mutation(
+        "chain: judge only the leaf",
+        "src/revocation/chain.rs",
+        "    for link in walked.links.iter().skip(1).filter(|link| !link.no_check) {",
+        "    for link in walked.links.iter().skip(usize::MAX).filter(|link| !link.no_check) {",
+        "an_intermediate_revoked_before_the_moment_revokes_the_chain_and_is_named",
+    ),
+    Mutation(
+        "chain: judge a certificate that needs no check",
+        "src/revocation/chain.rs",
+        "    for link in walked.links.iter().skip(1).filter(|link| !link.no_check) {",
+        "    for link in walked.links.iter().skip(1).filter(|_| true) {",
+        "a_certificate_that_needs_no_check_is_walked_through_and_not_judged",
+    ),
+    Mutation(
+        "chain: a revocation before the moment outweighs nothing",
+        "src/revocation/chain.rs",
+        "        Status::Revoked if !revocation.after_moment => 5,",
+        "        Status::Revoked if !revocation.after_moment => 1,",
+        "the_most_telling_answer_decides_and_the_leaf_breaks_a_tie",
+    ),
+    Mutation(
+        "chain: nothing said about a certificate reads as good",
+        "src/revocation/chain.rs",
+        "        Status::None => 2,",
+        "        Status::None => 0,",
+        "an_intermediate_the_document_says_nothing_about_is_not_read_as_good",
+    ),
+    Mutation(
+        "chain: the top breaks a tie",
+        "src/revocation/chain.rs",
+        "(weight(&c.revocation), std::cmp::Reverse(*at))",
+        "(weight(&c.revocation), *at)",
+        "the_most_telling_answer_decides_and_the_leaf_breaks_a_tie",
+    ),
+    Mutation(
+        "chain: past the bound a good chain stands",
+        "src/revocation/chain.rs",
+        "    let (standing, after_moment, decided_by) = if dropped > 0 && reassures {",
+        "    let (standing, after_moment, decided_by) = if false && reassures {",
+        "a_chain_longer_than_the_bound_is_counted_and_cannot_read_good",
+    ),
+    Mutation(
+        "chain: count nothing past the bound",
+        "src/revocation/chain.rs",
+        "            dropped += 1;",
+        "            dropped += 0;",
+        "a_chain_longer_than_the_bound_is_counted_and_cannot_read_good",
+    ),
+    Mutation(
+        # Not "remove the seen check", which would hang the harness: a loop
+        # with nothing to end it is the defect, and a test cannot time it out.
+        "chain: call a loop a missing issuer",
+        "src/revocation/chain.rs",
+        "                end: End::Loop,",
+        "                end: End::NoIssuer,",
+        "two_authorities_certifying_each_other_end_the_walk_rather_than_loop_it",
+    ),
+    Mutation(
+        "chain: the attested moment ignores the certificates above the authority's",
+        "src/docinfo.rs",
+        "        || timestamp\n            .revocation_chain",
+        "        || false && timestamp\n            .revocation_chain",
+        "only_an_intact_token_from_a_trusted_unrevoked_authority_attests_a_moment",
+    ),
+    Mutation(
+        "chain: the scan keeps no chain for the signer",
+        "src/docinfo.rs",
+        "            out.revocation_chain = Some(chain);",
+        "            out.revocation_chain = None.filter(|_: &crate::revocation::chain::Chain| true).or(None); let _ = chain;",
+        "the_certificate_above_the_signers_is_judged_at_the_same_moment",
+    ),
+    Mutation(
+        "chain: --strict ignores a revoked certificate above the signer's",
+        "src/cli/verify.rs",
+        "            c.certificates.iter().skip(1).any(|above| {",
+        "            c.certificates.iter().skip(usize::MAX).any(|above| {",
+        "a_certificate_above_the_signers_revoked_before_the_attested_time_fails_strict",
+    ),
+    Mutation(
+        "chain: name the leaf when an issuing certificate decides",
+        "src/cli/words.rs",
+        "                    &issuing_certificate(judged)\n                )\n            ),",
+        "                    leaf_holder(authority)\n                )\n            ),",
+        "every_json_shape_and_the_wording_match_their_committed_samples",
+    ),
+    Mutation(
+        "longterm: write a signature whose chain reads revoked",
+        "src/longterm.rs",
+        "            .find(|c| c.revocation.standing == Status::Revoked)",
+        "            .find(|_| false)",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        "longterm: write a signature whose chain reads none",
+        "src/longterm.rs",
+        "            .find(|c| c.revocation.standing != Status::Good)",
+        "            .find(|_| false)",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+    Mutation(
+        "longterm: write a signature whose chain runs past the bound",
+        "src/longterm.rs",
+        "        if chain.dropped > 0 {",
+        "        if false {",
+        "the_check_before_writing_wants_good_for_both_and_names_a_revocation",
+    ),
+]
+
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -2492,6 +2492,21 @@ Anything less and the signer is judged now, as before.
 
 **Residuals** 30 and 31, below; 28 is narrowed.
 
+**The whole chain, added the same day.** The same data is now asked about every certificate
+from the signer's --- and the authority's --- up to its root, at the moment the leaf is judged
+(`revocation/chain.rs`, `docs/PLAN.md` §9 *The whole chain*). A certificate above the leaf that
+the document shows revoked before that moment revokes the chain: `verify --strict` fails it, and
+on the authority's side it earns no attested moment. **No new input and no new authority**: the
+walk reads the certificates already parsed --- the signature's, its token's, the `/DSS`'s and
+those inside the responses --- finds each issuer by name *and* key with the same
+`issuer_of`, and judges with the same `judge`, so every signature it checks is charged to the
+same `MAX_HASHED`. **Bounded**: at most eight certificates judged per chain
+(`chain::MAX_CHAIN`), the rest counted to the walk's end and turning a chain that would read
+*good* or *none* into *not checked*; a certificate met twice ends the walk, so two authorities
+certifying each other cannot loop it; the steps are at most the candidates, which the bounds
+above already count. The chain the OS assembles is **not** offered as candidates --- a revocation
+answer stays a property of the file, the same on every computer --- which is residual 34.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —
@@ -4064,6 +4079,16 @@ which is what makes it evidence rather than a milestone.
     `nextUpdate` has not passed; tpdf writes it, and a later reader judges the same response.
     Bounded by the response's own validity window (7 days on the test responders; hours to days
     on the public ones, `docs/PLAN.md` §9) and by responses being signed. Not closed.
+34. **A chain the document leaves unfinished reads not checked, even where this computer's store
+    would finish it** (§T6.25), added 2026-09-28. The walk up from the signer's certificate
+    takes issuers only from the document, so a B-LT document from another writer whose `/DSS`
+    stops at a cross-certificate, or leaves out an intermediate the OS holds, reads *not
+    checked* for the certificate where the walk stopped, however good the rest. The direction
+    is the safe one --- nothing reads *good* that the document does not show --- and tpdf's own
+    writer carries every issuer and the self-issued anchor. The cost is a warning a reader of
+    such a document sees and a stricter reader might not. Not closed: offering the OS chain's
+    roots as anchors only, never as issuers of checked data, would close the cross-certificate
+    half without making the answer depend on the computer's data.
 
 ## 8. How to re-verify any of this
 

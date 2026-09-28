@@ -64,6 +64,33 @@
           "moment": "2026-09-26 18:20:14 UTC",
           "after_moment": false,
           "sentence": "not checked — the document carries no revocation data for the authority's certificate, and tpdf does not fetch any, so a certificate its issuer has since withdrawn reads the same as one it has not."
+        },
+        "revocation_chain": {
+          "standing": "none",
+          "after_moment": false,
+          "decided_by": 0,
+          "dropped": 0,
+          "end": "root",
+          "certificates": [
+            {
+              "subject": "Acme Time Authority",
+              "serial": "0B",
+              "revocation": {
+                "standing": "none",
+                "why": null,
+                "source": null,
+                "issued": "",
+                "next": "",
+                "revoked": "",
+                "reason": null,
+                "basis": "stated",
+                "moment": "2026-09-26 18:20:14 UTC",
+                "after_moment": false,
+                "sentence": "not checked — the document carries no revocation data for the authority's certificate, and tpdf does not fetch any, so a certificate its issuer has since withdrawn reads the same as one it has not."
+              }
+            }
+          ],
+          "sentence": "not checked — the same as the row above: no certificate stands between the authority's certificate and a root."
         }
       },
       "revocation": {
@@ -78,6 +105,50 @@
         "moment": "2026-09-26 18:20:13 UTC",
         "after_moment": false,
         "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the signer's certificate had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+      },
+      "revocation_chain": {
+        "standing": "good",
+        "after_moment": false,
+        "decided_by": null,
+        "dropped": 0,
+        "end": "root",
+        "certificates": [
+          {
+            "subject": "First Signer",
+            "serial": "05",
+            "revocation": {
+              "standing": "good",
+              "why": null,
+              "source": "ocsp",
+              "issued": "2026-09-26 12:00:00 UTC",
+              "next": "2026-09-27 12:00:00 UTC",
+              "revoked": "",
+              "reason": null,
+              "basis": "claimed",
+              "moment": "2026-09-26 18:20:13 UTC",
+              "after_moment": false,
+              "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the signer's certificate had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+            }
+          },
+          {
+            "subject": "tpdf test issuing CA",
+            "serial": "07",
+            "revocation": {
+              "standing": "good",
+              "why": null,
+              "source": "ocsp",
+              "issued": "2026-09-26 12:00:00 UTC",
+              "next": "2026-09-27 12:00:00 UTC",
+              "revoked": "",
+              "reason": null,
+              "basis": "claimed",
+              "moment": "2026-09-26 18:20:13 UTC",
+              "after_moment": false,
+              "sentence": "not revoked — an OCSP response in the document, signed by its issuer or a responder its issuer authorised, issued 2026-09-26 12:00:00 UTC and meant to hold until 2026-09-27 12:00:00 UTC, says the issuing certificate tpdf test issuing CA had not been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
+            }
+          }
+        ],
+        "sentence": "not revoked — the document's revocation data says neither the signer's certificate nor the issuing certificate tpdf test issuing CA had been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
       }
     },
     {
@@ -96,7 +167,8 @@
       },
       "trust": null,
       "timestamp": null,
-      "revocation": null
+      "revocation": null,
+      "revocation_chain": null
     }
   ],
   "summary": "Signed as Signature2 and saved to contract-signed.pdf. Read back after writing, the signature is intact. Earlier signature: Signature1 intact."

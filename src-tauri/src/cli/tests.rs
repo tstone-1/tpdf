@@ -413,6 +413,7 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
         }),
         timestamp: None,
         revocation: None,
+        revocation_chain: None,
     }
 }
 
@@ -963,6 +964,7 @@ fn wording() -> serde_json::Value {
     // reason a revocation gives, every gap, every basis, both sources --- for
     // the signer's certificate and an authority's.
     let mut revocations = Vec::new();
+    let mut chains = Vec::new();
     {
         use crate::revocation::{Basis, Gap, Reason, Revocation, Source, Status};
         let bases = [Basis::Attested, Basis::Stated, Basis::Claimed, Basis::Now];
@@ -1032,12 +1034,100 @@ fn wording() -> serde_json::Value {
                 }
             }
         }
-        for shape in shapes {
+        for shape in &shapes {
             for authority in [false, true] {
                 revocations.push(serde_json::json!({
                     "revocation": shape,
                     "authority": authority,
-                    "sentence": words::revocation_sentence(&shape, authority),
+                    "sentence": words::revocation_sentence(shape, authority),
+                }));
+            }
+        }
+
+        // A chain row: every revocation shape on the certificate above the
+        // leaf, which then decides or is outweighed by nothing; each answer
+        // but `good` on the leaf, with a good certificate above it and alone;
+        // a longer good chain; the bound; and the three ways an issuer is
+        // named --- each for the signer and for an authority.
+        use crate::revocation::chain::{combine, End, Judged};
+        let good = answered(
+            Basis::Attested,
+            Status::Good,
+            Source::Ocsp,
+            "2026-08-27 09:00:00 UTC",
+        );
+        let named = |cn: &str, subject: &str, revocation: &Revocation| Judged {
+            subject: subject.into(),
+            subject_cn: cn.into(),
+            serial: "07".into(),
+            revocation: revocation.clone(),
+        };
+        let leaf = |revocation: &Revocation| named("A. Signer", "CN=A. Signer", revocation);
+        let issuer =
+            |revocation: &Revocation| named("An Issuing CA", "CN=An Issuing CA,O=Acme", revocation);
+        let mut built = Vec::new();
+        for shape in &shapes {
+            built.push(combine(vec![leaf(&good), issuer(shape)], 0, End::Root));
+        }
+        // One of each answer the leaf's own can decide with: the chain's
+        // sentence then names only the answer, never its detail.
+        let mut heads: Vec<&Revocation> = Vec::new();
+        for shape in shapes.iter().filter(|s| s.standing != Status::Good) {
+            if !heads
+                .iter()
+                .any(|h| (h.standing, h.after_moment) == (shape.standing, shape.after_moment))
+            {
+                heads.push(shape);
+            }
+        }
+        for shape in &heads {
+            built.push(combine(vec![leaf(shape), issuer(&good)], 0, End::Root));
+            for end in [End::Root, End::NoIssuer] {
+                built.push(combine(vec![leaf(shape)], 0, end));
+            }
+        }
+        built.push(combine(vec![leaf(&good)], 0, End::Root));
+        built.push(combine(
+            vec![leaf(&good), issuer(&good), issuer(&good), issuer(&good)],
+            0,
+            End::Root,
+        ));
+        built.push(combine(vec![leaf(&good), issuer(&good)], 3, End::Root));
+        built.push(combine(vec![leaf(&good), issuer(&good)], 1, End::Root));
+        let unknown = heads
+            .iter()
+            .find(|h| h.standing == Status::Unknown)
+            .copied()
+            .expect("an unknown");
+        built.push(combine(vec![leaf(unknown), issuer(&good)], 2, End::Root));
+        for (cn, subject) in [("", "CN=An Issuing CA,O=Acme"), ("", "")] {
+            built.push(combine(
+                vec![leaf(&good), named(cn, subject, &good)],
+                0,
+                End::Root,
+            ));
+            built.push(combine(
+                vec![leaf(&good), named(cn, subject, &at(Basis::Attested))],
+                0,
+                End::NoIssuer,
+            ));
+        }
+        for chain in built {
+            for authority in [false, true] {
+                chains.push(serde_json::json!({
+                    "chain": chain,
+                    "authority": authority,
+                    "sentence": words::chain_sentence(&chain, authority),
+                    "issuers": chain
+                        .certificates
+                        .iter()
+                        .skip(1)
+                        .map(|c| words::revocation_sentence_about(
+                            &c.revocation,
+                            authority,
+                            &words::issuing_certificate(c),
+                        ))
+                        .collect::<Vec<_>>(),
                 }));
             }
         }
@@ -1049,6 +1139,7 @@ fn wording() -> serde_json::Value {
         "timestamp": timestamps,
         "authority": authorities,
         "revocation": revocations,
+        "chain": chains,
         "after_signing": after,
         "after_redaction": after_redaction,
         // The window offers these by name and the tool takes their names:
@@ -1101,6 +1192,7 @@ fn full_signature() -> report::Signature {
             },
             false,
         )),
+        revocation_chain: Some(super::verify::chain_report(&sample_chain(), false)),
         timestamp: Some(super::verify::timestamp_report(
             &crate::docinfo::Timestamp {
                 when: "2026-09-26 18:20:14 UTC".into(),
@@ -1127,10 +1219,62 @@ fn full_signature() -> report::Signature {
                     moment: "2026-09-26 18:20:14 UTC".into(),
                     ..crate::revocation::Revocation::default()
                 }),
+                // The authority's certificate issued straight by a root: a
+                // chain of one, whose row the dialog does not show.
+                revocation_chain: Some(crate::revocation::chain::Chain {
+                    certificates: vec![crate::revocation::chain::Judged {
+                        subject: "CN=Acme Time Authority".into(),
+                        subject_cn: "Acme Time Authority".into(),
+                        serial: "0B".into(),
+                        revocation: crate::revocation::Revocation {
+                            basis: crate::revocation::Basis::Stated,
+                            moment: "2026-09-26 18:20:14 UTC".into(),
+                            ..crate::revocation::Revocation::default()
+                        },
+                    }],
+                    standing: crate::revocation::Status::None,
+                    decided_by: Some(0),
+                    ..crate::revocation::chain::Chain::default()
+                }),
             },
             false,
         )),
     }
+}
+
+/// The signer's chain in the sample: the signer good and its issuing
+/// authority good, from OCSP responses in the document.
+fn sample_chain() -> crate::revocation::chain::Chain {
+    let good = crate::revocation::Revocation {
+        standing: crate::revocation::Status::Good,
+        why: None,
+        source: Some(crate::revocation::Source::Ocsp),
+        issued: "2026-09-26 12:00:00 UTC".into(),
+        next: "2026-09-27 12:00:00 UTC".into(),
+        revoked: String::new(),
+        reason: None,
+        basis: crate::revocation::Basis::Claimed,
+        moment: "2026-09-26 18:20:13 UTC".into(),
+        after_moment: false,
+    };
+    crate::revocation::chain::combine(
+        vec![
+            crate::revocation::chain::Judged {
+                subject: "CN=First Signer".into(),
+                subject_cn: "First Signer".into(),
+                serial: "05".into(),
+                revocation: good.clone(),
+            },
+            crate::revocation::chain::Judged {
+                subject: "CN=tpdf test issuing CA".into(),
+                subject_cn: "tpdf test issuing CA".into(),
+                serial: "07".into(),
+                revocation: good,
+            },
+        ],
+        0,
+        crate::revocation::chain::End::Root,
+    )
 }
 
 fn bare_signature() -> report::Signature {
@@ -1152,6 +1296,7 @@ fn bare_signature() -> report::Signature {
         trust: None,
         timestamp: None,
         revocation: None,
+        revocation_chain: None,
     }
 }
 

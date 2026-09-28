@@ -81,6 +81,19 @@ have the binary.)
   signature whose certificate the document shows revoked before that time, and
   still passes one carrying no revocation data. The JSON gains `revocation` on
   each signature and each timestamp, and `attested_at` on each trust answer.
+- **The certificates above the signer's are checked too.** An issuing
+  authority whose own certificate has been revoked vouches for nothing it
+  issued, so a signature under it is no better than one whose own certificate
+  was revoked. From the same data the document carries, and at the same time,
+  tpdf now checks every certificate from the signer's — and a timestamp
+  authority's — up to its root. When there is one above the signer's, the
+  properties dialog shows a *Chain revocation* row naming the certificate that
+  decides it; a certificate above the signer's the document says nothing about
+  is shown as not checked, never as fine. `tpdf verify --strict` fails a
+  signature whose issuing certificate the document shows revoked before the
+  signature was made, and a timestamp whose authority's issuing certificate is
+  shown revoked no longer vouches for when a signature was made. The JSON gains
+  `revocation_chain` on each signature and each timestamp.
 
 ### Fixed
 

@@ -552,6 +552,7 @@ hop through the index.
 - A redaction's read-back looks for what was taken, so a match that could not be marked is invisible to it
 - A bound checked on the way in through one door is untested through the other
 - A list judged twice over the same two certificates hid a mutation of the first judgement
+- Judging the whole chain made two checks of the leaf redundant, and their mutations went quiet
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -25189,3 +25190,27 @@ It is not redundant above them. The worker's reading judges nobody but the signe
 authority, so for an intermediate the gathering's check is the only one. The mutation is aimed at
 `a_revoked_intermediate_is_refused_before_anything_is_written` now. A check layered on another is
 covered only where the other does not reach.
+
+### Judging the whole chain made two checks of the leaf redundant, and their mutations went quiet
+
+2026-09-28, the reader's judgement of every certificate above the signer's and the authority's.
+The chain's first certificate is the leaf, with the leaf's own answer, so a chain `revoked`
+covers a leaf `revoked` too. Two earlier guards asked about the leaf beside a new one asking
+about the chain, and the mutation table said what that costs: *cli: a revocation before the
+moment passes --strict* (C1) and *longterm: write a signature whose revocation reads none* (C2)
+both **survived** their first run after the change. Deleting the leaf clause changed nothing,
+because the chain clause refused the same signature a line later --- every test still green, and
+each clause now unable to fail alone.
+
+The fix was not to delete either but to make them disjoint: the chain clauses in
+`cli::verify::passes_strict` and `longterm::check` now look only at the certificates **above**
+the leaf (`certificates.iter().skip(1)`), and the leaf clauses keep the leaf. Each question has
+one owner, and each mutation reddens its own test again. The same reasoning retires the last
+paragraph of the entry above this one: the worker's reading does judge the intermediates now,
+so the gathering's judgement of one is no longer the only check --- and its test now also asserts
+*which* layer refused (the list *from* the responder's host, not the one *in the document*),
+which is what keeps that mutation aimed.
+
+Worth knowing whenever a check is widened to include what an older check already covers: the
+older one becomes redundant silently, and only a mutation of it says so. Widen to the part not
+yet covered, not to the whole.

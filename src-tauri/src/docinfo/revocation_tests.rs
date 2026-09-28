@@ -298,6 +298,121 @@ fn a_revocation_after_the_attested_time_does_not_fail_strict_and_one_before_does
     }
 }
 
+/// The signer under an intermediate `w.ca` issued, the intermediate in the
+/// signature, and a `/DSS` holding a good response for the signer, one saying
+/// `middle` for the intermediate when given, and a good one for the authority.
+fn b_lt_under_an_intermediate(w: &World, middle: Option<Says>) -> Vec<u8> {
+    let issuing = w.ca.intermediate("tpdf test issuing authority", 0x6c, 0x31);
+    let signer = issuing.issue("tpdf test signer under it", 0x6d, 8, None);
+    let bytes = signed(
+        &signer,
+        std::slice::from_ref(&issuing.certificate),
+        G,
+        &w.tsa,
+    );
+    let mut responses = vec![
+        ocsp(&signer.certificate, &issuing, Says::Good),
+        ocsp(&w.tsa.certificate, &w.tsa_root, Says::Good),
+    ];
+    if let Some(says) = middle {
+        responses.push(ocsp(&issuing.certificate, &w.ca, says));
+    }
+    with_dss(
+        &bytes,
+        &[w.ca.certificate.clone(), w.tsa.root.clone()],
+        &responses,
+        &[],
+    )
+}
+
+#[test]
+fn the_certificate_above_the_signers_is_judged_at_the_same_moment() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let signature = read(
+        &b_lt_under_an_intermediate(&w, Some(Says::Good)),
+        &anchors(&w),
+    );
+    assert_eq!(
+        signature.trust.as_ref().map(|t| t.standing),
+        Some(Standing::TrustedAtTimestamp)
+    );
+    let chain = signature.revocation_chain.clone().expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.decided_by, chain.certificates.len()),
+        (Status::Good, None, 2),
+        "{chain:?}"
+    );
+    assert_eq!(
+        chain.certificates[1].subject_cn,
+        "tpdf test issuing authority"
+    );
+    assert_eq!(chain.certificates[1].revocation.basis, Basis::Attested);
+    // Its first certificate is the answer beside it, not a second judgement.
+    assert_eq!(
+        Some(&chain.certificates[0].revocation),
+        signature.revocation.as_ref()
+    );
+    // And the authority's, issued straight by its root: a chain of one.
+    let stamp = signature.timestamp.expect("a timestamp");
+    let above = stamp.revocation_chain.expect("the authority's chain");
+    assert_eq!(
+        (above.standing, above.certificates.len()),
+        (Status::Good, 1)
+    );
+}
+
+#[test]
+fn a_certificate_above_the_signers_revoked_before_the_attested_time_fails_strict() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    for (at, after) in [(G + DAY, true), (G - DAY, false)] {
+        let bytes = b_lt_under_an_intermediate(
+            &w,
+            Some(Says::Revoked {
+                at,
+                reason: Some(2),
+            }),
+        );
+        let signature = read(&bytes, &anchors(&w));
+        assert_eq!(
+            signature.revocation.as_ref().map(|r| r.standing),
+            Some(Status::Good),
+            "the signer's own certificate is good: only the chain can fail it"
+        );
+        let chain = signature.revocation_chain.clone().expect("a chain");
+        assert_eq!(
+            (chain.standing, chain.decided_by, chain.after_moment),
+            (Status::Revoked, Some(1), after),
+            "{chain:?}"
+        );
+        let report = crate::cli::verify::signature_report(&signature);
+        assert_eq!(crate::cli::verify::passes_strict(&report), after, "{at}");
+    }
+}
+
+#[test]
+fn a_certificate_above_the_signers_with_no_data_is_not_read_as_good() {
+    if !has_store() {
+        return;
+    }
+    let w = world();
+    let signature = read(&b_lt_under_an_intermediate(&w, None), &anchors(&w));
+    let chain = signature.revocation_chain.clone().expect("a chain");
+    assert_eq!(
+        (chain.standing, chain.decided_by),
+        (Status::None, Some(1)),
+        "{chain:?}"
+    );
+    // Not checked is not a failure: `--strict` asks what speaks against.
+    let report = crate::cli::verify::signature_report(&signature);
+    assert!(crate::cli::verify::passes_strict(&report));
+}
+
 #[test]
 fn the_dss_certificates_complete_a_chain_the_signature_does_not_carry() {
     if !has_store() {
@@ -485,6 +600,20 @@ fn only_an_intact_token_from_a_trusted_unrevoked_authority_attests_a_moment() {
             "{verdict:?} {standing:?} revoked {revoked}"
         );
     }
+    // A certificate above the authority's, revoked: it vouches for nothing
+    // below it, so the token attests no moment --- and the control, a chain
+    // that is good.
+    for (standing, attests) in [(Status::Revoked, None), (Status::Good, Some(G))] {
+        let above = Timestamp {
+            revocation_chain: Some(crate::revocation::chain::Chain {
+                standing,
+                decided_by: Some(1),
+                ..Default::default()
+            }),
+            ..timestamp(Verdict::Intact, Standing::Trusted, false)
+        };
+        assert_eq!(attested_moment(&above, &token, G), attests, "{standing:?}");
+    }
     // And a moment outside the authority's certificate's dates.
     assert_eq!(
         attested_moment(
@@ -645,6 +774,18 @@ fn write_b_lt_documents_for_pyhanko() {
         ("revoked-after", b_lt(&w, revoked(G + DAY), Says::Good)),
         ("stale", stale),
         ("none", signed(&w.signer, &[], G, &w.tsa)),
+        (
+            "intermediate-good",
+            b_lt_under_an_intermediate(&w, Some(Says::Good)),
+        ),
+        (
+            "intermediate-revoked-before",
+            b_lt_under_an_intermediate(&w, Some(revoked(G - DAY))),
+        ),
+        (
+            "intermediate-revoked-after",
+            b_lt_under_an_intermediate(&w, Some(revoked(G + DAY))),
+        ),
     ] {
         std::fs::write(out.join(format!("{name}.pdf")), &bytes).expect("written");
         let anchors = anchors(&w);
@@ -655,6 +796,12 @@ fn write_b_lt_documents_for_pyhanko() {
             signature
                 .revocation
                 .map(|r| (r.standing, r.why, r.after_moment))
+        );
+        println!(
+            "{name}: tpdf chain {:?}",
+            signature
+                .revocation_chain
+                .map(|c| (c.standing, c.decided_by, c.after_moment))
         );
     }
 }

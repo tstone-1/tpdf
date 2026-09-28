@@ -67,6 +67,7 @@ function signed(): Signature {
     integrity: { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" },
     trust: null,
     revocation: null,
+    revocation_chain: null,
   };
 }
 
@@ -720,6 +721,7 @@ describe("a timestamp on a signature", () => {
       trust: null,
       attested: verdict === "intact" || verdict === "weak",
       revocation: null,
+      revocation_chain: null,
     };
   }
 
@@ -787,6 +789,59 @@ describe("a timestamp on a signature", () => {
     expect(rows.find((r) => r.name === "Authority revocation")?.value).toContain(
       "no revocation data for the authority's certificate",
     );
+  });
+
+  it("puts each chain's row under its certificate's own, and only when there is a chain above it", () => {
+    const answer = {
+      standing: "good" as const,
+      why: null,
+      source: "ocsp" as const,
+      issued: "2026-08-20 09:00:00 UTC",
+      next: "2026-08-27 09:00:00 UTC",
+      revoked: "",
+      reason: null,
+      basis: "stated" as const,
+      moment: "2026-08-21 12:00:00 UTC",
+      after_moment: false,
+    };
+    const judged = (cn: string) => ({
+      subject: `CN=${cn}`,
+      subject_cn: cn,
+      serial: "07",
+      revocation: answer,
+    });
+    const two = {
+      certificates: [judged("A. Signer"), judged("An Issuing CA")],
+      standing: "good" as const,
+      after_moment: false,
+      decided_by: null,
+      dropped: 0,
+      end: "root" as const,
+    };
+    const sig = signed();
+    sig.trust = { standing: "trusted", why: null, store: "mac", attested_at: "" };
+    sig.revocation = answer;
+    sig.revocation_chain = two;
+    sig.timestamp = {
+      ...stamp("intact"),
+      trust: { standing: "trusted", why: null, store: "mac", attested_at: "" },
+      revocation: answer,
+      revocation_chain: two,
+    };
+    const names = signatureRows(sig, 1024).map((r) => r.name);
+    expect(names.indexOf("Chain revocation")).toBe(names.indexOf("Revocation") + 1);
+    expect(names.indexOf("Authority chain revocation")).toBe(
+      names.indexOf("Authority revocation") + 1,
+    );
+
+    // The control: a chain of the leaf alone adds no row to either.
+    const one = { ...two, certificates: [judged("A. Signer")] };
+    sig.revocation_chain = one;
+    sig.timestamp = { ...sig.timestamp, revocation_chain: one };
+    const alone = signatureRows(sig, 1024).map((r) => r.name);
+    expect(alone).toContain("Revocation");
+    expect(alone).not.toContain("Chain revocation");
+    expect(alone).not.toContain("Authority chain revocation");
   });
 
   it("puts the authority's standing under the time, and only when there is one", () => {

@@ -83,6 +83,8 @@ use x509_ocsp::{BasicOcspResponse, CertStatus, OcspResponse, OcspResponseStatus,
 
 use crate::integrity::Hash;
 
+pub mod chain;
+
 /// The most OCSP responses read for one signature, from the document and its
 /// CMS together.
 ///

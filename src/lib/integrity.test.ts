@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  chainRow,
   COMPUTER,
   DOUBT,
   integrityRow,
@@ -11,6 +12,7 @@ import {
   trustRow,
   WHY,
   type Basis,
+  type Chain,
   type Doubt,
   type Gap,
   type Reason,
@@ -141,6 +143,7 @@ describe("the integrity row among the others", () => {
       integrity: verdict("altered"),
       trust: null,
       revocation: null,
+      revocation_chain: null,
     };
     const rows = signatureRows(signature, 1024);
     expect(rows[0]?.name).toBe("Integrity");
@@ -321,6 +324,7 @@ describe("the trust row among the others", () => {
       integrity,
       trust,
       revocation,
+      revocation_chain: null,
     };
   }
 
@@ -479,5 +483,92 @@ describe("revocationRow", () => {
 
   it("renders nothing when there is no answer", () => {
     expect(revocationRow(null)).toBeNull();
+  });
+});
+
+describe("chainRow", () => {
+  /** The signer's chain: the leaf's answer, then each above it, combined as `revocation::chain::combine` would. */
+  function chain(
+    answers: Revocation[],
+    decided_by: number | null,
+    more: Partial<Chain> = {},
+  ): Chain {
+    const certificates = answers.map((r, at) => ({
+      subject: at === 0 ? "CN=A. Signer" : `CN=Issuing CA ${at}`,
+      subject_cn: at === 0 ? "A. Signer" : `Issuing CA ${at}`,
+      serial: "07",
+      revocation: r,
+    }));
+    const decider = decided_by === null ? null : answers[decided_by];
+    return {
+      certificates,
+      standing: decider?.standing ?? "good",
+      after_moment: decider?.after_moment ?? false,
+      decided_by,
+      dropped: 0,
+      end: "root",
+      ...more,
+    };
+  }
+
+  it("is not shown when nothing stands above the leaf, which its own row then says", () => {
+    expect(chainRow(null)).toBeNull();
+    expect(chainRow(chain([revocation("good")], null))).toBeNull();
+    expect(chainRow(chain([revocation("none")], 0, { end: "no_issuer" }))).toBeNull();
+    // The control: one certificate above it, and the row is there.
+    expect(chainRow(chain([revocation("good"), revocation("good")], null))).not.toBeNull();
+  });
+
+  it("names the issuing certificate a revocation is about, and warns", () => {
+    for (const authority of [false, true]) {
+      const row = chainRow(chain([revocation("good"), revocation("revoked")], 1), authority);
+      expect(row?.name).toBe(authority ? "Authority chain revocation" : "Chain revocation");
+      expect(row?.value).toContain("says the issuing certificate Issuing CA 1 was revoked on");
+      expect(row?.value).toContain("already withdrawn when");
+      expect(row?.warn).toBe(true);
+    }
+  });
+
+  it("never calls a chain with a certificate nothing was said about good", () => {
+    const row = chainRow(chain([revocation("good"), revocation("none")], 1));
+    expect(row?.value.split(" — ")[0]).toBe("not checked");
+    expect(row?.value).toContain("no revocation data for the issuing certificate Issuing CA 1");
+    expect(row?.warn).toBe(true);
+  });
+
+  it("says a whole good chain is good, calmly, and names its top", () => {
+    const row = chainRow(
+      chain([revocation("good"), revocation("good"), revocation("good")], null),
+    );
+    expect(row?.value).toContain(
+      "none of the 3 certificates from the signer's certificate up to the issuing certificate Issuing CA 2",
+    );
+    expect(row?.warn).toBeUndefined();
+  });
+
+  it("says a chain past the bound was not followed, with no certificate named", () => {
+    const row = chainRow(
+      chain([revocation("good"), revocation("good")], null, { standing: "unchecked", dropped: 2 }),
+    );
+    expect(row?.value).toContain("longer than the 8 certificates tpdf follows");
+    expect(row?.value).toContain("2 certificates further up were not judged");
+    expect(row?.warn).toBe(true);
+  });
+
+  it("points back at the leaf's own row when the leaf decides", () => {
+    const row = chainRow(chain([revocation("unknown"), revocation("good")], 0));
+    expect(row?.value).toBe(
+      "unknown — decided by the signer's certificate itself, in the row above; nothing about " +
+        "the certificate above it reads worse.",
+    );
+    expect(row?.warn).toBe(true);
+  });
+
+  it("lets a revocation after the attested moment stand calmly, as the leaf's row does", () => {
+    const row = chainRow(
+      chain([revocation("good"), revocation("revoked", { after_moment: true })], 1),
+    );
+    expect(row?.value).toContain("does not undo the signature");
+    expect(row?.warn).toBeUndefined();
   });
 });

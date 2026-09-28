@@ -796,6 +796,40 @@ impl TestCa {
         }
     }
 
+    /// [`TestCa::intermediate`] carrying `id-pkix-ocsp-nocheck`: an authority
+    /// no real issuer makes, for the one rule a chain walk applies to it ---
+    /// walked through, never asked about.
+    #[must_use]
+    pub fn intermediate_no_check(&self, name: &str, seed: u8, serial: u8) -> TestCa {
+        let key = key(seed);
+        let certificate = certificate_with(
+            &Spec {
+                subject: name,
+                issuer: &self.name,
+                key: &key,
+                signer: &self.key,
+                serial,
+                purposes: None,
+                authority: true,
+            },
+            Dates {
+                from: FROM,
+                until: UNTIL,
+            },
+            &[Extension {
+                extn_id: oid(OCSP_NO_CHECK),
+                critical: false,
+                extn_value: OctetString::new(der::asn1::Null.to_der().expect("null"))
+                    .expect("octets"),
+            }],
+        );
+        TestCa {
+            key,
+            name: name.to_string(),
+            certificate,
+        }
+    }
+
     /// A delegated OCSP responder: a certificate this authority issues with
     /// `id-kp-OCSPSigning`, as RFC 6960 §4.2.2.2 requires, and
     /// `id-pkix-ocsp-nocheck`, as real responders' certificates carry it.

@@ -2,7 +2,7 @@
 //!
 //! **A port, held to its original by a test, not a second author.** The words
 //! live in `src/lib/integrity.ts` (`integrityRow`, `trustRow`, `timestampRow`,
-//! `authorityRow`, `revocationRow`, `WHY`, `DOUBT`, `GAP`)
+//! `authorityRow`, `revocationRow`, `chainRow`, `WHY`, `DOUBT`, `GAP`)
 //! and `src/lib/signing.ts` (`afterSigning`), where the properties dialog and
 //! the signing panel say them. The command-line tool has no webview to ask, so
 //! the functions are restated here --- and `words_sample` writes every case this
@@ -17,6 +17,7 @@
 //! genuine.
 
 use crate::integrity::{Integrity, Verdict, Why};
+use crate::revocation::chain::{Chain, End, Judged, MAX_CHAIN};
 use crate::revocation::{Basis, Gap, Reason, Revocation, Source, Status};
 use crate::trust::{Doubt, Standing, Store, Trust};
 
@@ -226,11 +227,39 @@ pub fn moment_phrase(revocation: &Revocation) -> String {
 /// is a timestamp authority's rather than the signer's.
 #[must_use]
 pub fn revocation_sentence(revocation: &Revocation, authority: bool) -> String {
-    let whose = if authority {
+    revocation_sentence_about(revocation, authority, leaf_holder(authority))
+}
+
+/// The signer's or the authority's certificate, as the sentences name it.
+fn leaf_holder(authority: bool) -> &'static str {
+    if authority {
         "the authority's certificate"
     } else {
         "the signer's certificate"
+    }
+}
+
+/// A certificate above the leaf, as the sentences name it: `integrity.ts`'s
+/// `issuingCertificate`.
+#[must_use]
+pub fn issuing_certificate(judged: &Judged) -> String {
+    let name = if judged.subject_cn.is_empty() {
+        &judged.subject
+    } else {
+        &judged.subject_cn
     };
+    if name.is_empty() {
+        "an issuing certificate with no readable name".into()
+    } else {
+        format!("the issuing certificate {name}")
+    }
+}
+
+/// [`revocation_sentence`], about the certificate `whose` names: the leaf's,
+/// or one above it. `integrity.ts`'s `revocationRow(revocation, authority,
+/// whose)`.
+#[must_use]
+pub fn revocation_sentence_about(revocation: &Revocation, authority: bool, whose: &str) -> String {
     let made = if authority {
         "the timestamp"
     } else {
@@ -289,6 +318,122 @@ pub fn revocation_sentence(revocation: &Revocation, authority: bool) -> String {
                 .why
                 .map_or_else(|| "no reason was given".to_string(), |g| gap(g, &moment))
         ),
+    }
+}
+
+/// "1 certificate", "3 certificates".
+fn certificates(n: usize) -> String {
+    if n == 1 {
+        "1 certificate".into()
+    } else {
+        format!("{n} certificates")
+    }
+}
+
+/// The chain revocation row's value: `integrity.ts`'s
+/// `chainRow(chain, authority).value`. The row is shown only when the chain
+/// holds a certificate above the leaf, or one past the bound; the sentence is
+/// written for every chain, because the JSON carries it for every chain.
+#[must_use]
+pub fn chain_sentence(chain: &Chain, authority: bool) -> String {
+    let whose = leaf_holder(authority);
+    let above = chain.certificates.len().saturating_sub(1);
+    let unjudged = if chain.dropped == 0 {
+        String::new()
+    } else {
+        format!(
+            " {} further up {} not judged.",
+            certificates(chain.dropped),
+            if chain.dropped == 1 { "was" } else { "were" }
+        )
+    };
+    match chain.decided_by {
+        None if chain.standing == Status::Good => {
+            let moment = chain
+                .certificates
+                .first()
+                .map(|c| moment_phrase(&c.revocation))
+                .unwrap_or_default();
+            let top = chain
+                .certificates
+                .last()
+                .map(issuing_certificate)
+                .unwrap_or_default();
+            match above {
+                0 => format!(
+                    "not revoked — the same as the row above: no certificate stands between \
+                     {whose} and a root."
+                ),
+                1 => format!(
+                    "not revoked — the document's revocation data says neither {whose} nor {top} \
+                     had been revoked, and it reaches {moment}."
+                ),
+                _ => format!(
+                    "not revoked — the document's revocation data says none of the {} from \
+                     {whose} up to {top} had been revoked, and it reaches {moment}.",
+                    certificates(above + 1)
+                ),
+            }
+        }
+        None => format!(
+            "not checked — the chain from {whose} to its root is longer than the {MAX_CHAIN} \
+             certificates tpdf follows, so {} further up {}, and {} might have been revoked.",
+            certificates(chain.dropped),
+            if chain.dropped == 1 {
+                "was not judged"
+            } else {
+                "were not judged"
+            },
+            if chain.dropped == 1 {
+                "it"
+            } else {
+                "any of them"
+            }
+        ),
+        Some(0) if above == 0 => {
+            let why = match chain.end {
+                End::Root => format!("no certificate stands between {whose} and a root"),
+                End::NoIssuer | End::Loop => {
+                    format!("the certificate that issued {whose} is not in the document")
+                }
+            };
+            format!(
+                "{} — the same as the row above: {why}.{unjudged}",
+                head(chain)
+            )
+        }
+        Some(0) => format!(
+            "{} — decided by {whose} itself, in the row above; nothing about {} above it \
+             reads worse.{unjudged}",
+            head(chain),
+            if above == 1 {
+                "the certificate".to_string()
+            } else {
+                format!("the {}", certificates(above))
+            }
+        ),
+        Some(at) => match chain.certificates.get(at) {
+            Some(judged) => format!(
+                "{}{unjudged}",
+                revocation_sentence_about(
+                    &judged.revocation,
+                    authority,
+                    &issuing_certificate(judged)
+                )
+            ),
+            None => String::new(),
+        },
+    }
+}
+
+/// The first words of a chain's answer, when the leaf's own decides it.
+fn head(chain: &Chain) -> &'static str {
+    match chain.standing {
+        Status::Revoked if chain.after_moment => "revoked after the timestamp",
+        Status::Revoked => "revoked",
+        Status::Unknown => "unknown",
+        Status::Good => "not revoked",
+        Status::None | Status::Unchecked => "not checked",
     }
 }
 
