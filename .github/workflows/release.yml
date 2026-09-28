@@ -476,16 +476,20 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** Sign a document with a certificate from your
-          macOS keychain or Windows certificate store, invisibly or drawn on the
-          page, and choose what the drawn signature shows; the key never leaves
-          the operating system. *Document properties* now says whether each
-          signature is intact and whether this computer trusts its signer. A new
-          `tpdf` command-line tool signs, verifies, reads, fills and redacts from
-          scripts. On macOS 27, redactions can be verified again: every
-          redaction there had been reported *not verified*. There, the first redaction
-          after installing or after a macOS update takes about half a minute
-          longer while the text recogniser prepares its models.
+          **New in this release.** A signature can carry a timestamp from
+          DigiCert, Sectigo, GlobalSign or a server you name, so it shows when
+          it was made on a clock other than your own. With a timestamp you can
+          also keep it verifiable after the certificates expire: tpdf adds the
+          revocation data and an archive timestamp to the document. Nothing is
+          sent unless you ask for it: a timestamp request carries only a hash
+          of the signature, and long-term data asks the certificate
+          authorities about your certificate. *Document properties* and
+          `tpdf verify` now check
+          timestamps in any document, judge a signer at the time a trusted
+          timestamp attests, and read the revocation data a document carries
+          for every certificate in its chains; opening a document never goes
+          online. `tpdf` output in `--json` is plain ASCII, so PowerShell
+          reads file names with umlauts correctly.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX

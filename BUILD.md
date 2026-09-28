@@ -6023,6 +6023,35 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.22 verification, macOS arm64, 2026-09-28:** all 27 gates passed on the final tree,
+`check_windows.py` type-checked the Windows tree, and CI passed both legs on every pushed
+commit of the cycle up to `b94cccf`. No npm update was available. `cargo update` offered only
+`tokio-rustls` 0.26.5 to 0.26.6 and was **not taken**: any `cargo update` here, `-p` and
+`--precise` included, also re-resolves `windows-sys` from 0.61.2 down to 0.59 and 0.60 for a
+dozen packages and links three more Windows crates, while the version bump alone changes one
+line of `Cargo.lock`. A Windows-tree downgrade on release day was not worth a patch with no
+advisory; the likely cause is the resolver fitting `rust-version = "1.86"`, not yet
+established. `--since v26.9.21` selected 561 Rust mutations. Each increment ran its own
+selection at its commit; before the tag, the groups a later commit touched were run again on
+the fixed code: 190 (`longterm`, `lt`, `dss`, `trust`, `revocation`, `cli`) and 125 (`token`,
+`integrity`, `chain`, `tsa`, `sign`, `sign visible`, `keystore`, `archive`, `cli json`), all
+caught, and `docinfo` 63 of 63 after the archive timestamp reordered it. The other groups,
+`save` among them, were not re-run after their own increment's run. The window's signing
+phase ran with the owner at the machine, 46/46, and `tpdf-cli sign` signed against the real
+keychain with a DigiCert timestamp, read intact by tpdf and pyHanko. A read-only audit of this
+cycle's threat-model additions found two undisclosed exposures, both fixed before the tag
+(`d446ffc`): long-term signing handed the token's certificates to the OS in the app process
+with no count limit, and over `http://` a substituted authority's certificates chose the
+addresses tpdf fetched. It also found /DSS limits applied after decoding, two exit-code and
+read-back mismatches, and eight stale sentences, all corrected there. `release.yml` changed in
+its notes and in the Windows qpdf download path, which CI had already run green, so no
+rehearsal tag was cut.
+
+**Not run before the tag:** the other window phases, `mutate_viewer.py`, every Windows window
+phase, `print-probe` and `redact-reach-probe`, a timestamp or long-term request from Windows,
+a signer certificate from a real CA, the external smoke test of the normal bundle (step 8) and
+the hand-applied update (step 12). CI's `windows-2025` gate leg is the Windows evidence.
+
 **26.9.21 verification, macOS arm64, 2026-09-27:** all 26 gates passed on the final tree and
 `check_windows.py` type-checked the Windows tree. Tauri 2.12 and its plugins, wry 0.57 and
 tao 0.37 were taken this cycle; the RustCrypto majors stay held because `cms` 0.3 and `rsa`
