@@ -1528,3 +1528,16 @@ fn plain_text_ends_every_page_with_a_form_feed() {
         "Quarterly review\nThe first paragraph.\n\u{c}alpha one\nbeta one\n\u{c}\u{c}"
     );
 }
+
+#[test]
+fn json_output_is_ascii_and_means_the_same_text() {
+    // A German path, the dash the verdict sentences use, and a character
+    // outside the Basic Multilingual Plane, which needs a surrogate pair.
+    let value = serde_json::json!({ "path": "C:\\Prüfung Größe.pdf", "sentence": "intact — 𝄞" });
+    let text = super::ascii_json(&value).expect("encodes");
+    assert!(text.is_ascii(), "{text}");
+    assert!(text.contains("Pr\\u00fcfung"), "{text}");
+    assert!(text.contains("\\ud834\\udd1e"), "{text}");
+    let back: serde_json::Value = serde_json::from_str(&text).expect("decodes");
+    assert_eq!(back, value);
+}

@@ -647,7 +647,12 @@ document, pretty-printed, whenever the exit code is 0 or 1 — for `verify` and 
 when it is 3 or 4, since the other documents may have been read, and for `fill` also when it
 refuses its answers (3) or finds them not read back (4), with every problem listed. Every document has `schema` (now `1`;
 a key may be added without changing it, and one renamed or removed changes it) and
-`command`. Enumerations use the same words as the application's own data.
+`command`. Enumerations use the same words as the application's own data. The JSON is plain
+ASCII: any other character, an umlaut in a file name included, is written as a `\uXXXX`
+escape, which every JSON reader turns back into the same text. That is what lets PowerShell's
+`ConvertFrom-Json` read it on Windows, where a program's output is decoded through the
+console's code page rather than as UTF-8. The plain-text output has no such escape, so read
+it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may carry one.
 
 - `identities`: `usable` and `not_usable`, lists of certificates. Each has `id` (SHA-256 of
   the certificate, lowercase hex) and `subject` (its common name, or its whole name when it

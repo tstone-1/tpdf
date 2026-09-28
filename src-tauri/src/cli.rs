@@ -391,10 +391,42 @@ fn say(to: &mut dyn Write, line: &str) {
 
 /// JSON, pretty, as one write.
 fn json(to: &mut dyn Write, value: &impl serde::Serialize) {
-    match serde_json::to_string_pretty(value) {
+    match ascii_json(value) {
         Ok(text) => say(to, &text),
         Err(e) => say(to, &format!("{{\"error\":\"could not encode: {e}\"}}")),
     }
+}
+
+/// `value` as pretty JSON in which every character outside ASCII is a `\uXXXX`
+/// escape, surrogate pairs above U+FFFF.
+///
+/// **Because a Windows script reads this through a code page.** PowerShell
+/// decodes a program's output with `[Console]::OutputEncoding`, which is the
+/// console's OEM code page --- 437 or 850, not UTF-8 --- so `$r = tpdf-cli verify
+/// --json "Prüfung.pdf" | ConvertFrom-Json` gave back a `path` of `PrÃ¼fung.pdf`
+/// that named no file (measured on a Windows desktop at the 26.9.21 release). An
+/// escape is the same JSON string to every parser and has no bytes a code page
+/// can misread. It is applied to the finished text, which is sound because
+/// `serde_json` writes a character outside ASCII only inside a string literal,
+/// where an escape means that character.
+///
+/// # Errors
+///
+/// Whatever `serde_json` cannot encode.
+pub(crate) fn ascii_json(value: &impl serde::Serialize) -> serde_json::Result<String> {
+    let text = serde_json::to_string_pretty(value)?;
+    let mut ascii = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii() {
+            ascii.push(c);
+        } else {
+            let mut units = [0u16; 2];
+            for unit in c.encode_utf16(&mut units) {
+                ascii.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    Ok(ascii)
 }
 
 /// The usage text, from [`COMMANDS`].

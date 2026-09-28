@@ -12069,6 +12069,15 @@ MUTATIONS += [
         only_on="macos",
     ),
     Mutation(
+        # Write JSON as UTF-8. A PowerShell script reading it decodes through
+        # the console's code page and gets `PrÃ¼fung` for `Prüfung`.
+        "cli json: leave characters outside ASCII unescaped",
+        "src/cli.rs",
+        "        if c.is_ascii() {",
+        "        if true {",
+        "json_output_is_ascii_and_means_the_same_text",
+    ),
+    Mutation(
         "cli tool link: call any file of that name tpdf's",
         "src/clitool.rs",
         '            dir.ends_with("Contents/MacOS")',

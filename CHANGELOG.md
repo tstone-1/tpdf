@@ -17,6 +17,17 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.22] - Unreleased
+
+### Fixed
+
+- **`tpdf` JSON reads correctly in PowerShell.** A script that captured
+  `tpdf-cli ... --json` in PowerShell got `PrÃ¼fung.pdf` back for a file
+  called `Prüfung.pdf`, because PowerShell decodes a program's output through
+  the console's code page. The JSON is now plain ASCII, with every other
+  character written as an escape that any JSON reader turns back into the
+  same text.
+
 ## [26.9.21] - 2026-09-27
 
 ### Added

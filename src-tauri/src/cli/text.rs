@@ -196,7 +196,7 @@ impl Subcommand for Text {
         let password = password(self.password_env.as_deref())?;
         let report = read_text(env, self, password.as_deref())?;
         let written = if self.json {
-            let mut text = serde_json::to_string_pretty(&report)
+            let mut text = super::ascii_json(&report)
                 .map_err(|e| Failure::new(Exit::Internal, format!("could not encode: {e}")))?;
             text.push('\n');
             text
