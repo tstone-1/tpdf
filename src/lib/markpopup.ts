@@ -51,6 +51,7 @@
  */
 
 import type { MarkKind, MarkView } from "./pages";
+import { message } from "./i18n";
 import { place, POPUP_WIDTH, type Anchor } from "./popup";
 import {
   cssColor,
@@ -401,7 +402,7 @@ export class MarkPopup {
   private colors(): HTMLElement {
     const row = document.createElement("div");
     row.setAttribute("role", "group");
-    row.setAttribute("aria-label", "Mark colour");
+    row.setAttribute("aria-label", message("markColor"));
     row.style.cssText =
       "display:flex;gap:0.45rem;align-items:center;margin-bottom:0.45rem;";
 

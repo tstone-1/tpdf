@@ -1,5 +1,8 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
+import { UI_LOCALE } from "./lib/i18n";
+
+document.documentElement.lang = UI_LOCALE;
 
 const target = document.getElementById("app");
 if (!target) throw new Error("#app missing from index.html");

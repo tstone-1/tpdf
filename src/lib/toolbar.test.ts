@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { TOOL_ACTIONS, TOOL_GROUPS, toolbarState } from "./toolbar";
+import { cssColor, MARK_COLORS, PALETTE, swatchBackground } from "./markcolors";
 
 function harness() {
   const state = { open: false, selected: false, dirty: false, undo: false, redo: false, matches: 0 };
@@ -21,6 +22,21 @@ function harness() {
 }
 
 describe("toolbar command surface", () => {
+  it("offers a visible swatch for every color using the annotation palette", () => {
+    const group = TOOL_GROUPS.find((group) => group.id === "color")!;
+    expect(group.items.length).toBe(PALETTE.length);
+    expect(new Set(TOOL_GROUPS.map((group) => group.id)).size).toBe(TOOL_GROUPS.length);
+    for (const entry of PALETTE) {
+      expect(group.items.find((item) => item.id === `edit.color.${entry.id}`)?.swatch).toBe(entry);
+      if (entry.rgb !== null) expect(swatchBackground(entry)).toBe(cssColor(entry.rgb));
+      else {
+        expect(swatchBackground(entry)).toContain("linear-gradient");
+        expect(swatchBackground(entry)).toContain(cssColor(MARK_COLORS.highlight));
+        expect(swatchBackground(entry)).toContain(cssColor(MARK_COLORS.ink));
+      }
+    }
+  });
+
   it("resolves every visible action against the real application registry", () => {
     const { registry } = harness();
     const snapshot = toolbarState(registry);

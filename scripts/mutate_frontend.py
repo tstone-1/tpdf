@@ -79,6 +79,9 @@ class Mutation:
 #: Recorded rather than deleted silently: the next person to notice the gap
 #: should find out that it was measured, not overlooked.
 MUTATIONS = [
+    Mutation('locale: ignore English region', 'src/lib/i18n.ts', 'COLOUR_REGIONS.has(locale.region ?? "US")', 'false', 'resolves ["en-GB","en-US"] to en-GB'),
+    Mutation('locale: hardcode color command spelling', 'src/lib/appcommands.ts', '${message("color", locale)}: ${entry.name}', 'Colour: ${entry.name}', 'localizes command titles but preserves command ids in en-US'),
+    Mutation('toolbar: omit color swatches', 'src/lib/toolbar.ts', '      swatch: entry,', '', 'offers a visible swatch for every color using the annotation palette'),
     Mutation('error copying: intercept selected interface text', 'src/lib/appcommands.ts', '  if (nativeCopy(event)) return;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
     Mutation('error copying: viewer intercepts native copy', 'src/lib/viewer.ts', '    if (inTextField(event) || nativeCopy(event)) return;', '    if (inTextField(event)) return;', 'does not steal native copying when focus remains on the PDF surface'),
     Mutation('error copying: treat every shortcut as copy', 'src/lib/keys.ts', '  if (!matches("edit.copy", event)) return false;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
@@ -5615,6 +5618,7 @@ TEST_FILES = [
     "src/lib/saveanswer.test.ts",
     "src/lib/tablabels.test.ts",
     "src/lib/toolbar.test.ts",
+    "src/lib/i18n.test.ts",
     "src/lib/marknibs.test.ts",
     "src/lib/text.test.ts",
     "src/lib/clicks.test.ts",

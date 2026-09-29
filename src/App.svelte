@@ -3953,7 +3953,7 @@
     <Toolbar state={toolState}
       active={status?.armed ? armedLabel(status.armed) : null}
       drawing={status?.drawing ?? null} erasing={status?.erasing != null}
-      colourLabel={markColor.name} widthLabel={markNib.name}
+      colorId={markColor.id} widthLabel={markNib.name}
       selected={status?.selected ?? 0} run={runToolbarCommand}
       finish={finishToolbarDrawing} cancel={cancelToolbarTool} />
   {/if}

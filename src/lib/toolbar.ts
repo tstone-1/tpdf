@@ -1,13 +1,17 @@
 import type { CommandRegistry } from "./commands";
-import { PALETTE } from "./markcolors";
+import { PALETTE, type Swatch } from "./markcolors";
 import { NIBS } from "./marknibs";
+import { message } from "./i18n";
 
 export interface ToolItem {
   id: string;
   label: string;
+  swatch?: Swatch;
 }
 
 export interface ToolGroup {
+  /** Stable identity: translated labels must never decide behavior. */
+  id: "document" | "highlight" | "draw" | "pages" | "redact" | "color" | "width";
   label: string;
   items: ToolItem[];
 }
@@ -22,6 +26,7 @@ export const TOOL_ACTIONS: ToolItem[] = [
 
 export const TOOL_GROUPS: ToolGroup[] = [
   {
+    id: "document",
     label: "Document",
     items: [
       { id: "file.properties", label: "Document properties" },
@@ -31,6 +36,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
+    id: "highlight",
     label: "Highlight",
     items: [
       { id: "edit.highlightSelection", label: "Highlight selection" },
@@ -40,6 +46,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
+    id: "draw",
     label: "Draw",
     items: [
       { id: "edit.draw", label: "Freehand drawing" },
@@ -53,6 +60,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
+    id: "pages",
     label: "Pages",
     items: [
       { id: "view.showThumbnails", label: "Page thumbnails" },
@@ -72,6 +80,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
+    id: "redact",
     label: "Redact",
     items: [
       { id: "edit.redactRegion", label: "Mark a region for removal" },
@@ -84,13 +93,16 @@ export const TOOL_GROUPS: ToolGroup[] = [
     ],
   },
   {
-    label: "Colour",
+    id: "color",
+    label: message("color"),
     items: PALETTE.map((entry) => ({
       id: `edit.color.${entry.id}`,
       label: entry.name[0]!.toUpperCase() + entry.name.slice(1),
+      swatch: entry,
     })),
   },
   {
+    id: "width",
     label: "Width",
     items: NIBS.map((entry) => ({
       id: `edit.nib.${entry.id}`,

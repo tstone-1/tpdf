@@ -170,6 +170,12 @@ export function cssColor(rgb: MarkColor): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+/** Default is a per-kind choice, represented by the actual highlight and drawing colors. */
+export function swatchBackground(entry: Swatch): string {
+  return entry.rgb !== null ? cssColor(entry.rgb)
+    : `linear-gradient(135deg, ${cssColor(MARK_COLORS.highlight)} 50%, ${cssColor(MARK_COLORS.ink)} 50%)`;
+}
+
 /** Whether two colours are the same, for showing which swatch is on. */
 export function sameColor(a: MarkColor | null, b: MarkColor | null): boolean {
   if (a === null || b === null) return a === b;

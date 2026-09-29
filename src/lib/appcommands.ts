@@ -39,6 +39,7 @@ import {
   parseSplitPoints,
 } from "./pageranges";
 import { PALETTE } from "./markcolors";
+import { message, UI_LOCALE, type UiLocale } from "./i18n";
 import { NIBS } from "./marknibs";
 import { PAGE_SIZES, PAGE_SIZE_NAMES, type PageSizeName } from "./pagesizes";
 import type { MarkKind, StampName } from "./pages";
@@ -513,6 +514,7 @@ export interface AppActions {
 export function registerAppCommands(
   registry: CommandRegistry,
   actions: AppActions,
+  locale: UiLocale = UI_LOCALE,
 ): void {
   /**
    * Every command the application has, in one place.
@@ -1082,7 +1084,7 @@ export function registerAppCommands(
       // list sorted by title, and it is what a reader searches for when they do
       // not know this application calls the colour "pink". The colour itself is
       // lowercase because it is a word in a sentence rather than a name.
-      title: `Colour: ${entry.name}`,
+      title: `${message("color", locale)}: ${entry.name}`,
       // Enabled on any open document, with or without a mark open: with one it
       // recolours, without one it arms the next mark. Guarding on `hasOpenMark`
       // would grey out exactly the case a reader uses to choose before marking.
@@ -1846,7 +1848,7 @@ export function registerAppCommands(
       // for the reader who most expects it to --- and what this actually does is
       // change how the document looks, which is worth saying out loud.
       id: "view.invertPages",
-      title: "Invert page colours",
+      title: message("invertPageColors", locale),
       keys: label("view.invertPages"),
       enabled: withDocument,
       run: () => actions.toggleInvert(),

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { TOOL_ACTIONS, TOOL_GROUPS } from "./lib/toolbar";
+  import { TOOL_ACTIONS, TOOL_GROUPS, type ToolGroup, type ToolItem } from "./lib/toolbar";
+  import { DEFAULT_SWATCH, swatch, swatchBackground } from "./lib/markcolors";
+  import { message } from "./lib/i18n";
 
   let {
     state: commandState,
@@ -8,7 +10,7 @@
     drawing = null,
     erasing = false,
     selected = 0,
-    colourLabel = "",
+    colorId = "default",
     widthLabel = "",
     run,
     finish,
@@ -19,7 +21,7 @@
     drawing: number | null;
     erasing: boolean;
     selected: number;
-    colourLabel?: string;
+    colorId?: string;
     widthLabel?: string;
     run: (id: string) => void;
     finish: () => void;
@@ -29,23 +31,24 @@
   let host = $state<HTMLDivElement>();
   let open = $state<string | null>(null);
   const basicGroups = TOOL_GROUPS.filter((group) =>
-    ["Highlight", "Draw"].includes(group.label),
+    ["highlight", "draw"].includes(group.id),
   );
   const otherGroups = TOOL_GROUPS.filter((group) =>
-    ["Pages", "Redact"].includes(group.label),
+    ["pages", "redact"].includes(group.id),
   );
   const options = TOOL_GROUPS.filter((group) =>
-    ["Colour", "Width"].includes(group.label),
+    ["color", "width"].includes(group.id),
   );
+  let selectedSwatch = $derived(swatch(colorId) ?? DEFAULT_SWATCH);
   let unfinished = $derived((drawing ?? 0) > 0);
   let inTool = $derived(active !== null || drawing !== null || erasing);
 
-  function toolPressed(label: string): boolean {
-    if (label === "Draw") return drawing !== null || erasing || /^(Box|Ellipse|Stamp)/.test(active ?? "");
-    if (label === "Comment") return active?.startsWith("Comment") ?? false;
-    if (label === "Text") return active?.startsWith("Text box") ?? false;
-    if (label === "Pages") return active?.startsWith("Crop") ?? false;
-    if (label === "Redact") return active?.startsWith("Redact") ?? false;
+  function toolPressed(id: string): boolean {
+    if (id === "draw") return drawing !== null || erasing || /^(Box|Ellipse|Stamp)/.test(active ?? "");
+    if (id === "edit.addComment") return active?.startsWith("Comment") ?? false;
+    if (id === "edit.addTextBox") return active?.startsWith("Text box") ?? false;
+    if (id === "pages") return active?.startsWith("Crop") ?? false;
+    if (id === "redact") return active?.startsWith("Redact") ?? false;
     return false;
   }
 
@@ -134,29 +137,43 @@
 
 <svelte:window onpointerdown={outside} onkeydowncapture={keyboard} onfocusin={focusMoved} onresize={() => { open = null; rove(); }} />
 
-{#snippet dropdown(group: { label: string; items: { id: string; label: string }[] }, option = false)}
+{#snippet itemButton(item: ToolItem, option = false)}
+  <button
+    class:color-item={item.swatch !== undefined}
+    aria-pressed={item.swatch ? item.swatch.id === selectedSwatch.id : undefined}
+    disabled={!(commandState[item.id]?.enabled ?? false) || (unfinished && !option)}
+    title={item.swatch?.id === "default" ? message("defaultColorHint") : commandState[item.id]?.title ?? item.label}
+    onclick={() => invoke(item.id)}
+  >
+    {#if item.swatch}
+      <span class="swatch" style:background={swatchBackground(item.swatch)} aria-hidden="true"></span>
+    {/if}
+    {item.label}
+    {#if item.swatch}
+      <span class="selection" class:selected={item.swatch.id === selectedSwatch.id} aria-hidden="true"></span>
+    {/if}
+  </button>
+{/snippet}
+
+{#snippet dropdown(group: ToolGroup, option = false)}
   <div class="dropdown">
     <button
-      class:pressed={open === group.label || toolPressed(group.label)}
-      aria-pressed={["Draw", "Pages", "Redact"].includes(group.label) ? toolPressed(group.label) : undefined}
-      data-group={group.label}
-      data-testid={group.label === "Colour" ? "markcolor" : group.label === "Width" ? "marknib" : undefined}
-      aria-expanded={open === group.label}
+      class:pressed={open === group.id || toolPressed(group.id)}
+      aria-pressed={["draw", "pages", "redact"].includes(group.id) ? toolPressed(group.id) : undefined}
+      data-group={group.id}
+      data-testid={group.id === "color" ? "markcolor" : group.id === "width" ? "marknib" : undefined}
+      aria-expanded={open === group.id}
       disabled={unfinished && !option}
-      title={group.label === "Highlight" && selected === 0 ? "Select text first, then choose a highlight or underline" : group.label}
-      onclick={() => toggle(group.label)}
-    >{group.label}{group.label === "Colour" && colourLabel ? `: ${colourLabel}` : group.label === "Width" && widthLabel ? `: ${widthLabel}` : ""}<span class="chevron" aria-hidden="true"></span></button>
-    {#if open === group.label}
+      title={group.id === "highlight" && selected === 0 ? "Select text first, then choose a highlight or underline" : group.label}
+      onclick={() => toggle(group.id)}
+    >{#if group.id === "color"}<span class="swatch" style:background={swatchBackground(selectedSwatch)} aria-hidden="true"></span>{/if}{group.label}{group.id === "color" ? `: ${selectedSwatch.name}` : group.id === "width" && widthLabel ? `: ${widthLabel}` : ""}<span class="chevron" aria-hidden="true"></span></button>
+    {#if open === group.id}
       <div class="popup" aria-label={group.label}>
-        {#if group.label === "Highlight" && selected === 0}
+        {#if group.id === "highlight" && selected === 0}
           <p class="hint">Select text first</p>
         {/if}
         {#each group.items as item}
-          <button
-            disabled={!(commandState[item.id]?.enabled ?? false) || (unfinished && !option)}
-            title={commandState[item.id]?.title ?? item.label}
-            onclick={() => invoke(item.id)}
-          >{item.label}</button>
+          {@render itemButton(item, option)}
         {/each}
       </div>
     {/if}
@@ -165,7 +182,7 @@
 
 <div class="tools" bind:this={host} role="toolbar" aria-label="Document tools">
   <!-- Keep Document visible at narrow widths too: Windows has no native File menu. -->
-  {#each TOOL_GROUPS.filter((group) => group.label === "Document") as group}
+  {#each TOOL_GROUPS.filter((group) => group.id === "document") as group}
     {@render dropdown(group)}
   {/each}
   <div class="history">
@@ -173,13 +190,13 @@
     <button disabled={!enabled("edit.redo")} title={commandState["edit.redo"]?.title ?? "Redo"} onclick={() => invoke("edit.redo")}>Redo</button>
   </div>
   <button class:pressed={!inTool} aria-pressed={!inTool} disabled={unfinished} title={unfinished ? "Finish or discard this drawing first" : "Select text and marks"} onclick={cancel}>Select</button>
-  {#each basicGroups.filter((group) => group.label === "Highlight") as group}
+  {#each basicGroups.filter((group) => group.id === "highlight") as group}
     {@render dropdown(group)}
   {/each}
   {#each TOOL_ACTIONS as action}
-    <button class:pressed={toolPressed(action.label)} aria-pressed={toolPressed(action.label)} disabled={!enabled(action.id)} title={commandState[action.id]?.title ?? action.label} onclick={() => invoke(action.id)}>{action.label}</button>
+    <button class:pressed={toolPressed(action.id)} aria-pressed={toolPressed(action.id)} disabled={!enabled(action.id)} title={commandState[action.id]?.title ?? action.label} onclick={() => invoke(action.id)}>{action.label}</button>
   {/each}
-  {#each basicGroups.filter((group) => group.label === "Draw") as group}
+  {#each basicGroups.filter((group) => group.id === "draw") as group}
     {@render dropdown(group)}
   {/each}
   <div class="secondary">
@@ -196,9 +213,9 @@
           {/each}
         {/each}
         {#each options as group}
-          <p class="hint">{group.label}: {group.label === "Colour" ? colourLabel : widthLabel}</p>
+          <p class="hint">{group.label}: {group.id === "color" ? selectedSwatch.name : widthLabel}</p>
           {#each group.items as item}
-            <button disabled={!(commandState[item.id]?.enabled ?? false)} title={commandState[item.id]?.title ?? item.label} onclick={() => invoke(item.id)}>{item.label}</button>
+            {@render itemButton(item, true)}
           {/each}
         {/each}
       </div>
@@ -234,6 +251,11 @@
   .chevron { display: inline-block; width: 5px; height: 5px; border-bottom: 1px solid; border-right: 1px solid; transform: rotate(45deg); margin: 0 2px 3px 8px; }
   .popup { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; display: flex; flex-direction: column; min-width: 175px; max-width: min(310px, calc(100vw - 24px)); max-height: min(65vh, 440px); overflow-y: auto; padding: 5px; border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); background: Canvas; border-radius: 6px; box-shadow: 0 4px 16px #0003; }
   .popup button { text-align: left; white-space: normal; }
+  .swatch { display: inline-block; width: 16px; height: 16px; flex: none; box-sizing: border-box; border-radius: 50%; border: 1px solid color-mix(in srgb, CanvasText 45%, transparent); vertical-align: -3px; margin-right: 7px; }
+  .popup .color-item { display: flex; align-items: center; gap: 3px; }
+  .color-item[aria-pressed="true"] { background: color-mix(in srgb, CanvasText 9%, Canvas); }
+  .selection { width: 8px; height: 8px; flex: none; margin-left: auto; border-radius: 50%; }
+  .selection.selected { background: CanvasText; }
   .options .popup, .more { left: auto; right: 0; }
   .hint { font-size: 12px; margin: 5px 9px; opacity: .7; }
   .compact { display: none; }
