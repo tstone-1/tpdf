@@ -5762,6 +5762,26 @@ assets; the draft held all eight expected files. All five updater entries named
 uploaded packages and matched their updater signatures. `publish_release.py` accepted
 the completed rehearsal in read-only mode. The rehearsal remains unpublished.
 
+**Expanded local package rehearsal, 2026-09-29, `1bc9e74`:** all 24 API tests
+passed against each freshly built macOS DMG, macOS app archive, Windows x64 MSI
+and Windows x64 NSIS setup: 96 executions, zero skips, and four successful
+missing-engine controls. Each run imported the installed wheel outside the
+checkout. The macOS archive was created locally from the fresh app; this run
+did not exercise hosted signing, notarization or updater signatures.
+
+The same extracted packages and installed wheel also passed 34 OS-key signing
+assertions per package/identity: macOS RSA on both packages and Windows RSA and
+ECDSA P-256 on both installers, 204 assertions in total. This included filling,
+verified redaction and signing in sequence. Independent pyHanko readback accepted
+all 18 resulting signatures and rejected all six tampered copies; independent
+form and pixel checks confirmed removal of the second confidential widget and
+preservation of public content. Package and CLI digests matched between the API
+and signing checks. Windows test certificates and CNG keys were removed, with
+the original certificate, root and key inventories unchanged. These were
+self-signed identities; no timestamp or long-term signing was requested in this
+package run. The earlier hosted rehearsal remains evidence for `9d05867`, not
+for this later commit.
+
 Native Windows x64 execution was verified on 2026-09-29 at `186991b`, using
 Rust 1.97.1, Python 3.14.7 and the digest-checked `pdfium-8066-tpdf.1` engine.
 All 322 CLI integration checks passed; the only skip was the macOS-only
