@@ -2882,7 +2882,7 @@ SOFTWARE.
 | tls_codec | 0.4.2 | Apache-2.0 OR MIT |
 | tls_codec_derive | 0.4.2 | Apache-2.0 OR MIT |
 | tokio | 1.53.1 | MIT |
-| tokio-rustls | 0.26.5 | MIT OR Apache-2.0 |
+| tokio-rustls | 0.26.6 | MIT OR Apache-2.0 |
 | tokio-util | 0.7.19 | MIT |
 | toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 |
 | toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 |

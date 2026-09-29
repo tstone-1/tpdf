@@ -6026,12 +6026,18 @@ privacy sentence about network activity only on request does not describe tpdf.
 **26.9.22 verification, macOS arm64, 2026-09-28:** all 27 gates passed on the final tree,
 `check_windows.py` type-checked the Windows tree, and CI passed both legs on every pushed
 commit of the cycle up to `b94cccf`. No npm update was available. `cargo update` offered only
-`tokio-rustls` 0.26.5 to 0.26.6 and was **not taken**: any `cargo update` here, `-p` and
-`--precise` included, also re-resolves `windows-sys` from 0.61.2 down to 0.59 and 0.60 for a
-dozen packages and links three more Windows crates, while the version bump alone changes one
-line of `Cargo.lock`. A Windows-tree downgrade on release day was not worth a patch with no
-advisory; the likely cause is the resolver fitting `rust-version = "1.86"`, not yet
-established. `--since v26.9.21` selected 561 Rust mutations. Each increment ran its own
+`tokio-rustls` 0.26.5 to 0.26.6 and was **not taken**, because the attempted updates also
+changed Windows dependency edges. **Diagnosis corrected 2026-09-29:** with the pinned Cargo
+1.97.1, a targeted `cargo update -p tokio-rustls` reassigns 11 broad `windows-sys` ranges
+from 0.61.2 to the already-locked 0.59.0 or 0.60.2. This matches
+[Cargo issue #5529](https://github.com/rust-lang/cargo/issues/5529). A full
+`cargo update --manifest-path src-tauri/Cargo.toml` restores every edge to its original
+version and leaves only the TLS patch's version and checksum changed, reproduced online
+and offline. The Rust minimum is not the cause: `windows-sys` 0.61.2 requires Rust 1.71.
+For dependency refreshes, use the full update and inspect `git diff -- src-tauri/Cargo.lock`;
+Cargo's summary (including `--dry-run`) does not report these edge changes between packages
+already present in the lockfile. No extra pin or Rust-version change is needed.
+`--since v26.9.21` selected 561 Rust mutations. Each increment ran its own
 selection at its commit; before the tag, the groups a later commit touched were run again on
 the fixed code: 190 (`longterm`, `lt`, `dss`, `trust`, `revocation`, `cli`) and 125 (`token`,
 `integrity`, `chain`, `tsa`, `sign`, `sign visible`, `keystore`, `archive`, `cli json`), all
