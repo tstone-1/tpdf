@@ -11823,6 +11823,20 @@ MUTATIONS += [
         "the_identifier_is_the_applications",
     ),
     Mutation(
+        "cli render: omit the total pixel budget",
+        "src/cli/render.rs",
+        "f64::from(width) * f64::from(height) > 16_777_216.0",
+        "false",
+        "rendering_bounds_are_checked_before_allocation",
+    ),
+    Mutation(
+        "cli render: accept a truncated raw tile",
+        "src/save_outside.rs",
+        "stated != expected || stated > capacity",
+        "stated > expected || stated > capacity",
+        "raw_tile_bytes_must_match_geometry_and_fit_the_mapping",
+    ),
+    Mutation(
         "cli edit: flatten a worker failure into an ordinary refusal",
         "src/cli/edit.rs",
         "            self.0.exit,\n",

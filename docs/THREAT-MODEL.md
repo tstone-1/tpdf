@@ -2385,6 +2385,15 @@ plans or enable document JavaScript. A failed operation publishes no file.
 Publication shares the page commands' staging, input-alias refusal, signature
 consent and encryption preservation. The dry run validates the model and text
 requests without saving; it cannot establish that the later write will succeed.
+
+`render` uses the same contained worker to read and rasterize one page. The
+coordinator accepts raw RGBA tiles only after their length equals the requested
+geometry and fits the shared mapping; it encodes PNG without parsing PDF or
+decoding an image from the worker. Allocation is capped at 16,777,216 pixels,
+each side at 8192 pixels, and each worker request retains its 30-second deadline.
+Output staging and input fingerprint checks precede publication. Rendering
+makes no signature or redaction-verification claim.
+
 The Python client uses argument arrays and stdin JSON, never a shell. Passwords
 are child-environment values. Calls have deadlines and attempt owned-process-tree
 cleanup; a timeout is not a rollback. There is no new network listener or authority.

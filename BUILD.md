@@ -5554,16 +5554,21 @@ The `api` gate runs `api/python/test_api.py` against the built CLI, including a
 complete edit/readback/extract workflow, structured refusals, protocol errors,
 literal arguments, child-only passwords and process-tree timeout cleanup. The
 Rust CLI integration section *JSON edit plans* separately reads written page
-content, annotation dictionaries and geometry. These are headless tests of the
-same backend used by the GUI; they do not replace window interaction checks.
+content, annotation dictionaries and geometry. The *PNG rendering* section checks
+decoded colors across tile seams, saved crops and rotations, and output preservation
+on refusal. These are headless tests of the same backend used by the GUI; they do
+not replace window interaction checks.
 
 **What the gates run.** `cargo test` runs three things for it:
 
 - `cli::tests` and `clitool::tests` --- the command line and every refusal, `--identity`
   resolution, the exit codes, the committed JSON and wording samples in
   `src-tauri/testdata/cli/`, and the README holding every JSON key and every exit code.
-  Regenerate the samples with `TPDF_CLI_SAMPLES=write cargo test --lib cli::` and read the
-  diff: a changed JSON sample is a changed schema (a renamed or removed key moves
+  Regenerate the samples with
+  `TPDF_CLI_SAMPLES=write cargo test --manifest-path src-tauri/Cargo.toml --locked --lib cli::tests::every_json_shape_and_the_wording_match_their_committed_samples`.
+  Run this test alone: parallel sample-directory checks can race newly created
+  fixtures. Then run the ordinary gates and read the diff: a changed JSON sample
+  is a changed schema (a renamed or removed key moves
   `report::SCHEMA`), and a changed `wording.json` must still pass `src/lib/cliwording.test.ts`,
   which holds it to `integrity.ts` and `signing.ts`. `reading.json` is the same arrangement for
   `tpdf text`'s reading order: `reading::tests::cases` with the order `src/reading.rs` gives

@@ -91,6 +91,8 @@ mod edit;
 mod forms;
 #[path = "cli/pages.rs"]
 mod pages;
+#[path = "cli/render.rs"]
+mod render;
 // `redact`, for the same reason.
 #[cfg(target_os = "macos")]
 #[path = "cli/image_log.rs"]
@@ -116,7 +118,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 19] = [
+    let checks: [Check; 20] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -142,6 +144,7 @@ fn main() {
         ("the tool's workers are sandboxed", workers_are_sandboxed),
         ("page operations through the shipped CLI", pages::operations),
         ("JSON edit plans through the shipped CLI", edit::operations),
+        ("PNG rendering through the shipped CLI", render::renders),
         ("info agrees with the in-process reader", info_agrees),
         ("text agrees with the in-process extraction", text_agrees),
         ("text beside pdftotext, for information", beside_pdftotext),
@@ -1832,7 +1835,9 @@ fn never_maps_pdfium(report: &mut Report) {
         let observer = image_log::compile(&dir);
         let filled = dir.join("filled.pdf").display().to_string();
         let redacted = dir.join("redacted.pdf").display().to_string();
-        let lines: [Vec<&str>; 7] = [
+        let rendered = dir.join("page.png").display().to_string();
+        let lines: [Vec<&str>; 8] = [
+            vec!["render", &shown, "-o", &rendered],
             vec!["verify", &shown],
             vec!["info", &shown],
             vec!["text", &shown],

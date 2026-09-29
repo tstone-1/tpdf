@@ -23,6 +23,19 @@ use crate::trust::{Doubt, Standing, Store};
 /// The schema number every document carries.
 pub const SCHEMA: u32 = 1;
 
+/// One page rendered to PNG. Page numbers are one-based.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Rendered {
+    pub schema: u32,
+    pub command: String,
+    pub input: String,
+    pub output: String,
+    pub page: u32,
+    pub dpi: u32,
+    pub width_px: u32,
+    pub height_px: u32,
+}
+
 /// An edit plan, either validated without writing or successfully published.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edited {

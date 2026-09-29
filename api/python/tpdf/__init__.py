@@ -202,6 +202,16 @@ class Tpdf:
         """Inspect original text runs and the revision required for replacement."""
         return self.run('text-runs', '--page', str(page), '--', path, password=password).report
 
+    def render(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        page: int = 1, dpi: int = 144, force: bool = False, password: str | None = None,
+    ) -> dict[str, Any]:
+        """Render one page to PNG for visual assertions, without opening a window."""
+        args = ['-o', os.fspath(output), '--page', str(page), '--dpi', str(dpi)]
+        if force:
+            args.append('--force')
+        return self.run('render', *args, '--', source, password=password).report
+
     def fill(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         values: Mapping[str, Any], *, force: bool = False, password: str | None = None,

@@ -460,6 +460,50 @@ impl Session {
     /// The worker refused, is locked, died, or did not answer in time --- after
     /// which it is gone and every later question fails.
     pub fn ask(&mut self, request: Request) -> Result<Reply, Declined> {
+        self.exchange(move |worker| InWorker::asked(worker, &request))
+    }
+
+    /// Read a raw tile with the same deadline as other session requests.
+    /// Only bounded RGBA bytes cross back; no image decoder runs in the caller.
+    pub(crate) fn tile(
+        &mut self,
+        request: crate::render::TileRequest,
+    ) -> Result<Vec<u8>, Declined> {
+        self.exchange(move |worker| {
+            let response = worker
+                .call(&Request::Tile {
+                    rid: 0,
+                    page: request.page,
+                    scale: request.scale,
+                    turns: request.turns,
+                    invert: request.invert,
+                    x: request.x,
+                    y: request.y,
+                    width: request.width,
+                    height: request.height,
+                    png: false,
+                    crop: request.crop,
+                })
+                .map_err(Declined::Failed)?;
+            if response.locked {
+                return Err(Declined::Locked(response.error));
+            }
+            if !response.ok {
+                return Err(Declined::Refused(response.error));
+            }
+            if response.abandoned {
+                return Err(Declined::Failed("the worker abandoned the render".into()));
+            }
+            let expected = usize::from(request.width) * usize::from(request.height) * 4;
+            let length = raw_tile_length(response.bytes, expected, worker.tile.len())?;
+            Ok(worker.tile.as_slice()[..length].to_vec())
+        })
+    }
+
+    fn exchange<T: Send + 'static>(
+        &mut self,
+        action: impl FnOnce(&mut Worker) -> Result<T, Declined> + Send + 'static,
+    ) -> Result<T, Declined> {
         let Some(worker) = self.worker.take() else {
             return Err(Declined::Failed(
                 "the worker holding this document is gone".into(),
@@ -468,7 +512,7 @@ impl Session {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut worker = worker;
-            let answer = InWorker::asked(&mut worker, &request);
+            let answer = action(&mut worker);
             let _ = tx.send((worker, answer));
         });
         match rx.recv_timeout(DEFAULT_DEADLINE) {
@@ -483,6 +527,30 @@ impl Session {
                     DEFAULT_DEADLINE.as_secs_f64()
                 )))
             }
+        }
+    }
+}
+
+fn raw_tile_length(stated: usize, expected: usize, capacity: usize) -> Result<usize, Declined> {
+    if stated != expected || stated > capacity {
+        return Err(Declined::Failed(format!(
+            "worker returned {stated} tile bytes; expected {expected} within {capacity}"
+        )));
+    }
+    Ok(stated)
+}
+
+#[cfg(test)]
+mod tile_tests {
+    use super::*;
+    #[test]
+    fn raw_tile_bytes_must_match_geometry_and_fit_the_mapping() {
+        assert_eq!(raw_tile_length(16, 16, 32).unwrap(), 16);
+        for (stated, expected, capacity) in [(15, 16, 32), (17, 16, 32), (16, 16, 15)] {
+            assert!(matches!(
+                raw_tile_length(stated, expected, capacity),
+                Err(Declined::Failed(_))
+            ));
         }
     }
 }

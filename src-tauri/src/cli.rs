@@ -59,6 +59,7 @@ pub mod info;
 mod pages;
 pub mod redact;
 pub mod regions;
+mod render;
 pub mod report;
 pub mod sign;
 pub mod text;
@@ -445,6 +446,7 @@ pub const COMMANDS: &[Registered] = &[
     edit::COMMAND,
     edit::COMMENTS,
     edit::TEXT_RUNS,
+    render::COMMAND,
 ];
 
 impl Env<'_> {

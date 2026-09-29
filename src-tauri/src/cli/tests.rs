@@ -241,6 +241,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("edit", "edit a.pdf --plan edits.json -o b.pdf"),
         ("comments", "comments a.pdf --json"),
         ("text-runs", "text-runs a.pdf --page 1 --json"),
+        ("render", "render a.pdf -o page.png --json"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -1468,6 +1469,19 @@ fn samples() -> Vec<(&'static str, String)> {
     };
     vec![
         (
+            "render",
+            pretty(&report::Rendered {
+                schema: report::SCHEMA,
+                command: "render".into(),
+                input: "source.pdf".into(),
+                output: "page.png".into(),
+                page: 1,
+                dpi: 144,
+                width_px: 1200,
+                height_px: 1600,
+            }),
+        ),
+        (
             "command-error",
             pretty(&report::Failed {
                 schema: report::SCHEMA,
@@ -1650,7 +1664,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 18, "the sample table itself");
+    assert_eq!(want.len(), 19, "the sample table itself");
     assert_eq!(found, want);
 }
 

@@ -497,8 +497,9 @@ both.
 ## Command-line tool
 
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf fields`,
-`tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`
-and `tpdf crop` expose document workflows to scripts. The commands do what **Sign document…**, **Document
+`tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
+`tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs` and `tpdf render`
+expose document workflows to scripts. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
 the private key never leaves the operating system, and every signed, filled or redacted file is
@@ -519,6 +520,7 @@ which; add that folder to `PATH`, or call the tool by its full path. The example
 
 ```
 tpdf help --json
+tpdf render report.pdf --page 2 --dpi 144 -o page.png --json
 tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
@@ -792,8 +794,15 @@ assert result["written"]
 assert pdf.comments("output.pdf")["comments"][0]["body"] == "Automated review"
 ```
 
-`help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()` and
-`edit()` return parsed reports. `run(command, *arguments)` reaches every CLI command,
+For visual assertions, render a saved document without opening a window:
+
+```python
+image = pdf.render("output.pdf", "page.png", page=1, dpi=144)
+assert image["width_px"] > 0 and image["height_px"] > 0
+```
+
+`help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
+`edit()` and `render()` return parsed reports. `run(command, *arguments)` reaches every CLI command,
 including signing, redaction and page operations. It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict
@@ -808,7 +817,24 @@ if the operating system refuses it. Each call starts its own CLI process. This
 API edits files; it does not control an open GUI, start an HTTP server or bypass
 OS permission prompts for signing keys.
 
-**Passwords.** `info`, `text`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Rendering.** `tpdf render input.pdf -o page.png --page 1 --dpi 144 --json`
+writes one PNG, using the viewer's contained PDFium renderer, including saved
+annotations, form appearances, crops and rotations. Page numbers start at 1;
+page 1 and 144 DPI are the defaults. `--dpi` accepts integers from 1 to 600.
+Dimensions round to the nearest whole pixel, matching the viewer. Outputs below
+one pixel on either side, above 8192 pixels on either side,
+or above 16,777,216 pixels total are refused; adjust the DPI explicitly. Existing
+outputs require `--force`; the input is never replaced. Failure before
+publication leaves the destination unchanged. Rendering creates no signature
+or redaction-verification claim and does not alter the PDF.
+
+The JSON report carries `schema`, `command`, `input`, `output`, `page`, `dpi`,
+`width_px` and `height_px`. PNG bytes go to the named file; stdout holds the
+report. Identical input and settings are repeatable on the same renderer and
+platform. For portable visual tests compare decoded pixels with a tolerance:
+font fallback and rasterization can differ across OS or PDFium versions.
+
+**Passwords.** `render`, `info`, `text`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's

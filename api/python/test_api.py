@@ -79,6 +79,25 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(self.pdf.info(extracted)['files'][0]['document']['pages'], 1)
         self.assertEqual(self.pdf.comments(extracted)['comments'], [])
 
+    def test_render_supports_repeatable_visual_assertions(self):
+        first = self.root / 'before.png'
+        second = self.root / 'after.png'
+        report = self.pdf.render(self.source, first, dpi=72)
+        self.assertEqual((report['page'], report['dpi'], report['width_px'], report['height_px']), (1,72,300,400))
+        baseline = first.read_bytes()
+        self.assertEqual(baseline[:8], b'\x89PNG\r\n\x1a\n')
+        self.pdf.render(self.source, second, dpi=72)
+        self.assertEqual(baseline, second.read_bytes())
+        edited = self.root / 'rotated.pdf'
+        self.pdf.edit(self.source, edited, [{'op': 'rotate', 'page': 1, 'degrees': 90}])
+        report = self.pdf.render(edited, second, dpi=72, force=True)
+        self.assertEqual((report['width_px'],report['height_px']), (400,300))
+        self.assertNotEqual(baseline, second.read_bytes())
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.render(self.source, first, page=2, force=True)
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertEqual(first.read_bytes(), baseline)
+
     def test_form_helpers_fill_through_stdin_and_read_back(self):
         source = self.root / 'form.pdf'
         fixture(source, form=True)

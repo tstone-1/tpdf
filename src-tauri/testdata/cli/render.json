@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "command": "render",
+  "input": "source.pdf",
+  "output": "page.png",
+  "page": 1,
+  "dpi": 144,
+  "width_px": 1200,
+  "height_px": 1600
+}
