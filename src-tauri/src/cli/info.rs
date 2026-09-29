@@ -57,15 +57,19 @@ pub fn parse(args: &[String]) -> Result<Info, String> {
     let mut files = Vec::new();
     let mut password_env = None;
     let mut json = false;
+    let mut positional = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "--json" => json = true,
-            "--password-env" => {
+        match (positional, arg.as_str()) {
+            (false, "--") => positional = true,
+            (false, "--json") => json = true,
+            (false, "--password-env") => {
                 password_env = Some(variable(super::args::value(arg, &mut rest)?)?);
             }
-            flag if flag.starts_with('-') && flag != "-" => return Err(unknown("info", flag)),
-            path => files.push(PathBuf::from(path)),
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("info", flag))
+            }
+            (_, path) => files.push(PathBuf::from(path)),
         }
     }
     if files.is_empty() {

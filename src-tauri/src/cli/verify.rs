@@ -46,13 +46,17 @@ fn boxed(args: &[String]) -> Result<Box<dyn Subcommand>, String> {
 pub fn parse(args: &[String]) -> Result<Verify, String> {
     let mut files = Vec::new();
     let mut json = false;
+    let mut positional = false;
     let mut strict = false;
     for arg in args {
-        match arg.as_str() {
-            "--json" => json = true,
-            "--strict" => strict = true,
-            flag if flag.starts_with('-') && flag != "-" => return Err(unknown("verify", flag)),
-            path => files.push(PathBuf::from(path)),
+        match (positional, arg.as_str()) {
+            (false, "--") => positional = true,
+            (false, "--json") => json = true,
+            (false, "--strict") => strict = true,
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("verify", flag))
+            }
+            (_, path) => files.push(PathBuf::from(path)),
         }
     }
     if files.is_empty() {

@@ -75,9 +75,95 @@ class ClientTests(unittest.TestCase):
         self.assertEqual([(c['page'], c['body']) for c in comments], [(1, 'Synthetic API note')])
         self.assertIn('SYNTHETIC ORIGINAL', self.pdf.text(output)['pages'][1]['text'])
         extracted = self.root / 'extracted.pdf'
-        self.pdf.run('extract', output, '--pages', '2', '-o', extracted)
+        self.pdf.extract(output, extracted, pages='2')
         self.assertEqual(self.pdf.info(extracted)['files'][0]['document']['pages'], 1)
         self.assertEqual(self.pdf.comments(extracted)['comments'], [])
+
+    def test_page_helpers_merge_extract_and_split_read_back(self):
+        second = self.root / 'second.pdf'
+        self.pdf.edit(self.source, second, [
+            {'op': 'insert_blank', 'after': 1, 'width': 200, 'height': 250},
+            {'op': 'annotate', 'page': 2, 'kind': 'note', 'rect': [10, 20, 20, 20], 'text': 'SECOND'},
+        ])
+        merged = self.root / 'merged.pdf'
+        self.assertTrue(self.pdf.merge([second, self.source], merged)['complete'])
+        self.assertEqual(self.pdf.info(merged)['files'][0]['document']['pages'], 3)
+        self.assertEqual([p['text'].strip() for p in self.pdf.text(merged)['pages']],
+                         ['SYNTHETIC ORIGINAL', '', 'SYNTHETIC ORIGINAL'])
+        extracted = self.root / 'extracted.pdf'
+        self.pdf.extract(merged, extracted, pages='3,2,2')
+        self.assertEqual([p['text'].strip() for p in self.pdf.text(extracted)['pages']],
+                         ['', 'SYNTHETIC ORIGINAL'])
+        self.assertEqual([(c['page'], c['body']) for c in self.pdf.comments(extracted)['comments']], [(1, 'SECOND')])
+        split = self.pdf.split(merged, self.root / 'part.pdf', every=2)
+        self.assertTrue(split['complete'])
+        self.assertEqual([p['pages'] for p in split['outputs']], [2, 1])
+        parts = [Path(p['path']) for p in split['outputs']]
+        self.assertEqual([p.name for p in parts], ['part-1.pdf', 'part-2.pdf'])
+        self.assertEqual([self.pdf.info(p)['files'][0]['document']['pages'] for p in parts], [2, 1])
+        self.assertEqual(self.pdf.comments(parts[0])['comments'][0]['body'], 'SECOND')
+        self.assertEqual(self.pdf.comments(parts[1])['comments'], [])
+        self.assertEqual(self.pdf.text(parts[1])['pages'][0]['text'].strip(), 'SYNTHETIC ORIGINAL')
+
+    def test_page_helpers_apply_only_selected_pages(self):
+        merged = self.root / 'merged.pdf'
+        self.pdf.merge([self.source, self.source], merged)
+        rotated = self.root / 'rotated.pdf'
+        self.pdf.rotate(merged, rotated, degrees=90, pages='2')
+        sizes = self.pdf.info(rotated)['files'][0]['document']['page_sizes']
+        self.assertEqual([(p['width_pt'], p['height_pt'], p['count']) for p in sizes],
+                         [(300, 400, 1), (400, 300, 1)])
+        cropped = self.root / 'cropped.pdf'
+        self.pdf.crop(rotated, cropped, rect=[10, 20, 100, 150], pages='1')
+        sizes = self.pdf.info(cropped)['files'][0]['document']['page_sizes']
+        self.assertEqual([(p['width_pt'], p['height_pt'], p['count']) for p in sizes],
+                         [(100, 150, 1), (400, 300, 1)])
+        for page, expected in [(1, (100, 150)), (2, (400, 300))]:
+            image = self.pdf.render(cropped, self.root / f'page-{page}.png', page=page, dpi=72)
+            self.assertEqual((image['width_px'], image['height_px']), expected)
+
+    def test_page_helper_refusals_preserve_existing_outputs(self):
+        output = self.root / 'protected.pdf'
+        output.write_bytes(b'EXISTING OUTPUT')
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.extract(self.source, output, pages='2', force=True)
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+        with self.assertRaises(CommandError):
+            self.pdf.rotate(self.source, output, degrees=90)
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+        self.pdf.rotate(self.source, output, degrees=90, force=True)
+        self.assertEqual(self.pdf.info(output)['files'][0]['document']['page_sizes'][0]['width_pt'], 400)
+        for sources in [str(self.source), self.source]:
+            with self.assertRaises(TypeError):
+                self.pdf.merge(sources, output)
+        with self.assertRaises(ValueError):
+            self.pdf.crop(self.source, output, rect=[0, 10, 20])
+
+    def test_option_like_filenames_are_literal_for_every_helper(self):
+        client = Tpdf(BINARY, cwd=self.root)
+        # An exact option name proves that '--' disables even recognized options.
+        source = self.root / '--json'
+        fixture(source, form=True)
+        self.assertEqual(client.info('--json')['files'][0]['path'], '--json')
+        self.assertIn('SYNTHETIC ORIGINAL', client.text('--json')['pages'][0]['text'])
+        field = client.fields('--json')['fields'][0]['name']
+        client.fill('--json', '-filled.pdf', {field: 'LITERAL'})
+        self.assertEqual(client.fields('-filled.pdf')['fields'][0]['value'], 'LITERAL')
+        self.assertEqual(client.comments('--json')['comments'], [])
+        self.assertEqual(client.text_runs('--json')['runs'][0]['text'], 'SYNTHETIC ORIGINAL')
+        client.render('--json', '-page.png', dpi=72)
+        client.edit('--json', '-edited.pdf', [{'op': 'rotate', 'page': 1, 'degrees': 90}])
+        client.merge(['--json', '-edited.pdf'], '-merged.pdf')
+        client.extract('-merged.pdf', '-extracted.pdf', pages='2')
+        client.rotate('-extracted.pdf', '-rotated.pdf', degrees=180)
+        client.crop('-rotated.pdf', '-cropped.pdf', rect=[0, 0, 100, 100])
+        self.assertTrue(client.split('-merged.pdf', '-part.pdf')['complete'])
+        self.assertEqual(client.verify('--json')['files'][0]['path'], '--json')
+        with self.assertRaises(CommandError) as caught:
+            client.verify('--json', strict=True)
+        self.assertEqual(caught.exception.exit_code, 1)
+        self.assertEqual(caught.exception.report['files'][0]['path'], '--json')
 
     def test_render_supports_repeatable_visual_assertions(self):
         first = self.root / 'before.png'

@@ -220,6 +220,47 @@ fn every_other_malformed_line_is_refused_with_its_reason() {
 }
 
 #[test]
+fn document_readers_and_fill_treat_every_argument_after_separator_as_a_path() {
+    let flags = argv("--json --strict -- --json -- --strict");
+    let verification = verify::parse(&flags).unwrap();
+    assert!(verification.json && verification.strict);
+    assert_eq!(
+        verification.files,
+        argv("--json -- --strict")
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>()
+    );
+    let information = super::info::parse(&argv("--json -- --json --password-env")).unwrap();
+    assert!(information.json);
+    assert_eq!(information.password_env, None);
+    assert_eq!(
+        information.files,
+        vec![PathBuf::from("--json"), PathBuf::from("--password-env")]
+    );
+    let text = super::text::parse(&argv("--json -- --force")).unwrap();
+    assert_eq!(text.input, PathBuf::from("--force"));
+    assert!(!text.force);
+    let fields = super::fields::parse(&argv("--json -- --password-env")).unwrap();
+    assert_eq!(fields.input, PathBuf::from("--password-env"));
+    assert_eq!(fields.password_env, None);
+    let fill = super::fill::parse(&argv("--json -o out.pdf --values - -- --force")).unwrap();
+    assert_eq!(fill.input, PathBuf::from("--force"));
+    assert!(!fill.force);
+    for line in [
+        "text -- a b",
+        "fields -- a b",
+        "fill -o out --values - -- a b",
+        "info --unknown",
+        "text --unknown",
+        "fields --unknown",
+        "verify --unknown",
+    ] {
+        assert!(parse(&argv(line)).is_err(), "{line}");
+    }
+}
+
+#[test]
 fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
     // The registration is the whole of adding a command, so it is what is
     // held: each name dispatches to its own parser (a line it accepts), each

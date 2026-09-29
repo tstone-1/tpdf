@@ -74,18 +74,22 @@ pub fn parse(args: &[String]) -> Result<Text, String> {
     let mut pages = None;
     let mut password_env = None;
     let mut json = false;
+    let mut positional = false;
     let mut output: Option<PathBuf> = None;
     let mut force = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "--pages" => pages = Some(page_list(value(arg, &mut rest)?)?),
-            "--password-env" => password_env = Some(variable(value(arg, &mut rest)?)?),
-            "--json" => json = true,
-            "-o" | "--output" => output = Some(PathBuf::from(value(arg, &mut rest)?)),
-            "--force" => force = true,
-            flag if flag.starts_with('-') && flag != "-" => return Err(unknown("text", flag)),
-            path => {
+        match (positional, arg.as_str()) {
+            (false, "--") => positional = true,
+            (false, "--pages") => pages = Some(page_list(value(arg, &mut rest)?)?),
+            (false, "--password-env") => password_env = Some(variable(value(arg, &mut rest)?)?),
+            (false, "--json") => json = true,
+            (false, "-o" | "--output") => output = Some(PathBuf::from(value(arg, &mut rest)?)),
+            (false, "--force") => force = true,
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("text", flag))
+            }
+            (_, path) => {
                 if input.is_some() {
                     return Err(format!(
                         "`text` takes one document, and `{path}` is a second"

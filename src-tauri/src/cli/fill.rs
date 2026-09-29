@@ -93,22 +93,26 @@ pub fn parse(args: &[String]) -> Result<Fill, String> {
     let mut values: Option<Values> = None;
     let mut password_env = None;
     let mut json = false;
+    let mut positional = false;
     let mut force = false;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "-o" | "--output" => output = Some(PathBuf::from(value(arg, &mut rest)?)),
-            "--values" => {
+        match (positional, arg.as_str()) {
+            (false, "--") => positional = true,
+            (false, "-o" | "--output") => output = Some(PathBuf::from(value(arg, &mut rest)?)),
+            (false, "--values") => {
                 values = Some(match value(arg, &mut rest)?.as_str() {
                     "-" => Values::Stdin,
                     path => Values::File(PathBuf::from(path)),
                 });
             }
-            "--password-env" => password_env = Some(variable(value(arg, &mut rest)?)?),
-            "--json" => json = true,
-            "--force" => force = true,
-            flag if flag.starts_with('-') && flag != "-" => return Err(unknown("fill", flag)),
-            path => {
+            (false, "--password-env") => password_env = Some(variable(value(arg, &mut rest)?)?),
+            (false, "--json") => json = true,
+            (false, "--force") => force = true,
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("fill", flag))
+            }
+            (_, path) => {
                 if input.is_some() {
                     return Err(format!(
                         "`fill` takes one document, and `{path}` is a second --- fill them one \

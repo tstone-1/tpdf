@@ -184,19 +184,19 @@ class Tpdf:
 
     def info(self, *paths: str | os.PathLike[str], password: str | None = None) -> dict[str, Any]:
         """Read document information."""
-        return self.run('info', *paths, password=password).report
+        return self.run('info', '--', *paths, password=password).report
 
     def text(self, path: str | os.PathLike[str], *, password: str | None = None) -> dict[str, Any]:
         """Extract text and its reading order."""
-        return self.run('text', path, password=password).report
+        return self.run('text', '--', path, password=password).report
 
     def fields(self, path: str | os.PathLike[str], *, password: str | None = None) -> dict[str, Any]:
         """Inspect form fields and the answers they accept."""
-        return self.run('fields', path, password=password).report
+        return self.run('fields', '--', path, password=password).report
 
     def comments(self, path: str | os.PathLike[str], *, password: str | None = None) -> dict[str, Any]:
         """Read annotations; incomplete scans raise CommandError with their report."""
-        return self.run('comments', path, password=password).report
+        return self.run('comments', '--', path, password=password).report
 
     def text_runs(self, path: str | os.PathLike[str], *, page: int = 1, password: str | None = None) -> dict[str, Any]:
         """Inspect original text runs and the revision required for replacement."""
@@ -217,10 +217,10 @@ class Tpdf:
         values: Mapping[str, Any], *, force: bool = False, password: str | None = None,
     ) -> dict[str, Any]:
         """Fill fields from a Python mapping without an intermediate JSON file."""
-        args = [os.fspath(source), '-o', os.fspath(output), '--values', '-']
+        args = ['-o', os.fspath(output), '--values', '-']
         if force:
             args.append('--force')
-        return self.run('fill', *args, input_json=dict(values), password=password).report
+        return self.run('fill', *args, '--', source, input_json=dict(values), password=password).report
 
     def edit(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
@@ -241,3 +241,85 @@ class Tpdf:
             'edit', *args, input_json={'schema': 1, 'operations': list(operations)},
             password=password,
         ).report
+
+    def verify(self, *paths: str | os.PathLike[str], strict: bool = False) -> dict[str, Any]:
+        """Inspect signatures. With strict=True, unsigned/untrusted files raise CommandError.
+
+        The exception retains the full verification report and exit code. Use
+        run('verify', '--strict', '--', *paths, check=False) for a Result instead.
+        """
+        args = ['--strict'] if strict else []
+        return self.run('verify', *args, '--', *paths).report
+
+    def _pages(
+        self, command: str, sources: Sequence[str | os.PathLike[str]],
+        output: str | os.PathLike[str], options: Sequence[str], *,
+        force: bool, invalidate_signatures: bool, password: str | None,
+    ) -> dict[str, Any]:
+        args = ['-o', os.fspath(output), *options]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run(command, *args, '--', *sources, password=password).report
+
+    def merge(
+        self, sources: Sequence[str | os.PathLike[str]], output: str | os.PathLike[str], *,
+        force: bool = False, invalidate_signatures: bool = False, password: str | None = None,
+    ) -> dict[str, Any]:
+        """Combine at least two documents in order. Only the first may be encrypted."""
+        if isinstance(sources, (str, bytes, os.PathLike)):
+            raise TypeError('sources must be a sequence of document paths, not one path')
+        return self._pages('merge', sources, output, [], force=force,
+            invalidate_signatures=invalidate_signatures, password=password)
+
+    def extract(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        pages: str, force: bool = False, invalidate_signatures: bool = False,
+        password: str | None = None,
+    ) -> dict[str, Any]:
+        """Copy a page range (e.g. '1-3,7'), in document order, each page once."""
+        return self._pages('extract', [source], output, ['--pages', pages], force=force,
+            invalidate_signatures=invalidate_signatures, password=password)
+
+    def split(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        every: int = 1, force: bool = False, invalidate_signatures: bool = False,
+        password: str | None = None,
+    ) -> dict[str, Any]:
+        """Write groups as output-1.pdf, output-2.pdf, etc.; report lists actual paths.
+
+        A publication failure can leave some parts written. CommandError.report
+        retains those paths; do not interpret an exception as a rollback.
+        """
+        return self._pages('split', [source], output, ['--every', str(every)], force=force,
+            invalidate_signatures=invalidate_signatures, password=password)
+
+    def rotate(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        degrees: int, pages: str | None = None, force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> dict[str, Any]:
+        """Turn selected pages clockwise by 90, 180 or 270 degrees; default all pages."""
+        options = ['--degrees', str(degrees)]
+        if pages is not None:
+            options += ['--pages', pages]
+        return self._pages('rotate', [source], output, options, force=force,
+            invalidate_signatures=invalidate_signatures, password=password)
+
+    def crop(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        rect: Sequence[float], pages: str | None = None, force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> dict[str, Any]:
+        """Set visible x,y,width,height in display points from top-left.
+
+        Cropping hides content; it does not redact it. The CLI validates geometry.
+        """
+        if isinstance(rect, (str, bytes)) or len(rect) != 4:
+            raise ValueError('rect must contain four numbers: x, y, width, height')
+        options = ['--rect', ','.join(str(value) for value in rect)]
+        if pages is not None:
+            options += ['--pages', pages]
+        return self._pages('crop', [source], output, options, force=force,
+            invalidate_signatures=invalidate_signatures, password=password)

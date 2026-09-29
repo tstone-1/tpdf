@@ -802,8 +802,29 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()` and `render()` return parsed reports. `run(command, *arguments)` reaches every CLI command,
-including signing, redaction and page operations. It returns a `Result` carrying
+`edit()`, `render()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`crop()` return parsed reports. Page helpers accept `force=`, `password=` and
+`invalidate_signatures=`; page ranges count from 1 and select pages once in document
+order. Cropping hides content and is not redaction.
+
+```python
+pdf.merge(["first.pdf", "second.pdf"], "combined.pdf")
+pdf.extract("combined.pdf", "selected.pdf", pages="1-3,7")
+pdf.rotate("selected.pdf", "rotated.pdf", degrees=90, pages="2")
+pdf.crop("rotated.pdf", "cropped.pdf", rect=[20, 30, 200, 300], pages="1")
+parts = pdf.split("combined.pdf", "part.pdf", every=2)
+assert parts["complete"]
+for part in parts["outputs"]:
+    assert pdf.info(part["path"])["files"][0]["document"]["pages"] == part["pages"]
+```
+
+`verify(..., strict=True)` raises `CommandError` when any input is unsigned or any
+signature is not intact and trusted; its report remains available on the exception.
+A failed split can leave published parts: inspect `CommandError.report["outputs"]`
+when that report contains an output list. An error does not imply rollback.
+
+`run(command, *arguments)` reaches every CLI command, including signing and redaction.
+It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict
 or partial split directly. Malformed or incompatible reports raise `ProtocolError`.
