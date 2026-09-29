@@ -72,10 +72,11 @@ export class PropertiesDialog {
 
     this.heading = document.createElement("h2");
     this.heading.textContent = "Document properties";
+    // Translucent row labels form stacking contexts; keep the title above them.
     this.heading.style.cssText =
       "margin:0;padding:0.85rem 1rem;font-size:15px;font-weight:600;" +
       "border-bottom:1px solid color-mix(in srgb, CanvasText 14%, transparent);" +
-      "position:sticky;top:0;background:Canvas;";
+      "position:sticky;top:0;z-index:1;background:Canvas;";
 
     this.body = document.createElement("div");
     this.body.style.cssText = "padding:0.4rem 1rem 1rem;";

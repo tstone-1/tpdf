@@ -2214,9 +2214,16 @@ Synthetic anchored, untrusted, expired, future, missing-intermediate, wrong-purp
 and timestamp-authority controls pass in both processes. Starting the child without
 containment fails the integrity assertion. No trust stores or keys are changed.
 
-The uncontained control was an elevated SSH process; an ordinary-user installed application
-and signing with its OS-held key remain separate, unmeasured paths. This is not a cold-cache
-measurement. Deliberately denied store-service access also remains unmeasured: an API error
+The uncontained control was an elevated SSH process. A separate installed-application
+run later on 2026-09-29 measured the 26.9.22 GUI at medium integrity (8192) in the ordinary
+user's desktop session, with low-integrity (4096), job-contained renderer children loading
+only the packaged PDFium. A disposable non-exportable RSA-2048 CNG key signed invisible,
+visible and DigiCert-timestamped copies through that GUI; independent pyHanko readback
+validated the signatures and trusted the timestamp offline. The self-signed signer remained
+untrusted as expected. `BUILD.md`, *Installed Windows signing*, records the cancellation,
+tamper and rendering controls. Successful long-term signing with a CA-issued signer and
+hardware-token/PIN behavior remain unmeasured. Neither run is a cold-cache measurement.
+Deliberately denied store-service access also remains unmeasured: an API error
 is classified as `unchecked`, but a store failure presented by Windows as an incomplete chain
 could still read as untrusted. The new test establishes access under the measured containment
 and store configuration, not under every possible account or store ACL.

@@ -15920,8 +15920,12 @@ that `genTime` falls inside the authority's certificate's dates. The `TSTInfo`'s
 A timestamp on a document timestamp (archive timestamps) and `/DSS`.
 Windows follow-up, 2026-09-29: synthetic timestamp-authority purpose and chain controls pass
 under production low-integrity/job containment, with private in-memory roots. Real ROOT-store
-verdicts agree with the uncontained process (`docs/THREAT-MODEL.md` §T6.22). A request to a real
-timestamp authority from the installed Windows application remains unmeasured.
+verdicts agree with the uncontained process (`docs/THREAT-MODEL.md` §T6.22). Later the same
+day, the installed 26.9.22 Windows GUI signed with a disposable non-exportable CNG key
+and a real DigiCert timestamp under an ordinary desktop token. Independent pyHanko
+readback validated both and trusted the timestamp offline. See `BUILD.md`, *Installed
+Windows signing*, for the scope and controls; successful long-term signing with a
+CA-issued signer remains unmeasured.
 
 #### Adding a timestamp when signing --- done 2026-09-28
 

@@ -6049,9 +6049,54 @@ On Windows 11 build 26200, the native trust suite passed 23 tests (the contained
 is ignored in ordinary discovery and explicitly run by its parent), and the CLI passed
 240 checks with one macOS-only skip. Native all-target Clippy and formatting passed.
 Real ROOT-store verdicts agree under low-integrity/job containment and outside it;
-`docs/THREAT-MODEL.md` §T6.22 records the controls and account limitations. Installed
-Windows GUI signing with an OS-held key under an ordinary account remains unmeasured.
-This verification did not build or publish a release.
+`docs/THREAT-MODEL.md` §T6.22 records the controls and account limitations. The installed
+Windows signing workflow was measured later the same day, below. This verification
+did not build or publish a release.
+
+**Installed Windows signing, 2026-09-29, Windows 11 build 26200:** the official per-user
+NSIS installer upgraded 26.9.21 to 26.9.22. External UI Automation drove the installed
+application, with no application check harness. A temporary InteractiveToken task at
+Limited run level launched it in the unlocked desktop session; the GUI itself measured
+medium integrity (8192). A disposable one-day RSA-2048 certificate and non-exportable
+CNG key were created under that same ordinary token in CurrentUser/My. No ROOT store
+was changed and no existing signing identity was used.
+
+The installed CLI and GUI both signed invisibly; the GUI also placed a visible signature
+with a reason and location and signed with a DigiCert timestamp. Independent pyHanko
+readback found each signature intact and valid, covering the whole file, and matched
+its signer certificate byte for byte to the test certificate. The timestamp was
+`INTACT:TRUSTED` with network fetching disabled. qpdf found no structural errors.
+Poppler rendered both invisible outputs pixel-identically to the input; all changed
+pixels in the visible output stayed within its widget. The installed viewer reopened
+that visible copy correctly. App-only PrintWindow capture was proved independent of
+an overlapping control window.
+
+Chooser Cancel, native Save-dialog Cancel, and an unavailable timestamp authority left
+no new output and preserved the source digest. A covered-byte alteration was rejected
+by both the installed verifier and pyHanko. The self-signed signer correctly read as
+untrusted at its root; installed `verify --strict` returned 1. Long-term signing correctly
+refused the certificate's missing OCSP/CRL information, offered its explicit choices,
+and wrote nothing when cancelled. No fallback was counted as a successful long-term
+signing: that case still needs a CA-issued test certificate with revocation services.
+
+The GUI mapped no PDFium; both observed renderer children measured low integrity (4096),
+job membership, and PDFium loaded solely from the installed package. This run does not
+establish smart-card/PIN behavior, a trusted CA-issued signer's workflow, or successful
+long-term signing and archive timestamp creation from the installed Windows application.
+
+The installed GUI's Properties readback and installed CLI both reported the DigiCert
+timestamp authority trusted by Windows and the self-signed signer untrusted at its root.
+Cleanup closed all 11 owned application/worker/WebView processes, restored the original
+session and localStorage byte for byte, deleted the exact test certificate and its CNG
+key, and removed the temporary task. Other certificates were unchanged. The successful
+26.9.22 update remains installed.
+
+The scrolled Properties screenshot exposed a display defect: translucent labels painted
+above the sticky title. An unreleased fix gives that title an explicit stacking level
+in `src/lib/propertiesdialog.ts`. A Chromium reproduction using the actual dialog showed
+row labels covering the header before the change and only the heading at the sampled
+header points afterwards; before/after renders confirmed the correction. The installed
+26.9.22 binary used for the signing measurements does not contain this display fix.
 
 **26.9.22 verification, macOS arm64, 2026-09-28:** all 27 gates passed on the final tree,
 `check_windows.py` type-checked the Windows tree, and CI passed both legs on every pushed
