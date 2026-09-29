@@ -5559,6 +5559,17 @@ decoded colors across tile seams, saved crops and rotations, and output preserva
 on refusal. These are headless tests of the same backend used by the GUI; they do
 not replace window interaction checks.
 
+Native Windows x64 execution was verified on 2026-09-29 at `186991b`, using
+Rust 1.97.1, Python 3.14.7 and the digest-checked `pdfium-8066-tpdf.1` engine.
+All 322 CLI integration checks passed; the only skip was the macOS-only
+`sandbox_check` inspection. All 89 CLI unit tests, the raw-tile boundary test
+and all 12 Python API tests passed, including Unicode paths, JSON edits, form
+filling, PNG rendering and timeout cleanup of the process tree. The complete
+CLI run included the generated document-timestamp fixture. Both the isolated
+test checkout and the original checkout stayed clean, and no CLI process
+remained. This exercised the native debug CLI and Python client, not GUI
+interaction or a newly packaged installer.
+
 **What the gates run.** `cargo test` runs three things for it:
 
 - `cli::tests` and `clitool::tests` --- the command line and every refusal, `--identity`
