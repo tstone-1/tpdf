@@ -563,6 +563,10 @@ An answers file for `fill` is one JSON object of full field names and answers:
 }
 ```
 
+`redact --regions -` reads a regions array from stdin (at most once per command).
+Use `./-` for a file literally named `-`. Put options before `--` to pass an input
+filename that begins with a dash.
+
 A regions file for `redact` is one JSON array of rectangles, each on a page counted from 1,
 measured as `sign --rect` measures one — `[x, y, w, h]` in points from the top-left corner of
 the page as it is displayed:
@@ -803,7 +807,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
 `edit()`, `render()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
-`crop()` return parsed reports. Page helpers accept `force=`, `password=` and
+`crop()` and `redact()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
 
@@ -823,7 +827,29 @@ signature is not intact and trusted; its report remains available on the excepti
 A failed split can leave published parts: inspect `CommandError.report["outputs"]`
 when that report contains an output list. An error does not imply rollback.
 
-`run(command, *arguments)` reaches every CLI command, including signing and redaction.
+Redaction accepts literal search terms, regular expressions, or rectangles directly:
+
+```python
+preview = pdf.redact("input.pdf", texts=["PRIVATE-731"], dry_run=True)
+assert not preview["written"] and preview["verified"] is None
+report = pdf.redact("input.pdf", "redacted.pdf", texts=["PRIVATE-731"])
+assert report["written"] and report["verified"] is True
+
+# Rectangles are sent through stdin; no intermediate JSON file is needed.
+preview = pdf.redact("input.pdf", regions=[
+    {"page": 1, "rect": [25, 275, 170, 35]},
+], dry_run=True)
+```
+
+Use `patterns=[r"PRIVATE-[0-9]+"]` for regex matching; `case_sensitive=True` enables
+case sensitivity. `pages="1-3"` limits searches, while rectangles name their own pages.
+A written but unverified copy raises `CommandError` with exit code 1; the file remains,
+and `exception.report["reasons"]` explains why. Use `check=False` to receive that report
+directly. Always inspect `written` and `verified`: no matches and dry runs write nothing
+and have `verified: null`, even though the command succeeds. `force=`, `password=` and
+`invalidate_signatures=` have the same meaning as their CLI options.
+
+`run(command, *arguments)` reaches every CLI command, including signing.
 It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict

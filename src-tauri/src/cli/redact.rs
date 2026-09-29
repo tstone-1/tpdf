@@ -31,7 +31,7 @@
 //! too. This process parses no document.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::args::{lexically_same, unknown, value};
@@ -48,7 +48,7 @@ use crate::text::PageText;
 /// `redact`, registered.
 pub const COMMAND: Registered = Registered {
     name: "redact",
-    usage: "redact <in.pdf> -o <out.pdf> (--text STR | --pattern REGEX | --regions FILE)...\n        [--case-sensitive] [--pages 1-3,7] [--dry-run] [--invalidate-signatures]\n        [--password-env VAR] [--force] [--json]",
+    usage: "redact <in.pdf> -o <out.pdf> (--text STR | --pattern REGEX | --regions FILE|-)...\n        [--case-sensitive] [--pages 1-3,7] [--dry-run] [--invalidate-signatures]\n        [--password-env VAR] [--force] [--json]",
     summary: "Removes every match of each --text and --pattern (found as the\n            viewer's search finds it) and every rectangle a --regions file\n            names, writes the result to -o, and reads it back. Exit 0 means\n            the copy was proved clean; 1 means it was written and could not be,\n            with every reason. --dry-run writes nothing and says what would go.\n            A signed document is refused unless --invalidate-signatures.",
     parse: boxed,
 };
@@ -74,7 +74,7 @@ pub struct Redact {
     pub texts: Vec<String>,
     /// `--pattern`, in the order given.
     pub patterns: Vec<String>,
-    /// `--regions` files, in the order given.
+    /// `--regions` files, in the order given; `-` reads stdin once.
     pub regions: Vec<PathBuf>,
     /// `--case-sensitive`, for every `--text` and `--pattern`.
     pub case_sensitive: bool,
@@ -146,23 +146,29 @@ pub fn parse(args: &[String]) -> Result<Redact, String> {
     };
     let mut input: Option<PathBuf> = None;
     let mut rest = args.iter();
+    let mut positional = false;
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "-o" | "--output" => command.output = Some(PathBuf::from(value(arg, &mut rest)?)),
-            "--text" => command.texts.push(value(arg, &mut rest)?.clone()),
-            "--pattern" => command.patterns.push(value(arg, &mut rest)?.clone()),
-            "--regions" => command.regions.push(PathBuf::from(value(arg, &mut rest)?)),
-            "--case-sensitive" => command.case_sensitive = true,
-            "--pages" => command.pages = Some(page_list(value(arg, &mut rest)?)?),
-            "--dry-run" => command.dry_run = true,
-            "--invalidate-signatures" => command.invalidate_signatures = true,
-            "--password-env" => {
+        match (positional, arg.as_str()) {
+            (false, "--") => positional = true,
+            (false, "-o" | "--output") => {
+                command.output = Some(PathBuf::from(value(arg, &mut rest)?))
+            }
+            (false, "--text") => command.texts.push(value(arg, &mut rest)?.clone()),
+            (false, "--pattern") => command.patterns.push(value(arg, &mut rest)?.clone()),
+            (false, "--regions") => command.regions.push(PathBuf::from(value(arg, &mut rest)?)),
+            (false, "--case-sensitive") => command.case_sensitive = true,
+            (false, "--pages") => command.pages = Some(page_list(value(arg, &mut rest)?)?),
+            (false, "--dry-run") => command.dry_run = true,
+            (false, "--invalidate-signatures") => command.invalidate_signatures = true,
+            (false, "--password-env") => {
                 command.password_env = Some(variable(value(arg, &mut rest)?)?);
             }
-            "--force" => command.force = true,
-            "--json" => command.json = true,
-            flag if flag.starts_with('-') && flag != "-" => return Err(unknown("redact", flag)),
-            path => {
+            (false, "--force") => command.force = true,
+            (false, "--json") => command.json = true,
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("redact", flag))
+            }
+            (_, path) => {
                 if input.is_some() {
                     return Err(format!(
                         "`redact` takes one document, and `{path}` is a second --- redact them \
@@ -180,6 +186,15 @@ pub fn parse(args: &[String]) -> Result<Redact, String> {
              often as needed"
                 .into(),
         );
+    }
+    if command
+        .regions
+        .iter()
+        .filter(|p| p.as_path() == Path::new("-"))
+        .count()
+        > 1
+    {
+        return Err("--regions - can read stdin only once".into());
     }
     for text in &command.texts {
         prepared(SearchKind::Text, text, command.case_sensitive)?;
@@ -207,7 +222,11 @@ pub fn parse(args: &[String]) -> Result<Redact, String> {
                         .into(),
                 );
             }
-            if command.regions.iter().any(|r| lexically_same(r, output)) {
+            if command
+                .regions
+                .iter()
+                .any(|r| r != Path::new("-") && lexically_same(r, output))
+            {
                 return Err("`-o` names a regions file".into());
             }
         }
@@ -273,32 +292,48 @@ pub fn region_list(text: &str, shown: &str) -> Result<Vec<(u32, [f32; 4])>, Stri
     Ok(out)
 }
 
-/// Every `--regions` file, read and checked, in the order given.
+/// Every `--regions` source, read and checked, in the order given.
 fn read_regions(files: &[PathBuf]) -> Result<Vec<(u32, [f32; 4])>, Failure> {
     let mut all = Vec::new();
     for path in files {
         let shown = path.display().to_string();
-        let mut text = String::new();
-        std::fs::File::open(path)
-            .and_then(|f| f.take(MAX_REGIONS_BYTES + 1).read_to_string(&mut text))
-            .map_err(|e| {
+        let regions = if path == Path::new("-") {
+            read_region_source(std::io::stdin().lock(), "stdin")?
+        } else {
+            let file = std::fs::File::open(path).map_err(|e| {
                 Failure::new(
                     Exit::Refused,
                     format!("could not read the regions from {shown}: {e}"),
                 )
             })?;
-        if text.len() as u64 > MAX_REGIONS_BYTES {
-            return Err(Failure::new(
-                Exit::Refused,
-                format!(
-                    "{shown} passes {} MiB, which is not a regions file",
-                    MAX_REGIONS_BYTES / (1024 * 1024)
-                ),
-            ));
-        }
-        all.extend(region_list(&text, &shown).map_err(|why| Failure::new(Exit::Refused, why))?);
+            read_region_source(file, &shown)?
+        };
+        all.extend(regions);
     }
     Ok(all)
+}
+
+fn read_region_source(reader: impl Read, shown: &str) -> Result<Vec<(u32, [f32; 4])>, Failure> {
+    let mut text = String::new();
+    reader
+        .take(MAX_REGIONS_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| {
+            Failure::new(
+                Exit::Refused,
+                format!("could not read the regions from {shown}: {e}"),
+            )
+        })?;
+    if text.len() as u64 > MAX_REGIONS_BYTES {
+        return Err(Failure::new(
+            Exit::Refused,
+            format!(
+                "{shown} passes {} MiB, which is not a regions file",
+                MAX_REGIONS_BYTES / (1024 * 1024)
+            ),
+        ));
+    }
+    region_list(&text, shown).map_err(|why| Failure::new(Exit::Refused, why))
 }
 
 /// Drives one of the render service's callback-shaped calls to an answer.
@@ -759,7 +794,7 @@ fn run_redact(
         if command
             .regions
             .iter()
-            .any(|r| crate::save::same_file(r, output))
+            .any(|r| r != Path::new("-") && crate::save::same_file(r, output))
         {
             return Err(Failure::new(
                 Exit::Usage,
@@ -1016,4 +1051,27 @@ pub fn outcome(applied: Vec<String>, unmarked: Vec<String>) -> (bool, Vec<String
         why,
         if verified { Exit::Ok } else { Exit::Strict },
     )
+}
+
+#[cfg(test)]
+mod stdin_tests {
+    use super::*;
+
+    #[test]
+    fn region_readers_reject_oversize_invalid_utf8_and_truncated_json() {
+        let padded = std::io::Cursor::new(b"[]").chain(std::io::repeat(b' '));
+        let failure = read_region_source(padded, "stdin").unwrap_err();
+        assert_eq!(failure.exit, Exit::Refused);
+        assert!(failure.message.contains("passes 16 MiB"));
+        for input in [b"\xff".as_slice(), b"[{", b"[] trailing"] {
+            assert_eq!(
+                read_region_source(input, "stdin").unwrap_err().exit,
+                Exit::Refused
+            );
+        }
+        assert_eq!(
+            read_region_source(b"[]".as_slice(), "stdin").unwrap(),
+            Vec::new()
+        );
+    }
 }

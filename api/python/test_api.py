@@ -22,9 +22,11 @@ TARGET = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'src-tauri' / 'target'))
 BINARY = Path(os.environ.get('TPDF_TEST_CLI', TARGET / 'debug' / ('tpdf-cli.exe' if os.name == 'nt' else 'tpdf-cli')))
 
 
-def fixture(path: Path, *, form: bool = False) -> None:
+def fixture(path: Path, *, form: bool = False, content: bytes | None = None,
+            retained_secret: bool = False) -> None:
     """A one-page PDF with visible, editable text; explicit xref offsets."""
-    content = b'BT /F1 12 Tf 30 100 Td (SYNTHETIC ORIGINAL) Tj ET'
+    if content is None:
+        content = b'BT /F1 12 Tf 30 100 Td (SYNTHETIC ORIGINAL) Tj ET'
     objects = [
         b'<< /Type /Catalog /Pages 2 0 R >>',
         b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -39,6 +41,11 @@ def fixture(path: Path, *, form: bool = False) -> None:
             b'<< /Fields [7 0 R] /DA (/F1 12 Tf 0 g) /DR << /Font << /F1 5 0 R >> >> >>',
             b'<< /Type /Annot /Subtype /Widget /FT /Tx /T (Synthetic.answer) /V (OLD) /Rect [30 200 200 225] /P 3 0 R /F 4 >>',
         ]
+    if retained_secret:
+        assert not form
+        # A comment outside the redaction is kept, and still holds the secret.
+        objects[2] = objects[2][:-2] + b' /Annots [6 0 R] >>'
+        objects.append(b'<< /Type /Annot /Subtype /Text /Rect [250 340 270 360] /Contents (PRIVATE-731) /F 2 >>')
     data = bytearray(b'%PDF-1.7\n')
     offsets = [0]
     for number, body in enumerate(objects, 1):
@@ -164,6 +171,93 @@ class ClientTests(unittest.TestCase):
             client.verify('--json', strict=True)
         self.assertEqual(caught.exception.exit_code, 1)
         self.assertEqual(caught.exception.report['files'][0]['path'], '--json')
+
+    def redaction_source(self, *, retained_secret=False):
+        source = self.root / '-private.pdf'
+        fixture(source, retained_secret=retained_secret, content=(
+            b'BT /F1 20 Tf 30 100 Td (PRIVATE-731) Tj ET\n'
+            b'BT /F1 14 Tf 30 200 Td (PUBLIC CONTROL) Tj ET'
+        ))
+        return source
+
+    def test_redaction_text_and_regions_remove_only_target_content(self):
+        source = self.redaction_source()
+        original = source.read_bytes()
+        client = Tpdf(BINARY, cwd=self.root, timeout=120)
+        for name, selectors in [
+            ('text', {'texts': ['private-731']}),
+            ('regions', {'regions': [{'page': 1, 'rect': [25, 275, 170, 35]}]}),
+        ]:
+            with self.subTest(selector=name):
+                output = self.root / f'{name}.pdf'
+                report = client.redact(source.name, output, **selectors)
+                self.assertTrue(report['written'])
+                self.assertIs(report['verified'], True)
+                self.assertEqual(report['reasons'], [])
+                self.assertEqual(report['regions'], 1)
+                text = client.text(output)['pages'][0]['text']
+                self.assertNotIn('PRIVATE-731', text)
+                self.assertIn('PUBLIC CONTROL', text)
+                self.assertNotIn(b'PRIVATE-731', output.read_bytes())
+        self.assertEqual(source.read_bytes(), original)
+
+    def test_redaction_dry_run_and_no_match_never_claim_verified(self):
+        source = self.redaction_source()
+        output = self.root / 'protected.pdf'
+        output.write_bytes(b'EXISTING OUTPUT')
+        report = self.pdf.redact(source, output, patterns=['PRIVATE-[0-9]+'], dry_run=True, force=True)
+        self.assertTrue(report['dry_run'])
+        self.assertFalse(report['written'])
+        self.assertIsNone(report['verified'])
+        self.assertEqual(report['searches'][0]['matches'], 1)
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+        report = self.pdf.redact(source, patterns=['PRIVATE-[0-9]+'], dry_run=True)
+        self.assertIsNone(report['output'])
+        self.assertIsNone(report['verified'])
+        report = self.pdf.redact(source, output, texts=['private-731'], case_sensitive=True, force=True)
+        self.assertEqual(report['searches'][0]['matches'], 0)
+        self.assertFalse(report['written'])
+        self.assertIsNone(report['verified'])
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+
+    def test_redaction_verification_failure_retains_report_and_written_copy(self):
+        source = self.redaction_source(retained_secret=True)
+        output = self.root / 'unverified.pdf'
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.redact(source, output, texts=['PRIVATE-731'])
+        self.assertEqual(caught.exception.exit_code, 1)
+        report = caught.exception.report
+        self.assertTrue(report['written'])
+        self.assertIs(report['verified'], False)
+        self.assertTrue(any('is still in the file' in r for r in report['reasons']), report['reasons'])
+        self.assertNotIn('PRIVATE-731', self.pdf.text(output)['pages'][0]['text'])
+        self.assertEqual(self.pdf.comments(output)['comments'][0]['body'], 'PRIVATE-731')
+        report = self.pdf.redact(source, output, texts=['PRIVATE-731'], force=True, check=False)
+        self.assertTrue(report['written'])
+        self.assertIs(report['verified'], False)
+        self.assertTrue(report['reasons'])
+
+    def test_redaction_invalid_regions_and_requests_preserve_output(self):
+        source = self.redaction_source()
+        output = self.root / 'protected.pdf'
+        output.write_bytes(b'EXISTING OUTPUT')
+        for selectors in [
+            {'regions': [{'page': 1, 'rect': [0, 0, -1, 10]}]},
+            {'regions': [{'page': 2, 'rect': [0, 0, 10, 10]}]},
+            {'regions': [{'page': 1, 'rect': [0, 0, 10, 10], 'unknown': True}]},
+            {'patterns': ['(']},
+        ]:
+            with self.subTest(selectors=selectors), self.assertRaises(CommandError):
+                self.pdf.redact(source, output, force=True, **selectors)
+            self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+        with self.assertRaises(TypeError):
+            self.pdf.redact(source, output, texts='PRIVATE-731')
+        with self.assertRaises(TypeError):
+            self.pdf.redact(source, output, regions={'page': 1, 'rect': [0, 0, 10, 10]})
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.redact(source, output, texts=['PRIVATE-731'])
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
 
     def test_render_supports_repeatable_visual_assertions(self):
         first = self.root / 'before.png'

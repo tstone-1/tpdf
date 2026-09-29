@@ -446,3 +446,16 @@ pub(super) fn redact_samples() -> (report::Redacted, report::Redacted) {
     };
     (written, dry)
 }
+
+#[test]
+fn regions_stdin_is_single_use_and_the_separator_keeps_option_like_paths_literal() {
+    let command = parsed("--regions - --dry-run -- --force");
+    assert_eq!(command.input, std::path::PathBuf::from("--force"));
+    assert!(!command.force);
+    assert_eq!(command.regions, vec![std::path::PathBuf::from("-")]);
+    assert!(refused("a.pdf --regions - --regions - --dry-run").contains("stdin only once"));
+    assert!(refused("--regions - --dry-run -- a.pdf b.pdf").contains("is a second"));
+    // A literal file named '-' is spelled './-'; stdin cannot alias an output.
+    assert!(parse(&argv("a.pdf --regions - -o -")).is_ok());
+    assert!(refused("a.pdf --regions ./- -o -").contains("regions file"));
+}

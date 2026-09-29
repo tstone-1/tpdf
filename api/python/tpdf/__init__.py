@@ -323,3 +323,48 @@ class Tpdf:
             options += ['--pages', pages]
         return self._pages('crop', [source], output, options, force=force,
             invalidate_signatures=invalidate_signatures, password=password)
+
+    def redact(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str] | None = None, *,
+        texts: Sequence[str] = (), patterns: Sequence[str] = (),
+        regions: Sequence[Mapping[str, Any]] | None = None,
+        pages: str | None = None, case_sensitive: bool = False, dry_run: bool = False,
+        force: bool = False, invalidate_signatures: bool = False,
+        password: str | None = None, check: bool = True,
+    ) -> dict[str, Any]:
+        """Remove text, regex matches or rectangles, using the CLI's verified writer.
+
+        Regions are {'page': 1, 'rect': [x, y, width, height]} in display points
+        from top-left, sent through stdin. pages limits searches only; regions
+        name their own pages. Matching ignores case unless case_sensitive=True.
+        A dry run (output optional) writes nothing and has verified=None.
+
+        A written but unverified copy raises CommandError with exit_code=1;
+        its report and file remain available. check=False returns that report
+        directly: inspect written, verified and reasons. Exit 0 alone does not
+        prove a redaction: no matches also writes nothing with verified=None.
+        """
+        args = []
+        if output is not None:
+            args += ['-o', os.fspath(output)]
+        for flag, queries in [('--text', texts), ('--pattern', patterns)]:
+            if isinstance(queries, (str, bytes)):
+                raise TypeError(f'{flag} queries must be a sequence of strings, not one string')
+            for query in queries:
+                if not isinstance(query, str):
+                    raise TypeError(f'{flag} queries must be strings')
+                args += [flag, query]
+        payload = None
+        if regions is not None:
+            if isinstance(regions, (str, bytes, Mapping)):
+                raise TypeError('regions must be a sequence of page/rect mappings')
+            payload = [dict(region) for region in regions]
+            args += ['--regions', '-']
+        if pages is not None:
+            args += ['--pages', pages]
+        for enabled, flag in [(case_sensitive, '--case-sensitive'), (dry_run, '--dry-run'),
+                              (force, '--force'), (invalidate_signatures, '--invalidate-signatures')]:
+            if enabled:
+                args.append(flag)
+        return self.run('redact', *args, '--', source, input_json=payload,
+                        password=password, check=check).report

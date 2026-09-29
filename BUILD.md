@@ -5595,7 +5595,9 @@ the record.
 The `api` gate runs `api/python/test_api.py` against the built CLI, including a
 complete edit/readback/extract workflow, merge order, split contents, selected-page
 rotation and cropping, structured refusals, protocol errors, option-like filenames,
-child-only passwords and process-tree timeout cleanup. The
+child-only passwords and process-tree timeout cleanup. Redaction tests cover text and
+stdin regions, preserved control text, dry runs, refusals, and a retained secret in
+an unrelated annotation that must leave the written copy unverified. The
 Rust CLI integration section *JSON edit plans* separately reads written page
 content, annotation dictionaries and geometry. The *PNG rendering* section checks
 decoded colors across tile seams, saved crops and rotations, and output preservation
