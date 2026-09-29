@@ -2380,6 +2380,28 @@ Two of them are worth understanding rather than just running:
 `.github/workflows/ci.yml` runs the gates on `macos-latest` and `windows-2025` for every
 push to `main` and every pull request, since 2026-08-02.
 
+Windows cache investigation, 2026-09-29: [CI run 36559413820](https://github.com/tstone-1/tpdf/actions/runs/36559413820)
+took 31m53s. Rust cache restore took 2m27s and its post-step 9m18s; within
+the latter, archive preparation took 8m29s and upload about 20s. The saved
+archive was 5,088,915,448 bytes. The pinned cache action already removes
+incremental output and examples. An exact cache-key hit skips saving; this run
+restored an older dependency key and wrote the new one. Do not treat this save
+cost as an overhead paid on every source-only push.
+
+A native Windows compression comparison used zstd 1.5.7 and Git's tar on
+1,584 dependency artifacts (3,627,418,892 bytes), with four interleaved pairs
+and reversed pair order. Level 1 versus the default level 3 made the archive
+13.0% larger (890 MB versus 787 MB); median compression-plus-extraction time
+was 10.58s versus 10.31s. All eight extractions reproduced every path and
+SHA-256 digest. Lower compression was therefore not adopted. These are desktop
+measurements of dependency artifacts, not timings for the full hosted cache.
+The desktop's accumulated app/fuzz `debug/deps` directories also contained
+1,731 identically named, byte-identical artifacts totalling 2,876,360,610 bytes.
+That includes historical builds and is not a size estimate for CI's duplicate
+content. A shared target directory remains an experiment requiring a full
+restore/build/save comparison; the action cleans each workspace separately,
+so mapping both to one directory also needs its retained dependency set checked.
+
 This section said "CI runs on a tag, and on nothing else" until then, and the reason it
 gave was half wrong in a way worth keeping. The objection was never runner minutes — it was
 that a workflow would be **a second place for the gate list to live**. `ci.yml` does not
@@ -5589,9 +5611,19 @@ and native Windows x64 NSIS setup (48 executions, zero skips). All four
 missing-engine controls failed rendering as required. The Windows run left no
 CLI process behind and did not change the original checkout. The publication
 helper also refused the older green v26.9.22 run because it lacked the packaged
-API steps. Hosted signing/notarization and the new workflow wiring still require
-the release-mechanics rehearsal described in step 10; these local packages do
-not establish that hosted result.
+API steps.
+
+The hosted rehearsal also passed on 2026-09-29: `v26.9.22-rc1` at `9d05867`,
+[Release run 36562793601](https://github.com/tstone-1/tpdf/actions/runs/36562793601).
+Both platform jobs in [CI](https://github.com/tstone-1/tpdf/actions/runs/36559413820)
+and the [dependency audit](https://github.com/tstone-1/tpdf/actions/runs/36559413644)
+passed before the tag. The release reused that exact-commit CI evidence, verified
+macOS Developer ID signing, notarization and stapling, and passed all 48 packaged
+API test executions with zero skips and all four missing-engine controls. The
+four package SHA-256 digests in the test receipts matched the uploaded release
+assets; the draft held all eight expected files. All five updater entries named
+uploaded packages and matched their updater signatures. `publish_release.py` accepted
+the completed rehearsal in read-only mode. The rehearsal remains unpublished.
 
 Native Windows x64 execution was verified on 2026-09-29 at `186991b`, using
 Rust 1.97.1, Python 3.14.7 and the digest-checked `pdfium-8066-tpdf.1` engine.
