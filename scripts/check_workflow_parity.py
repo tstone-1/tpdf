@@ -77,6 +77,8 @@ import pathlib
 import re
 import sys
 
+from publish_release import PACKAGE_STEP
+
 #: Repository root, taken from this file rather than the working directory.
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -282,6 +284,30 @@ def other_workflows() -> list[str]:
     )
 
 
+def packaged_api(text: str) -> list[str]:
+    """The release-only gate must execute on both platforms and fail the job.
+
+    This intentionally recognises one simple, unconditional step. Conditional
+    execution or shell wrappers need an explicit review of this assertion.
+    """
+    block = '\n'.join(job_block(text, 'release'))
+    parts = re.split(r'(?m)^      - ', block)[1:]
+    command = ('python scripts/check_packaged_api.py --bundle-dir '
+               '"${{ matrix.bundle-dir }}" --updater --report scratch/packaged-api.json')
+    found = [part for part in parts if re.search(
+        r'(?m)^        run: ' + re.escape(command) + r'$', part)]
+    if len(found) != 1:
+        return ['release: expected one unconditional packaged CLI/API check']
+    if not found[0].startswith(f'name: {PACKAGE_STEP}\n'):
+        return ['release: packaged CLI/API step name differs from the publication guard']
+    if re.search(r'(?m)^        (if|continue-on-error):', found[0]):
+        return ['release: packaged CLI/API check must run unconditionally and fail the job']
+    # A job-level continue-on-error defeats an otherwise strict step.
+    if re.search(r'(?m)^    continue-on-error:', block):
+        return ['release: continue-on-error would bypass packaged CLI/API failures']
+    return []
+
+
 def main() -> int:
     """Compares the two jobs and reports the first difference."""
     found: dict[str, list[str]] = {}
@@ -317,6 +343,8 @@ def main() -> int:
             print(f"[FAIL] {workflow}'s '{JOB}' job has no steps -- the scan found nothing")
             return 1
         wrong = authority(workflow, block, path.read_text(encoding="utf-8"))
+        if workflow.endswith('/release.yml'):
+            wrong.extend(packaged_api(whole))
         if wrong:
             for line in wrong:
                 print(f"[FAIL] {line}")

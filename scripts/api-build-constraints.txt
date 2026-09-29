@@ -1,0 +1,3 @@
+# Pin build-time code executed by the release job, separately from the client's
+# supported backend range. The wheel has no runtime dependencies.
+setuptools==84.0.0

@@ -197,6 +197,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "ci.yml and release.yml no longer run the same gates job",
         ),
         (
+            "packages",
+            [sys.executable, str(ROOT / "scripts" / "test_packaged_api.py")],
+            "the packaged API runner or publication guard failed its controls",
+        ),
+        (
             # Beside parity rather than folded into it, because parity is
             # structurally blind to this: it compares the two workflows against
             # each other, so four identical wrong fixture paths are perfect

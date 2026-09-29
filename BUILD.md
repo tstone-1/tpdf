@@ -5559,6 +5559,40 @@ decoded colors across tile seams, saved crops and rotations, and output preserva
 on refusal. These are headless tests of the same backend used by the GUI; they do
 not replace window interaction checks.
 
+The release job also runs `scripts/check_packaged_api.py` after bundling and
+notarization. It extracts the DMG and macOS updater archive, or both Windows
+installers, outside the checkout. It builds the Python client wheel with a pinned
+backend, installs it into a fresh virtual environment, asserts the import comes
+from that environment, and runs the same API tests against each extracted CLI.
+Missing or ambiguous packages, wrong versions, skipped tests and failures stop
+the job. A missing-engine control must fail rendering after hiding only the
+extracted PDFium library. Nothing is installed into the user's applications or
+registered as a PDF handler. The JSON workflow artifacts record package, CLI,
+engine and wheel SHA-256 digests and test totals.
+
+Reproduce the package check with Python 3.13+ and `uv` on PATH:
+
+```
+python scripts/check_packaged_api.py --bundle-dir src-tauri/target/release/bundle --updater --report scratch/packaged-api.json
+```
+
+The directory must contain exactly one current package of each required kind;
+use a separate directory when old build outputs are present. Omit `--updater`
+for a local macOS build that produced only a DMG. Windows additionally needs
+7-Zip on PATH; MSI extraction uses `msiexec /a`, without installing the product.
+The ordinary `packages` gate tests the runner's empty-suite, skipped-test,
+failure and wrong-import controls, plus release wiring and publication refusal.
+
+Verified on 2026-09-29 against locally built release packages: all 12 API tests
+passed for each of the macOS DMG, macOS updater archive, native Windows x64 MSI
+and native Windows x64 NSIS setup (48 executions, zero skips). All four
+missing-engine controls failed rendering as required. The Windows run left no
+CLI process behind and did not change the original checkout. The publication
+helper also refused the older green v26.9.22 run because it lacked the packaged
+API steps. Hosted signing/notarization and the new workflow wiring still require
+the release-mechanics rehearsal described in step 10; these local packages do
+not establish that hosted result.
+
 Native Windows x64 execution was verified on 2026-09-29 at `186991b`, using
 Rust 1.97.1, Python 3.14.7 and the digest-checked `pdfium-8066-tpdf.1` engine.
 All 322 CLI integration checks passed; the only skip was the macOS-only
@@ -7291,9 +7325,10 @@ starts at 0 and increments within the month.
    **From 26.9.21 there is one more on purpose: `tpdf-cli.exe`**, the command-line tool, a
    second `[[bin]]` the bundler ships beside `tpdf.exe` (`src/bin/tpdf-cli.rs`). So a released
    MSI should hold four files, and three means the tool did not ship. Since 26.9.21 the
-   release workflow checks this itself (*Verify the Windows installers carry the command-line
-   tool*): it extracts the MSI, requires `tpdf-cli.exe` beside `tpdf.exe` and runs it, and reads
-   the NSIS setup's listing with 7-Zip. Proved failing on 26.9.20's own installers first, on
+   release workflow checks this itself. The *Test packaged CLI and installed Python API*
+   step now extracts both the MSI and NSIS setup, requires `tpdf-cli.exe` beside `tpdf.exe`,
+   and exercises both through the installed Python client. The original presence check was
+   proved failing on 26.9.20's own installers first, on
    MOTHERSHIP: the MSI extracted to `THIRD-PARTY-NOTICES.md`, `tpdf.exe` and `pdfium.dll` only,
    and the step stopped at *the MSI does not carry tpdf-cli.exe*. Still extract one as below
    after a release that changes it, and run
@@ -7521,10 +7556,18 @@ starts at 0 and increments within the month.
     tell a whole release from half of one, and it would have caught this before publishing.
 
 11. **Publish the draft, and check it from outside the account.** A green `Release` run
-    produces four artifacts and shows them to nobody — GitHub hides a draft from everyone
+    produces the release assets and shows them to nobody — GitHub hides a draft from everyone
     but repository owners, and its assets sit under `releases/download/untagged-<hash>/`
     rather than under the tag. Meanwhile the *tag* is public, so from outside the repository
     the state reads as a tag pushed by mistake.
+
+    Use `scripts/publish_release.py` for publication. It requires the latest
+    `release.yml` run for the exact tag and commit to have completed successfully,
+    with a successful packaged CLI/API step in both platform jobs. An older
+    green run, a skipped step or an empty job list cannot authorize publication.
+    Without `--publish` the command only checks. GitHub repository owners can
+    bypass this helper through the website or direct API calls; do not publish
+    a failed draft that way.
 
     **Count the assets before publishing, and count them with GraphQL.** A complete release
     is **8** files: the `.dmg`, `tpdf_aarch64.app.tar.gz` and its `.sig`, the `.msi` and
@@ -7543,7 +7586,7 @@ starts at 0 and increments within the month.
 
     ```
     gh release list --repo tstone-1/tpdf                      # second column: Draft
-    gh release edit vYY.M.MICRO --repo tstone-1/tpdf --draft=false
+    python scripts/publish_release.py vYY.M.MICRO --publish
     gh release list --repo tstone-1/tpdf                      # second column: Latest
     curl -sIL -o /dev/null -w '%{http_code}\n' \
       https://github.com/tstone-1/tpdf/releases/download/vYY.M.MICRO/<asset>   # expect 200
