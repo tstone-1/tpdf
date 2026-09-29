@@ -3968,10 +3968,21 @@ installed. The worker dies on a closed fd, the retry respawns into the same layo
 document intermittently will not open — as a function of the parent's fd-table holes,
 which nothing logs.
 
-The dup-first advice this file already carries is right; the trap is the cleanup undoing
-it. A scratch is anything that is *not a target*, and the only safe way to say so is to
-derive the test from the same table that drives the installs (`is_scratch(fd, shuffle)`
-takes the `(source, target)` array itself), so the two can never drift apart.
+The original repair compared every temporary against the entire target set before closing
+it. That repaired cleanup, but the claim that copying every source first was sufficient
+was wrong. On 2026-09-29 macOS CI caught a successful redaction whose spare printed
+`recvmsg: Socket operation on non-socket`. With free slots 3 and 4, copies of the tile
+and socket occupy 3 and 4; installing the tile at 4 overwrites the socket copy before
+the socket's own install at 5. The same alias can replace a merge's input mapping.
+
+Both macOS spawn paths now use `worker_handover::remap_fds`: `F_DUPFD_CLOEXEC` creates
+every temporary above the highest destination, then `dup2` installs the destinations
+and cleanup closes all temporaries. Fixed storage and descriptor syscalls keep the
+operation safe between fork and exec. The earlier tests only checked the cleanup
+predicate; the regression tests now force low holes in forked children and read distinct
+bytes through each installed descriptor. Both the spare and four-mapping tests failed
+against the old algorithm. They also check inheritable destinations and temporary cleanup,
+including failure while duplicating a source.
 
 ### Repeating a race inside one process re-runs the first round, not the race
 
@@ -25252,4 +25263,3 @@ refusal the tests could have been "fixed" to expect. A fake server answers every
 it is dropped, and a test that means *exactly once* counts the requests and says so --- which is
 what `Pki::paths()` does for the revocation half. The CLI fake now answers every connection, and
 the checks assert what was written: an intact archive over the whole file.
-

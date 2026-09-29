@@ -80,7 +80,7 @@ use serde::Serialize;
 #[cfg(windows)]
 use crate::worker_argv::command_line;
 #[cfg(target_os = "macos")]
-use crate::worker_handover::{is_scratch, send_document, socket_pair};
+use crate::worker_handover::{remap_fds, send_document, socket_pair};
 use crate::worker_proto::{read_reply_line, ReplyError};
 #[cfg(windows)]
 use crate::worker_shm::duplicate_into;
@@ -739,34 +739,10 @@ impl Worker {
 
         let tile_fd = tile.raw_fd();
         let sock_fd = theirs.as_raw_fd();
-        // SAFETY: only dup/dup2/close run between fork and exec, all of which are
-        // async-signal-safe. Both sources are dup'd to fresh descriptors first,
-        // because either may already occupy the target number.
+        // SAFETY: remap_fds uses only async-signal-safe descriptor calls;
+        // both sources stay owned until spawn returns.
         unsafe {
-            command.pre_exec(move || {
-                let t = libc::dup(tile_fd);
-                let s = libc::dup(sock_fd);
-                if t < 0 || s < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                // One array, driving both the installs and the cleanup, so the
-                // set of numbers being installed on cannot drift from the set
-                // the cleanup protects. See [`is_scratch`] for what closing the
-                // wrong one costs --- here it is the handover socket, and a
-                // spare that never receives a document waits forever.
-                let shuffle = [(t, TILE_FD), (s, SOCK_FD)];
-                for (temp, target) in shuffle {
-                    if libc::dup2(temp, target) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                for (temp, _) in shuffle {
-                    if is_scratch(temp, &shuffle) {
-                        libc::close(temp);
-                    }
-                }
-                Ok(())
-            });
+            command.pre_exec(move || remap_fds(&[(tile_fd, TILE_FD), (sock_fd, SOCK_FD)]));
         }
 
         let mut child = command.spawn().map_err(|e| format!("spawn failed: {e}"))?;
@@ -1089,66 +1065,27 @@ impl Worker {
         let tile_fd = tile.raw_fd();
         let out_fd = out.map(AsRawFd::as_raw_fd);
         let in_fd = inputs.map(Shm::raw_fd);
-        // SAFETY: only dup/dup2/close run between fork and exec, all of which
-        // are async-signal-safe. Both sources are dup'd to fresh descriptors
-        // first, because either may already occupy the target number --- the
-        // parent's own mapping files typically land on exactly fd 3 and 4.
+        // SAFETY: remap_fds uses only async-signal-safe descriptor calls.
+        // The fixed array and its slice allocate nothing after fork; the caller
+        // keeps all source descriptors open until spawn returns.
         unsafe {
             command.pre_exec(move || {
-                let d = libc::dup(doc_fd);
-                let t = libc::dup(tile_fd);
-                if d < 0 || t < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                // As in `prespawn`: one array drives the installs and the
-                // cleanup, so a temporary is never closed on the strength of
-                // its own target alone. The parent's mapping files typically
-                // land on exactly fd 3 and 4, which is what makes a temporary
-                // landing on the *other* target a layout to expect rather than
-                // a curiosity --- see [`is_scratch`].
-                //
-                // **A fixed array sliced to length, never a `Vec`.** Only
-                // async-signal-safe calls may run between `fork` and `exec`,
-                // and allocating is not one of them --- a `push` here would be a
-                // deadlock on the allocator's lock in whatever state the fork
-                // froze it, which reproduces about never.
-                let mut installs = [(d, DOC_FD), (t, TILE_FD), (-1, OUT_FD), (-1, IN_FD)];
-                // Grown to four on 2026-09-01 for the merge's input mapping, and
-                // still a fixed array sliced to length for the reason above: no
-                // allocation may happen here. The two optional slots are filled
-                // in order, so an inputs mapping without an output file is not
-                // expressible --- which is correct, since the only request that
-                // reads one also writes.
-                let mut installed = 2;
+                let mut mappings = [
+                    (doc_fd, DOC_FD),
+                    (tile_fd, TILE_FD),
+                    (-1, OUT_FD),
+                    (-1, IN_FD),
+                ];
+                let mut count = 2;
                 if let Some(fd) = out_fd {
-                    let o = libc::dup(fd);
-                    if o < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    installs[2].0 = o;
-                    installed = 3;
+                    mappings[2].0 = fd;
+                    count = 3;
                 }
                 if let Some(fd) = in_fd {
-                    let i = libc::dup(fd);
-                    if i < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    installs[3].0 = i;
-                    installed = 4;
+                    mappings[3].0 = fd;
+                    count = 4;
                 }
-                let installs: &mut [(i32, i32)] = &mut installs[..installed];
-                let shuffle = &*installs;
-                for &(temp, target) in shuffle {
-                    if libc::dup2(temp, target) < 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                for &(temp, _) in shuffle {
-                    if is_scratch(temp, shuffle) {
-                        libc::close(temp);
-                    }
-                }
-                Ok(())
+                remap_fds(&mappings[..count])
             });
         }
 

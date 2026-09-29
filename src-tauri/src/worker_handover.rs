@@ -11,7 +11,7 @@
 //!
 //! The Windows counterpart is not here, and that is placement rather than
 //! omission --- it is a `DuplicateHandle` into the child's own table, which sits
-//! beside the section it copies, in `worker_shm.rs`. `is_scratch` is here for a
+//! beside the section it copies, in `worker_shm.rs`. `remap_fds` is here for a
 //! different reason again: it is no part of the handover, but it guards the same
 //! descriptor numbers between `fork` and `exec`, and the two are right together
 //! or wrong together.
@@ -19,33 +19,54 @@
 #[cfg(target_os = "macos")]
 use std::os::fd::{FromRawFd, OwnedFd};
 
-/// Whether a temporary descriptor from the pre-`exec` shuffle is only that.
+/// Installs up to four inherited descriptors without allocating between fork and exec.
 ///
-/// Between `fork` and `exec` each mapping is `dup`'d to a scratch number and
-/// then `dup2`'d onto the number the child expects, because the source may
-/// already *be* one of those numbers. The scratch copy is closed afterwards ---
-/// except when it is not a scratch copy at all.
+/// Scratch copies must be above every destination: copying all sources first
+/// does not help if installing one destination overwrites a later scratch copy.
+/// `dup2` clears close-on-exec on each destination; scratch copies are closed on
+/// both success and failure. Only async-signal-safe descriptor calls run here.
 ///
-/// `dup` returns the **lowest free** descriptor, and the trap is that "lowest
-/// free" can be a number the shuffle is about to install on. With the document
-/// mapping on fd 3, the tile mapping on fd 5 and a hole at fd 4, `dup(3)`
-/// returns **4**, which is [`crate::worker::TILE_FD`]: the tile's own `dup2` then
-/// installs the
-/// tile there, correctly, and closing the document's "temporary" afterwards
-/// closes the tile the child is about to be handed. The child starts with a
-/// descriptor that names nothing, on a number the protocol says is a 16 MB
-/// mapping, and every later diagnosis points at the mapping rather than at the
-/// fork.
+/// # Safety
 ///
-/// So a temporary is compared against **every** number the shuffle installs, not
-/// only against its own target --- and the list it is compared against is the
-/// same array that drives the `dup2` calls, so there is no second copy of the
-/// target set to fall out of step with them. A temporary that equals a target
-/// *is* the installed descriptor by then; there is nothing left to close, and
-/// nothing leaks by keeping it.
+/// Call only in a forked child before exec, with owned source descriptors and
+/// distinct nonnegative targets. The child must exit if any operation fails.
 #[cfg(target_os = "macos")]
-pub(crate) fn is_scratch(fd: i32, shuffle: &[(i32, i32)]) -> bool {
-    !shuffle.iter().any(|(_, target)| *target == fd)
+pub(crate) unsafe fn remap_fds(mappings: &[(i32, i32)]) -> std::io::Result<()> {
+    let mut copies = [-1; 4];
+    if mappings.len() > copies.len() {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    let minimum = mappings
+        .iter()
+        .map(|&(_, target)| target)
+        .max()
+        .unwrap_or(2)
+        .checked_add(1)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    // SAFETY: the caller owns each source and no other child thread runs.
+    let result = unsafe {
+        (|| {
+            for (copy, &(source, _)) in copies.iter_mut().zip(mappings) {
+                *copy = libc::fcntl(source, libc::F_DUPFD_CLOEXEC, minimum);
+                if *copy < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            for (&copy, &(_, target)) in copies.iter().zip(mappings) {
+                if libc::dup2(copy, target) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        })()
+    };
+    for copy in copies {
+        if copy >= 0 {
+            // SAFETY: this is a temporary descriptor created above.
+            unsafe { libc::close(copy) };
+        }
+    }
+    result
 }
 
 /// A connected pair, one half of which is handed to a pre-spawned worker.
@@ -199,64 +220,128 @@ pub unsafe fn recv_document(socket: i32) -> Result<Option<(OwnedFd, usize)>, Str
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
-    #[cfg(target_os = "macos")]
-    use crate::worker::{DOC_FD, SOCK_FD, TILE_FD};
+    use super::*;
+    use std::os::fd::AsRawFd;
 
-    /// The layout that provokes it, and it is an ordinary one: the parent's own
-    /// mapping files land low, so a hole below the tile's descriptor is exactly
-    /// what a process that has opened and closed a file has. With the document
-    /// on fd 3, the tile on fd 5 and fd 4 free, `dup` of the document returns 4
-    /// --- which is `TILE_FD`, and by the time the cleanup runs it holds the
-    /// tile.
-    ///
-    /// The failure this pins is silent on the parent's side: the child comes up
-    /// with a closed descriptor where its tile mapping should be, and says so
-    /// as a mapping error rather than as a fork one.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_temporary_that_landed_on_another_installed_number_is_not_closed() {
-        let shuffle = [(4, DOC_FD), (6, TILE_FD)];
-        assert!(
-            !super::is_scratch(4, &shuffle),
-            "fd 4 is TILE_FD and holds the tile mapping by now"
+    /// Forces low descriptor holes in a forked child, away from the test runner's
+    /// descriptor table. Distinct pipe bytes expose aliases; nonblocking reads
+    /// fail immediately even if another process inherited a pipe's writer.
+    fn check_layout(targets: &[i32], invalid_source: bool) {
+        let sources: Vec<OwnedFd> = targets
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let mut pipe = [-1; 2];
+                // SAFETY: writable two-element array, then one initialized byte.
+                unsafe {
+                    assert_eq!(libc::pipe(pipe.as_mut_ptr()), 0);
+                    let read = OwnedFd::from_raw_fd(pipe[0]);
+                    let write = OwnedFd::from_raw_fd(pipe[1]);
+                    assert_eq!(
+                        libc::fcntl(read.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK),
+                        0
+                    );
+                    let byte = b'A' + index as u8;
+                    assert_eq!(
+                        libc::write(write.as_raw_fd(), (&raw const byte).cast(), 1),
+                        1
+                    );
+                    let high = libc::fcntl(read.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 32);
+                    assert!(high >= 32);
+                    OwnedFd::from_raw_fd(high)
+                }
+            })
+            .collect();
+        // SAFETY: the child uses only descriptor syscalls, remap_fds and _exit;
+        // it never returns to the multithreaded test runner or runs destructors.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0);
+        if pid == 0 {
+            // SAFETY: all changes affect only this child. The source copies are
+            // above 31, so clearing the low slots cannot close them.
+            unsafe {
+                for fd in 3..32 {
+                    libc::close(fd);
+                }
+                let mut mappings = [(-1, -1); 4];
+                for (index, (source, &target)) in sources.iter().zip(targets).enumerate() {
+                    let low = 10 + index as i32;
+                    if libc::dup2(source.as_raw_fd(), low) < 0 {
+                        libc::_exit(80);
+                    }
+                    mappings[index] = (low, target);
+                }
+                if invalid_source {
+                    mappings[targets.len() - 1].0 = -1;
+                }
+                let result = remap_fds(&mappings[..targets.len()]);
+                if invalid_source {
+                    if result.is_ok() {
+                        libc::_exit(81);
+                    }
+                } else {
+                    if result.is_err() {
+                        libc::_exit(82);
+                    }
+                    for (index, &target) in targets.iter().enumerate() {
+                        let mut byte = 0u8;
+                        if libc::read(target, (&raw mut byte).cast(), 1) != 1
+                            || byte != b'A' + index as u8
+                        {
+                            libc::_exit(90 + index as i32);
+                        }
+                        if libc::fcntl(target, libc::F_GETFD) & libc::FD_CLOEXEC != 0 {
+                            libc::_exit(100);
+                        }
+                    }
+                }
+                for fd in 3..32 {
+                    if !(10..10 + targets.len() as i32).contains(&fd)
+                        && (invalid_source || !targets.contains(&fd))
+                        && libc::fcntl(fd, libc::F_GETFD) != -1
+                    {
+                        libc::_exit(101);
+                    }
+                }
+                libc::_exit(0);
+            }
+        }
+        let mut status = 0;
+        loop {
+            // SAFETY: this process owns the child and status is writable.
+            let waited = unsafe { libc::waitpid(pid, &raw mut status, 0) };
+            if waited == pid {
+                break;
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EINTR)
+            );
+        }
+        assert_eq!(
+            status, 0,
+            "descriptor layout {targets:?}: child status {status}"
         );
-        // And the one that really is a temporary still goes, or the check has
-        // been satisfied by refusing to close anything at all.
-        assert!(super::is_scratch(6, &shuffle));
     }
 
-    /// The control: the common layout, where both temporaries land above every
-    /// number the shuffle installs on and both must be closed.
-    #[cfg(target_os = "macos")]
     #[test]
-    fn temporaries_above_every_installed_number_are_all_closed() {
-        let shuffle = [(7, DOC_FD), (8, TILE_FD)];
-        assert!(super::is_scratch(7, &shuffle));
-        assert!(super::is_scratch(8, &shuffle));
+    fn low_holes_cannot_alias_the_prespawn_socket() {
+        check_layout(&[crate::worker::TILE_FD, crate::worker::SOCK_FD], false);
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn a_temporary_that_is_already_its_own_target_is_not_closed() {
-        // `dup2(n, n)` is a no-op that returns `n`, so the "temporary" and the
-        // installed descriptor are the same open file --- closing it would take
-        // the mapping with it.
-        let shuffle = [(DOC_FD, DOC_FD), (9, TILE_FD)];
-        assert!(!super::is_scratch(DOC_FD, &shuffle));
-        assert!(super::is_scratch(9, &shuffle));
+    fn low_holes_preserve_all_document_output_and_input_mappings() {
+        use crate::worker::{DOC_FD, IN_FD, OUT_FD, TILE_FD};
+        let targets = [DOC_FD, TILE_FD, OUT_FD, IN_FD];
+        for count in 2..=4 {
+            check_layout(&targets[..count], false);
+        }
     }
 
-    /// The pre-spawn shuffle installs on different numbers, and the same trap
-    /// reaches it: a tile temporary landing on `SOCK_FD` would close the
-    /// handover socket, and a spare that never receives a document is not an
-    /// error --- it is a process waiting in `recvmsg` for the rest of its life.
-    #[cfg(target_os = "macos")]
     #[test]
-    fn the_prespawn_shuffle_protects_the_handover_socket_too() {
-        let shuffle = [(SOCK_FD, TILE_FD), (7, SOCK_FD)];
-        assert!(!super::is_scratch(SOCK_FD, &shuffle));
-        assert!(super::is_scratch(7, &shuffle));
+    fn an_invalid_source_closes_every_temporary_without_installing_anything() {
+        check_layout(&[crate::worker::TILE_FD, crate::worker::SOCK_FD], true);
     }
 }
