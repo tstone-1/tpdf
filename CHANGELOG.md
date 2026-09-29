@@ -17,6 +17,48 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.9.23] - 2026-09-29
+
+### Added
+
+- **More document workflows from scripts.** The CLI can merge, extract, split,
+  rotate and crop pages, inspect comments and editable text runs, apply ordered
+  JSON edit plans, and render a page to PNG without opening a window. Edit plans
+  cover page changes, annotations, comment changes and supported text replacements.
+  Page-operation outputs are checked in fresh workers before publication.
+  Rewriting signed documents requires explicit consent; cropping is not redaction.
+- **A Python API for the CLI.** The `tpdf-client` package in `api/python` provides
+  typed helpers for every CLI command, parsed JSON results, structured errors,
+  deadlines and process cleanup. Form answers, edit plans and redaction rectangles
+  can pass through stdin; passwords stay out of command-line arguments. The client
+  is installed from the repository and requires the bundled command-line tool.
+- **Machine-readable command discovery and results.** `help --json` lists
+  commands and accepted arguments; results use versioned JSON and documented
+  exit codes. Filenames starting with a dash can follow `--`.
+  Signature reports identify document
+  timestamps separately from ordinary signatures.
+
+### Fixed
+
+- **Reliable macOS worker startup.** Reusing a low file-descriptor number while
+  preparing a child could replace its handover socket or another mapping. All
+  temporary descriptors now sit above the destination numbers, with regression
+  tests that reproduce the previous failure.
+- **Document properties heading stays above scrolling row labels.**
+
+### Validation
+
+- Windows trust checks now compare the production low-integrity worker with
+  uncontained controls. Real OS-key signing workflows ran on macOS and Windows;
+  isolated private-CA tests cover timestamps, OCSP, CRLs and archive timestamps
+  without installing a trusted root. Independent readers check signed outputs
+  and reject tampered copies. Commercial certificate and hardware-token coverage
+  remains limited.
+- Release builds test the installed Python client against both packages on each
+  platform, including a missing-engine negative control. Publication requires
+  both packaged CLI/API checks to pass on the exact tagged commit.
+- Updated `tokio-rustls` to 0.26.6 while preserving the Windows dependency graph.
+
 ## [26.9.22] - 2026-09-28
 
 ### Added

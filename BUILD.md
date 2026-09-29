@@ -5782,6 +5782,20 @@ self-signed identities; no timestamp or long-term signing was requested in this
 package run. The earlier hosted rehearsal remains evidence for `9d05867`, not
 for this later commit.
 
+**Expanded hosted rehearsal, 2026-09-29, `7823da7`:**
+[`v26.9.22-rc2`](https://github.com/tstone-1/tpdf/actions/runs/36607432667)
+passed both release jobs after both CI platforms and the dependency audit passed
+on the exact commit. All four packages passed 24 installed-client API tests
+each (96 executions, zero skips) and their missing-engine controls. Their SHA-256
+digests matched the uploaded assets. All eight release assets were present;
+all five updater entries matched their payloads and signature files, and all
+three updater signatures verified against the application's public key.
+macOS Developer ID signing, notarization and stapling passed. The publication
+helper accepted the draft in read-only mode; the rehearsal remains unpublished.
+The preceding CI attempt exposed descriptor aliasing during macOS worker startup.
+Regression tests reproduced the old shuffle's failure before the fix; the final
+local run passed all 29 gates in 763.4 seconds.
+
 Native Windows x64 execution was verified on 2026-09-29 at `186991b`, using
 Rust 1.97.1, Python 3.14.7 and the digest-checked `pdfium-8066-tpdf.1` engine.
 All 322 CLI integration checks passed; the only skip was the macOS-only

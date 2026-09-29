@@ -479,20 +479,22 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in this release.** A signature can carry a timestamp from
-          DigiCert, Sectigo, GlobalSign or a server you name, so it shows when
-          it was made on a clock other than your own. With a timestamp you can
-          also keep it verifiable after the certificates expire: tpdf adds the
-          revocation data and an archive timestamp to the document. Nothing is
-          sent unless you ask for it: a timestamp request carries only a hash
-          of the signature, and long-term data asks the certificate
-          authorities about your certificate. *Document properties* and
-          `tpdf verify` now check
-          timestamps in any document, judge a signer at the time a trusted
-          timestamp attests, and read the revocation data a document carries
-          for every certificate in its chains; opening a document never goes
-          online. `tpdf` output in `--json` is plain ASCII, so PowerShell
-          reads file names with umlauts correctly.
+          **New in 26.9.23.** More PDF workflows can run without a window:
+          merge, extract, split, rotate and crop pages; apply JSON edit plans
+          for page changes, annotations, comments and supported text replacements;
+          inspect comments and text runs; and render pages to PNG for visual tests.
+          `help --json` lists commands and accepted arguments. The Python client
+          provides helpers for every CLI command, parsed results, structured
+          errors and timeouts. Install it from a checkout with
+          `uv pip install ./api/python`; install the application separately.
+          See the [CLI and Python API instructions](https://github.com/tstone-1/tpdf#command-line-tool).
+
+          This release also fixes a macOS worker-startup defect that could give
+          a child the wrong handover socket or mapping, and keeps the document
+          properties heading above scrolling labels. Windows trust-store and
+          OS-key signing checks, private-CA long-term signing tests, and packaged
+          CLI/API tests now provide broader native-platform evidence. Commercial
+          certificate and hardware-token coverage remains limited.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
@@ -598,7 +600,10 @@ jobs:
           check signatures; `info` and `text` read a document's properties and
           text; `fields` and `fill` read and answer its form; `redact` removes
           words, patterns or areas and reports whether the result is verified.
-          Every command has stable JSON and exit codes.
+          `merge`, `extract`, `split`, `rotate` and `crop` operate on pages;
+          `edit` applies JSON plans; `comments` and `text-runs` inspect editable
+          content; `render` writes PNG images. Results use versioned JSON and
+          documented exit codes. Cropping and text replacement are not redaction.
           On macOS choose *Install command-line tool…* in the tpdf menu; on
           Windows the installer puts `tpdf-cli.exe` beside `tpdf.exe`. See the
           README's *Command-line tool* section.

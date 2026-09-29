@@ -55,8 +55,16 @@ you do not need to have diagnosed it.
   required before writes that can invalidate a document's digital signatures.
 - A digital signature tpdf reports as **intact** when the signed bytes or the signature do
   not check out, or as **trusted** when this computer's trust store does not vouch for its
-  signer. Revocation is not checked, and a signature trusted only through Adobe's list reads
-  as untrusted here; both are disclosed rather than defects.
+  signer. Revocation is checked offline from evidence embedded in the document;
+  absent or inconclusive evidence is reported as not checked. A signature trusted
+  only through Adobe's list can read as untrusted here.
+- Accepting invalid timestamps or revocation evidence, or making timestamp or
+  revocation requests without the reader's explicit signing options. Verification
+  and opening a document must not contact certificate authorities.
+- Bypassing CLI/API input preservation, output replacement consent, edit-plan
+  bounds or signature-invalidation consent. A failed split can leave the parts
+  already published, and a timed-out Python call does not promise rollback;
+  both are documented behavior.
 - tpdf signing with a certificate it lists as unusable, or a signing key's private part
   leaving the operating system's key store.
 
