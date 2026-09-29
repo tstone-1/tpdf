@@ -23,6 +23,45 @@ use crate::trust::{Doubt, Standing, Store};
 /// The schema number every document carries.
 pub const SCHEMA: u32 = 1;
 
+/// An edit plan, either validated without writing or successfully published.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Edited {
+    pub schema: u32,
+    pub command: String,
+    pub input: String,
+    pub output: String,
+    pub written: bool,
+    pub operations: usize,
+    pub pages: Vec<crate::render::PageSize>,
+    /// Newly added annotations remaining after all operations, including undo.
+    pub annotations: usize,
+    pub signatures_invalidated: usize,
+    pub signatures_unknown: bool,
+}
+
+/// Original annotations. Pages are one-based, unlike the internal scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Comments {
+    pub schema: u32,
+    pub command: String,
+    pub input: String,
+    pub complete: bool,
+    pub comments: Vec<crate::annots::Comment>,
+    pub limits: crate::annots::Limits,
+}
+
+/// Editable text and the revision callers must return with a replacement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextRuns {
+    pub schema: u32,
+    pub command: String,
+    pub input: String,
+    /// One-based page in the input file.
+    pub page: u32,
+    pub revision: Vec<u8>,
+    pub runs: Vec<crate::textedit::Run>,
+}
+
 /// Machine-readable command discovery, `help --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Help {

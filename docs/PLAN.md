@@ -15414,8 +15414,10 @@ form from the command line* and *Redacting from the command line* below:
 4. ~~`tpdf redact`: by search term or pattern, in batch, with the verified / not-verified report
    as JSON~~ --- done 2026-09-27.
 
-**Not done.** A real-keychain `sign` has not been run by an agent, because it raises the
-keychain prompt the owner answers; `BUILD.md` has the command and its verification. **The
+**Historical status, 2026-09-27.** The following limits describe this increment when
+first completed. For later real-keychain checks and the installed Windows signing
+workflow, see `BUILD.md`'s signing checks and *Cutting a release*, including the
+2026-09-29 installed Windows measurements and their remaining limitations. **The
 Windows tool ran on a desktop 2026-09-27** (MOTHERSHIP, from a console over SSH): `identities`,
 `verify` on ten fixtures with the macOS verdicts, and a real invisible and visible sign with a
 temporary store certificate, read intact by tpdf, pyHanko and OpenSSL. Installing onto PATH is

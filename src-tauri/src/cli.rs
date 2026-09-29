@@ -51,6 +51,7 @@
 //! since other documents in the same run may have been read.
 
 pub mod args;
+mod edit;
 pub mod fields;
 pub mod fill;
 pub mod identities;
@@ -441,6 +442,9 @@ pub const COMMANDS: &[Registered] = &[
     pages::SPLIT,
     pages::ROTATE,
     pages::CROP,
+    edit::COMMAND,
+    edit::COMMENTS,
+    edit::TEXT_RUNS,
 ];
 
 impl Env<'_> {

@@ -2373,6 +2373,22 @@ be enumerated, because the writer is a full rewrite that would invalidate them -
 asks before doing the same, and a command line has nobody to ask. An encrypted document is
 written re-encrypted with its own passwords, as the window's save writes it.
 
+**JSON edit API** (`edit`, `comments`, `text-runs`, added 2026-09-29) uses the
+same worker readers and copy writer. The coordinator reads at most 1 MiB of edit
+JSON, rejects unknown fields and schema versions, and applies at most 1,000
+operations to the GUI's `Edits` model. Text replacements are validated by a worker
+against the inspected revision before entering that model. Original comment
+identities must belong to the selected source page. No PDF parser is added to
+the coordinator. Plans cannot name worker file descriptors, inject internal save
+plans or enable document JavaScript. A failed operation publishes no file.
+
+Publication shares the page commands' staging, input-alias refusal, signature
+consent and encryption preservation. The dry run validates the model and text
+requests without saving; it cannot establish that the later write will succeed.
+The Python client uses argument arrays and stdin JSON, never a shell. Passwords
+are child-environment values. Calls have deadlines and attempt owned-process-tree
+cleanup; a timeout is not a rollback. There is no new network listener or authority.
+
 **Page operations** (`merge`, `extract`, `split`, `rotate`, `crop`, added 2026-09-29)
 use `save::write_merged`, `save::write_split` and `save::write_copy` with `InWorker`.
 The coordinator constructs plans from page counts and geometry returned by workers;

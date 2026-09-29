@@ -5550,6 +5550,13 @@ hardened runtime before the bundle, and as `tpdf-cli.exe` beside `tpdf.exe` in b
 installers. `README.md`'s *Command-line tool* section is its reference and `docs/PLAN.md` Phase 6
 the record.
 
+The `api` gate runs `api/python/test_api.py` against the built CLI, including a
+complete edit/readback/extract workflow, structured refusals, protocol errors,
+literal arguments, child-only passwords and process-tree timeout cleanup. The
+Rust CLI integration section *JSON edit plans* separately reads written page
+content, annotation dictionaries and geometry. These are headless tests of the
+same backend used by the GUI; they do not replace window interaction checks.
+
 **What the gates run.** `cargo test` runs three things for it:
 
 - `cli::tests` and `clitool::tests` --- the command line and every refusal, `--identity`

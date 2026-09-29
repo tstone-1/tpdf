@@ -431,7 +431,11 @@ fn answers() -> serde_json::Value {
 }
 
 /// The built tool with `stdin` fed from `input`.
-fn tool_with_stdin(args: &[&str], env: &[(&str, &str)], input: &str) -> (i32, String, String) {
+pub(super) fn tool_with_stdin(
+    args: &[&str],
+    env: &[(&str, &str)],
+    input: &str,
+) -> (i32, String, String) {
     use std::io::Write as _;
     let mut child = Command::new(env!("CARGO_BIN_EXE_tpdf-cli"))
         .args(args)

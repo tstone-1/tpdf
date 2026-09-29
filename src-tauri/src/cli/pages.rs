@@ -200,12 +200,12 @@ fn rectangle(raw: &str) -> Result<[f32; 4], String> {
     Ok([x, y, w, h])
 }
 
-struct Input {
-    plan: Plan,
-    sizes: Vec<PageSize>,
-    encrypted: bool,
-    signed: Option<SignedState>,
-    signatures_unknown: bool,
+pub(super) struct Input {
+    pub plan: Plan,
+    pub sizes: Vec<PageSize>,
+    pub encrypted: bool,
+    pub signed: Option<SignedState>,
+    pub signatures_unknown: bool,
 }
 
 fn ask(
@@ -226,7 +226,11 @@ fn unexpected(reply: &Reply) -> Failure {
     )
 }
 
-fn read_input(env: &Env<'_>, path: &Path, key: Option<&str>) -> Result<(Input, Session), Failure> {
+pub(super) fn read_input(
+    env: &Env<'_>,
+    path: &Path,
+    key: Option<&str>,
+) -> Result<(Input, Session), Failure> {
     let (file, len) = opened(path).map_err(|why| Failure::new(Exit::Refused, why))?;
     let fingerprint =
         Fingerprint::of_open(&file, path).map_err(|why| Failure::new(Exit::Refused, why))?;
@@ -280,6 +284,29 @@ fn read_input(env: &Env<'_>, path: &Path, key: Option<&str>) -> Result<(Input, S
     ))
 }
 
+pub(super) fn check_target(inputs: &[PathBuf], target: &Path, force: bool) -> Result<(), Failure> {
+    if inputs.iter().any(|p| save::same_file(p, target)) {
+        return Err(Failure::new(
+            Exit::Usage,
+            "an output names an input under another name",
+        ));
+    }
+    // symlink_metadata also sees dangling links; --force does not follow
+    // them to an unrelated file when the save helper resolves its target.
+    if let Ok(metadata) = target.symlink_metadata() {
+        if metadata.file_type().is_symlink() || !metadata.is_file() || !force {
+            return Err(Failure::new(
+                Exit::Refused,
+                format!(
+                    "{} exists; choose a new name or use --force for a regular file",
+                    target.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl Pages {
     fn targets(&self, count: usize) -> Result<Vec<PathBuf>, Failure> {
         if self.kind != Kind::Split {
@@ -293,26 +320,7 @@ impl Pages {
     }
 
     fn check_target(&self, target: &Path) -> Result<(), Failure> {
-        if self.inputs.iter().any(|p| save::same_file(p, target)) {
-            return Err(Failure::new(
-                Exit::Usage,
-                "an output names an input under another name",
-            ));
-        }
-        // symlink_metadata also sees dangling links; --force does not follow
-        // them to an unrelated file when the save helper resolves its target.
-        if let Ok(metadata) = target.symlink_metadata() {
-            if metadata.file_type().is_symlink() || !metadata.is_file() || !self.force {
-                return Err(Failure::new(
-                    Exit::Refused,
-                    format!(
-                        "{} exists; choose a new name or use --force for a regular file",
-                        target.display()
-                    ),
-                ));
-            }
-        }
-        Ok(())
+        check_target(&self.inputs, target, self.force)
     }
 
     fn run_pages(
@@ -587,7 +595,7 @@ impl Subcommand for Pages {
     }
 }
 
-fn same_sizes(actual: &[PageSize], expected: &[PageSize]) -> bool {
+pub(super) fn same_sizes(actual: &[PageSize], expected: &[PageSize]) -> bool {
     actual.len() == expected.len()
         && actual.iter().zip(expected).all(|(a, b)| {
             (a.width_pt - b.width_pt).abs() < 0.02 && (a.height_pt - b.height_pt).abs() < 0.02
@@ -608,9 +616,9 @@ fn unchanged(inputs: &[Input], paths: &[PathBuf]) -> Result<(), Failure> {
 }
 
 /// Owns only a staging directory this process created exclusively; never an output name.
-struct Temporary(PathBuf);
+pub(super) struct Temporary(pub PathBuf);
 impl Temporary {
-    fn beside(target: &Path) -> Result<Self, Failure> {
+    pub(super) fn beside(target: &Path) -> Result<Self, Failure> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let parent = target.parent().unwrap_or_else(|| Path::new("."));
         for _ in 0..100 {
@@ -635,7 +643,7 @@ impl Temporary {
             "could not allocate a staging file",
         ))
     }
-    fn publish(staged: &Path, target: &Path, force: bool) -> Result<(), Failure> {
+    pub(super) fn publish(staged: &Path, target: &Path, force: bool) -> Result<(), Failure> {
         let result = if force {
             save::commit_in_place(staged, target)
         } else {

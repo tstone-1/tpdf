@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "command": "edit",
+  "input": "input.pdf",
+  "output": "edited.pdf",
+  "written": true,
+  "operations": 2,
+  "pages": [
+    {
+      "width_pt": 300.0,
+      "height_pt": 400.0
+    }
+  ],
+  "annotations": 1,
+  "signatures_invalidated": 0,
+  "signatures_unknown": false
+}

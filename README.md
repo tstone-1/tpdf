@@ -719,7 +719,96 @@ earlier parts remain and the report lists exactly those files. It has `complete:
 and a non-null `error`; scripts must check both the exit code and report. Staging
 failures publish nothing and leave any existing outputs intact.
 
-**Passwords.** `info`, `text`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**JSON edit plans.** `tpdf edit input.pdf --plan edits.json -o output.pdf --json`
+applies an ordered plan through the GUI's editing model and sandboxed writer. Use
+`--plan -` to read JSON from stdin. The request is bounded to 1 MiB and 1,000
+operations. Unknown fields, unknown operations and unsupported schema versions
+are refused. An invalid operation publishes nothing, including with `--force`.
+`--dry-run` validates the plan without writing; it does not promise that a later
+write will succeed. Output protection, signature consent and encryption preservation
+follow the page commands above. Saved page sizes and encryption are read back
+before publication; this is not a redaction-verification claim.
+
+```json
+{
+  "schema": 1,
+  "operations": [
+    {"op": "move_page", "page": 3, "to": 1},
+    {"op": "delete_page", "page": 2},
+    {"op": "insert_blank", "after": 1, "width": 595, "height": 842},
+    {"op": "annotate", "page": 2, "kind": "note",
+     "rect": [30, 40, 20, 20], "text": "Review this page", "author": "Reviewer"}
+  ]
+}
+```
+
+Pages are **one-based positions immediately before each operation**. `move_page`
+uses the final destination position; `insert_blank` uses `after: 0` for the front.
+Blank dimensions are positive points, at most 14,400 each. `rotate` takes `page`
+and `degrees` (90, 180, 270 or their negatives), added to existing rotation.
+`undo` and `redo` operate within this plan and refuse when there is nothing to undo
+or redo. No intermediate PDF is published.
+
+`annotate` supports `highlight`, `underline`, `strikeout`, `squiggly`, `note`,
+`square`, `ellipse`, `textbox`, `stamp` and `ink`. Its `rect` is
+`[x,y,width,height]` in points from the current displayed page's top-left corner.
+Ink instead takes `strokes`, an array of flat `[x,y,x,y,...]` arrays. `stamp`
+requires a `stamp` value of `approved`, `confidential`, `draft` or `final`.
+Optional `color` is RGB in 0..1 (default red), `width` is the stroke width in
+points (0.25 to 24, default 2.5), `text` is the note or text-box body, and `author` names its author.
+The text is limited to 4,000 characters and author to 120. Geometry must fit the
+page. Signature images and replies are not supported by this edit schema.
+
+`tpdf comments input.pdf --json` lists existing annotations, including their
+`object` identities. `rewrite_comment` takes `page`, `object` and `text`;
+`delete_comment` takes `page` and `object`. Read identities again after saving:
+a rewrite may renumber PDF objects. A null object cannot be edited this way.
+A comment scan with limits returns a detailed report and exit 1, never a complete
+empty list. Annotation readback can therefore serve as an assertion in a test.
+
+`tpdf text-runs input.pdf --page 1 --json` lists supported original text runs.
+A `replace_text` operation takes `page`, `operator`, `revision`, `original` and
+`replacement`: return the inspected run's operator and text and the report's
+32-byte revision. The worker rejects stale revisions, changed original text,
+unsupported glyphs and replacements that do not fit the original space. This
+version exposes bounded replacement; the GUI's explicit font/layout controls
+are not yet part of the edit schema. Use `tpdf text` to inspect the saved result.
+Text editing is not redaction; use `redact` for confidential content.
+
+**Python API.** Install the client from a checkout with
+`uv pip install ./api/python`; the application/CLI must be installed separately.
+The client has no runtime dependencies and requires Python 3.10 or newer.
+
+```python
+from tpdf import Tpdf
+
+pdf = Tpdf()  # Or Tpdf("/path/to/tpdf-cli", timeout=60)
+result = pdf.edit("input.pdf", "output.pdf", [
+    {"op": "rotate", "page": 1, "degrees": 90},
+    {"op": "annotate", "page": 1, "kind": "note",
+     "rect": [30, 40, 20, 20], "text": "Automated review"},
+])
+assert result["written"]
+assert pdf.comments("output.pdf")["comments"][0]["body"] == "Automated review"
+```
+
+`help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()` and
+`edit()` return parsed reports. `run(command, *arguments)` reaches every CLI command,
+including signing, redaction and page operations. It returns a `Result` carrying
+`report`, `exit_code` and `stderr`. Nonzero exits raise `CommandError`, which retains
+those results; use `check=False` on `run` to inspect a negative verification verdict
+or partial split directly. Malformed or incompatible reports raise `ProtocolError`.
+`password=` passes a password in the child's environment, without changing the
+caller's environment or placing the password in the command line.
+
+Calls use literal argument arrays without a shell and a 120-second default timeout.
+`CommandTimeout` means completion is unknown: outputs may already have been published.
+The client attempts to terminate the owned process tree; cleanup is bounded even
+if the operating system refuses it. Each call starts its own CLI process. This
+API edits files; it does not control an open GUI, start an HTTP server or bypass
+OS permission prompts for signing keys.
+
+**Passwords.** `info`, `text`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
@@ -766,6 +855,21 @@ escape, which every JSON reader turns back into the same text. That is what lets
 console's code page rather than as UTF-8. The plain-text output has no such escape, so read
 it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may carry one.
 
+- `edit`: `input`, `output`, `written`, `operations` (validated operation count),
+  `pages` (resulting `width_pt` and `height_pt` in order), `annotations` (new marks
+  still present), `signatures_invalidated` (zero for a dry run), and
+  `signatures_unknown`. `written: false` is a successful dry run, not a saved file.
+- `comments`: `input`, `complete`, `comments` and `limits`. Each comment has `id`
+  (scan-local), one-based `page`, `kind`, `author`, `body`, `subject`, `date`,
+  `rect` (`[left,top,right,bottom]`, unlike an edit request's width/height),
+  flattened `quads`, `reply_to` (another scan-local id or null), `hidden`, `color`
+  and `object` (`[number,generation]` or null). Limits report `crowded_pages`,
+  `over_budget`, `bodies_clipped`, `unknown_kinds`, `unreadable`, `cycles` and
+  `pages_missed`. `complete` is false when any limit applies.
+- `text-runs`: `input`, one-based `page`, `revision` (32 byte values) and `runs`.
+  Each run has `operator`, `text`, `font`, `size`, `matrix` (six values in original
+  PDF user space), `advance`, `display_rect` (original displayed coordinates),
+  and optional `minimum_height`. These addresses describe the inspected source.
 - `help`: `version` is the application version, and `commands` lists every available
   command, each with `name`, `usage` and `summary` from the same registry as plain help.
 - `merge`, `extract`, `split`, `rotate`, `crop`: `inputs` lists source paths in argument

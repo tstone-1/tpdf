@@ -299,6 +299,11 @@ def gates() -> "list[tuple[str, list[str], str]]":
             "a binary does not link (clippy and cargo test never link one)",
         ),
         (
+            "api",
+            [sys.executable, "-m", "unittest", "discover", "-s", str(ROOT / "api" / "python"), "-p", "test_*.py"],
+            "the Python API client or its external CLI workflows failed",
+        ),
+        (
             "sinks",
             [sys.executable, str(ROOT / "scripts" / "check_webview_sinks.py")],
             "a markup-parsing sink appeared in the frontend (THREAT-MODEL T8)",

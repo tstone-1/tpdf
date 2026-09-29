@@ -238,6 +238,9 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("split", "split a.pdf --every 2 -o b.pdf"),
         ("rotate", "rotate a.pdf --degrees 90 -o b.pdf"),
         ("crop", "crop a.pdf --rect 0,0,100,200 -o b.pdf"),
+        ("edit", "edit a.pdf --plan edits.json -o b.pdf"),
+        ("comments", "comments a.pdf --json"),
+        ("text-runs", "text-runs a.pdf --page 1 --json"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -1498,6 +1501,69 @@ fn samples() -> Vec<(&'static str, String)> {
                 error: None,
             }),
         ),
+        (
+            "edit",
+            pretty(&report::Edited {
+                schema: report::SCHEMA,
+                command: "edit".into(),
+                input: "input.pdf".into(),
+                output: "edited.pdf".into(),
+                written: true,
+                operations: 2,
+                pages: vec![crate::render::PageSize {
+                    width_pt: 300.,
+                    height_pt: 400.,
+                }],
+                annotations: 1,
+                signatures_invalidated: 0,
+                signatures_unknown: false,
+            }),
+        ),
+        (
+            "comments",
+            pretty(&report::Comments {
+                schema: report::SCHEMA,
+                command: "comments".into(),
+                input: "edited.pdf".into(),
+                complete: true,
+                comments: vec![crate::annots::Comment {
+                    id: 0,
+                    page: 1,
+                    kind: crate::annots::Kind::Text,
+                    author: "Synthetic author".into(),
+                    body: "Synthetic note".into(),
+                    subject: String::new(),
+                    date: Some("2026-09-29 12:00".into()),
+                    rect: [10., 20., 30., 40.],
+                    quads: vec![],
+                    reply_to: None,
+                    hidden: false,
+                    color: Some([1., 0., 0.]),
+                    object: Some((8, 0)),
+                }],
+                limits: crate::annots::Limits::default(),
+            }),
+        ),
+        (
+            "text-runs",
+            pretty(&report::TextRuns {
+                schema: report::SCHEMA,
+                command: "text-runs".into(),
+                input: "input.pdf".into(),
+                page: 1,
+                revision: vec![1; 32],
+                runs: vec![crate::textedit::Run {
+                    operator: 3,
+                    text: "Synthetic".into(),
+                    font: "Helvetica".into(),
+                    size: 12.,
+                    matrix: [1., 0., 0., 1., 30., 100.],
+                    advance: 55.,
+                    display_rect: [30., 288., 85., 300.],
+                    minimum_height: Some(15.),
+                }],
+            }),
+        ),
         ("identities", pretty(&identities)),
         ("verify", pretty(&verify)),
         ("sign", pretty(&sign)),
@@ -1584,7 +1650,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 15, "the sample table itself");
+    assert_eq!(want.len(), 18, "the sample table itself");
     assert_eq!(found, want);
 }
 

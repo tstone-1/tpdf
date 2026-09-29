@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tpdf-client"
+version = "0.1.0"
+description = "Python client for the tpdf command-line API"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+
+[tool.setuptools.packages.find]
+include = ["tpdf"]
+
+[tool.setuptools.package-data]
+tpdf = ["py.typed"]

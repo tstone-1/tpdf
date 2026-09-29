@@ -11823,6 +11823,20 @@ MUTATIONS += [
         "the_identifier_is_the_applications",
     ),
     Mutation(
+        "cli edit: flatten a worker failure into an ordinary refusal",
+        "src/cli/edit.rs",
+        "            self.0.exit,\n",
+        "            Exit::Refused,\n",
+        "worker_failures_keep_their_exit_code_and_operation_context",
+    ),
+    Mutation(
+        "cli edit: accept an unsupported request schema",
+        "src/cli/edit.rs",
+        "if request.schema != 1 {",
+        "if request.schema == 0 {",
+        "edit_plan_rejects_unknown_fields_versions_and_unbounded_requests",
+    ),
+    Mutation(
         "cli pages: overwrite a destination that appeared during processing",
         "src/cli/pages.rs",
         "std::fs::hard_link(staged, target).map_err(|e| e.to_string())",

@@ -5,7 +5,7 @@ use super::{scratch, tool, Report};
 use lopdf::{dictionary, Document, Object, Stream};
 use std::path::Path;
 
-fn fixture(path: &Path, names: &[&str]) {
+pub(super) fn fixture(path: &Path, names: &[&str]) {
     let mut doc = Document::with_version("1.7");
     let tree = doc.new_object_id();
     let font =
@@ -38,7 +38,7 @@ fn fixture(path: &Path, names: &[&str]) {
 fn s(path: &Path) -> String {
     path.display().to_string()
 }
-fn names(path: &Path) -> Vec<String> {
+pub(super) fn names(path: &Path) -> Vec<String> {
     let doc = Document::load(path).expect("written PDF");
     doc.get_pages()
         .keys()

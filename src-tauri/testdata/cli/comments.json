@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "command": "comments",
+  "input": "edited.pdf",
+  "complete": true,
+  "comments": [
+    {
+      "id": 0,
+      "page": 1,
+      "kind": "text",
+      "author": "Synthetic author",
+      "body": "Synthetic note",
+      "subject": "",
+      "date": "2026-09-29 12:00",
+      "rect": [
+        10.0,
+        20.0,
+        30.0,
+        40.0
+      ],
+      "quads": [],
+      "reply_to": null,
+      "hidden": false,
+      "color": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "object": [
+        8,
+        0
+      ]
+    }
+  ],
+  "limits": {
+    "crowded_pages": 0,
+    "over_budget": false,
+    "bodies_clipped": 0,
+    "unknown_kinds": 0,
+    "unreadable": 0,
+    "cycles": 0,
+    "pages_missed": 0
+  }
+}
