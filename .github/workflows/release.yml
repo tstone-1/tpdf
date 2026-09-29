@@ -161,7 +161,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1 + a changelog commit)
         with:
-          # The fuzz package has its own workspace and build directory.
+          # Keep separate targets: mapping both workspaces to one makes
+          # rust-cache clean it twice, removing fuzz-only dependencies.
+          # Sharing also repeated the app build after fuzz in the native
+          # Windows comparison; BUILD.md records the complete timings.
           workspaces: |
             src-tauri
             src-tauri/fuzz

@@ -2398,9 +2398,29 @@ measurements of dependency artifacts, not timings for the full hosted cache.
 The desktop's accumulated app/fuzz `debug/deps` directories also contained
 1,731 identically named, byte-identical artifacts totalling 2,876,360,610 bytes.
 That includes historical builds and is not a size estimate for CI's duplicate
-content. A shared target directory remains an experiment requiring a full
-restore/build/save comparison; the action cleans each workspace separately,
-so mapping both to one directory also needs its retained dependency set checked.
+content.
+
+The shared-target experiment then ran on native Windows x64 at `9d05867`, with
+`CARGO_BUILD_JOBS=2` and `CARGO_INCREMENTAL=0`. Both configurations passed all
+29 gates. Four interleaved pairs, reversing pair order, measured restoration,
+the five affected gates (`clippy`, `test`, `fuzz`, `bins`, `api`), the pinned
+cache action's target-cleanup code, and archiving. Each round started from its
+configuration's fixed, cleaned cache snapshot; both snapshots were verified
+after restoration by path and SHA-256 digest. All eight timed cycles passed.
+
+| Target layout | Compressed target cache | Median measured cycle |
+|---|---:|---:|
+| Separate app/fuzz directories | 1.154 GB | 4m29s |
+| Shared directory | 0.801 GB | 5m24s |
+
+Sharing cut the archive by 30.6% but was slower in every pair, by 30-77 seconds
+(11-28%). The action cleans each workspace in turn: mapping both to one target
+removes fuzz-only `jobserver` and `libfuzzer-sys` artifacts. Cargo also rebuilt
+the application/examples after the fuzz build in every shared trial; with
+separate directories that step took less than a second. Keep the separate
+targets. These are desktop target-cache cycles, excluding the common Cargo
+registry, network transfer, initial setup and unaffected gates; they are not
+hosted CI timings.
 
 This section said "CI runs on a tag, and on nothing else" until then, and the reason it
 gave was half wrong in a way worth keeping. The objection was never runner minutes — it was
