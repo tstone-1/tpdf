@@ -74,7 +74,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 |---|---|---|
 | **Webview** (Svelte) | Draws, receives tiles, issues commands — eleven of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
-| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes the signed copy, a filled copy or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
+| **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
 | **Disk** | Holds the document and tpdf's output | — |
 
@@ -2372,6 +2372,28 @@ and the answers file under any name as the output, and refuses an existing outpu
 be enumerated, because the writer is a full rewrite that would invalidate them --- the window
 asks before doing the same, and a command line has nobody to ask. An encrypted document is
 written re-encrypted with its own passwords, as the window's save writes it.
+
+**Page operations** (`merge`, `extract`, `split`, `rotate`, `crop`, added 2026-09-29)
+use `save::write_merged`, `save::write_split` and `save::write_copy` with `InWorker`.
+The coordinator constructs plans from page counts and geometry returned by workers;
+crop coordinates are converted through `Request::CropBox`, never by parsing PDF here.
+Every input is inspected for signatures before writing; signed or incompletely inspected
+inputs require `--invalidate-signatures`. Merge preserves the first input's encryption
+and refuses encrypted additional inputs. Source fingerprints are checked before writing
+and again before publishing. This detects changes across the operation, but is not a
+filesystem snapshot against concurrent writers.
+
+Outputs go to an exclusively created staging directory beside the destination. Fresh
+workers check page counts, displayed dimensions and encryption before publication.
+Without `--force`, a hard link publishes each file without replacing a concurrent
+arrival. `--force` uses the save path's replacement; input aliases, symbolic-link
+outputs and directories are refused. A split checks all destinations and stages all
+parts before publishing; a publication failure can leave earlier parts, which are
+listed in its JSON report. This is per-file atomicity, not a multi-file transaction.
+The output filesystem must support hard links for no-replacement publication.
+`tests/cli/pages.rs` exercises the built tool and checks content/order, rotation and
+crop boxes independently of its JSON reports. Page-range expansion is bounded to
+100,000 selected pages, and splits to 10,000 output files.
 
 **`redact`, a second entry point to redaction** (added the same day). `tpdf redact` reaches
 the window's *Redact and save as…* with no window: it opens the document in a

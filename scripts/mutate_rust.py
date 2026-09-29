@@ -11811,8 +11811,8 @@ MUTATIONS += [
     Mutation(
         "cli: a registered command that nothing dispatches to",
         "src/cli.rs",
-        "    fill::COMMAND,\n    redact::COMMAND,\n];",
-        "    fill::COMMAND,\n];",
+        "    redact::COMMAND,\n",
+        "",
         "every_registered_command_is_reached_by_its_name_and_listed_in_help",
     ),
     Mutation(
@@ -11821,6 +11821,13 @@ MUTATIONS += [
         'pub const IDENTIFIER: &str = "com.timostein.tpdf";',
         'pub const IDENTIFIER: &str = "com.timostein.tpdf.cli";',
         "the_identifier_is_the_applications",
+    ),
+    Mutation(
+        "cli pages: overwrite a destination that appeared during processing",
+        "src/cli/pages.rs",
+        "std::fs::hard_link(staged, target).map_err(|e| e.to_string())",
+        "std::fs::copy(staged, target).map(|_| ()).map_err(|e| e.to_string())",
+        "publication_refuses_a_late_collision_and_cleans_only_owned_staging",
     ),
     # `tpdf info` and `tpdf text`. What needs a worker --- the locked answer
     # reaching `verify` and `info` as `locked`, the password crossing to the

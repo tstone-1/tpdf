@@ -296,6 +296,9 @@ That heading form is safe here because `release.yml` reads nothing from `CHANGEL
 one. `BUILD.md` names that one command and deliberately does not repeat the commands
 underneath it.
 
+`types` temporarily mutates the working tree. Run other compilers/tests, including
+`check_windows.py`, only after it finishes.
+
 On Windows the gate runner defaults `CARGO_BUILD_JOBS` to 2, respecting an explicit
 override. Concurrent example builds exhausted commit memory with OS error 1455
 and allocation aborts; use the same bound for local Cargo verification outside

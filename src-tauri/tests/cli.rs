@@ -87,6 +87,8 @@ use x509_cert::time::{Time, Validity};
 // directly in `tests/` would be a test target of its own to cargo.
 #[path = "cli/forms.rs"]
 mod forms;
+#[path = "cli/pages.rs"]
+mod pages;
 // `redact`, for the same reason.
 #[cfg(target_os = "macos")]
 #[path = "cli/image_log.rs"]
@@ -112,7 +114,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 17] = [
+    let checks: [Check; 18] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -136,6 +138,7 @@ fn main() {
         ),
         ("the tool's process never maps PDFium", never_maps_pdfium),
         ("the tool's workers are sandboxed", workers_are_sandboxed),
+        ("page operations through the shipped CLI", pages::operations),
         ("info agrees with the in-process reader", info_agrees),
         ("text agrees with the in-process extraction", text_agrees),
         ("text beside pdftotext, for information", beside_pdftotext),

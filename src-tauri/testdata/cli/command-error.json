@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "command": "extract",
+  "error": {
+    "kind": "usage",
+    "exit_code": 2,
+    "message": "extract needs --pages"
+  }
+}

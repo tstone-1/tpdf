@@ -23,6 +23,97 @@ use crate::trust::{Doubt, Standing, Store};
 /// The schema number every document carries.
 pub const SCHEMA: u32 = 1;
 
+/// Machine-readable command discovery, `help --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Help {
+    /// Schema version.
+    pub schema: u32,
+    /// Always `help`.
+    pub command: String,
+    /// Application version.
+    pub version: String,
+    /// Every registered command, in help order.
+    pub commands: Vec<Command>,
+}
+
+/// One command in discovery output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Command {
+    /// Subcommand name.
+    pub name: String,
+    /// Arguments accepted by the command, as shown in help.
+    pub usage: String,
+    /// Human-readable description.
+    pub summary: String,
+}
+
+/// A command that failed before it had a more detailed report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Failed {
+    /// Schema version.
+    pub schema: u32,
+    /// The requested command, including an unknown command on a usage error.
+    pub command: String,
+    /// Machine-readable category, exit status and human-readable explanation.
+    pub error: CommandError,
+}
+
+/// An error shared by command failures and partially published page operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandError {
+    /// `usage`, `refused`, or `failed`.
+    pub kind: String,
+    /// The process exit status.
+    pub exit_code: i32,
+    /// Human-readable explanation; scripts should branch on kind/exit_code.
+    pub message: String,
+}
+
+impl CommandError {
+    pub(super) fn from_failure(failure: &super::Failure) -> Self {
+        Self {
+            kind: match failure.exit {
+                super::Exit::Usage => "usage",
+                super::Exit::Refused => "refused",
+                _ => "failed",
+            }
+            .into(),
+            exit_code: failure.exit.code(),
+            message: failure.message.clone(),
+        }
+    }
+}
+
+/// A merge, extract, split, rotation or crop, including partial publication.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pages {
+    /// Schema version.
+    pub schema: u32,
+    /// The requested operation.
+    pub command: String,
+    /// Source paths, in command-line order.
+    pub inputs: Vec<String>,
+    /// True only when all requested files were published.
+    pub complete: bool,
+    /// Files actually published, in order. Empty on a pre-publication failure.
+    pub outputs: Vec<PageOutput>,
+    /// Number of source signatures affected by this rewrite.
+    pub signatures_invalidated: usize,
+    /// Signature enumeration was incomplete in at least one input.
+    pub signatures_unknown: bool,
+    /// Null on success; otherwise describes the failure after partial publication.
+    pub error: Option<CommandError>,
+}
+
+/// One completed output file of a page operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageOutput {
+    /// Destination as derived from the command line.
+    pub path: String,
+    /// Number of pages checked in a fresh worker before publication.
+    pub pages: usize,
+}
+
 /// `tpdf identities --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Identities {

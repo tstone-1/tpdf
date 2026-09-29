@@ -497,8 +497,9 @@ both.
 ## Command-line tool
 
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf fields`,
-`tpdf fill` and `tpdf redact` do from a terminal what **Sign document…**, **Document
-properties**, the viewer's own text, its form filling and **Redact and save as…** do in the
+`tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`
+and `tpdf crop` expose document workflows to scripts. The commands do what **Sign document…**, **Document
+properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
 the private key never leaves the operating system, and every signed, filled or redacted file is
 read back and checked before success is reported. Nothing is uploaded, and nothing goes online
@@ -517,6 +518,12 @@ which; add that folder to `PATH`, or call the tool by its full path. The example
 <!-- built: app.installCommandLineTool app.uninstallCommandLineTool -->
 
 ```
+tpdf help --json
+tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
+tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
+tpdf split combined.pdf --every 10 -o part.pdf --json
+tpdf rotate report.pdf --degrees 90 --pages 2-4 -o rotated.pdf --json
+tpdf crop report.pdf --rect 36,36,500,700 -o cropped.pdf --json
 tpdf identities
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe"
 tpdf sign contract.pdf -o contract-signed.pdf --identity 2a144cdb…c74 \
@@ -683,7 +690,36 @@ the page as it is displayed:
   form is refused, as the window refuses it. `-o` must name a new file unless `--force` is
   given.
 
-**Passwords.** `info`, `text`, `fields`, `fill` and `redact` read a password-protected document when given
+**Page operations.** `merge` takes two or more inputs and preserves argument order.
+`extract --pages` selects pages in document order, each once: `3,1,1` means pages 1
+and 3. `split --every N` writes groups of N consecutive pages (default 1); the last
+may be shorter. `-o part.pdf` produces `part-1.pdf`, `part-2.pdf`, and so on, never
+`part.pdf` itself. At most 10,000 split files are allowed per command.
+`rotate --degrees 90|180|270` adds a clockwise turn to the selected pages' existing
+rotation. `crop --rect x,y,w,h` uses points from the top-left corner of each page as
+currently displayed; the rectangle must fit every selected page. Crop hides content;
+it does not remove it and must not be used for redaction. Rotation and crop apply to
+all pages unless `--pages` selects some. Page selections are limited to 100,000 pages.
+
+All five require `-o` and preserve their inputs, including when an output is a link
+to an input. They refuse signed documents, or documents whose signatures could not
+be fully enumerated, unless `--invalidate-signatures` explicitly permits rewriting
+them. A merge checks every input for signatures. `--password-env` supplies the first
+input's password; its encryption is preserved in the output. Additional merge inputs
+must be unencrypted, since one output cannot preserve different encryption settings.
+
+Page outputs are staged beside their destinations, then opened in fresh sandboxed
+workers to check page counts, displayed sizes and encryption before publication.
+An existing output is refused unless `--force` is given; symbolic links and directories
+are refused even with `--force`. Without `--force`, publication uses a hard link so a
+file appearing during processing is also preserved; the destination filesystem must
+support hard links. All split parts are staged and checked before publishing any.
+Publication is atomic per file, not across the set: if a later publication fails,
+earlier parts remain and the report lists exactly those files. It has `complete: false`
+and a non-null `error`; scripts must check both the exit code and report. Staging
+failures publish nothing and leave any existing outputs intact.
+
+**Passwords.** `info`, `text`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's
@@ -712,10 +748,16 @@ built.
 | 3 | Refused: an identity that is unknown, ambiguous or cannot sign; a document that cannot be read or signed; for `text`, `fields` and `fill`, a locked document; for `text`, a page past its end; for `fields` and `fill`, an XFA form; for `fill`, a signed document or answers it cannot write, with nothing written; for `sign --timestamp`, an authority that could not be reached, did not answer in time, declined, or answered with a timestamp that does not check out, with nothing written; for `sign --long-term`, a timestamp authority this computer does not trust, or revocation data or an archive timestamp that could not be had, does not check out, or says a certificate is revoked, with nothing written; for `redact`, a signed document without `--invalidate-signatures`, an XFA form, a regions file it cannot read, a page it cannot read, more than 500 matches, matches it cannot mark, or a document the removal cannot rewrite, with nothing written; an output that exists; a key the system would not use, or a prompt that was cancelled. |
 | 4 | tpdf failed: a worker died or did not answer, the certificate store could not be searched, or the written file did not read back as written — for `sign --long-term`, also the validation data tpdf built not reading back as it must, with nothing written; for `fill`, the copy is then removed; for `redact`, a copy that could not be read back or finished is removed. |
 
-Errors are one sentence each on stderr. With **`--json`** stdout carries exactly one JSON
-document, pretty-printed, whenever the exit code is 0 or 1 — for `verify` and `info` also
-when it is 3 or 4, since the other documents may have been read, and for `fill` also when it
-refuses its answers (3) or finds them not read back (4), with every problem listed. Every document has `schema` (now `1`;
+Errors are one sentence each on stderr. With **`--json`**, commands also return
+one JSON document on failure, including malformed arguments (2), refusals (3) and
+internal failures (4). Existing detailed reports are preserved: `verify` and `info`
+report per-file errors, and `fill` reports individual answer/readback problems.
+When no detailed report exists, the result is `schema`, `command`, and `error`,
+whose `kind` is `usage`, `refused` or `failed`, `exit_code` is the process status,
+and `message` explains it. Branch on the code or kind, not the message text.
+On success, `text --json -o out.json` writes its report to the named file instead
+of stdout; other JSON reports go to stdout. `help --json` supports discovery;
+`--version` remains plain text. Every document has `schema` (now `1`;
 a key may be added without changing it, and one renamed or removed changes it) and
 `command`. Enumerations use the same words as the application's own data. The JSON is plain
 ASCII: any other character, an umlaut in a file name included, is written as a `\uXXXX`
@@ -724,6 +766,14 @@ escape, which every JSON reader turns back into the same text. That is what lets
 console's code page rather than as UTF-8. The plain-text output has no such escape, so read
 it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may carry one.
 
+- `help`: `version` is the application version, and `commands` lists every available
+  command, each with `name`, `usage` and `summary` from the same registry as plain help.
+- `merge`, `extract`, `split`, `rotate`, `crop`: `inputs` lists source paths in argument
+  order, `complete` says every requested output was published, and `outputs` lists only
+  published files, each with `path` and `pages`. `signatures_invalidated` counts source
+  signatures affected by rewriting; `signatures_unknown` says an input's enumeration
+  was incomplete. `error` is null on success or the error object described above on
+  partial publication. A failure before publication uses the generic error report.
 - `identities`: `usable` and `not_usable`, lists of certificates. Each has `id` (SHA-256 of
   the certificate, lowercase hex) and `subject` (its common name, or its whole name when it
   has none); a usable one also `issuer`, `expires` (`YYYY-MM-DD HH:MM:SS UTC`) and `method`

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "command": "split",
+  "inputs": [
+    "input.pdf"
+  ],
+  "complete": true,
+  "outputs": [
+    {
+      "path": "part-1.pdf",
+      "pages": 2
+    },
+    {
+      "path": "part-2.pdf",
+      "pages": 1
+    }
+  ],
+  "signatures_invalidated": 0,
+  "signatures_unknown": false,
+  "error": null
+}

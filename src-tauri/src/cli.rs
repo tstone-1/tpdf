@@ -55,6 +55,7 @@ pub mod fields;
 pub mod fill;
 pub mod identities;
 pub mod info;
+mod pages;
 pub mod redact;
 pub mod regions;
 pub mod report;
@@ -299,9 +300,21 @@ fn now() -> u64 {
 
 /// Runs one command line, writing to `out` and `err`. Returns the exit code.
 pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let wants_json = args
+        .iter()
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == "--json");
+    let mut output = Counted {
+        inner: out,
+        bytes: 0,
+    };
+    let out = &mut output;
     let line = match args::parse(args) {
         Ok(line) => line,
         Err(why) => {
+            if wants_json {
+                failure_json(out, args, &Failure::new(Exit::Usage, &why));
+            }
             say(err, &format!("{}: {why}", env.program));
             say(
                 err,
@@ -312,7 +325,26 @@ pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Wr
     };
     let result = match line {
         args::Line::Help => {
-            say(out, &usage(&env.program));
+            if wants_json {
+                json(
+                    out,
+                    &report::Help {
+                        schema: report::SCHEMA,
+                        command: "help".into(),
+                        version: env!("CARGO_PKG_VERSION").into(),
+                        commands: COMMANDS
+                            .iter()
+                            .map(|c| report::Command {
+                                name: c.name.into(),
+                                usage: c.usage.into(),
+                                summary: c.summary.into(),
+                            })
+                            .collect(),
+                    },
+                );
+            } else {
+                say(out, &usage(&env.program));
+            }
             Ok(Exit::Ok)
         }
         args::Line::Version => {
@@ -324,10 +356,43 @@ pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Wr
     match result {
         Ok(exit) => exit.code(),
         Err(failure) => {
+            // Some commands already returned a detailed report (including fill's
+            // field errors). Never append a second JSON document to that report.
+            if wants_json && out.bytes == 0 {
+                failure_json(out, args, &failure);
+            }
             say(err, &format!("{}: {}", env.program, failure.message));
             failure.exit.code()
         }
     }
+}
+
+struct Counted<'a> {
+    inner: &'a mut dyn Write,
+    bytes: usize,
+}
+
+impl Write for Counted<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(bytes)?;
+        self.bytes += n;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+fn failure_json(out: &mut dyn Write, args: &[String], failure: &Failure) {
+    json(
+        out,
+        &report::Failed {
+            schema: report::SCHEMA,
+            command: args.first().cloned().unwrap_or_default(),
+            error: report::CommandError::from_failure(failure),
+        },
+    );
 }
 
 /// One command: what it was asked, and how it runs.
@@ -371,6 +436,11 @@ pub const COMMANDS: &[Registered] = &[
     fields::COMMAND,
     fill::COMMAND,
     redact::COMMAND,
+    pages::MERGE,
+    pages::EXTRACT,
+    pages::SPLIT,
+    pages::ROTATE,
+    pages::CROP,
 ];
 
 impl Env<'_> {

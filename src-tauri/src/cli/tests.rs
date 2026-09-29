@@ -233,6 +233,11 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("fields", "fields a.pdf --json"),
         ("fill", "fill a.pdf -o b.pdf --values answers.json"),
         ("redact", "redact a.pdf -o b.pdf --text Secret"),
+        ("merge", "merge a.pdf b.pdf -o c.pdf"),
+        ("extract", "extract a.pdf --pages 1 -o b.pdf"),
+        ("split", "split a.pdf --every 2 -o b.pdf"),
+        ("rotate", "rotate a.pdf --degrees 90 -o b.pdf"),
+        ("crop", "crop a.pdf --rect 0,0,100,200 -o b.pdf"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -1459,6 +1464,40 @@ fn samples() -> Vec<(&'static str, String)> {
         summary,
     };
     vec![
+        (
+            "command-error",
+            pretty(&report::Failed {
+                schema: report::SCHEMA,
+                command: "extract".into(),
+                error: report::CommandError {
+                    kind: "usage".into(),
+                    exit_code: 2,
+                    message: "extract needs --pages".into(),
+                },
+            }),
+        ),
+        (
+            "pages",
+            pretty(&report::Pages {
+                schema: report::SCHEMA,
+                command: "split".into(),
+                inputs: vec!["input.pdf".into()],
+                complete: true,
+                outputs: vec![
+                    report::PageOutput {
+                        path: "part-1.pdf".into(),
+                        pages: 2,
+                    },
+                    report::PageOutput {
+                        path: "part-2.pdf".into(),
+                        pages: 1,
+                    },
+                ],
+                signatures_invalidated: 0,
+                signatures_unknown: false,
+                error: None,
+            }),
+        ),
         ("identities", pretty(&identities)),
         ("verify", pretty(&verify)),
         ("sign", pretty(&sign)),
@@ -1545,7 +1584,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 13, "the sample table itself");
+    assert_eq!(want.len(), 15, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -2134,4 +2173,54 @@ fn long_term_data_is_asked_for_only_with_a_timestamp() {
             .expect("parsed")
             .long_term
     );
+}
+
+#[test]
+fn json_errors_cover_usage_refusal_and_internal_failure() {
+    struct BrokenStore;
+    impl Store for BrokenStore {
+        fn identities(&self) -> Result<Vec<Held>, String> {
+            Err("store unavailable".into())
+        }
+        fn saved_image(&self) -> Result<Option<crate::signature::Image>, String> {
+            Ok(None)
+        }
+    }
+    for (line, code, kind) in [
+        ("extract missing.pdf --json", 2, "usage"),
+        ("unknown --json", 2, "usage"),
+        ("text /no-such-tpdf-input.pdf --json", 3, "refused"),
+        ("identities --json", 4, "failed"),
+    ] {
+        let (actual, out, err) = ran(&argv(line), &BrokenStore);
+        assert_eq!(actual, code, "{err}");
+        let value: report::Failed = serde_json::from_str(&out).expect("one complete JSON document");
+        assert_eq!(value.error.kind, kind);
+        assert_eq!(value.error.exit_code, code);
+        assert!(!value.error.message.is_empty() && !err.is_empty());
+    }
+    let (code, out, _) = ran(&argv("extract missing.pdf"), &BrokenStore);
+    assert_eq!(code, 2);
+    assert!(out.is_empty(), "plain errors stay on stderr");
+    let (code, out, _) = ran(&argv("extract -o out.pdf -- --json"), &BrokenStore);
+    assert_eq!(code, 2);
+    assert!(out.is_empty(), "a filename after -- is not a JSON flag");
+    for line in ["merge", "merge a.pdf -o b.pdf"] {
+        assert!(refused(line).contains("at least two input documents"));
+    }
+}
+
+#[test]
+fn json_help_discovers_every_registered_command() {
+    let (code, out, err) = ran(&argv("help --json"), &Soft256(Vec::new()));
+    assert_eq!(code, 0, "{err}");
+    let help: report::Help = serde_json::from_str(&out).expect("help JSON");
+    assert_eq!(help.schema, 1);
+    assert_eq!(help.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(help.commands.len(), COMMANDS.len());
+    for (item, command) in help.commands.iter().zip(COMMANDS) {
+        assert_eq!(item.name, command.name);
+        assert_eq!(item.usage, command.usage);
+        assert_eq!(item.summary, command.summary);
+    }
 }

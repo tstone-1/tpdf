@@ -163,8 +163,14 @@ pub fn page_list(raw: &str) -> Result<Vec<u32>, String> {
                 if from > to {
                     return Err(format!("`--pages {raw}`: {from}-{to} runs backwards"));
                 }
+                if to - from >= 100_000 {
+                    return Err("--pages selects too many pages; at most 100000 per command".into());
+                }
                 pages.extend(from..=to);
             }
+        }
+        if pages.len() > 100_000 {
+            return Err("--pages selects too many pages; at most 100000 per command".into());
         }
     }
     Ok(pages.into_iter().collect())
