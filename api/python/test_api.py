@@ -259,6 +259,58 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.exit_code, 3)
         self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
 
+    def test_signing_refusals_preserve_inputs_and_outputs(self):
+        # No usable identity is needed, and these cases cannot sign with a real key.
+        original = self.source.read_bytes()
+        output = self.root / 'signed.pdf'
+        identity = 'tpdf SYNTHETIC MISSING API IDENTITY 00000000'
+        for options in [{'long_term': True}, {'timestamp': 'ftp://invalid.example'},
+                        {'page': 1}, {'rect': [0, 0, -1, 20]},
+                        {'rect': [0, 0, 80, 40], 'lines': ['invalid']}]:
+            with self.subTest(options=options), self.assertRaises(CommandError) as caught:
+                self.pdf.sign(self.source, output, identity=identity, **options)
+            self.assertEqual(caught.exception.exit_code, 2)
+            self.assertFalse(output.exists())
+        output.write_bytes(b'EXISTING OUTPUT')
+        with self.assertRaises(CommandError) as caught:
+            self.pdf.sign(self.source, output, identity=identity)
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertEqual(output.read_bytes(), b'EXISTING OUTPUT')
+        self.assertEqual(self.source.read_bytes(), original)
+        client = Tpdf(BINARY, cwd=self.root)
+        # Missing input is refused before any identity is used; '--force' is a path.
+        with self.assertRaises(CommandError) as caught:
+            client.sign('--force', 'unused.pdf', identity=identity)
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertFalse((self.root / 'unused.pdf').exists())
+
+    def test_signing_options_and_discovery_use_the_json_contract(self):
+        with patch('tpdf.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.returncode = 0
+            process.communicate.return_value = (b'{"schema":1,"command":"identities","usable":[],"not_usable":[]}', b'')
+            self.assertEqual(self.pdf.identities()['usable'], [])
+            self.assertEqual(popen.call_args.args[0][1:], ['identities', '--json'])
+            process.communicate.return_value = (b'{"schema":1,"command":"sign"}', b'')
+            self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID')
+            self.assertEqual(popen.call_args.args[0][1:],
+                ['sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID', '--', 'input.pdf'])
+            self.pdf.sign('--input.pdf', '-output.pdf', identity='SYNTHETIC ID',
+                rect=[10, 20, 200, 80], page=2, no_image=True, lines=[], reason='Synthetic approval',
+                location='Synthetic location', timestamp='digicert', long_term=True, force=True)
+            self.assertEqual(popen.call_args.args[0][1:], [
+                'sign', '--json', '-o', '-output.pdf', '--identity', 'SYNTHETIC ID',
+                '--visible', '--rect', '10,20,200,80', '--page', '2', '--no-image', '--lines', '',
+                '--reason', 'Synthetic approval', '--location', 'Synthetic location',
+                '--timestamp', 'digicert', '--long-term', '--force', '--', '--input.pdf'])
+            popen.reset_mock()
+            for identity in ['', '   ', None]:
+                with self.assertRaises(ValueError):
+                    self.pdf.sign(self.source, 'unused.pdf', identity=identity)
+            with self.assertRaises(TypeError):
+                self.pdf.sign(self.source, 'unused.pdf', identity='SYNTHETIC ID', lines='name')
+            popen.assert_not_called()
+
     def test_render_supports_repeatable_visual_assertions(self):
         first = self.root / 'before.png'
         second = self.root / 'after.png'

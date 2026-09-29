@@ -368,3 +368,56 @@ class Tpdf:
                 args.append(flag)
         return self.run('redact', *args, '--', source, input_json=payload,
                         password=password, check=check).report
+
+    def identities(self) -> dict[str, Any]:
+        """List usable OS-held signing certificates and rejected ones with reasons.
+
+        Enumeration does not sign. Pass a chosen certificate's id to sign(); the
+        client never chooses the first available identity automatically.
+        """
+        return self.run('identities').report
+
+    def sign(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        identity: str, rect: Sequence[float] | None = None, page: int | None = None,
+        no_image: bool = False, lines: Sequence[str] | None = None,
+        reason: str | None = None, location: str | None = None,
+        timestamp: str | None = None, long_term: bool = False, force: bool = False,
+    ) -> dict[str, Any]:
+        """Sign with an explicitly selected OS-held certificate; no key is exported.
+
+        Use identities()['usable'] to select its SHA-256 id (or exact subject).
+        rect=[x,y,width,height] creates a visible signature, in display points
+        from top-left; page defaults to 1. Other appearance options require rect.
+        lines selects any of 'label', 'name', 'date'; [] hides all three.
+        Visible signatures use the saved image unless no_image=True.
+
+        timestamp selects a CLI authority name or URL and explicitly enables its
+        network request. long_term requires timestamp and asks certificate
+        authorities for revocation evidence. Neither is enabled by default.
+        Encrypted inputs are not supported by signing. The OS may prompt for
+        key access; configure the client's timeout for interactive use.
+        """
+        if not isinstance(identity, str) or not identity.strip():
+            raise ValueError('identity must name an explicitly selected certificate')
+        args = ['-o', os.fspath(output), '--identity', identity]
+        if rect is not None:
+            if isinstance(rect, (str, bytes)) or len(rect) != 4:
+                raise ValueError('rect must contain four numbers: x, y, width, height')
+            args += ['--visible', '--rect', ','.join(str(value) for value in rect)]
+        if page is not None:
+            args += ['--page', str(page)]
+        if no_image:
+            args.append('--no-image')
+        if lines is not None:
+            if isinstance(lines, (str, bytes)):
+                raise TypeError('lines must be a sequence of label, name, date')
+            args += ['--lines', ','.join(lines)]
+        for flag, value in [('--reason', reason), ('--location', location), ('--timestamp', timestamp)]:
+            if value is not None:
+                args += [flag, value]
+        if long_term:
+            args.append('--long-term')
+        if force:
+            args.append('--force')
+        return self.run('sign', *args, '--', source).report

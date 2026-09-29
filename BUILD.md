@@ -5604,6 +5604,34 @@ decoded colors across tile seams, saved crops and rotations, and output preserva
 on refusal. These are headless tests of the same backend used by the GUI; they do
 not replace window interaction checks.
 
+The optional OS-key client check requires an explicitly selected document-signing
+identity already in the OS store. It never imports, exports, trusts or removes a key.
+Run it separately from unattended gates; macOS may require a key-access prompt:
+
+```sh
+python api/python/check_signing.py --executable src-tauri/target/debug/tpdf-cli --identity "<certificate SHA-256>" --output-dir scratch/signing-api --expect-untrusted
+```
+
+Use a new output directory on each run. `--expect-untrusted` is for a self-signed
+test identity; omit it when strict trust must pass. Optional `--timestamp digicert`
+enables the timestamp request. The check writes synthetic inputs, signed and tampered
+copies, rendered controls and a digest receipt for independent inspection. It checks
+identity selection, invisible and visible signatures, strict trust, tamper rejection,
+output preservation and optional timestamp integrity. Ordinary API tests exercise
+argument forwarding and refusals without signing with an installed identity. Successful
+long-term signing still requires a CA-issued certificate with working revocation services.
+
+**OS-key Python workflow, 2026-09-29:** the existing macOS RSA test identity passed
+18 checks, including a DigiCert timestamp. Native Windows x64 passed 18 checks with
+a disposable RSA identity and 17 with ECDSA P-256 (no timestamp requested for ECDSA).
+Both Windows keys were non-exportable CNG keys; their certificates and key files were
+removed after testing, and the pre-existing certificate inventory was unchanged.
+No trust root was added. Both platforms passed all 22 unattended API tests and 93 CLI
+unit tests. Independent pyHanko readback accepted all eight signed outputs, confirmed
+both timestamps and visible reason/location metadata, and rejected all three tampered
+copies. These self-signed signers remained untrusted; successful CA-backed long-term
+signing was not established by this run.
+
 The release job also runs `scripts/check_packaged_api.py` after bundling and
 notarization. It extracts the DMG and macOS updater archive, or both Windows
 installers, outside the checkout. It builds the Python client wheel with a pinned
@@ -5835,7 +5863,7 @@ sign asks no authority whatever          -> 9 red: the sound case exits 4 --- th
 a failed request exits 4, not 3           -> 6 red: every failure, nothing written in each
 ```
 
-**Against the real keychain, by hand, never by an agent.** `identities` reads certificates only
+**Against the real keychain, run explicitly outside unattended gates.** `identities` reads certificates only
 and raises no prompt:
 
 ```bash
@@ -5877,8 +5905,8 @@ openssl cms -verify -binary -noverify -inform DER -in "$S/blob.der" -content "$S
 ```
 
 The cut was checked both ways on 2026-09-27: `incr-signed.pdf` verifies, `signed-altered.pdf`
-fails with *content verify error*. **Not yet run against the real keychain**; the first person
-to run it should record the result here.
+fails with *content verify error*. The OS-key Python workflow described above was
+subsequently run against real macOS and Windows stores on 2026-09-29.
 
 **The link.** *Install command-line tool…* is not driven by any check: it writes
 `/usr/local/bin` and can raise an administrator prompt. `clitool::tests` holds the decision over

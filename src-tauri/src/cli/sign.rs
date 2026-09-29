@@ -115,31 +115,35 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut force = false;
 
     let mut rest = args.iter();
+    let mut positional = false;
     while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "-o" | "--output" => output = Some(PathBuf::from(value(arg, &mut rest)?)),
-            "--identity" => identity = Some(value(arg, &mut rest)?.clone()),
-            "--visible" => visible = true,
-            "--page" => page = Some(page_number(value(arg, &mut rest)?)?),
-            "--rect" => rect = Some(rectangle(value(arg, &mut rest)?)?),
-            "--no-image" => image = Some(false),
-            "--lines" => lines = Some(line_list(value(arg, &mut rest)?)?),
-            "--reason" => reason = Some(value(arg, &mut rest)?.clone()),
-            "--location" => location = Some(value(arg, &mut rest)?.clone()),
+        match (positional, arg.as_str()) {
+            (false, "--") => positional = true,
+            (false, "-o" | "--output") => output = Some(PathBuf::from(value(arg, &mut rest)?)),
+            (false, "--identity") => identity = Some(value(arg, &mut rest)?.clone()),
+            (false, "--visible") => visible = true,
+            (false, "--page") => page = Some(page_number(value(arg, &mut rest)?)?),
+            (false, "--rect") => rect = Some(rectangle(value(arg, &mut rest)?)?),
+            (false, "--no-image") => image = Some(false),
+            (false, "--lines") => lines = Some(line_list(value(arg, &mut rest)?)?),
+            (false, "--reason") => reason = Some(value(arg, &mut rest)?.clone()),
+            (false, "--location") => location = Some(value(arg, &mut rest)?.clone()),
             // Judged here, so an address tpdf will not ask --- `ftp:`, a
             // typo, a URL with a password in it --- is a malformed line and
             // exit 2, before any worker, key or socket.
-            "--timestamp" => {
+            (false, "--timestamp") => {
                 timestamp = Some(
                     crate::tsa::authority(value(arg, &mut rest)?)
                         .map_err(|why| why.sentence(""))?,
                 );
             }
-            "--long-term" => long_term = true,
-            "--json" => json = true,
-            "--force" => force = true,
-            flag if flag.starts_with('-') && flag != "-" => return Err(unknown("sign", flag)),
-            path => {
+            (false, "--long-term") => long_term = true,
+            (false, "--json") => json = true,
+            (false, "--force") => force = true,
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("sign", flag))
+            }
+            (_, path) => {
                 if input.is_some() {
                     return Err(format!(
                         "`sign` takes one document, and `{path}` is a second --- sign them one \

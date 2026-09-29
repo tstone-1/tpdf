@@ -807,7 +807,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
 `edit()`, `render()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
-`crop()` and `redact()` return parsed reports. Page helpers accept `force=`, `password=` and
+`crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
 
@@ -849,7 +849,28 @@ directly. Always inspect `written` and `verified`: no matches and dry runs write
 and have `verified: null`, even though the command succeeds. `force=`, `password=` and
 `invalidate_signatures=` have the same meaning as their CLI options.
 
-`run(command, *arguments)` reaches every CLI command, including signing.
+Signing requires an explicitly selected certificate from the operating system:
+
+```python
+identities = pdf.identities()  # usable certificates and not_usable reasons
+# Select an id from identities["usable"]; do not silently choose the first one.
+selected_id = "<certificate SHA-256>"
+signed = pdf.sign("input.pdf", "signed.pdf", identity=selected_id)
+visible = pdf.sign("input.pdf", "visible.pdf", identity=selected_id,
+                   rect=[40, 40, 220, 80], page=1, no_image=True,
+                   lines=["label", "name"], reason="Approved", location="Office")
+assert pdf.verify("signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
+```
+
+`rect=` enables a visible signature; page, image, lines, reason and location options
+require it. `lines=[]` hides the three standard lines. `timestamp="digicert"` (or another
+CLI authority name or URL) requests a timestamp; `long_term=True` additionally requests
+revocation evidence and requires a timestamp. Both network features are off by default.
+Signing keeps the key in the OS, which may request key-access approval; allow an appropriate
+client timeout. Encrypted inputs are refused. An intact signature is not necessarily trusted;
+`verify(..., strict=True)` checks both and raises on a negative verdict.
+
+`run(command, *arguments)` reaches every CLI command.
 It returns a `Result` carrying
 `report`, `exit_code` and `stderr`. Nonzero exits raise `CommandError`, which retains
 those results; use `check=False` on `run` to inspect a negative verification verdict

@@ -2345,3 +2345,11 @@ fn json_help_discovers_every_registered_command() {
         assert_eq!(item.summary, command.summary);
     }
 }
+
+#[test]
+fn signing_treats_flags_after_separator_as_literal_input_paths() {
+    let parsed = sign::parse(&argv("-o out.pdf --identity synthetic -- --force")).unwrap();
+    assert_eq!(parsed.input, PathBuf::from("--force"));
+    assert!(!parsed.force);
+    assert!(sign::parse(&argv("-o out.pdf --identity synthetic -- a.pdf b.pdf")).is_err());
+}
