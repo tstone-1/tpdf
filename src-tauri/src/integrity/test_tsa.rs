@@ -158,6 +158,7 @@ pub struct Faults {
 }
 
 /// A software timestamp authority: its key, its certificate, and the root.
+#[derive(Clone)]
 pub struct TestTsa {
     key: p256::ecdsa::SigningKey,
     /// The authority's certificate, DER, issued by [`TestTsa::root`].

@@ -146,8 +146,8 @@ pub struct Held {
 ///
 /// **The seam the tests sign through**, and the only one: [`OsStore`] is the
 /// shipped implementation and asks the keychain or the certificate store; a
-/// test supplies software keys (`sign_cms/testkeys.rs`'s kind) and never
-/// touches either. Everything else --- the workers, the writer, the read-back
+/// test supplies synthetic identities with software or ephemeral native keys,
+/// and never touches either store. Everything else --- the workers, the writer, the read-back
 /// --- is the path a reader's command takes.
 pub trait Store {
     /// Every certificate with a key behind it, unfiltered.

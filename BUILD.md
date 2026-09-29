@@ -5608,6 +5608,50 @@ decoded colors across tile seams, saved crops and rotations, and output preserva
 on refusal. These are headless tests of the same backend used by the GUI; they do
 not replace window interaction checks.
 
+A purchased certificate is not needed for the private-CA integration check:
+
+```sh
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 'sign --long-term'
+```
+
+This section also runs in the normal gates. Its private CA and local timestamp,
+OCSP and CRL responders use synthetic certificates. The document signer uses an
+in-memory `SecKey` on macOS or an unnamed CNG key on Windows. Only fixture key
+bytes are imported, and every native handle is released. The OS evaluates the
+timestamp authority against explicit roots for that call; no keychain, certificate
+store, trust setting or shipped CLI trust option is changed. Normal worker
+verification must still report these roots as untrusted. This exercises CLI
+signing, native cryptographic operations, network requests to loopback responders,
+contained workers, and saved-file readback. Identity discovery, persistent-key
+permissions, hardware tokens and commercial-CA compatibility remain separate checks.
+
+The cases cover successful OCSP and CRL evidence, an intermediate CA, revoked and
+unknown answers, responder failures, an untrusted timestamp authority, and an
+expired signer refused before native signing or revocation requests. To retain
+three successful outputs and public roots for independent offline verification,
+use a new evidence directory:
+
+```sh
+TPDF_PKI_OUT="$PWD/scratch/private-pki" cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 'sign --long-term'
+uv run --with pyhanko python scripts/check_private_pki.py scratch/private-pki
+```
+
+On Windows set `$env:TPDF_PKI_OUT` to an absolute directory path before the Cargo
+command. The verifier uses these roots only in memory and disables fetching. It
+requires both intact signatures, complete-file archive coverage and embedded
+revocation evidence. Its controls strip that evidence (intact signature, failed
+trust) and alter covered content (both signatures fail integrity). It writes
+`verification.json` with verdicts and artifact digests; no private keys are saved.
+
+**Private-CA native signing, 2026-09-29:** macOS and native Windows each passed
+all 22 focused checks. Independent offline verification accepted all six outputs
+(two OCSP cases, two CRL cases and two intermediate-chain cases), and rejected each
+missing-evidence and covered-byte-tampering control. Replacing the native signer
+with a software signer made both native-request controls fail. Windows user
+certificate/root and persistent CNG key inventories were unchanged. macOS keychain
+search list, default keychain, user trust settings and signing-identity inventory
+were unchanged after the native tests.
+
 The optional OS-key client check requires an explicitly selected document-signing
 identity already in the OS store. It never imports, exports, trusts or removes a key.
 Run it separately from unattended gates; macOS may require a key-access prompt:
@@ -5649,8 +5693,8 @@ readback is saved as `long-term-verify.json`, and a tampered copy must invalidat
 both signatures. `test_signing_checks.py` tests the instrument offline, including
 missing evidence, an ordinary signature in place of an archive timestamp, and
 refusal without fallback. Those controls do not establish live CA compatibility.
-No suitable CA-issued identity was available on either test platform on 2026-09-29;
-the live successful CA-backed long-term run remains outstanding.
+No suitable commercially issued identity was available in either OS store on
+2026-09-29; the live commercial-CA and hardware-token runs remain outstanding.
 
 **OS-key Python workflow, 2026-09-29:** the existing macOS RSA test identity passed
 18 checks, including a DigiCert timestamp. Native Windows x64 passed 18 checks with

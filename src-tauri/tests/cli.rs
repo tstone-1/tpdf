@@ -89,6 +89,8 @@ use x509_cert::time::{Time, Validity};
 mod edit;
 #[path = "cli/forms.rs"]
 mod forms;
+#[path = "cli/os_key.rs"]
+mod os_key;
 #[path = "cli/pages.rs"]
 mod pages;
 #[path = "cli/render.rs"]
@@ -1159,16 +1161,15 @@ struct PkiStore {
     certificate: Vec<u8>,
     chain: Vec<Vec<u8>>,
     seed: u8,
+    calls: std::rc::Rc<os_key::Calls>,
 }
 
 impl Store for PkiStore {
     fn identities(&self) -> Result<Vec<Held>, String> {
-        let key = p256::ecdsa::SigningKey::from_bytes(&[self.seed; 32].into())
-            .map_err(|e| e.to_string())?;
         Ok(vec![Held {
             certificate: self.certificate.clone(),
             chain: self.chain.clone(),
-            key: Box::new(Soft(key)),
+            key: os_key::p256(self.seed, self.calls.clone())?,
         }])
     }
 
@@ -1187,19 +1188,16 @@ fn long_term_when_signing(report: &mut Report) {
     std::fs::write(&plain, plain_pdf()).expect("input");
     let s = |p: &Path| p.display().to_string();
     let tsa_root = test_tsa::TestTsa::new().root;
+    let calls = std::rc::Rc::new(os_key::Calls::default());
     let sign_under = |pki: &Pki, out: &Path, extra: &[&str], roots: &[Vec<u8>]| {
+        calls.signatures.set(0);
         let store = PkiStore {
             certificate: pki.signer.certificate.clone(),
             chain: pki.chain.clone(),
             seed: pki.signer.seed,
+            calls: calls.clone(),
         };
-        let url = authority_by(
-            Answer::Token(test_tsa::Faults::default()),
-            test_tsa::TestTsa::publishing(&test_tsa::Published {
-                ocsp: vec![format!("{}/ocsp/authority", pki.base)],
-                ..test_tsa::Published::default()
-            }),
-        );
+        let url = authority_by(Answer::Token(test_tsa::Faults::default()), pki.tsa.clone());
         let mut args = vec![
             "sign".to_string(),
             s(&plain),
@@ -1230,6 +1228,15 @@ fn long_term_when_signing(report: &mut Report) {
         "long-term data from a sound PKI: sign exits 0",
         code == 0,
         &format!("exit {code}: {stderr}"),
+    );
+    report.check(
+        "private PKI: exactly one native signing request and every key handle released",
+        calls.signatures.get() == 1 && calls.live_keys.get() == 0,
+        &format!(
+            "signatures {}, live keys {}",
+            calls.signatures.get(),
+            calls.live_keys.get()
+        ),
     );
     match read_back(&out) {
         Err(why) => report.check("long-term data: the tool reads it back", false, &why),
@@ -1268,6 +1275,57 @@ fn long_term_when_signing(report: &mut Report) {
         pki.paths() == ["/ocsp/signer", "/ocsp/authority"],
         &format!("{:?}", pki.paths()),
     );
+
+    keep_pki_output("ocsp", &out, &pki);
+    let (code, stdout, stderr) = tool(&["verify", "--strict", "--json", &s(&out)], &[]);
+    let verified: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_default();
+    report.check(
+        "private PKI: system-store verification remains untrusted after isolated trust",
+        code == 1
+            && verified["strict_passed"] == false
+            && verified["files"][0]["signatures"]
+                .as_array()
+                .is_some_and(|items| {
+                    items.len() == 2
+                        && items
+                            .iter()
+                            .all(|item| item["trust"]["standing"] == "untrusted")
+                }),
+        &format!("exit {code}: {stdout}{stderr}"),
+    );
+
+    let pki = Pki::start(Plan {
+        signer_crl: Some(Serve::Good),
+        authority_crl: Some(Serve::Good),
+        ..Plan::default()
+    });
+    let out = dir.join("b-lta-crl.pdf");
+    let (code, _, stderr) = sign(&pki, &out, &["--long-term"]);
+    report.check(
+        "private PKI: CRL-only signing uses the OS and releases its keys",
+        code == 0 && calls.signatures.get() == 1 && calls.live_keys.get() == 0,
+        &stderr,
+    );
+    match read_back(&out) {
+        Ok((_, json)) => {
+            let signature = &json["files"][0]["signatures"][0];
+            report.check(
+                "private PKI: both certificates have good CRL evidence",
+                signature["revocation"]["standing"] == "good"
+                    && signature["revocation"]["source"] == "crl"
+                    && signature["timestamp"]["revocation"]["standing"] == "good"
+                    && signature["timestamp"]["revocation"]["source"] == "crl",
+                &signature.to_string(),
+            );
+        }
+        Err(why) => report.check("private PKI: CRL output reads back", false, &why),
+    }
+    report.check(
+        "private PKI: only the two expected CRLs were requested",
+        pki.paths() == ["/crl/signer.crl", "/crl/authority.crl"],
+        &format!("{:?}", pki.paths()),
+    );
+    keep_pki_output("crl", &out, &pki);
 
     // Under an intermediate: what the gathering asked about is what the
     // reading judges, so the whole chain reads back good --- through the real
@@ -1322,6 +1380,8 @@ fn long_term_when_signing(report: &mut Report) {
         &format!("exit {code}: {stdout}"),
     );
 
+    keep_pki_output("intermediate", &out, &pki);
+
     // An authority this computer does not trust --- as one substituted on
     // the path would be --- is refused before anything is fetched: its
     // certificate names the fake PKI's server, and nothing reaches it.
@@ -1349,6 +1409,16 @@ fn long_term_when_signing(report: &mut Report) {
             "a revoked signer",
             Plan {
                 signer_ocsp: Some(Serve::Revoked),
+                ..good
+            },
+            "will not write a signature made with a revoked certificate",
+            false,
+        ),
+        (
+            "a CRL-revoked signer",
+            Plan {
+                signer_ocsp: None,
+                signer_crl: Some(Serve::Revoked),
                 ..good
             },
             "will not write a signature made with a revoked certificate",
@@ -1397,6 +1467,28 @@ fn long_term_when_signing(report: &mut Report) {
         );
     }
 
+    let mut expired = Pki::start(good);
+    expired.signer =
+        expired
+            .root
+            .issue_dated(PKI_SUBJECT, expired.signer.seed, 3, now - 600, now - 300);
+    let out = dir.join("expired.pdf");
+    let (code, _, stderr) = sign(&expired, &out, &["--long-term"]);
+    report.check(
+        "private PKI: an expired signer is refused before native signing or revocation requests",
+        code == 3
+            && stderr.contains("expired")
+            && !out.exists()
+            && calls.signatures.get() == 0
+            && calls.live_keys.get() == 0
+            && expired.paths().is_empty(),
+        &format!(
+            "exit {code}, signatures {}, requests {:?}: {stderr}",
+            calls.signatures.get(),
+            expired.paths()
+        ),
+    );
+
     // Control: without a timestamp it is a malformed line.
     let out = dir.join("no-timestamp.pdf");
     let (code, _, stderr) = signs(
@@ -1413,6 +1505,7 @@ fn long_term_when_signing(report: &mut Report) {
             certificate: pki.signer.certificate.clone(),
             chain: pki.chain.clone(),
             seed: pki.signer.seed,
+            calls: calls.clone(),
         },
         now,
     );
@@ -1422,6 +1515,26 @@ fn long_term_when_signing(report: &mut Report) {
         &format!("exit {code}: {stderr}"),
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Optional public evidence for an independent verifier; never writes a key.
+/// TPDF_PKI_OUT names a fresh directory; each case refuses to overwrite one.
+fn keep_pki_output(name: &str, output: &Path, pki: &test_tsa::Pki) {
+    let Some(root) = std::env::var_os("TPDF_PKI_OUT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    std::fs::create_dir_all(&root).expect("evidence parent");
+    let dir = root.join(name);
+    std::fs::create_dir(&dir).expect("new private-PKI evidence directory");
+    std::fs::copy(output, dir.join("signed.pdf")).expect("signed evidence");
+    std::fs::write(dir.join("signer-root.der"), &pki.root.certificate).expect("public root");
+    std::fs::write(dir.join("timestamp-root.der"), &pki.tsa.root).expect("public root");
+    std::fs::write(
+        dir.join("requests.json"),
+        serde_json::to_vec_pretty(&pki.paths()).expect("paths"),
+    )
+    .expect("request paths");
 }
 
 // --- 2 ----------------------------------------------------------------------
