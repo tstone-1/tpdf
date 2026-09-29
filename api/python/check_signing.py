@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 import sys
 
-from test_api import fixture
+from test_api import check_document_workflow, fixture
 from tpdf import CommandError, Tpdf
 
 
@@ -94,9 +94,13 @@ def check_signing(pdf: Tpdf, directory: Path, identity: str, *,
         require(stamp is not None and stamp['attested'] and stamp['integrity']['verdict'] == 'intact',
                 'requested timestamp is present and intact')
     require(source.read_bytes() == original, 'source remains unchanged')
+    workflow = directory / 'workflow'
+    workflow.mkdir()
+    for message in check_document_workflow(pdf, workflow, identity=selected):
+        require(True, message)
     return {'identity': selected, 'checks': checks, 'timestamp': timestamp,
-            'files': {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                      for path in sorted(directory.iterdir()) if path.is_file()}}
+            'files': {path.relative_to(directory).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                      for path in sorted(directory.rglob('*')) if path.is_file()}}
 
 
 def main() -> int:

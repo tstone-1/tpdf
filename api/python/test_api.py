@@ -23,7 +23,7 @@ BINARY = Path(os.environ.get('TPDF_TEST_CLI', TARGET / 'debug' / ('tpdf-cli.exe'
 
 
 def fixture(path: Path, *, form: bool = False, content: bytes | None = None,
-            retained_secret: bool = False) -> None:
+            retained_secret: bool = False, private_form: bool = False) -> None:
     """A one-page PDF with visible, editable text; explicit xref offsets."""
     if content is None:
         content = b'BT /F1 12 Tf 30 100 Td (SYNTHETIC ORIGINAL) Tj ET'
@@ -41,10 +41,22 @@ def fixture(path: Path, *, form: bool = False, content: bytes | None = None,
             b'<< /Fields [7 0 R] /DA (/F1 12 Tf 0 g) /DR << /Font << /F1 5 0 R >> >> >>',
             b'<< /Type /Annot /Subtype /Widget /FT /Tx /T (Synthetic.answer) /V (OLD) /Rect [30 200 200 225] /P 3 0 R /F 4 >>',
         ]
+    if private_form:
+        assert form
+        objects[2] = objects[2].replace(b'/Annots [7 0 R]', b'/Annots [7 0 R 9 0 R 10 0 R]')
+        objects[5] = objects[5].replace(b'/Fields [7 0 R]', b'/Fields [7 0 R 8 0 R]')
+        objects += [
+            b'<< /FT /Tx /T (Synthetic.private) /V (OLD) /Kids [9 0 R 10 0 R] >>',
+            b'<< /Type /Annot /Subtype /Widget /Parent 8 0 R /Rect [30 300 200 325] /P 3 0 R /F 4 >>',
+            b'<< /Type /Annot /Subtype /Widget /Parent 8 0 R /Rect [30 250 200 275] /P 3 0 R /F 4 >>',
+        ]
     if retained_secret:
-        assert not form
         # A comment outside the redaction is kept, and still holds the secret.
-        objects[2] = objects[2][:-2] + b' /Annots [6 0 R] >>'
+        reference = f'{len(objects) + 1} 0 R'.encode()
+        if form:
+            objects[2] = objects[2].replace(b'] >>', b' ' + reference + b'] >>')
+        else:
+            objects[2] = objects[2][:-2] + b' /Annots [' + reference + b'] >>'
         objects.append(b'<< /Type /Annot /Subtype /Text /Rect [250 340 270 360] /Contents (PRIVATE-731) /F 2 >>')
     data = bytearray(b'%PDF-1.7\n')
     offsets = [0]
@@ -59,6 +71,78 @@ def fixture(path: Path, *, form: bool = False, content: bytes | None = None,
     path.write_bytes(data)
 
 
+def check_document_workflow(pdf: Tpdf, directory: Path, *, identity: str | None = None,
+                            retained_secret: bool = False, dry_run: bool = False) -> list[str]:
+    """Real fill/redact/readback pipeline, also reused by the opt-in OS-key check.
+
+    Select only the first of two widgets sharing a confidential value. Signing
+    must be downstream of a written AND verified redaction. A dry run or an
+    unverified written copy is not an approved document.
+    """
+    checks = []
+
+    def require(condition: bool, message: str) -> None:
+        if not condition:
+            raise RuntimeError(message)
+        checks.append(message)
+
+    source, filled, clean, signed = [directory / name for name in
+                                    ('form.pdf', 'filled.pdf', 'redacted.pdf', 'signed.pdf')]
+    fixture(source, form=True, private_form=True, retained_secret=retained_secret,
+            content=(b'BT /F1 14 Tf 30 100 Td (PUBLIC CONTROL) Tj ET\n'
+                     b'BT /F1 20 Tf 30 310 Td (PRIVATE-731) Tj ET'))
+    original = source.read_bytes()
+    pdf.fill(source, filled, {'Synthetic.answer': 'PUBLIC ANSWER', 'Synthetic.private': 'PRIVATE-731'})
+    filled_bytes = filled.read_bytes()
+    fields = pdf.fields(filled)['fields']
+    require(next(field for field in fields if field['name'] == 'Synthetic.private')['widgets'] == 2,
+            'workflow: confidential field has two widgets before redaction')
+    values = {field['name']: field['value'] for field in fields}
+    require(values == {'Synthetic.answer': 'PUBLIC ANSWER', 'Synthetic.private': 'PRIVATE-731'},
+            'workflow: both form values were filled')
+    before_png = directory / 'filled.png'
+    pdf.render(filled, before_png, dpi=72)
+    report = pdf.redact(filled, clean, regions=[{'page': 1, 'rect': [25, 65, 180, 40]}],
+                        dry_run=dry_run, check=False)
+    (directory / 'redaction-report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    if report['written'] is not True or report['verified'] is not True:
+        raise RuntimeError('workflow: redaction must be written and verified before signing')
+    require(not report['reasons'], 'workflow: redaction has no verification failures')
+
+    def readback(path: Path) -> None:
+        values = {field['name']: field['value'] for field in pdf.fields(path)['fields']}
+        require(values.get('Synthetic.answer') == 'PUBLIC ANSWER'
+                and 'PRIVATE-731' not in values.values(), f'workflow: {path.name} preserves only public form values')
+        text = pdf.text(path)['pages'][0]['text']
+        require('PUBLIC CONTROL' in text and 'PRIVATE-731' not in text,
+                f'workflow: {path.name} preserves public text and removes confidential text')
+        require(b'PRIVATE-731' not in path.read_bytes(), f'workflow: {path.name} has no literal secret bytes')
+        comments = pdf.comments(path)
+        require(comments['complete'] and all('PRIVATE-731' not in json.dumps(item)
+                                             for item in comments['comments']),
+                f'workflow: {path.name} has no confidential comment content')
+
+    readback(clean)
+    clean_png = directory / 'redacted.png'
+    rendered = pdf.render(clean, clean_png, dpi=72)
+    require((rendered['width_px'], rendered['height_px']) == (300, 400)
+            and clean_png.read_bytes() != before_png.read_bytes(), 'workflow: redaction changes the rendered page')
+    if identity is not None:
+        result = pdf.sign(clean, signed, identity=identity)
+        require(result['identity']['id'] == identity, 'workflow: signing uses the selected certificate')
+        signatures = pdf.verify(signed)['files'][0]['signatures']
+        require(len(signatures) == 1 and signatures[0]['integrity']['verdict'] == 'intact'
+                and signatures[0]['covers_whole_file'], 'workflow: signature is intact and covers the file')
+        require(signed.read_bytes().startswith(clean.read_bytes()), 'workflow: signing preserves the redacted revision')
+        readback(signed)
+        signed_png = directory / 'signed.png'
+        pdf.render(signed, signed_png, dpi=72)
+        require(signed_png.read_bytes() == clean_png.read_bytes(), 'workflow: invisible signing preserves redacted rendering')
+    require(source.read_bytes() == original and filled.read_bytes() == filled_bytes,
+            'workflow: source and filled input remain unchanged')
+    return checks
+
+
 class ClientTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='tpdf-api-')
@@ -67,6 +151,32 @@ class ClientTests(unittest.TestCase):
         self.source = self.root / 'synthetic input.pdf'
         fixture(self.source)
         self.pdf = Tpdf(BINARY, timeout=30)
+
+    def test_fill_redact_workflow(self):
+        checks = check_document_workflow(self.pdf, self.root)
+        self.assertGreaterEqual(len(checks), 8)
+        self.assertFalse((self.root / 'signed.pdf').exists())
+
+    def test_workflow_stops_before_signing_on_unverified_redaction_or_dry_run(self):
+        for name, options in [('retained', {'retained_secret': True}), ('dry-run', {'dry_run': True})]:
+            directory = self.root / name
+            directory.mkdir()
+            with self.subTest(case=name), patch.object(self.pdf, 'sign') as sign:
+                with self.assertRaisesRegex(RuntimeError, 'redaction must be written and verified'):
+                    check_document_workflow(self.pdf, directory, identity='SYNTHETIC NEVER USED', **options)
+                sign.assert_not_called()
+                self.assertFalse((directory / 'signed.pdf').exists())
+            report = json.loads((directory / 'redaction-report.json').read_text(encoding='utf-8'))
+            if name == 'retained':
+                self.assertIs(report['verified'], False)
+                self.assertIs(report['written'], True)
+                self.assertTrue(any('is still in the file' in reason for reason in report['reasons']))
+                self.assertTrue((directory / 'redacted.pdf').exists())
+                self.assertIn('PRIVATE-731', [item['body'] for item in self.pdf.comments(directory / 'redacted.pdf')['comments']])
+            else:
+                self.assertIs(report['written'], False)
+                self.assertIsNone(report['verified'])
+                self.assertFalse((directory / 'redacted.pdf').exists())
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}

@@ -5597,7 +5597,11 @@ complete edit/readback/extract workflow, merge order, split contents, selected-p
 rotation and cropping, structured refusals, protocol errors, option-like filenames,
 child-only passwords and process-tree timeout cleanup. Redaction tests cover text and
 stdin regions, preserved control text, dry runs, refusals, and a retained secret in
-an unrelated annotation that must leave the written copy unverified. The
+an unrelated annotation that must leave the written copy unverified. A composed
+fill/redact/readback workflow checks a confidential field with two widgets, selects
+only its first occurrence for redaction, and verifies that the public field and
+control text survive. A retained secret and a dry run must both stop before the
+signing call. The same workflow runs against extracted release packages. The
 Rust CLI integration section *JSON edit plans* separately reads written page
 content, annotation dictionaries and geometry. The *PNG rendering* section checks
 decoded colors across tile seams, saved crops and rotations, and output preservation
@@ -5617,7 +5621,10 @@ test identity; omit it when strict trust must pass. Optional `--timestamp digice
 enables the timestamp request. The check writes synthetic inputs, signed and tampered
 copies, rendered controls and a digest receipt for independent inspection. It checks
 identity selection, invisible and visible signatures, strict trust, tamper rejection,
-output preservation and optional timestamp integrity. Ordinary API tests exercise
+output preservation and optional timestamp integrity. It also runs the composed
+form workflow through signing, then re-reads form values, text, comments, signature
+integrity and coverage, and compares rendered output. Its digest receipt includes
+the nested workflow artifacts and the redaction report. Ordinary API tests exercise
 argument forwarding and refusals without signing with an installed identity. Successful
 long-term signing still requires a CA-issued certificate with working revocation services.
 
@@ -5631,6 +5638,17 @@ unit tests. Independent pyHanko readback accepted all eight signed outputs, conf
 both timestamps and visible reason/location metadata, and rejected all three tampered
 copies. These self-signed signers remained untrusted; successful CA-backed long-term
 signing was not established by this run.
+
+**Composed form workflow, 2026-09-29:** all 24 unattended API tests passed on
+macOS and native Windows. The extended OS-key check passed 34 assertions each for
+macOS RSA, Windows RSA and Windows ECDSA P-256, without timestamp requests in this
+run. Independent pyHanko verification accepted the three workflow signatures and
+matched their certificate digests to the selected identities. Independent form
+readback and PNG decoding confirmed that the second confidential widget disappeared
+while the public answer and control text retained their pixels. Moving the signing
+call ahead of redaction approval made both negative controls fail at the assertion
+that signing must not be called. Windows test keys and certificates were removed;
+the pre-existing certificate inventory was unchanged.
 
 The release job also runs `scripts/check_packaged_api.py` after bundling and
 notarization. It extracts the DMG and macOS updater archive, or both Windows
