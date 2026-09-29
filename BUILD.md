@@ -296,14 +296,20 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
-# pypdf on what `tpdf redact` writes: none of the matched strings in the text or the content
-# streams, both controls kept. TPDF_REDACT_PROBE leaves the input (the negative control), the
-# copy written by all three kinds of query at once, and the strings expected gone and kept.
-TPDF_REDACT_PROBE=/tmp/tpdf-redact cargo test --manifest-path src-tauri/Cargo.toml --test cli
+# pypdf on what `tpdf redact` writes: matched strings absent from page text, form values,
+# appearances and orphan objects, with the controls kept. Prove the independent checker first.
+uv run --with pypdf scripts/redact_pdf_check.py --self-test
+# TPDF_REDACT_PROBE leaves input/output pairs and their expectations, including one field
+# whose widgets and distinct appearances are on two pages but only one widget is covered.
+TPDF_REDACT_PROBE=/tmp/tpdf-redact cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli
 uv run --with pypdf scripts/redact_pdf_check.py /tmp/tpdf-redact/contacts-redacted.pdf \
     /tmp/tpdf-redact/contacts-expected.json
 uv run --with pypdf scripts/redact_pdf_check.py /tmp/tpdf-redact/contacts.pdf \
     /tmp/tpdf-redact/contacts-expected.json --expect-fail
+uv run --with pypdf scripts/redact_pdf_check.py /tmp/tpdf-redact/multi-widget-redacted.pdf \
+    /tmp/tpdf-redact/multi-widget-expected.json
+uv run --with pypdf scripts/redact_pdf_check.py /tmp/tpdf-redact/multi-widget.pdf \
+    /tmp/tpdf-redact/multi-widget-expected.json --expect-fail
 
 # The same readers on what `tpdf fill` writes. TPDF_FILL_PROBE leaves the filled files, and
 # their inputs as the negative controls, in a scratch directory.
@@ -5598,14 +5604,20 @@ the record.
   token over what the request carried: sound, read back intact and attested by the built tool
   and the in-process reader alike; and six failures --- another imprint, another nonce, an SHA-1
   signature, a refusal carrying a token, an answer too long, nobody listening --- each exit 3
-  with nothing written, and an `ftp:` address exit 2. Its containment runs a dry run and a write under `DYLD_PRINT_LIBRARIES`,
-  where the processes beside the PDFium workers that map none are the OCR worker and a spare
-  that ended without a document. The parts that bind PDFium in
+  with nothing written, and an `ftp:` address exit 2. Its macOS containment check injects a
+  test-only dyld callback library, compiled with `clang`, which logs images per PID. The
+  coordinator is identified by the PID returned from spawning it; its log must include
+  initialization, known images and completion. Loading PDFium into that PID, or starting
+  no engine-loading worker, makes the negative controls fail. Shared dyld stderr is not
+  used as evidence because its records can interleave. The parts that bind PDFium in
   this process run after the one asserting it has not. Without generated fixtures (*Test
   fixtures*) the fixture parts say `[SKIP]`.
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test cli      # 226 checks, ~100 s debug
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli
+# Focused diagnosis: list sections, then run one without the rest of the suite.
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --list
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test cli -- --filter 'never maps'
 cargo test --manifest-path src-tauri/Cargo.toml --lib cli::     # includes clitool::
 ```
 
@@ -6023,6 +6035,24 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**Post-release verification, 2026-09-29:** all 27 gates passed on macOS arm64
+(2,328 Rust unit tests, nine documented ignored tests; 1,963 frontend tests; 253 CLI
+checks). The run took 859.9 s across its gates. The CLI's parity section spent 191.2 s
+in repeated CoreFoundation enumeration of the large Cargo cache; after moving only
+the macOS test runner into a temporary directory, the full CLI passed 253/253 and
+parity passed 13/13. The loader observation now uses per-process logs with deliberate
+failure controls. The two-page, shared-field redaction case passes on macOS and Windows;
+reintroducing the field-removal defect fails four of its five checks. Independent
+pypdf reads reject the original and defective output and accept the corrected output.
+
+On Windows 11 build 26200, the native trust suite passed 23 tests (the contained child
+is ignored in ordinary discovery and explicitly run by its parent), and the CLI passed
+240 checks with one macOS-only skip. Native all-target Clippy and formatting passed.
+Real ROOT-store verdicts agree under low-integrity/job containment and outside it;
+`docs/THREAT-MODEL.md` §T6.22 records the controls and account limitations. Installed
+Windows GUI signing with an OS-held key under an ordinary account remains unmeasured.
+This verification did not build or publish a release.
+
 **26.9.22 verification, macOS arm64, 2026-09-28:** all 27 gates passed on the final tree,
 `check_windows.py` type-checked the Windows tree, and CI passed both legs on every pushed
 commit of the cycle up to `b94cccf`. No npm update was available. `cargo update` offered only
@@ -6177,6 +6207,16 @@ release is Latest. Fetched without an account, the `.dmg`, `.msi`, `-setup.exe` 
 clone not made after it will be too.** `git fetch` does not overwrite an existing tag, so
 `v26.9.17` still named a commit with no merge base with `main`. Every `--since` run then stopped at *"git
 could not diff against 'v26.9.17'"*. `git fetch origin --tags --force` once per clone fixes it.
+
+**Historical binary provenance, checked 2026-09-29:** the 31 published tags from
+`v26.8.0` through `v26.9.17` were rewritten, while their binaries retain their original
+successful release builds. Full-tree comparisons against those build commits found exactly
+one changed path per tag: `AGENTS.md`, which the application build does not package or read.
+The application and build files are byte-identical. The five later releases through
+`v26.9.22` still point at their build commits. [The provenance mapping](docs/release-provenance.json)
+records each original build commit, workflow run, current tag commit and changed blob.
+Affected release notes identify the original build. This is source comparison evidence,
+not a claim that the binaries were rebuilt or reproduced; tags and binaries were preserved.
 
 **26.9.17 verification, macOS arm64, 2026-09-23:** all 26 gates passed on the release tree
 (1,886 Rust tests with three expected skips, 1,782 frontend) and `check_windows.py`

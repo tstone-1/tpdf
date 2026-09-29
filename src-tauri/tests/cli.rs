@@ -5,7 +5,7 @@
 //! here the current binary is this test. So the first thing `main` does is be
 //! a worker when asked --- exactly what `cli::main` does in the shipped tool.
 //!
-//! Four checks, each with the control that keeps it from passing vacuously:
+//! Checks with controls that keep them from passing vacuously:
 //!
 //! 1. **`verify` agrees with the in-process reader** on every signed fixture,
 //!    signature by signature --- run as the **built binary**
@@ -34,7 +34,7 @@
 //!    and writes nothing. Control: an address that is not `http`/`https` is
 //!    exit 2, before anything is asked.
 //! 3. **The tool's own process never maps PDFium, and its workers do** (macOS:
-//!    `DYLD_PRINT_LIBRARIES` on the built binary, separated by pid; both
+//!    an injected dyld callback logs each image to a private per-PID file; both
 //!    platforms: this process's own module list after `cli::run` has verified a
 //!    document, with PDFium bound in-process last as the control that the list
 //!    can show it).
@@ -88,6 +88,9 @@ use x509_cert::time::{Time, Validity};
 #[path = "cli/forms.rs"]
 mod forms;
 // `redact`, for the same reason.
+#[cfg(target_os = "macos")]
+#[path = "cli/image_log.rs"]
+mod image_log;
 #[path = "cli/redact.rs"]
 mod redact;
 // The software timestamp authority the library's unit tests mint tokens with,
@@ -105,9 +108,11 @@ fn main() {
     if argv.get(1).map(String::as_str) == Some(worker::WORKER_ARGV) {
         worker_child::main(&argv);
     }
-    // The order is load-bearing: 3 asserts this process has not mapped PDFium,
-    // and 5 and 6 map it here to extract in-process, so they come after.
-    let checks: [Check; 16] = [
+    #[cfg(target_os = "macos")]
+    run_outside_cargo_deps(&argv);
+    // The order is load-bearing: never_maps_pdfium asserts this process has
+    // not mapped PDFium, so it must precede the in-process PDFium readers.
+    let checks: [Check; 17] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -147,6 +152,10 @@ fn main() {
             redact::removes_what_it_finds,
         ),
         (
+            "redact removes every widget of a covered field",
+            redact::widgets_are_removed,
+        ),
+        (
             "redact's verdict is the application's",
             redact::verdict_is_the_applications,
         ),
@@ -155,16 +164,71 @@ fn main() {
             redact::refusals_write_nothing,
         ),
     ];
+    // Run a focused section with `cargo test --test cli -- --filter <name>`.
+    // No arguments still runs the complete gate. An empty selection fails.
+    let filter = match &argv[1..] {
+        [] => None,
+        [flag] if flag == "--list" => {
+            for (name, _) in checks {
+                println!("{name}");
+            }
+            return;
+        }
+        [flag, name] if flag == "--filter" => Some(name.as_str()),
+        _ => {
+            eprintln!("usage: cli [--list | --filter <section substring>]");
+            std::process::exit(2);
+        }
+    };
     let mut report = Report::default();
     for (name, check) in checks {
+        if filter.is_some_and(|filter| !name.contains(filter)) {
+            continue;
+        }
         println!("--- {name}");
+        let started = std::time::Instant::now();
         check(&mut report);
+        println!(
+            "[INFO] finished {name} in {:.1}s",
+            started.elapsed().as_secs_f64()
+        );
     }
     println!(
         "\ncli: {} passed, {} failed, {} skipped",
         report.passed, report.failed, report.skipped
     );
     std::process::exit(i32::from(report.failed > 0 || report.passed == 0));
+}
+
+/// CoreFoundation enumerates the executable's directory while Vision warms.
+/// A long-lived Cargo deps directory can contain over a million artifacts;
+/// every OCR worker then pays that listing again. Run this test executable
+/// (and its re-executed workers) from a directory containing only itself.
+/// Compile-time fixture/library/tool paths stay the same. Worker dispatch
+/// comes first, and the copy's parent is not named deps, so it cannot recurse.
+#[cfg(target_os = "macos")]
+fn run_outside_cargo_deps(argv: &[String]) {
+    use std::os::unix::process::ExitStatusExt as _;
+    let current = std::env::current_exe().expect("integration executable path");
+    if current
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|p| p.to_str())
+        != Some("deps")
+    {
+        return;
+    }
+    let directory = scratch("runner");
+    let copy = directory.join("cli-check");
+    std::fs::copy(&current, &copy).expect("copy integration executable");
+    let result = Command::new(&copy).args(&argv[1..]).status();
+    std::fs::remove_dir_all(&directory).expect("remove private integration runner");
+    let status = result.expect("private integration runner finishes");
+    std::process::exit(
+        status
+            .code()
+            .unwrap_or_else(|| 128 + status.signal().unwrap_or(1)),
+    );
 }
 
 /// One named check over the shared report.
@@ -1756,16 +1820,14 @@ fn never_maps_pdfium(report: &mut Report) {
 
     #[cfg(target_os = "macos")]
     {
-        // The built binary, from outside: dyld names every image each process
-        // loads, prefixed by its pid, and the workers inherit the variable.
-        let (code, _, stderr) = tool(&["verify", &shown], &[("DYLD_PRINT_LIBRARIES", "1")]);
-        // `info`, `text`, `fields` and `fill` read the document through the
-        // same workers; each is held to the same rule, by the same parse of
-        // dyld's output. `fill` spawns three --- the reading, the writing and
-        // the read-back --- and every one of them is a worker here.
+        // An injected test library registers dyld's image-add callback. Each
+        // process opens its own log before containment; the parent is the PID
+        // returned by spawn, never inferred from the images being checked.
+        let observer = image_log::compile(&dir);
         let filled = dir.join("filled.pdf").display().to_string();
         let redacted = dir.join("redacted.pdf").display().to_string();
-        let lines: [Vec<&str>; 6] = [
+        let lines: [Vec<&str>; 7] = [
+            vec!["verify", &shown],
             vec!["info", &shown],
             vec!["text", &shown],
             vec!["fields", &form_shown],
@@ -1793,123 +1855,62 @@ fn never_maps_pdfium(report: &mut Report) {
                 "Rumpelstilzchen",
             ],
         ];
-        for line in &lines {
+        for (at, line) in lines.iter().enumerate() {
             let command = if line.contains(&"--dry-run") {
                 "redact --dry-run"
             } else {
                 line[0]
             };
-            let (code, _, stderr) = tool(line, &[("DYLD_PRINT_LIBRARIES", "1")]);
-            let parents: std::collections::BTreeSet<String> = stderr
-                .lines()
-                .filter_map(|line| line.strip_prefix("dyld["))
-                .filter_map(|rest| rest.split_once("]: "))
-                .filter(|(_, image)| image.ends_with("/tpdf-cli"))
-                .map(|(pid, _)| pid.to_string())
-                .collect();
-            let mapped_by = |pid: &str| {
-                stderr
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("dyld["))
-                    .filter_map(|rest| rest.split_once("]: "))
-                    .filter(|(p, _)| *p == pid)
-                    .any(|(_, image)| image.to_ascii_lowercase().contains("pdfium"))
-            };
-            // The tool is the one process running tpdf-cli that maps no PDFium;
-            // every worker is tpdf-cli too, and maps it --- except two of
-            // `redact`'s, whose render service is the application's: the OCR
-            // worker, which reads pixels and never a document, and a spare the
-            // pool pre-spawned and nobody handed a document before the tool
-            // exited, which ends before it maps anything. So the tool is named
-            // by being first --- dyld's first line is the process that was
-            // started, before it could spawn anything --- and `redact` is
-            // allowed those two beside it, and one more. Every process here
-            // writes its dyld lines to the one stderr, and they interleave
-            // mid-line (`libCheckFix.dylidyld[55923]: <uuid>b`, captured
-            // 2026-09-27), so a worker whose `libpdfium` line was cut in two
-            // counts as clean. `redact` runs the most processes for the longest,
-            // and a full gate run saw 4 clean where four runs alone saw 2 or 3.
-            // The slack is in the upper bound only; the two assertions that
-            // carry the claim --- the first process maps no PDFium, a worker
-            // does --- are not loosened.
-            let clean = parents.iter().filter(|pid| !mapped_by(pid)).count();
-            let workers = parents.iter().filter(|pid| mapped_by(pid)).count();
-            let first = stderr
-                .lines()
-                .filter_map(|line| line.strip_prefix("dyld["))
-                .find_map(|rest| rest.split_once("]: ").map(|(pid, _)| pid.to_string()));
-            let tool_clean = first
-                .as_deref()
-                .is_some_and(|pid| parents.contains(pid) && !mapped_by(pid));
-            let (ok, ocr) = match command {
-                "redact" => (code == 0 || code == 1, 3),
-                "redact --dry-run" => (code == 0, 1),
-                _ => (code == 0, 0),
-            };
+            let observed = image_log::run(&observer, &dir.join(format!("images-{at}")), line, None);
+            let boundary = observed.boundary(if command == "fill" { 3 } else { 1 });
+            let ok = observed.code == 0 || (command == "redact" && observed.code == 1);
             report.check(
                 &format!("{command}: the tool's own process never loaded PDFium, and a worker did"),
-                ok && tool_clean
-                    && clean <= 1 + ocr
-                    && workers >= if command == "fill" { 3 } else { 1 },
-                &format!("exit {code}, {clean} clean, {workers} with PDFium"),
+                ok && boundary.is_ok(),
+                &format!("exit {}: {boundary:?}; {}", observed.code, observed.stderr),
             );
-        }
-        let mut by_pid: std::collections::BTreeMap<String, Vec<String>> = Default::default();
-        for line in stderr.lines() {
-            if let Some(rest) = line.strip_prefix("dyld[") {
-                if let Some((pid, image)) = rest.split_once("]: ") {
-                    by_pid
-                        .entry(pid.to_string())
-                        .or_default()
-                        .push(image.to_string());
-                }
+            if at == 0 {
+                report.check(
+                    "control: losing the parent's loader log cannot establish its boundary",
+                    observed.without_parent_log().boundary(1).is_err(),
+                    "an absent parent observation passed",
+                );
             }
         }
-        // The tool is the process that loaded the tool's own image.
-        let tool_pid = by_pid
-            .iter()
-            .find(|(_, images)| {
-                images.iter().any(|i| i.ends_with("/tpdf-cli")) && !pdfium_in(images)
-            })
-            .or_else(|| {
-                by_pid
-                    .iter()
-                    .find(|(_, images)| images.first().is_some_and(|i| i.ends_with("/tpdf-cli")))
-            })
-            .map(|(pid, _)| pid.clone());
-        let workers: Vec<&String> = by_pid
-            .iter()
-            .filter(|(pid, _)| Some(*pid) != tool_pid.as_ref())
-            .map(|(pid, _)| pid)
-            .collect();
-        let tool_images = tool_pid
-            .as_ref()
-            .and_then(|p| by_pid.get(p))
-            .cloned()
-            .unwrap_or_default();
-        report.check(
-            "the built tool verified the document",
-            code == 0,
-            &format!("exit {code}"),
+        // Real-process negative controls exercise both halves separately.
+        // Loading PDFium into the coordinator must fail even if workers load
+        // it too; a valid help command has a readable parent but no workers.
+        let mapped = image_log::run(
+            &observer,
+            &dir.join("parent-mapped"),
+            &["verify", &shown],
+            Some(&library_dir().join("libpdfium.dylib")),
         );
         report.check(
-            "control: dyld's list for the tool's process is readable (libSystem is in it)",
-            tool_images.iter().any(|i| i.contains("libSystem")),
+            "control: PDFium injected into the launched process is detected",
+            mapped.code == 0
+                && mapped
+                    .boundary(1)
+                    .is_err_and(|why| why == "the launched PID loaded PDFium"),
             &format!(
-                "{} images from {} processes",
-                tool_images.len(),
-                by_pid.len()
+                "exit {}: {:?}; {}",
+                mapped.code,
+                mapped.boundary(1),
+                mapped.stderr
             ),
         );
+        let no_workers = image_log::run(&observer, &dir.join("no-workers"), &["--help"], None);
         report.check(
-            "the tool's own process never loaded PDFium",
-            !tool_images.is_empty() && !pdfium_in(&tool_images),
-            &format!("{tool_images:?}"),
-        );
-        report.check(
-            "control: a worker it spawned did load PDFium",
-            workers.iter().any(|pid| pdfium_in(&by_pid[*pid])),
-            &format!("{} other processes", workers.len()),
+            "control: a readable clean parent without an engine-loading worker fails",
+            no_workers.code == 0
+                && no_workers.boundary(0).is_ok()
+                && no_workers.boundary(1).is_err(),
+            &format!(
+                "exit {}: {:?}; {}",
+                no_workers.code,
+                no_workers.boundary(1),
+                no_workers.stderr
+            ),
         );
     }
 

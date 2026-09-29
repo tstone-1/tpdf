@@ -65,6 +65,193 @@ fn untrusted(why: Doubt) -> Trust {
 mod platform_tests {
     use super::*;
 
+    /// Read each Windows ROOT view without opening it for writes. At least one
+    /// presently valid root in each view must pass the production system engine.
+    /// No personal certificate names or certificate bytes enter the test log.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_system_root_is_trusted() {
+        for line in windows_system_root_outcomes() {
+            println!("{line}");
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_system_root_outcomes() -> Vec<String> {
+        use sha2::Digest;
+        let mut outcomes = Vec::new();
+        use windows_sys::Win32::Security::Cryptography::{
+            CertCloseStore, CertEnumCertificatesInStore, CertOpenStore,
+            CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_PROV_SYSTEM_W, CERT_STORE_READONLY_FLAG,
+            CERT_SYSTEM_STORE_CURRENT_USER, CERT_SYSTEM_STORE_LOCAL_MACHINE,
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs();
+        let name: Vec<u16> = "ROOT\0".encode_utf16().collect();
+        for (label, location) in [
+            ("current user", CERT_SYSTEM_STORE_CURRENT_USER),
+            ("local machine", CERT_SYSTEM_STORE_LOCAL_MACHINE),
+        ] {
+            let store = unsafe {
+                CertOpenStore(
+                    CERT_STORE_PROV_SYSTEM_W,
+                    0,
+                    0,
+                    location | CERT_STORE_READONLY_FLAG | CERT_STORE_OPEN_EXISTING_FLAG,
+                    name.as_ptr().cast(),
+                )
+            };
+            assert!(!store.is_null(), "cannot read {label} ROOT store");
+            let mut context = std::ptr::null();
+            let mut candidates = Vec::new();
+            // Enumeration releases its preceding context, including on exhaustion.
+            loop {
+                context = unsafe { CertEnumCertificatesInStore(store, context) };
+                if context.is_null() {
+                    break;
+                }
+                candidates.push(platform::encoded(context));
+            }
+            let enumeration_error = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+            unsafe { CertCloseStore(store, 0) };
+            assert_eq!(
+                enumeration_error, 0x8009_2004,
+                "{label} ROOT enumeration did not finish"
+            );
+            assert!(!candidates.is_empty(), "{label} ROOT store is empty");
+            candidates.sort();
+            let mut digest = sha2::Sha256::new();
+            let mut accepted = 0;
+            for der in &candidates {
+                let found = Certificate::from_der(der)
+                    .map(|certificate| {
+                        judge(&certificate, now, |at| {
+                            platform::evaluate(der, &[], Anchors::System, at)
+                        })
+                    })
+                    .unwrap_or_else(|_| Trust::unchecked(Doubt::Certificate));
+                accepted += usize::from(found == trusted());
+                digest.update(der.len().to_le_bytes());
+                digest.update(der);
+                digest.update(serde_json::to_vec(&found).unwrap());
+            }
+            outcomes.push(format!(
+                "{label} ROOT: {} certificates, {accepted} trusted for documents; outcomes {}",
+                candidates.len(),
+                crate::docinfo::hex_of(&digest.finalize())
+            ));
+            assert!(accepted > 0, "no usable trusted root in {label} ROOT store");
+        }
+        outcomes
+    }
+
+    /// This test is called only by the parent below: running it as an ordinary
+    /// test would measure the test runner's token instead of a worker's token.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "spawned by windows_worker_trust_matches_uncontained_controls"]
+    fn contained_windows_trust_child() {
+        // Observe the token and the job, then an actual denied write. Equality
+        // of trust verdicts alone would also pass with containment removed.
+        assert_eq!(crate::sandbox_win::integrity_level().unwrap(), 0x1000);
+        assert!(crate::sandbox_win::in_any_job().unwrap());
+        let path = std::env::current_dir()
+            .unwrap()
+            .join(format!("tpdf-trust-denied-{}.tmp", std::process::id()));
+        let write = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path);
+        if write.is_ok() {
+            drop(write);
+            let _ = std::fs::remove_file(&path);
+            panic!("low-integrity child could write its medium-integrity working directory");
+        }
+        assert_eq!(
+            write.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        windows_trust_controls();
+        println!("[PASS] contained Windows trust controls");
+    }
+
+    #[cfg(windows)]
+    fn windows_trust_controls() {
+        a_windows_system_root_is_trusted();
+        a_chain_to_an_anchor_is_trusted();
+        a_self_signed_certificate_nobody_anchored_ends_at_an_untrusted_root();
+        a_missing_intermediate_is_a_missing_link_not_an_untrusted_root();
+        a_certificate_that_has_expired_since_reads_as_expired();
+        an_expired_certificate_nobody_vouched_for_is_untrusted_not_expired();
+        a_certificate_not_yet_in_force_reads_as_not_yet_valid();
+        a_certificate_issued_only_for_web_servers_is_not_trusted_for_signing();
+        a_blob_is_read_for_its_signer_and_the_rest_of_its_set();
+        super::authority_tests::a_minted_authority_chains_to_its_root_for_timestamping();
+        super::authority_tests::an_authority_not_issued_for_timestamping_is_not_trusted_for_it();
+    }
+
+    /// Run this test's contained child before its uncontained controls, so the
+    /// comparison does not itself warm the store before measuring the boundary.
+    /// Other trust tests may run concurrently; this is not a cold-cache claim.
+    #[cfg(windows)]
+    #[test]
+    fn windows_worker_trust_matches_uncontained_controls() {
+        use crate::sandbox_win::{spawn_contained, Containment, Stdio};
+        use std::io::Read;
+        use std::os::windows::io::{AsRawHandle, FromRawHandle};
+        let writable = std::env::current_dir()
+            .unwrap()
+            .join(format!("tpdf-trust-control-{}.tmp", std::process::id()));
+        let control = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&writable)
+            .expect("the parent must be able to write the probe directory");
+        drop(control);
+        std::fs::remove_file(writable).unwrap();
+        let (read, write) = crate::sandbox_win::pipe().unwrap();
+        let mut output = unsafe { std::fs::File::from_raw_handle(read) };
+        let output_write = unsafe { std::fs::File::from_raw_handle(write) };
+        let output_error = output_write.try_clone().unwrap();
+        let input = std::fs::File::open("NUL").unwrap();
+        let stdio = Stdio {
+            stdin: input.as_raw_handle(),
+            stdout: output_write.as_raw_handle(),
+            stderr: output_error.as_raw_handle(),
+        };
+        let executable = std::env::current_exe().unwrap();
+        let command = format!(
+            "\"{}\" --exact trust::tests::platform_tests::contained_windows_trust_child --ignored --nocapture",
+            executable.display()
+        );
+        let child = spawn_contained(&command, &[], &Containment::default(), Some(&stdio)).unwrap();
+        drop(output_write);
+        drop(output_error);
+        let reader = std::thread::spawn(move || {
+            let mut text = String::new();
+            output.read_to_string(&mut text).unwrap();
+            text
+        });
+        child.resume().unwrap();
+        let code = child.wait_timeout(60_000).unwrap();
+        if code.is_none() {
+            child.kill().unwrap();
+        }
+        let text = reader.join().unwrap();
+        println!("{text}");
+        assert_eq!(code, Some(0), "contained trust test failed: {text}");
+        assert!(text.contains("[PASS] contained Windows trust controls"));
+        for expected in windows_system_root_outcomes() {
+            assert!(
+                text.lines().any(|line| line == expected),
+                "system store outcomes differ from child: {expected}\n{text}"
+            );
+        }
+        windows_trust_controls();
+    }
+
     #[test]
     fn a_chain_to_an_anchor_is_trusted() {
         // The control. A checker that answered "not trusted" for everything
@@ -303,7 +490,7 @@ mod authority_tests {
     }
 
     #[test]
-    fn a_minted_authority_chains_to_its_root_for_timestamping() {
+    pub(super) fn a_minted_authority_chains_to_its_root_for_timestamping() {
         // The control: the minter's authority, anchored at its own root, is
         // what increment B's fake timestamp authority will present.
         let tsa = TestTsa::new();
@@ -328,7 +515,7 @@ mod authority_tests {
     }
 
     #[test]
-    fn an_authority_not_issued_for_timestamping_is_not_trusted_for_it() {
+    pub(super) fn an_authority_not_issued_for_timestamping_is_not_trusted_for_it() {
         for purposes in [None, Some(&[EMAIL_PROTECTION][..])] {
             let tsa = TestTsa::with_purposes(purposes);
             let roots = std::slice::from_ref(&tsa.root);

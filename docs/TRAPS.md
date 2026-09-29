@@ -24956,6 +24956,15 @@ shared stream --- dyld, `log`, a worker's own `eprintln!` --- has the same weakn
 of what is *absent* from a process is inflated by every mangled line, and a count of what is
 present is not.
 
+**Correction, 2026-09-29:** the claim above that both important assertions survive was
+wrong. A real run reported zero workers mapping PDFium. Interleaving can lose that observation
+or attribute an image to a different process. Increasing a count allowance
+cannot repair that observation channel. The CLI integration check now injects a test-only
+dyld image observer that writes a separate log per process, and identifies the coordinator
+by the PID returned when spawning it. Controls deliberately load PDFium into the coordinator
+and run a command that starts no worker; both must be rejected. This changes the test's
+instrument, not the shipped worker or its containment.
+
 ### Tauri 2.12 puts an empty `msvcrt.lib` on the library path of everything that depends on `tpdf`
 
 2026-09-27, cutting 26.9.21. The dependency update took `tauri-build` from 2.6.3 to 2.7.0, and
@@ -25040,6 +25049,17 @@ not the application's**: the shipped executables sit in `Contents/MacOS` beside 
 the network's own share --- 0.36 s DigiCert, 2.1 s Sectigo, 0.39 s GlobalSign by `curl` --- is what
 a reader waits for. The first `SecTrust` call's 5 to 19 s (*The first Security-framework call in a
 process can cost seconds*) may be the same listing; that was not measured.
+
+**Measured again, 2026-09-29:** the CLI integration test's OCR worker spent its
+Vision/Metal startup in the same CoreFoundation directory walk, before containment.
+A process sample identified the walk and its open directory descriptor named
+`target/debug/deps`, which held about 1.57 million entries. The complete CLI parity
+section took 191.2 s there; an identical executable copied into a fresh directory
+passed the same 13 checks in 1.9 s after an initial run. The macOS CLI test harness
+now copies itself out of Cargo's `deps` directory before running its checks; workers
+re-execute that copy. Arguments and exit codes are preserved, and the parent removes
+the temporary directory after the child exits. The shipped executable and containment
+are unchanged. Clearing the build cache is not a prerequisite for running the tests.
 
 ### OpenSSL refused Sectigo's timestamp given every system root, and accepted it given the one root the token names
 

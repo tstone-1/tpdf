@@ -1,0 +1,477 @@
+{
+  "schema_version": 1,
+  "repository": "tstone-1/tpdf",
+  "verified_on": "2026-09-29",
+  "scope": "Published stable application releases through v26.9.22. Full source-tree comparison against successful release workflow commits; not a binary reproducibility claim.",
+  "releases": [
+    {
+      "version": "v26.9.22",
+      "build_commit": "1978cada7e53b966d8fb8ab905a9fac00b3e8b7f",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/36479448158",
+      "current_tag_commit": "1978cada7e53b966d8fb8ab905a9fac00b3e8b7f",
+      "changed_paths": []
+    },
+    {
+      "version": "v26.9.21",
+      "build_commit": "7313840a94fbcceddcb5e2870234c8e4c302ac14",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/36350766559",
+      "current_tag_commit": "7313840a94fbcceddcb5e2870234c8e4c302ac14",
+      "changed_paths": []
+    },
+    {
+      "version": "v26.9.20",
+      "build_commit": "bfa20f1e43cd26bacfaa441c1bf7f27b9c805cdd",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/36241244294",
+      "current_tag_commit": "bfa20f1e43cd26bacfaa441c1bf7f27b9c805cdd",
+      "changed_paths": []
+    },
+    {
+      "version": "v26.9.19",
+      "build_commit": "7a303fc3a442c8dfe76dc3490f9d5f6e85021677",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/36210816941",
+      "current_tag_commit": "7a303fc3a442c8dfe76dc3490f9d5f6e85021677",
+      "changed_paths": []
+    },
+    {
+      "version": "v26.9.18",
+      "build_commit": "11fc587eac182f4fa126400b55c60a8648acd545",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/36051914575",
+      "current_tag_commit": "11fc587eac182f4fa126400b55c60a8648acd545",
+      "changed_paths": []
+    },
+    {
+      "version": "v26.9.17",
+      "build_commit": "703ce122d1d24c787a599abcf7bc9db38e8fcded",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35926997120",
+      "current_tag_commit": "0f43908911947c19830d74076ec63f38c24d43d8",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "d62e30bef57c934b91b116dce07d9bcf4433413d",
+          "tag_blob": "bed541f34f3f434fe2164a179c13cb3df3fc7fc1"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.16",
+      "build_commit": "37474f44b5ce919df1bcb43af0bb3e0c08ff23c1",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35536185621",
+      "current_tag_commit": "b08a15f7c858be7407a00fbec5bec2500aa343ca",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "023a4bd27af6b6e93a04bc1ddba2f4fda963770b",
+          "tag_blob": "0a204bc21a2eba8968e2dd66f4010629998588e1"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.15",
+      "build_commit": "b22b477dd486cb36d3e9e74a710414961ecd0ae5",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35516912238",
+      "current_tag_commit": "b243e405a1a2b6af34f803cf7d0768b36bbd459c",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "023a4bd27af6b6e93a04bc1ddba2f4fda963770b",
+          "tag_blob": "0a204bc21a2eba8968e2dd66f4010629998588e1"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.14",
+      "build_commit": "0b85a68aa2bdc5ebcd31513c98a6a1b5a727468c",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35456576271",
+      "current_tag_commit": "1e69f68761a561652f87128ccda233d1e3c6b23e",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "023a4bd27af6b6e93a04bc1ddba2f4fda963770b",
+          "tag_blob": "0a204bc21a2eba8968e2dd66f4010629998588e1"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.13",
+      "build_commit": "020c487e01dd78b3db9ce7c61bd694b58391e159",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35441022587",
+      "current_tag_commit": "550085fe7befd9803f59a059f947ad6f0e792e10",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "e67d399154d1cc8473f30c8d84eac06d99310867",
+          "tag_blob": "425439b4626149600e300e7e2a53fe1ce8d8647f"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.12",
+      "build_commit": "86a8024d2e22d57bebfef229ef5fe1acbb4541a7",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35362415340",
+      "current_tag_commit": "54671f88c3f76e483b67ba3dc03d0c1fab10ce05",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "e67d399154d1cc8473f30c8d84eac06d99310867",
+          "tag_blob": "425439b4626149600e300e7e2a53fe1ce8d8647f"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.11",
+      "build_commit": "119ac00423b79c34229b8beef4fee609bd61e1b7",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35233118530",
+      "current_tag_commit": "de9a2e1a4e2bee1eaa4e3c87959dfb7884524eb6",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "2cad5248b5f39a3ce80be3511fb19b593ff638e3",
+          "tag_blob": "741635f5d03578cf0498fab7f26f0a4dc28e0a70"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.10",
+      "build_commit": "163858e2ec0b438bc42246c76f2a5cff7d4b2006",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35200546939",
+      "current_tag_commit": "5dabd275e9490dd3daa79f9dd1234a0acb48a5a7",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "01aa311f756486e0bfa88f2b6461b80cd7a0c696",
+          "tag_blob": "ab800b96b42e90b9b769b517d020a07bdc01894a"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.9",
+      "build_commit": "3fc05c2553760876adfee289a245716f4a192b4d",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35121225231",
+      "current_tag_commit": "812601d332b9f0f27234eb43aedc03fc996c50f3",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "1295b57f50efb28f1b0ab3b990902f7ff270ec72",
+          "tag_blob": "04d8850ca280c5c51e5a5bfd35560c4fbffe5afe"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.8",
+      "build_commit": "353f43bbc61ba9bdf11932a4e509f4de66be1d75",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/35087285777",
+      "current_tag_commit": "3896f525ccda77c8951276c19a6a446aa879cbd4",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "754ba50358b29c1ed51761af8a2f50d30ea3bf9c",
+          "tag_blob": "fa8662b8c9baa93b4f0f07b01fc2e4118abec668"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.7",
+      "build_commit": "baf84e6ae182f233dcba50ed3180c53ee156a9c2",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/34824435182",
+      "current_tag_commit": "4564f953747a763b97ed7cc72c30cebc285c19e9",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "311bca72f21a74b00ad73db5c9e8eea0ca218bf6",
+          "tag_blob": "01625ed739618ffc37dbad89f02f5d24dd42ec80"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.6",
+      "build_commit": "928d1023953407d33437edfd8d8c3630d4aa6416",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/34697129818",
+      "current_tag_commit": "8a768c08956269052499b2a452c2334ee9051792",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "e5ccfcf3b1b3b924aa5e37f57844b4f903865045",
+          "tag_blob": "e44a45ecb2aa23f9b55837300963e5e41f0ae463"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.5",
+      "build_commit": "bf6a901f3c5d84199773bcc78897d8f15d5f88d9",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/34632163228",
+      "current_tag_commit": "51a56e1b9810da855264bebabab7b2a9963bf7ae",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "f682c93ad870350616ca08001207ed2950fc63d4",
+          "tag_blob": "b44d977f5f7e4b87d1afabbda0232949d69da737"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.4",
+      "build_commit": "601ae69faf4c7f57fb2e014ccbdcf1acd5946954",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/34506017112",
+      "current_tag_commit": "5ceb3e1ded66ccd67b28ba786607efae5ca45e5c",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "7ac86db327077b9eefd08b229f616322b4261da6",
+          "tag_blob": "ceb5c786550688a85df51035f2085f3793e584c3"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.3",
+      "build_commit": "a44300e9c197b76131da21d91024a4b521ab2c52",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/34144890388",
+      "current_tag_commit": "2a5810b63ff42fc68b237884344f7949a02770a1",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "5e31e81872228ffeb1a9482ad85e0b73f8b93ffb",
+          "tag_blob": "1cc491b1ded955e56880015eebcc526f4f4b44a4"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.2",
+      "build_commit": "7092fd0d4ce3d926d988cdd539a036f8903959d8",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/34055230755",
+      "current_tag_commit": "353ac433efda164dbdd943c04838f197fcdfdc68",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "5e31e81872228ffeb1a9482ad85e0b73f8b93ffb",
+          "tag_blob": "1cc491b1ded955e56880015eebcc526f4f4b44a4"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.1",
+      "build_commit": "9b65848db94dfb8d55dc3a10bb1cb5c5bc0f65ae",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/33725078251",
+      "current_tag_commit": "adead6c995e4fd697fc1612dd1a562c6b31fd101",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "69b8c60d9678a62dcd8092c639c3f9c901b38d7f",
+          "tag_blob": "092ad889d0c407f0326120810cbc6b99692ff7b6"
+        }
+      ]
+    },
+    {
+      "version": "v26.9.0",
+      "build_commit": "a99548c789e844281b83cf1ee48a2af0a4cb63f8",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/33477022763",
+      "current_tag_commit": "cf55960e9d5e4b9c71504494816e4bf1c90afd9d",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "e2c5b74c83d973daeef88f8a876a6ffe135b401c",
+          "tag_blob": "f945dd5a00c54411b5e3f344d647002788492f92"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.12",
+      "build_commit": "9b69f23e7d0a1e95b9f8fd90447a37122e8b9bf3",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/33337327621",
+      "current_tag_commit": "fd7622e5d512811532e2bb0f1d863b8f6daba4f7",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "8f0cab243bd02819f97a34fbf221b5c7bb715485",
+          "tag_blob": "34ad3d611b91d464e5eb30109991ddc7f9d4daaf"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.11",
+      "build_commit": "b1bfbd2b6e42042cc4dda16eb602e2522174a615",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/33147375584",
+      "current_tag_commit": "271914cfb3f65f591bacb034508a984a02fab827",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "f10c7c9bb32fc4617795936eb9433ef091d44627",
+          "tag_blob": "07339c36b74dc41ece4cf0d6af9b06333c27f733"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.10",
+      "build_commit": "93f071e9ca89af117d12a7925093762b4bffa32b",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32839597446",
+      "current_tag_commit": "9a0f4b8f333b7a799f50ec10db34140050aa752c",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "90b58d64f01e9cc20616c1b7d43f26ec16c4db66",
+          "tag_blob": "f5b332b610ace366441dd3b9e75e0cdc84f11ece"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.9",
+      "build_commit": "d3b2c63280f86d96b84a9847ba473473a98639f6",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32722141888",
+      "current_tag_commit": "3751b8a80d774b5319f25e7df0c7534e99f5e51f",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "e4deb1a838a9f615f607327d3982ac9236b7180a",
+          "tag_blob": "8ae4957db1a8f301e646966f7af907b178ef5778"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.8",
+      "build_commit": "a248c3aa2df52ed4e9cc4e372d41f69486fd73b5",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32669315154",
+      "current_tag_commit": "dfeed37c41db9ce22e02f2d4f52f2934742e428c",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "c29ec0bc0b4bfd15f4ad2ceabbe4f57615163872",
+          "tag_blob": "f715c1cf47e5ed1c7be3b38777170cf19772716f"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.7",
+      "build_commit": "1adca4d5c2239f16b6eddfd6aa551a91134526b1",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32523392036",
+      "current_tag_commit": "5c3a08fe1f47acb54b11f4b90d8406b656790487",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "14a9169d3965f8ae1020df2a59303b39bba47984",
+          "tag_blob": "fba38e42b913b81d29cbfef00aff652903b18651"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.6",
+      "build_commit": "14ef7d74b7bd602c7830f56b85870f3e083ea4ad",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32419799347",
+      "current_tag_commit": "c887808fb49f210819071cad6c7034b2c8a3cb64",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "fd276ba24cdbc4fb1bb1f0b5a80f2551003b0a3f",
+          "tag_blob": "ecd51e04cc73cad4dc0605830a7024490527caf2"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.5",
+      "build_commit": "a1ccc534bb61adc42cd3122958387c7c97bd8a28",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32264590176",
+      "current_tag_commit": "009a5c448904ba4eb6ebffe241f5e051216d95a7",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "c1b5385e10a98cba3445b8f49f0eab858f466b8e",
+          "tag_blob": "ce3ffe97f9c22debf9701a525ab9fc096c50a560"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.4",
+      "build_commit": "aa5e2f266b952b0d413fef75e74318a07e91689f",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32175135749",
+      "current_tag_commit": "cd5da9f830acd7715b1edb5d2a56062fb384e4f6",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "b775178a22c7926a32e8cc1dd29a5f4b2f6649c4",
+          "tag_blob": "741f7d57b5457e0ad20552bae4759c3b45581092"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.3",
+      "build_commit": "35be30cd1081f135a4eb447fe5a12762af2d61d7",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/32044716105",
+      "current_tag_commit": "8b14aa01a1369754a0c5c7ff1738017edf2ca239",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "f48d52bfe315e8eb80f9ed437c043b20552dbc81",
+          "tag_blob": "8d6f01ec9fc063f2bd6777e8c712f7b478eee37f"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.2",
+      "build_commit": "3b4f32f8b66c70263e1619dc77b0e9d6598c2d94",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/31608061349",
+      "current_tag_commit": "bf376a72388105211f58acce5107839cc28641fc",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "d8dc662239c0b616776048d6d662aaa50494522d",
+          "tag_blob": "3ae0257fae731e7f42ff337a34d5493818d0831f"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.1",
+      "build_commit": "0f2910ebb59f598568136f7ee968d5c924f104d8",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/31599416693",
+      "current_tag_commit": "d80520f24a4c67c9bf427248782fdda6df968eea",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "83888fff1eb15058690816057151ba80651dce90",
+          "tag_blob": "f15e31c22aebf563a5ff8d5a3bde65edc029e2e9"
+        }
+      ]
+    },
+    {
+      "version": "v26.8.0",
+      "build_commit": "9a5b3b37f09d979dd958ffdda1bcff79328ef639",
+      "release_run": "https://github.com/tstone-1/tpdf/actions/runs/30832943461",
+      "current_tag_commit": "695132856ede8e58d65c093bc7cd996f587d5cb7",
+      "changed_paths": [
+        {
+          "path": "AGENTS.md",
+          "status": "M",
+          "build_blob": "9c14df4a440dfef9d7ed40135c33209a2762d013",
+          "tag_blob": "92a38a82c53c0414919150fb24f261eb3d733c94"
+        }
+      ]
+    }
+  ]
+}

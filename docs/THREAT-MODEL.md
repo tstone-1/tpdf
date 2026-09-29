@@ -2201,13 +2201,25 @@ certificates are attacker-chosen. That was a measurement, not an assumption: `si
 --mode trust` repeats the scan in a child under `worker::SANDBOX_PROFILE` --- proved live by
 the child failing to read its own input file --- and on macOS the verdict lines are identical
 to the unsandboxed ones on every document tried. The profile's `(allow default)` is what admits
-the Mach lookup to `trustd`; `(deny network*)` does not reach it. **Windows is not measured**:
-a Windows worker is contained by its parent, the probe cannot put itself in that position, and
-whether a low-integrity process inside the job can open the stores `CertGetCertificateChain`
-reads is unverified. A chain call that fails outright is `unchecked`, but whether a store it
-cannot open makes the call fail or makes a root read as untrusted is unmeasured --- the second
-would be the macOS `trustd` defect above in a Windows shape, and the first Windows run should
-look for it.
+the Mach lookup to `trustd`; `(deny network*)` does not reach it.
+
+**Windows containment measured 2026-09-29, Windows 11 build 26200.**
+`trust::tests::platform_tests::windows_worker_trust_matches_uncontained_controls` starts a
+child through `sandbox_win::spawn_contained` with production defaults. The child observes
+low integrity (4096), job membership, and a denied write in a directory the parent can write.
+It reads the CurrentUser and LocalMachine ROOT views without write access; the certificate
+and trust-verdict digests for every root agree with the uncontained control. The measured
+views held 71 and 70 roots, of which 58 and 57 were currently trusted for document signing.
+Synthetic anchored, untrusted, expired, future, missing-intermediate, wrong-purpose, CMS
+and timestamp-authority controls pass in both processes. Starting the child without
+containment fails the integrity assertion. No trust stores or keys are changed.
+
+The uncontained control was an elevated SSH process; an ordinary-user installed application
+and signing with its OS-held key remain separate, unmeasured paths. This is not a cold-cache
+measurement. Deliberately denied store-service access also remains unmeasured: an API error
+is classified as `unchecked`, but a store failure presented by Windows as an incomplete chain
+could still read as untrusted. The new test establishes access under the measured containment
+and store configuration, not under every possible account or store ACL.
 
 **What the OS receives.** Not the document's bytes as written: the CMS blob is bounded by
 `MAX_SIG_BLOB` as before, each certificate is decoded by `x509-cert` and **re-encoded** as DER,
@@ -4086,7 +4098,8 @@ which is what makes it evidence rather than a milestone.
     each re-encoded from a successful `x509-cert` decode and under 64 KiB --- and by `trustd`
     being the component every other program on the machine hands attacker-supplied
     certificates to. Not closed: closing it means not asking the OS, which is the decision the
-    trust verdict rests on. Unmeasured on Windows, where the parse is in-process and contained.
+    trust verdict rests on. Windows trust-store access under containment was measured
+    2026-09-29 (§T6.22); its chain builder runs in the worker process.
     **Widened 2026-09-28, at the 26.9.22 release audit** (§T6.22, §T10): a signing with
     long-term data hands the OS certificates from the network --- the timestamp token's set ---
     in the coordinator or `tpdf-cli`, which is not contained on either platform: once to judge

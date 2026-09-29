@@ -75,7 +75,11 @@
 //! repeats the scan in a sandboxed child: the worker's sandbox profile allows
 //! the Mach lookups `SecTrust` makes to `trustd`, and the verdicts under it
 //! equal the unsandboxed ones. A `trustd` that cannot be reached is
-//! [`Standing::Unchecked`], never a refusal (`platform::failure_of`). What the OS
+//! [`Standing::Unchecked`], never a refusal (`platform::failure_of`). On Windows,
+//! `windows_worker_trust_matches_uncontained_controls` starts a child through
+//! the production low-integrity/job launcher and compares real ROOT-store
+//! verdicts and synthetic chain controls; the scope is in the threat model's
+//! T6.22. What the OS
 //! receives is not the document's bytes: each certificate is decoded by
 //! `x509-cert` and re-encoded as DER, at most [`MAX_CERTIFICATES`] of them and
 //! each under [`MAX_CERTIFICATE_BYTES`].

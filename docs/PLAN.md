@@ -15917,9 +15917,11 @@ authority as for the signer. Judging the signer's certificate at `genTime` rathe
 there to use, and without revocation data from then it would only move the question. Checking
 that `genTime` falls inside the authority's certificate's dates. The `TSTInfo`'s `tsa` name,
 `accuracy` and `ordering` are not read, nor its version; a nonce means nothing in a stored token.
-A timestamp on a document timestamp (archive timestamps) and `/DSS`. The Windows store has not
-been asked about an authority on Windows, though the code is the same call the signer's trust
-makes.
+A timestamp on a document timestamp (archive timestamps) and `/DSS`.
+Windows follow-up, 2026-09-29: synthetic timestamp-authority purpose and chain controls pass
+under production low-integrity/job containment, with private in-memory roots. Real ROOT-store
+verdicts agree with the uncontained process (`docs/THREAT-MODEL.md` §T6.22). A request to a real
+timestamp authority from the installed Windows application remains unmeasured.
 
 #### Adding a timestamp when signing --- done 2026-09-28
 

@@ -43,7 +43,7 @@ use tpdf_lib::cli::report::SearchKind;
 use tpdf_lib::render::{Backend, RenderService};
 use tpdf_lib::search::{Options, Prepared};
 
-use super::{fixture, library_dir, scratch, tool, Report};
+use super::{fixture, library_dir, scratch, strings, tool, Report};
 
 /// Each line of each page: the words `contacts_pdf` draws, one text object a
 /// line, at `(x, y)` in points up from the bottom.
@@ -157,6 +157,175 @@ pub(super) fn shared_form_pdf() -> Vec<u8> {
     let mut bytes = Vec::new();
     doc.save_to(&mut bytes).expect("saved");
     bytes
+}
+
+/// A field value and default shared by widgets on two different pages.
+/// Each widget has its own appearance; an unrelated field and page text must
+/// survive. The region covers only the first widget and a printed label that
+/// gives the OCR gate a measurable font size. The field secret is never page
+/// text, so removing the label cannot supply the missing field-value needle.
+fn multi_widget_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let field = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let mut kids = Vec::new();
+    let mut page_ids = Vec::new();
+    let mut retained = None;
+    for at in 0..2 {
+        let page = doc.new_object_id();
+        let appearance = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 250.into(), 24.into()],
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+            },
+            b"BT /F1 12 Tf 4 6 Td (WIDGET-SECRET-4827) Tj ET".to_vec(),
+        ));
+        let widget = doc.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "Parent" => field, "P" => page,
+            "Rect" => vec![72.into(), 700.into(), 322.into(), 724.into()], "F" => 4,
+            "AP" => dictionary! { "N" => appearance },
+        });
+        kids.push(Object::Reference(widget));
+        let mut annots = vec![Object::Reference(widget)];
+        if at == 1 {
+            let control = doc.add_object(dictionary! {
+                "Type" => "Annot", "Subtype" => "Widget", "FT" => "Tx",
+                "T" => Object::string_literal("Retained"), "V" => Object::string_literal("CONTROL-ANSWER"),
+                "P" => page, "Rect" => vec![72.into(), 600.into(), 322.into(), 624.into()], "F" => 4,
+            });
+            annots.push(Object::Reference(control));
+            retained = Some(control);
+        }
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            format!(
+                "BT /F1 8 Tf 72 500 Td (CONTROL-KEEP page {}) Tj ET\n{}",
+                at + 1,
+                if at == 0 {
+                    "BT /F1 12 Tf 72 730 Td (REMOVE FIELD) Tj ET"
+                } else {
+                    ""
+                }
+            )
+            .into_bytes(),
+        ));
+        doc.objects.insert(
+            page,
+            dictionary! {
+                "Type" => "Page", "Parent" => pages,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+                "Contents" => content, "Annots" => annots,
+            }
+            .into(),
+        );
+        page_ids.push(Object::Reference(page));
+    }
+    doc.objects.insert(
+        field,
+        dictionary! {
+            "FT" => "Tx", "T" => Object::string_literal("Repeated"),
+            "V" => Object::string_literal("WIDGET-SECRET-4827"),
+            "DV" => Object::string_literal("WIDGET-SECRET-4827"), "Kids" => kids,
+        }
+        .into(),
+    );
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => page_ids, "Count" => 2 }.into(),
+    );
+    let catalog = doc.add_object(dictionary! {
+        "Type" => "Catalog", "Pages" => pages,
+        "AcroForm" => dictionary! { "Fields" => vec![Object::Reference(field), Object::Reference(retained.expect("control field"))] },
+    });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+pub(super) fn widgets_are_removed(report: &mut Report) {
+    let dir = scratch("redact-widgets");
+    let input = dir.join("multi-widget.pdf");
+    let output = dir.join("multi-widget-redacted.pdf");
+    let regions = dir.join("regions.json");
+    std::fs::write(&input, multi_widget_pdf()).expect("multi-widget input");
+    std::fs::write(&regions, r#"[{"page":1,"rect":[72,50,250,44]}]"#).expect("regions");
+    let before_fields = tool(&["fields", &s(&input), "--json"], &[]);
+    let fields = parsed(&before_fields.1);
+    let shared = fields["fields"]
+        .as_array()
+        .and_then(|fields| fields.iter().find(|field| field["name"] == "Repeated"));
+    report.check(
+        "control: one value has two widgets on two pages beside an unrelated field",
+        before_fields.0 == 0
+            && shared.is_some_and(|field| {
+                field["widgets"] == 2
+                    && field["pages"] == serde_json::json!([1, 2])
+                    && field["value"] == "WIDGET-SECRET-4827"
+            })
+            && before_fields.1.contains("CONTROL-ANSWER"),
+        &format!("exit {}: {}", before_fields.0, before_fields.2),
+    );
+    let (code, json, stderr) = run(
+        &strings(&[
+            "redact",
+            &s(&input),
+            "-o",
+            &s(&output),
+            "--regions",
+            &s(&regions),
+            "--json",
+        ]),
+        &[],
+    );
+    report.check(
+        "covering one widget produces a verified rewrite",
+        code == 0 && json["written"] == true && json["verified"] == true,
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    let after_fields = tool(&["fields", &s(&output), "--json"], &[]);
+    report.check(
+        "the shared field is gone and the unrelated answer remains",
+        after_fields.0 == 0
+            && !after_fields.1.contains("WIDGET-SECRET-4827")
+            && !after_fields.1.contains("Repeated")
+            && after_fields.1.contains("CONTROL-ANSWER"),
+        &format!(
+            "exit {}: {} {}",
+            after_fields.0, after_fields.1, after_fields.2
+        ),
+    );
+    let kept = ["CONTROL-KEEP page 1", "CONTROL-KEEP page 2"];
+    let wrong = readers(&output, &dir, &["WIDGET-SECRET-4827"], &kept);
+    report.check(
+        "every reader loses the widget secret and retains both page controls",
+        wrong.is_empty(),
+        &wrong.join("; "),
+    );
+    match (qdf(&input, &dir), qdf(&output, &dir)) {
+        (Some(before), Some(after)) => report.check(
+            "independent qpdf control: a stored field value and appearance become absent after rewriting",
+            contains(&before, "WIDGET-SECRET-4827") && !contains(&after, "WIDGET-SECRET-4827") && contains(&after, "CONTROL-ANSWER"),
+            "qpdf did not observe the expected before/after values"),
+        _ => report.skip("independent qpdf field/appearance readback", "qpdf is unavailable or could not decode the files"),
+    }
+    if let Some(probe) = std::env::var_os("TPDF_REDACT_PROBE").map(PathBuf::from) {
+        std::fs::create_dir_all(&probe).expect("probe directory");
+        std::fs::copy(&input, probe.join("multi-widget.pdf")).expect("probe input");
+        std::fs::copy(&output, probe.join("multi-widget-redacted.pdf")).expect("probe output");
+        std::fs::write(
+            probe.join("multi-widget-expected.json"),
+            serde_json::json!({"gone": ["WIDGET-SECRET-4827"], "kept": kept}).to_string(),
+        )
+        .expect("probe expectation");
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// `contacts_pdf` with an `/AcroForm` carrying an `/XFA` packet.
@@ -641,9 +810,11 @@ pub(super) fn verdict_is_the_applications(report: &mut Report) {
         }
     }
     for (name, path, queries) in &cases {
+        println!("[INFO] parity {name}: application path");
         let theirs_out = dir.join(format!("app-{name}"));
         let ours_out = dir.join(format!("tool-{name}"));
         let app = app_path(path, &theirs_out, queries, None);
+        println!("[INFO] parity {name}: command-line path");
         let line = [
             vec![
                 "redact".to_string(),
