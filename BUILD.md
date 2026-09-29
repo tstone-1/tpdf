@@ -5628,6 +5628,30 @@ the nested workflow artifacts and the redaction report. Ordinary API tests exerc
 argument forwarding and refusals without signing with an installed identity. Successful
 long-term signing still requires a CA-issued certificate with working revocation services.
 
+For that test, install an identity intended for document signing in the OS store
+(or connect its supported hardware token), and confirm its SHA-256 ID with
+`tpdf identities --json`. The OS must trust its chain. A token must expose the
+private key through Windows CNG or the macOS Keychain; availability in a separate
+PDF application's token interface does not establish that. Then run:
+
+```sh
+python api/python/check_signing.py --executable src-tauri/target/debug/tpdf-cli --identity "<CA-issued certificate SHA-256>" --output-dir scratch/signing-lt --timestamp digicert --long-term
+```
+
+`--long-term` cannot be combined with `--expect-untrusted`. It explicitly enables
+revocation requests to certificate authorities and an archive timestamp request.
+The check requires two intact signed revisions, an actual document timestamp
+covering the final file, trusted timestamps, and complete good revocation evidence
+for the signer and signature timestamp authority. `verify --strict` alone also
+accepts signatures without revocation evidence, so it is not sufficient for this
+check. A refusal ends the run; there is no fallback to ordinary signing. The
+readback is saved as `long-term-verify.json`, and a tampered copy must invalidate
+both signatures. `test_signing_checks.py` tests the instrument offline, including
+missing evidence, an ordinary signature in place of an archive timestamp, and
+refusal without fallback. Those controls do not establish live CA compatibility.
+No suitable CA-issued identity was available on either test platform on 2026-09-29;
+the live successful CA-backed long-term run remains outstanding.
+
 **OS-key Python workflow, 2026-09-29:** the existing macOS RSA test identity passed
 18 checks, including a DigiCert timestamp. Native Windows x64 passed 18 checks with
 a disposable RSA identity and 17 with ECDSA P-256 (no timestamp requested for ECDSA).

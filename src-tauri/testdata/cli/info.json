@@ -73,6 +73,7 @@
         },
         "signatures": [
           {
+            "document_timestamp": false,
             "field": "Signature1",
             "signer": "First Signer",
             "issuer": "tpdf test root CA",

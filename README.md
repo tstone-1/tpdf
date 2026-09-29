@@ -1042,7 +1042,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
 - `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
   certificate as above), `visible`, `signatures` (every signature in the written file, read
   back) and `summary` (the sentence the application shows after signing).
-- A signature: `field`; `signer` and `issuer` (from its certificate, empty when none could
+- A signature: `field`; `document_timestamp` (`true` for an RFC 3161 document or archive
+  timestamp, `false` for a document signature, including one with an attached timestamp); `signer` and `issuer` (from its certificate, empty when none could
   be read); `claimed_time` (the time the signer's computer gave; not checked);
   `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
   `integrity` with `verdict` (`intact`, `weak`, `altered`, `broken`, `unchecked`), `why`

@@ -1237,7 +1237,8 @@ fn long_term_when_signing(report: &mut Report) {
             let signature = &json["files"][0]["signatures"][0];
             report.check(
                 "long-term data: the signer's and the authority's revocation read back good",
-                signature["integrity"]["verdict"] == "intact"
+                signature["document_timestamp"] == false
+                    && signature["integrity"]["verdict"] == "intact"
                     && signature["revocation"]["standing"] == "good"
                     && signature["timestamp"]["revocation"]["standing"] == "good",
                 &signature.to_string(),
@@ -1246,6 +1247,7 @@ fn long_term_when_signing(report: &mut Report) {
             report.check(
                 "long-term data: an archive timestamp over the whole follows, and is intact",
                 json["files"][0]["signatures"].as_array().map(Vec::len) == Some(2)
+                    && archive["document_timestamp"] == true
                     && archive["covers_whole_file"] == true
                     && archive["timestamp"]["integrity"]["verdict"] == "intact",
                 &archive.to_string(),

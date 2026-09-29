@@ -8,6 +8,7 @@
       "error": null,
       "signatures": [
         {
+          "document_timestamp": false,
           "field": "Signature1",
           "signer": "First Signer",
           "issuer": "tpdf test root CA",
@@ -146,6 +147,7 @@
           }
         },
         {
+          "document_timestamp": false,
           "field": "Signature2",
           "signer": "",
           "issuer": "",

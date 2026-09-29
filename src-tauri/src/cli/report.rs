@@ -265,6 +265,9 @@ pub enum ErrorKind {
 /// One signature, as the properties dialog reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature {
+    /// True for an `ETSI.RFC3161` document timestamp, including an archive
+    /// timestamp; false for a document signature, even one carrying a timestamp.
+    pub document_timestamp: bool,
     /// The field's fully qualified name.
     pub field: String,
     /// Whom the signing certificate names (its common name, or its whole

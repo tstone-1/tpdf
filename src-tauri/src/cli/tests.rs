@@ -496,6 +496,7 @@ fn a_long_term_failure_of_tpdfs_own_is_4_and_every_refusal_3() {
 
 fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature {
     report::Signature {
+        document_timestamp: false,
         field: "Signature1".into(),
         signer: "A".into(),
         issuer: "B".into(),
@@ -1299,6 +1300,7 @@ fn full_signature() -> report::Signature {
         attested_at: String::new(),
     };
     report::Signature {
+        document_timestamp: false,
         field: "Signature1".into(),
         signer: "First Signer".into(),
         issuer: "tpdf test root CA".into(),
@@ -1422,6 +1424,7 @@ fn sample_chain() -> crate::revocation::chain::Chain {
 fn bare_signature() -> report::Signature {
     let integrity = integrity(Verdict::Unchecked, Some(Why::Format), "", "");
     report::Signature {
+        document_timestamp: false,
         field: "Signature2".into(),
         signer: String::new(),
         issuer: String::new(),
