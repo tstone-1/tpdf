@@ -306,8 +306,14 @@ fn textedit_read_only_owners_keep_their_layout_attributes() {
             dictionary! { "O" => "Layout", "Placement" => "Middle" },
             false,
         ),
+        // ISO 32000-1 7.9.5: either pair of opposite corners names the
+        // rectangle, and a link is read-only, so its bounds cannot go stale.
         (
             dictionary! { "O" => "Layout", "BBox" => vec![90.into(), 176.into(), 38.into(), 192.into()] },
+            true,
+        ),
+        (
+            dictionary! { "O" => "Layout", "BBox" => vec![90.into(), 176.into(), 38.into()] },
             false,
         ),
         // PowerPoint writes block spacing and the default writing mode on

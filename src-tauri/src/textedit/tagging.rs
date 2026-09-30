@@ -300,6 +300,8 @@ struct Scope<'a> {
     namespaces: &'a BTreeSet<ObjectId>,
     // The root's ClassMap, when it has one (ISO 32000-1 14.7.5.2).
     classes: Option<&'a Dictionary>,
+    // The root's validated RoleMap, when it has one (ISO 32000-1 14.7.3).
+    roles: Option<&'a Dictionary>,
 }
 
 // ISO 32000-2 Annex L: standard types whose meaning the PDF 2.0 namespace keeps
@@ -710,7 +712,15 @@ fn groups<'a>(
         ..paragraph
     };
     let mut groups = Vec::new();
-    for item in paragraph.items {
+    // Each item with the element it sits in, and whether a text box it was
+    // lifted out of pins it.
+    let mut work: Vec<(&'a Object, ObjectId, bool)> = paragraph
+        .items
+        .into_iter()
+        .rev()
+        .map(|item| (item, paragraph.id, false))
+        .collect();
+    while let Some((item, parent, lifted_pins)) = work.pop() {
         if let Object::Reference(id) = item {
             // Word and Acrobat nest a sublist inside the list body rather than
             // beside it. A list is a container, so it goes back to the walk,
@@ -723,17 +733,47 @@ fn groups<'a>(
                     .and_then(name)
                     .is_ok_and(|tag| goes_back_to_the_walk(plain.tag, tag))
             }) {
-                nested.push((item, plain.id, plain.pinned));
+                nested.push((item, parent, plain.pinned || lifted_pins));
                 continue;
             }
             if !ids.insert(*id) || ids.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
             let child = node(doc, *id)?;
+            // PowerPoint wraps the paragraphs of every table cell in a Textbox,
+            // which its RoleMap makes a Sect. The paragraphs are the cell's:
+            // lift them into it, one level only, so the cell stays the block
+            // a wrap cannot move out of. A grouping element owns no content.
+            let raw = name(get(child, b"S")?)?;
+            if parent == plain.id
+                && matches!(plain.tag, b"TD" | b"TH")
+                && container(role(scope.roles, raw)?)
+            {
+                // Its own parent, which the check above makes the cell: the
+                // one-level rule is that check, not this one.
+                let (_, pins) = element(doc, child, parent, scope, false, role(scope.roles, raw)?)?;
+                let items = kids(doc, child)?;
+                if child.has(b"A")
+                    || items.is_empty()
+                    || items.len() + work.len() > MAX_NODES
+                    || !items
+                        .iter()
+                        .all(|item| matches!(item, Object::Reference(_)))
+                {
+                    return Err(INVALID.into());
+                }
+                work.extend(
+                    items
+                        .iter()
+                        .rev()
+                        .map(|item| (item, *id, lifted_pins || pins)),
+                );
+                continue;
+            }
             let (page, pins) = element(
                 doc,
                 child,
-                plain.id,
+                parent,
                 scope,
                 !annotation_owner(name(get(child, b"S")?)?),
                 name(get(child, b"S")?)?,
@@ -758,12 +798,57 @@ fn groups<'a>(
             if items.len() > MAX_NODES {
                 return Err(INVALID.into());
             }
+            // PowerPoint wraps a link's words in a Span inside the Link, and
+            // may name its annotation through an indirect OBJR. The Span keeps
+            // its own tag, which its marked content repeats, and is pinned:
+            // the words belong to the link, read-only like Word's.
+            let mut own = Vec::new();
+            for item in items {
+                let Object::Reference(kid) = item else {
+                    own.push(item);
+                    continue;
+                };
+                if !annotation_owner(tag) {
+                    own.push(item);
+                    continue;
+                }
+                let object = doc.get_object(*kid).map_err(|_| INVALID)?;
+                let dict = object.as_dict().map_err(|_| INVALID)?;
+                if dict
+                    .get(b"Type")
+                    .is_ok_and(|kind| kind.as_name().ok() == Some(b"OBJR"))
+                {
+                    own.push(object);
+                    continue;
+                }
+                if tag != b"Link"
+                    || name(get(dict, b"S")?)? != b"Span"
+                    || !ids.insert(*kid)
+                    || ids.len() > MAX_NODES
+                {
+                    return Err(INVALID.into());
+                }
+                let (span_page, _) = element(doc, dict, *id, scope, true, b"Span")?;
+                // The words: marked content, which the claim below requires
+                // of every item (an element there is refused as it is anywhere).
+                let words = kids(doc, dict)?;
+                if words.is_empty() || words.len() > MAX_NODES {
+                    return Err(INVALID.into());
+                }
+                groups.push(Group {
+                    id: *kid,
+                    page: span_page,
+                    tag: b"Span",
+                    items: words.iter().collect(),
+                    pinned: true,
+                });
+            }
             let group = Group {
                 id: *id,
                 page,
                 tag,
-                items: items.iter().collect(),
-                pinned: plain.pinned || pins || in_figure,
+                items: own,
+                pinned: plain.pinned || pins || lifted_pins || in_figure,
             };
             // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
             // branch recurses, so this adds one bounded level, not arbitrary trees.
@@ -786,8 +871,10 @@ fn groups<'a>(
     Ok(groups)
 }
 
-// Table 344: an element's ink bounds, four ordered numbers. Whether it is
-// present decides whether the element's content has to stay where it is.
+// Table 344: an element's ink bounds, a rectangle. Whether it is present
+// decides whether the element's content has to stay where it is. ISO 32000-1
+// 7.9.5 lets a rectangle name either pair of opposite corners, and a reader
+// normalises it; the Logitech M185 guide's InDesign export gives its top first.
 fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<bool, String> {
     let Ok(bounds) = attributes.get(b"BBox") else {
         return Ok(false);
@@ -796,12 +883,8 @@ fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<bool, String>
     if bounds.len() != 4 {
         return Err(INVALID.into());
     }
-    let bounds = bounds
-        .iter()
-        .map(super::number)
-        .collect::<Result<Vec<_>, _>>()?;
-    if bounds[0] > bounds[2] || bounds[1] > bounds[3] {
-        return Err(INVALID.into());
+    for bound in bounds {
+        super::number(bound)?;
     }
     Ok(true)
 }
@@ -1113,6 +1196,7 @@ impl Tags {
             pages: &page_ids,
             namespaces: &namespaces,
             classes,
+            roles,
         };
         let mut assigned = 0;
         let mut ids = page_ids.clone();

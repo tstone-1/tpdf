@@ -426,8 +426,7 @@ fn textedit_bounded_tables_refuse_malformed_bounds_and_placements() {
     for entries in [
         dictionary! { "O" => "Table", "BBox" => rectangle() },
         dictionary! { "O" => "Layout", "BBox" => vec![0.into(), 0.into(), 9.into()] },
-        dictionary! { "O" => "Layout", "BBox" => vec![9.into(), 0.into(), 0.into(), 9.into()] },
-        dictionary! { "O" => "Layout", "BBox" => vec![0.into(), 9.into(), 9.into(), 0.into()] },
+        dictionary! { "O" => "Layout", "BBox" => vec![0.into(), 9.into(), 9.into(), "Top".into()] },
         dictionary! { "O" => "Layout", "BBox" => Object::Name(b"Auto".to_vec()) },
         dictionary! { "O" => "Layout", "Placement" => "Middle" },
         dictionary! { "O" => "Layout", "Width" => -1 },
@@ -438,6 +437,13 @@ fn textedit_bounded_tables_refuse_malformed_bounds_and_placements() {
     ] {
         let (doc, _) = bounded(entries);
         refused(doc);
+    }
+    // ISO 32000-1 7.9.5: a rectangle may name either pair of opposite
+    // corners (InDesign gives the top first). Accepted, and still pinning.
+    for corners in [[9, 0, 0, 9], [0, 9, 9, 0]] {
+        let (doc, _) =
+            bounded(dictionary! { "O" => "Layout", "BBox" => corners.map(Object::from).to_vec() });
+        assert_eq!(offered(&doc), ["THIRD"]);
     }
     // Block indents and spacing are allocation, accepted here as on a paragraph.
     let (doc, _) = bounded(dictionary! { "O" => "Layout", "StartIndent" => 12, "SpaceAfter" => 6 });
