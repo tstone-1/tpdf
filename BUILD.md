@@ -10520,8 +10520,7 @@ python3 scripts/mutate_rust.py --only 'installed-cff:'
 - `fonts::installed::tests`: 18 tests (one macOS-gated: `ArialMT` found by CoreText and
   `Helvetica` found as a face of `Helvetica.ttc`, whose name records are Macintosh Roman only;
   an unknown name answers nothing although CoreText matches a substitute). The Windows-gated
-  counterpart (`ArialMT` with a DirectWrite face index) compiles under
-  `scripts/check_windows.py` and has not been run on Windows.
+  counterpart (`ArialMT` with a DirectWrite face index) passes on Windows x64 (below).
 - `sysfont::tests`: 7 tests, the lookup seam, the bound (32 MiB accepted, one byte more
   refused), and the request round trip against the real writer: asked, supplied once, asked
   again, the subset journalled, and the journalled subset reused with no lookup.
@@ -10574,7 +10573,7 @@ is refused with *draws two of the characters with one glyph*.
   7.8 MB, a face of a collection CoreText does not name) became a 3,648-byte subset for
   "Tokyo 東京", Kohinoor Devanagari (name-keyed, `fsType` 0) a 2,556-byte one, each installed and
   read back through the composite reader with its widths and rights; Tamil Sangam MN is refused.
-  No Windows counterpart: no CFF font is guaranteed on Windows.
+  No Windows counterpart: no CFF font is guaranteed on Windows (one present is measured below).
 - `text_installed_check.py`, CFF part: 451 of 3,600 font bytes embedded as `/CIDFontType0C`
   under a CIDFontType0 with no CIDToGIDMap; fontTools' CFF parser finds `Adobe-Identity-0`, the
   rights string for `fsType` 0 and for a copy with 8, and every embedded charstring's outline and
@@ -10597,17 +10596,55 @@ is refused with *draws two of the characters with one glyph*.
 - `scripts/gates.py`: 29/29, 2,392 Rust tests passed with 9 ignored, 1,976 frontend tests.
   `scripts/check_windows.py`: the Windows tree type-checks and passes clippy, examples included.
   Neither lookup needed a change, because neither filtered CFF files; the worker did.
-  CoreText finding Hiragino and Kohinoor is measured above; DirectWrite's is read from the code
-  (`sysfont::locate` asks for no file type) and has not been run.
+  CoreText finding Hiragino and Kohinoor is measured above; DirectWrite finding a CFF file is
+  measured on Windows below.
 
 **Not done:** CFF2 installed fonts are refused (*has CFF2 outlines, which cannot be embedded*;
 `subsetter` subsets CFF2 only by instancing it to TrueType, behind a feature tpdf does not
 enable), and so is a CFF font whose FontMatrix is not 1/1000 (drawn at other than 1000 units per
 em, Tamil Sangam MN on macOS), as *could not be read*, because the CID-keyed CFF reader a
-reopened document goes through accepts only that matrix. Windows has not run the lookup or the
-round trip. No fuzz seed was
+reopened document goes through accepts only that matrix. No fuzz seed was
 added: the fuzz targets take documents and edit without a layout, so neither reaches
 `installed::accept`, whose input is the reader's own font file.
+
+**Windows x64, 2026-09-30, at `072f3ea`.** On MOTHERSHIP (Windows 11), in the console session
+at medium integrity through a one-shot `/IT` scheduled task, with `CARGO_BUILD_JOBS=2`:
+`cargo test --locked --lib textedit` passes 604 (1,824 filtered out), `--lib sysfont` 7, and
+`--lib installed` 27: the macOS 28 less its two macOS-gated tests, plus
+`windows_finds_installed_fonts_by_exact_postscript_name`, which ran and passed, so
+DirectWrite found `ArialMT` and named its face index. `fetch_pdfium.py --check` verified the
+8066 library. The commands above only supply generated fonts, so the lookup itself was run
+through the application, which is the only caller of `sysfont::find`. Scratch-only
+documents, built on the Mac from copies of the two installed Windows files (digests compared
+on both sides, nothing committed), embed producer-like subsets with integer widths: `SYNTHETIC
+FIRST` in one subset and `SYNTHETIC SECOND` in another, so `EDITED FIRST` needs a `D` the first
+subset lacks. Windows' Arial is version 7.06, `fsType` 8, 1,045,720 bytes (SHA-256 `b3658ead...`).
+The native `textedit` phase passes 23/23 on the Arial document, whose subsets are WinAnsi
+TrueType fonts named `ABCDEF+ArialMT` and `GHIJKL+ArialMT`. In the saved copy fontTools and pypdf find
+one added Type0/Identity-H font, `XGDDDA+ArialMT`, a 23,552-byte FontFile2 subset of the
+installed file. Its 8 codes have outlines, advances and `/W` equal to `arial.ttf`, and it
+carries `fsType` 8. Both document subsets are byte-identical. PDFKit counts 2,362 changed pixels
+inside the target and none outside, and the text agrees. The probe's `--roundtrip`, handed the
+same file, passes its preview/save pixel agreement. It writes a font of the same size and tag,
+which the same readers accept. The control is the same document with its font renamed
+`TPDFNoSuchFontAnywhere`: the phase still passes 23/23, the lookup finds nothing, and the save
+is set in `NotoSans`. The readback then fails, and PDFKit counts 2,212 different pixels. `qpdf
+--check` is clean on every save.
+
+**CFF on Windows.** No CFF font is guaranteed on Windows. MOTHERSHIP has 18 CFF faces among
+486 font files, all from Windows' optional Hebrew supplemental fonts: David, Frank Ruehl,
+Miriam and Nachlieli CLM, Frank Ruhl Hofshi and Miriam Libre. All are name-keyed, `fsType` 0 and
+not CFF2. Only the four Frank Ruhl Hofshi and Miriam Libre faces are drawn at 1000 units per
+em; the fourteen CLM faces are at 1090 or 1200, which the editor refuses as it refuses Tamil
+Sangam MN (from the code; none was tried here). `MiriamLibre-Regular.otf` (64,252 bytes, SHA-256 `6c366f3f...`) was exercised the
+same way, with its document subsets embedded as FontFile3 `/Type1C`. The native phase passes
+23/23. DirectWrite finds the `.otf`, and the save embeds `CCHZVU+MiriamLibre-Regular` as
+a 1,440-byte bare CID-keyed CFF (`/CIDFontType0C`, `Adobe-Identity-0`, no CIDToGIDMap). The
+program carries `/FSType 0 def /OrigFontType /OpenType def`, and its 8 charstrings' outlines,
+widths and `/W` equal the installed file's. PDFKit counts 1,884 changed pixels inside and none
+outside. The probe's round trip passes too (1,434 bytes, `FCDPYN+`). Remote work took about 15
+minutes; both scheduled tasks and the work folder were removed, `npm run build` restored the normal assets (`check_bundle_share.py`: harness excluded),
+and the checkout is clean at `072f3ea`.
 
 **Settled 2026-09-30, as built:** when the document's own font forbids editing, no installed
 copy is tried, because the document's restriction decides. An installed file over 32 MiB falls
@@ -13615,7 +13652,19 @@ policy (*Existing-text editing*: 1 MiB, 16,384 operators) and was not raised; wh
 page of 40,000 operators is worth the scan cost is a decision to make on a measurement of what
 the scan costs at that size, not a side effect of this increment.
 
-**Not done.** Windows has not run any of this. Text under a turned clip is read-only, never
+**Windows x64, 2026-09-30, at `072f3ea`.** The downloaded factsheet's digest matched the manifest
+on both sides. `text-edit-probe --inspect --all-pages` finds all six pages editable with 97, 35,
+33, 42, 32 and 53 runs, as on macOS. In the console session through a one-shot `/IT` scheduled
+task, `textedit-factsheet` and `textedit-factsheet-body` pass 27/27 each. The worker-exit
+observer passed its self-test and found no surviving test workers. On both saves
+`make_textedit_embedded.py --layout-controls` accepts the tagged structure graph, the rewritten
+ActualText and the operands, and refuses all nine controls. PDFKit counts 695 and 781 changed
+pixels inside the edited words, none outside and none on the other five pages, the macOS counts
+exactly. The synthetic page passes the worker probe and the native `textedit` phase 23/23. pypdf
+accepts both saves with 7 and 8 controls refused, and PDFKit counts 968 changed pixels inside
+and none outside for both. `qpdf --check` is clean on all four saves.
+
+**Not done.** Text under a turned clip is read-only, never
 editable. A Span whose ActualText spans several runs, differs from its words by more than end
 spaces, or sits over an inline ActualText span stays read-only. A replacement that wraps inside
 a rewritten Span is refused. The mouse guide's operator bound is the user's call. The full
