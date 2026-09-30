@@ -58,6 +58,11 @@ def fixture(path: Path, *, form: bool = False, content: bytes | None = None,
         else:
             objects[2] = objects[2][:-2] + b' /Annots [' + reference + b'] >>'
         objects.append(b'<< /Type /Annot /Subtype /Text /Rect [250 340 270 360] /Contents (PRIVATE-731) /F 2 >>')
+    write_pdf(path, objects)
+
+
+def write_pdf(path: Path, objects: list[bytes]) -> None:
+    """Number `objects` from 1, the first being the catalog, with an exact xref."""
     data = bytearray(b'%PDF-1.7\n')
     offsets = [0]
     for number, body in enumerate(objects, 1):
@@ -69,6 +74,32 @@ def fixture(path: Path, *, form: bool = False, content: bytes | None = None,
         data.extend(f'{offset:010d} 00000 n \n'.encode())
     data.extend(f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode())
     path.write_bytes(data)
+
+
+def powerpoint_fixture(path: Path) -> None:
+    """A page tagged the way PowerPoint for Microsoft 365 exports a slide.
+
+    A Textbox that the RoleMap makes a Sect holds a P, whose Span carries
+    ActualText equal to the words it paints. The editor rewrites that text with
+    the words (BUILD.md, *PowerPoint factsheet*); before 26.10.0 the Span was
+    read-only and this page offered nothing.
+    """
+    content = b'/Span << /MCID 0 >> BDC BT /F1 12 Tf 30 100 Td (SYNTHETIC ORIGINAL) Tj ET EMC'
+    write_pdf(path, [
+        b'<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R /MarkInfo << /Marked true >> >>',
+        b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents 4 0 R'
+        b' /Resources << /Font << /F1 5 0 R >> >> /StructParents 0 >>',
+        b'<< /Length ' + str(len(content)).encode() + b' >>\nstream\n' + content + b'\nendstream',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Type /StructTreeRoot /K 7 0 R /ParentTree 10 0 R /ParentTreeNextKey 1'
+        b' /RoleMap << /Textbox /Sect >> >>',
+        b'<< /Type /StructElem /S /Document /P 6 0 R /K [8 0 R] >>',
+        b'<< /Type /StructElem /S /Textbox /P 7 0 R /K [9 0 R] >>',
+        b'<< /Type /StructElem /S /P /P 8 0 R /Pg 3 0 R /K [11 0 R] >>',
+        b'<< /Nums [0 [11 0 R]] >>',
+        b'<< /Type /StructElem /S /Span /P 9 0 R /Pg 3 0 R /K 0 /ActualText (SYNTHETIC ORIGINAL) >>',
+    ])
 
 
 def check_document_workflow(pdf: Tpdf, directory: Path, *, identity: str | None = None,
@@ -460,6 +491,33 @@ class ClientTests(unittest.TestCase):
             'revision': scanned['revision'], 'original': run['text'], 'replacement': 'SYNTHETIC',
         }])
         self.assertEqual(self.pdf.text(output)['pages'][0]['text'].strip(), 'SYNTHETIC')
+
+    def test_edit_rewrites_powerpoint_accessible_text_with_the_words(self):
+        source = self.root / 'powerpoint.pdf'
+        powerpoint_fixture(source)
+        original = source.read_bytes()
+        scanned = self.pdf.text_runs(source)
+        run = next(run for run in scanned['runs'] if run['text'] == 'SYNTHETIC ORIGINAL')
+        output = self.root / 'powerpoint-edited.pdf'
+        self.pdf.edit(source, output, [{
+            'op': 'replace_text', 'page': 1, 'operator': run['operator'],
+            'revision': scanned['revision'], 'original': run['text'], 'replacement': 'SYNTHETIC EDITED',
+        }])
+        self.assertEqual(self.pdf.text(output)['pages'][0]['text'].strip(), 'SYNTHETIC EDITED')
+        # Independent of tpdf's reader: the Span's newest definition in the file
+        # (a save appends it) must carry the new words as its ActualText.
+        data = output.read_bytes()
+        newest = data[data.rindex(b'\n11 0 obj'):]
+        newest = newest[:newest.index(b'endobj')]
+        # A text string is PDFDocEncoding or, with a byte-order mark, UTF-16BE
+        # (ISO 32000-1 7.9.2.2); the writer may use either. No escapes occur
+        # in these words, so the literal ends at the first parenthesis.
+        start = newest.index(b'/ActualText') + len(b'/ActualText')
+        literal = newest[newest.index(b'(', start) + 1:]
+        literal = literal[:literal.index(b')')]
+        spoken = literal[2:].decode('utf-16-be') if literal.startswith(b'\xfe\xff') else literal.decode('latin-1')
+        self.assertEqual(spoken, 'SYNTHETIC EDITED')
+        self.assertEqual(source.read_bytes(), original)
 
     def test_dry_run_and_refused_request_preserve_output(self):
         output = self.root / 'protected.pdf'
