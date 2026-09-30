@@ -14887,6 +14887,18 @@ widths before embedding a subset. The same edit uses Noto on a computer without 
 decision. Windows compiles the DirectWrite lookup and has not run it. CFF installed fonts are
 the remaining gap. See `BUILD.md`, *An installed copy of the document's font*.
 
+**The practical sample, re-measured 2026-09-30.** The "two editable pages out of 48" above was
+long out of date. Measured today on the six practical documents that could be downloaded (the
+Adobe letter timed out and was not measured), before this increment, 16 of 47 pages were
+editable: passport guide 1/16, consumer factsheet 0/6, mouse guide 0/2, W-9 1/6, research paper
+12/15, agenda 2/2. The PowerPoint factsheet is now the practical acceptance page: all eight
+constructs its export writes are admitted, and page 2 passes native replacement in a table cell
+and in body text, save, reopen and independent pypdf and PDFKit readback, with the edited
+Span's ActualText rewritten to the new words (`BUILD.md`, *PowerPoint factsheet: an unchanged
+practical page*). The factsheet is now 6/6 and the six practical documents 22 of 47; this is a small selected sample, not a success rate. Next target: the mouse guide, whose remaining blocker is the
+scan's 16,384-operator bound against pages of 27,313 and 39,479 operators, which is a
+performance decision rather than a grammar gap; after it, its `sh` shadings and `BX`/`EX`.
+
 ### Phase 6 — Cryptographic signing
 
 A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,

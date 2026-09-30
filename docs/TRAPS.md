@@ -260,6 +260,7 @@ hop through the index.
 - A simple font encodes a Latin-1 letter its subset does not have, so encoding is not coverage
 - ttf-parser decodes no Macintosh Roman name, and Apple's Helvetica carries no other kind
 
+- A text's own ActualText rule has to admit the empty text a deletion leaves
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
@@ -557,6 +558,7 @@ hop through the index.
 - Judging the whole chain made two checks of the leaf redundant, and their mutations went quiet
 - A mutation's named test stopped catching it when a refusal was relaxed, and the harness's fallback found the one that still did
 
+- A page-text comparison that folds whitespace passes an added space
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -25316,3 +25318,37 @@ test would have reported SURVIVED for a table that is still checked, and one tha
 and counted any red would have reported OK and hidden that the named test had stopped meaning
 anything. When a refusal is relaxed, the mutations that named the tests it used to fail are the
 ones to re-run.
+
+### A text's own ActualText rule has to admit the empty text a deletion leaves
+
+2026-09-30, rewriting a structure Span's ActualText with its words (`docs/TEXTEDIT.md`,
+*PowerPoint for Microsoft 365*). The rule that admits such a Span compares its ActualText with
+the text its run paints, and its first form required the compared text to be non-empty, which
+read like a sensible guard against a Span of nothing but spaces. Every unit test passed. The
+`textedit_scan` fuzz target failed on its first execution of the new seed, before mutating a
+byte: it deletes the first run it is offered and requires that run to be offered again, empty,
+and a deletion writes an empty ActualText, which the rule then refused, so the rescan pinned the
+Span and the run was gone. The editor would have let a reader delete a word and then refused to
+let them type it back.
+
+An admission rule that compares a document's text with a description of it is applied again to
+every document the editor writes, so it has to admit every state an edit can leave, deletion
+first. The fuzz target's invariant (a discovered run can be deleted and is still offered) is what
+caught it, and only because a seed of the new shape existed; the unit test now asserts the
+re-offer too.
+
+### A page-text comparison that folds whitespace passes an added space
+
+2026-09-30, adding negative controls to `make_textedit_embedded.py --check` after it was brought
+back in line with the writer (`BUILD.md`, *Three readers brought back to the writer*). For a
+non-symbolic font the reader's only text check was `" ".join(page.extract_text().split())`
+against the expected line, and a control that appended a space to the replacement operand
+**passed** it: splitting on whitespace makes `"EDITED FIRST "` and `"EDITED FIRST"` the same
+string. Symbolic fonts were covered by an exact decode of the operand bytes, which is why the
+gap had not shown on the fixtures most of the readback sections use.
+
+The reader now decodes both edited operands exactly through the font's own encoding table as
+pypdf reads it, and the control is one of seven `--layout-controls` run against every output.
+A comparison normalised for layout noise cannot be the only check of the thing the noise is
+made of; spaces are text here.
+

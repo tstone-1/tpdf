@@ -13451,3 +13451,120 @@ styles, ligatures, named maps) were true when written, because those worker save
 patches of `Tj` strings with no kept number; they were not re-run here beyond the 22 outputs
 above. The earlier sections, before `59d25b6`, were measured against the writer of their day
 and are not claims about the current one.
+
+### PowerPoint factsheet: an unchanged practical page — measured 2026-09-30
+
+The EC consumer conditions factsheet for Lithuania (`consumer-factsheet.pdf` in
+`testdata/textedit-public-corpus.json`, SHA-256 `cbd18ff8...a53b`) is a Microsoft PowerPoint for
+Microsoft 365 export, tagged. It had 0 of 6 editable pages. Its first refusal was a tagged
+structure, and as *Public target follow-up* warned, the first refusal understated the work: the
+whole inventory was found by walking one refusal at a time with scratch-only bypasses, never
+by rewriting the source, and it is eight constructs. Each is now admitted, with a synthetic test,
+`pptx:` mutations and the grammar in `docs/TEXTEDIT.md`, *PowerPoint for Microsoft 365*:
+
+| Construct | Where it refused | Now |
+|---|---|---|
+| `TD > Textbox > P` (RoleMap `Textbox` to `Sect`) | a container inside a cell | the bare wrapper is lifted into the cell, one level |
+| `Link > Span > MCID`, and an `OBJR` that is an indirect object | an element inside a link | the Span is the link's pinned words; the OBJR is resolved |
+| a layout `/BBox` with its top first (the mouse guide) | inverted corners | either pair of opposite corners (ISO 32000-1 7.9.5) |
+| `m l l l W* n`, corners off the axis by up to 0.0002 pt | an open, skewed clip | closed by the clip; within 0.001 it is its inner rectangle |
+| a type 0 sampled function in every gradient | a stream where a dictionary was expected | checked, never evaluated |
+| `/Matte [0 0 0]` on every picture's soft mask | an unknown image key | one number in `[0, 1]` per owner colour component |
+| ActualText on all 305 text Spans, 292 in paragraphs and 13 in links (137 equal to the words, 168 equal but for an end space, none different) | every run pinned read-only | rewritten with the words; any other Span pinned as before |
+| a turned square clipping an icon, page 3 | a non-rectangular clip | its text read-only; the scope holds an image and no text |
+
+Two of these carry a decision worth knowing. The turned clip keeps text under it read-only
+rather than testing containment against the polygon, because measuring first showed no text in
+that scope. The ActualText rule strips only U+0020 at either end, and it has to admit the empty
+text a deletion leaves: the `textedit_scan` fuzz target found that on the new seed's first
+execution (`docs/TRAPS.md`, *A text's own ActualText rule has to admit the empty text a deletion
+leaves*).
+
+Reproduce, with the public PDFs downloaded and digest-checked by the recipe in *Public-document
+text editing baseline*, and the checks application built as in *Existing-text workflow*:
+
+```sh
+cargo build --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe
+src-tauri/target/debug/examples/text-edit-probe --inspect scratch/textedit-public/consumer-factsheet.pdf --all-pages
+python3 scripts/tabs_check.py <checks-binary> scratch/textedit-public/consumer-factsheet.pdf --phase textedit-factsheet --saved-copy scratch/factsheet/cell/synthetic-after.pdf
+python3 scripts/tabs_check.py <checks-binary> scratch/textedit-public/consumer-factsheet.pdf --phase textedit-factsheet-body --saved-copy scratch/factsheet/body/synthetic-after.pdf
+# with the unchanged download copied in as <dir>/synthetic-before.pdf:
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --layout-controls scratch/factsheet/cell/synthetic-before.pdf scratch/factsheet/cell/synthetic-after.pdf --factsheet --page=1
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --layout-controls scratch/factsheet/body/synthetic-before.pdf scratch/factsheet/body/synthetic-after.pdf --factsheet-body --page=1
+swift scripts/text_edit_pdfkit.swift scratch/factsheet/cell --factsheet --page=1
+swift scripts/text_edit_pdfkit.swift scratch/factsheet/body --factsheet-body --page=1
+# the same shapes on one original page:
+uv run --with fonttools --with pypdf testdata/make_textedit_pptx.py scratch/pptx
+src-tauri/target/debug/examples/text-edit-probe scratch/pptx/worker scratch/pptx/pptx.pdf
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --layout-controls scratch/pptx/worker/synthetic-before.pdf scratch/pptx/worker/synthetic-after.pdf --pptx
+swift scripts/text_edit_pdfkit.swift scratch/pptx/worker --pptx
+python3 scripts/tabs_check.py <checks-binary> scratch/pptx/pptx.pdf --phase textedit --saved-copy <dir>/synthetic-after.pdf
+python3 scripts/mutate_rust.py --only 'pptx:'
+```
+
+**Measured on macOS.** The worker discovers 97, 35, 33, 42, 32 and 53 runs on the six pages.
+On page 2 the native application replaces `Action taken` in a table cell (`TD > Textbox > P >
+Span`) with `Action done`, and in a second run `Detailed results` in the page header with
+`Detailed data`: 27/27 checks each, run twice, the second time on the final code and byte-identical, including undo and redo pixels, the refused overflow,
+save, reopen, page 1 unchanged and the other tab untouched. In both saved files pypdf finds one
+show replaced by the layout sequence with every restated state equal to the source's, the kept
+kerning numbers the source's own, the cursor restored to the source show's advance, the operand
+decoding exactly to the new words, every page's resources equal, the other five pages'
+content byte-identical, and exactly one structure element changed: the edited Span, whose
+ActualText went from the old words to the new. Nine controls are refused for their named
+reasons each, among them the old ActualText put back. PDFKit finds 695 and 781 changed pixels
+inside the edited words, none outside them and none on the other five pages, and reads the
+page's text with only the words replaced. A worker round trip of both edits in one save passes
+its preview/save pixel agreement and `qpdf --check`, and both Spans read the new words.
+
+The synthetic page passes the worker probe and the native `textedit` phase 23/23. pypdf accepts
+both saves, with 7 controls refused on the worker's byte patch and 8 on the native layout save
+(the rest do not apply: a byte patch restates nothing, and the file has one page), and PDFKit
+finds 968 changed pixels inside the edit and none outside, for both.
+
+The survey of the unchanged downloads, before and after (`python3 scripts/textedit_survey.py`,
+the same eight files; the Adobe letter could not be downloaded, timeouts, and was not measured):
+
+| Document | Before | After | First refusal left |
+|---|---:|---:|---|
+| Passport guide | 1/16 | 1/16 | ActualText sequence, inline spacing, Unicode map |
+| Consumer factsheet | 0/6 | **6/6** | none |
+| Mouse guide | 0/2 | 0/2 | text operator count (was: tagged structure) |
+| W-9 | 1/6 | 1/6 | marked content against its tag, unmapped font code |
+| Research paper | 12/15 | 12/15 | preserved Form XObject |
+| Wellington agenda | 2/2 | 2/2 | none |
+| W3C dummy | 1/1 | 1/1 | none |
+| W3C headers | 4/5 | 4/5 | page with only read-only text |
+| **All eight** | **21/53** | **27/53** | |
+
+The six practical documents among them went from 16 to 22 editable pages of 47.
+
+**The mouse guide** passes its tagged structure now (the reversed BBox), and stops at its content:
+27,313 and 39,479 operators on its two pages against the 16,384 the scan bounds, and past that
+12 `sh` shadings and `BX`/`EX` compatibility sections. The operator bound is a performance
+policy (*Existing-text editing*: 1 MiB, 16,384 operators) and was not raised; whether an InDesign
+page of 40,000 operators is worth the scan cost is a decision to make on a measurement of what
+the scan costs at that size, not a side effect of this increment.
+
+**Not done.** Windows has not run any of this. Text under a turned clip is read-only, never
+editable. A Span whose ActualText spans several runs, differs from its words by more than end
+spaces, or sits over an inline ActualText span stays read-only. A replacement that wraps inside
+a rewritten Span is refused. The mouse guide's operator bound is the user's call. The full
+mutation table was not run; the run below covered every mutation in the files these commits
+touched.
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'pptx:'`: 61 mutations, each caught by the
+test named for it. Four survived their first run and each was a test that could not fail, fixed
+in the test: a nested text box refused by the parent check inside `element` rather than by the
+one-level rule (now the only mechanism), turned-clip refusals that passed because a page left
+with only read-only text is refused too (a line after the scope now separates them), a range
+bound only reachable under a scaling CTM, and a sample-width case refused for its length first.
+`--since 195286e` then ran all 459 mutations in the files these commits touched, after 15 of
+them were re-aimed at code the increment reshaped: all 459 caught. One old mutation was removed
+because the check it broke was removed on purpose (*bounded attributes: accept an inverted
+box*), and one of the new ones because it duplicated a re-aimed one.
+
+**Fuzz.** `uv run src-tauri/fuzz/run.py --target textedit_scan --seconds 20`, with the new
+`editable-pptx` seed: the first run failed on that seed's first execution (the deletion finding
+above); after the fix, 24,186 executions from 131 at `INITED`, 100 MB peak RSS, no finding
+(`--sanitizer=none` on macOS, so not an AddressSanitizer result).

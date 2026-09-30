@@ -30,6 +30,12 @@ have the binary.)
   fonts whose licence permits editing and subsetting are used. On a computer
   without the font, the same edit uses Noto Sans. Fonts with PostScript (CFF)
   outlines are not used yet.
+- **Text in PowerPoint exports can be edited.** Slides and factsheets saved as
+  PDF from PowerPoint for Microsoft 365 used to offer no text at all. Their
+  paragraphs and table cells are now editable, and the words a screen reader or
+  search reads for them are updated with each edit. Link text, pictures and
+  gradients are kept as they are. On a six-page EC factsheet every page now
+  offers its text.
 
 ### Changed
 

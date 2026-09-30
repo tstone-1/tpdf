@@ -182,6 +182,7 @@ touching `src-tauri/src/textedit/`. Its topics, in order:
 - Embedded Type 1 programs, word gaps in fonts without a space, kept kerning (`kerning.rs`).
 - Non-embedded and standard-14 Latin fonts, the second producer sample, CID-keyed CFF.
 - `cm` inside a text block, the 1e-6 ink allowance, untagged StructParents, patterns, skewed text.
+- PowerPoint for Microsoft 365.
 
 **Signatures, forms, tabs and the worker's writers and readers are in
 [`docs/SUBSYSTEMS.md`](docs/SUBSYSTEMS.md).** Its topics, in order:

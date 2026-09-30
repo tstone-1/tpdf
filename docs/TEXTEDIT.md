@@ -194,7 +194,9 @@ Single rectangular clips accept nonzero signed width and height, normalizing
 transformed corners before intersection. The saved `re W/W* n` bytes remain
 unchanged. Partly clipped text retains its clip and exposes only its visible hit
 area. Bounded compound rectangular clips preserve winding and holes; their text
-ink must remain fully contained. Unsupported clip shapes remain refused.
+ink must remain fully contained. Unsupported clip shapes remain refused, except one
+turned convex quadrilateral, whose text is kept read-only (*PowerPoint for Microsoft
+365* below).
 Generate equivalent clip fixtures with `make_textedit_composite.py <path> --clip-direction
 positive|x|y|both --clip-rule W|W*`; the background makes a missing clip visible.
 
@@ -392,7 +394,8 @@ to both) are accepted. `tagging/producer_tests.rs`,
 An element *pins* its content (read-only, through `Tags::bounded`) when it keeps
 metadata describing that content as it stands: `/Alt` or `/ActualText` on any
 element (each covers every descendant; InDesign sets ActualText on the Span of a
-forced line break), a non-empty `/T` on an element owning text, being a child of a
+forced line break; a Span whose ActualText is its own words is rewritten instead,
+*PowerPoint for Microsoft 365* below), a non-empty `/T` on an element owning text, being a child of a
 Figure, a
 non-Start `TextAlign`, or a table `/BBox`. `element()` returns the pin with the
 page; the walk ORs it into `bounded` and `Group::pinned` carries it through
@@ -680,8 +683,8 @@ sum nothing differently and get no allowance.
 
 Untagged pages may retain a bounded integer StructParents index with no
 StructTreeRoot. Preserve that unused index; actual MCIDs without a tree remain
-refused. Axial shading patterns with bounded type-2 interpolation functions can
-paint preserved paths; tiling patterns remain refused. Pattern-filled text,
+refused. Axial shading patterns with bounded type-2 interpolation functions, or a
+type-0 sampled function checked and never evaluated, can paint preserved paths; tiling patterns remain refused. Pattern-filled text,
 skewed or mirrored text matrices and text under a non-diagonal page CTM stay
 read-only, with validated embedded-font
 bounds retained for layout collision checks. Its text, positioning and resource
@@ -691,3 +694,72 @@ points' range is checked, TikZ rotates drawings with `cm`), and a moveto may
 start a subpath that draws nothing (TikZ's `m m ... h m S`) as long as the path
 draws a segment. Clips under a non-diagonal CTM remain refused. See `textedit/patterns.rs` and
 `textedit/preserved_tests.rs`; private-document checks stay in ignored directories.
+
+## PowerPoint for Microsoft 365
+
+Measured on the unchanged EC consumer factsheet (`testdata/textedit-public-corpus.json`),
+2026-09-30; `BUILD.md` *PowerPoint factsheet* has the round trips. Every shape below was
+found by walking the refusals of that one document with scratch-only bypasses, and each
+has a synthetic test and a `pptx:` mutation. `testdata/make_textedit_pptx.py` draws all of
+them on one original page.
+
+- **A cell's text box.** PowerPoint wraps each table cell's paragraphs in `Textbox`, which
+  its RoleMap maps to `Sect`: `TD > Textbox > P`. A child of a TD or TH whose role is a
+  grouping element is lifted into the cell, one level only, when it is a bare wrapper: no
+  `/A`, at least one child, and only elements as children, never marked content of its
+  own. Its own pins (alternate text) reach what it holds. The cell stays the block a wrap
+  cannot move out of (`tagging::groups`).
+- **A link's words.** PowerPoint tags them as a `Span` inside the `Link`, and may name the
+  annotation through an `OBJR` that is itself an indirect object. Only a Link may hold
+  such a Span; it must hold marked content and nothing else, its parent-tree slot names
+  the Span, and its text is pinned like any link text. The indirect OBJR is resolved and
+  held to the ordinary ownership rules.
+- **Element bounds.** A layout `/BBox` may name either pair of opposite corners (ISO 32000-1
+  7.9.5; InDesign writes its top first, the Logitech guide). It must still be four numbers,
+  and it still pins what it describes.
+- **The page clip.** `m l l l W* n`, with no closing segment: clipping closes the subpath
+  (ISO 32000-1 8.5.3.3), and such an implicit close is accepted only when `W`/`W*`
+  follows at once. PowerPoint's corners are off the axis by float noise, up to 0.0002 pt.
+  Corners, and an explicit closing `l`, within `clipping::NEAR` (0.001 unscaled user
+  units) of the axis are taken as the rectangle each edge's innermost point bounds,
+  which the true path contains, and only when that rectangle is the one subpath, since a
+  hole's inner rectangle would understate it.
+- **A turned picture's clip.** `m l l l [l] [h] W|W* n` around one strictly convex
+  quadrilateral that is not a rectangle (`clipping::quadrilateral`), under a diagonal CTM,
+  every corner in range. The axis-aligned clip model cannot hold it, so text drawn under
+  it keeps its bytes and is read-only for the rest of its graphics-state scope; the clip is
+  kept. The factsheet's one such scope, on page 3, holds an image and no text, so this
+  costs nothing there; containment against the polygon would be the next step if one did.
+- **Gradients.** Every PowerPoint gradient is an axial shading whose `/Function` is a type 0
+  sampled stream (ISO 32000-1 7.10.2): 512 eight-bit RGB samples, Flate. It is checked and
+  never evaluated: exactly the keys of Table 38/39 and the stream's own, one input over
+  `[0 1]`, 1 to 4,096 samples, a standard sample width, `Order` 1 or 3, `Range` and `Decode`
+  with two numbers per colour component (Range ordered), a two-number `Encode`, no decode
+  parameters, and exactly `ceil(size x components x bits / 8)` decoded bytes.
+- **Matted soft masks.** `/Matte` (ISO 32000-1 11.6.5.3) is accepted on a soft mask only,
+  with one number in `[0, 1]` per colour component of the image it belongs to, and not
+  when that image is indexed. It is kept, never applied.
+- **A Span's ActualText.** PowerPoint sets ActualText on every Span of a paragraph, equal to
+  the words it paints or to them with the word's space at one end. Such a Span is no
+  longer pinned by it when nothing else pins it (no `/Alt`, no non-empty `/T`, nothing
+  inherited) and it holds exactly one marked-content sequence. The scan then keeps it
+  editable only where every show of the Span is plain text in exactly one run, the run
+  holds nothing else, no inline ActualText span sits inside it, and the rule below holds;
+  anywhere else the page is scanned again with that Span pinned (`textedit::inspect`,
+  `Tags::pin`), which is exactly the old behaviour.
+
+  **The rule** (`actual::Edges`): with `A` the ActualText decoded as a PDF text string and
+  `R` the run's text, strip leading and trailing U+0020 (and nothing else) from both; the
+  two cores must be equal. Both empty is a match: that is what a deletion leaves. For a
+  replacement `R'`, the new ActualText is `R'` with each end's run of spaces changed by the
+  difference the source had at that end (`A`'s count minus `R`'s), floored at zero; an
+  `R'` of nothing but spaces is one end. It is written in the same save, UTF-16BE with a
+  BOM, into the Span's own dictionary (`commit_batch`, beside moved link rectangles), so
+  undo, redo and reopening need nothing of their own: the journal holds replacements and
+  the save rebuilds from the source. A replacement that wraps is refused, as for an inline
+  span. `verify` and redaction are untouched: redaction refuses pending text edits.
+
+  The growth and blocks probes restore a rewritten Span after each trial, as they restore
+  the links a wrap moves; without it the next trial met the new ActualText and found the
+  Span pinned.
+
