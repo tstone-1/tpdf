@@ -5,6 +5,7 @@ uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py
 uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --named-mapping output.pdf
 uv run --with pypdf testdata/make_textedit_embedded.py --check before.pdf after.pdf
 uv run --with pypdf testdata/make_textedit_embedded.py --tagged-controls before.pdf after.pdf
+uv run --with pypdf testdata/make_textedit_embedded.py --layout-controls before.pdf after.pdf [--check options]
 Writes a deterministic test font and an ignored PDF with the native UI fixture's
 geometry. No installed or third-party font is read.
 """
@@ -14,6 +15,165 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from text_edit_fonts import make_font, pdf_round_trip
+
+
+# Text state a layout save may restate around its show (ISO 32000-1 Table 105),
+# and the line operators it may replay afterwards to put the line matrix back.
+STATE = (b"Tf", b"Tc", b"Tw", b"Tz", b"TL", b"Ts", b"Tm")
+LINE = (b"Td", b"TD", b"T*")
+SHOWS = (b"Tj", b"TJ")
+
+
+def multiply(a, b):
+    return [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3],
+            a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3],
+            a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]]
+
+
+def text_states(operations):
+    """The text state in force before each operation, following q/Q and BT."""
+    state = {b"Tf": None, b"Tc": 0.0, b"Tw": 0.0, b"Tz": 100.0, b"TL": 0.0, b"Ts": 0.0,
+             "tm": [1, 0, 0, 1, 0, 0], "lm": [1, 0, 0, 1, 0, 0]}
+    saved, states = [], []
+    for operands, operator in operations:
+        states.append(dict(state))
+        state = step(state, operands, operator, saved)
+    states.append(dict(state))
+    return states
+
+
+def step(state, operands, operator, saved=None):
+    state = dict(state)
+    if operator == b"q" and saved is not None:
+        saved.append(dict(state))
+    elif operator == b"Q" and saved:
+        restored = saved.pop()
+        state.update({key: restored[key] for key in STATE[:-1]})
+    elif operator == b"BT":
+        state["tm"] = state["lm"] = [1, 0, 0, 1, 0, 0]
+    elif operator == b"Tf":
+        state[b"Tf"] = (operands[0], float(operands[1]))
+    elif operator in STATE[1:-1]:
+        state[operator] = float(operands[0])
+    elif operator == b"Tm":
+        state["tm"] = state["lm"] = [float(v) for v in operands]
+    elif operator in LINE:
+        x, y = (0.0, -state[b"TL"]) if operator == b"T*" else (float(operands[0]), float(operands[1]))
+        if operator == b"TD":
+            state[b"TL"] = -y
+        state["tm"] = state["lm"] = multiply([1, 0, 0, 1, x, y], state["lm"])
+    return state
+
+
+def show_advance(operands, operator, state, fonts):
+    """Horizontal text-space advance of one show, from the font's own widths."""
+    from pypdf._font import Font
+
+    name, size = state[b"Tf"]
+    font = fonts[name].get_object()
+    scale = state[b"Tz"] / 100
+    parts = operands[0] if operator == b"TJ" else [operands[0]]
+    composite = font.get("/Subtype") == "/Type0"
+    if composite:
+        descendant = font["/DescendantFonts"][0].get_object()
+        widths, default, table = {}, float(descendant.get("/DW", 1000)), list(descendant.get("/W", []))
+        index = 0
+        while index < len(table):
+            first, second = int(table[index]), table[index + 1].get_object()
+            if isinstance(second, list):
+                widths.update({first + offset: float(w) for offset, w in enumerate(second)})
+                index += 2
+            else:
+                widths.update({code: float(table[index + 2]) for code in range(first, int(second) + 1)})
+                index += 3
+        width = lambda code: widths.get(code, default)
+    elif "/Widths" in font:
+        first = int(font.get("/FirstChar", 0))
+        table = [float(w) for w in font["/Widths"]]
+        missing = float(font.get("/FontDescriptor", {}).get("/MissingWidth", 0)) if "/FontDescriptor" in font else 0.0
+        width = lambda code: table[code - first] if 0 <= code - first < len(table) else missing
+    else:
+        # A standard 14 font without Widths: Adobe's metrics, as pypdf carries them.
+        metrics = Font.from_font_resource(font)
+        assert isinstance(metrics.encoding, dict), "cannot measure the source show"
+        width = lambda code: float(metrics.character_widths[metrics.encoding[code]])
+    advance = 0.0
+    for part in parts:
+        if not isinstance(part, (str, bytes)):
+            advance -= float(part) / 1000 * size * scale
+            continue
+        raw = part.original_bytes if isinstance(part, str) else bytes(part)
+        stride = 2 if composite else 1
+        for offset in range(0, len(raw), stride):
+            code = int.from_bytes(raw[offset:offset + stride], "big")
+            space = state[b"Tw"] if stride == 1 and code == 32 else 0.0
+            advance += (width(code) / 1000 * size + state[b"Tc"] + space) * scale
+    return advance
+
+
+def edited_shows(operations, fonts):
+    """Pair each edited source show with the show that replaced it.
+
+    A byte patch replaces shows one for one. A layout save (every edit made in
+    the application) replaces one show with: text state restated to the values
+    the source had there, the new show, the same state and the source's line
+    matrix restated, and at most one `TJ` of an empty string and a number that
+    puts the cursor where the source show left it. Anything else refuses.
+    """
+    import difflib
+
+    old_ops, new_ops = operations
+    states = text_states(old_ops)
+    matcher = difflib.SequenceMatcher(a=[repr(op) for op in old_ops], b=[repr(op) for op in new_ops], autojunk=False)
+    changes, first = [], None
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        old, new = old_ops[i1:i2], new_ops[j1:j2]
+        first = i1 if first is None else first
+        if len(old) == len(new) and all(a[1] in SHOWS and b[1] == a[1] for a, b in zip(old, new)):
+            changes += list(zip(old, new))
+            continue
+        assert len(old) == 1 and old[0][1] in SHOWS, "operator count changed"
+        source = states[i1]
+        shows = [index for index, op in enumerate(new) if op[1] in SHOWS]
+        assert shows, "operator count changed"
+        show = shows[0]
+        state = dict(source)
+        for operands, operator in new[:show]:
+            assert operator in STATE, "operator count changed"
+            state = step(state, operands, operator)
+        assert all(state[key] == source[key] for key in STATE[:-1]) and close(state["tm"], source["tm"]), "restated text state differs from the source"
+        after = dict(state)
+        rest = new[show + 1:]
+        cursor = None
+        if rest and rest[-1][1] == b"TJ":
+            cursor, rest = rest[-1], rest[:-1]
+            parts = cursor[0][0]
+            assert len(parts) == 2 and isinstance(parts[0], (str, bytes)) and len(parts[0]) == 0 and not isinstance(parts[1], (str, bytes)), "cursor restoration shows text"
+        for operands, operator in rest:
+            assert operator in STATE + LINE, "operator count changed"
+            after = step(after, operands, operator)
+        assert all(after[key] == source[key] for key in STATE[:-1]), "restored text state differs from the source"
+        assert close(after["lm"], source["lm"]), "restored line matrix differs from the source"
+        if cursor is not None:
+            moved = -float(cursor[0][0][1]) / 1000 * source[b"Tf"][1] * source[b"Tz"] / 100
+            # Where the source's cursor already was on its line, in text space.
+            lm, tm = source["lm"], source["tm"]
+            det = lm[0] * lm[3] - lm[1] * lm[2]
+            ex, ey = tm[4] - lm[4], tm[5] - lm[5]
+            along = (ex * lm[3] - ey * lm[2]) / det
+            across = (ey * lm[0] - ex * lm[1]) / det
+            assert abs(across) <= 1e-4, "source cursor left its line"
+            wanted = along + show_advance(old[0][0], old[0][1], source, fonts)
+            assert abs(moved - wanted) <= 1e-4, "cursor restoration does not reach the end of the source show"
+        changes.append((old[0], new[show]))
+    assert changes, "no text operand changed"
+    return changes, first
+
+
+def close(a, b):
+    return all(abs(x - y) <= 1e-4 for x, y in zip(a, b))
 
 
 def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False, cid_ligatures=False, numbered_list=False, nested_list=False, list_child=False):
@@ -95,18 +255,24 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         print("[PASS] independent parser: complete tagged structure graph and page parent key preserved")
     operations = [ContentStream(page["/Contents"], reader).operations
                   for page, reader in zip(pages, readers)]
-    assert len(operations[0]) == len(operations[1]), "operator count changed"
-    changes = [(old, new) for old, new in zip(*operations) if old != new]
+    changes, changed_index = edited_shows(operations, pages[0]["/Resources"].get("/Font", {}))
     assert len(changes) == (6 if w3c else 1), "wrong number of changed text operands"
     if w3c:
-        assert all(old[1] == new[1] == b"Tj" and len(old[0]) == len(new[0]) == 1 for old, new in changes), "group edit changed non-text operators"
+        assert all(old[1] == b"Tj" and len(old[0]) == 1 for old, new in changes), "group edit changed non-text operators"
+        assert all(new[1] == b"Tj" for old, new in changes[1:]), "group edit changed non-text operators"
     old, new = changes[0]
-    assert old[1] == new[1] and old[1] in (b"Tj", b"TJ"), "text-show operator changed"
+    assert old[1] in (b"Tj", b"TJ") and new[1] in (b"Tj", b"TJ"), "text-show operator changed"
     assert len(old[0]) == len(new[0]) == 1, "wrong text-show operand count"
     if old[1] == b"TJ":
         assert isinstance(old[0][0], list), "wrong source array"
-        assert isinstance(new[0][0], list) and len(new[0][0]) == 1, "wrong replacement array"
-        assert isinstance(new[0][0][0], (str, bytes)), "replacement array contains an adjustment"
+    if new[1] == b"TJ":
+        # kerning.rs keeps the source's own items around the changed middle:
+        # an adjustment may survive, but only one the source array already had,
+        # in its order. A new number would move text the parser cannot see.
+        assert isinstance(new[0][0], list) and any(isinstance(part, (str, bytes)) for part in new[0][0]), "wrong replacement array"
+        kept = [part for part in new[0][0] if not isinstance(part, (str, bytes))]
+        source = iter(part for part in old[0][0] if not isinstance(part, (str, bytes))) if old[1] == b"TJ" else iter(())
+        assert all(any(number == other for other in source) for number in kept), "replacement array contains an adjustment the source did not have"
     else:
         assert isinstance(new[0][0], (str, bytes)), "wrong replacement operand"
     fonts = list(pages[0]["/Resources"]["/Font"].values())
@@ -130,7 +296,6 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         old_text, new_text = ("REGULAR", "ANNUAL") if page_index == 0 else ("Community Hub", "Community")
     if symbolic:
         if agenda or passport:
-            changed_index = next(i for i, pair in enumerate(zip(*operations)) if pair[0] != pair[1])
             font_name = [args[0] for args, op in operations[0][:changed_index] if op == b"Tf"][-1]
             mapped_font = pages[0]["/Resources"]["/Font"][font_name]
             expected_operands = [(old, old_text), (new, new_text)]
@@ -209,6 +374,19 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
                 assert " ".join(page.extract_text().split()) == "1. " + first + " " + label + " SYNTHETIC SECOND", "list text or labels changed"
                 continue
             assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND")).split()), "wrong decoded text"
+        if not symbolic:
+            # The page text above folds whitespace, so an added or lost space
+            # passes it. Decode both edited operands exactly through the font's
+            # own encoding (pypdf's table, not the editor's).
+            from pypdf._cmap import get_encoding
+            font_name = [args[0] for args, op in operations[0][:changed_index] if op == b"Tf"][-1]
+            encoding, _ = get_encoding(pages[0]["/Resources"]["/Font"][font_name].get_object())
+            assert isinstance(encoding, dict), "expected a simple font's encoding table"
+            for operation, text in ((old, expected_text[0] + (" " if wrapped else "")), (new, expected_text[1])):
+                parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
+                raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
+                               for part in parts if isinstance(part, (str, bytes)))
+                assert all(code in encoding for code in raw) and "".join(encoding[code] for code in raw) == text, "wrong decoded operand"
     if float32:
         print("[PASS] independent parser: only target text operands changed; resources agree at float32 precision with exact stream bytes")
     else:
@@ -287,6 +465,99 @@ def tagged_controls(before, after, page_index=0, wrapped=False):
             print("[PASS] independent structure control:", mode)
 
 
+def layout_controls(before, after, page_index=0, wrapped=False, **options):
+    """Prove the readback of an edited page refuses what it exists to catch.
+
+    Each control damages one thing in a copy of a passing output and requires
+    `check` to refuse it for that reason: the input left unedited, an added
+    space, a changed font resource, a restated text state that differs from the
+    source, a cursor restoration a unit short, a kerning number the source never
+    had, and a painting operator inside the edited region. A control that does
+    not apply to this output (no restoration, no array) is skipped by name.
+    """
+    import contextlib
+    import io
+    import tempfile
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import ArrayObject, ContentStream, FloatObject, NameObject, NumberObject
+
+    check(before, after, page_index, wrapped, **options)
+    source = ContentStream(PdfReader(before).pages[page_index]["/Contents"], PdfReader(before)).operations
+
+    def damaged(mode):
+        writer = PdfWriter(clone_from=after)
+        page = writer.pages[page_index]
+        if mode == "font_resource":
+            font = next(iter(page["/Resources"]["/Font"].values())).get_object()
+            font[NameObject("/Spoiled")] = NumberObject(1)
+            return writer
+        stream = ContentStream(page["/Contents"], writer)
+        ops = stream.operations
+        index = next(i for i, (old, new) in enumerate(zip(source, ops)) if old != new) if mode != "unedited" else None
+        if mode == "unedited":
+            return PdfWriter(clone_from=before)
+        # The edited text object: from the first changed operation to its ET.
+        end = next(i for i in range(index, len(ops)) if ops[i][1] == b"ET")
+        shows = [i for i in range(index, end) if ops[i][1] in SHOWS]
+        if mode == "added_space":
+            operands, operator = ops[shows[0]]
+            from pypdf.generic import ByteStringObject
+            # A Tj's operand list is itself the list of parts to change.
+            parts = operands[0] if operator == b"TJ" else operands
+            last = max(i for i, part in enumerate(parts) if isinstance(part, (str, bytes)))
+            raw = parts[last].original_bytes if isinstance(parts[last], str) else bytes(parts[last])
+            parts[last] = ByteStringObject(raw + (b"\x00 " if options.get("cid_ligatures") else b" "))
+        elif mode == "restated_state":
+            restated = [i for i in range(index, end) if ops[i][1] == b"Tc"]
+            if not restated:
+                return None
+            ops[restated[-1]] = ([FloatObject(0.5)], b"Tc")
+        elif mode == "cursor_short":
+            cursor = [i for i in range(index, end) if ops[i][1] == b"TJ" and len(ops[i][0][0]) == 2 and len(ops[i][0][0][0]) == 0]
+            if not cursor:
+                return None
+            number = ops[cursor[0]][0][0][1]
+            ops[cursor[0]][0][0][1] = FloatObject(float(number) + 1)
+        elif mode == "new_kern":
+            operands, operator = ops[shows[0]]
+            if operator != b"TJ":
+                return None
+            operands[0].insert(1, NumberObject(-7))
+        elif mode == "painting":
+            ops.insert(shows[0], ([], b"n"))
+        page.replace_contents(stream)
+        return writer
+
+    reasons = {
+        "unedited": "no text operand changed",
+        "added_space": "wrong",
+        "font_resource": "page resources changed",
+        "restated_state": "text state differs",
+        "cursor_short": "cursor restoration",
+        "new_kern": "adjustment the source did not have",
+        "painting": "operator count changed",
+    }
+    with tempfile.TemporaryDirectory(prefix="tpdf-layout-controls-") as room:
+        for mode, reason in reasons.items():
+            writer = damaged(mode)
+            if writer is None:
+                print("[SKIP] readback control does not apply to this output:", mode)
+                continue
+            target = Path(room) / (mode + ".pdf")
+            writer.write(target)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    check(before, target, page_index, wrapped, **options)
+            except AssertionError as error:
+                # A ligature fixture pins its glyph codes before it decodes them,
+                # and a subset without a space cannot decode the added one.
+                other = ("ligature glyph codes", "unmapped symbolic code") if mode == "added_space" else ()
+                assert reason in str(error) or any(text in str(error) for text in other), f"{mode} refused for another reason: {error}"
+            else:
+                raise AssertionError("readback control survived: " + mode)
+            print("[PASS] readback control refused:", mode)
+
+
 def named_mapping(target):
     """Synthetic WinAnsi font with agreeing Mac/Windows maps and ToUnicode."""
     import io
@@ -320,7 +591,8 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--named-mapping":
         named_mapping(Path(sys.argv[2]))
         return
-    if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls"):
+    if len(sys.argv) >= 4 and sys.argv[1] in ("--check", "--tagged-controls", "--layout-controls"):
+        checking = sys.argv[1] in ("--check", "--layout-controls")
         page, wrapped, float32, default_encoding = 0, False, False, False
         w3c = dash = agenda = cff_unicode = cff_ligatures = passport = cid_ligatures = numbered_list = nested_list = list_child = False
         for option in sys.argv[4:]:
@@ -328,32 +600,36 @@ def main():
                 page = int(option.split("=", 1)[1])
             elif option == "--wrapped":
                 wrapped = True
-            elif option == "--default-encoding" and sys.argv[1] == "--check":
+            elif option == "--default-encoding" and checking:
                 default_encoding = True
-            elif option == "--nested-list-child" and sys.argv[1] == "--check":
+            elif option == "--nested-list-child" and checking:
                 list_child = True
-            elif option == "--nested-list" and sys.argv[1] == "--check":
+            elif option == "--nested-list" and checking:
                 nested_list = True
-            elif option == "--list" and sys.argv[1] == "--check":
+            elif option == "--list" and checking:
                 numbered_list = True
-            elif option == "--passport" and sys.argv[1] == "--check":
+            elif option == "--passport" and checking:
                 passport = True
-            elif option == "--agenda" and sys.argv[1] == "--check":
+            elif option == "--agenda" and checking:
                 agenda = True
-            elif option == "--cid-ligatures" and sys.argv[1] == "--check":
+            elif option == "--cid-ligatures" and checking:
                 cid_ligatures = True
-            elif option == "--cff-ligatures" and sys.argv[1] == "--check":
+            elif option == "--cff-ligatures" and checking:
                 cff_ligatures = True
-            elif option == "--cff-unicode" and sys.argv[1] == "--check":
+            elif option == "--cff-unicode" and checking:
                 cff_unicode = True
-            elif option == "--dash" and sys.argv[1] == "--check":
+            elif option == "--dash" and checking:
                 dash = True
-            elif option == "--w3c-dummy" and sys.argv[1] == "--check":
+            elif option == "--w3c-dummy" and checking:
                 w3c = True
-            elif option == "--float32" and sys.argv[1] == "--check":
+            elif option == "--float32" and checking:
                 float32 = True
             else:
                 raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --cid-ligatures, --dash, --agenda, --passport, --list, --nested-list, --nested-list-child or --w3c-dummy (--check only)")
+        options = dict(float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list, nested_list=nested_list, list_child=list_child)
+        if sys.argv[1] == "--layout-controls":
+            layout_controls(*sys.argv[2:4], page, wrapped, **options)
+            return
         action = check if sys.argv[1] == "--check" else tagged_controls
         if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport or cid_ligatures or numbered_list or nested_list or list_child:
             check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list, nested_list=nested_list, list_child=list_child)
@@ -361,7 +637,7 @@ def main():
             action(*sys.argv[2:4], page, wrapped)
         return
     if len(sys.argv) != 1:
-        raise SystemExit("expected no arguments, --check or --tagged-controls before.pdf after.pdf")
+        raise SystemExit("expected no arguments, --check, --layout-controls or --tagged-controls before.pdf after.pdf")
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import ArrayObject, DecodedStreamObject, NameObject, NumberObject
 

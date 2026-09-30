@@ -96,9 +96,11 @@ for (name, document) in [("before", before), ("after", after)] {
     guard let page = document.page(at: pageIndex) else { fail("missing page") }
     if variant == "--wide-spacing" {
         // Independent positions for the Tf=1, Tm=12 fixture: ten source
-        // glyphs then 12*Tw minus .24pt TJ; seven replacement glyphs then Tw.
+        // glyphs then 12*Tw minus .24pt TJ; seven replacement glyphs then Tw,
+        // minus the same .24pt, since the space before FIRST is unchanged and
+        // kerning.rs keeps the source's adjustment between two kept glyphs.
         let matches = document.findString("FIRST", withOptions: [])
-        let expectedX = name == "before" ? 257.104 : 235.744
+        let expectedX = name == "before" ? 257.104 : 235.504
         guard matches.count == 1, abs(matches[0].bounds(for: page).minX - expectedX) < 0.02
         else { fail("wide word gap has the wrong position for \(name)") }
     }

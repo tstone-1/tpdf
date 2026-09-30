@@ -525,7 +525,8 @@ fn run() -> Result<(), String> {
         ("S".repeat(80), "exceed the original"),
         (
             "\u{03b1}".into(),
-            "Latin-1, en dash, curly single quotes and minus only",
+            // The wording since 59d25b6 (WinAnsi punctuation at its own code).
+            "printable Latin-1, WinAnsi punctuation and minus only",
         ),
     ];
     if default_encoding {

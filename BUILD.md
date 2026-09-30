@@ -13384,3 +13384,70 @@ justified one in Coatesville each move down with their underline under the same 
 tagged page and on one without tags, and with two runs of one line; the deep box, the rule past
 the line, the underline under cut text and the image still refuse. Ten mutations under
 `underline:`, all caught; two older `wrap room:` ones re-aimed at the reshaped loops.
+
+### Three readers brought back to the writer — measured 2026-09-30
+
+The Windows verification of 2026-09-30 (*Word spacing and the next practical target*) found
+three independent readers rejecting correct output on both platforms. They had gone stale
+behind the writer, not the other way round; each is now fixed and still refuses what its
+section says it refuses.
+
+- **`text-edit-probe`, default mode.** Its last step expected the refusal wording from
+  before `59d25b6` (2026-09-17), which added WinAnsi punctuation. It now expects
+  *printable Latin-1, WinAnsi punctuation and minus only*. Stale from `59d25b6`.
+- **`make_textedit_embedded.py --check`.** It required the edited page to keep its operator
+  count and a replaced `TJ` to be a single string. Both stopped being true of correct output:
+  `ec5a696` (2026-09-18) keeps the source's own `TJ` items around the changed middle
+  (`kerning.rs`), which broke worker saves of a `TJ`; and the application has sent every
+  edit with a layout since 26.9.9 (`812601d`, 2026-09-16), whose save restates
+  `Tf Tc Tw Tm` around the new show, replays the source's line operators and ends with
+  `TJ [() n]` to put the cursor back (its present form is from `b5a47f4` and `eab6dee`,
+  2026-09-19), which broke every native save. The dates come from the history, not from
+  re-running each commit. The reader now pairs each
+  edited show through a diff of the two operator lists and accepts exactly two shapes: shows
+  replaced one for one, or one show replaced by that layout sequence. Every restated state
+  must equal the source's at that point, the replayed line matrix must equal the source's,
+  and the cursor number must equal the source show's own advance (measured from the font's
+  `Widths`, `W` or, for a standard font, Adobe's metrics) to 1e-4 text units. A number left
+  in a replacement `TJ` must be one the source array had, in its order. It also decodes both
+  edited operands exactly through a simple font's own encoding: the page-text comparison it
+  had folds whitespace, so an added trailing space passed it, which the new controls found.
+- **`text_edit_pdfkit.swift --wide-spacing`.** `FIRST` now lands at 235.504 pt, not 235.744:
+  the space before it is unchanged, so the source's 20/1000 em (0.24 pt at 12 pt) between
+  them is kept. Stale from `ec5a696` for the worker save, and for the native one since the
+  layout default.
+
+`--layout-controls before.pdf after.pdf [--check options]` damages a copy of a passing output
+seven ways and requires a refusal for the named reason each time: the input left unedited, a
+space added to the replacement, a font resource changed, a restated `Tc` differing from the
+source, the cursor restoration one unit short, a kerning number the source never had, and a
+painting operator inside the edited region. A control that cannot apply to an output (a byte
+patch has no restoration) prints `[SKIP]` with its name rather than passing.
+
+```sh
+cargo build --locked --manifest-path src-tauri/Cargo.toml --example text-edit-probe
+src-tauri/target/debug/examples/text-edit-probe scratch/readers/default
+uv run --with fonttools --with pypdf testdata/make_textedit_embedded.py --layout-controls <dir>/synthetic-before.pdf <dir>/synthetic-after.pdf [--cff-unicode|--cff-ligatures|--dash|--w3c-dummy|--passport --page=15]
+swift scripts/text_edit_pdfkit.swift <dir> --wide-spacing
+```
+
+Measured on macOS against the 22 outputs retrieved from the Windows run (11 worker, 11
+native; the macOS worker's 11 are byte-identical to them, and so is a fresh macOS native
+`textedit-wide-spacing` save, 23/23): the default probe and all 11 fixture probes pass; the
+pypdf reader accepts all 22, and its controls refuse every applicable damage (7 of 7 on the
+four symbolic-TrueType native saves, 6 on the other native saves, which have no kept number,
+4 or 5 on worker saves) with the named reason; the W3C worker save passes with 4 refusals.
+PDFKit places `FIRST` correctly in both `--wide-spacing` saves and refuses an unedited copy
+(`wide word gap has the wrong position for after`).
+
+**What relied on them.** Between 26.9.9 and this fix no section of this file cites a pass
+by any of the three. The 26.9.9 release notes report a packaged fallback-font save *with
+independent parser readback* without naming the reader; `--check` refuses any save that adds
+a font resource, so it cannot have been this one. The sections of 2026-09-17 to 2026-09-29 verify through
+`--roundtrip`, `text_wrap_check.py`, `qpdf --check` and `pdftotext`, and the Windows section
+of 2026-09-30 already recorded all three as failing and substituted a structural readback.
+Its claims that *the pypdf reader accepts the worker save* (remapped and Unicode CFF, stroke
+styles, ligatures, named maps) were true when written, because those worker saves are byte
+patches of `Tj` strings with no kept number; they were not re-run here beyond the 22 outputs
+above. The earlier sections, before `59d25b6`, were measured against the writer of their day
+and are not claims about the current one.
