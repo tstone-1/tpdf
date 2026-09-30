@@ -4520,9 +4520,10 @@ em and its rights permit editing and subsetting; otherwise Noto as before. No
 is shown what was substituted: the preview names the installed font, or why it was not used.
 A structure-only scan of one reader's PDFs is why: in 18 of 34 documents with subset fonts,
 every subset font was installed on that Mac, and 38 of 43 installed WinAnsi TrueType subsets
-agreed with the installed widths on every glyph. CFF-outline installed fonts are refused, not
-yet embedded. See `BUILD.md`, *An installed copy of the document's font*, and
-`docs/TEXTEDIT.md`.
+agreed with the installed widths on every glyph. CFF-outline installed fonts are embedded as
+a bare CID-keyed CFF (FontFile3 `/CIDFontType0C`) with their `fsType` carried in the program,
+and re-edited through the existing CID-keyed CFF reader. See `BUILD.md`, *An installed copy of
+the document's font*, and `docs/TEXTEDIT.md`.
 The raster-preview fallback is a design decision, not a
 working editing preview in this increment.
 
@@ -14884,8 +14885,10 @@ Automatic font mode now sets characters the embedded subset lacks in an installe
 same font before falling back to Noto: the worker names the font, the app process finds it
 through CoreText or DirectWrite and reads it, and the worker verifies the name, rights and
 widths before embedding a subset. The same edit uses Noto on a computer without the font, by
-decision. Windows compiles the DirectWrite lookup and has not run it. CFF installed fonts are
-the remaining gap. See `BUILD.md`, *An installed copy of the document's font*.
+decision. Windows compiles the DirectWrite lookup and has not run it. Installed fonts with CFF
+outlines followed the same day, embedded as CIDFontType0C and verified on two system CFF
+fonts on macOS; CFF2, and CFF drawn at other than 1000 units per em, are still refused. See
+`BUILD.md`, *An installed copy of the document's font*.
 
 **The practical sample, re-measured 2026-09-30.** The "two editable pages out of 48" above was
 long out of date. Measured today on the six practical documents that could be downloaded (the

@@ -74,7 +74,11 @@ pub(super) fn with_tables(subset: &[u8], extra: &[([u8; 4], &[u8])]) -> Result<V
     }
     let power = count.ilog2() as u16;
     let search = (1u16 << power) * 16;
-    let mut result = vec![0, 1, 0, 0];
+    // TrueType or, for an installed font's CFF subset, OpenType ('OTTO').
+    let mut result = match subset.get(..4) {
+        Some(version @ ([0, 1, 0, 0] | b"OTTO")) => version.to_vec(),
+        _ => return Err(invalid.into()),
+    };
     for value in [count, search, power, count * 16 - search] {
         result.extend(value.to_be_bytes());
     }

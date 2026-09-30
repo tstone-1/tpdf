@@ -18,7 +18,13 @@ carries the right name.
                   "TITLE SECOND", same outlines and advances, a (3,1) cmap
   sparse.ttf      a copy missing D, a character the document's subset has
   collection.ttc  face 0 is another font (TPDFOtherSans), face 1 is full.ttf
-  cff.otf         the same font with CFF outlines
+  cff.otf         the same font with CFF outlines, U+00A0 drawn by the space
+                  glyph as many OpenType fonts draw it
+  cff2048.otf     cff.otf drawn at 2048 units per em, a CFF FontMatrix the
+                  editor's CID-keyed CFF reader refuses
+  subset.cff      the document's subset of cff.otf as a bare Type1C program,
+                  glyphs named as ISO 32000-1 Annex D names them, the way a
+                  producer embeds an OpenType font in a simple font
   colour.ttf      full.ttf with an empty COLR/CPAL pair: a colour font
 
 --check regenerates in memory and compares byte for byte, so a hand edit or a
@@ -44,19 +50,23 @@ def advance(ch: str) -> int:
     return 512 if ch == " " else 900 + (ord(ch) * 37) % 400
 
 
-def build(characters: str, *, ps_name: str = NAME, cff: bool = False) -> bytes:
+def build(characters: str, *, ps_name: str = NAME, cff: bool = False,
+          adobe_names: bool = False, cff_upem: int = 1000) -> bytes:
+    from fontTools.agl import UV2AGL
     from fontTools.fontBuilder import FontBuilder
     from fontTools.pens.t2CharStringPen import T2CharStringPen
     from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-    upem = 1000 if cff else UPEM
+    upem = cff_upem if cff else UPEM
     scale = upem / UPEM
     chars = sorted(set(characters) - {" "})
-    names = {ch: f"uni{ord(ch):04X}" for ch in chars}
+    names = {ch: UV2AGL[ord(ch)] if adobe_names else f"uni{ord(ch):04X}" for ch in chars}
     order = [".notdef", "space", *names.values()]
     builder = FontBuilder(upem, isTTF=not cff)
     builder.setupGlyphOrder(order)
-    builder.setupCharacterMap({32: "space", **{ord(ch): name for ch, name in names.items()}})
+    shared = {0xA0: "space"} if cff and not adobe_names else {}
+    builder.setupCharacterMap({32: "space", **shared,
+                               **{ord(ch): name for ch, name in names.items()}})
     widths = {".notdef": round(1000 * scale), "space": round(advance(" ") * scale)}
     glyphs = {}
     for name in order:
@@ -78,7 +88,10 @@ def build(characters: str, *, ps_name: str = NAME, cff: bool = False) -> bytes:
             pen.closePath()
         glyphs[name] = pen.getCharString() if cff else pen.glyph()
     if cff:
-        builder.setupCFF(ps_name, {"FullName": "TPDF Installed Sans"}, glyphs, {})
+        # Hint values only, so that the Private DICT is not empty: an offset
+        # to an empty dict reads the same wherever it points.
+        private = {"BlueValues": [-12, 0, 700, 712], "StdHW": 60, "StdVW": 80}
+        builder.setupCFF(ps_name, {"FullName": "TPDF Installed Sans"}, glyphs, private)
     else:
         builder.setupGlyf(glyphs)
     builder.setupHorizontalMetrics({name: (widths[name], 0) for name in order})
@@ -122,6 +135,13 @@ def colour(data: bytes) -> bytes:
     return output.getvalue()
 
 
+def bare_cff(data: bytes) -> bytes:
+    """The CFF table of an OpenType font, as a PDF's FontFile3 carries it."""
+    from fontTools.ttLib import TTFont
+
+    return TTFont(io.BytesIO(data)).reader["CFF "]
+
+
 def generate() -> dict[str, bytes]:
     full = build(FULL)
     return {
@@ -130,6 +150,8 @@ def generate() -> dict[str, bytes]:
         "sparse.ttf": build(FULL.replace("D", "")),
         "collection.ttc": collection(build(FULL, ps_name="TPDFOtherSans"), full),
         "cff.otf": build(FULL, cff=True),
+        "cff2048.otf": build(FULL, cff=True, cff_upem=2048),
+        "subset.cff": bare_cff(build(SUBSET, cff=True, adobe_names=True)),
         "colour.ttf": colour(full),
     }
 

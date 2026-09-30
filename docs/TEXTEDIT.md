@@ -105,9 +105,9 @@ carries the bytes as base64 in `Layout::installed`, set by the app process only.
 - the face must carry the requested PostScript name in every name record that decodes
   (Macintosh Roman read as ASCII: Apple's collections carry nothing else), and in a
   collection the named face, or the one face carrying the name when none is named;
-- TrueType outlines only. A CFF-outline `.otf` copy is refused with its own reason
-  (*has CFF outlines, which cannot be embedded yet*) and so is a variable or colour font;
-  **CFF installed fonts are not done**;
+- TrueType or CFF outlines. A variable or colour font is refused with its own reason, and
+  so is CFF2 (*has CFF2 outlines, which cannot be embedded*), which `subsetter` does not
+  subset;
 - OS/2 `fsType` must be 0 or 0x8 (`installed::permits`): the document-font rule refuses
   restricted (0x2) and preview-and-print (0x4) already, and an installed font additionally
   refuses no-subsetting (0x100) and bitmap-only (0x200), since it is subsetted here. A
@@ -117,7 +117,9 @@ carries the bytes as base64 in `Layout::installed`, set by the app process only.
   `installed::TOLERANCE`, one unit. Producers write widths as integers, rounded or
   truncated, and the unit is the one the document's Unicode path already allows between a
   program and its PDF widths. On any disagreement Noto is used;
-- every character of the replacement must be in the copy.
+- every character of the replacement must be in the copy, and for a CFF copy drawn by a
+  glyph of its own: U+00A0 and the space often share one, and a CID-keyed program has one
+  code, and one ToUnicode entry, per glyph (*draws two of the characters with one glyph*).
 
 What is embedded is a subset built by `subsetter` from the replacement's and the document
 subset's glyphs, with the source's OS/2 and a format 12 `(3,10)` character map put back
@@ -126,7 +128,31 @@ a Noto fallback, under `XXXXXX+<PostScript name>`. The preview names it with the
 full name and *(installed)*; a refused copy is named beside the Noto used, as in *Noto
 Sans (the installed X differs from the document's copy)*. After an Apply the journal keeps
 that subset, not the file, and every later request (tiles, outlines, the save) puts it
-through the same checks. The command-line tool's text replacements carry no layout and
+through the same checks.
+
+**A CFF copy (added 2026-09-30) is embedded as a Type0/Identity-H font whose CIDFontType0
+descendant carries the bare CID-keyed CFF as FontFile3 `/CIDFontType0C`**, with no
+CIDToGIDMap: the carrier xdvipdfmx, LuaTeX and Typst write for an OpenType CFF font. `subsetter` makes any CFF font, name- or
+CID-keyed, CID-keyed with each glyph its own CID, so the codes written are the subset's glyph
+ids (`fallback::Font::measure`, `identity`). `/FontFile3 /OpenType` was the alternative and
+is not used: it needs PDF 1.6 and is not permitted by PDF/A-1, while `/CIDFontType0C` is PDF
+1.3 and is the form the editor's own CID-keyed CFF reader (`fonts/cff/cid.rs`) already reads,
+so a reopened document is re-edited through existing code. The OS/2 `fsType` a bare CFF
+would lose is carried into the program's Top DICT as Distiller carries it, a `PostScript`
+string `/FSType N def /OrigFontType /OpenType def` (`fonts/cff/rights.rs`, which moves every
+absolute offset by what the string adds), and read back by `profile::permissions`. Before
+anything is written, the program is parsed by `cff::cid::parse` and every glyph's charstring
+width compared with the width `/W` will declare; a copy whose `hmtx` and charstrings disagree,
+or whose FontMatrix is not 1/1000 (a CFF font drawn at 2048 units per em, Tamil Sangam MN
+among macOS's), is refused as unreadable, because a reopened document could not be edited.
+The journal keeps the OpenType subset, OS/2 and character map put back, as for TrueType. A
+CFF subset of that subset is not the same bytes (`subsetter` writes the Font DICT matrix it
+read back at another length), but the second is a fixed point with the same glyphs.
+Reopened, the written font is read as the document's own CID-keyed CFF, and a character in
+neither subset goes back to the installed copy by name. A document whose own font is a simple
+Type1C subset of the font compares its `/Widths` with the copy exactly as a TrueType subset's.
+
+The command-line tool's text replacements carry no layout and
 never use a fallback font of either kind, so they are unaffected. Encoding alone is also no
 longer taken as coverage: a simple font's Latin-1 slots encode whether or not the subset
 has the glyph, and until this change such a missing letter refused the automatic preview

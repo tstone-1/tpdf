@@ -808,6 +808,7 @@ hop through the index.
 - A fixture cannot put tagged and untagged text on one page, and the untagged half simply is not there
 - A fixture rewritten to reach one parser leaves the standard, and every other reader then judges it differently
 - A fake server that answers once encodes how many requests the code makes
+- An empty Private DICT reads the same wherever its offset points
 
 ## Documents as controls
 - A mitigation present and disclaimed is quieter than one claimed and absent
@@ -25351,4 +25352,21 @@ The reader now decodes both edited operands exactly through the font's own encod
 pypdf reads it, and the control is one of seven `--layout-controls` run against every output.
 A comparison normalised for layout noise cannot be the only check of the thing the noise is
 made of; spaces are text here.
+
+### An empty Private DICT reads the same wherever its offset points
+
+2026-09-30, carrying an installed OpenType font's `fsType` into the bare CFF it is embedded as
+(`fonts/cff/rights.rs`, `docs/TEXTEDIT.md`). Adding a string to the Top DICT moves every
+absolute offset in the program, and one of them is each Font DICT's offset to its Private DICT.
+The generated test font (`testdata/make_installed_fonts.py`, `cff.otf`) was built with an empty
+Private DICT, the fontTools default, so its Font DICT read `Private 0 118`: zero bytes at offset
+118. Zero bytes read at any offset are the same empty dict, so a writer that forgot to move that
+offset produced a program that parsed, measured and drew exactly like the right one. Measured by
+mutation: with the offset left unmoved, the test named for the writer stayed green, and only the
+macOS test on Hiragino Sans, a real font with hint values in its Private DICTs, went red.
+
+The fixture now carries hint values (BlueValues, StdHW, StdVW), and the named test catches the
+same mutation. The general shape: a pointer is only tested by a fixture in which what it points
+at is non-empty and differs from what lies at a wrong address. A size of zero makes every
+address correct.
 

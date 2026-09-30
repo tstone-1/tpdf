@@ -1876,8 +1876,9 @@ box (0.1 to 14,400 points per axis), font size (1 to 512 points), and at most 12
 wrapped lines. Four bundled OFL Noto Sans styles and regular/bold Noto Sans CJK SC
 provide fallback glyphs without filesystem access. An installed copy of a document's own
 font can come before them since 2026-09-30; the worker still opens no file, and §T6.26
-has what crosses the boundary instead. Only the trusted bundled CJK
-programs pass through the subsetter; saved subsets retain embedding rights and
+has what crosses the boundary instead. Of the bundled programs only the CJK ones pass
+through the subsetter; an installed copy, TrueType or CFF, does too (§T6.26). Saved subsets
+retain embedding rights and
 must satisfy the existing embedded-font bounds. CJK programs are shared by style
 and glyph set, and Latin programs by style; bounded
 CIDToGIDMap streams map validated glyphs and ToUnicode streams are capped at
@@ -2637,13 +2638,25 @@ reads the file (`sysfont.rs`), and the next request carries the bytes to the wor
   subset a worker built.
 - **The worker trusts none of it** (`textedit/fonts/installed.rs::accept`). The face must
   carry the requested name in every name record that decodes, which also catches an OS
-  lookup that answered with a substitute and the wrong face of a collection; TrueType
-  outlines only, no variable or colour font; OS/2 rights of 0 or editable (0x8) only;
+  lookup that answered with a substitute and the wrong face of a collection; TrueType or
+  CFF outlines, no CFF2, variable or colour font; OS/2 rights of 0 or editable (0x8) only;
   every width the document's subset declares must agree within 1/1000 em; the supplied
   bytes are bounded again on deserialisation, before decoding, and in `accept`. The
   program is parsed by `ttf-parser` and cut down by `subsetter`, the same two crates and the
   same process that already handle the bundled fonts, and the subset is held to
   `MAX_CONTENT` and parsed back before it is used.
+- **CFF outlines, added 2026-09-30, widen what the worker parses in an installed file.**
+  `ttf-parser` reads the CFF table and `subsetter` desubroutinizes the charstrings of the
+  glyphs kept, a code path the bundled TrueType fonts never reach. Its subroutine recursion
+  is bounded (depth 64), but the expansion is not bounded before its output exists: a
+  hostile installed font whose subroutines call each other several times at each level can
+  make the output large before `MAX_CONTENT` refuses it. On Windows the worker's commit cap
+  refuses the allocation; on macOS a worker's memory has no bound (see *Memory has no kernel
+  bound on macOS* above), so this is the same exposure a document's own decompression bomb
+  has there, reached only through a font the reader installed. What is embedded is the subset's bare CFF with one string added to its Top DICT
+  (`fonts/cff/rights.rs`, which patches five-byte offsets in place and refuses anything
+  else), and it is parsed back by `cff::cid::parse`, the reader any document's CID-keyed
+  CFF already goes through, with every glyph width compared, before it is written.
 - **What a document can make happen.** The name comes from the document, so a document can
   make the app process read the file of any font the reader has installed, and the worker
   parse it. The reach ends at the worker, which has no network (§T4), and at a subset of that

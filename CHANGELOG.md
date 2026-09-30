@@ -29,7 +29,8 @@ have the binary.)
   installed copy was not used. Only part of the font is embedded, and only
   fonts whose licence permits editing and subsetting are used. On a computer
   without the font, the same edit uses Noto Sans. Fonts with PostScript (CFF)
-  outlines are not used yet.
+  outlines, common among Adobe's OpenType fonts, are used too, and text saved
+  in one can be edited again.
 - **Text in PowerPoint exports can be edited.** Slides and factsheets saved as
   PDF from PowerPoint for Microsoft 365 used to offer no text at all. Their
   paragraphs and table cells are now editable, and the words a screen reader or

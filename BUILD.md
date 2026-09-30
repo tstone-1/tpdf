@@ -10482,11 +10482,13 @@ producer's integer widths introduce and the unit the document's Unicode path alr
 (`sysfont.rs`: CoreText descriptor match on macOS, which names the file and not the face;
 DirectWrite's system collection on Windows, which names both, simulated faces skipped), reads at
 most 32 MiB, and asks again with the bytes in `Layout::installed`. The worker accepts the copy
-only if the face carries the name in every name record that decodes, has TrueType outlines and
-is neither variable nor colour, has `fsType` 0 or 0x8, and agrees with every width the document's
-subset declares. It embeds a subset (the replacement's and the document subset's glyphs, OS/2
-and a format 12 character map put back) as a Type0/Identity-H font, and after an Apply the
-journal keeps that subset instead of the file. The command-line tool's replacements carry no
+only if the face carries the name in every name record that decodes, has TrueType or CFF
+outlines and is neither CFF2, variable nor colour, has `fsType` 0 or 0x8, and agrees with every
+width the document's subset declares. It embeds a subset (the replacement's and the document
+subset's glyphs, OS/2 and a format 12 character map put back) as a Type0/Identity-H font, and
+after an Apply the journal keeps that subset instead of the file. A TrueType subset is embedded
+as it is under a CIDFontType2; a CFF one as the bare CID-keyed CFF inside it, FontFile3
+`/CIDFontType0C` under a CIDFontType0, with its `fsType` written into the program (below). The command-line tool's replacements carry no
 layout, so they use neither Noto nor an installed font; nothing changed there.
 
 **Also fixed on the way.** Automatic mode took *encodes* as *covers*: a simple font's Latin-1
@@ -10506,6 +10508,11 @@ uv run --with pypdf --with fonttools python scripts/text_installed_check.py src-
 swift scripts/text_edit_pdfkit.swift scratch/installed-check --installed
 python3 scripts/mutate_rust.py --only 'installed font:'
 python3 scripts/mutate_frontend.py --only 'installed font:'
+# CFF outlines (the check above writes scratch/installed-check/cff as well)
+swift scripts/text_edit_pdfkit.swift scratch/installed-check/cff --installed
+qpdf --check scratch/installed-check/cff/synthetic-after.pdf
+qpdf --check scratch/installed-check/cff/again/edited.pdf
+python3 scripts/mutate_rust.py --only 'installed-cff:'
 ```
 
 **Measured on macOS arm64, 2026-09-30:**
@@ -10540,9 +10547,65 @@ python3 scripts/mutate_frontend.py --only 'installed font:'
 - `scripts/check_windows.py`: the Windows tree type-checks and passes clippy, examples
   included.
 
-**Not done:** CFF-outline installed fonts (`.otf`) are refused with *has CFF outlines, which
-cannot be embedded yet*; embedding them needs a CIDFontType0/`FontFile3` writer and a
-re-editing path for it. Windows has not run the lookup or the round trip. No fuzz seed was
+**CFF outlines, measured 2026-09-30.** `subsetter` 0.2.6 subsets CFF (not CFF2) and returns an
+OpenType file whose `CFF ` table it has made CID-keyed (`Adobe-Identity-0`), desubroutinized,
+with each glyph its own CID and every absolute offset a five-byte integer. Two carriers were
+possible for it: the whole OpenType file as FontFile3 `/OpenType`, which keeps the OS/2 table,
+or the bare table as FontFile3 `/CIDFontType0C`. The bare table was chosen, and only it was
+built: it is PDF 1.3 where `/OpenType` is PDF 1.6 and outside PDF/A-1, it is what xdvipdfmx,
+LuaTeX and Typst embed, and the editor already reads it (`fonts/cff/cid.rs`), so a reopened
+document is re-edited through existing code rather than a second CFF path. PDFium, PDFKit,
+fontTools and poppler all read what was written (below). The cost is the OS/2 `fsType`, which a bare CFF has nowhere to carry:
+`fonts/cff/rights.rs` adds Distiller's Top DICT `PostScript` string `/FSType N def
+/OrigFontType /OpenType def` and moves every offset by what it adds, and the result is parsed
+by `cff::cid::parse` with every charstring width compared against the `/W` about to be written
+before anything is. Codes are the subset's glyph ids, so there is no CIDToGIDMap, and two
+characters one glyph draws (U+00A0 and the space, in many fonts) cannot both be written: the copy
+is refused with *draws two of the characters with one glyph*.
+
+- `fonts::installed::tests`: 28 on macOS (10 new, one macOS-gated new; the old CFF refusal test
+  replaced by a CFF2 one). A TrueType document subset set through `cff.otf`, saved, reopened,
+  its CID-keyed CFF read back as the document's own font and used with no installed copy, then
+  a character in neither subset added through the copy again; `fsType` 8 carried and read back,
+  0x2/0x4/0x100/0x200 refused; widths three units off refused; a copy whose `hmtx` and
+  charstrings disagree, and one drawn at 2048 units per em, refused before writing; a Type1C
+  document subset compared with the CFF and the TrueType build of the font. The macOS test uses
+  fonts in the sealed system volume: Hiragino Sans W3 (CID-keyed, Adobe-Japan1, `fsType` 8,
+  7.8 MB, a face of a collection CoreText does not name) became a 3,648-byte subset for
+  "Tokyo 東京", Kohinoor Devanagari (name-keyed, `fsType` 0) a 2,556-byte one, each installed and
+  read back through the composite reader with its widths and rights; Tamil Sangam MN is refused.
+  No Windows counterpart: no CFF font is guaranteed on Windows.
+- `text_installed_check.py`, CFF part: 451 of 3,600 font bytes embedded as `/CIDFontType0C`
+  under a CIDFontType0 with no CIDToGIDMap; fontTools' CFF parser finds `Adobe-Identity-0`, the
+  rights string for `fsType` 0 and for a copy with 8, and every embedded charstring's outline and
+  width equal to the installed font's, and `/W` equal to its advances; the saved file edited
+  again through the probe, with the embedded program read back and `z` from the copy. The probe's
+  own preview/save agreement is PDFium's rendering of each.
+- PDFKit `scratch/installed-check/cff --installed`: 1,544 changed pixels inside the target, zero
+  outside; text agrees. `qpdf --check` is clean on the three CFF outputs. As a third reader, not
+  committed: poppler's `pdftoppm` draws the TrueType and the CFF result with the same glyphs.
+- Mutations: 16 new Rust (`installed-cff:`, one macOS-only), 16/16 caught by the named test after
+  two findings. A separate check in the writer that two characters did not share a code
+  survived: the layout step that follows already refuses such a text, so the check was removed
+  and its test kept. And with the fixture's Private DICT empty, as fontTools builds it, the
+  mutation that leaves the Private offset unmoved passed the test named for it, caught only by
+  the Hiragino test; the fixture now has hint values (`docs/TRAPS.md`, *An empty Private DICT
+  reads the same wherever its offset points*). *installed font: embed CFF outlines* became
+  *installed-cff: embed CFF2 outlines*. All 48 `installed` mutations were run and caught; so
+  were 128 of the 129 aimed at the files this touched (`--since HEAD`), the one survivor, *gaps:
+  accept an empty word*, surviving identically on the commit before this one.
+- `scripts/gates.py`: 29/29, 2,392 Rust tests passed with 9 ignored, 1,976 frontend tests.
+  `scripts/check_windows.py`: the Windows tree type-checks and passes clippy, examples included.
+  Neither lookup needed a change, because neither filtered CFF files; the worker did.
+  CoreText finding Hiragino and Kohinoor is measured above; DirectWrite's is read from the code
+  (`sysfont::locate` asks for no file type) and has not been run.
+
+**Not done:** CFF2 installed fonts are refused (*has CFF2 outlines, which cannot be embedded*;
+`subsetter` subsets CFF2 only by instancing it to TrueType, behind a feature tpdf does not
+enable), and so is a CFF font whose FontMatrix is not 1/1000 (drawn at other than 1000 units per
+em, Tamil Sangam MN on macOS), as *could not be read*, because the CID-keyed CFF reader a
+reopened document goes through accepts only that matrix. Windows has not run the lookup or the
+round trip. No fuzz seed was
 added: the fuzz targets take documents and edit without a layout, so neither reaches
 `installed::accept`, whose input is the reader's own font file.
 
@@ -10550,8 +10613,10 @@ added: the fuzz targets take documents and edit without a layout, so neither rea
 copy is tried, because the document's restriction decides. An installed file over 32 MiB falls
 back to Noto; the fonts that large are mostly CJK, which go to Noto CJK regardless. With two
 installed versions of one font, CoreText may pick the one whose widths disagree, and the reader
-then sees Noto with that reason. CFF installed fonts are the next increment on this path,
-because Adobe's Minion Pro and Myriad Pro families, common in the scanned documents, are CFF.
+then sees Noto with that reason. CFF installed fonts were the next increment on this path,
+because Adobe's Minion Pro and Myriad Pro families, common in the scanned documents, are CFF;
+they are embedded since the same day (*CFF outlines*, below). Neither family is installed on the
+Mac this was measured on, so neither has been tried.
 
 ### Signed-fixture padding regression
 

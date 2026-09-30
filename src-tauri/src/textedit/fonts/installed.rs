@@ -15,14 +15,16 @@
 //! * every glyph width the document's subset declares must agree with the
 //!   installed advance within [`TOLERANCE`], or the two are not the same font
 //!   whatever their names say;
-//! * TrueType outlines only: a CFF-outline (`.otf`) copy is refused with its
-//!   own reason, and so is a variable or colour font.
+//! * TrueType or CFF outlines. A variable or colour font is refused with its
+//!   own reason, and so is CFF2, which `subsetter` does not subset.
 //!
 //! What is embedded is a subset, never the file: the glyphs of the replacement
 //! and of the document's own subset, with the OS/2 table and a character map
 //! put back (`fallback_subset::with_tables`). That same subset is what the
 //! journal keeps after an Apply, and it passes every check here again on each
-//! later request, since a subset of the font is still the font.
+//! later request, since a subset of the font is still the font. A TrueType
+//! subset is embedded as it is; a CFF one as the bare CID-keyed program inside
+//! it, with its rights carried into the program (`fallback::Font::installed`).
 use super::{fallback, Metrics};
 use crate::textedit::Installed;
 use ttf_parser::{name_id, Face, GlyphId, Tag};
@@ -54,8 +56,8 @@ const MAX_FACES: u32 = 256;
 pub(in crate::textedit) enum Refusal {
     /// Not a readable font, too large, or no face carrying the name.
     Unreadable,
-    /// PostScript (CFF) outlines, which this writer cannot embed yet.
-    Cff,
+    /// CFF2 outlines, which `subsetter` does not subset.
+    Cff2,
     /// A variable or colour font, whose outlines the editor does not validate.
     Variable,
     /// Rights that forbid editing or subsetting.
@@ -65,17 +67,21 @@ pub(in crate::textedit) enum Refusal {
     Widths,
     /// A character of the replacement the installed copy lacks.
     Missing,
+    /// Two characters of the replacement drawn by one CFF glyph: a
+    /// CID-keyed program has one code per glyph, and one ToUnicode entry.
+    Shared,
 }
 
 impl Refusal {
     pub(in crate::textedit) fn reason(self, name: &str) -> String {
         let why = match self {
             Refusal::Unreadable => "could not be read",
-            Refusal::Cff => "has CFF outlines, which cannot be embedded yet",
+            Refusal::Cff2 => "has CFF2 outlines, which cannot be embedded",
             Refusal::Variable => "is a variable or colour font",
             Refusal::Rights => "does not permit editing",
             Refusal::Widths => "differs from the document's copy",
             Refusal::Missing => "lacks a character",
+            Refusal::Shared => "draws two of the characters with one glyph",
         };
         format!("the installed {name} {why}")
     }
@@ -174,18 +180,17 @@ pub(in crate::textedit) fn accept(
     // `face_index` has checked that this face carries the name.
     let face = Face::parse(bytes, index).map_err(|_| Refusal::Unreadable)?;
     let tables = face.tables();
-    if tables.cff.is_some() || face.raw_face().table(Tag::from_bytes(b"CFF2")).is_some() {
-        return Err(Refusal::Cff);
-    }
-    if tables.glyf.is_none() {
-        return Err(Refusal::Unreadable);
-    }
     if [b"fvar", b"COLR", b"CBDT", b"sbix", b"SVG "]
         .iter()
         .any(|tag| face.raw_face().table(Tag::from_bytes(tag)).is_some())
     {
         return Err(Refusal::Variable);
     }
+    if face.raw_face().table(Tag::from_bytes(b"CFF2")).is_some() {
+        return Err(Refusal::Cff2);
+    }
+    // `subsetter` takes TrueType outlines over CFF ones when a font has both.
+    let cff = tables.cff.is_some() && tables.glyf.is_none();
     let os2 = face.raw_face().table(Tag::from_bytes(b"OS/2"));
     if let Some(os2) = os2 {
         let rights = os2.get(8..10).ok_or(Refusal::Unreadable)?;
@@ -207,8 +212,13 @@ pub(in crate::textedit) fn accept(
         }
         mapped.insert(ch, id);
     }
+    let mut drawn = std::collections::BTreeMap::new();
     for ch in text.chars().filter(|ch| *ch != '\n') {
-        mapped.insert(ch, glyph(ch).ok_or(Refusal::Missing)?);
+        let id = glyph(ch).ok_or(Refusal::Missing)?;
+        mapped.insert(ch, id);
+        if cff && *drawn.entry(id).or_insert(ch) != ch {
+            return Err(Refusal::Shared);
+        }
     }
     let program = subset(bytes, index, &mapped, os2).ok_or(Refusal::Unreadable)?;
     let (font, metrics) = fallback::Font::installed(program.clone(), wanted, text)

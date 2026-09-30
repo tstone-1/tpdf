@@ -14,6 +14,8 @@ const SPARSE: &[u8] = include_bytes!("sparse.ttf");
 const COLLECTION: &[u8] = include_bytes!("collection.ttc");
 const CFF: &[u8] = include_bytes!("cff.otf");
 const COLOUR: &[u8] = include_bytes!("colour.ttf");
+const SUBSET_CFF: &[u8] = include_bytes!("subset.cff");
+const CFF_2048: &[u8] = include_bytes!("cff2048.otf");
 /// What the preview says when the installed copy is used.
 const USED: &str = "TPDF Installed Sans (installed)";
 
@@ -138,6 +140,12 @@ fn embedded(doc: &Document) -> (Dictionary, Dictionary, Vec<u8>) {
         .get_dictionary(font.as_reference().unwrap())
         .unwrap()
         .clone();
+    embedded_font(doc, &font)
+}
+
+/// A Type0 font's descendant, and the program it embeds.
+fn embedded_font(doc: &Document, font: &Dictionary) -> (Dictionary, Dictionary, Vec<u8>) {
+    let font = font.clone();
     let child = font.get(b"DescendantFonts").unwrap().as_array().unwrap()[0]
         .as_reference()
         .unwrap();
@@ -155,6 +163,7 @@ fn embedded(doc: &Document) -> (Dictionary, Dictionary, Vec<u8>) {
         .get_object(
             descriptor
                 .get(b"FontFile2")
+                .or_else(|_| descriptor.get(b"FontFile3"))
                 .unwrap()
                 .as_reference()
                 .unwrap(),
@@ -434,14 +443,466 @@ fn an_installed_file_past_the_bound_is_refused() {
     );
 }
 
+/// `program` with `ch`'s advance moved by `units` font units.
+fn moved(program: &[u8], ch: char, units: i16) -> Vec<u8> {
+    let face = Face::parse(program, 0).unwrap();
+    let id = face.glyph_index(ch).unwrap();
+    let advance = face.glyph_hor_advance(id).unwrap();
+    let mut program = program.to_vec();
+    let at = table(&program, b"hmtx") + 4 * usize::from(id.0);
+    program[at..at + 2].copy_from_slice(&advance.wrapping_add_signed(units).to_be_bytes());
+    program
+}
+
+/// `program` with another OS/2 `fsType`.
+fn rights_of(program: &[u8], rights: u16) -> Vec<u8> {
+    let mut program = program.to_vec();
+    let at = table(&program, b"OS/2") + 8;
+    program[at..at + 2].copy_from_slice(&rights.to_be_bytes());
+    program
+}
+
+/// The FontFile3 subtype of the added font's descendant, if it has one.
+fn carrier(doc: &Document, child: &Dictionary) -> Option<Vec<u8>> {
+    let descriptor = doc
+        .get_dictionary(
+            child
+                .get(b"FontDescriptor")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+        )
+        .unwrap();
+    let stream = doc
+        .get_object(descriptor.get(b"FontFile3").ok()?.as_reference().unwrap())
+        .unwrap()
+        .as_stream()
+        .unwrap();
+    Some(
+        stream
+            .dict
+            .get(b"Subtype")
+            .unwrap()
+            .as_name()
+            .unwrap()
+            .to_vec(),
+    )
+}
+
+/// The document's own font as a producer embeds an OpenType font in a simple
+/// font: a WinAnsi Type1 font whose FontFile3 is a bare Type1C subset of the
+/// same font.
+fn type1c_document() -> Document {
+    let mut doc = with_content(b"BT /F1 12 Tf 40 180 Td (TITLE) Tj 0 -80 Td (SECOND) Tj ET");
+    let face = Face::parse(CFF, 0).unwrap();
+    let widths = (32_u8..=84)
+        .map(|code| {
+            let ch = char::from(code);
+            let width = if "TITLE SECOND".contains(ch) {
+                f64::from(
+                    face.glyph_hor_advance(face.glyph_index(ch).unwrap())
+                        .unwrap(),
+                )
+            } else {
+                0.
+            };
+            Object::Real(width as f32)
+        })
+        .collect::<Vec<_>>();
+    let stream = doc.add_object(Stream::new(
+        dictionary! { "Subtype" => "Type1C" },
+        SUBSET_CFF.to_vec(),
+    ));
+    let tagged = format!("ABCDEF+{NAME}");
+    let descriptor = doc.add_object(dictionary! {
+        "Type" => "FontDescriptor", "FontName" => tagged.as_str(), "Flags" => 32,
+        "FontBBox" => vec![0.into(), 0.into(), 1000.into(), 700.into()],
+        "ItalicAngle" => 0, "Ascent" => 879, "Descent" => -195,
+        "CapHeight" => 700, "StemV" => 80, "FontFile3" => stream
+    });
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => tagged.as_str(),
+        "Encoding" => "WinAnsiEncoding", "FirstChar" => 32, "LastChar" => 84,
+        "Widths" => widths, "FontDescriptor" => descriptor
+    });
+    for page in crate::pagetree::ordered_pages(&doc) {
+        doc.get_dictionary_mut(page).unwrap().set(
+            "Resources",
+            dictionary! { "Font" => dictionary! { "F1" => font } },
+        );
+    }
+    doc
+}
+
 #[test]
-fn cff_outlines_are_refused_with_their_own_reason() {
+fn cff_outlines_are_subsetted_and_embedded_as_a_cid_keyed_program() {
     let doc = document();
     let change = edit(&doc, "TITLE Ab", EditFont::Auto, Some(supplied(CFF, None)));
+    let report = preview_layout(&doc, &change).unwrap();
+    assert_eq!(report.font, USED);
+    // The journal keeps an OpenType subset, the character map and the
+    // rights put back, and it is itself an installed copy that sets the
+    // same text the same way.
+    let kept = report.installed.expect("the subset the journal keeps");
+    assert_eq!(&kept.program[..4], b"OTTO");
+    let face = Face::parse(&kept.program, 0).unwrap();
+    let whole = Face::parse(CFF, 0).unwrap();
+    assert!(face.tables().cff.is_some() && face.tables().glyf.is_none());
+    assert_eq!(face.number_of_glyphs(), 13);
+    assert!(carries_name(&face, NAME));
+    assert!(face.raw_face().table(Tag::from_bytes(b"OS/2")).is_some());
+    for ch in "TITLE SECONDAb".chars() {
+        assert_eq!(
+            face.glyph_hor_advance(face.glyph_index(ch).unwrap()),
+            whole.glyph_hor_advance(whole.glyph_index(ch).unwrap()),
+            "{ch}"
+        );
+    }
+    // Unlike a TrueType one, a CFF subset of the subset is not the same
+    // bytes: `subsetter` writes the Font DICT's matrix it read back at
+    // another length. The second is a fixed point, with the same glyphs.
+    let journal = edit(&doc, "TITLE Ab", EditFont::Auto, Some(kept.clone()));
+    let again = preview_layout(&doc, &journal).unwrap();
+    assert_eq!(again.font, USED);
+    let second = again.installed.expect("a subset again");
+    let resubset = edit(&doc, "TITLE Ab", EditFont::Auto, Some(second.clone()));
+    assert_eq!(
+        preview_layout(&doc, &resubset).unwrap().installed.as_ref(),
+        Some(&second)
+    );
+    let face2 = Face::parse(&second.program, 0).unwrap();
+    assert_eq!(face2.number_of_glyphs(), face.number_of_glyphs());
+    for ch in "TITLE SECONDAb".chars() {
+        assert_eq!(face2.glyph_index(ch), face.glyph_index(ch), "{ch}");
+        assert_eq!(
+            face2.glyph_hor_advance(face2.glyph_index(ch).unwrap()),
+            face.glyph_hor_advance(face.glyph_index(ch).unwrap()),
+            "{ch}"
+        );
+    }
+
+    let mut saved = doc.clone();
+    write(&mut saved, std::slice::from_ref(&change)).unwrap();
+    let (font, child, program) = embedded(&saved);
+    assert_eq!(
+        child.get(b"Subtype").unwrap().as_name().unwrap(),
+        b"CIDFontType0"
+    );
+    assert!(!child.has(b"CIDToGIDMap"));
+    assert_eq!(
+        carrier(&saved, &child).as_deref(),
+        Some(&b"CIDFontType0C"[..])
+    );
+    // The bare program inside the subset the journal keeps, its rights
+    // carried in the Top DICT as Distiller carries them.
+    let table = face.raw_face().table(Tag::from_bytes(b"CFF ")).unwrap();
+    assert_eq!(
+        program,
+        crate::textedit::fonts::cff::rights::with_rights(table, Some(0)).unwrap()
+    );
+    let declaration = b"/FSType 0 def /OrigFontType /OpenType def";
+    assert!(program.windows(declaration.len()).any(|w| w == declaration));
+    // Each code is the subset's glyph id, and each width the installed
+    // advance of the character its ToUnicode entry names.
+    let map = saved
+        .get_object(font.get(b"ToUnicode").unwrap().as_reference().unwrap())
+        .unwrap()
+        .as_stream()
+        .unwrap()
+        .content
+        .clone();
+    let map = String::from_utf8(map).unwrap();
+    let widths = child.get(b"W").unwrap().as_array().unwrap();
+    assert_eq!(widths.len(), 2 * "TILE Ab".len());
+    for pair in widths.chunks_exact(2) {
+        let code = pair[0].as_i64().unwrap();
+        let width = f64::from(pair[1].as_array().unwrap()[0].as_float().unwrap());
+        let entry = format!("<{code:04X}> <");
+        let at = map.find(&entry).expect("a ToUnicode entry") + entry.len();
+        let ch = char::from_u32(u32::from_str_radix(&map[at..at + 4], 16).unwrap()).unwrap();
+        assert_eq!(i64::from(face.glyph_index(ch).unwrap().0), code, "{ch}");
+        let advance = f64::from(
+            whole
+                .glyph_hor_advance(whole.glyph_index(ch).unwrap())
+                .unwrap(),
+        );
+        assert!(
+            (advance - width).abs() < 1e-3,
+            "{ch}: {width} against {advance}"
+        );
+    }
+
+    // Saved and reopened, the written font is read as the document's own
+    // CID-keyed CFF font: its glyphs set text with no installed copy at all.
+    let mut bytes = Vec::new();
+    saved.save_to(&mut bytes).unwrap();
+    let mut reopened = Document::load_mem(&bytes).unwrap();
+    assert_eq!(scan(&reopened, 0).unwrap().runs[0].text, "TITLE Ab");
+    let own = preview_layout(
+        &reopened,
+        &edit(&reopened, "Ab TITLE", EditFont::Auto, None),
+    )
+    .unwrap();
+    assert!(
+        own.font.len() == NAME.len() + 7 && own.font.ends_with(&format!("+{NAME}")),
+        "{}",
+        own.font
+    );
+    assert_eq!((own.wants, own.installed), (None, None));
+    // A character in neither subset goes back to the installed copy by name.
+    let next = edit(&reopened, "TITLE Abz", EditFont::Auto, None);
+    assert_eq!(
+        preview_layout(&reopened, &next).unwrap().wants.as_deref(),
+        Some(NAME)
+    );
+    let next = edit(
+        &reopened,
+        "TITLE Abz",
+        EditFont::Auto,
+        Some(supplied(CFF, None)),
+    );
+    assert_eq!(preview_layout(&reopened, &next).unwrap().font, USED);
+    write(&mut reopened, &[next]).unwrap();
+    let mut bytes = Vec::new();
+    reopened.save_to(&mut bytes).unwrap();
+    let reopened = Document::load_mem(&bytes).unwrap();
+    assert_eq!(scan(&reopened, 0).unwrap().runs[0].text, "TITLE Abz");
+}
+
+#[test]
+fn a_cff_copy_keeps_its_rights_in_the_embedded_program() {
+    let doc = document();
+    let refused = format!("Noto Sans (the installed {NAME} does not permit editing)");
+    for (rights, expected) in [
+        (0x8_u16, USED),
+        (0x2, refused.as_str()),
+        (0x4, &refused),
+        (0x100, &refused),
+        (0x200, &refused),
+    ] {
+        let program = rights_of(CFF, rights);
+        let change = edit(
+            &doc,
+            "TITLE Ab",
+            EditFont::Auto,
+            Some(supplied(&program, None)),
+        );
+        assert_eq!(
+            preview_layout(&doc, &change).unwrap().font,
+            expected,
+            "fsType {rights:#x}"
+        );
+        if expected == USED {
+            let mut saved = doc.clone();
+            write(&mut saved, &[change]).unwrap();
+            let (_, _, program) = embedded(&saved);
+            let declaration = b"/FSType 8 def /OrigFontType /OpenType def";
+            assert!(program.windows(declaration.len()).any(|w| w == declaration));
+            // Reopened, the program's own rights are read and permit editing.
+            let mut bytes = Vec::new();
+            saved.save_to(&mut bytes).unwrap();
+            let reopened = Document::load_mem(&bytes).unwrap();
+            let own = edit(&reopened, "Ab TITLE", EditFont::Auto, None);
+            assert!(preview_layout(&reopened, &own)
+                .unwrap()
+                .font
+                .ends_with(&format!("+{NAME}")));
+        }
+    }
+}
+
+#[test]
+fn cff2_outlines_are_refused_with_their_own_reason() {
+    let mut program = CFF.to_vec();
+    let count = usize::from(u16::from_be_bytes([program[4], program[5]]));
+    let record = (0..count)
+        .map(|index| 12 + 16 * index)
+        .find(|&at| &program[at..at + 4] == b"CFF ")
+        .unwrap();
+    program[record + 3] = b'2';
+    let doc = document();
+    let change = edit(
+        &doc,
+        "TITLE Ab",
+        EditFont::Auto,
+        Some(supplied(&program, None)),
+    );
     assert_eq!(
         preview_layout(&doc, &change).unwrap().font,
-        format!("Noto Sans (the installed {NAME} has CFF outlines, which cannot be embedded yet)")
+        format!("Noto Sans (the installed {NAME} has CFF2 outlines, which cannot be embedded)")
     );
+}
+
+#[test]
+fn a_cff_copy_whose_width_disagrees_falls_to_noto() {
+    let doc = document();
+    let differs = format!("Noto Sans (the installed {NAME} differs from the document's copy)");
+    // `T` is 589.84 thousandths in the document and 590 units in the copy.
+    for (units, expected) in [(0, USED), (3, differs.as_str()), (-3, &differs)] {
+        let program = moved(CFF, 'T', units);
+        let change = edit(
+            &doc,
+            "TITLE Ab",
+            EditFont::Auto,
+            Some(supplied(&program, None)),
+        );
+        assert_eq!(
+            preview_layout(&doc, &change).unwrap().font,
+            expected,
+            "{units} units"
+        );
+    }
+}
+
+#[test]
+fn a_cff_copy_whose_charstrings_disagree_with_its_metrics_is_not_embedded() {
+    // `b` is in no document subset, so no width comparison sees it; only
+    // reading the embedded program back against the widths `/W` would
+    // declare does.
+    let doc = document();
+    let program = moved(CFF, 'b', 5);
+    let change = edit(
+        &doc,
+        "TITLE Ab",
+        EditFont::Auto,
+        Some(supplied(&program, None)),
+    );
+    assert_eq!(
+        preview_layout(&doc, &change).unwrap().font,
+        format!("Noto Sans (the installed {NAME} could not be read)")
+    );
+}
+
+#[test]
+fn two_characters_one_cff_glyph_are_refused_with_their_own_reason() {
+    // cff.otf draws U+00A0 with the space glyph; one CID cannot carry both
+    // characters in a ToUnicode map.
+    let doc = document();
+    let change = edit(
+        &doc,
+        "TITLE A\u{a0}b",
+        EditFont::Auto,
+        Some(supplied(CFF, None)),
+    );
+    assert_eq!(
+        preview_layout(&doc, &change).unwrap().font,
+        format!("Noto Sans (the installed {NAME} draws two of the characters with one glyph)")
+    );
+    // Either one alone is set in the installed copy.
+    for text in ["TITLE Ab", "TITLE\u{a0}Ab"] {
+        let change = edit(&doc, text, EditFont::Auto, Some(supplied(CFF, None)));
+        assert_eq!(
+            preview_layout(&doc, &change).unwrap().font,
+            USED,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn a_cff_program_the_reader_would_refuse_is_not_embedded() {
+    // The same font at 2048 units per em: its widths agree with the
+    // document's, and its FontMatrix is one the CID-keyed CFF reader of a
+    // reopened document refuses, so it is refused before anything is written.
+    let doc = document();
+    let change = edit(
+        &doc,
+        "TITLE Ab",
+        EditFont::Auto,
+        Some(supplied(CFF_2048, None)),
+    );
+    assert_eq!(
+        preview_layout(&doc, &change).unwrap().font,
+        format!("Noto Sans (the installed {NAME} could not be read)")
+    );
+}
+
+#[test]
+fn the_cff_writer_gives_every_character_its_own_glyph_code() {
+    // A subset whose map draws U+00A0 and the space with one glyph, as the
+    // journal keeps one when only one of them was typed: the writer, which
+    // `accept` never asks for both, refuses both rather than map one code
+    // to two characters. Its own layout check is what refuses: the later
+    // character takes the shared code's text and the earlier cannot be
+    // encoded (a separate check for it survived its mutation, 2026-09-30).
+    let doc = document();
+    let change = edit(
+        &doc,
+        "TITLE\u{a0}Ab",
+        EditFont::Auto,
+        Some(supplied(CFF, None)),
+    );
+    let kept = preview_layout(&doc, &change).unwrap().installed.unwrap();
+    let face = Face::parse(&kept.program, 0).unwrap();
+    assert_eq!(face.glyph_index(' '), face.glyph_index('\u{a0}'));
+    assert!(fallback::Font::installed(kept.program.clone(), NAME, "A b").is_ok());
+    assert!(fallback::Font::installed(kept.program, NAME, "A b\u{a0}").is_err());
+}
+
+#[test]
+fn a_type1c_document_font_is_compared_with_its_installed_copy() {
+    let doc = type1c_document();
+    let asked = preview_layout(&doc, &edit(&doc, "TITLE Ab", EditFont::Auto, None)).unwrap();
+    assert_eq!(asked.wants.as_deref(), Some(NAME));
+    let differs = format!("Noto Sans (the installed {NAME} differs from the document's copy)");
+    // The CFF copy itself, a TrueType build of the same font (widths within
+    // half a unit), and a CFF copy three units off on a letter of the subset.
+    for (program, expected) in [
+        (CFF.to_vec(), USED),
+        (FULL.to_vec(), USED),
+        (moved(CFF, 'S', 3), differs.as_str()),
+    ] {
+        let change = edit(
+            &doc,
+            "TITLE Ab",
+            EditFont::Auto,
+            Some(supplied(&program, None)),
+        );
+        let report = preview_layout(&doc, &change).unwrap();
+        assert_eq!(report.font, expected);
+        if expected == USED {
+            let mut saved = doc.clone();
+            write(&mut saved, &[change]).unwrap();
+            assert_eq!(scan(&saved, 0).unwrap().runs[0].text, "TITLE Ab");
+        }
+    }
+}
+
+#[test]
+fn the_rights_writer_moves_every_offset_and_refuses_what_it_cannot_patch() {
+    use crate::textedit::fonts::cff::{cid, rights::with_rights};
+    let doc = document();
+    let change = edit(&doc, "TITLE Ab", EditFont::Auto, Some(supplied(CFF, None)));
+    let kept = preview_layout(&doc, &change).unwrap().installed.unwrap();
+    let face = Face::parse(&kept.program, 0).unwrap();
+    let bare = face.raw_face().table(Tag::from_bytes(b"CFF ")).unwrap();
+    assert_eq!(with_rights(bare, None).unwrap(), bare);
+    let before = cid::parse(bare).unwrap();
+    // 0x100 is the no-subsetting bit, which a document's own font may carry.
+    for rights in [0_u16, 8, 0x100] {
+        let written = with_rights(bare, Some(rights)).unwrap();
+        let after = cid::parse(&written).unwrap();
+        // Every glyph reads back with the same width and outline hull.
+        for cid in 0..face.number_of_glyphs() {
+            let (old, new) = (before.glyph(cid).unwrap(), after.glyph(cid).unwrap());
+            assert_eq!(
+                old.map(|g| (g.id, g.advance, g.ink)),
+                new.map(|g| (g.id, g.advance, g.ink)),
+                "CID {cid}"
+            );
+        }
+        // A second declaration is refused rather than duplicated.
+        assert!(with_rights(&written, Some(rights)).is_err());
+    }
+    // A truncated program never panics, and never comes out as one the
+    // reader accepts: the writer refuses what it cannot patch, and leaves
+    // the rest to `cid::parse`, which the writer's caller runs.
+    for len in 0..bare.len() {
+        assert!(
+            with_rights(&bare[..len], Some(8)).map_or(true, |w| cid::parse(&w).is_err()),
+            "prefix {len}"
+        );
+    }
 }
 
 #[test]
@@ -667,4 +1128,96 @@ fn a_document_subset_that_declares_no_width_has_nothing_to_compare() {
         Some(Refusal::Widths)
     );
     assert!(accept(&supplied(FULL, None), NAME, &[('T', 589.84375)], "Ab").is_ok());
+}
+
+/// macOS ships OpenType fonts with CFF outlines in its sealed system volume:
+/// Hiragino Sans, CID-keyed with `fsType` 8, as a face of a collection
+/// CoreText does not name, and Kohinoor Devanagari, name-keyed with `fsType`
+/// 0. Each is subsetted, embedded, and read back by the reader a reopened
+/// document goes through. Tamil Sangam MN's CFF is drawn at 2048 units per
+/// em, a matrix that reader refuses, so it is refused before anything is
+/// written.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_embeds_installed_cff_fonts_through_the_reader_a_reopened_document_uses() {
+    for (name, text, rights) in [
+        ("HiraginoSans-W3", "Tokyo \u{6771}\u{4eac}", Some(8)),
+        ("KohinoorDevanagari-Regular", "Mumbai \u{915}", Some(0)),
+        ("TamilSangamMN", "Tamil", None),
+    ] {
+        let found = crate::sysfont::find(name).expect("ships with macOS");
+        let at = face_index(&found.bytes, found.index, name).unwrap();
+        let face = Face::parse(&found.bytes, at).unwrap();
+        assert!(face.tables().cff.is_some(), "{name} has CFF outlines");
+        // What a producer's subset of it declares: integer widths.
+        let unit = 1000. / f64::from(face.units_per_em());
+        let declared = "Tamo"
+            .chars()
+            .map(|ch| {
+                let advance = face
+                    .glyph_hor_advance(face.glyph_index(ch).unwrap())
+                    .unwrap();
+                (ch, (f64::from(advance) * unit).round())
+            })
+            .collect::<Vec<_>>();
+        let supplied = Installed {
+            name: name.into(),
+            index: found.index,
+            program: found.bytes.clone(),
+        };
+        let result = accept(&supplied, name, &declared, text);
+        let Some(rights) = rights else {
+            assert_eq!(result.err(), Some(Refusal::Unreadable), "{name}");
+            continue;
+        };
+        let accepted = result.unwrap_or_else(|refusal| panic!("{name}: {refusal:?}"));
+        assert!(
+            accepted.program.program.len() * 100 < found.bytes.len(),
+            "{name}"
+        );
+        let mut doc = with_content(b"BT ET");
+        let id = accepted
+            .font
+            .install(
+                &mut doc,
+                &mut crate::textedit::fonts::fallback::Programs::new(),
+            )
+            .unwrap();
+        let written = doc.get_dictionary(id).unwrap().clone();
+        let metrics = super::super::composite(&doc, &written).unwrap();
+        let mut read = metrics.declared();
+        read.sort_by_key(|(ch, _)| *ch);
+        let mut expected = text
+            .chars()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|ch| {
+                let advance = face
+                    .glyph_hor_advance(face.glyph_index(ch).unwrap())
+                    .unwrap();
+                (ch, f64::from(advance) * unit)
+            })
+            .collect::<Vec<_>>();
+        expected.sort_by_key(|(ch, _)| *ch);
+        assert_eq!(read.len(), expected.len(), "{name}");
+        for ((ch, width), (want, advance)) in read.iter().zip(&expected) {
+            assert_eq!(ch, want, "{name}");
+            assert!(
+                (width - advance).abs() < 1e-3,
+                "{name} {ch}: {width} against {advance}"
+            );
+        }
+        let (_, child, program) = embedded_font(&doc, &written);
+        assert_eq!(
+            carrier(&doc, &child).as_deref(),
+            Some(&b"CIDFontType0C"[..])
+        );
+        let declaration = format!("/FSType {rights} def /OrigFontType /OpenType def");
+        assert!(
+            program
+                .windows(declaration.len())
+                .any(|w| w == declaration.as_bytes()),
+            "{name}"
+        );
+    }
 }

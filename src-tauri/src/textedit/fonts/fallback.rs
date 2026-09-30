@@ -16,6 +16,9 @@ pub(in crate::textedit) struct Font {
     widths: BTreeMap<u16, f64>,
     glyphs: Vec<u8>,
     subset: Option<Vec<u8>>,
+    /// The bare CID-keyed CFF embedded for an installed font with CFF
+    /// outlines, in place of `subset`, which stays what the journal keeps.
+    compact: Option<Vec<u8>>,
     program_key: Vec<u8>,
 }
 
@@ -67,7 +70,7 @@ impl Font {
         text: &str,
     ) -> Result<(Self, super::Metrics), String> {
         let face = super::face(data(style), false).map_err(|e| format!("Bundled font: {e}"))?;
-        let (mut font, metrics) = Self::measure(&face, style, text)?;
+        let (mut font, metrics) = Self::measure(&face, style, text, false)?;
         if style >= 4 {
             font.program_key = font.glyphs.clone();
             let (program, glyphs) = super::fallback_subset::build(data(style), &font.glyphs)
@@ -91,16 +94,50 @@ impl Font {
     }
 
     /// A subset of an installed font, already built and checked by
-    /// `installed::accept`, set up to write `text`: the program is embedded as
-    /// it is, under `name`, and read back here through its own character map.
+    /// `installed::accept`, set up to write `text` under `name`, read here
+    /// through its own character map.
+    ///
+    /// A TrueType subset is embedded as it is. A CFF one is embedded as the
+    /// bare CID-keyed program inside it (FontFile3 /CIDFontType0C, PDF 1.3),
+    /// the carrier xdvipdfmx, LuaTeX and Typst write and `cff::cid` reads;
+    /// `subsetter` has made it CID-keyed with each glyph its own CID, so the
+    /// codes written are the subset's glyph ids. The OS/2
+    /// rights go into the program (`cff::rights`), and the program is read
+    /// back through the parser a reopened document is read with, every width
+    /// against the one `/W` will declare, before anything is written.
     pub(in crate::textedit) fn installed(
         program: Vec<u8>,
         name: &str,
         text: &str,
     ) -> Result<(Self, super::Metrics), String> {
         use sha2::{Digest, Sha256};
-        let face = super::face(&program, false)?;
-        let (mut font, metrics) = Self::measure(&face, INSTALLED, text)?;
+        let face = super::installed_face(&program)?;
+        let cff = face.tables().cff.is_some();
+        let (mut font, metrics) = Self::measure(&face, INSTALLED, text, cff)?;
+        if cff {
+            let rights = face
+                .raw_face()
+                .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+                .map(|os2| {
+                    os2.get(8..10)
+                        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                        .ok_or("invalid installed font rights")
+                })
+                .transpose()?;
+            let table = face
+                .raw_face()
+                .table(ttf_parser::Tag::from_bytes(b"CFF "))
+                .ok_or("missing installed CFF program")?;
+            let compact = super::cff::rights::with_rights(table, rights)?;
+            let read = super::cff::cid::parse(&compact)?;
+            for (&code, &width) in &font.widths {
+                let glyph = read.glyph(code)?.ok_or("unreadable installed CFF glyph")?;
+                if (glyph.advance - width).abs() > super::installed::TOLERANCE {
+                    return Err("installed CFF widths disagree with its metrics".into());
+                }
+            }
+            font.compact = Some(compact);
+        }
         font.installed = Some(name.to_owned());
         font.program_key = Sha256::digest(&program).to_vec();
         font.subset = Some(program);
@@ -109,10 +146,13 @@ impl Font {
 
     /// One code per distinct character of `text`, with its glyph in `face`
     /// and that glyph's advance as its width, and the metrics that write them.
+    /// With `identity` the code is the glyph id, for a CID-keyed CFF program,
+    /// which has no CIDToGIDMap; otherwise codes count up from 1.
     fn measure(
         face: &ttf_parser::Face<'_>,
         style: u8,
         text: &str,
+        identity: bool,
     ) -> Result<(Self, super::Metrics), String> {
         let characters: std::collections::BTreeSet<_> =
             text.chars().filter(|ch| *ch != '\n').collect();
@@ -126,6 +166,7 @@ impl Font {
             widths: BTreeMap::new(),
             glyphs: vec![0, 0],
             subset: None,
+            compact: None,
             program_key: Vec::new(),
         };
         for (index, ch) in characters.into_iter().enumerate() {
@@ -133,7 +174,14 @@ impl Font {
                 .glyph_index(ch)
                 .filter(|id| id.0 != 0)
                 .ok_or("The selected fallback font does not contain a required character")?;
-            let code = (index + 1) as u16;
+            // Two characters drawn by one glyph would share an identity code;
+            // the later would take the code's text, and the layout below, which
+            // must encode every character, refuses the earlier.
+            let code = if identity {
+                glyph.0
+            } else {
+                (index + 1) as u16
+            };
             let width = f64::from(
                 face.glyph_hor_advance(glyph)
                     .ok_or("missing fallback glyph width")?,
@@ -148,7 +196,7 @@ impl Font {
             font.codes.clone(),
             1000.,
             &font.widths,
-            Some(&font.glyphs),
+            (!identity).then_some(font.glyphs.as_slice()),
         )?;
         let metrics = super::Metrics {
             restricted: false,
@@ -175,10 +223,16 @@ impl Font {
         let program = *programs
             .entry((self.style, self.program_key.clone()))
             .or_insert_with(|| {
-                doc.add_object(Stream::new(
-                    dictionary! { "Length1" => bytes.len() as i64 },
-                    bytes.to_vec(),
-                ))
+                doc.add_object(match &self.compact {
+                    Some(compact) => Stream::new(
+                        dictionary! { "Subtype" => "CIDFontType0C" },
+                        compact.clone(),
+                    ),
+                    None => Stream::new(
+                        dictionary! { "Length1" => bytes.len() as i64 },
+                        bytes.to_vec(),
+                    ),
+                })
             });
         let mut name = self
             .installed
@@ -193,14 +247,16 @@ impl Font {
                 .collect();
             name = format!("{tag}+{name}");
         }
-        let face = super::face(
-            if self.installed.is_some() {
-                bytes
-            } else {
-                data(self.style)
-            },
-            false,
-        )?;
+        let face = if self.installed.is_some() {
+            super::installed_face(bytes)?
+        } else {
+            super::face(data(self.style), false)?
+        };
+        let (subtype, carrier) = if self.compact.is_some() {
+            ("CIDFontType0", "FontFile3")
+        } else {
+            ("CIDFontType2", "FontFile2")
+        };
         let scale = 1000. / f64::from(face.units_per_em());
         let bounds = face.global_bounding_box();
         let descriptor = doc.add_object(dictionary! {
@@ -212,9 +268,8 @@ impl Font {
                 else if matches!(self.style, 2 | 3) { Object::Integer(-12) } else { Object::Integer(0) },
             "Ascent" => (f64::from(face.ascender())*scale) as i64,
             "Descent" => (f64::from(face.descender())*scale) as i64,
-            "CapHeight" => 714, "StemV" => 80, "FontFile2" => program
+            "CapHeight" => 714, "StemV" => 80, carrier => program
         });
-        let glyphs = doc.add_object(Stream::new(Dictionary::new(), self.glyphs.clone()));
         let widths = self
             .widths
             .iter()
@@ -225,12 +280,19 @@ impl Font {
                 ]
             })
             .collect::<Vec<_>>();
-        let child = doc.add_object(dictionary! {
-            "Type" => "Font", "Subtype" => "CIDFontType2", "BaseFont" => name.as_str(),
+        let mut child = dictionary! {
+            "Type" => "Font", "Subtype" => subtype, "BaseFont" => name.as_str(),
             "CIDSystemInfo" => dictionary! { "Registry" => Object::string_literal("Adobe"),
                 "Ordering" => Object::string_literal("Identity"), "Supplement" => 0 },
-            "FontDescriptor" => descriptor, "CIDToGIDMap" => glyphs, "DW" => 1000, "W" => widths
-        });
+            "FontDescriptor" => descriptor, "DW" => 1000, "W" => widths
+        };
+        // A CID-keyed CFF maps CIDs to glyphs through its own charset, and
+        // ISO 32000-1 Table 117 gives a CIDToGIDMap to CIDFontType2 only.
+        if self.compact.is_none() {
+            let glyphs = doc.add_object(Stream::new(Dictionary::new(), self.glyphs.clone()));
+            child.set("CIDToGIDMap", glyphs);
+        }
+        let child = doc.add_object(child);
         let mut map = String::from("/CIDInit /ProcSet findresource begin\n12 dict begin begincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def /CMapType 2 def\n1 begincodespacerange <0000> <FFFF> endcodespacerange\n");
         let entries: Vec<_> = self.codes.iter().collect();
         for block in entries.chunks(100) {

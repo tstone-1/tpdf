@@ -667,6 +667,13 @@ impl Metrics {
 // how YuGothic subsets carry their space: read from the glyf header itself
 // (numberOfContours, then after the bounding box endPtsOfContours[0]).
 fn empty_glyph(face: &Face<'_>, glyph: GlyphId) -> Option<bool> {
+    // An installed OpenType font's CFF outlines (`installed_face`): only a
+    // complete outline parse that draws nothing proves a blank glyph.
+    if let Some(table) = face.tables().cff {
+        return outlines::cff_bounds(&table, glyph)
+            .ok()
+            .map(|ink| ink.is_none());
+    }
     let raw = face.raw_face();
     let loca = ttf_parser::loca::Table::parse(
         face.tables().maxp.number_of_glyphs,
@@ -1133,6 +1140,21 @@ fn face(bytes: &[u8], allow_apple: bool) -> Result<Face<'_>, String> {
         return Err(RESTRICTED.into());
     }
     Ok(face)
+}
+
+/// An installed font's subset as the writer reads it (`fallback::Font::installed`):
+/// a TrueType program exactly as `face` reads any, or the OpenType program
+/// with CFF outlines `subsetter` makes of a CFF font. Only `installed::accept`
+/// calls the writer, on a subset it has just built from a font it has held to
+/// its own rules (outlines, rights, widths), so nothing is re-checked here.
+pub(super) fn installed_face(bytes: &[u8]) -> Result<Face<'_>, String> {
+    if bytes.get(..4) != Some(b"OTTO") {
+        return face(bytes, false);
+    }
+    Face::parse(bytes, 0)
+        .ok()
+        .filter(|face| face.tables().cff.is_some())
+        .ok_or_else(|| "unsupported installed OpenType program".into())
 }
 
 // A validated program, and whether its OS/2 rights forbid editing with it.

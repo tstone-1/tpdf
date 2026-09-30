@@ -12,6 +12,7 @@ use ttf_parser::{cff::Table, GlyphId};
 pub(super) mod cid;
 mod encoding;
 mod profile;
+pub(super) mod rights;
 #[cfg(test)]
 mod tests;
 
