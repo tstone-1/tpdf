@@ -678,6 +678,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-passport":
     case "textedit-agenda":
     case "textedit-agenda-page2":
+    case "textedit-factsheet":
+    case "textedit-factsheet-body":
     case "textedit-multipage":
     case "textedit-list-child":
     case "textedit-grow":
@@ -691,6 +693,11 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const passport = phase === "textedit-passport";
       const agendaPage2 = phase === "textedit-agenda-page2";
       const agenda = phase === "textedit-agenda" || agendaPage2;
+      // The unchanged EC consumer factsheet (BUILD.md, *PowerPoint factsheet*):
+      // on page 2 a table cell's words (TD > Textbox > P > Span) and the body
+      // header's, both Spans whose ActualText is rewritten with them.
+      const factsheetBody = phase === "textedit-factsheet-body";
+      const factsheet = phase === "textedit-factsheet" || factsheetBody;
       const dash = phase === "textedit-dash";
       const cffLigatures = phase === "textedit-cff-ligatures";
       const cffUnicode = phase === "textedit-cff-unicode";
@@ -701,9 +708,9 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const wideSpacing = phase === "textedit-wide-spacing";
       const grow = phase === "textedit-grow";
       const pushes = phase === "textedit-push";
-      const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 ? 1 : 0;
-      const original = listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 || factsheet ? 1 : 0;
+      const original = factsheetBody ? "Detailed results" : factsheet ? "Action taken" : listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = factsheetBody ? "Detailed data" : factsheet ? "Action done" : listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
@@ -730,7 +737,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // only one of the two was found by running a phase. At 1,000 every one of
       // the five is refused, and refused for the room rather than for a
       // character bound (4,096) or a missing glyph.
-      const overflow = (passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : "S").repeat(1000);
+      const overflow = (passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : factsheet ? "a" : "S").repeat(1000);
       // The run's own characters, which is what a longer draft is built from
       // wherever one has to be accepted: a glyph the font lacks, or one wider
       // than the line has room for, would refuse it for a reason of its own.
@@ -754,7 +761,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       };
       const read = async (index = page) => String.fromCodePoint(...(await call("page_text", { doc: host.edits()!.doc, page: filePage(index), crop: null })).codes);
       const untouched = page === 1 ? await read(0) : "";
-      if (page === 1) check("both source pages have their original text", untouched.includes(agenda ? "REGULAR" : original) && (await read(1)).includes(original));
+      if (page === 1) check("both source pages have their original text", untouched.includes(agenda ? "REGULAR" : factsheet ? "Consumer" : original) && (await read(1)).includes(original));
       await start();
       check("source text is offered for replacement", field()!.value === original + (wrapped ? " " : ""));
       if (pushes) {
@@ -866,7 +873,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       if (!await settle(() => host.viewer()?.idle === true, SETTLE_MS)) throw new Error("text target layout did not settle");
       await pause(100);
       const hit = target()!.getBoundingClientRect();
-      check("the text target is visible and has area", hit.width > (w3c || agenda || passport ? 5 : 50) && hit.height > 5 && hit.top >= 0);
+      check("the text target is visible and has area", hit.width > (w3c || agenda || passport || factsheet ? 5 : 50) && hit.height > 5 && hit.top >= 0);
       if (passport) {
         // Independent source matrix: 0 8 -8 0 382.6772 31.0394, on a
         // 555.591pt sheet. The source ink occupies this narrow vertical band.
@@ -908,7 +915,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
         if (!canvas || !context) throw new Error("text check needs a readable composited surface");
-        const a = viewer.screenPoint(page, passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 55 : 35, passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
+        const a = viewer.screenPoint(page, factsheetBody ? 435 : factsheet ? 55 : passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 55 : 35, factsheetBody ? 20 : factsheet ? 278 : passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, factsheetBody ? 530 : factsheet ? 140 : passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, factsheetBody ? 37 : factsheet ? 296 : passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
         const left = Math.round(a.x*dpr), top = Math.round(a.y*dpr);
         const width = Math.round((b.x-a.x)*dpr), height = Math.round((b.y-a.y)*dpr);
         if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error(`text pixel sample is off screen: ${JSON.stringify({left,top,width,height,canvasWidth:canvas.width,canvasHeight:canvas.height})}`);
@@ -942,7 +949,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("mixed-direction selection survives every view turn", true);
       }
       const edited = await read();
-      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(listChild ? "SYNTHETIC FIRST" : passport ? "Your passport" : agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
+      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(factsheet ? "Consumer" : listChild ? "SYNTHETIC FIRST" : passport ? "Your passport" : agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
       const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(page), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
       check("unsaved search finds the replacement", matches.matches.length === 1);
       host.run("edit.undo"); await host.idle();

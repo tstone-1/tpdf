@@ -176,8 +176,15 @@ def close(a, b):
     return all(abs(x - y) <= 1e-4 for x, y in zip(a, b))
 
 
-def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False, cid_ligatures=False, numbered_list=False, nested_list=False, list_child=False):
-    """Independent parser: one changed operand, identical fonts and colour data."""
+def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=False, overhang=False, default_encoding=False, w3c=False, dash=False, agenda=False, cff_unicode=False, cff_ligatures=False, passport=False, cid_ligatures=False, numbered_list=False, nested_list=False, list_child=False, factsheet=None, pptx=False):
+    """Independent parser: one changed operand, identical fonts and colour data.
+
+    `factsheet` ("cell" or "body") reads the unchanged EC consumer factsheet's
+    page 2 edits (BUILD.md, *PowerPoint factsheet*): there the one change the
+    structure tree may carry is the edited Span's ActualText, from the old
+    words to the new. `pptx` reads `make_textedit_pptx.py`'s page the same way.
+    """
+    spoken = ("SYNTHETIC FIRST", "EDITED FIRST") if pptx else None
     from pypdf import PdfReader
     from pypdf.generic import ContentStream, DictionaryObject, StreamObject, FloatObject
 
@@ -208,6 +215,12 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     if agenda:
         import hashlib
         assert hashlib.sha256(Path(before).read_bytes()).hexdigest() == "5aa6129722dd20b351cf99575142666ab2c26b84555a9cabe920dcb07a17dbcd", "expected unchanged public agenda"
+    if factsheet:
+        import hashlib
+        assert hashlib.sha256(Path(before).read_bytes()).hexdigest() == "cbd18ff8b6fe949a27e11b73e87aa4faab589f66a08c0e727eefe697c877a53b", "expected unchanged public factsheet"
+        assert factsheet in ("cell", "body") and page_index == 1, "expected factsheet page 2"
+        old_text, new_text = ("Action taken", "Action done") if factsheet == "cell" else ("Detailed results", "Detailed data")
+        spoken = (old_text, new_text)
     readers = [PdfReader(path) for path in (before, after)]
     count = len(readers[0].pages)
     assert 0 <= page_index < count <= 128 and len(readers[1].pages) == count, "wrong page count"
@@ -236,7 +249,7 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
                         return ("ref", identities[identity])
                     index = identities[identity] = len(nodes)
                     nodes.append(None)
-                    assert len(nodes) <= 256, "structure graph exceeds fixture limit"
+                    assert len(nodes) <= (16384 if factsheet else 256), "structure graph exceeds fixture limit"
                     nodes[index] = visit(obj.get_object())
                     return ("ref", index)
                 if isinstance(obj, DictionaryObject):
@@ -251,8 +264,21 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
             mark_info = value(root["/MarkInfo"]) if "/MarkInfo" in root else None
             return (top, nodes, [p.get("/StructParents") for p in reader.pages], mark_info)
 
-        assert structure(readers[0]) == structure(readers[1]), "tagged structure or parent references changed"
-        print("[PASS] independent parser: complete tagged structure graph and page parent key preserved")
+        graphs = [structure(reader) for reader in readers]
+        if spoken:
+            # Exactly one element differs, and only in its ActualText: the old
+            # words before, the new words after. Put the old back and the two
+            # graphs must then be identical.
+            differing = [index for index, (a, b) in enumerate(zip(graphs[0][1], graphs[1][1])) if a != b]
+            assert len(graphs[0][1]) == len(graphs[1][1]) and len(differing) <= 1, "tagged structure changed beyond one element"
+            assert differing, "the Span's ActualText was not rewritten"
+            element = graphs[1][1][differing[0]]
+            assert isinstance(element, dict) and element.get("/S") == "/Span", "the changed element is not a Span"
+            assert graphs[0][1][differing[0]].get("/ActualText") == spoken[0], "the changed Span did not speak the old words"
+            assert element.get("/ActualText") == spoken[1], "the Span's ActualText is not the new words"
+            graphs[1][1][differing[0]] = graphs[0][1][differing[0]]
+        assert graphs[0] == graphs[1], "tagged structure or parent references changed"
+        print("[PASS] independent parser: complete tagged structure graph and page parent key preserved" + ("; the edited Span's ActualText now reads the replacement" if spoken else ""))
     operations = [ContentStream(page["/Contents"], reader).operations
                   for page, reader in zip(pages, readers)]
     changes, changed_index = edited_shows(operations, pages[0]["/Resources"].get("/Font", {}))
@@ -294,7 +320,7 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
         old_text, new_text = "ILB 53 (09.22)", "ILB 53"
     if agenda:
         old_text, new_text = ("REGULAR", "ANNUAL") if page_index == 0 else ("Community Hub", "Community")
-    if symbolic:
+    if symbolic and not factsheet:
         if agenda or passport:
             font_name = [args[0] for args, op in operations[0][:changed_index] if op == b"Tf"][-1]
             mapped_font = pages[0]["/Resources"]["/Font"][font_name]
@@ -354,7 +380,25 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
     if w3c:
         assert count == 1 and page_index == 0
         expected_text = ("Dummy PDF file", "Dummy PDF fill")
-    if agenda or passport:
+    if factsheet:
+        assert count == 6, "wrong public fixture page count"
+        # WinAnsi Arial, not symbolic: both edited operands decode exactly
+        # through the font's own encoding (pypdf's table, not the editor's).
+        from pypdf._cmap import get_encoding
+        font_name = [args[0] for args, op in operations[0][:changed_index] if op == b"Tf"][-1]
+        encoding, _ = get_encoding(pages[0]["/Resources"]["/Font"][font_name].get_object())
+        assert isinstance(encoding, dict), "expected a simple font's encoding table"
+        for operation, text in ((old, old_text), (new, new_text)):
+            parts = operation[0][0] if operation[1] == b"TJ" else operation[0]
+            raw = b"".join(part.original_bytes if isinstance(part, str) else bytes(part)
+                           for part in parts if isinstance(part, (str, bytes)))
+            assert all(code in encoding for code in raw) and "".join(encoding[code] for code in raw) == text, "wrong decoded operand"
+        original = pages[0].extract_text()
+        assert original.count(old_text) == 1, "wrong public fixture text"
+        # pypdf reads spaces off positions, and the kept kerning reads a little
+        # differently to it; the operands above are exact, so compare words.
+        assert pages[1].extract_text().split() == original.replace(old_text, new_text).split(), "wrong public fixture replacement or adjacent text"
+    elif agenda or passport:
         assert (count == 16 and page_index == 15) if passport else (count == 2 and page_index in (0, 1)), "wrong public fixture page count"
         original = pages[0].extract_text()
         assert original.count(old_text) == 1, "wrong public fixture text"
@@ -373,7 +417,8 @@ def check(before, after, page_index=0, wrapped=False, float32=False, cid_latin1=
                 label = "1." if nested_list else "2."
                 assert " ".join(page.extract_text().split()) == "1. " + first + " " + label + " SYNTHETIC SECOND", "list text or labels changed"
                 continue
-            assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND")).split()), "wrong decoded text"
+            # The PowerPoint page's third line is a link's words, read-only.
+            assert " ".join(page.extract_text().split()) == " ".join((first + ("" if w3c else " SYNTHETIC SECOND") + (" FIRST" if pptx else "")).split()), "wrong decoded text"
         if not symbolic:
             # The page text above folds whitespace, so an added or lost space
             # passes it. Decode both edited operands exactly through the font's
@@ -472,7 +517,8 @@ def layout_controls(before, after, page_index=0, wrapped=False, **options):
     `check` to refuse it for that reason: the input left unedited, an added
     space, a changed font resource, a restated text state that differs from the
     source, a cursor restoration a unit short, a kerning number the source never
-    had, and a painting operator inside the edited region. A control that does
+    had, a painting operator inside the edited region, another page's content
+    changed, and for the factsheet the edited Span's ActualText put back. A control that does
     not apply to this output (no restoration, no array) is skipped by name.
     """
     import contextlib
@@ -525,6 +571,25 @@ def layout_controls(before, after, page_index=0, wrapped=False, **options):
             operands[0].insert(1, NumberObject(-7))
         elif mode == "painting":
             ops.insert(shows[0], ([], b"n"))
+        elif mode == "other_page":
+            if len(writer.pages) < 2:
+                return None
+            from pypdf.generic import DecodedStreamObject
+            other = writer.pages[1 if page_index == 0 else 0]
+            stream = DecodedStreamObject()
+            stream.set_data(other.get_contents().get_data() + b"\n% changed untouched page\n")
+            other[NameObject("/Contents")] = writer._add_object(stream)
+            return writer
+        elif mode == "stale_actual_text":
+            if not options.get("factsheet") and not options.get("pptx"):
+                return None
+            from pypdf.generic import TextStringObject
+            old, new = ("SYNTHETIC FIRST", "EDITED FIRST") if options.get("pptx") else ("Action taken", "Action done") if options["factsheet"] == "cell" else ("Detailed results", "Detailed data")
+            spans = [obj for obj in (writer.get_object(i + 1) for i in range(len(writer._objects)))
+                     if hasattr(obj, "get") and obj.get("/ActualText") == new]
+            assert len(spans) == 1, "expected one Span speaking the replacement"
+            spans[0][NameObject("/ActualText")] = TextStringObject(old)
+            return writer
         page.replace_contents(stream)
         return writer
 
@@ -536,6 +601,8 @@ def layout_controls(before, after, page_index=0, wrapped=False, **options):
         "cursor_short": "cursor restoration",
         "new_kern": "adjustment the source did not have",
         "painting": "operator count changed",
+        "stale_actual_text": "Span's ActualText",
+        "other_page": "untouched page content changed",
     }
     with tempfile.TemporaryDirectory(prefix="tpdf-layout-controls-") as room:
         for mode, reason in reasons.items():
@@ -551,7 +618,7 @@ def layout_controls(before, after, page_index=0, wrapped=False, **options):
             except AssertionError as error:
                 # A ligature fixture pins its glyph codes before it decodes them,
                 # and a subset without a space cannot decode the added one.
-                other = ("ligature glyph codes", "unmapped symbolic code") if mode == "added_space" else ()
+                other = ("ligature glyph codes", "unmapped symbolic code") if mode == "added_space" else ("Span's ActualText",) if mode == "unedited" else ()
                 assert reason in str(error) or any(text in str(error) for text in other), f"{mode} refused for another reason: {error}"
             else:
                 raise AssertionError("readback control survived: " + mode)
@@ -595,6 +662,8 @@ def main():
         checking = sys.argv[1] in ("--check", "--layout-controls")
         page, wrapped, float32, default_encoding = 0, False, False, False
         w3c = dash = agenda = cff_unicode = cff_ligatures = passport = cid_ligatures = numbered_list = nested_list = list_child = False
+        factsheet = None
+        pptx = False
         for option in sys.argv[4:]:
             if option.startswith("--page="):
                 page = int(option.split("=", 1)[1])
@@ -612,6 +681,10 @@ def main():
                 passport = True
             elif option == "--agenda" and checking:
                 agenda = True
+            elif option == "--pptx" and checking:
+                pptx = True
+            elif option in ("--factsheet", "--factsheet-body") and checking:
+                factsheet = "body" if option.endswith("body") else "cell"
             elif option == "--cid-ligatures" and checking:
                 cid_ligatures = True
             elif option == "--cff-ligatures" and checking:
@@ -625,14 +698,14 @@ def main():
             elif option == "--float32" and checking:
                 float32 = True
             else:
-                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --cid-ligatures, --dash, --agenda, --passport, --list, --nested-list, --nested-list-child or --w3c-dummy (--check only)")
-        options = dict(float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list, nested_list=nested_list, list_child=list_child)
+                raise SystemExit("expected --page=N (zero based), --wrapped, --float32, --default-encoding, --cff-unicode, --cff-ligatures, --cid-ligatures, --dash, --agenda, --factsheet, --factsheet-body, --pptx, --passport, --list, --nested-list, --nested-list-child or --w3c-dummy (--check only)")
+        options = dict(float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list, nested_list=nested_list, list_child=list_child, factsheet=factsheet, pptx=pptx)
         if sys.argv[1] == "--layout-controls":
             layout_controls(*sys.argv[2:4], page, wrapped, **options)
             return
         action = check if sys.argv[1] == "--check" else tagged_controls
-        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport or cid_ligatures or numbered_list or nested_list or list_child:
-            check(*sys.argv[2:4], page, wrapped, float32=float32, default_encoding=default_encoding, w3c=w3c, dash=dash, agenda=agenda, cff_unicode=cff_unicode, cff_ligatures=cff_ligatures, passport=passport, cid_ligatures=cid_ligatures, numbered_list=numbered_list, nested_list=nested_list, list_child=list_child)
+        if float32 or default_encoding or w3c or dash or agenda or cff_unicode or cff_ligatures or passport or cid_ligatures or numbered_list or nested_list or list_child or factsheet or pptx:
+            check(*sys.argv[2:4], page, wrapped, **options)
         else:
             action(*sys.argv[2:4], page, wrapped)
         return
