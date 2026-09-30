@@ -10546,6 +10546,13 @@ re-editing path for it. Windows has not run the lookup or the round trip. No fuz
 added: the fuzz targets take documents and edit without a layout, so neither reaches
 `installed::accept`, whose input is the reader's own font file.
 
+**Settled 2026-09-30, as built:** when the document's own font forbids editing, no installed
+copy is tried, because the document's restriction decides. An installed file over 32 MiB falls
+back to Noto; the fonts that large are mostly CJK, which go to Noto CJK regardless. With two
+installed versions of one font, CoreText may pick the one whose widths disagree, and the reader
+then sees Noto with that reason. CFF installed fonts are the next increment on this path,
+because Adobe's Minion Pro and Myriad Pro families, common in the scanned documents, are CFF.
+
 ### Signed-fixture padding regression
 
 `fixturebytes` runs `python3 testdata/test_incremental_pdf.py` without optional
