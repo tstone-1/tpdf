@@ -479,22 +479,20 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.9.23.** More PDF workflows can run without a window:
-          merge, extract, split, rotate and crop pages; apply JSON edit plans
-          for page changes, annotations, comments and supported text replacements;
-          inspect comments and text runs; and render pages to PNG for visual tests.
-          `help --json` lists commands and accepted arguments. The Python client
-          provides helpers for every CLI command, parsed results, structured
-          errors and timeouts. Install it from a checkout with
-          `uv pip install ./api/python`; install the application separately.
-          See the [CLI and Python API instructions](https://github.com/tstone-1/tpdf#command-line-tool).
+          **New in 26.9.24.** Text in PowerPoint for Microsoft 365 exports can
+          be edited: paragraphs and table cells, with the accessible text that a
+          screen reader or search uses rewritten with the words. When an edit
+          needs a character the document's embedded font lacks, tpdf uses the
+          same font installed on this computer, if it matches the document's copy
+          and its licence permits editing, and embeds only the glyphs it needs;
+          otherwise Noto Sans. The preview names the font it used. OpenType fonts
+          with PostScript outlines are included. The mark colour menu shows each
+          colour, and US or British spelling follows the system language.
 
-          This release also fixes a macOS worker-startup defect that could give
-          a child the wrong handover socket or mapping, and keeps the document
-          properties heading above scrolling labels. Windows trust-store and
-          OS-key signing checks, private-CA long-term signing tests, and packaged
-          CLI/API tests now provide broader native-platform evidence. Commercial
-          certificate and hardware-token coverage remains limited.
+          This release also fixes automatic font choice when a document's font
+          lacks one letter of the new text: the preview used to be refused
+          instead of falling back to another font. The same edits work from the
+          command line and the Python client.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX

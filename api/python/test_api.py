@@ -81,7 +81,7 @@ def powerpoint_fixture(path: Path) -> None:
 
     A Textbox that the RoleMap makes a Sect holds a P, whose Span carries
     ActualText equal to the words it paints. The editor rewrites that text with
-    the words (BUILD.md, *PowerPoint factsheet*); before 26.10.0 the Span was
+    the words (BUILD.md, *PowerPoint factsheet*); before 26.9.24 the Span was
     read-only and this page offered nothing.
     """
     content = b'/Span << /MCID 0 >> BDC BT /F1 12 Tf 30 100 Td (SYNTHETIC ORIGINAL) Tj ET EMC'

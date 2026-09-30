@@ -6295,6 +6295,26 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.9.24 verification, macOS arm64, 2026-09-30:** all 29 gates passed on the final tree
+(2,392 Rust tests with nine documented ignored, 1,976 frontend tests), and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--since v26.9.23` ran and was caught:
+71 frontend, 808 Rust and 11 window. The window phases passed on macOS against the checks
+build: viewer 316 text-heavy and 221 vector-heavy, `tabs` 20, `forms` 18, `signatures` 21,
+`import` 28, `redact-pages` 34 and `textedit` 23, the last read back by PDFKit with 2,395
+changed pixels inside the edit and none outside. The normal bundle contains no harness; with
+the development engine hidden, `menu_check.py` (after its self-test) found a clean menu bar,
+`save_check.py` saved over the document twice and refused a print after a second writer, and
+the bundled `tpdf-cli` answered `--version` and `verify`. A local build is ad-hoc signed, so the
+Developer ID check belongs to the published artifact. On Windows x64 the same day, the new
+installed-font lookup (Arial through DirectWrite, and a real CFF font, Miriam Libre), the
+factsheet edits and the text-editor tests ran natively (see those sections). A new API check
+edits a PowerPoint-shaped page through `tpdf-client` and was proved red with the ActualText
+rewrite removed. `docs/THREAT-MODEL.md` already covered this cycle's additions; `README.md`
+was corrected for installed fonts and PowerPoint accessible text. `release.yml` changed only in
+its notes, so no rehearsal tag was cut. **Not run before the tag:** `print-probe` and
+`redact-reach-probe` on Windows (printing and OCR redaction are unchanged this cycle) and the
+Windows window phases other than text editing; CI's Windows gate leg is that evidence.
+
 **Post-release verification, 2026-09-29:** all 27 gates passed on macOS arm64
 (2,328 Rust unit tests, nine documented ignored tests; 1,963 frontend tests; 253 CLI
 checks). The run took 859.9 s across its gates. The CLI's parity section spent 191.2 s
