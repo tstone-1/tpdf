@@ -14898,9 +14898,12 @@ editable: passport guide 1/16, consumer factsheet 0/6, mouse guide 0/2, W-9 1/6,
 constructs its export writes are admitted, and page 2 passes native replacement in a table cell
 and in body text, save, reopen and independent pypdf and PDFKit readback, with the edited
 Span's ActualText rewritten to the new words (`BUILD.md`, *PowerPoint factsheet: an unchanged
-practical page*). The factsheet is now 6/6 and the six practical documents 22 of 47; this is a small selected sample, not a success rate. Next target: the mouse guide, whose remaining blocker is the
-scan's 16,384-operator bound against pages of 27,313 and 39,479 operators, which is a
-performance decision rather than a grammar gap; after it, its `sh` shadings and `BX`/`EX`.
+practical page*). The factsheet is now 6/6 and the six practical documents 22 of 47; this is a small selected sample, not a success rate. The mouse guide's remaining blocker is the
+scan's 16,384-operator bound against pages of 27,313 and 39,479 operators, and after it its
+`sh` shadings and `BX`/`EX`. **Decided 2026-09-30: the bound stays** until another real
+document needs more, since raising it costs scan time and memory on every page; the mouse
+guide stays refused. The next practical target is still to be chosen by its complete blocker
+inventory, as the factsheet was.
 
 ### Phase 6 — Cryptographic signing
 
