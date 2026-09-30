@@ -15,7 +15,8 @@ somebody else left, and save — over the open file or to a copy. **It redacts**
 the page's own instructions — over the open file or to a copy — with the result read
 back and reported either way. What is *not* built is the list further down, and
 general text editing is the one that matters. The editor supports a bounded set of
-text layouts and fonts, with adjustable text boxes, wrapping and bundled font fallback.
+text layouts and fonts, with adjustable text boxes, wrapping, and new characters set in an
+installed copy of the document's font or in bundled Noto.
 Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page. Sign a
 document with a certificate from your macOS keychain or Windows certificate store, see
@@ -477,11 +478,17 @@ or pattern-filled text can remain read-only beside editable text, and so can let
 outside Latin, such as Cyrillic, that a font's encoding names.
 Supported images and vector artwork remain unchanged. Unchanged Word, LibreOffice, Edge,
 Acrobat, PowerPoint, pdfTeX, XeLaTeX, LuaTeX and Typst exports are included in the verified
-examples; this does not mean every export from those applications is editable. Text in
+examples; this does not mean every export from those applications is editable. Where a
+producer repeats a span's words as its accessible text, as PowerPoint does, an edit
+rewrites that text with the words. Text in
 math symbols, in slide background layers and in page stamps stays read-only.
-Auto font selection uses the original font when possible and bundled Noto Sans
-when new characters need it, or when the document's font does not permit editing, which
-the preview then says; text left in such a font keeps it. Regular and bold Noto Sans CJK SC also cover Chinese,
+Auto font selection uses the original font when possible. When new characters are
+missing from the document's embedded copy of its font, it uses the same font installed on
+this computer, if its widths match the document's copy and its licence permits editing,
+and embeds only the glyphs the edit needs; otherwise bundled Noto Sans. It also uses Noto
+when the document's font does not permit editing. The preview names the font it used, and
+says why an installed copy was not. On a computer without the font, the same edit uses Noto.
+Text the edit leaves in a font that does not permit editing keeps that font. Regular and bold Noto Sans CJK SC also cover Chinese,
 Japanese and Korean characters, using Simplified Chinese glyph forms. CJK edits
 embed only the glyphs they use. Replacements must fit the chosen box without crossing
 clips or neighbouring content. Automatic table resizing, flow across pages and
@@ -1122,7 +1129,8 @@ unbuilt while they shipped.
   archive timestamp when you ask for them with a timestamp; what is not built is adding them
   later to a signature already in a document.
   <!-- not-built: file.addValidationData -->
-- General text editing: arbitrary fonts and layouts, inserting unavailable glyphs,
+- General text editing: arbitrary fonts and layouts, adding glyphs to a document's own
+  embedded font (new characters come from an installed copy of that font or from Noto),
   paragraph reflow and unsupported complex content streams.
 
 ## What Phase 0 established
