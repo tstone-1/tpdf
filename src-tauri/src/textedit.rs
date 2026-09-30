@@ -686,6 +686,14 @@ struct Inspection {
     /// The links the batch's wraps move with their text, each with its new
     /// `/Rect` in default user space (`layout::Prepared::links`).
     links: BTreeMap<ObjectId, [f64; 4]>,
+    /// Runs whose structure Span carries their own text as ActualText, which
+    /// an edit rewrites with them (`actual::Element`, `docs/TEXTEDIT.md`).
+    structure_actual: BTreeMap<u32, actual::Element>,
+    /// The ActualText the batch writes into each such Span.
+    span_texts: BTreeMap<ObjectId, Object>,
+    /// Spans whose ActualText turned out not to be their one run's text, so
+    /// that the page is scanned again with them read-only (`inspect`).
+    demote: BTreeSet<ObjectId>,
 }
 
 /// One annotation as a wrap sees it: where it is on the displayed page, and,
@@ -802,7 +810,24 @@ struct Gaps {
     count: u32,
 }
 
+/// The page, scanned. A structure Span pinned only by its ActualText is taken
+/// at its word first; where the scan finds that ActualText is not its one run's
+/// text, the page is scanned again with that Span read-only, which is what it
+/// was before its ActualText could be rewritten. The second scan cannot find
+/// another: the Spans it keeps are judged by their own runs alone.
 fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
+    let first = inspect_pinning(doc, page, &BTreeSet::new())?;
+    if first.demote.is_empty() {
+        return Ok(first);
+    }
+    inspect_pinning(doc, page, &first.demote)
+}
+
+fn inspect_pinning(
+    doc: &Document,
+    page: u32,
+    pinned: &BTreeSet<ObjectId>,
+) -> Result<Inspection, String> {
     let pages = crate::pagetree::ordered_pages(doc);
     let id = *pages
         .get(page as usize)
@@ -811,6 +836,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         return Err("a repeated page object is not editable".into());
     }
     let mut tags = tagging::Tags::read(doc, id, &pages)?;
+    tags.pin(pinned);
     let bytes = page_content(doc, id)?;
     let content = Content::decode_strict(&bytes).map_err(|e| e.to_string())?;
     if content.operations.len() > MAX_OPERATIONS {
@@ -889,6 +915,10 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut gaps = BTreeMap::new();
     let mut compound_run_clips = BTreeMap::new();
     let mut contexts = BTreeMap::new();
+    // Each structure Span with rewritable ActualText: its shows, and whether
+    // none of them is inside an ActualText span of its own. A read-only or
+    // spacer show never becomes a run, which the comparison below sees.
+    let mut span_shows: BTreeMap<ObjectId, (Vec<u32>, bool)> = BTreeMap::new();
     let mut preserved = Vec::new();
     let mut form_text_bounds = Vec::new();
     let mut graphics: Vec<[f32; 4]> = Vec::new();
@@ -1532,6 +1562,11 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         if display_rect.iter().any(|v| !v.is_finite()) {
             return Err("text bounds exceed the display range".into());
         }
+        if let Some(span) = tags.actual() {
+            let (shows, plain) = span_shows.entry(span).or_insert((Vec::new(), true));
+            shows.push(index as u32);
+            *plain &= actual.is_none();
+        }
         if let Some(spacer) = &spacer {
             spacer.text(&text)?;
             continue;
@@ -1631,6 +1666,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         lowered: BTreeMap::new(),
         annotations: annotation_rects(doc, id).ok(),
         links: BTreeMap::new(),
+        structure_actual: BTreeMap::new(),
+        span_texts: BTreeMap::new(),
+        demote: BTreeSet::new(),
     };
     for span in actual_spans {
         span.finish(&mut inspection)?;
@@ -1641,6 +1679,47 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     grouping::collect(&mut inspection);
     if inspection.blocks.is_empty() || blocks::FORCE.load(std::sync::atomic::Ordering::Relaxed) {
         inspection.blocks = blocks::geometric(&inspection, &sheet);
+    }
+    // A Span's ActualText is rewritten with its run only where it is that
+    // run's text: every show of the Span plain text in one run, and nothing
+    // else in the run, with the texts equal but for spaces at either end.
+    for (span, (shows, plain)) in span_shows {
+        let owner = |run: &Run| {
+            std::iter::once(run.operator)
+                .chain(
+                    inspection
+                        .groups
+                        .get(&run.operator)
+                        .into_iter()
+                        .flatten()
+                        .copied(),
+                )
+                .collect::<BTreeSet<_>>()
+        };
+        let touching: Vec<&Run> = inspection
+            .runs
+            .runs
+            .iter()
+            .filter(|run| owner(run).iter().any(|show| shows.contains(show)))
+            .collect();
+        let element = match touching.as_slice() {
+            [run] if plain && shows.iter().all(|show| owner(run).contains(show)) => doc
+                .get_dictionary(span)
+                .ok()
+                .and_then(|dict| dict.get(b"ActualText").ok())
+                .and_then(|value| actual::logical(value).ok())
+                .and_then(|text| actual::Edges::of(&text, &run.text))
+                .map(|edges| (run.operator, actual::Element { span, edges })),
+            _ => None,
+        };
+        match element {
+            Some((operator, element)) => {
+                inspection.structure_actual.insert(operator, element);
+            }
+            None => {
+                inspection.demote.insert(span);
+            }
+        }
     }
     Ok(inspection)
 }
@@ -1909,7 +1988,10 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
                 edited: edited.get(&change.page).cloned().unwrap_or_default(),
             };
             let replacement = layout::prepare(doc, page, change, &placement)?;
-            if page.actual_text.contains_key(&change.operator) && replacement.lines > 1 {
+            if (page.actual_text.contains_key(&change.operator)
+                || page.structure_actual.contains_key(&change.operator))
+                && replacement.lines > 1
+            {
                 return Err("ActualText editing currently requires a single line".into());
             }
             // Every show this edit pushes, told where it ended up. The ones
@@ -2121,13 +2203,12 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         show.operands[0] = moved;
         page.patched.insert(*operator as usize);
     }
-    // Logical replacement strings are patched with their owning show.
+    // Logical replacement strings are patched with their owning show, and a
+    // structure Span's ActualText is rewritten with the run it describes.
     for change in changes {
-        actual::patch(
-            prepared.get_mut(&change.page).ok_or("missing text page")?,
-            change.operator,
-            &change.replacement,
-        )?;
+        let page = prepared.get_mut(&change.page).ok_or("missing text page")?;
+        actual::patch(page, change.operator, &change.replacement)?;
+        actual::rewrite(page, change.operator, &change.replacement);
     }
     Ok(prepared)
 }
@@ -2154,6 +2235,7 @@ fn commit_batch(doc: &mut Document, prepared: BTreeMap<u32, Inspection>) -> Resu
                  expanded,
                  lowered,
                  links,
+                 span_texts,
                  ..
              }| {
                 let mut font_names = BTreeSet::new();
@@ -2176,12 +2258,17 @@ fn commit_batch(doc: &mut Document, prepared: BTreeMap<u32, Inspection>) -> Resu
                     .chain(lowered)
                     .collect();
                 streams::rewrite_expanded(&bytes, &content, &patched, &expansions)
-                    .map(|bytes| (id, bytes, expanded, links))
+                    .map(|bytes| (id, bytes, expanded, links, span_texts))
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
     let mut programs = BTreeMap::new();
-    for (page, bytes, expanded, links) in ready {
+    for (page, bytes, expanded, links, span_texts) in ready {
+        for (span, text) in span_texts {
+            doc.get_dictionary_mut(span)
+                .map_err(|e| e.to_string())?
+                .set("ActualText", text);
+        }
         for (link, rect) in links {
             doc.get_dictionary_mut(link)
                 .map_err(|e| e.to_string())?

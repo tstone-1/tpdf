@@ -195,6 +195,14 @@ fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Re
             .filter_map(|id| doc.get_object(id).ok().map(|object| (id, object.clone())))
             .collect()
     };
+    // An edit also rewrites the ActualText of a structure Span whose words it
+    // replaces (`docs/TEXTEDIT.md`), another object the document already had.
+    let spoken: Vec<(ObjectId, Object)> = doc
+        .objects
+        .iter()
+        .filter(|(_, object)| object.as_dict().is_ok_and(|dict| dict.has(b"ActualText")))
+        .map(|(id, object)| (*id, object.clone()))
+        .collect();
     let result = textedit::write(doc, &[change]);
     if result.is_ok() {
         if std::env::var_os("TPDF_PROBE_DIGESTS").is_some() {
@@ -212,6 +220,7 @@ fn trial(doc: &mut lopdf::Document, page: &Page, change: textedit::Change) -> Re
         doc.objects.retain(|id, _| id.0 <= max_id);
         doc.objects.insert(page.id, page.dictionary.clone());
         doc.objects.extend(annotations);
+        doc.objects.extend(spoken);
         doc.max_id = max_id;
     }
     result

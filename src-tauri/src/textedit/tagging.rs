@@ -692,6 +692,9 @@ struct Group<'a> {
     items: Vec<&'a Object>,
     // Whether this group or an ancestor pins its content (see `element`).
     pinned: bool,
+    // A Span leaf pinned by nothing but its own ActualText, which an edit may
+    // rewrite rather than leave stale (`Tags::actual`); `pinned` is then false.
+    actual: bool,
 }
 
 // Exactly one optional NonStruct/Span level below a paragraph, never a recursive
@@ -709,6 +712,7 @@ fn groups<'a>(
     }
     let mut plain = Group {
         items: Vec::new(),
+        actual: false,
         ..paragraph
     };
     let mut groups = Vec::new();
@@ -841,14 +845,31 @@ fn groups<'a>(
                     tag: b"Span",
                     items: words.iter().collect(),
                     pinned: true,
+                    actual: false,
                 });
             }
+            // PowerPoint sets ActualText on every Span of a paragraph, equal
+            // to the words it paints (the EC consumer factsheet: 292 of them,
+            // none different). A Span pinned by that alone, holding one
+            // sequence of marked content, is left for the scan to compare with
+            // what it paints; `Tags::actual` carries it (`docs/TEXTEDIT.md`).
+            let inherited = plain.pinned || lifted_pins || in_figure;
+            let actual = tag == b"Span"
+                && child.has(b"ActualText")
+                && !child.has(b"Alt")
+                && child
+                    .get(b"T")
+                    .map_or(true, |title| title.as_str().is_ok_and(<[u8]>::is_empty))
+                && matches!(own.as_slice(), [Object::Integer(_) | Object::Dictionary(_)]);
             let group = Group {
                 id: *id,
                 page,
                 tag,
                 items: own,
-                pinned: plain.pinned || pins || lifted_pins || in_figure,
+                pinned: inherited || (pins && !actual),
+                // Not a guard: an inherited pin keeps the text read-only either
+                // way, and this only spares the page a second scan (`inspect`).
+                actual: actual && !inherited,
             };
             // Cell -> paragraph -> optional Span/NonStruct leaf. Only the cell
             // branch recurses, so this adds one bounded level, not arbitrary trees.
@@ -979,6 +1000,10 @@ pub(super) struct Tags {
     // MCIDs under an element whose authored ink bounds are kept on save, so
     // their text must stay where the bounds say it is (ISO 32000-1 Table 344).
     bounded: BTreeSet<usize>,
+    // MCIDs of a Span pinned only by its own ActualText, with that Span. The
+    // scan keeps each only where the Span's ActualText is the text it paints;
+    // anywhere else `pin` moves it into `bounded`, which is what it was.
+    actual: BTreeMap<usize, ObjectId>,
     seen: BTreeSet<usize>,
     active: Option<Option<usize>>, // None outside; Some(None) is an artifact.
     has_content: bool,
@@ -1207,6 +1232,7 @@ impl Tags {
             .map(|child| (child, root_id, 0, false))
             .collect();
         let mut bounded_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
+        let mut actual_slots: BTreeMap<ObjectId, BTreeMap<usize, ObjectId>> = BTreeMap::new();
         let mut containers = 0;
         while let Some((child, parent_id, depth, bounded)) = pending.pop() {
             let id = reference(child)?;
@@ -1388,6 +1414,7 @@ impl Tags {
                 tag: if role == b"Figure" { role } else { tag },
                 items: content_items,
                 pinned: bounded,
+                actual: false,
             };
             let mut deferred = Vec::new();
             let produced = groups(doc, paragraph, &scope, &mut ids, &mut deferred)?;
@@ -1405,6 +1432,7 @@ impl Tags {
                 tag,
                 items,
                 pinned,
+                actual,
             } in produced
             {
                 for item in items {
@@ -1458,6 +1486,9 @@ impl Tags {
                     if pinned {
                         bounded_slots.entry(owner).or_default().insert(mcid);
                     }
+                    if actual {
+                        actual_slots.entry(owner).or_default().insert(mcid, id);
+                    }
                 }
             }
         }
@@ -1492,6 +1523,7 @@ impl Tags {
             names,
             blocks,
             bounded: bounded_slots.remove(&page).unwrap_or_default(),
+            actual: actual_slots.remove(&page).unwrap_or_default(),
             ..Self::default()
         })
     }
@@ -1652,6 +1684,27 @@ impl Tags {
             // An artifact is never the document's content, tagged or not.
             Some(None) => true,
             None => !self.names.is_empty(),
+        }
+    }
+
+    /// The Span whose ActualText an edit of the marked content now open would
+    /// have to rewrite, where there is one (`actual`).
+    pub(super) fn actual(&self) -> Option<ObjectId> {
+        self.active
+            .flatten()
+            .and_then(|mcid| self.actual.get(&mcid).copied())
+    }
+
+    /// Keeps these Spans' content read-only after all, as their ActualText
+    /// makes it when it is not the text they paint.
+    pub(super) fn pin(&mut self, spans: &BTreeSet<ObjectId>) {
+        let actual = std::mem::take(&mut self.actual);
+        for (mcid, span) in actual {
+            if spans.contains(&span) {
+                self.bounded.insert(mcid);
+            } else {
+                self.actual.insert(mcid, span);
+            }
         }
     }
 

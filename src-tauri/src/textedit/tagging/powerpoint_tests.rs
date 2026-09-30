@@ -382,3 +382,211 @@ fn textedit_a_span_in_a_link_holds_only_its_words() {
     let (doc, _) = linked_span("Widget", "Form");
     assert!(textedit::scan(&doc, 0).is_err());
 }
+
+// ids: page, root, document, first, second, parents, first span, second span.
+// PowerPoint (the EC consumer factsheet) sets ActualText on every Span of a
+// paragraph, equal to the words it paints, or to them with the word's space at
+// one end. `body` replaces the page's content; its MCIDs 0 and 1 are the Spans'.
+fn spoken(first: &str, second: &str, body: Option<&str>) -> (Document, [ObjectId; 8]) {
+    let (mut doc, ids) = fixture(
+        body.unwrap_or(std::str::from_utf8(CONTENT).unwrap())
+            .as_bytes(),
+    );
+    let mut spans = Vec::new();
+    for (paragraph, mcid, text) in [(ids[3], 0, first), (ids[4], 1, second)] {
+        let span = doc.add_object(dictionary! {
+            "Type" => "StructElem", "S" => "Span", "P" => paragraph, "Pg" => ids[0],
+            "K" => vec![Object::Integer(mcid)], "ActualText" => Object::string_literal(text),
+        });
+        doc.get_dictionary_mut(paragraph)
+            .unwrap()
+            .set("K", vec![Object::Reference(span)]);
+        spans.push(span);
+    }
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![spans[0].into(), spans[1].into()]),
+        ],
+    );
+    (
+        doc,
+        [
+            ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], spans[0], spans[1],
+        ],
+    )
+}
+
+fn spoken_text(doc: &Document, span: ObjectId) -> String {
+    let value = doc
+        .get_dictionary(span)
+        .unwrap()
+        .get(b"ActualText")
+        .unwrap();
+    crate::textedit::actual::logical(value).unwrap()
+}
+
+fn replace(
+    doc: &mut Document,
+    original: &str,
+    replacement: &str,
+    layout: Option<textedit::Layout>,
+) -> Result<(), String> {
+    let runs = textedit::scan(doc, 0).unwrap();
+    let run = runs.runs.iter().find(|run| run.text == original).unwrap();
+    textedit::write(
+        doc,
+        &[textedit::Change {
+            layout,
+            page: 0,
+            revision: runs.revision,
+            operator: run.operator,
+            original: original.into(),
+            replacement: replacement.into(),
+        }],
+    )
+}
+
+#[test]
+fn textedit_a_spans_actual_text_is_rewritten_with_its_words() {
+    // Equal, and equal but for a trailing space only the ActualText has.
+    let (mut doc, ids) = spoken("FIRST", "SECOND ", None);
+    assert_eq!(texts(&doc), ["FIRST", "SECOND"]);
+    let before = doc.objects.clone();
+    replace(&mut doc, "FIRST", "IN", None).unwrap();
+    assert_eq!(spoken_text(&doc, ids[6]), "IN");
+    assert_eq!(spoken_text(&doc, ids[7]), "SECOND ");
+    // Nothing else in the structure moved: only the page and the one Span.
+    for (id, object) in &before {
+        if *id != ids[0] && *id != ids[6] {
+            assert_eq!(&doc.objects[id], object);
+        }
+    }
+    // Reopened, the rewritten Span is offered again and edits again; the
+    // other keeps the space its ActualText had over its words.
+    assert_eq!(texts(&doc), ["IN", "SECOND"]);
+    replace(&mut doc, "SECOND", "NOTED", None).unwrap();
+    assert_eq!(spoken_text(&doc, ids[7]), "NOTED ");
+    replace(&mut doc, "IN", "", None).unwrap();
+    assert_eq!(spoken_text(&doc, ids[6]), "");
+    // The editor's own edits come with a layout: rewritten the same way.
+    let (mut doc, ids) = spoken("FIRST", "SECOND", None);
+    let layout = textedit::Layout {
+        width: 60.,
+        height: 16.,
+        size: 12.,
+        wrap: false,
+        font: textedit::EditFont::Original,
+        grow: false,
+    };
+    replace(&mut doc, "FIRST", "IN", Some(layout.clone())).unwrap();
+    assert_eq!(spoken_text(&doc, ids[6]), "IN");
+    // One line only: a replacement that wraps would need its ActualText to
+    // say where the line broke.
+    let (mut doc, _) = spoken("FIRST", "SECOND", None);
+    let wrapped = textedit::Layout {
+        width: 30.,
+        height: 40.,
+        wrap: true,
+        ..layout
+    };
+    assert_eq!(
+        replace(&mut doc, "FIRST", "IN IN", Some(wrapped)).unwrap_err(),
+        "ActualText editing currently requires a single line"
+    );
+}
+
+#[test]
+fn textedit_a_span_whose_actual_text_is_not_its_words_stays_read_only() {
+    for (first, why) in [
+        ("FIRST!", "different text"),
+        ("FIR ST", "a space inside"),
+        ("  ", "only spaces"),
+    ] {
+        let (doc, _) = spoken(first, "SECOND", None);
+        assert_eq!(texts(&doc), ["SECOND"], "{why}");
+    }
+    // Alternate text, or a title, still pins the Span as before.
+    for key in ["Alt", "T"] {
+        let (mut doc, ids) = spoken("FIRST", "SECOND", None);
+        doc.get_dictionary_mut(ids[6])
+            .unwrap()
+            .set(key, Object::string_literal("first"));
+        assert_eq!(texts(&doc), ["SECOND"], "{key}");
+    }
+    // One sequence painting two runs: the ActualText covers both.
+    let two = "/Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET BT /F1 12 Tf 40 160 Td (DOCS) Tj ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC";
+    for first in ["FIRST", "FIRST DOCS"] {
+        let (doc, _) = spoken(first, "SECOND", Some(two));
+        assert_eq!(texts(&doc), ["SECOND"], "{first}");
+    }
+    // One run, and beside it a show kept read-only (under a turned clip): the
+    // ActualText covers that show's words too.
+    let beside = "/Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 180 Td (FIRST) Tj ET q 110 170 m 128 167 l 125 149 l 107 152 l h W n BT /F1 12 Tf 110 155 Td (DOCS) Tj ET Q EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC";
+    let (doc, _) = spoken("FIRST", "SECOND", Some(beside));
+    assert_eq!(texts(&doc), ["SECOND"]);
+    // An ActualText span of its own inside the Span's sequence.
+    let inline = "/Standard << /MCID 0 >> BDC BT /F1 12 Tf 40 180 Td /Span << /ActualText (FIRST) >> BDC (FIRST) Tj EMC ET EMC /Standard << /MCID 1 >> BDC BT /F1 12 Tf 40 140 Td (SECOND) Tj ET EMC";
+    let (doc, _) = spoken("FIRST", "SECOND", Some(inline));
+    assert_eq!(texts(&doc), ["SECOND"]);
+    // The controls: without the Span's ActualText, those same pages offer FIRST.
+    for body in [two, beside, inline] {
+        let (mut doc, ids) = spoken("FIRST", "SECOND", Some(body));
+        doc.get_dictionary_mut(ids[6])
+            .unwrap()
+            .remove(b"ActualText");
+        assert!(texts(&doc).contains(&"FIRST".to_string()), "{body}");
+    }
+}
+
+// A Span holding a sequence on each of two pages: the ActualText is the text of
+// both, and neither page alone may rewrite it.
+#[test]
+fn textedit_a_span_across_two_pages_stays_read_only() {
+    let (mut doc, ids) = super::tests::multipage();
+    let span = doc.add_object(dictionary! {
+        "Type" => "StructElem", "S" => "Span", "P" => ids[3], "Pg" => ids[0],
+        "K" => vec![
+            Object::Integer(0),
+            dictionary! { "Type" => "MCR", "Pg" => ids[6], "MCID" => 0 }.into(),
+        ],
+        "ActualText" => Object::string_literal("FIRST"),
+    });
+    doc.get_dictionary_mut(ids[3])
+        .unwrap()
+        .set("K", vec![Object::Reference(span)]);
+    // The second page's first paragraph now owns nothing; drop it.
+    let kids = doc
+        .get_dictionary_mut(ids[2])
+        .unwrap()
+        .get_mut(b"K")
+        .unwrap()
+        .as_array_mut()
+        .unwrap();
+    kids.retain(|kid| kid.as_reference().ok() != Some(ids[7]));
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![span.into(), ids[4].into()]),
+            7.into(),
+            Object::Array(vec![span.into(), ids[8].into()]),
+        ],
+    );
+    assert_eq!(texts(&doc), ["SECOND"]);
+    // The control: on one page only, the same Span is rewritable.
+    doc.get_dictionary_mut(span)
+        .unwrap()
+        .set("K", vec![Object::Integer(0)]);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![span.into(), ids[4].into()]),
+            7.into(),
+            Object::Array(vec![Object::Null, ids[8].into()]),
+        ],
+    );
+    assert_eq!(texts(&doc), ["FIRST", "SECOND"]);
+}
