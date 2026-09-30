@@ -6318,6 +6318,14 @@ Windows window phases other than text editing; CI's Windows gate leg is that evi
 `yoke-derive` 0.8.3 had been yanked. `cargo update -p yoke-derive` in both lockfiles moved it to
 0.8.4 and changed no other entry, the notices file was regenerated for that one line, and the
 tag went on the commit after the release commit.
+Published 2026-09-30 from `8881ccf` with `scripts/publish_release.py`, after `audit.yml` and
+`ci.yml` passed both legs on that commit; the release run (36751035458) skipped its gates
+because CI had passed that commit, and its packaged CLI/API checks passed on both platforms.
+The draft carried 8 assets. Fetched without an account, the `.dmg`, `.msi` and `-setup.exe`
+answered 200 and `latest.json` offers 26.9.24 for `darwin-aarch64` and `windows-x86_64`. The
+downloaded `.dmg` staples, its bundle verifies with `codesign --deep --strict`, `tpdf-cli` is
+signed `Developer ID Application` with the hardened runtime, and Gatekeeper reports
+*Notarized Developer ID*. The hand-applied update from 26.9.23 (step 12) is still to do.
 
 **Post-release verification, 2026-09-29:** all 27 gates passed on macOS arm64
 (2,328 Rust unit tests, nine documented ignored tests; 1,963 frontend tests; 253 CLI
