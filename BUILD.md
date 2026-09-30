@@ -10136,7 +10136,58 @@ unchanged input. The two new word-spacing fuzz seeds reach discovery; the seeded
 run completes 23,734 executions in 21 seconds with 88 MiB peak RSS and no finding
 (`--sanitizer=none` on macOS). Clippy, type checking, formatting, mutation anchors,
 notices and the normal bundle check pass; the normal bundle contains no harness.
-Windows word-spacing verification remains outstanding.
+
+Windows x64 verification on 2026-09-30 at `67d7d5b` covers this section and the
+five below it, plus the Phase 5 passport and position work in `docs/PLAN.md`.
+After fast-forwarding, the Windows checkout needed
+`python scripts\fetch_pdfium.py --force`: its `vendor/pdfium` was still
+`pdfium-8044-tpdf.1` against the `8066` pin. Running that fetch in the elevated SSH
+session left `vendor\pdfium` with a protected, non-inherited ACL that grants only
+SYSTEM, Administrators and the owner (Administrators). The interactive,
+non-elevated session then got `LoadLibraryExW` error 5 for `pdfium.dll`, so every
+worker probe failed with `could not read source page count`. The application was
+unaffected because it loads its copy from `target\debug\pdfium`.
+`icacls vendor\pdfium /reset /T` and `/setowner` fixed it, and `--check`
+still verified the library. Fetch in the session that will run the checks.
+All 562 tests selected by `cargo test --locked --lib textedit` pass on Windows
+(1,817 filtered out). Fourteen Mac-generated fixtures arrived with matching
+SHA-256 digests, including archive
+`29d6e72dc9ddd6f475ae47f2a33943cd69fe884b9ae4c8e6047f3e5d451d15aa`.
+The 33 retrieved PDFs matched their Windows digests, archive
+`54395eb7941789a717a31dd783f06e077b75983879f23e4cbd3d569b6d9599ec`.
+The native checks ran inside the logged-in console session through a temporary
+`/IT` scheduled task. The worker-exit observer passed its self-test and reported no
+surviving test workers after each of the 14 native runs.
+
+Three independent readers now reject correct output on both platforms, so they
+are recorded rather than counted as passes:
+- **Refusal wording.** The default `text-edit-probe` mode still expects the refusal
+  wording from before `59d25b6`, so its last step fails after a successful save.
+- **Explicit layout.** Native saves go through the explicit-layout writer, which
+  restates text state and adds a trailing `TJ` offset, so
+  `make_textedit_embedded.py --check` reports `operator count changed`.
+- **Kept adjustment.** The writer now keeps the authored `TJ` adjustment after an
+  edited fragment, so pypdf reports `wrong replacement array` for the
+  symbolic-TrueType worker saves. The same kept 20/1000 em (0.24 pt) puts `FIRST`
+  at 235.504 rather than 235.744 under `--wide-spacing`.
+
+All 11 Windows worker outputs are byte-identical to a macOS worker built from a
+clean `67d7d5b` worktree, and the macOS probe fails at the same wording step.
+In place of the stale operator check, a structural pypdf readback accepts all 11
+native saves. Each has one replaced show, only text-state, positioning and show
+operators added, resources and other pages unchanged, and the same replacement
+bytes as the worker. It crashes rather than passing on an unchanged input or a
+foreign document.
+For this section, both space-code native workflows pass 23/23 checks. For worker
+and native saves alike:
+- `text_spacing_pdfkit.swift --word-char=space` matches all 14 and 11 painted glyphs.
+- PDFKit counts 1,040 (`+1`) and 1,112 (`-1`) changed pixels inside the target, zero outside.
+
+The unedited inputs used as saved files are rejected (glyph populations 14, 14).
+The `textedit-wide-spacing` phase passes 23/23. The temporary scheduled tasks and
+`C:\tmp` work folder were removed, and `npm run build` restored normal assets
+(`check_bundle_share.py`: harness excluded). The checkout is clean at `67d7d5b`.
+Remote work took about 21 minutes.
 
 The next unchanged practical input is passport-guide page 16, identified by the
 existing manifest digest. Across its 415 operators, every text show has an explicit
@@ -10180,8 +10231,11 @@ the normal-bundle check pass; normal assets are restored with zero harness code.
 The unchanged passport guide retains its manifest SHA-256 and all 16 pages now
 reach `unsupported embedded CFF font`, past the initial external-state refusal.
 This does not establish that later states are supported or make any page editable;
-page 16 remains the next practical target. Windows verification of this increment
-remains outstanding.
+page 16 remains the next practical target. Windows x64 verification on 2026-09-30
+at `67d7d5b` (setup and reader notes under *Word spacing*) passes the native
+workflow, 23/23. Worker and native saves each change 1,040 pixels inside the
+target and zero outside, with all 18,816 image pixels still painted. The worker
+save is byte-identical to macOS.
 
 
 ### Custom CFF glyph encodings
@@ -10230,7 +10284,12 @@ It still contains unsupported non-ASCII names and multi-character ligature targe
 Its ToUnicode declares a two-byte code space while bfchar sources have one byte;
 the current strict wrapper does not accept that shape. Further support needs
 independent reader comparisons, not a skipped mapping check. The practical-corpus
-editable-page count is unchanged; Windows verification remains outstanding.
+editable-page count is unchanged. Windows x64 verification on 2026-09-30 at
+`67d7d5b` passes both native workflows, `remapped-unicode.pdf` and
+`remapped.pdf`, at 23/23 each. The independent pypdf reader accepts both worker
+saves: only target operands change and resources are preserved. PDFKit measures
+1,852 changed pixels inside the target and zero outside for all four saves.
+Worker outputs are byte-identical to macOS.
 
 ### Non-ASCII CFF glyphs
 
@@ -10279,8 +10338,12 @@ with zero harness code.
 
 The unchanged passport guide remains refused on all 16 pages at its unsupported
 ligature names. No additional practical page is editable yet. Its CMap code-space
-mismatch and later stroke-state operators remain separate work. Windows
-verification of this increment is outstanding.
+mismatch and later stroke-state operators remain separate work. Windows x64
+verification on 2026-09-30 at `67d7d5b` passes the `textedit-cff-unicode` workflow
+23/23. The pypdf reader accepts the `--cff-unicode` and `--dash` worker saves.
+PDFKit measures 1,455 changed pixels inside the target for the worker and native
+`unicode-mapped.pdf` saves, and 593 for `unicode.pdf`, each with zero outside.
+Worker outputs are byte-identical to macOS.
 
 ### Line stroke styles during text editing
 
@@ -10319,7 +10382,10 @@ The unchanged passport guide's page 16 uses caps/joins 0 and 1, miter limit 4,
 and dotted patterns with a zero dash and a positive gap. Its source digest
 matches the public corpus manifest. Font ligatures and its CMap code-space
 mismatch remain separate blockers; this increment does not establish another
-editable practical page. Windows native verification remains outstanding.
+editable practical page. Windows x64 verification on 2026-09-30 at `67d7d5b`
+passes the native workflow 23/23. The pypdf reader accepts the worker save, and
+PDFKit measures 2,395 changed pixels inside the target and zero outside for the
+worker and native saves. The native save restates `TL` with the other text state.
 
 ### Ligatures and matching simple-font maps
 
@@ -10374,7 +10440,21 @@ run completes 24,730 executions in 21 seconds with 88 MiB peak RSS and no findin
 samples remain at 2 editable and 46 refused pages. Passport guide page 16 now
 reaches its final, 90-degree text matrix; it remains refused pending support for
 orthogonal text rotation. This is verified grammar coverage, not another
-editable practical page. Windows native verification remains outstanding.
+editable practical page. Windows x64 verification on 2026-09-30 at `67d7d5b`
+passes both native workflows, `textedit-cff-ligatures` and `textedit` on
+`named-mapping.pdf`, at 23/23 each. The pypdf reader accepts both worker saves
+with exact ligature codes. PDFKit measures 2,261 and 898 changed pixels inside the
+targets and zero outside for worker and native saves.
+
+The same Windows run covers the passport work in `docs/PLAN.md` Phase 5. The
+passport guide's digest matches the manifest. `text-edit-probe --inspect --all-pages`
+finds page 16 editable with 37 runs and the other 15 pages refused, the same JSON as
+on macOS. `textedit-passport` passes 31/31, including mixed-direction selection
+through every view turn. PDFKit measures 404 changed pixels inside the label, zero
+outside, and zero changed pixels on each of the other 15 pages. `tabs-position`
+passes 12/12 on the 600x800/1200x1600/600x400 document and 12/12 on the passport
+guide, and `tabs-rotation` passes 10/10 on 600x800/1200x400/600x800.
+`text_direction_check.py` passes all 16 text/page direction combinations.
 
 All 24 final gates pass (242.9s summed gate time): 1,481 Rust tests pass
 with 3 ignored, 1,668 frontend tests pass, and normal assets contain zero

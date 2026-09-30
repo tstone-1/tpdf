@@ -14858,7 +14858,12 @@ after changing the layout selected the sheet under the stale scroll offset.
 View rotation, individual-page rotation and page reordering now retain the intended
 fit target across layout changes. The native rotation check and three targeted
 regression mutations cover that choice.
-Windows native verification of these increments remains outstanding.
+Windows x64 verification on 2026-09-30 at `67d7d5b` passes these increments.
+The passport label edit passes 31/31 native checks, with 404 changed pixels inside
+the label and none elsewhere. `tabs-position` passes 12/12 on both the mixed-size
+document and the guide, and `tabs-rotation` passes 10/10. The 16-combination
+direction probe also passes. `BUILD.md`, *Ligatures and matching simple-font
+maps*, records the run.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.
