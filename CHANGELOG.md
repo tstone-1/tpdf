@@ -17,6 +17,20 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.0] - Unreleased
+
+### Changed
+
+- **Colour choices show the colour.** The toolbar's colour group draws a swatch
+  beside each name and on the group's button, which marks the current one, and
+  *Default* shows the yellow used for highlights and comments beside the red
+  used for drawing marks.
+- **US or British spelling follows the system language.** English with a
+  British, Irish, Australian, New Zealand, Canadian, South African, Indian or
+  Singaporean region shows "Colour"; any other English, or a language tpdf does
+  not offer, shows "Color". Only these words change; command names used by
+  scripts and saved settings stay the same. The choice is read at startup.
+
 ## [26.9.23] - 2026-09-29
 
 ### Added
