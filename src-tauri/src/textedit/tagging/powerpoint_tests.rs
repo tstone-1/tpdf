@@ -470,6 +470,8 @@ fn textedit_a_spans_actual_text_is_rewritten_with_its_words() {
     assert_eq!(spoken_text(&doc, ids[7]), "NOTED ");
     replace(&mut doc, "IN", "", None).unwrap();
     assert_eq!(spoken_text(&doc, ids[6]), "");
+    // Deleted, the run is still offered, to be typed into again.
+    assert_eq!(texts(&doc), ["", "NOTED"]);
     // The editor's own edits come with a layout: rewritten the same way.
     let (mut doc, ids) = spoken("FIRST", "SECOND", None);
     let layout = textedit::Layout {
@@ -503,6 +505,7 @@ fn textedit_a_span_whose_actual_text_is_not_its_words_stays_read_only() {
         ("FIRST!", "different text"),
         ("FIR ST", "a space inside"),
         ("  ", "only spaces"),
+        ("", "nothing"),
     ] {
         let (doc, _) = spoken(first, "SECOND", None);
         assert_eq!(texts(&doc), ["SECOND"], "{why}");

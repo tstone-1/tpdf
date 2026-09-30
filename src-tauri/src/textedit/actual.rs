@@ -117,9 +117,9 @@ fn utf16(text: &str) -> Object {
 
 /// How a Span's ActualText differs from the text its one run paints, when it
 /// differs by nothing but spaces at either end: the ActualText's and the run's
-/// counts of leading and trailing U+0020, around a core that is the same and
-/// not empty. PowerPoint writes the two equal, or with the word's space in
-/// only one of them (`docs/TEXTEDIT.md`).
+/// counts of leading and trailing U+0020, around a core that is the same.
+/// PowerPoint writes the two equal, or with the word's space in only one of
+/// them (`docs/TEXTEDIT.md`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Edges {
     actual: [usize; 2],
@@ -137,7 +137,9 @@ impl Edges {
     pub(super) fn of(actual: &str, painted: &str) -> Option<Self> {
         let (core, actual) = edges(actual);
         let (shown, painted) = edges(painted);
-        (!core.is_empty() && core == shown).then_some(Self { actual, painted })
+        // Both empty is a match too: a deleted run paints nothing and its
+        // Span says nothing, and the run is still there to type into.
+        (core == shown).then_some(Self { actual, painted })
     }
 
     /// The ActualText for a replacement of the run: the replacement, with

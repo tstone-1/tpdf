@@ -221,8 +221,8 @@ fn actual_text_standard_font_matching_text_stays_editable() {
 }
 
 // The rule for a structure Span's ActualText (`Edges`, `docs/TEXTEDIT.md`):
-// equal to the run's text but for spaces at either end, around a core that is
-// not empty; a replacement moves each end's spaces by the source's difference.
+// equal to the run's text but for spaces at either end; a replacement moves
+// each end's spaces by the source's difference.
 #[test]
 fn a_spans_actual_text_differs_from_its_words_only_at_the_ends() {
     use super::Edges;
@@ -231,13 +231,16 @@ fn a_spans_actual_text_differs_from_its_words_only_at_the_ends() {
         ("word ", "word"),
         ("word", "word "),
         (" word", "word  "),
+        // Deleted: nothing painted, nothing said.
+        ("", ""),
+        (" ", ""),
     ] {
         assert!(
             Edges::of(spoken, painted).is_some(),
             "{spoken:?} {painted:?}"
         );
     }
-    for (spoken, painted) in [("word!", "word"), ("wo rd", "word"), (" ", " "), ("", "")] {
+    for (spoken, painted) in [("word!", "word"), ("wo rd", "word"), ("", "word"), ("word", "")] {
         assert!(
             Edges::of(spoken, painted).is_none(),
             "{spoken:?} {painted:?}"
