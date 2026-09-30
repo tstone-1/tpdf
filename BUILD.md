@@ -6313,7 +6313,11 @@ rewrite removed. `docs/THREAT-MODEL.md` already covered this cycle's additions; 
 was corrected for installed fonts and PowerPoint accessible text. `release.yml` changed only in
 its notes, so no rehearsal tag was cut. **Not run before the tag:** `print-probe` and
 `redact-reach-probe` on Windows (printing and OCR redaction are unchanged this cycle) and the
-Windows window phases other than text editing; CI's Windows gate leg is that evidence.
+Windows window phases other than text editing; CI's Windows gate leg is that evidence. The first
+`Audit` run on the release commit was red for one denied warning, not an advisory:
+`yoke-derive` 0.8.3 had been yanked. `cargo update -p yoke-derive` in both lockfiles moved it to
+0.8.4 and changed no other entry, the notices file was regenerated for that one line, and the
+tag went on the commit after the release commit.
 
 **Post-release verification, 2026-09-29:** all 27 gates passed on macOS arm64
 (2,328 Rust unit tests, nine documented ignored tests; 1,963 frontend tests; 253 CLI

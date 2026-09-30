@@ -2946,7 +2946,7 @@ SOFTWARE.
 | x509-ocsp | 0.2.1 | Apache-2.0 OR MIT |
 | xattr | 1.6.1 | MIT OR Apache-2.0 |
 | yoke | 0.8.3 | Unicode-3.0 |
-| yoke-derive | 0.8.3 | Unicode-3.0 |
+| yoke-derive | 0.8.4 | Unicode-3.0 |
 | zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zerofrom | 0.1.8 | Unicode-3.0 |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 |
