@@ -481,6 +481,7 @@ fn textedit_a_spans_actual_text_is_rewritten_with_its_words() {
         wrap: false,
         font: textedit::EditFont::Original,
         grow: false,
+        installed: None,
     };
     replace(&mut doc, "FIRST", "IN", Some(layout.clone())).unwrap();
     assert_eq!(spoken_text(&doc, ids[6]), "IN");
