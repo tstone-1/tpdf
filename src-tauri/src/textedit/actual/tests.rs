@@ -240,7 +240,12 @@ fn a_spans_actual_text_differs_from_its_words_only_at_the_ends() {
             "{spoken:?} {painted:?}"
         );
     }
-    for (spoken, painted) in [("word!", "word"), ("wo rd", "word"), ("", "word"), ("word", "")] {
+    for (spoken, painted) in [
+        ("word!", "word"),
+        ("wo rd", "word"),
+        ("", "word"),
+        ("word", ""),
+    ] {
         assert!(
             Edges::of(spoken, painted).is_none(),
             "{spoken:?} {painted:?}"

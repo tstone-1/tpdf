@@ -236,7 +236,7 @@ fn samples(
     {
         return Err("image samples do not match dimensions and colour components".into());
     }
-    Ok((bytes, Some(components).filter(|_| high_index.is_none())))
+    Ok((bytes, high_index.is_none().then_some(components)))
 }
 
 // ISO 32000-1 Table 10. Predictor 1, the default, leaves the filter's output as
