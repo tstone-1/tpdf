@@ -10616,7 +10616,11 @@ installed versions of one font, CoreText may pick the one whose widths disagree,
 then sees Noto with that reason. CFF installed fonts were the next increment on this path,
 because Adobe's Minion Pro and Myriad Pro families, common in the scanned documents, are CFF;
 they are embedded since the same day (*CFF outlines*, below). Neither family is installed on the
-Mac this was measured on, so neither has been tried.
+Mac this was measured on, so neither has been tried. Also settled: an installed CFF font is
+embedded as bare `FontFile3 /CIDFontType0C`, not `/OpenType`, which keeps PDF 1.3 and PDF/A-1
+readers and lets re-editing use the existing CID-keyed CFF reader, at the cost of writing the
+rights into the program's Top DICT. A replacement that needs two characters one glyph draws
+(a space and a no-break space, say) falls back to Noto rather than splitting across two fonts.
 
 ### Signed-fixture padding regression
 
