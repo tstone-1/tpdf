@@ -4511,8 +4511,19 @@ Restoring the original text clears the pending replacement. History is limited t
 other before entering the journal. Eight focused tests include a real rewrite after
 page movement and extraction; five targeted mutations prove the principal guards.
 
-System-font matching, font repair, subset extension, complex shaping and reflow
-remain unimplemented. The raster-preview fallback is a design decision, not a
+Font repair, complex shaping and reflow remain unimplemented. **System-font matching exists
+since 2026-09-30, in the narrow form the reader decided on:** when the document's subset lacks
+a character, automatic mode tries an installed copy of the *same* font, matched by exact
+PostScript name and accepted only when every width the subset declares agrees within 1/1000
+em and its rights permit editing and subsetting; otherwise Noto as before. No
+"metric-compatible" substitute is chosen by likeness, which keeps item 6's rule that a reader
+is shown what was substituted: the preview names the installed font, or why it was not used.
+A structure-only scan of one reader's PDFs is why: in 18 of 34 documents with subset fonts,
+every subset font was installed on that Mac, and 38 of 43 installed WinAnsi TrueType subsets
+agreed with the installed widths on every glyph. CFF-outline installed fonts are refused, not
+yet embedded. See `BUILD.md`, *An installed copy of the document's font*, and
+`docs/TEXTEDIT.md`.
+The raster-preview fallback is a design decision, not a
 working editing preview in this increment.
 
 The strict surgical check replaces AB with BA in both synthetic font formats and
@@ -14867,6 +14878,14 @@ maps*, records the run.
 Retain practical-page save and independent readback as the acceptance criterion;
 more generated-only grammar cases are not the product milestone.
 Wider Unicode, subset extension and paragraph reflow remain open.
+
+**Installed copies of a document's font (2026-09-30, unreleased, macOS verified).**
+Automatic font mode now sets characters the embedded subset lacks in an installed copy of the
+same font before falling back to Noto: the worker names the font, the app process finds it
+through CoreText or DirectWrite and reads it, and the worker verifies the name, rights and
+widths before embedding a subset. The same edit uses Noto on a computer without the font, by
+decision. Windows compiles the DirectWrite lookup and has not run it. CFF installed fonts are
+the remaining gap. See `BUILD.md`, *An installed copy of the document's font*.
 
 ### Phase 6 — Cryptographic signing
 
