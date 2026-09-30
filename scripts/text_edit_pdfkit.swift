@@ -1,5 +1,5 @@
 // Independent readback of text-edit-probe's synthetic or W3C output on macOS.
-// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--table|--latin1|--image|--wide-spacing|--list|--nested-list|--nested-list-child|--hanging-indent|--first-indent]
+// swift scripts/text_edit_pdfkit.swift scratch/text-edit/worker [--installed|--table|--latin1|--image|--wide-spacing|--list|--nested-list|--nested-list-child|--hanging-indent|--first-indent]
 import Foundation
 import PDFKit
 import CoreGraphics
@@ -19,7 +19,7 @@ for option in CommandLine.arguments.dropFirst(2) {
         selected = index
         hasPage = true
     } else {
-        guard variant.isEmpty, ["--table", "--nested-list-child", "--nested-list", "--list", "--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing", "--hanging-indent", "--first-indent"].contains(option) else { fail("unknown or conflicting option") }
+        guard variant.isEmpty, ["--table", "--nested-list-child", "--nested-list", "--list", "--latin1", "--browser", "--browser-flow", "--browser-latin1", "--browser-overhang", "--default-encoding", "--w3c-dummy", "--agenda", "--passport", "--dash", "--cff-unicode", "--cff-ligatures", "--cid-ligatures", "--continued", "--inline", "--image", "--wide-spacing", "--hanging-indent", "--first-indent", "--installed"].contains(option) else { fail("unknown or conflicting option") }
         variant = option
     }
 }
@@ -36,7 +36,9 @@ let dash = variant == "--dash"
 let listChild = variant == "--nested-list-child"
 let indented = ["--hanging-indent", "--first-indent"].contains(variant)
 let original = listChild ? "SYNTHETIC SECOND" : ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "SYNTHETIC ffi ffi fi fl ff" : variant == "--cff-unicode" ? "SYNTHETIC \u{2212}\u{00a0}\u{2018}\u{2019}\u{2013}£" : dash ? "SYNTHETIC\u{2013}FIRST" : w3c ? "Dummy PDF file" : defaultEncoding ? "SYNTHETIC ' ` £ ß" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : latin1 ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST"
-let replacement = listChild ? "EDITED SECOND" : ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "EDITED ffi fi fl ff" : variant == "--cff-unicode" ? "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}" : dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
+// --installed: scripts/text_installed_check.py, whose replacement needs letters
+// the document's subset lacks and an installed copy of the same font supplies.
+let replacement = variant == "--installed" ? "Edited \u{03a9} FIRST" : listChild ? "EDITED SECOND" : ["--cff-ligatures", "--cid-ligatures"].contains(variant) ? "EDITED ffi fi fl ff" : variant == "--cff-unicode" ? "EDITED £\u{2013}\u{2019}\u{2018}\u{00a0}\u{2212}" : dash ? "EDITED\u{2013}FIRST" : w3c ? "Dummy PDF fill" : defaultEncoding ? "£ ' ` ß" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : latin1 ? "GEPRÜFT ß" : "EDITED FIRST"
 guard let before = PDFDocument(url: root.appendingPathComponent("synthetic-before.pdf")),
       let after = PDFDocument(url: root.appendingPathComponent("synthetic-after.pdf")),
       before.pageCount == after.pageCount, before.pageCount <= 128, selected < before.pageCount

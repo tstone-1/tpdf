@@ -15,6 +15,7 @@ fn edit(doc: &Document, replacement: &str, width: f64, height: f64, wrap: bool) 
             wrap,
             font: EditFont::Auto,
             grow: false,
+            installed: None,
         }),
     }
 }
@@ -143,6 +144,7 @@ fn cjk_program_cache_distinguishes_glyph_sets_and_reuses_identical_sets() {
                 wrap: false,
                 font: EditFont::Auto,
                 grow: false,
+                installed: None,
             }),
         })
         .collect();
@@ -387,6 +389,7 @@ fn replacement_fonts_keep_discovery_limits_and_share_programs() {
                 wrap: false,
                 font: EditFont::Auto,
                 grow: false,
+                installed: None,
             }),
         })
         .collect();
@@ -456,6 +459,7 @@ pub(super) fn default_layout(run: &Run) -> Layout {
         wrap: false,
         font: EditFont::Auto,
         grow: true,
+        installed: None,
     }
 }
 

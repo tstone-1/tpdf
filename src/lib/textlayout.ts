@@ -28,6 +28,12 @@ export function defaultTextLayout(run: TextRun): TextLayout {
     size, wrap: false, font: "auto", grow: true };
 }
 
+/** What "Original with automatic fallback" tries, in order, for a character the
+ * document's font lacks. An installed copy is used only when it is the same font
+ * by exact name and agrees with the document's widths, so the same edit can come
+ * out differently on a computer without it. */
+export const AUTOMATIC_ORDER = "The document's font; for characters it lacks, the same font if it is installed on this computer, otherwise Noto Sans";
+
 /** Native form controls also provide keyboard access to resizing and wrapping. */
 export class TextLayoutControls {
   /**
@@ -69,6 +75,9 @@ export class TextLayoutControls {
       ["noto_sans_italic", "Noto Sans Italic"], ["noto_sans_bold_italic", "Noto Sans Bold Italic"],
       ["noto_sans_cjk_sc", "Noto Sans CJK SC"], ["noto_sans_cjk_sc_bold", "Noto Sans CJK SC Bold"]]) {
       const option = document.createElement("option"); option.value = value!; option.textContent = title!;
+      // The order automatic mode tries, which the preview line then names: the
+      // worker's `layout::prepare` is where it is decided.
+      if (value === "auto") option.title = AUTOMATIC_ORDER;
       this.font.append(option);
     }
     label.append(this.font); this.root.append(label); this.font.addEventListener("change", change);

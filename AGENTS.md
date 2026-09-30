@@ -170,7 +170,7 @@ cannot supply the API that checker imports. See Microsoft's
 touching `src-tauri/src/textedit/`. Its topics, in order:
 
 - Text matrices, page CTMs, content bounds, grouping, clips, Identity-H, `text-edit-probe --roundtrip`, text direction.
-- Explicit layouts, bundled Noto fallback fonts, CJK subsetting, previews.
+- Explicit layouts, Noto fallback fonts, installed document fonts, CJK subsetting, previews.
 - Consecutive shows: cursor, line matrix, `TJ` compensation, `TD` leading.
 - ActualText tab/bell spacers (`spacers.rs`) and other ActualText spans (`actual.rs`).
 - Marked content inside text objects; signed and compound rectangular clips.

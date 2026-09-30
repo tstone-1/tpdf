@@ -5290,6 +5290,7 @@ name = "tpdf"
 version = "26.9.23"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "caseless",
  "cms",
  "core-foundation 0.10.1",
@@ -5304,6 +5305,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-core-graphics",
+ "objc2-core-text",
  "objc2-foundation",
  "objc2-pdf-kit",
  "objc2-vision",

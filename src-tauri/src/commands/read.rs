@@ -276,19 +276,32 @@ pub async fn document_text_runs(
         if change.page != at.page {
             return Err("Text no longer belongs to this page".into());
         }
-        changes.retain(|old| (old.page, old.operator) != (change.page, change.operator));
-        if change.replacement != change.original || change.layout.is_some() {
-            changes.push(change);
-        }
+        changes = crate::sysfont::batch(changes, change).0;
     }
-    let (reply, rx) = reply_channel();
-    service.text_runs(at.doc, at.page, changes, outlines, reply);
-    let mut runs: crate::textedit::PageRuns = await_reply("document_text_runs", rx).await?;
+    let (mut runs, _) = crate::sysfont::ask_with_installed(
+        changes,
+        |changes| ask_runs("document_text_runs", &service, &at, changes, outlines),
+        crate::sysfont::find,
+    )
+    .await?;
     // Said by the side that knows. The worker answered about the document it
     // holds and cannot name it; this is the layer that chose which document to
     // ask, so it is the layer that can say which one the page number is of.
     runs.source = at.source;
     Ok(runs)
+}
+
+/// One text request to the worker that answers for `at`.
+async fn ask_runs(
+    label: &'static str,
+    service: &RenderService,
+    at: &TextAddress,
+    changes: Vec<crate::textedit::Change>,
+    outlines: bool,
+) -> Result<crate::textedit::PageRuns, String> {
+    let (reply, rx) = reply_channel();
+    service.text_runs(at.doc, at.page, changes, outlines, reply);
+    await_reply(label, rx).await
 }
 
 /// Which worker answers for a page's text, and the page number it answers by.
@@ -398,14 +411,13 @@ pub async fn text_replace(
     if change.page != at.page {
         return Err("Text no longer belongs to this page".into());
     }
-    let mut pending = at.mine(edits.text_changes(doc));
-    pending.retain(|old| (old.page, old.operator) != (change.page, change.operator));
-    if change.replacement != change.original || change.layout.is_some() {
-        pending.push(change.clone());
-    }
-    let (reply, rx) = reply_channel();
-    service.text_runs(at.doc, at.page, pending, false, reply);
-    await_reply("text_replace", rx).await?;
+    let change = crate::sysfont::replacement(
+        change,
+        at.mine(edits.text_changes(doc)),
+        |changes| ask_runs("text_replace", &service, &at, changes, false),
+        crate::sysfont::find,
+    )
+    .await?;
     edits.replace_text(doc, page, change)
 }
 

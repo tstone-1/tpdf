@@ -98,6 +98,72 @@ pub struct Preview {
     #[serde(default)]
     pub extent: [f32; 4],
     pub lines: usize,
+    /// The PostScript name automatic mode would have tried an installed copy
+    /// of, had one been supplied: the document's own font, whose subset lacks
+    /// a character of the replacement. The app process looks it up and asks
+    /// again (`commands::read`); nothing else reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wants: Option<String>,
+    /// The subset of an installed font this draft was set in, which is what
+    /// the journal keeps in place of the whole file (`fonts::installed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<Installed>,
+}
+
+pub(crate) use fonts::installed::{valid_postscript_name, MAX_BYTES as MAX_INSTALLED};
+
+/// An installed copy of a document's own font, by exact PostScript name.
+///
+/// **Supplied by the app process, never by the webview**, which found the file
+/// through the operating system (`crate::sysfont`). The worker trusts none of
+/// it: the face's name table must carry `name`, its rights must permit
+/// editing, and every width the document's subset declares must agree with it
+/// (`fonts::installed::accept`). After an Apply the journal holds the subset
+/// the worker built rather than the file, so a pending edit costs kilobytes on
+/// every request that carries it.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Installed {
+    pub name: String,
+    /// The face in a collection; `None` asks the worker to find the one face
+    /// carrying `name`, which is what macOS supplies (CoreText names the file,
+    /// not the face).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(with = "base64_bytes")]
+    pub program: Vec<u8>,
+}
+
+impl std::fmt::Debug for Installed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Installed")
+            .field("name", &self.name)
+            .field("index", &self.index)
+            .field("bytes", &self.program.len())
+            .finish()
+    }
+}
+
+/// Bytes as one base64 string rather than a JSON array of numbers, which
+/// would cost four bytes per byte on a request carrying a whole font file.
+mod base64_bytes {
+    use base64::Engine;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        // Checked before decoding, so an oversized string is refused without
+        // allocating its decoded copy.
+        if text.len() > super::MAX_INSTALLED.div_ceil(3) * 4 {
+            return Err(serde::de::Error::custom("installed font exceeds its limit"));
+        }
+        base64::engine::general_purpose::STANDARD
+            .decode(text)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 pub(crate) fn preview_layout(doc: &Document, change: &Change) -> Result<Preview, String> {
@@ -116,6 +182,8 @@ pub(crate) fn preview_layout(doc: &Document, change: &Change) -> Result<Preview,
         rect: prepared.rect,
         extent: prepared.extent,
         lines: prepared.lines,
+        wants: prepared.wants,
+        installed: prepared.installed,
     })
 }
 
@@ -195,6 +263,10 @@ pub struct Layout {
     /// journal, a probe's request file, a test -- keeps the box it names.
     #[serde(default)]
     pub grow: bool,
+    /// An installed copy of the run's own font, for automatic mode. Set by the
+    /// app process only; see [`Installed`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<Installed>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

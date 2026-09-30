@@ -319,6 +319,7 @@ fn textedit_truetype_descenders_extend_hit_bounds_and_keep_a_finite_limit() {
                     wrap: false,
                     font: textedit::EditFont::Original,
                     grow: false,
+                    installed: None,
                 }),
                 page: 0,
                 revision: before.revision,
@@ -362,6 +363,7 @@ fn textedit_overhanging_source_ink_fits_its_own_default_box_unmoved() {
                     wrap: false,
                     font: textedit::EditFont::Auto,
                     grow: false,
+                    installed: None,
                 }),
             }],
         )
@@ -396,6 +398,7 @@ fn textedit_overhanging_source_ink_fits_its_own_default_box_unmoved() {
                     wrap: false,
                     font: textedit::EditFont::Auto,
                     grow: false,
+                    installed: None,
                 }),
             }],
         );
@@ -435,6 +438,7 @@ fn textedit_a_partly_clipped_run_takes_its_own_text_in_the_default_box() {
             wrap: false,
             font: textedit::EditFont::Auto,
             grow: false,
+            installed: None,
         }),
     };
     let width = (run.advance * 1000.).ceil() / 1000.;
@@ -490,6 +494,7 @@ fn textedit_an_edit_the_source_positioning_cannot_place_is_laid_out_afresh() {
                 wrap: false,
                 font: textedit::EditFont::Auto,
                 grow: false,
+                installed: None,
             }),
         }],
     )

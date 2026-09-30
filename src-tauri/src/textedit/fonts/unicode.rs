@@ -195,6 +195,23 @@ impl Metrics {
         ))
     }
 
+    /// Each single character an offered glyph shows, with the PDF width the
+    /// document declares for it, in thousandths of an em. Read-only glyphs
+    /// and ligature sequences are left out: they name no one character.
+    pub(super) fn declared(&self) -> Vec<(char, f64)> {
+        self.identities
+            .iter()
+            .filter_map(|(code, (_, width))| {
+                let mut characters = self.codes.get(code)?.chars();
+                let character = characters.next()?;
+                characters
+                    .next()
+                    .is_none()
+                    .then_some((character, f64::from_bits(*width)))
+            })
+            .collect()
+    }
+
     // A replacement writes a text several glyphs share with the glyph its run
     // already shows for it, when the run shows exactly one: a small-caps word
     // keeps its small capitals. Other shared texts stay unwritable.

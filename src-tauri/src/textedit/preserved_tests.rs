@@ -90,6 +90,7 @@ fn preserved_skew_text_blocks_layout_collisions() {
             wrap: false,
             font: EditFont::Original,
             grow: false,
+            installed: None,
         }),
     };
     let objects = doc.objects.clone();

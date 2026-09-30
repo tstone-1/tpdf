@@ -227,9 +227,17 @@ been decoded under a stated bound.
   height set to the image dictionary's, so a header claiming a larger image is refused before
   any buffer is allocated; and the output buffer must be exactly `width × height × components`.
 - **`subsetter` (MIT OR Apache-2.0), added 2026-09-17** in `5dabd27`, reads no document bytes.
-  It subsets only the bundled Noto fallback programs (`textedit/fonts/fallback_subset.rs`),
-  and its output is parsed back with `ttf-parser` and held to `MAX_CONTENT` like any other
-  program.
+  It subsets the bundled Noto fallback programs (`textedit/fonts/fallback_subset.rs`) and,
+  since 2026-09-30, an installed copy of a document's font (`textedit/fonts/installed.rs`),
+  which is a file on the reader's computer the app process read, never document bytes; its
+  output is parsed back with `ttf-parser` and held to `MAX_CONTENT` like any other program.
+
+Two more arrived with installed-font matching on 2026-09-30, **neither a new package**:
+`base64` 0.22 (MIT OR Apache-2.0), already in the runtime tree through the updater and
+`wry`, carries an installed font's bytes across the worker boundary as one string rather
+than a JSON array of numbers; `objc2-core-text` 0.3 (Zlib OR Apache-2.0 OR MIT), already
+compiled beneath `objc2-app-kit`, finds that font by PostScript name in the app process on
+macOS. Windows uses a feature of the `windows` crate already linked (`Win32_Graphics_DirectWrite`).
 
 What checks these crates against the advisory databases is `.github/workflows/audit.yml`, on
 every push, every pull request and weekly, since 2026-09-26. Before that nothing did, which is

@@ -75,6 +75,7 @@ fn app_layout(run: &textedit::Run) -> textedit::Layout {
         wrap: false,
         font: textedit::EditFont::Auto,
         grow: true,
+        installed: None,
     }
 }
 

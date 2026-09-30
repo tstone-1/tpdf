@@ -19,6 +19,18 @@ have the binary.)
 
 ## [26.10.0] - Unreleased
 
+### Added
+
+- **Edited text can use the document's own font when it is installed.** When
+  new text needs a character the PDF's embedded copy of its font leaves out,
+  automatic font mode now looks for the same font installed on this computer
+  and uses it if it matches the document's copy, before falling back to Noto
+  Sans. The preview names the font and marks it *(installed)*, or says why an
+  installed copy was not used. Only part of the font is embedded, and only
+  fonts whose licence permits editing and subsetting are used. On a computer
+  without the font, the same edit uses Noto Sans. Fonts with PostScript (CFF)
+  outlines are not used yet.
+
 ### Changed
 
 - **Colour choices show the colour.** The toolbar's colour group draws a swatch
@@ -30,6 +42,13 @@ have the binary.)
   Singaporean region shows "Colour"; any other English, or a language tpdf does
   not offer, shows "Color". Only these words change; command names used by
   scripts and saved settings stay the same. The choice is read at startup.
+
+### Fixed
+
+- **A letter missing from a document's embedded font no longer stops the
+  preview.** Automatic font mode now falls back as intended when the embedded
+  copy of a simple font lacks a Latin letter, instead of reporting that the
+  font has no glyph for it.
 
 ## [26.9.23] - 2026-09-29
 

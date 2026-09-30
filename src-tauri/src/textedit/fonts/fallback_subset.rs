@@ -43,6 +43,14 @@ fn checksum(bytes: &[u8]) -> u32 {
 }
 
 fn restore_rights(subset: &[u8], rights: &[u8]) -> Result<Vec<u8>, String> {
+    with_tables(subset, &[(*b"OS/2", rights)])
+}
+
+/// A subset with `extra` tables added or replaced, as one checksummed sfnt.
+/// `installed::accept` puts back both tables the subsetter drops: OS/2, which
+/// carries the embedding rights, and a character map, which a later edit
+/// reads the subset through.
+pub(super) fn with_tables(subset: &[u8], extra: &[([u8; 4], &[u8])]) -> Result<Vec<u8>, String> {
     let invalid = "Invalid bundled font subset";
     let face = ttf_parser::RawFace::parse(subset, 0).map_err(|_| invalid)?;
     let mut tables = BTreeMap::new();
@@ -52,7 +60,9 @@ fn restore_rights(subset: &[u8], rights: &[u8]) -> Result<Vec<u8>, String> {
             face.table(record.tag).ok_or(invalid)?.to_vec(),
         );
     }
-    tables.insert(*b"OS/2", rights.to_vec());
+    for (tag, bytes) in extra {
+        tables.insert(*tag, bytes.to_vec());
+    }
     tables
         .get_mut(b"head")
         .and_then(|head| head.get_mut(8..12))

@@ -79,7 +79,60 @@ alternates. This avoids ttf-parser's loca-count overflow for 65,535 glyphs.
 `scripts/text_cjk_check.py` checks worker preview/save pixels and independently
 compares saved Unicode, outlines, widths, rights and sfnt checksums with the
 bundled fonts. Layout tests cover adding new characters after reopening a subset.
-No system fonts, complex-script shaping or automatic table-row growth are used.
+No complex-script shaping or automatic table-row growth is used. Installed fonts are
+used in one case only, described next; until 2026-09-30 this sentence said none were.
+
+**An installed copy of the document's own font comes between the subset and Noto**
+(decided 2026-09-30). When the document's subset lacks a character of the replacement,
+automatic mode tries, in order: the subset itself; an installed copy of the same font,
+matched by exact PostScript name; the bundled Noto. A structure-only scan of one reader's
+own PDFs that day (macOS) is why the second step exists: 34 of 58 readable PDFs embed
+subset fonts, in 18 every subset font was installed on that Mac, and 77 of 154 subset-font
+occurrences were. For 43 installed WinAnsi TrueType subsets, the PDF `/Widths` agreed with
+the installed advances on every glyph within 1/1000 em for 38, on at least 95% for 5, and
+disagreed wholesale for none. The consequence was accepted with the decision: **the same
+edit can come out differently on a computer without that font**, where Noto is used.
+
+The worker has no filesystem, so the pieces are split at the process boundary. The worker
+names the font it wants (`textedit::Preview::wants`: the descriptor's `FontName`, or a
+Type0 font's descendant's, without its six-letter subset tag); the app process asks the
+operating system for that exact name (`sysfont.rs`: a CoreText descriptor match on macOS,
+which names the file but not the face; DirectWrite's system collection on Windows, which
+names both) and reads the file, at most 32 MiB (`installed::MAX_BYTES`); the next request
+carries the bytes as base64 in `Layout::installed`, set by the app process only.
+`fonts/installed.rs::accept` then decides, trusting none of it:
+
+- the face must carry the requested PostScript name in every name record that decodes
+  (Macintosh Roman read as ASCII: Apple's collections carry nothing else), and in a
+  collection the named face, or the one face carrying the name when none is named;
+- TrueType outlines only. A CFF-outline `.otf` copy is refused with its own reason
+  (*has CFF outlines, which cannot be embedded yet*) and so is a variable or colour font;
+  **CFF installed fonts are not done**;
+- OS/2 `fsType` must be 0 or 0x8 (`installed::permits`): the document-font rule refuses
+  restricted (0x2) and preview-and-print (0x4) already, and an installed font additionally
+  refuses no-subsetting (0x100) and bitmap-only (0x200), since it is subsetted here. A
+  document font whose own rights forbid editing is never replaced by an installed copy;
+- every glyph the document's subset declares with a known character and a nonzero width
+  must exist in the copy and agree with its advance scaled to 1/1000 em within
+  `installed::TOLERANCE`, one unit. Producers write widths as integers, rounded or
+  truncated, and the unit is the one the document's Unicode path already allows between a
+  program and its PDF widths. On any disagreement Noto is used;
+- every character of the replacement must be in the copy.
+
+What is embedded is a subset built by `subsetter` from the replacement's and the document
+subset's glyphs, with the source's OS/2 and a format 12 `(3,10)` character map put back
+(`fallback_subset::with_tables`), written as a Type0/Identity-H CIDFontType2 exactly like
+a Noto fallback, under `XXXXXX+<PostScript name>`. The preview names it with the font's
+full name and *(installed)*; a refused copy is named beside the Noto used, as in *Noto
+Sans (the installed X differs from the document's copy)*. After an Apply the journal keeps
+that subset, not the file, and every later request (tiles, outlines, the save) puts it
+through the same checks. The command-line tool's text replacements carry no layout and
+never use a fallback font of either kind, so they are unaffected. Encoding alone is also no
+longer taken as coverage: a simple font's Latin-1 slots encode whether or not the subset
+has the glyph, and until this change such a missing letter refused the automatic preview
+rather than reaching Noto. `fonts/installed/tests.rs` and `sysfont/tests.rs` use generated
+fonts (`testdata/make_installed_fonts.py`); `scripts/text_installed_check.py` and
+`text_edit_pdfkit.swift --installed` read a saved result back independently.
 New text must fit the page, active clips and the selected box without colliding
 with other source text. Draft previews use the worker's save path and a bounded
 PNG crop; cancelling a preview creates no journal entry. Independent synthetic

@@ -913,6 +913,7 @@ fn textedit_type1_rights_restrict_editing() {
                 wrap: false,
                 font,
                 grow: false,
+                installed: None,
             }),
         };
         let plain = textedit::write(&mut doc.clone(), &[change("CBA", None)]);
@@ -1069,6 +1070,7 @@ fn textedit_type1_layout_keeps_the_original_font_and_writes_gaps() {
                 wrap,
                 font: textedit::EditFont::Auto,
                 grow: false,
+                installed: None,
             }),
         }
     };

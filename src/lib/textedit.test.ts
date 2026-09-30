@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changedTextPages, replacementError, TextEditor, type TextChange, type TextRuns } from "./textedit";
 import { NOTHING_OPEN, type EditState } from "./edits";
-import { defaultTextLayout } from "./textlayout";
+import { AUTOMATIC_ORDER, defaultTextLayout } from "./textlayout";
 import { pageId } from "./pages";
 import { FakeElement, installFakeDom, type FakeDom } from "./testdom";
 
@@ -100,6 +100,17 @@ describe("existing text editing", () => {
     editor.commit(); await editor.settle();
     expect(write).toHaveBeenLastCalledWith(expect.objectContaining({ replacement: "\u65b0\u5b57",
       layout: expect.objectContaining({ font: "noto_sans_cjk_sc_bold" }) }));
+    editor.destroy();
+  });
+  it("explains the automatic font order, installed copy before Noto, on that option only", () => {
+    const { editor, root } = mount();
+    const font = (root as FakeElement & { querySelectorAll(): FakeElement[] }).querySelectorAll()
+      .find((node) => node.getAttribute("aria-label") === "Font")!;
+    const titled = font.children.filter((node) => (node as FakeElement & { title?: string }).title);
+    expect(titled.map((node) => (node as FakeElement & { value: string }).value)).toEqual(["auto"]);
+    expect((titled[0] as FakeElement & { title: string }).title).toBe(AUTOMATIC_ORDER);
+    expect(AUTOMATIC_ORDER.indexOf("installed")).toBeGreaterThan(-1);
+    expect(AUTOMATIC_ORDER.indexOf("installed")).toBeLessThan(AUTOMATIC_ORDER.indexOf("Noto Sans"));
     editor.destroy();
   });
   it("applies layout-only changes and wraps on Ctrl+Enter while Enter adds a line", async () => {

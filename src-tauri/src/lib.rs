@@ -105,6 +105,7 @@ pub mod signature_store;
 pub mod startup;
 pub mod structure;
 pub mod sweep;
+mod sysfont;
 pub mod text;
 pub mod textcache;
 pub mod trust;

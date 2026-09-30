@@ -32,6 +32,7 @@ fn layout_only_edits_are_journaled_and_undo_restores_the_exact_layout() {
         wrap: true,
         font: crate::textedit::EditFont::NotoSans,
         grow: false,
+        installed: None,
     });
     doc.replace_text(page, edit.clone()).unwrap();
     assert_eq!(doc.text_changes(), [opened(&edit)]);

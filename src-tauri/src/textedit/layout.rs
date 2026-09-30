@@ -34,6 +34,10 @@ pub(super) struct Prepared {
     pub fallback: Option<fonts::fallback::Font>,
     pub name: Vec<u8>,
     pub label: String,
+    /// See `Preview::wants`.
+    pub wants: Option<String>,
+    /// The installed font's subset this edit is set in; see `Preview::installed`.
+    pub installed: Option<super::Installed>,
     pub rect: [f32; 4],
     pub lines: usize,
     /// The shows this edit pushes along its line, and how far each has to end
@@ -2107,14 +2111,49 @@ pub(super) fn prepare(
         .get(&run.operator)
         .copied()
         .unwrap_or(super::DEFAULT_GAP);
-    let encodable = change
-        .replacement
-        .split('\n')
-        .all(|line| original_metrics.items(line, gap).is_ok());
+    // Encoding alone is not coverage: a simple font's Latin-1 slots encode
+    // whether or not its subset has the glyph, and only measuring finds the
+    // hole. Until 2026-09-30 a missing letter in such a subset refused the
+    // automatic preview instead of reaching a fallback.
+    let encodable = change.replacement.split('\n').all(|line| {
+        original_metrics.items(line, gap).is_ok()
+            && original_metrics
+                .gapped_layout(line, 1., 0., 0., gap)
+                .is_ok()
+    });
     // A font whose embedding rights forbid editing is read but never written
     // in: automatic layout sets the replacement in Noto, and the reader who
     // asked for the original font is told which to choose instead.
     let restricted = original_metrics.is_restricted();
+    // The second choice in automatic mode, before Noto: an installed copy of
+    // the document's own font, found by the app process by exact PostScript
+    // name and accepted only by `installed::accept`. None is tried for a font
+    // whose own rights already forbid editing with it: the document's claim
+    // stands whatever the installed copy says. `wants` tells the app process
+    // which name to look up when it supplied nothing.
+    let mut wants = None;
+    let mut accepted = None;
+    let mut declined = None;
+    if settings.font == EditFont::Auto
+        && !change.replacement.is_empty()
+        && !encodable
+        && !restricted
+    {
+        if let Some(wanted) = fonts::installed::postscript_name(doc, font_dict) {
+            match &settings.installed {
+                None => wants = Some(wanted),
+                Some(supplied) => match fonts::installed::accept(
+                    supplied,
+                    &wanted,
+                    &original_metrics.declared(),
+                    &change.replacement,
+                ) {
+                    Ok(found) => accepted = Some(found),
+                    Err(refusal) => declined = Some(refusal.reason(&wanted)),
+                },
+            }
+        }
+    }
     let chosen = match settings.font {
         _ if change.replacement.is_empty() => None,
         EditFont::Auto if encodable => None,
@@ -2135,8 +2174,7 @@ pub(super) fn prepare(
         EditFont::NotoSansCjkSc => Some(4),
         EditFont::NotoSansCjkScBold => Some(5),
     };
-    let (fallback, metrics, name, label, spacing, word_spacing) = if let Some(style) = chosen {
-        let (font, metrics) = fonts::fallback::Font::new(style, &change.replacement)?;
+    let resource_name = || -> Result<Vec<u8>, String> {
         let mut name = format!("TPDFEdit{}", run.operator).into_bytes();
         while font_table.has(&name) {
             name.push(b'_');
@@ -2144,15 +2182,32 @@ pub(super) fn prepare(
                 return Err("too many replacement font resources".into());
             }
         }
+        Ok(name)
+    };
+    let mut installed = None;
+    let (fallback, metrics, name, label, spacing, word_spacing) = if let Some(found) = accepted {
+        installed = Some(found.program);
+        (
+            Some(found.font),
+            found.metrics,
+            resource_name()?,
+            found.label,
+            0.,
+            0.,
+        )
+    } else if let Some(style) = chosen {
+        let (font, metrics) = fonts::fallback::Font::new(style, &change.replacement)?;
         (
             Some(font),
             metrics,
-            name,
+            resource_name()?,
             if restricted {
                 format!(
                     "{} (the document's font does not permit editing)",
                     fonts::fallback::label(style)
                 )
+            } else if let Some(reason) = &declined {
+                format!("{} ({reason})", fonts::fallback::label(style))
             } else {
                 fonts::fallback::label(style).to_owned()
             },
@@ -2879,6 +2934,8 @@ pub(super) fn prepare(
         fallback,
         name,
         label,
+        wants,
+        installed,
         rect,
         lines: line_count,
         line: if delta > 0. {

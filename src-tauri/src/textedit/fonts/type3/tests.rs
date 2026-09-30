@@ -55,6 +55,7 @@ fn type3_edit_delete_and_layout_preserve_fonts_and_following_text() {
                 wrap: false,
                 font: EditFont::Original,
                 grow: false,
+                installed: None,
             }),
         ] {
             let (mut doc, _, _, _) = fixture();

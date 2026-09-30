@@ -231,8 +231,17 @@ quick-xml = "0.42"
 # `glyph-names` is on because CFF glyphs are addressed by name
 # (`textedit/fonts/cff.rs`). Unmaintained since 2026-06-28: `.cargo/audit.toml`.
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "glyph-names"] }
-# MIT OR Apache-2.0. Subset only the bundled static CJK fallback programs.
+# MIT OR Apache-2.0. Subsets the bundled static CJK fallback programs, and
+# since 2026-09-30 an installed copy of a document's own TrueType font
+# (`textedit/fonts/installed.rs`), in the worker only.
 subsetter = { version = "0.2.6", default-features = false }
+# An installed font's bytes cross the worker boundary in a request, and a JSON
+# array of numbers would cost four bytes per byte. MIT OR Apache-2.0, and it
+# adds **no package**: 0.22.1 is already in the runtime tree through
+# `tauri-plugin-updater` and `wry`, checked with `cargo tree -i` rather than
+# assumed, which is the standing rule for anything the licensing constraint
+# touches.
+base64 = "0.22"
 
 # The macOS print dialog. PDFKit paginates the document and builds the
 # NSPrintOperation; AppKit supplies NSPrintInfo and runs the panel. `objc2`,
@@ -280,7 +289,12 @@ objc2-core-graphics = { version = "0.3.2", default-features = false, features = 
     "CGBitmapContext",
     "std",
 ] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "std"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFBase", "CFString", "CFURL", "std"] }
+# Finding an installed font by exact PostScript name, in the **app process**
+# (`sysfont.rs`): a descriptor match and its file URL, nothing parsed. Already
+# compiled into the tree beneath `objc2-app-kit`, so declaring it adds no
+# package. Zlib OR Apache-2.0 OR MIT.
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["CTFontDescriptor", "std"] }
 
 # Windows containment, for `examples/win_sandbox_probe.rs`. macOS gets its boundary
 # from `sandbox_init`, which has no counterpart here: job objects, integrity
@@ -376,6 +390,10 @@ windows = { version = "0.62", features = [
     "Win32_System_Diagnostics_ToolHelp",
     # PrintDlgW, and the CommDlg error code that distinguishes Cancel from failure.
     "Win32_UI_Controls_Dialogs",
+    # The system font collection, to find an installed font by its exact
+    # PostScript name and the file and face index it lives in (`sysfont.rs`).
+    # A feature on a crate already here; no package.
+    "Win32_Graphics_DirectWrite",
 ] }
 # Windows only. Apache-2.0 OR MIT. What gives this platform the document
 # handover macOS gets from `RunEvent::Opened`: a second launch forwards its

@@ -257,6 +257,8 @@ hop through the index.
 - pyHanko asks about an OCSP responder's own revocation unless its certificate says not to
 - DigiCert's and Sectigo's tokens carry their roots as cross-certificates, and a walk to the issuer finds none
 - pyHanko resolves a responder named by key to a cross-certificate, and calls the root's own answer unauthorised
+- A simple font encodes a Latin-1 letter its subset does not have, so encoding is not coverage
+- ttf-parser decodes no Macintosh Roman name, and Apple's Helvetica carries no other kind
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -553,6 +555,7 @@ hop through the index.
 - A bound checked on the way in through one door is untested through the other
 - A list judged twice over the same two certificates hid a mutation of the first judgement
 - Judging the whole chain made two checks of the leaf redundant, and their mutations went quiet
+- A mutation's named test stopped catching it when a refusal was relaxed, and the harness's fallback found the one that still did
 
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
@@ -25263,3 +25266,53 @@ refusal the tests could have been "fixed" to expect. A fake server answers every
 it is dropped, and a test that means *exactly once* counts the requests and says so --- which is
 what `Pki::paths()` does for the revocation half. The CLI fake now answers every connection, and
 the checks assert what was written: an intact archive over the whole file.
+
+### A simple font encodes a Latin-1 letter its subset does not have, so encoding is not coverage
+
+2026-09-30, adding installed-font matching. Automatic font mode keeps the document's own font
+when it "covers" the replacement, and `layout::prepare` decided that with
+`original_metrics.items(line, gap).is_ok()`. For a simple (single-byte) font that is a question
+about *encoding*: `Metrics::codes_for` turns each character into its Latin-1 or WinAnsi slot and,
+on the unmapped path, returns the slots without asking whether the font has a glyph there. Only
+measuring does (`Metrics::width`), and measuring happened later, in the layout, where the missing
+letter came back as *the font has no validated glyph for this character* --- a refusal of the
+whole preview rather than the fallback automatic mode exists for.
+
+So a WinAnsi TrueType subset of the kind every office producer writes, lacking one Latin letter
+the reader typed, refused automatic mode outright, and had since automatic mode existed. Nothing
+had tried it: the fallback tests use unembedded Helvetica, which has every Latin-1 width, and the
+embedded-font tests ask for the original font. The first fixture built for installed fonts ---
+a document subset of "TITLE SECOND" asked for "TITLE Ab" --- hit it before any installed-font code
+ran, and the error looked like the new code's.
+
+Coverage now also requires the line to measure (`gapped_layout`). The general point: a
+predicate named for one property that is computed from a cheaper, weaker one holds wherever the
+two coincide, and the fixtures that exist are usually the ones where they do. Build the fixture
+where they differ --- here, a subset missing a letter in the font's own encoding.
+
+### ttf-parser decodes no Macintosh Roman name, and Apple's Helvetica carries no other kind
+
+2026-09-30. `ttf_parser::name::Name::to_string` decodes Unicode and Windows records only and
+answers `None` for a Macintosh Roman one. `/System/Library/Fonts/Helvetica.ttc` has only
+Macintosh Roman name records, so a name check written over `to_string` found no PostScript name
+in any of its six faces and refused the font CoreText had just named --- which read as a lookup
+defect. Arial, with records on all three platforms, passed, so a check tested only on Arial
+cannot see it. `installed::carries_name` reads a Macintosh Roman record as the ASCII a
+PostScript name must be, and the macOS-gated test asks for Helvetica for that reason.
+
+### A mutation's named test stopped catching it when a refusal was relaxed, and the harness's fallback found the one that still did
+
+2026-09-30. *CJK fallback: omit embedding rights* removes the OS/2 table `fallback_subset`
+puts back into a CJK subset, and named `cjk_fallback_subsets_and_reopens_with_new_characters`
+as its test. Re-aimed after a refactor, it went red in
+`cjk_program_cache_distinguishes_glyph_sets_and_reuses_identical_sets` instead --- the one test
+that asserts the table is present --- and the named test stayed green. The likeliest reason is
+recorded in `docs/TEXTEDIT.md`: since 2026-09-18 a TrueType program with no OS/2 table is
+edited as unrestricted, so the named test's reopen-and-edit no longer fails without it. That
+date is inferred from the document, not re-measured.
+
+The harness's fallback to the whole suite is what said so: a harness that ran only the named
+test would have reported SURVIVED for a table that is still checked, and one that ran everything
+and counted any red would have reported OK and hidden that the named test had stopped meaning
+anything. When a refusal is relaxed, the mutations that named the tests it used to fail are the
+ones to re-run.

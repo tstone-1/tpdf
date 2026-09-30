@@ -138,6 +138,7 @@ pub(super) fn restricts(rights: i64) -> bool {
 
 pub(super) mod fallback;
 mod fallback_subset;
+pub(super) mod installed;
 
 impl Metrics {
     /// The same metrics, marked as a font no new text may be encoded in when
@@ -150,6 +151,30 @@ impl Metrics {
     /// Whether the font's embedding rights forbid encoding new text in it.
     pub(super) fn is_restricted(&self) -> bool {
         self.restricted
+    }
+
+    /// Every character the font offers with a nonzero PDF width, and that
+    /// width in thousandths of an em: what an installed copy of the same font
+    /// must agree with (`installed::accept`). Ligature slots name no single
+    /// character and are left out; so are opaque glyphs, which name none.
+    pub(super) fn declared(&self) -> Vec<(char, f64)> {
+        let mut declared = match &self.unicode {
+            Some(metrics) => metrics.declared(),
+            None => self
+                .widths
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, width)| {
+                    let slot = u8::try_from(slot).ok()?;
+                    let width = (*width)?;
+                    ligatures::text(slot)
+                        .is_none()
+                        .then(|| (super::slot_character(slot), width))
+                })
+                .collect(),
+        };
+        declared.retain(|(_, width)| *width > 0.);
+        declared
     }
 
     fn text_slots(&self, text: &str) -> Result<Vec<u8>, String> {

@@ -1874,7 +1874,9 @@ metrics and glyph outlines are validated before use. Legacy replacements fit the
 original line width and use existing glyphs. Explicit layouts allow a bounded
 box (0.1 to 14,400 points per axis), font size (1 to 512 points), and at most 128
 wrapped lines. Four bundled OFL Noto Sans styles and regular/bold Noto Sans CJK SC
-provide fallback glyphs without filesystem access. Only the trusted bundled CJK
+provide fallback glyphs without filesystem access. An installed copy of a document's own
+font can come before them since 2026-09-30; the worker still opens no file, and §T6.26
+has what crosses the boundary instead. Only the trusted bundled CJK
 programs pass through the subsetter; saved subsets retain embedding rights and
 must satisfy the existing embedded-font bounds. CJK programs are shared by style
 and glyph set, and Latin programs by style; bounded
@@ -2615,6 +2617,49 @@ same rules as any token (intact, not weak; trusted for timestamping now or at a 
 archive's moment; nothing on its chain revoked; its time inside its certificate), and only a
 range reaching past the earlier one's counts. No new parse: the fields were already read, now in
 a different order, and each document timestamp was already checked over its range.
+
+#### T6.26 — An installed copy of the document's font, added 2026-09-30
+
+**What is new is one input crossing into the worker and one file read in the app
+process.** When automatic font mode needs a character the document's embedded subset
+lacks, the worker names the PostScript name it would try (`textedit::Preview::wants`), the
+app process asks the operating system where a font of exactly that name is installed and
+reads the file (`sysfont.rs`), and the next request carries the bytes to the worker as
+`textedit::Layout::installed`. Nothing else in the application reads a font file.
+
+- **The app process parses nothing.** CoreText (macOS) or DirectWrite (Windows) answers
+  where the font is; the file is read whole, bounded by the read itself at
+  `MAX_INSTALLED`, 32 MiB, with one byte over refused, so a file that grows between two
+  calls cannot outrun the bound. A name that is not 1--63 printable ASCII characters
+  without PDF delimiters is never looked up. The webview cannot supply the bytes: every
+  change from it is stripped of `installed` before the batch is built
+  (`sysfont::batch`), so the only font a worker is handed is one this process read or a
+  subset a worker built.
+- **The worker trusts none of it** (`textedit/fonts/installed.rs::accept`). The face must
+  carry the requested name in every name record that decodes, which also catches an OS
+  lookup that answered with a substitute and the wrong face of a collection; TrueType
+  outlines only, no variable or colour font; OS/2 rights of 0 or editable (0x8) only;
+  every width the document's subset declares must agree within 1/1000 em; the supplied
+  bytes are bounded again on deserialisation, before decoding, and in `accept`. The
+  program is parsed by `ttf-parser` and cut down by `subsetter`, the same two crates and the
+  same process that already handle the bundled fonts, and the subset is held to
+  `MAX_CONTENT` and parsed back before it is used.
+- **What a document can make happen.** The name comes from the document, so a document can
+  make the app process read the file of any font the reader has installed, and the worker
+  parse it. The reach ends at the worker, which has no network (§T4), and at a subset of that
+  font's glyphs inside the edited copy the reader chooses to save --- the glyphs of the
+  characters they typed and of the document's own subset, never the whole program. A font
+  whose rights forbid embedding or subsetting is refused. The file's bytes are the reader's
+  own installed font, not attacker-chosen data, except where the reader installed a hostile
+  font, which then reaches the same parser every document font already reaches, in the same
+  sandbox.
+- **What the journal carries.** After an Apply the journal holds the worker's subset rather
+  than the file, so the bytes riding on every tile, outline and save request are kilobytes,
+  and each of those requests puts the subset through `accept` again rather than trusting the
+  worker that built it.
+
+The same edit can come out differently on a computer without the font, where Noto is used;
+that was accepted with the decision and is residual risk 35 rather than a defect.
 
 ### T7 — Distribution and update
 
@@ -4250,6 +4295,14 @@ which is what makes it evidence rather than a milestone.
     such a document sees and a stricter reader might not. Not closed: offering the OS chain's
     roots as anchors only, never as issuers of checked data, would close the cross-certificate
     half without making the answer depend on the computer's data.
+
+35. **An edit's font depends on what the computer has installed** (§T6.26), added 2026-09-30.
+    Automatic mode uses an installed copy of the document's own font for characters its
+    subset lacks, so the same edit sets in that font on one computer and in Noto on another,
+    and a preview taken on one is not a promise about the other. Accepted with the decision:
+    the preview names the font it used and marks it *(installed)*, and once applied the
+    journal carries the subset, so saving on the computer that previewed it writes what was
+    previewed. CFF-outline installed fonts are refused rather than used.
 
 ## 8. How to re-verify any of this
 
