@@ -1307,6 +1307,21 @@ fn textedit_type1_gapped_layout_matches_the_written_words() {
     let items = metrics.items("AB CD", 250.).unwrap();
     assert_eq!(items.len(), 3);
     assert_eq!(items[1], Object::Real(-250.));
+    // A leading, trailing or repeated space separates no words, so both the
+    // writer and the measurement refuse it rather than shift by nothing.
+    // kerning.rs asks `items` without measuring first, so each is pinned.
+    for text in [" AB", "AB ", "AB  CD"] {
+        assert_eq!(
+            metrics.items(text, 250.).unwrap_err(),
+            crate::textedit::fonts::GAP_SPACES,
+            "{text:?}"
+        );
+        assert_eq!(
+            metrics.gapped_layout(text, 10., 0., 0., 250.).unwrap_err(),
+            crate::textedit::fonts::GAP_SPACES,
+            "{text:?}"
+        );
+    }
     // A font that writes a space measures and writes it as a glyph.
     let doc = page(
         &Font::new(),
