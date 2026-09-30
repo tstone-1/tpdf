@@ -1200,3 +1200,95 @@ fn textedit_stencil_masks_paint_only_a_ready_fill_colour() {
     assert!(textedit::scan(&fixture(stencil(group4(4)), &later), 0).is_err());
     assert!(textedit::scan(&fixture(image(), &later), 0).is_ok());
 }
+
+fn matted(space: &str, components: usize, matte: Object) -> Document {
+    let mut picture = image();
+    picture.dict.set("ColorSpace", space);
+    picture.content = vec![127; 3 * 2 * components];
+    let mut alpha = mask();
+    alpha.dict.set("Matte", matte);
+    masked(picture, Some(alpha), BODY)
+}
+
+fn black(count: usize) -> Object {
+    Object::Array(vec![Object::Integer(0); count])
+}
+
+// ISO 32000-1 11.6.5.3: a soft mask may name the matte colour its owner's
+// colour was premultiplied against. PowerPoint (the EC consumer factsheet)
+// writes `/Matte [0 0 0]` on the mask of every RGB picture. It is kept as it
+// is: one number in [0, 1] per component of the owner's colour space.
+#[test]
+fn textedit_a_soft_mask_may_carry_its_owners_matte_colour() {
+    for (space, components) in [("DeviceGray", 1), ("DeviceRGB", 3), ("DeviceCMYK", 4)] {
+        let doc = matted(space, components, black(components));
+        assert_eq!(textedit::scan(&doc, 0).unwrap().runs.len(), 2, "{space}");
+        let doc = matted(
+            space,
+            components,
+            Object::Array(vec![Object::Real(1.); components]),
+        );
+        assert!(textedit::scan(&doc, 0).is_ok(), "{space}");
+    }
+    let mut doc = matted("DeviceRGB", 3, black(3));
+    let runs = textedit::scan(&doc, 0).unwrap();
+    let objects = doc.objects.clone();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    // The picture and its mask, Matte and all, are the objects they were.
+    for (id, object) in objects {
+        if object.as_stream().is_ok_and(|s| s.dict.has(b"Width")) {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+}
+
+#[test]
+fn textedit_a_matte_colour_belongs_to_a_soft_mask_of_that_shape() {
+    for matte in [
+        // One number per component of the owner's colour space.
+        black(1),
+        black(4),
+        Object::Array(vec![]),
+        // Each a colour component, in [0, 1].
+        Object::Array(vec![0.into(), 0.into(), Object::Real(1.5)]),
+        Object::Array(vec![0.into(), 0.into(), Object::Integer(-1)]),
+        Object::Array(vec![0.into(), 0.into(), Object::Name(b"Black".to_vec())]),
+        Object::Integer(0),
+    ] {
+        let doc = matted("DeviceRGB", 3, matte.clone());
+        assert!(textedit::scan(&doc, 0).is_err(), "{matte:?}");
+    }
+    // Only a soft mask has an owner to premultiply: on a painted image the
+    // key is refused like any other it does not know.
+    let mut picture = image();
+    picture.dict.set("Matte", black(3));
+    assert!(textedit::scan(&fixture(picture, BODY), 0).is_err());
+    // An indexed owner's samples are palette entries; a matte for them is refused.
+    let mut indexed = image();
+    indexed.dict.set(
+        "ColorSpace",
+        vec![
+            "Indexed".into(),
+            "DeviceRGB".into(),
+            1.into(),
+            Object::string_literal(vec![0; 6]),
+        ],
+    );
+    indexed.content = vec![0; 6];
+    let mut alpha = mask();
+    alpha.dict.set("Matte", black(1));
+    assert!(textedit::scan(&masked(indexed.clone(), Some(alpha), BODY), 0).is_err());
+    // The control: the same indexed picture and mask without the matte.
+    assert!(textedit::scan(&masked(indexed, Some(mask()), BODY), 0).is_ok());
+}

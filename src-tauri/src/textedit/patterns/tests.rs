@@ -176,3 +176,131 @@ fn textedit_pattern_text_is_preserved_beside_editable_solid_text() {
         }
     }
 }
+
+// PowerPoint's gradient function (Microsoft 365, the EC consumer factsheet):
+// type 0, 512 eight-bit RGB samples, Flate-compressed. `change` edits the
+// dictionary and the decoded samples before they are compressed.
+fn sampled(change: impl FnOnce(&mut Dictionary, &mut Vec<u8>)) -> Document {
+    let (mut doc, ids) = fixture(ART);
+    let mut dict = dictionary! {
+        "FunctionType" => 0, "Domain" => vec![0.into(), 1.into()],
+        "Range" => vec![0.into(), 1.into(), 0.into(), 1.into(), 0.into(), 1.into()],
+        "Size" => vec![512.into()], "BitsPerSample" => 8, "Order" => 1,
+        "Encode" => vec![0.into(), 511.into()],
+        "Decode" => vec![0.into(), 1.into(), 0.into(), 1.into(), 0.into(), 1.into()],
+    };
+    let mut samples: Vec<u8> = (0..512 * 3).map(|i| (i % 251) as u8).collect();
+    change(&mut dict, &mut samples);
+    let mut stream = Stream::new(dict, samples);
+    stream.compress().unwrap();
+    doc.objects.insert(ids[3], stream.into());
+    doc
+}
+
+#[test]
+fn textedit_a_sampled_shading_function_is_kept() {
+    let mut doc = sampled(|_, _| {});
+    let runs = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(runs.runs.len(), 2);
+    let function = doc
+        .objects
+        .iter()
+        .find(|(_, o)| o.as_stream().is_ok_and(|s| s.dict.has(b"Size")))
+        .map(|(id, o)| (*id, o.clone()))
+        .unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(doc.objects[&function.0], function.1);
+    // Twelve bits: 3 samples x 3 outputs x 12 = 108 bits, padded to 14 bytes.
+    let doc = sampled(|dict, samples| {
+        dict.set("Size", vec![3.into()]);
+        dict.set("BitsPerSample", 12);
+        dict.set("Encode", vec![0.into(), 2.into()]);
+        samples.truncate(14);
+    });
+    assert!(textedit::scan(&doc, 0).is_ok());
+    // Order, Encode and Decode are optional.
+    let doc = sampled(|dict, _| {
+        dict.remove(b"Order");
+        dict.remove(b"Encode");
+        dict.remove(b"Decode");
+    });
+    assert!(textedit::scan(&doc, 0).is_ok());
+}
+
+#[test]
+fn textedit_a_sampled_shading_function_is_exactly_what_it_says() {
+    type Change = fn(&mut Dictionary, &mut Vec<u8>);
+    let cases: [(&str, Change); 14] = [
+        ("type", |d, _| d.set("FunctionType", 4)),
+        ("two inputs", |d, _| {
+            d.set("Size", vec![512.into(), 1.into()])
+        }),
+        ("no samples", |d, s| {
+            d.set("Size", vec![0.into()]);
+            s.clear();
+        }),
+        ("too many", |d, s| {
+            d.set("Size", vec![5000.into()]);
+            s.resize(5000 * 3, 0);
+        }),
+        // Seven bits, with exactly the samples seven bits would take.
+        ("bits", |d, s| {
+            d.set("BitsPerSample", 7);
+            s.truncate((512 * 3 * 7usize).div_ceil(8));
+        }),
+        ("order", |d, _| d.set("Order", 2)),
+        ("outputs", |d, _| {
+            d.set("Range", vec![0.into(), 1.into(), 0.into(), 1.into()])
+        }),
+        ("reversed range", |d, _| {
+            d.set(
+                "Range",
+                vec![1.into(), 0.into(), 0.into(), 1.into(), 0.into(), 1.into()],
+            )
+        }),
+        ("decode", |d, _| d.set("Decode", vec![0.into(), 1.into()])),
+        ("encode", |d, _| {
+            d.set("Encode", vec![0.into(), 1.into(), 2.into()])
+        }),
+        ("domain", |d, _| d.set("Domain", vec![0.into(), 2.into()])),
+        ("key", |d, _| d.set("Functions", 1)),
+        ("short", |_, s| {
+            s.pop();
+        }),
+        ("long", |_, s| s.push(0)),
+    ];
+    for (case, change) in cases {
+        let doc = sampled(change);
+        assert!(textedit::scan(&doc, 0).is_err(), "{case}");
+    }
+    // No range at all, and parameters for the filter.
+    let doc = sampled(|d, _| {
+        d.remove(b"Range");
+    });
+    assert!(textedit::scan(&doc, 0).is_err());
+    let mut doc = sampled(|_, _| {});
+    let id = doc
+        .objects
+        .iter()
+        .find(|(_, o)| o.as_stream().is_ok_and(|s| s.dict.has(b"Size")))
+        .map(|(id, _)| *id)
+        .unwrap();
+    doc.get_object_mut(id)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .dict
+        .set("DecodeParms", dictionary! { "Predictor" => 1 });
+    assert!(textedit::scan(&doc, 0).is_err());
+}

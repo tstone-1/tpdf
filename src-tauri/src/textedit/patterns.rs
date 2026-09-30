@@ -1,6 +1,7 @@
 //! Preserve bounded axial shading artwork, never use a pattern to edit text.
 //! ISO 32000-1 8.7.4: a type-2 pattern contains a shading dictionary, not a
-//! content stream. Restrict its function to a nonrecursive type-2 interpolation.
+//! content stream. Restrict its function to a nonrecursive type-2 interpolation
+//! or a bounded type-0 sampled function, which is checked and never evaluated.
 use super::{colors, dictionary, number};
 use lopdf::{Dictionary, Document, Object};
 
@@ -143,7 +144,11 @@ fn check(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), Stri
             return Err(INVALID.into());
         }
     }
-    let function = dictionary(doc, shading.get(b"Function").map_err(|_| INVALID)?)?;
+    let function = shading.get(b"Function").map_err(|_| INVALID)?;
+    if let Ok(stream) = crate::encoding::resolve(doc, function).as_stream() {
+        return sampled(stream, components);
+    }
+    let function = dictionary(doc, function)?;
     keys(function, &[b"FunctionType", b"Domain", b"C0", b"C1", b"N"])?;
     if function.get(b"FunctionType").and_then(Object::as_i64).ok() != Some(2)
         || numbers::<2>(function, b"Domain")? != [0., 1.]
@@ -162,6 +167,94 @@ fn check(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), Stri
                 .map_err(|_| INVALID)?,
             components,
         )?;
+    }
+    Ok(())
+}
+
+// A sampled function's sample count, and the most bits one sample may take.
+const MAX_SAMPLES: i64 = 4096;
+const SAMPLE_BITS: [i64; 8] = [1, 2, 4, 8, 12, 16, 24, 32];
+
+/// ISO 32000-1 7.10.2: a type 0 (sampled) function of one input, as the
+/// shading's colour function. PowerPoint writes one for every gradient: 512
+/// eight-bit RGB samples, Flate-compressed. It is preserved and never
+/// evaluated; what is checked is that it is exactly what its dictionary says
+/// -- its shapes, and a decoded length equal to the one its size, outputs and
+/// bits per sample make -- so a reader that does evaluate it finds no surprise.
+fn sampled(stream: &lopdf::Stream, components: usize) -> Result<(), String> {
+    let function = &stream.dict;
+    keys(
+        function,
+        &[
+            b"FunctionType",
+            b"Domain",
+            b"Range",
+            b"Size",
+            b"BitsPerSample",
+            b"Order",
+            b"Encode",
+            b"Decode",
+            b"Length",
+            b"Filter",
+        ],
+    )?;
+    let integer = |key: &[u8]| {
+        function
+            .get(key)
+            .and_then(Object::as_i64)
+            .map_err(|_| INVALID)
+    };
+    let [size] = function
+        .get(b"Size")
+        .and_then(Object::as_array)
+        .map_err(|_| INVALID)?
+        .as_slice()
+    else {
+        return Err(INVALID.into());
+    };
+    let size = size.as_i64().map_err(|_| INVALID)?;
+    let bits = integer(b"BitsPerSample")?;
+    if integer(b"FunctionType")? != 0
+        || numbers::<2>(function, b"Domain")? != [0., 1.]
+        || !(1..=MAX_SAMPLES).contains(&size)
+        || !SAMPLE_BITS.contains(&bits)
+        || function
+            .get(b"Order")
+            .is_ok_and(|order| !matches!(order.as_i64(), Ok(1 | 3)))
+    {
+        return Err(INVALID.into());
+    }
+    // Range has two numbers per output, and the outputs are the colour
+    // space's components; Decode, when present, has the same shape.
+    for key in [b"Range".as_slice(), b"Decode"] {
+        let Ok(values) = function.get(key) else {
+            if key == b"Range" {
+                return Err(INVALID.into());
+            }
+            continue;
+        };
+        let values = values.as_array().map_err(|_| INVALID)?;
+        if values.len() != 2 * components {
+            return Err(INVALID.into());
+        }
+        for pair in values.chunks_exact(2) {
+            let [low, high] = [number(&pair[0])?, number(&pair[1])?];
+            if key == b"Range" && low > high {
+                return Err(INVALID.into());
+            }
+        }
+    }
+    if function.has(b"Encode") {
+        numbers::<2>(function, b"Encode")?;
+    }
+    let length = usize::try_from(size * components as i64 * bits)
+        .map_err(|_| INVALID)?
+        .div_ceil(8);
+    // Exactly that many bytes: a longer stream is refused by the decoding
+    // bound, a shorter one by the comparison.
+    let samples = super::filters::decode(stream, length).map_err(|_| INVALID)?;
+    if samples.len() < length {
+        return Err(INVALID.into());
     }
     Ok(())
 }

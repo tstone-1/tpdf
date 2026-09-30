@@ -38,7 +38,7 @@ pub(super) fn check(
             stencil: true,
         });
     }
-    let bytes = samples(doc, Some(resources), image, remaining)?;
+    let (bytes, colour) = samples(doc, Some(resources), image, remaining, None)?;
     match image.dict.get(b"SMask") {
         // ISO 32000-1 11.6.5.3: the soft mask carries this image's alpha. It is
         // painted only through the image naming it, so it has no mask of its
@@ -51,7 +51,7 @@ pub(super) fn check(
                 return Err(invalid());
             }
             Ok(Image {
-                bytes: bytes + samples(doc, None, mask, remaining - bytes)?,
+                bytes: bytes + samples(doc, None, mask, remaining - bytes, colour)?.0,
                 stencil: false,
             })
         }
@@ -63,13 +63,17 @@ pub(super) fn check(
 }
 
 // A painted image resolves named colour spaces through the page resources. A
-// soft mask reaches none, which is also what distinguishes the two here.
+// soft mask reaches none, which is also what distinguishes the two here; it is
+// given the colour components of the image it belongs to, `None` for an
+// indexed one. Returns the bytes charged and this image's own components,
+// likewise `None` when it is indexed.
 fn samples(
     doc: &Document,
     resources: Option<&Dictionary>,
     image: &Stream,
     remaining: usize,
-) -> Result<usize, String> {
+    parent: Option<usize>,
+) -> Result<(usize, Option<usize>), String> {
     let invalid = || "unsupported image on an editable page".to_string();
     for (key, value) in &image.dict {
         match (key.as_slice(), value) {
@@ -93,6 +97,25 @@ fn samples(
             (b"DecodeParms", _) => parameters(doc, value)?,
             // Validated by the caller, which owns the shared budget.
             (b"SMask", _) => {}
+            // ISO 32000-1 11.6.5.3: a soft mask may say that its owner's colour
+            // was premultiplied against this matte colour, one number per
+            // component of the owner's colour space. PowerPoint writes
+            // `[0 0 0]` on the masks of its RGB pictures. Kept, never applied.
+            // Only a soft mask of an image that is not indexed has `parent`,
+            // so on anything else no length matches and the key is refused.
+            (b"Matte", _) => {
+                let matte = crate::encoding::resolve(doc, value)
+                    .as_array()
+                    .map_err(|_| invalid())?;
+                if Some(matte.len()) != parent {
+                    return Err(invalid());
+                }
+                for component in matte {
+                    if !(0.0..=1.).contains(&super::number(component)?) {
+                        return Err(invalid());
+                    }
+                }
+            }
             (
                 b"Width" | b"Height" | b"BitsPerComponent" | b"ColorSpace" | b"Length" | b"Filter"
                 | b"Decode",
@@ -205,7 +228,7 @@ fn samples(
             return Err(invalid());
         }
         jpeg::check(&jpeg, width, height, components)?;
-        return Ok(bytes);
+        return Ok((bytes, Some(components)));
     }
     let decoded = filters::decode_unpredicted(image, samples)?;
     if decoded.len() != samples
@@ -213,7 +236,7 @@ fn samples(
     {
         return Err("image samples do not match dimensions and colour components".into());
     }
-    Ok(bytes)
+    Ok((bytes, Some(components).filter(|_| high_index.is_none())))
 }
 
 // ISO 32000-1 Table 10. Predictor 1, the default, leaves the filter's output as
