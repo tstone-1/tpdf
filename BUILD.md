@@ -6325,7 +6325,8 @@ The draft carried 8 assets. Fetched without an account, the `.dmg`, `.msi` and `
 answered 200 and `latest.json` offers 26.9.24 for `darwin-aarch64` and `windows-x86_64`. The
 downloaded `.dmg` staples, its bundle verifies with `codesign --deep --strict`, `tpdf-cli` is
 signed `Developer ID Application` with the hardened runtime, and Gatekeeper reports
-*Notarized Developer ID*. The hand-applied update from 26.9.23 (step 12) is still to do.
+*Notarized Developer ID*. The hand-applied update from 26.9.23 (step 12) was done by the owner
+the same day.
 
 **Post-release verification, 2026-09-29:** all 27 gates passed on macOS arm64
 (2,328 Rust unit tests, nine documented ignored tests; 1,963 frontend tests; 253 CLI
