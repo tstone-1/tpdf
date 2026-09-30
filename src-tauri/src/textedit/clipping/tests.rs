@@ -761,3 +761,166 @@ fn textedit_rotated_paint_is_preserved_and_rotated_clips_are_refused() {
         assert_eq!(textedit::scan(&doc, 0).unwrap_err(), message, "{path}");
     }
 }
+
+fn offered(body: &str) -> Result<Vec<String>, String> {
+    textedit::scan(&page(body.as_bytes()), 0)
+        .map(|runs| runs.runs.into_iter().map(|run| run.text).collect())
+}
+
+const FIRST: &str = "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET";
+
+// PowerPoint (Microsoft 365, measured on the EC consumer factsheet) clips each
+// slide to the page with `m l l l W* n`: no closing segment, closed by the clip
+// itself (ISO 32000-1 8.5.3.3), and corners off the axis by float noise of up
+// to 0.0002 pt. Within NEAR it is the rectangle its inner corners bound.
+// SECOND follows the clip's scope, and is the control that the page opened.
+#[test]
+fn textedit_a_nearly_axis_aligned_clip_is_its_inner_rectangle() {
+    for clip in [
+        "-0.00006 240 m 300 240 l 300 -0.00012 l -0.00006 -0.00006 l W* n",
+        "0 240 m 300 240 l 300 0.0002 l 0 0.0001 l W n",
+        "0 0 m 300 0.0009 l 300 240 l 0 240 l h W n",
+        // A closing segment back to the start, itself off by noise.
+        "0 0 m 300 0 l 300 240 l 0.0002 240 l 0.0005 -0.0003 l h W* n",
+    ] {
+        assert_eq!(
+            offered(&scoped(clip)).unwrap(),
+            ["FIRST", "SECOND"],
+            "{clip}"
+        );
+    }
+    // The saved stream keeps the authored clip byte for byte.
+    let clip = "-0.00006 240 m 300 240 l 300 -0.00012 l -0.00006 -0.00006 l W* n";
+    let mut doc = page(format!("q {clip} {FIRST} Q").as_bytes());
+    let source = textedit::scan(&doc, 0).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: source.revision,
+            operator: source.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    assert!(doc
+        .get_page_content(id)
+        .starts_with(format!("q {clip}").as_bytes()));
+    // FIRST's ink starts at x=40. With the left edge at 40 and at 40.0009 the
+    // inner rectangle starts at 40.0009 and cuts it; the outer would not.
+    assert!(offered(&scoped("40 240 m 300 240 l 300 0 l 40.0009 0 l W n")).is_err());
+    assert_eq!(
+        offered(&scoped("39.999 240 m 300 240 l 300 0 l 39.9991 0 l W n")).unwrap(),
+        ["FIRST", "SECOND"]
+    );
+    // So does a closing point that falls inside the rectangle.
+    assert!(offered(&scoped(
+        "40 0 m 300 0 l 300 240 l 40 240 l 40.0009 0.0001 l h W n"
+    ))
+    .is_err());
+}
+
+fn scoped(clip: &str) -> String {
+    format!("q {clip} {FIRST} Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET")
+}
+
+#[test]
+fn textedit_a_nearly_axis_aligned_clip_is_held_to_its_limits() {
+    // Off the axis by more than NEAR, one subpath is a turned clip (below):
+    // what it holds is read-only rather than measured against a rectangle.
+    assert_eq!(
+        offered(&scoped("0 240 m 300 240 l 300 0.002 l 0 0 l W n")).unwrap(),
+        ["SECOND"]
+    );
+    for clip in [
+        // A closing segment further than NEAR from the start is neither.
+        "0 0 m 300 0 l 300 240 l 0 240 l 0.002 0 l h W n",
+        // Closed by the clip only when the clip follows at once: here a second
+        // subpath follows, which would have to be closed by nothing.
+        "0 0 m 300 0 l 300 240 l 0 240 l 250 10 m 260 10 l 260 20 l 250 20 l h W n",
+        // An inexact rectangle only when it is the one subpath: a second one
+        // could be a hole the inner rectangle understates.
+        "0 240 m 300 240 l 300 0.0002 l 0 0 l h 250 10 m 260 10 l 260 20 l 250 20 l h W n",
+        "0 0 m 300 0 l 300 240 l 0 240 l 0.0005 0 l h 250 10 m 260 10 l 260 20 l 250 20 l h W n",
+    ] {
+        assert!(offered(&scoped(clip)).is_err(), "{clip}");
+    }
+    // The control: exact, the same two subpaths are accepted.
+    assert_eq!(
+        offered(&scoped(
+            "0 0 m 300 0 l 300 240 l 0 240 l h 250 10 m 260 10 l 260 20 l 250 20 l h W n"
+        ))
+        .unwrap(),
+        ["FIRST", "SECOND"]
+    );
+}
+
+// PowerPoint clips a turned picture to its turned frame: on the factsheet's
+// third page `m l l l l h W* n` around an icon, turned about 8 degrees, with an
+// image and no text inside. Text under such a clip is kept read-only; the clip
+// is kept, and text after its scope is edited as usual.
+#[test]
+fn textedit_text_under_a_turned_clip_is_read_only() {
+    let turned = "110 200 m 128 197 l 125 179 l 107 182 l 110 200 l h W* n";
+    let body = format!("q {turned} {FIRST} Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET");
+    assert_eq!(offered(&body).unwrap(), ["SECOND"]);
+    let mut doc = page(body.as_bytes());
+    let source = textedit::scan(&doc, 0).unwrap();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: source.revision,
+            operator: source.runs[0].operator,
+            original: "SECOND".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    let id = crate::pagetree::ordered_pages(&doc)[0];
+    assert!(doc
+        .get_page_content(id)
+        .starts_with(format!("q {turned} {FIRST} Q").as_bytes()));
+    // Without the implicit or explicit close, and with W as well.
+    assert_eq!(
+        offered(&format!(
+            "q 110 200 m 128 197 l 125 179 l 107 182 l W n {FIRST} Q BT /F1 12 Tf 40 140 Td (SECOND) Tj ET"
+        ))
+        .unwrap(),
+        ["SECOND"]
+    );
+}
+
+#[test]
+fn textedit_a_turned_clip_is_one_convex_quadrilateral() {
+    for clip in [
+        // Crossed: a bow tie is not convex.
+        "110 200 m 125 179 l 128 197 l 107 182 l h W n",
+        // A straight corner is a triangle, and a flat one has no inside.
+        "100 200 m 120 200 l 140 200 l 120 180 l h W n",
+        // The closing segment has to return to the start.
+        "110 200 m 128 197 l 125 179 l 107 182 l 111 200 l h W n",
+        // One subpath, then the clip and nothing painted.
+        "110 200 m 128 197 l 125 179 l 107 182 l h W f",
+        "110 200 m 128 197 l 125 179 l 107 182 l h 10 10 m 20 10 l 20 20 l h W n",
+        // Five corners.
+        "110 200 m 128 197 l 125 179 l 107 182 l 100 190 l h W n",
+    ] {
+        // SECOND after the scope: accepted, the clip would leave the page
+        // open with FIRST read-only, so only a refusal of the page passes.
+        assert!(offered(&scoped(clip)).is_err(), "{clip}");
+    }
+    // In range after the CTM, like every other point: written small and
+    // scaled past the limit, in a scope of its own so that no text is.
+    let far = "q 10000 0 0 10000 0 0 cm 110 200 m 128 197 l 125 179 l 107 182 l h W n Q";
+    let near = "q 10 0 0 10 0 0 cm 110 200 m 128 197 l 125 179 l 107 182 l h W n Q";
+    assert!(offered(&format!("{far} {}", scoped(""))).is_err());
+    assert_eq!(
+        offered(&format!("{near} {}", scoped(""))).unwrap(),
+        ["FIRST", "SECOND"]
+    );
+}

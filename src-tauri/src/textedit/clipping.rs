@@ -53,6 +53,9 @@ impl Region {
     }
 }
 
+// How far, in unscaled user space, a clip corner may sit off the axis.
+const NEAR: f64 = 0.001;
+
 // Rectangular subpaths emitted as m/l/h rather than re. Preserve the original
 // winding: nested rectangles can describe a hole, not a larger bounding box.
 pub(super) fn compound(
@@ -60,6 +63,8 @@ pub(super) fn compound(
     ctm: [f64; 6],
 ) -> Result<Option<(usize, Region)>, String> {
     let mut rectangles = Vec::new();
+    // Whether a rectangle was accepted only as nearly axis-aligned; see below.
+    let mut inexact = false;
     let mut index = 0;
     while ops.get(index).is_some_and(|op| op.operator == "m") {
         let mut points = Vec::new();
@@ -80,39 +85,79 @@ pub(super) fn compound(
             .get(index)
             .filter(|op| op.operator == "l" && op.operands.len() == 2)
         {
-            if [
+            let end = [
                 super::number(&op.operands[0])?,
                 super::number(&op.operands[1])?,
-            ] != points[0]
-            {
-                return Ok(None);
+            ];
+            // A closing segment back to the start, within NEAR of it like
+            // the corners below. Off by noise, it joins the inner rectangle.
+            if end != points[0] {
+                if (end[0] - points[0][0]).abs() > NEAR || (end[1] - points[0][1]).abs() > NEAR {
+                    return Ok(None);
+                }
+                inexact = true;
             }
+            points.push(end);
             index += 1;
         }
-        if !ops
+        // ISO 32000-1 8.5.3.3: clipping, like filling, closes an open
+        // subpath, so PowerPoint's `m l l l W* n` is a closed rectangle.
+        if ops
             .get(index)
             .is_some_and(|op| op.operator == "h" && op.operands.is_empty())
         {
-            return Ok(None);
-        }
-        index += 1;
-        let [a, b, c, d] = points.as_slice() else {
-            unreachable!()
-        };
-        if !((a[1] == b[1] && b[0] == c[0] && c[1] == d[1] && d[0] == a[0])
-            || (a[0] == b[0] && b[1] == c[1] && c[0] == d[0] && d[1] == a[1]))
+            index += 1;
+        } else if !ops
+            .get(index)
+            .is_some_and(|op| matches!(op.operator.as_str(), "W" | "W*") && op.operands.is_empty())
         {
             return Ok(None);
         }
+        let [a, b, c, d] = &points[..4] else {
+            unreachable!()
+        };
+        let aligned = |near: &dyn Fn(f64, f64) -> bool| {
+            (near(a[1], b[1]) && near(b[0], c[0]) && near(c[1], d[1]) && near(d[0], a[0]))
+                || (near(a[0], b[0]) && near(b[1], c[1]) && near(c[0], d[0]) && near(d[1], a[1]))
+        };
+        if !aligned(&|p, q| p == q) {
+            // PowerPoint writes its page clip with corners off the axis by
+            // float noise, up to 0.0002 points. Within NEAR it is accepted as
+            // the rectangle its inner corners bound, which the true
+            // quadrilateral contains; that holds only with no second
+            // subpath, since a hole's inner rectangle would understate it.
+            if !aligned(&|p, q| (p - q).abs() <= NEAR) {
+                return Ok(None);
+            }
+            inexact = true;
+        }
         // Keep computed differences in f64, like the existing rectangle path.
-        let xs = [a[0] * ctm[0] + ctm[4], c[0] * ctm[0] + ctm[4]];
-        let ys = [a[1] * ctm[3] + ctm[5], c[1] * ctm[3] + ctm[5]];
-        let exact = [
-            xs[0].min(xs[1]),
-            ys[0].min(ys[1]),
-            xs[0].max(xs[1]),
-            ys[0].max(ys[1]),
-        ];
+        // Each edge takes its innermost point, so the rectangle lies inside
+        // the true path; exact, every point is on its edge and this is it.
+        let slack = if inexact {
+            2. * NEAR * ctm[0].abs().max(ctm[3].abs())
+        } else {
+            0.
+        };
+        let inner = |values: Vec<f64>| {
+            let low = values.iter().copied().fold(f64::INFINITY, f64::min);
+            let high = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            [
+                values
+                    .iter()
+                    .copied()
+                    .filter(|v| *v <= low + slack)
+                    .fold(f64::NEG_INFINITY, f64::max),
+                values
+                    .iter()
+                    .copied()
+                    .filter(|v| *v >= high - slack)
+                    .fold(f64::INFINITY, f64::min),
+            ]
+        };
+        let [left, right] = inner(points.iter().map(|p| p[0] * ctm[0] + ctm[4]).collect());
+        let [bottom, top] = inner(points.iter().map(|p| p[1] * ctm[3] + ctm[5]).collect());
+        let exact = [left, bottom, right, top];
         if exact.iter().any(|v| !v.is_finite() || v.abs() > 1_000_000.)
             || exact[0] >= exact[2]
             || exact[1] >= exact[3]
@@ -128,6 +173,9 @@ pub(super) fn compound(
         if rectangles.len() > 32 {
             return Err("too many compound clip rectangles".into());
         }
+    }
+    if inexact && rectangles.len() != 1 {
+        return Ok(None);
     }
     let Some(rule) = ops
         .get(index)
@@ -148,6 +196,76 @@ pub(super) fn compound(
             even_odd: rule.operator == "W*",
         },
     )))
+}
+
+/// A clip to one strictly convex quadrilateral that is not an axis-aligned
+/// rectangle, as `m l l l [l] [h] W|W* n`, and how many operators it takes.
+///
+/// PowerPoint clips a turned picture to its turned frame (the EC consumer
+/// factsheet, page 3: a square turned about 8 degrees around an icon). The
+/// axis-aligned clip model cannot hold it, so the scan keeps whatever text is
+/// drawn under it read-only instead (`textedit.rs`, `turned_clip`); on that page
+/// the scope holds an image and no text at all. The clip's operators are kept.
+pub(super) fn quadrilateral(ops: &[Operation], ctm: [f64; 6]) -> Result<Option<usize>, String> {
+    let mut points = Vec::new();
+    let mut index = 0;
+    for expected in ["m", "l", "l", "l"] {
+        let Some(op) = ops
+            .get(index)
+            .filter(|op| op.operator == expected && op.operands.len() == 2)
+        else {
+            return Ok(None);
+        };
+        points.push(point(
+            ctm,
+            super::number(&op.operands[0])?,
+            super::number(&op.operands[1])?,
+        ));
+        index += 1;
+    }
+    for corner in &points {
+        bounded(*corner, "clip coordinates exceed their limit")?;
+    }
+    if let Some(op) = ops
+        .get(index)
+        .filter(|op| op.operator == "l" && op.operands.len() == 2)
+    {
+        let end = point(
+            ctm,
+            super::number(&op.operands[0])?,
+            super::number(&op.operands[1])?,
+        );
+        if end != points[0] {
+            return Ok(None);
+        }
+        index += 1;
+    }
+    if ops
+        .get(index)
+        .is_some_and(|op| op.operator == "h" && op.operands.is_empty())
+    {
+        index += 1;
+    }
+    if !ops
+        .get(index)
+        .is_some_and(|op| matches!(op.operator.as_str(), "W" | "W*") && op.operands.is_empty())
+        || !ops
+            .get(index + 1)
+            .is_some_and(|op| op.operator == "n" && op.operands.is_empty())
+    {
+        return Ok(None);
+    }
+    // Strictly convex: every turn the same way and none of them straight, so
+    // the region is the same under either rule and has an interior.
+    let turns = (0..4).map(|i| {
+        let [a, b, c] = [points[i], points[(i + 1) % 4], points[(i + 2) % 4]];
+        (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+    });
+    let turns = turns.collect::<Vec<_>>();
+    if !(turns.iter().all(|t| *t > 0.) || turns.iter().all(|t| *t < 0.)) {
+        return Ok(None);
+    }
+    Ok(Some(index + 2))
 }
 
 // PDF 1.6, 4.4.3: W/W* takes effect at the path-ending operator, and clips

@@ -876,6 +876,9 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
     let mut states = Vec::new();
     let mut clip = None;
     let mut compound_clips: Vec<clipping::Region> = Vec::new();
+    // Whether a clip the axis-aligned model cannot hold is in force
+    // (`clipping::quadrilateral`): text drawn under it is kept read-only.
+    let mut turned_clip = false;
     let mut path_until = 0;
     let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
     let mut font_operators = BTreeMap::new();
@@ -1012,6 +1015,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     stroke_components,
                     compound_clips.clone(),
                     (render, line_width),
+                    turned_clip,
                 ));
             }
             ("Q", []) if !inside => {
@@ -1026,6 +1030,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                     stroke_components,
                     compound_clips,
                     (render, line_width),
+                    turned_clip,
                 ) = states.pop().ok_or("unmatched graphics-state restore")?;
             }
             ("re", _) if !inside => {
@@ -1078,6 +1083,15 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
                         return Err("too many compound clipping intersections".into());
                     }
                     compound_clips.push(region);
+                    path_until = index + consumed;
+                    continue;
+                }
+                if let Some(consumed) = diagonal(page_transform)
+                    .then(|| clipping::quadrilateral(&content.operations[index..], page_transform))
+                    .transpose()?
+                    .flatten()
+                {
+                    turned_clip = true;
                     path_until = index + consumed;
                     continue;
                 }
@@ -1400,6 +1414,7 @@ fn inspect(doc: &Document, page: u32) -> Result<Inspection, String> {
         // A glyph whose text the editor cannot write keeps its whole run.
         let read_only = tags.read_only()
             || layer
+            || turned_clip
             || backtracks
             || text.contains(fonts::OPAQUE)
             || !diagonal(page_transform)
