@@ -14945,6 +14945,12 @@ change in width earlier. 357 of 416 pages are editable. Right-aligned and justif
 a centred line shared with other text, stay read-only (`docs/TEXTEDIT.md`, *Centred lines*;
 `BUILD.md`, *Centred lines are edited about their centre*).
 
+**Content on an empty parent-tree slot, 2026-10-01 (unreleased, macOS).** Acrobat and LiveCycle
+leave marked content on a `null` parent-tree slot where an element was removed. It was read-only
+only when tagged `/Artifact` and refused the page under any other tag, which locked the first
+page of the IRS W-9 and W-4. It is read-only under any tag now. 360 of 416 pages are editable
+(`BUILD.md`, *Content on an empty parent-tree slot*).
+
 ### Phase 6 — Cryptographic signing
 
 A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,

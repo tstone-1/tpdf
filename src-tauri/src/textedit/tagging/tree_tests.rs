@@ -207,7 +207,7 @@ fn textedit_untagged_page_in_a_tagged_document_edits_as_plain_text() {
 }
 
 #[test]
-fn textedit_null_parent_tree_slots_are_unowned_and_cannot_be_used() {
+fn textedit_null_parent_tree_slots_are_unowned_and_their_content_is_read_only() {
     let (mut doc, ids) = fixture(CONTENT);
     doc.get_dictionary_mut(ids[5]).unwrap().set(
         "Nums",
@@ -236,37 +236,66 @@ fn textedit_null_parent_tree_slots_are_unowned_and_cannot_be_used() {
     .unwrap();
     assert_eq!(textedit::scan(&doc, 0).unwrap().runs[0].text, "IN");
 
-    // A content sequence that uses the unowned slot is refused, not adopted.
-    let used = content.replacen("/MCID 0", "/MCID 1", 1);
-    let (mut doc, ids) = fixture(used.as_bytes());
-    doc.get_dictionary_mut(ids[5]).unwrap().set(
-        "Nums",
-        vec![
-            0.into(),
-            Object::Array(vec![ids[3].into(), Object::Null, ids[4].into()]),
-        ],
-    );
-    doc.get_dictionary_mut(ids[4])
-        .unwrap()
-        .set("K", vec![Object::Integer(2)]);
+    // A content sequence on the unowned slot is kept and never adopted: its
+    // text is not offered, an edit beside it leaves its bytes alone, and it
+    // cannot be the edit's target. Acrobat and LiveCycle leave real text this
+    // way where an element was removed, under the tag it had (`/Span`,
+    // `/Content`), and under no particular tag: an empty name does the same.
+    for tag in ["Standard", "Span", "Content", ""] {
+        let unowned = format!("/{tag} <</MCID 1>> BDC BT /F1 12 Tf 40 220 Td (FIRST) Tj ET EMC");
+        let used = format!("{unowned} {content}");
+        let build = || {
+            let (mut doc, ids) = fixture(used.as_bytes());
+            doc.get_dictionary_mut(ids[5]).unwrap().set(
+                "Nums",
+                vec![
+                    0.into(),
+                    Object::Array(vec![ids[3].into(), Object::Null, ids[4].into()]),
+                ],
+            );
+            doc.get_dictionary_mut(ids[4])
+                .unwrap()
+                .set("K", vec![Object::Integer(2)]);
+            (doc, ids)
+        };
+        let (mut doc, ids) = build();
+        let runs = textedit::scan(&doc, 0).unwrap();
+        let offered: Vec<_> = runs.runs.iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(offered, ["FIRST", "SECOND"], "{tag}");
+        let change = textedit::Change {
+            page: 0,
+            revision: runs.revision.clone(),
+            operator: runs.runs[1].operator,
+            original: "SECOND".into(),
+            replacement: "IN".into(),
+            layout: None,
+        };
+        textedit::write(&mut doc, std::slice::from_ref(&change)).unwrap();
+        let saved = String::from_utf8(doc.get_page_content(ids[0])).unwrap();
+        assert!(saved.starts_with(&unowned), "{tag}: {saved}");
+        assert!(
+            saved.contains("(IN) Tj") && !saved.contains("SECOND"),
+            "{saved}"
+        );
+        // The unowned text is no target: only the two owned runs are.
+        let (doc, _) = build();
+        for operator in 0..runs.runs[0].operator {
+            let mut doc = doc.clone();
+            let aimed = textedit::Change {
+                operator,
+                original: "FIRST".into(),
+                ..change.clone()
+            };
+            assert!(
+                textedit::write(&mut doc, &[aimed]).is_err(),
+                "{tag} {operator}"
+            );
+        }
+    }
+    // A slot the page does not have is still refused, under any tag.
+    let (doc, _) = fixture(content.replace("/MCID 2", "/MCID 9").as_bytes());
     assert_eq!(
         textedit::scan(&doc, 0).unwrap_err(),
         "marked content repeats or disagrees with its structure tag"
     );
-    // An empty tag name cannot match the empty name of an unowned slot.
-    let (mut doc, ids) = fixture(
-        used.replacen("/Standard << /MCID 1", "/ << /MCID 1", 1)
-            .as_bytes(),
-    );
-    doc.get_dictionary_mut(ids[5]).unwrap().set(
-        "Nums",
-        vec![
-            0.into(),
-            Object::Array(vec![ids[3].into(), Object::Null, ids[4].into()]),
-        ],
-    );
-    doc.get_dictionary_mut(ids[4])
-        .unwrap()
-        .set("K", vec![Object::Integer(2)]);
-    assert!(textedit::scan(&doc, 0).is_err());
 }

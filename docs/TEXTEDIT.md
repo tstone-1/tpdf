@@ -413,8 +413,9 @@ depth and node count. `Link`/`Form` elements own annotations through `OBJR`; the
 page's `/Annots`, subtype and `/StructParent` entry must all agree, each entry
 is claimed once, and their text stays read-only so link areas stay accurate.
 Pages without StructParents, `null` slots and slots naming unreachable elements
-are accepted; unowned and orphaned content is read-only, and a reachable
-element that skips its slot is still refused. The owning element, not the
+are accepted; unowned and orphaned content is read-only under any content tag
+(`/Artifact`, `/Span`, LiveCycle's `/Content`), and a reachable element that
+skips its slot, or an MCID past the page's slots, is still refused. The owning element, not the
 content tag, supplies semantics, except that `/Artifact` on an owned MCID is
 refused; artifact property lists (Table 330 keys) work inside and outside BT,
 owned sequences may carry a validated `/Lang` beside the MCID (InDesign's paragraphs),

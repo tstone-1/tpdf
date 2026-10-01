@@ -81,6 +81,12 @@ have the binary.)
   middle. This applies to a centred line that has no other text on it; a line
   shared with other text, and right-aligned or justified text, stay read-only.
   In `tpdf edit`, such an operation needs a `font`.
+- **The first page of the IRS W-9 and W-4 can be edited.** Acrobat and
+  LiveCycle leave content behind when an element is removed from a tagged
+  document's structure: the content keeps its mark, and the structure has an
+  empty entry for it. tpdf accepted that only when the content was marked as an
+  artifact and refused the whole page otherwise. Such content is now kept
+  read-only, and the rest of the page is editable.
 
 ### Fixed
 

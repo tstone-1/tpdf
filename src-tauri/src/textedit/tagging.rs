@@ -1679,11 +1679,12 @@ impl Tags {
             // the semantics (ISO 32000-1 14.7.4.2). Producers label sequences
             // loosely: Word writes Span or P for list bodies and figures, and
             // LiveCycle writes Content. Only Artifact contradicts an owner.
-            // An Artifact on an unowned (null) or orphaned slot is an artifact,
-            // Acrobat's form for retagged headers; it stays read-only.
-            if tag == b"Artifact"
-                && mcid < self.names.len()
-                && owner.is_none_or(|owner| owner == ORPHAN)
+            // An Artifact on an orphaned slot is an artifact, Acrobat's form
+            // for retagged headers. A null slot is what Acrobat and LiveCycle
+            // leave where an element was removed, under the tag the content
+            // had: the tree reaches nothing for it. Both stay read-only.
+            if mcid < self.names.len()
+                && (owner.is_none() || (tag == b"Artifact" && owner == Some(ORPHAN)))
             {
                 None
             } else {

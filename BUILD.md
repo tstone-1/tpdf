@@ -13990,6 +13990,33 @@ run's origin, so a centred line near the right edge is refused although it would
 as far that way. A centred line with other runs on it, right-aligned text and justified text
 are unchanged. PDFKit readback, a Windows run, the full mutation table.
 
+### Content on an empty parent-tree slot — measured 2026-10-01
+
+Three pages of the 26-document sample were refused as *marked content repeats or disagrees
+with its structure tag*: the first page of the IRS W-9 and W-4 (Designer 6.5) and page 4 of
+the Arcadia agenda (Acrobat). None repeats an MCID. Each has marked content whose parent-tree
+slot is `null`, under a tag other than `/Artifact`: 20 and 17 `/Content` sequences on the two
+forms, holding no text, and three `/Span` sequences on the agenda, holding three lines of a
+paragraph. `Tags::begin` took a `null` slot as read-only only under `/Artifact`, although this
+file and `docs/TEXTEDIT.md` already said unowned content is read-only.
+
+A `null` slot is now read-only under any tag. An MCID past the page's slots, a repeated MCID
+and `/Artifact` on an owned MCID are refused as before. The three pages are editable, with
+176, 239 and 136 runs; no other page of the 416 changed, and 360 are editable
+(`scratch/textedit-public/w26-nullslot.json` against `w26-centred.json`). The agenda's three
+unowned lines are not among its runs.
+
+**On the W-9.** `tpdf-cli edit` with `"font":"auto"` replaced *Before you begin.* on page 1
+with *Before you start.*; the report says `set in Noto Sans (the document's font does not
+permit editing)`. Poppler at 72 dpi: the two renders of page 1 differ only inside
+36 to 103 by 85 to 94, which is the run's rectangle, and pages 2 to 6 are identical.
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'null slots:'` (3): the page refused
+again, a slot the page lacks kept read-only, and an empty tag adopting the slot as its own.
+
+**Not done.** No run in the application window. The remaining 35 refused pages have 17
+first refusals, none above four pages.
+
 ### `sign --image` and `sign --hide` — measured 2026-10-01
 
 **Why there is a Rust decoder.** The request was for the file to go through the path and
