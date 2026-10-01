@@ -1649,6 +1649,10 @@ fn samples() -> Vec<(&'static str, String)> {
                 annotations: 1,
                 signatures_invalidated: 0,
                 signatures_unknown: false,
+                fonts: vec![report::FontUsed {
+                    operation: 2,
+                    font: "Noto Sans (the document's font does not permit editing)".into(),
+                }],
             }),
         ),
         (

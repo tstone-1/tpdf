@@ -50,6 +50,17 @@ pub struct Edited {
     pub annotations: usize,
     pub signatures_invalidated: usize,
     pub signatures_unknown: bool,
+    /// The font each `replace_text` that named one was set in, in plan order.
+    pub fonts: Vec<FontUsed>,
+}
+
+/// What a `replace_text` operation's `font` came to on this document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FontUsed {
+    /// The operation's place in the plan, counted from one.
+    pub operation: usize,
+    /// The editor's name for the font, with its reason when it is a fallback.
+    pub font: String,
 }
 
 /// Original annotations. Pages are one-based, unlike the internal scan.

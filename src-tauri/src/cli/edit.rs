@@ -319,8 +319,9 @@ fn apply(
     baseline: &super::pages::Input,
     now: u64,
     mut ask: impl FnMut(Request) -> Result<Reply, crate::save_outside::Declined>,
-) -> Result<Plan, Failure> {
+) -> Result<(Plan, Vec<report::FontUsed>), Failure> {
     let model = Edits::default();
+    let mut fonts = Vec::new();
     model.open(1, baseline.plan.baseline, None);
     let made = crate::save::pdf_date(UNIX_EPOCH + Duration::from_secs(now));
     let mut comments = None;
@@ -547,10 +548,21 @@ fn apply(
                         }
                         other => other,
                     })?;
-                    if !matches!(reply, Reply::TextRuns(_)) {
+                    let Reply::TextRuns(validated) = reply else {
                         return Err(OperationError::failed(
                             "worker did not validate the text change",
                         ));
+                    };
+                    // A change with a box is the one the worker lays out for
+                    // its reply, and the layout names the font it came to.
+                    if font.is_some() {
+                        let used = validated.preview.ok_or_else(|| {
+                            OperationError::failed("worker did not name the font it used")
+                        })?;
+                        fonts.push(report::FontUsed {
+                            operation: index + 1,
+                            font: used.font,
+                        });
                     }
                     model.replace_text(1, id, change)?;
                 }
@@ -604,7 +616,7 @@ fn apply(
     }
     let mut plan = model.plan(1).map_err(|e| Failure::new(Exit::Internal, e))?;
     plan.opened_as.clone_from(&baseline.plan.opened_as);
-    Ok(plan)
+    Ok((plan, fonts))
 }
 
 impl Subcommand for Edit {
@@ -700,7 +712,7 @@ impl Subcommand for Edit {
             return Err(Failure::new(Exit::Refused, "the document is signed or its signatures could not be fully read; edit requires --invalidate-signatures"));
         }
         let request = request.expect("edit has a request");
-        let plan = apply(&request, &before, env.now, |request| session.ask(request))?;
+        let (plan, fonts) = apply(&request, &before, env.now, |request| session.ask(request))?;
         drop(session);
         let sizes = dimensions(&plan, &before.sizes);
         let inputs = [self.input.clone()];
@@ -765,6 +777,7 @@ impl Subcommand for Edit {
                         }
                     },
                     signatures_unknown: before.signatures_unknown,
+                    fonts,
                 },
             );
         } else {
@@ -782,6 +795,12 @@ impl Subcommand for Edit {
                     }
                 ),
             );
+            for used in &fonts {
+                say(
+                    out,
+                    &format!("operation {}: set in {}", used.operation, used.font),
+                );
+            }
         }
         Ok(Exit::Ok)
     }
@@ -899,27 +918,67 @@ mod tests {
         };
         // No font: one question, and the run keeps its own place and font.
         let mut asked = Vec::new();
-        let made = apply(&plan("", 3).unwrap(), &baseline, 0, |request| {
+        let (made, fonts) = apply(&plan("", 3).unwrap(), &baseline, 0, |request| {
             asked.push(request);
             Ok(Reply::TextRuns(runs()))
         })
         .unwrap();
         assert_eq!(asked.len(), 1);
         assert_eq!(made.text_edits[0].change.layout, None);
+        assert_eq!(fonts, []);
 
         // A font: the run is read first, unedited, and the change that is
         // validated and journalled carries the editor's box for it.
+        // The worker lays a change with a box out for its reply, and names
+        // the font it came to; the report carries that name.
+        let laid_out = |request: &Request, font: &str| {
+            let Request::TextRuns { changes, .. } = request else {
+                panic!("{request:?}");
+            };
+            PageRuns {
+                preview: changes.last().map(|_| crate::textedit::Preview {
+                    png: Vec::new(),
+                    font: font.into(),
+                    rect: [0.; 4],
+                    extent: [0.; 4],
+                    lines: 1,
+                    wants: None,
+                    installed: None,
+                }),
+                ..runs()
+            }
+        };
         let mut asked = Vec::new();
-        let made = apply(
+        let (made, fonts) = apply(
             &plan("noto_sans_bold", 3).unwrap(),
             &baseline,
             0,
             |request| {
+                let reply = laid_out(&request, "Noto Sans Bold");
                 asked.push(request);
-                Ok(Reply::TextRuns(runs()))
+                Ok(Reply::TextRuns(reply))
             },
         )
         .unwrap();
+        assert_eq!(
+            fonts,
+            [report::FontUsed {
+                operation: 1,
+                font: "Noto Sans Bold".into(),
+            }]
+        );
+        // A reply that does not name the font is a failure, not a silent gap.
+        let failure = apply(&plan("auto", 3).unwrap(), &baseline, 0, |_| {
+            Ok(Reply::TextRuns(runs()))
+        })
+        .unwrap_err();
+        assert_eq!(
+            (failure.exit, failure.message.as_str()),
+            (
+                Exit::Internal,
+                "operation 1: worker did not name the font it used"
+            )
+        );
         let expected = Layout {
             width: 39.,
             height: 18.,

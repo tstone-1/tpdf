@@ -13,5 +13,11 @@
   ],
   "annotations": 1,
   "signatures_invalidated": 0,
-  "signatures_unknown": false
+  "signatures_unknown": false,
+  "fonts": [
+    {
+      "operation": 2,
+      "font": "Noto Sans (the document's font does not permit editing)"
+    }
+  ]
 }

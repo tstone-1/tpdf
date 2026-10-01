@@ -38,7 +38,9 @@ have the binary.)
   which is what the editor does by default; the six Noto values name a font
   outright. Until now the command line refused such an edit, for example on the
   IRS W-9, while the editor made it. Without `font` a plan behaves as before,
-  and a refusal that a fallback font would answer now says to add it.
+  and a refusal that a fallback font would answer now says to add it. The report
+  says which font each such replacement was set in: a `fonts` list in the JSON
+  and an `operation 2: set in Noto Sans` line in the plain output.
 
 - **`tpdf sign --image <file>` draws a signature image from a file.** A visible
   signature could only draw the image saved in the application, so a script could

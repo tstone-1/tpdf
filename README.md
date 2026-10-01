@@ -806,7 +806,11 @@ without `font` that is refused for either reason says so in its message. The oth
 values name the font outright: `noto_sans`, `noto_sans_bold`, `noto_sans_italic`,
 `noto_sans_bold_italic`, `noto_sans_cjk_sc` and `noto_sans_cjk_sc_bold`. The
 editor's automatic mode also tries an installed copy of the document's font;
-the command line does not, so its result is the same on every computer. Width,
+the command line does not, so its result is the same on every computer. The
+report says which font each such operation was set in: `"auto"` on a font that
+does not permit editing reports `Noto Sans (the document's font does not permit
+editing)`, and on a font that has every character it reports that font's own
+`/BaseFont` name. Width,
 height, size and wrapping are not yet part of the edit schema. Use `tpdf text`
 to inspect the saved result.
 Text editing is not redaction; use `redact` for confidential content.
@@ -984,8 +988,13 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
 
 - `edit`: `input`, `output`, `written`, `operations` (validated operation count),
   `pages` (resulting `width_pt` and `height_pt` in order), `annotations` (new marks
-  still present), `signatures_invalidated` (zero for a dry run), and
-  `signatures_unknown`. `written: false` is a successful dry run, not a saved file.
+  still present), `signatures_invalidated` (zero for a dry run),
+  `signatures_unknown` and `fonts`. `written: false` is a successful dry run, not a
+  saved file. `fonts` has one entry for each `replace_text` that named a `font`, in plan
+  order: `operation` (its place in the plan, counted from one) and `font` (the font the
+  replacement was set in, with the reason when that is not the document's own). It is
+  empty when no operation named one. The plain-text output prints the same as
+  `operation 2: set in Noto Sans` lines.
 - `comments`: `input`, `complete`, `comments` and `limits`. Each comment has `id`
   (scan-local), one-based `page`, `kind`, `author`, `body`, `subject`, `date`,
   `rect` (`[left,top,right,bottom]`, unlike an edit request's width/height),

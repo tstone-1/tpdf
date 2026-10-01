@@ -13870,7 +13870,16 @@ files: the W-9 plan above, and *Ωж* typed into the passport guide's page 3, wh
 then writes. No other refusal carries the hint, and none does once a font is named. Four
 more mutations under `--only 'cli edit'`, caught on the first run.
 
-**Not done.** The command's report does not name the font that was used. Width, height, size and wrapping are not in the plan.
+**The report names the font** (added the same day). The worker lays a change with a box out
+for its reply and that layout has a label; `cli/edit.rs` dropped it. It is now the report's
+`fonts` list, one entry for each operation that named a font, and a reply without the label
+is an internal failure. Checked in the `cli` integration suite on a real edit: `noto_sans_bold`
+reports `Noto Sans Bold` against operation 2 of a two-operation plan, `auto` on a font that
+has the characters reports the document's own font, a plan with no `font` reports an empty
+list, and the plain output has the line. `--only 'cli edit: the font'` and `--only 'cli edit:
+a reply'` are its three mutations.
+
+**Not done.** Width, height, size and wrapping are not in the plan.
 
 ### Placed artwork — measured 2026-10-01
 

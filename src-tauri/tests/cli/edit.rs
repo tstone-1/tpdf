@@ -242,6 +242,64 @@ pub(super) fn operations(report: &mut Report) {
         code == 0 && target.exists() && names(&target) == ["Bravo", "Charlie", "Alp"],
         &stderr,
     );
+    // The report names the font of each replacement that asked for one, and
+    // of no other. `"auto"` on a font that has the characters keeps it.
+    let named = |font: Option<&str>, name: &str| {
+        let mut op = json!({"op":"replace_text","page":1,"operator":runs["runs"][0]["operator"],"revision":runs["revision"],"original":"Alpha","replacement":"Alp"});
+        if let Some(font) = font {
+            op["font"] = json!(font);
+        }
+        let target = dir.join(name);
+        let (code, made, stderr) = edit(
+            &source,
+            &target,
+            json!([{"op":"rotate","page":2,"degrees":90}, op]),
+            &[],
+        );
+        (code, made["fonts"].clone(), stderr, target)
+    };
+    let (code, fonts, stderr, target) = named(Some("noto_sans_bold"), "font-bold.pdf");
+    report.check(
+        "a replacement that names a font reports the font it was set in",
+        code == 0
+            && fonts == json!([{"operation":2,"font":"Noto Sans Bold"}])
+            && names(&target)[0] == "Alp",
+        &format!("{fonts}; {stderr}"),
+    );
+    let (code, kept, stderr, _) = named(Some("auto"), "font-auto.pdf");
+    let own = kept[0]["font"].as_str().unwrap_or_default().to_owned();
+    report.check(
+        "automatic on a font with the characters reports the document's own font",
+        code == 0 && kept[0]["operation"] == 2 && !own.is_empty() && !own.contains("Noto"),
+        &format!("{kept}; {stderr}"),
+    );
+    let (code, fonts, stderr, _) = named(None, "font-none.pdf");
+    report.check(
+        "control: a replacement that names no font reports none",
+        code == 0 && fonts == json!([]),
+        &format!("{fonts}; {stderr}"),
+    );
+    let plain = dir.join("font-plain.pdf");
+    let (code, said, stderr) = tool_with_stdin(
+        &[
+            "edit",
+            &source.display().to_string(),
+            "--plan",
+            "-",
+            "-o",
+            &plain.display().to_string(),
+        ],
+        &[],
+        &json!({"schema":1,"operations":[{"op":"replace_text","page":1,"operator":runs["runs"][0]["operator"],"revision":runs["revision"],"original":"Alpha","replacement":"Alp","font":"noto_sans_italic"}]}).to_string(),
+    );
+    report.check(
+        "the plain report says it in a line of its own",
+        code == 0
+            && said
+                .lines()
+                .any(|line| line == "operation 1: set in Noto Sans Italic"),
+        &format!("{said}; {stderr}"),
+    );
     let target = dir.join("stale.pdf");
     let (code, _, stderr) = edit(
         &source,
