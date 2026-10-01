@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import headers from "../../src-tauri/testdata/signature/headers.json";
 import { decodeSignature, signatureDimensions, fitSignature, rotateSignature, trimSignature, validSignature, type SignatureImage } from "./signature";
 
 const image: SignatureImage = { width: 2, height: 1, rgba: [255, 0, 0, 255, 0, 0, 255, 128] };
@@ -56,6 +57,24 @@ describe("signature import allocation boundary", () => {
       await expect(decodeSignature(new Blob([bytes]), decode)).rejects.toThrow();
     }
     expect(decode).not.toHaveBeenCalled();
+  });
+  // One file of headers, read here and by `signature_import/tests.rs`: this
+  // reader and the command-line tool's take the same files and read the same
+  // size from them. A limit or a rule changed on one side alone fails that
+  // side's test. The counts are the emptiness control.
+  it("reads the shared headers as the command-line tool reads them", () => {
+    let read = 0, refused = 0;
+    for (const { name, parts, size } of headers as { name: string; parts: (string | number)[]; size: number[] | null }[]) {
+      const bytes = new Uint8Array(parts.reduce<number>((sum, part) => sum + (typeof part === "number" ? part : part.length / 2), 0));
+      let at = 0;
+      for (const part of parts) {
+        if (typeof part === "number") { at += part; continue; }
+        for (let i = 0; i < part.length; i += 2) bytes[at++] = parseInt(part.slice(i, i + 2), 16);
+      }
+      if (size) { expect(signatureDimensions(bytes), name).toEqual({ width: size[0], height: size[1] }); read++; }
+      else { expect(() => signatureDimensions(bytes), name).toThrow("valid, still PNG or JPEG"); refused++; }
+    }
+    expect([read, refused]).toEqual([10, 36]);
   });
   it("closes a decoder result that disagrees with its header", async () => {
     const close = vi.fn();

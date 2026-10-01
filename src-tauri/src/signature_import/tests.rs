@@ -262,3 +262,50 @@ fn a_file_the_header_passes_and_the_decoder_does_not_is_refused() {
         .unwrap_err()
         .contains("transparent everywhere"));
 }
+
+// One file of headers, read here and by `signature.test.ts`: the chooser's
+// reader and this one take the same files and read the same size from them.
+// A limit or a rule changed on one side alone fails that side's test.
+#[test]
+fn the_shared_headers_are_read_as_the_chooser_reads_them() {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Part {
+        Zeros(usize),
+        Hex(String),
+    }
+    #[derive(serde::Deserialize)]
+    struct Case {
+        name: String,
+        parts: Vec<Part>,
+        size: Option<(u32, u32)>,
+    }
+    let cases: Vec<Case> =
+        serde_json::from_str(include_str!("../../testdata/signature/headers.json")).unwrap();
+    let (mut read, mut refused) = (0, 0);
+    for case in &cases {
+        let mut bytes = Vec::new();
+        for part in &case.parts {
+            match part {
+                Part::Zeros(count) => bytes.resize(bytes.len() + count, 0),
+                Part::Hex(hex) => bytes.extend(
+                    (0..hex.len())
+                        .step_by(2)
+                        .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap()),
+                ),
+            }
+        }
+        match case.size {
+            Some(size) => {
+                assert_eq!(dimensions(&bytes), Ok(size), "{}", case.name);
+                read += 1;
+            }
+            None => {
+                assert_eq!(dimensions(&bytes), Err(INVALID.into()), "{}", case.name);
+                refused += 1;
+            }
+        }
+    }
+    // A file that lost its cases would compare nothing and pass.
+    assert_eq!((read, refused), (10, 36));
+}

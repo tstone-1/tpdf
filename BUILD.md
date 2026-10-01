@@ -14029,5 +14029,18 @@ line that works today and draws the reason, which the same request says must not
 
 **Not done.** A signing with a real keychain or certificate-store key, on either platform.
 Anything on Windows beyond the type-check. `api/python/check_signing.py` with `image=`. EXIF
-orientation. The chooser and the tool still have separate copies of the limits, with nothing
-that compares them.
+orientation.
+
+**The two header readers are held to one file of cases** (added the same day).
+`src-tauri/testdata/signature/headers.json` has 46 headers, 10 read and 36 refused, and each
+reader has one test that runs all of them; the counts are asserted on both sides, so a file
+that lost its cases fails. The limits sit on both sides of each boundary: 8192 and 8193 pixels
+a side, 4096 by 2048 and 4096 by 2049, exactly 10 MiB and one byte more, for PNG and for JPEG.
+`python3 scripts/mutate_rust.py --only 'signature headers:'` (15) and
+`python3 scripts/mutate_frontend.py --only 'signature headers:'` (14) change one limit or one
+rule on one side, and each is caught. Ten of the fourteen frontend mutations are caught by
+this test alone: before it, nothing in the frontend suite checked a side limit of 8191, either
+byte limit, a lossless, progressive or twelve-bit JPEG, a scan before the frame, a second PNG
+header, a PNG end chunk with data, or a PNG without image data. To add a case, edit
+`src-tauri/testdata/signature/headers.py`, run it from the repository root, and raise the two
+counts.

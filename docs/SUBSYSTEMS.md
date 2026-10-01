@@ -321,7 +321,10 @@ grammar read before anything is decoded (`dimensions` is `signatureDimensions`, 
 rule), trimming of transparent margins, the 512 by 256 result, and `Image::valid`. Different:
 the decoder (`png` and `zune-jpeg`), the scaling (an alpha-weighted area average), and a
 JPEG's EXIF orientation, which is not applied. The chooser's *remove white background* box has
-no counterpart. A change to the limits or the grammar belongs in both files.
+no counterpart. A change to the limits or the grammar belongs in both files, and a test on
+each side holds them together: `src-tauri/testdata/signature/headers.json` is 46 image headers
+with the size each must read as, or none, and both `signature.test.ts` and
+`signature_import/tests.rs` read every one. `headers.py` beside it writes the file.
 
 `cli/sign.rs` reads the image before it asks the store for anything, so a file that cannot be
 used ends the run with no certificate listed and no key touched; with `--image` the saved
