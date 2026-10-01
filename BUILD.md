@@ -13719,3 +13719,55 @@ box*), and one of the new ones because it duplicated a re-aimed one.
 `editable-pptx` seed: the first run failed on that seed's first execution (the deletion finding
 above); after the fix, 24,186 executions from 131 at `INITED`, 100 MB peak RSS, no finding
 (`--sanitizer=none` on macOS, so not an AddressSanitizer result).
+
+### Passport guide: a list bullet mapped to a control character — measured 2026-10-01
+
+HM Passport Office's application guidance (`passport-guidance.pdf` in
+`testdata/textedit-public-corpus.json`, SHA-256 `0c70c5f7...4f21`, an InDesign export) had 1 of
+16 editable pages. Twelve of the fifteen refused pages reported the same first refusal,
+*unsupported or ambiguous Unicode character map*, and it was one glyph: every list item on
+pages 3 to 14 begins with a Wingdings bullet (`/C2_0 1 Tf <0079> Tj`, a Type0 Identity-H
+TrueType font holding that single glyph) whose ToUnicode entry is `<0079> <009F>`, a C1 control
+character. `mapping::unicode_codes` refused any control target.
+
+A scratch build with that one check removed made ten of the twelve pages editable, which is
+what settled the rule before it was written: the map is admitted, and the glyph is read-only
+(`docs/TEXTEDIT.md`). The run counts say only the bullets were withdrawn: against the scratch
+build, each page has exactly as many fewer runs as it has bullets (page 3, 170 and 160 with
+ten bullets; page 9, 216 and 159 with fifty-seven).
+
+| Passport guide page | Before | Now |
+|---|---|---|
+| 1, 13, 15 | unsupported ActualText marked-content sequence | the same |
+| 2 | unsupported inline spacing sequence | the same |
+| 3--7, 9--12, 14 | unsupported or ambiguous Unicode character map | editable, 133 to 191 runs |
+| 8 | unsupported or ambiguous Unicode character map | unsupported external text graphics state |
+| 16 | editable, 37 runs | the same |
+
+The five public documents go from 20 to 30 editable pages of 45, and the six practical
+documents from 22 to 32 of 47. The others are unchanged: factsheet 6/6, mouse guide 0/2,
+research paper 12/15, W-9 1/6.
+
+**One unchanged page, through the path a reader's edit takes.** `tpdf-cli text-runs --page 3`
+lists *The Child box is for under 16s.*, the first bulleted line; `tpdf-cli edit` replaces it
+with *The Child box is for under 18s.* and saves. `qpdf --check` finds no errors, `pdftotext`
+reads the new sentence on page 3, and Poppler renders of all sixteen pages at 100 dpi differ
+in 52 pixels, every one inside the edited run's rectangle; the bullets and the other fifteen
+pages are pixel-identical. The source's digest is unchanged.
+
+```sh
+src-tauri/target/debug/tpdf-cli text-runs scratch/textedit-public/passport-guidance.pdf --page 3 --json
+src-tauri/target/debug/tpdf-cli edit scratch/textedit-public/passport-guidance.pdf --plan plan.json -o edited.pdf
+```
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'control target'`: three, each caught by
+the test named for it. *unicode: a zero-width mark is written* was re-aimed, since the line it
+edits gained a term, and is still caught.
+
+**Fuzz.** `uv run src-tauri/fuzz/run.py --target textedit_scan --seconds 20`: 22,973 executions
+from 14,314 at `INITED`, 95 MB peak RSS, no finding (`--sanitizer=none` on macOS).
+
+**Not done.** The five pages still refused, each by a construct of its own. A native-window
+edit of the page, PDFKit readback and a Windows run were not made (`scripts/check_windows.py`
+compiles it); the full mutation table was not run. The Wellington agenda was not downloaded
+for this run, so its 2/2 in the six-document total is the earlier measurement.

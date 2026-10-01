@@ -32,6 +32,15 @@ have the binary.)
   edits: with edits pending it asks, and offers *Save a copy* first. A file whose
   timestamp moved while its contents stayed the same is not reported.
 
+### Changed
+
+- **Text on a page with symbol-font list bullets can be edited.** A page was
+  refused for text editing when a bullet's font gave the bullet no readable
+  character, which is how Adobe InDesign writes Wingdings bullets. The bullet
+  now stays as it is, read-only, and the text beside it is editable. In the
+  passport application guide used as a test document this takes 10 more of its
+  16 pages from refused to editable.
+
 ## [26.9.24] - 2026-09-30
 
 ### Added

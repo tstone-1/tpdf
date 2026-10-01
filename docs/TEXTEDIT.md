@@ -675,6 +675,12 @@ box, is kept read-only at its PDF width with its ink reserved (up to
 `type1::OPAQUE_REACH`), where it used to refuse the font; LuaTeX writes TeX's
 italic correction into math widths. A PDF width of zero (Typst's combining macron
 under `DW 0`) is such a read-only mark too, the only glyph whose layout step may be zero.
+A composite font's ToUnicode entry may name one control character (InDesign maps
+its Wingdings list bullet to U+009F): that glyph has no text, so it is read-only
+in the same way, reads as `fonts::OPAQUE`, and no replacement can write it. The
+text shown after it in another operator stays editable. A simple font's map and
+Type3 (`mapping::unicode_single`) still refuse a control target, and a control
+inside a sequence is refused everywhere.
 The ToUnicode label grammar
 (`mapping::labels`) takes `CMapName`, `CMapType` 0-2, `CMapVersion`, `WMode 0`
 and `CIDSystemInfo` in any order, each once, the last also as Typst's

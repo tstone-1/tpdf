@@ -217,10 +217,21 @@ fn unicode_cid_preserves_scalars_and_refuses_ambiguous_or_overflowing_maps() {
         (shared[&0x101].as_str(), shared[&0x102].as_str()),
         ("\u{4e00}", "\u{4e00}")
     );
+    // One control character is kept as it is written (InDesign's Wingdings
+    // bullet is U+009F); `unicode::Metrics` makes the glyph read-only.
+    let bullet = unicode_cid(&stream(&map(
+        "2 beginbfchar <0101> <009f> <0102> <000a> endbfchar",
+    )))
+    .unwrap();
+    assert_eq!(
+        (bullet[&0x101].as_str(), bullet[&0x102].as_str()),
+        ("\u{9f}", "\n")
+    );
     for invalid in [
         "2 beginbfchar <0101> <4e00> <0101> <4e01> endbfchar",
         "1 beginbfchar <0101> <d840> endbfchar",
-        "1 beginbfchar <0101> <000a> endbfchar",
+        // A control character beside a letter is no ligature.
+        "1 beginbfchar <0101> <0041009f> endbfchar",
         "1 beginbfchar <0101> <00410031> endbfchar",
         "1 beginbfchar <0101> <00410020> endbfchar",
         "1 beginbfchar <0101> <0041004200430044> endbfchar",
@@ -229,6 +240,15 @@ fn unicode_cid_preserves_scalars_and_refuses_ambiguous_or_overflowing_maps() {
     ] {
         assert!(unicode_cid(&stream(&map(invalid))).is_err(), "{invalid}");
     }
+}
+
+// The control-character target is a composite font's only: a simple font's
+// map still refuses one, as it refuses a missing entry.
+#[test]
+fn unicode_single_refuses_a_control_character_target() {
+    assert_eq!(unicode_single(&stream(MAP)).unwrap()[&1], "A");
+    let control = MAP.replace("<01> <0041>", "<01> <009F>");
+    assert!(unicode_single(&stream(&control)).is_err());
 }
 
 // ConTeXt names a composite font's ToUnicode after the font, like pdfTeX:

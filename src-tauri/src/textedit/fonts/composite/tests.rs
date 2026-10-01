@@ -941,3 +941,49 @@ fn textedit_cid_letter_ligatures_decode_and_encode_by_longest_match() {
     // Y is no longer a character this font can write.
     assert!(metrics.encode("Y").is_err());
 }
+
+// InDesign maps its Wingdings list bullet to U+009F. A glyph whose map names
+// a control character has no text: it reads as `OPAQUE`, its line stays
+// read-only, nothing can write it, and the rest of the page is editable.
+#[test]
+fn textedit_a_glyph_mapped_to_a_control_character_is_read_only() {
+    let (mut doc, [font, _, _, mapping]) = fixture();
+    let named = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    let glyph = named.encode("F").unwrap();
+    let stream = doc
+        .get_object_mut(mapping)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap();
+    // "F" is in the first line only, so the second stays editable.
+    let map = String::from_utf8(stream.content.clone()).unwrap();
+    assert_eq!(map.matches("> <0046>").count(), 1);
+    stream.content = map.replace("> <0046>", "> <009f>").into_bytes();
+
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    assert_eq!(
+        metrics.source_layout(&glyph, 12., 0., 0.).unwrap().0,
+        super::super::OPAQUE.to_string()
+    );
+    assert!(metrics.encode("F").is_err());
+    assert!(metrics.encode("\u{9f}").is_err());
+    assert!(metrics.encode("N").is_ok());
+
+    let source = textedit::scan(&doc, 0).unwrap();
+    let texts: Vec<_> = source.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(texts, ["SYNTHETIC SECOND"]);
+    let before = doc.objects[&font].clone();
+    let change = Change {
+        layout: None,
+        replacement: "EDITED".into(),
+        original: source.runs[0].text.clone(),
+        page: 0,
+        revision: source.revision,
+        operator: source.runs[0].operator,
+    };
+    textedit::write(&mut doc, &[change]).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    let texts: Vec<_> = after.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(texts, ["EDITED"]);
+    assert_eq!(doc.objects[&font], before);
+}

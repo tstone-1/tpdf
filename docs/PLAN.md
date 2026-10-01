@@ -14914,6 +14914,15 @@ document needs more, since raising it costs scan time and memory on every page; 
 guide stays refused. The next practical target is still to be chosen by its complete blocker
 inventory, as the factsheet was.
 
+**The passport guide, 2026-10-01 (unreleased, macOS).** Chosen because 12 of its 15 refused
+pages shared one first refusal, and that was one glyph: InDesign's Wingdings list bullet,
+mapped to the control character U+009F. A composite font's glyph mapped to a control character
+is now kept read-only instead of refusing the font, and the guide is 11/16; the six practical
+documents are 32 of 47. Page 3 passes replacement of a bulleted line, save and independent
+readback (`BUILD.md`, *Passport guide: a list bullet mapped to a control character*). Its five
+remaining pages each stop at a different construct: ActualText marked content (three), an inline
+spacing sequence, and an external text graphics state.
+
 ### Phase 6 — Cryptographic signing
 
 A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,

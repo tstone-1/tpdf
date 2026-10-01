@@ -98,8 +98,15 @@ fn unicode_codes(
                 // longest mapped sequence. Several glyphs may share a text (a
                 // small capital and its capital, a delimiter's sizes); each
                 // reads as that text and none is written for it.
+                //
+                // A composite font's glyph may be mapped to one control
+                // character: InDesign maps its Wingdings list bullet to U+009F.
+                // That names no text, so `unicode::Metrics` keeps the glyph
+                // read-only and it reads as `OPAQUE`. A simple font's map may
+                // not: nothing has needed it.
+                let control = text.chars().any(char::is_control);
                 if (text.chars().count() != 1 && !text.chars().all(char::is_alphabetic))
-                    || text.chars().any(char::is_control)
+                    || (control && !wide)
                     || result.insert(code, text).is_some()
                 {
                     return Err(invalid());

@@ -134,8 +134,12 @@ impl Metrics {
                 return Err("composite font widths disagree with its glyph metrics".into());
             }
             // A zero width is a combining mark set over the glyph before it
-            // (Typst's macron, under `DW 0`): measured, never written.
-            let agrees = !read_only && width > 0. && (width - advance).abs() <= 1.;
+            // (Typst's macron, under `DW 0`): measured, never written. So is
+            // a glyph the map gives a control character (`mapping`): it has
+            // no text to write, and is measured at its PDF width like one
+            // whose program disagrees.
+            let unnamed = text.chars().any(char::is_control);
+            let agrees = !read_only && !unnamed && width > 0. && (width - advance).abs() <= 1.;
             let bounds = match ink {
                 Some([left, bottom, right, top])
                     if agrees
