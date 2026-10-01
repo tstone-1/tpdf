@@ -40,6 +40,19 @@ have the binary.)
   IRS W-9, while the editor made it. Without `font` a plan behaves as before,
   and a refusal that a fallback font would answer now says to add it.
 
+- **`tpdf sign --image <file>` draws a signature image from a file.** A visible
+  signature could only draw the image saved in the application, so a script could
+  not pass a company stamp and the result depended on what each computer had
+  saved. `--image` takes a PNG or JPEG for that signature only; the saved image is
+  neither read nor changed. A file that is missing or is not a usable image ends
+  the command before any certificate or key is asked for. `--image` with
+  `--no-image` is refused. In the Python client it is `image=`.
+- **`tpdf sign --hide reason,location` writes a reason or location without
+  drawing it.** Both are still drawn unless `--hide` names them, so existing
+  command lines draw what they drew. With an image-only appearance
+  (`--image stamp.png --lines ""`) this keeps text off the stamp. In the Python
+  client it is `hide=`.
+
 ### Changed
 
 - **Text on a page with symbol-font list bullets can be edited.** A page was

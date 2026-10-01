@@ -633,6 +633,8 @@ mod tests {
                 date: false,
                 reason: "Geprüft".into(),
                 location: "Köln".into(),
+                hide_reason: false,
+                hide_location: false,
             }
         );
 

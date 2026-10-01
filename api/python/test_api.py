@@ -444,7 +444,19 @@ class ClientTests(unittest.TestCase):
                 '--visible', '--rect', '10,20,200,80', '--page', '2', '--no-image', '--lines', '',
                 '--reason', 'Synthetic approval', '--location', 'Synthetic location',
                 '--timestamp', 'digicert', '--long-term', '--force', '--', '--input.pdf'])
+            self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID', rect=[10, 20, 200, 80],
+                image='stamp.png', lines=[], reason='Synthetic approval', hide=['reason'])
+            self.assertEqual(popen.call_args.args[0][1:], [
+                'sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID',
+                '--visible', '--rect', '10,20,200,80', '--image', 'stamp.png', '--lines', '',
+                '--hide', 'reason', '--reason', 'Synthetic approval', '--', 'input.pdf'])
             popen.reset_mock()
+            with self.assertRaises(ValueError):
+                self.pdf.sign(self.source, 'unused.pdf', identity='SYNTHETIC ID', rect=[10, 20, 200, 80],
+                    image='stamp.png', no_image=True)
+            with self.assertRaises(TypeError):
+                self.pdf.sign(self.source, 'unused.pdf', identity='SYNTHETIC ID', hide='reason')
+            popen.assert_not_called()
             for identity in ['', '   ', None]:
                 with self.assertRaises(ValueError):
                     self.pdf.sign(self.source, 'unused.pdf', identity=identity)

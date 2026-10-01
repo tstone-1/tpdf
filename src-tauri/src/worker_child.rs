@@ -677,6 +677,15 @@ fn handle(
                 Err(e) => Response::err(e),
             }
         }
+        Request::SignatureImage => match inputs {
+            None => Response::err(
+                "this worker was not started with an image file, so it has none to decode",
+            ),
+            Some(image) => match crate::signature_import::decode(image.as_slice()) {
+                Ok(image) => Response::reply(Reply::SignatureImage(image)),
+                Err(why) => Response::err(why),
+            },
+        },
         Request::SignaturePreview { at, visible } => {
             match render::run_signature_preview(bindings, *at, visible) {
                 Ok(preview) => Response::reply(Reply::SignaturePreview(preview)),

@@ -13980,3 +13980,54 @@ whether the editor's dashed box follows it was not looked at. A page displayed a
 run's origin, so a centred line near the right edge is refused although it would grow only half
 as far that way. A centred line with other runs on it, right-aligned text and justified text
 are unchanged. PDFKit readback, a Windows run, the full mutation table.
+
+### `sign --image` and `sign --hide` — measured 2026-10-01
+
+**Why there is a Rust decoder.** The request was for the file to go through the path and
+limits of an image imported in the signature chooser, with no second decoder. The chooser's
+decoder is the webview's (`createImageBitmap` in `signature.ts`), which the command-line tool
+does not have. So the limits and the header grammar are the chooser's, ported rule for rule,
+and the decoding is `png` and `zune-jpeg`, both already linked. It runs in a worker.
+`docs/SUBSYSTEMS.md` lists what is shared and what differs.
+
+**A worker that reads a second file and writes nothing.** `Worker::spawn_mapped` refused an
+inputs mapping without an output file on both platforms, because on macOS the descriptor
+shuffle filled its two optional slots in order. The slots are now filled independently and the
+refusal is gone. The Windows arm already handed the two over independently; only its guard
+was removed, and it has not been run on Windows.
+
+**The end-to-end checks** are `tests/cli/sign_image.rs`, in the `cli` integration suite (371
+checks, real workers, a software key, a store that counts): the file's pixels are read back
+from the signed document's image XObject with and without a saved image, and the saved image
+is read zero times; the control without `--image` draws the saved image and reads it once;
+`--lines ""` leaves an appearance with no text; a 1200 by 300 picture arrives as 512 by 128;
+seven unusable files (missing, text, empty, cut short, over 10 MB, a PDF, transparent) exit 3
+naming the file and the reason, write nothing, and leave the certificate list, the key and
+the saved image untouched; a document that is not a PDF is refused as the document. With
+`--reason "Document approved" --hide reason`, `/Reason` is set and the appearance has no text;
+without `--hide` the same line draws it.
+
+**Rendered with Poppler at 72 dpi**, rectangle `40,40,200,80` on a 400 by 300 page: image
+alone, the stamp fills 64 to 216 by 42 to 118 and nothing else on the page is dark but the
+page's own stroke; with the default lines, the stamp is in the left half, 42 to 138, with the
+text beside it; with the hidden reason, as image alone. `tpdf-cli verify` reads the
+signature intact.
+
+**Mutations.** `python3 scripts/mutate_rust.py --only 'signature image:'` (15), `--only
+'sign: --'` (5) and `--only 'sign: a hidden'` (3). Three were not caught at first and each
+was a redundant line rather than a missing test: `Transformations::EXPAND`, which `ALPHA`
+implies, and two guards for an image that shows nothing where one does the work. All three
+lines are gone. The harness cannot name a check in the `cli` suite, so eight more were applied
+by hand, one at a time, and the suite run against each: the saved image drawn for a file, no
+image drawn, the store asked before the image, the worker decoding nothing, every worker
+refusal reported as the image's, no size check before the worker, `--hide` not passed on, the
+image descriptor not handed over. Each turned at least one check red.
+
+**The item-2 acceptance line needs `--hide reason`.** As written it adds only `--reason` to
+`--image stamp.png --lines ""` and expects no text, but `--lines "" --reason X` is a command
+line that works today and draws the reason, which the same request says must not change.
+
+**Not done.** A signing with a real keychain or certificate-store key, on either platform.
+Anything on Windows beyond the type-check. `api/python/check_signing.py` with `image=`. EXIF
+orientation. The chooser and the tool still have separate copies of the limits, with nothing
+that compares them.

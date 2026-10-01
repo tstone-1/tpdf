@@ -587,6 +587,42 @@ impl InWorker {
         awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Declined::Failed)?
     }
 
+    /// The signature image in `image`, decoded by a worker started over `file`.
+    ///
+    /// `Request::SignatureImage`. The worker holds the document being signed
+    /// because a worker is started over one; the image is its second,
+    /// read-only mapping, and the only thing the request reads.
+    ///
+    /// # Errors
+    ///
+    /// As [`InWorker::properties`]; a refusal is `signature_import`'s own, or
+    /// the document's when it does not open.
+    pub fn signature_image(
+        &self,
+        file: &std::fs::File,
+        len: usize,
+        image: &std::fs::File,
+        image_len: usize,
+    ) -> Result<crate::signature::Image, Declined> {
+        let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
+        let image = Shm::map_open_file(image, image_len).map_err(Declined::Failed)?;
+        let worker = Worker::spawn_reading(std::sync::Arc::new(mapped), &image, &self.library_dir)
+            .map_err(Declined::Failed)?;
+        let pid = worker.pid();
+        let rx = asked_on_a_thread(worker, |worker| {
+            match Self::asked(worker, &Request::SignatureImage)? {
+                Reply::SignatureImage(image) => Ok(image),
+                other => Err(Declined::Failed(format!(
+                    "the worker answered the image request with {other:?}"
+                ))),
+            }
+        });
+        // The segment is this function's and outlives the wait, as a merge's does.
+        let answer = awaited(&rx, DEFAULT_DEADLINE, pid).map_err(Declined::Failed)?;
+        drop(image);
+        answer
+    }
+
     /// The revision a signature goes into, built by a worker holding `file`.
     ///
     /// `Request::PrepareSignature`, which the document's own pool answers in

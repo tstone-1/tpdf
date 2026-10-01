@@ -95,6 +95,8 @@ mod os_key;
 mod pages;
 #[path = "cli/render.rs"]
 mod render;
+#[path = "cli/sign_image.rs"]
+mod sign_image;
 // `redact`, for the same reason.
 #[cfg(target_os = "macos")]
 #[path = "cli/image_log.rs"]
@@ -120,11 +122,15 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 20] = [
+    let checks: [Check; 21] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
             sign_reads_back,
+        ),
+        (
+            "sign --image draws the file's image, and refuses a bad file before the store",
+            sign_image::draws_the_file,
         ),
         (
             "a timestamp minted by the test authority reads back through the tool",

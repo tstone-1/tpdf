@@ -63,7 +63,7 @@ fn a_whole_visible_signing_line_parses_into_what_the_worker_is_sent() {
             rect: [10.0, 20.0, 160.0, 80.0],
         })
     );
-    assert!(!sign.image);
+    assert_eq!(sign.image, sign::Picture::None);
     assert_eq!(
         sign.lines,
         Lines {
@@ -80,10 +80,84 @@ fn a_whole_visible_signing_line_parses_into_what_the_worker_is_sent() {
     // page 1, no replacing.
     let plain = signed("sign in.pdf --output out.pdf --identity A");
     assert_eq!(plain.visible, None);
-    assert!(plain.image && !plain.force && !plain.json);
+    assert!(plain.image == sign::Picture::Saved && !plain.force && !plain.json);
     assert_eq!(plain.lines, Lines::default());
     let visible = signed("sign in.pdf -o out.pdf --identity A --visible --rect 0,0,100,40");
     assert_eq!(visible.visible.map(|p| p.page), Some(1));
+}
+
+#[test]
+fn an_image_file_is_a_visible_signatures_and_excludes_no_image() {
+    let visible = "sign in.pdf -o out.pdf --identity A --visible --rect 0,0,100,40";
+    assert_eq!(
+        signed(&format!("{visible} --image stamps/acme.png")).image,
+        sign::Picture::File(PathBuf::from("stamps/acme.png"))
+    );
+    // Not a second document: the path is the option's value.
+    assert_eq!(
+        signed(&format!("{visible} --image stamp.png")).input,
+        PathBuf::from("in.pdf")
+    );
+    assert!(
+        refused("sign in.pdf -o out.pdf --identity A --image stamp.png")
+            .contains("`--image` describes a visible signature")
+    );
+    for line in [
+        format!("{visible} --image stamp.png --no-image"),
+        format!("{visible} --no-image --image stamp.png"),
+    ] {
+        assert!(refused(&line).contains("give one of them"), "{line}");
+    }
+    assert!(refused(&format!("{visible} --image")).contains("--image"));
+}
+
+#[test]
+fn hide_names_what_is_written_and_not_drawn() {
+    let visible = "sign in.pdf -o out.pdf --identity A --visible --rect 0,0,100,40";
+    // Nothing is hidden unless it is said.
+    let plain = signed(&format!("{visible} --reason Approved --location Hamburg"));
+    assert_eq!(plain.hide, sign::Hidden::default());
+    assert_eq!(
+        signed(&format!("{visible} --reason Approved --hide reason")).hide,
+        sign::Hidden {
+            reason: true,
+            location: false
+        }
+    );
+    assert_eq!(
+        signed(&format!(
+            "{visible} --reason Approved --location Hamburg --hide location,reason"
+        ))
+        .hide,
+        sign::Hidden {
+            reason: true,
+            location: true
+        }
+    );
+    for (line, says) in [
+        (
+            "sign in.pdf -o out.pdf --identity A --hide reason".to_string(),
+            "`--hide` describes a visible signature",
+        ),
+        (
+            format!("{visible} --hide reason"),
+            "no `--reason` was given",
+        ),
+        (
+            format!("{visible} --reason Approved --hide location"),
+            "no `--location` was given",
+        ),
+        (
+            format!("{visible} --reason Approved --hide date"),
+            "`date` is neither",
+        ),
+        (
+            format!("{visible} --reason Approved --hide ,"),
+            "was given neither",
+        ),
+    ] {
+        assert!(refused(&line).contains(says), "{line}: {}", refused(&line));
+    }
 }
 
 #[test]

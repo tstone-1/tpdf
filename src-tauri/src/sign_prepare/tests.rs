@@ -946,6 +946,7 @@ fn options_for(mask: u32, reason: &str, location: &str) -> Options {
         } else {
             String::new()
         },
+        ..Options::default()
     }
 }
 
@@ -1209,6 +1210,66 @@ fn a_reason_or_location_that_cannot_be_drawn_is_refused() {
     let (_, widget) = new_widget(&after, &unsigned);
     let strings = strings_of(&after, &widget);
     assert_eq!(&strings[3..], ["Reason: Geprüft", "Location: Köln"]);
+}
+
+// `sign --hide`: the dictionary carries the text and the appearance does not.
+#[test]
+fn a_hidden_reason_or_location_is_written_and_not_drawn() {
+    let original = two_pages(0);
+    let latin = |text: &str| text.chars().map(|ch| ch as u8).collect::<Vec<u8>>();
+    for (hide_reason, hide_location, drawn) in [
+        // Control: what every line without `--hide` draws.
+        (false, false, vec!["Reason: Approved", "Location: Hamburg"]),
+        (true, false, vec!["Location: Hamburg"]),
+        (false, true, vec!["Reason: Approved"]),
+        (true, true, vec![]),
+    ] {
+        let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+        placed.options.reason = "Approved".into();
+        placed.options.location = "Hamburg".into();
+        placed.options.hide_reason = hide_reason;
+        placed.options.hide_location = hide_location;
+        let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("prepared");
+        let after = reread(&original, &unsigned);
+        let (_, widget) = new_widget(&after, &unsigned);
+        assert_eq!(
+            &strings_of(&after, &widget)[3..],
+            drawn.as_slice(),
+            "{hide_reason} {hide_location}"
+        );
+        let signature = signature_of(&after, &widget);
+        assert_eq!(bytes_of(&signature, b"Reason"), Some(latin("Approved")));
+        assert_eq!(bytes_of(&signature, b"Location"), Some(latin("Hamburg")));
+    }
+    // Hidden text is not something shown: with no line and no image there is
+    // nothing to draw, and with an image the image is the whole appearance.
+    let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    placed.options = Options {
+        label: false,
+        name: false,
+        date: false,
+        reason: "Approved".into(),
+        hide_reason: true,
+        ..Options::default()
+    };
+    assert!(prepare_visible(original.clone(), NOW, None, &placed)
+        .expect_err("nothing drawn")
+        .contains("has to show something"));
+    placed.options.hide_reason = false;
+    assert!(prepare_visible(original.clone(), NOW, None, &placed).is_ok());
+    placed.options.hide_reason = true;
+    placed.image = Some(raster());
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("image alone");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert!(strings_of(&after, &widget).is_empty());
+    assert_eq!(
+        bytes_of(&signature_of(&after, &widget), b"Reason"),
+        Some(latin("Approved"))
+    );
+    // A hidden text is still held to what the dictionary may carry.
+    placed.options.reason = "Appr\noved".into();
+    assert!(prepare_visible(original, NOW, None, &placed).is_err());
 }
 
 #[test]

@@ -247,6 +247,7 @@ fn main() {
         date: lines.contains(&"date"),
         reason: value("--reason").unwrap_or_default(),
         location: value("--location").unwrap_or_default(),
+        ..Options::default()
     };
     let image = (!args.iter().any(|a| a == "--no-image")).then(raster);
     let visible = args.iter().any(|a| a == "--visible").then(|| Visible {

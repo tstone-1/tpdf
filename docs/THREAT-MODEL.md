@@ -2308,7 +2308,13 @@ is what unattended use rests on, and is the reader's decision. A smart card or t
 its PIN in its own dialog. The tool supplies no password, sets no access control and
 disables no prompt. A visible signature reads the saved signature image from the same
 protected store (`signature_store.rs`) under the application's service name, which is a second
-item and the OS may ask about it separately; `--no-image` does not read it. A key file
+item and the OS may ask about it separately; `--no-image` does not read it, and neither
+does `--image <file>`, which reads the named PNG or JPEG instead. That file is input like any
+other: the tool opens it, holds its size to 10 MB, and hands it to a worker as a second
+read-only mapping, where `signature_import` reads its header by a fixed grammar and then
+decodes it (`png`, `zune-jpeg`) under an 8-megapixel bound. The tool's own process parses no
+image. The worker is given nothing to write. A refusal there ends the command before the
+store is asked for a certificate. A key file
 (`.p12`) option is deliberately absent in this version: it would put a private key in a file
 this process reads, which the whole design avoids, and is an explicit later decision.
 

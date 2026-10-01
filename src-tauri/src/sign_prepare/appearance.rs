@@ -112,6 +112,11 @@ pub struct Options {
     /// Where it was signed, or blank for none. Written as `/Location` and drawn
     /// as *Location: ...*.
     pub location: String,
+    /// Write the reason and do not draw it: `sign --hide reason`, for an
+    /// appearance that is an image alone. Off wherever it is not said.
+    pub hide_reason: bool,
+    /// The same for the location.
+    pub hide_location: bool,
 }
 
 impl Default for Options {
@@ -123,6 +128,8 @@ impl Default for Options {
             date: true,
             reason: String::new(),
             location: String::new(),
+            hide_reason: false,
+            hide_location: false,
         }
     }
 }
@@ -138,6 +145,18 @@ impl Options {
     #[must_use]
     pub fn location(&self) -> Option<&str> {
         Some(self.location.trim()).filter(|text| !text.is_empty())
+    }
+
+    /// The reason as a line of the appearance: none when it is hidden.
+    #[must_use]
+    pub fn drawn_reason(&self) -> Option<&str> {
+        self.reason().filter(|_| !self.hide_reason)
+    }
+
+    /// The location as a line of the appearance: none when it is hidden.
+    #[must_use]
+    pub fn drawn_location(&self) -> Option<&str> {
+        self.location().filter(|_| !self.hide_location)
     }
 }
 
@@ -217,10 +236,10 @@ pub fn words(name: &str, pdf_date: &str, options: &Options) -> Vec<String> {
             part(12, 14)
         ));
     }
-    if let Some(reason) = options.reason() {
+    if let Some(reason) = options.drawn_reason() {
         lines.push(format!("Reason: {reason}"));
     }
-    if let Some(location) = options.location() {
+    if let Some(location) = options.drawn_location() {
         lines.push(format!("Location: {location}"));
     }
     lines
@@ -264,8 +283,8 @@ pub fn check(visible: &Visible) -> Result<(), String> {
     let lines = options.label
         || options.name
         || options.date
-        || options.reason().is_some()
-        || options.location().is_some();
+        || options.drawn_reason().is_some()
+        || options.drawn_location().is_some();
     if !lines && visible.image.is_none() {
         return Err(
             "a visible signature has to show something --- choose an image or at least one \

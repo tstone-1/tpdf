@@ -18,8 +18,8 @@ use crate::sign_prepare::{Options, Visible};
 /// `sign`, registered.
 pub const COMMAND: Registered = Registered {
     name: "sign",
-    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
-    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given. --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
+    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--image FILE | --no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]\n         [--hide reason,location]]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
+    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason and --location are written\n            to the signature and drawn as lines of it; --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
     parse: boxed,
 };
 
@@ -35,15 +35,16 @@ pub struct Sign {
     pub identity: String,
     /// Where a visible signature goes; `None` for an invisible one.
     pub visible: Option<Placement>,
-    /// Whether a visible signature draws the saved signature image, when one is
-    /// saved. `--no-image` turns it off.
-    pub image: bool,
+    /// The image a visible signature draws.
+    pub image: Picture,
     /// Which of the three lines a visible signature draws.
     pub lines: Lines,
     /// `/Reason`, drawn and written; empty for none.
     pub reason: String,
     /// `/Location`, drawn and written; empty for none.
     pub location: String,
+    /// `--hide`: which of the two are written and not drawn.
+    pub hide: Hidden,
     /// The timestamp authority `--timestamp` names, already judged by
     /// `tsa::authority`; `None` asks nobody for anything.
     pub timestamp: Option<url::Url>,
@@ -54,6 +55,18 @@ pub struct Sign {
     pub json: bool,
     /// `--force`: replace an existing output file.
     pub force: bool,
+}
+
+/// Which image a visible signature draws.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Picture {
+    /// The saved signature image, when one is saved. The default.
+    Saved,
+    /// None: `--no-image`.
+    None,
+    /// The PNG or JPEG file `--image` names, for this signature only. The
+    /// saved image is neither read nor changed.
+    File(PathBuf),
 }
 
 /// Where a visible signature goes.
@@ -77,6 +90,17 @@ pub struct Lines {
     pub name: bool,
     /// The signing time.
     pub date: bool,
+}
+
+/// What `--hide` names: text written to the signature and kept out of its
+/// appearance. Nothing by default, so a line without `--hide` draws what it
+/// always drew.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Hidden {
+    /// `/Reason` is written and *Reason: ...* is not drawn.
+    pub reason: bool,
+    /// `/Location` is written and *Location: ...* is not drawn.
+    pub location: bool,
 }
 
 impl Default for Lines {
@@ -105,10 +129,12 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut visible = false;
     let mut page: Option<u32> = None;
     let mut rect: Option<[f32; 4]> = None;
-    let mut image: Option<bool> = None;
+    let mut no_image = false;
+    let mut image: Option<PathBuf> = None;
     let mut lines: Option<Lines> = None;
     let mut reason: Option<String> = None;
     let mut location: Option<String> = None;
+    let mut hide: Option<Hidden> = None;
     let mut timestamp: Option<url::Url> = None;
     let mut long_term = false;
     let mut json = false;
@@ -124,10 +150,12 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
             (false, "--visible") => visible = true,
             (false, "--page") => page = Some(page_number(value(arg, &mut rest)?)?),
             (false, "--rect") => rect = Some(rectangle(value(arg, &mut rest)?)?),
-            (false, "--no-image") => image = Some(false),
+            (false, "--no-image") => no_image = true,
+            (false, "--image") => image = Some(PathBuf::from(value(arg, &mut rest)?)),
             (false, "--lines") => lines = Some(line_list(value(arg, &mut rest)?)?),
             (false, "--reason") => reason = Some(value(arg, &mut rest)?.clone()),
             (false, "--location") => location = Some(value(arg, &mut rest)?.clone()),
+            (false, "--hide") => hide = Some(hidden_list(value(arg, &mut rest)?)?),
             // Judged here, so an address tpdf will not ask --- `ftp:`, a
             // typo, a URL with a password in it --- is a malformed line and
             // exit 2, before any worker, key or socket.
@@ -179,10 +207,12 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let appearance = [
         ("--page", page.is_some()),
         ("--rect", rect.is_some()),
-        ("--no-image", image.is_some()),
+        ("--no-image", no_image),
+        ("--image", image.is_some()),
         ("--lines", lines.is_some()),
         ("--reason", reason.is_some()),
         ("--location", location.is_some()),
+        ("--hide", hide.is_some()),
     ];
     if !visible {
         if let Some((flag, _)) = appearance.iter().find(|(_, given)| *given) {
@@ -190,6 +220,29 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
                 "`{flag}` describes a visible signature --- add `--visible`, or leave it out"
             ));
         }
+    }
+    // Hiding what was not given is a line with a mistake in it: the script
+    // meant a reason to be written, and none would be.
+    let hide = hide.unwrap_or_default();
+    for (word, hidden, given) in [
+        ("reason", hide.reason, reason.is_some()),
+        ("location", hide.location, location.is_some()),
+    ] {
+        if hidden && !given {
+            return Err(format!(
+                "`--hide {word}` writes the {word} without drawing it, and no `--{word}` was \
+                 given"
+            ));
+        }
+    }
+    // Two answers to one question. Neither wins silently: a script that passes
+    // both has a mistake in it, and which image was drawn would hide it.
+    if no_image && image.is_some() {
+        return Err(
+            "`--image` names the image to draw and `--no-image` says to draw none --- give one \
+             of them"
+                .into(),
+        );
     }
     // Long-term validation data rests on a timestamp (B-LT is B-T with the
     // data added), so asking for it without one is a malformed line.
@@ -218,10 +271,15 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         output,
         identity,
         visible: placement,
-        image: image.unwrap_or(true),
+        image: match image {
+            Some(path) => Picture::File(path),
+            None if no_image => Picture::None,
+            None => Picture::Saved,
+        },
         lines: lines.unwrap_or_default(),
         reason: reason.unwrap_or_default(),
         location: location.unwrap_or_default(),
+        hide,
         timestamp,
         long_term,
         json,
@@ -271,6 +329,52 @@ pub(crate) fn read_back_holds(
                     .as_ref()
                     .is_some_and(|t| intact(t.integrity.as_ref())))
     }) && (!long_term || crate::longterm::check(signatures, field).is_ok())
+}
+
+/// The image in the file `--image` names.
+///
+/// Refused, naming the file and why: it cannot be opened, it is larger than
+/// the chooser's own limit, or it is not an image `signature_import` reads.
+fn image_file(
+    env: &Env<'_>,
+    document: &std::fs::File,
+    len: usize,
+    path: &std::path::Path,
+) -> Result<crate::signature::Image, Failure> {
+    let refused = |why: &str| {
+        Failure::new(
+            Exit::Refused,
+            format!(
+                "the image {} cannot be used: {why} --- nothing was written",
+                path.display()
+            ),
+        )
+    };
+    let image = std::fs::File::open(path).map_err(|e| refused(&format!("{e}")))?;
+    let size = image
+        .metadata()
+        .map_err(|e| refused(&format!("{e}")))?
+        .len();
+    if size == 0 || size > crate::signature_import::MAX_BYTES {
+        return Err(refused(crate::signature_import::INVALID));
+    }
+    env.worker()
+        .signature_image(document, len, &image, size as usize)
+        .map_err(|declined| match declined {
+            // The image's own refusals name the image. Anything else a worker
+            // refuses here is about the document it was started over, and is
+            // said as the signing itself would say it.
+            crate::save_outside::Declined::Refused(why)
+                if [
+                    crate::signature_import::INVALID,
+                    crate::signature_import::CLEAR,
+                ]
+                .contains(&why.as_str()) =>
+            {
+                refused(&why)
+            }
+            other => other.into(),
+        })
 }
 
 /// A page number, counted from 1.
@@ -337,6 +441,26 @@ fn line_list(text: &str) -> Result<Lines, String> {
     Ok(lines)
 }
 
+/// `reason,location`, either or both.
+fn hidden_list(text: &str) -> Result<Hidden, String> {
+    let mut hidden = Hidden::default();
+    for word in text.split(',').map(str::trim).filter(|w| !w.is_empty()) {
+        match word {
+            "reason" => hidden.reason = true,
+            "location" => hidden.location = true,
+            other => {
+                return Err(format!(
+                    "`--hide` names `reason` and `location`, and `{other}` is neither"
+                ))
+            }
+        }
+    }
+    if hidden == Hidden::default() {
+        return Err("`--hide` names `reason`, `location` or both, and was given neither".into());
+    }
+    Ok(hidden)
+}
+
 impl Subcommand for Sign {
     fn run(
         &self,
@@ -375,6 +499,14 @@ fn run_sign(
     let (file, len) = opened(&sign.input).map_err(|why| Failure::new(Exit::Refused, why))?;
     sign_cms::refuse_too_large(len as u64).map_err(|why| Failure::new(Exit::Refused, why))?;
 
+    // The image file, before the store is asked for anything: a file that is
+    // missing or is not an image ends the run with no certificate listed, no
+    // key touched and no keychain prompt. Decoded in a worker.
+    let mut picture = match &sign.image {
+        Picture::File(path) => Some(image_file(env, &file, len, path)?),
+        _ => None,
+    };
+
     // The certificate, from the store --- which asks the OS for certificates
     // only. The key is not touched until the digest is signed.
     let held = store_identities(env)?;
@@ -404,8 +536,8 @@ fn run_sign(
     let visible = match sign.visible {
         None => None,
         Some(placement) => {
-            let image = if sign.image {
-                env.store.saved_image().map_err(|why| {
+            let image = match &sign.image {
+                Picture::Saved => env.store.saved_image().map_err(|why| {
                     Failure::new(
                         Exit::Refused,
                         format!(
@@ -413,9 +545,9 @@ fn run_sign(
                              --no-image to sign without it"
                         ),
                     )
-                })?
-            } else {
-                None
+                })?,
+                Picture::None => None,
+                Picture::File(_) => picture.take(),
             };
             Some(Visible {
                 page: placement.page - 1,
@@ -428,6 +560,8 @@ fn run_sign(
                     date: sign.lines.date,
                     reason: sign.reason.clone(),
                     location: sign.location.clone(),
+                    hide_reason: sign.hide.reason,
+                    hide_location: sign.hide.location,
                 },
             })
         }

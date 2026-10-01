@@ -306,3 +306,29 @@ painted inside the tiles — measured on a fixture carrying no appearance stream
 where PDFium generates them: the note icon fills 637 of the 756 pixels in its own rectangle,
 the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
 reach before `annots.rs` was the *text*.
+
+## A signature image from a file (`sign --image`)
+
+The signature chooser decodes an imported image with the webview's decoder and scales it on a
+canvas (`signature.ts`, `signaturedialog.ts`). The command-line tool has no webview, so
+`sign --image <file>` decodes in Rust, in a worker: `signature_import.rs`, asked for by
+`Request::SignatureImage`, which reads the worker's second read-only mapping
+(`Worker::spawn_reading`, the mapping a merge's inputs use, here with nothing to write) and
+nothing of the document the worker was started over.
+
+Shared with the chooser: the limits (10 MB, 8192 pixels a side, 8 megapixels), the header
+grammar read before anything is decoded (`dimensions` is `signatureDimensions`, rule for
+rule), trimming of transparent margins, the 512 by 256 result, and `Image::valid`. Different:
+the decoder (`png` and `zune-jpeg`), the scaling (an alpha-weighted area average), and a
+JPEG's EXIF orientation, which is not applied. The chooser's *remove white background* box has
+no counterpart. A change to the limits or the grammar belongs in both files.
+
+`cli/sign.rs` reads the image before it asks the store for anything, so a file that cannot be
+used ends the run with no certificate listed and no key touched; with `--image` the saved
+image is never read. Only `signature_import`'s own two refusals are reported as the image's;
+any other refusal from that worker is the document's.
+
+`sign --hide reason,location` sets `Options::hide_reason` and `hide_location`: the text is
+written to `/Reason` and `/Location` and left out of the appearance's lines
+(`Options::drawn_reason`). Both default to off on the wire, so the application and every
+earlier request draw what they drew.

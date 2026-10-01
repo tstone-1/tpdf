@@ -380,8 +380,10 @@ class Tpdf:
     def sign(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         identity: str, rect: Sequence[float] | None = None, page: int | None = None,
-        no_image: bool = False, lines: Sequence[str] | None = None,
+        no_image: bool = False, image: str | os.PathLike[str] | None = None,
+        lines: Sequence[str] | None = None,
         reason: str | None = None, location: str | None = None,
+        hide: Sequence[str] | None = None,
         timestamp: str | None = None, long_term: bool = False, force: bool = False,
     ) -> dict[str, Any]:
         """Sign with an explicitly selected OS-held certificate; no key is exported.
@@ -390,7 +392,15 @@ class Tpdf:
         rect=[x,y,width,height] creates a visible signature, in display points
         from top-left; page defaults to 1. Other appearance options require rect.
         lines selects any of 'label', 'name', 'date'; [] hides all three.
-        Visible signatures use the saved image unless no_image=True.
+        Visible signatures use the saved image unless no_image=True. image names
+        a PNG or JPEG file to draw instead, for this signature only: the saved
+        image is neither read nor changed. image and no_image=True together are
+        refused. A file that is missing or is not a usable image is a refusal,
+        before any certificate or key is asked for.
+
+        reason and location are written to the signature and drawn as lines of
+        it. hide names which of 'reason', 'location' are written without being
+        drawn; nothing is hidden unless it is named.
 
         timestamp selects a CLI authority name or URL and explicitly enables its
         network request. long_term requires timestamp and asks certificate
@@ -407,12 +417,20 @@ class Tpdf:
             args += ['--visible', '--rect', ','.join(str(value) for value in rect)]
         if page is not None:
             args += ['--page', str(page)]
+        if image is not None and no_image:
+            raise ValueError('image names the image to draw and no_image draws none; give one')
         if no_image:
             args.append('--no-image')
+        if image is not None:
+            args += ['--image', os.fspath(image)]
         if lines is not None:
             if isinstance(lines, (str, bytes)):
                 raise TypeError('lines must be a sequence of label, name, date')
             args += ['--lines', ','.join(lines)]
+        if hide is not None:
+            if isinstance(hide, (str, bytes)):
+                raise TypeError('hide must be a sequence of reason, location')
+            args += ['--hide', ','.join(hide)]
         for flag, value in [('--reason', reason), ('--location', location), ('--timestamp', timestamp)]:
             if value is not None:
                 args += [flag, value]

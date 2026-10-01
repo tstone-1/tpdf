@@ -604,8 +604,16 @@ the page as it is displayed:
   is displayed, `--page N` counted from 1 (1 by default); your saved signature image is drawn
   beside the words unless `--no-image` is given, `--lines label,name,date` chooses which of
   the three lines appear, and `--reason` and `--location` are drawn and written into the
-  signature. Those options need `--visible`, and are refused without it rather than
-  dropped. `--timestamp` adds an RFC 3161 timestamp from `digicert`, `sectigo`,
+  signature. `--image <file>` draws a PNG or JPEG file instead of the saved image, for this
+  signature only: the saved image is neither read nor changed, so a script's result does not
+  depend on what a computer has saved. The file is held to the limits of an image imported
+  in the application (10 MB, 8 megapixels, no animation), trimmed of its transparent margins
+  and scaled down to at most 512 by 256 pixels. A file that is missing or is not such an
+  image ends the command with exit code 3 before any certificate or key is asked for, and
+  `--image` together with `--no-image` is refused. `--hide reason,location` writes the ones
+  it names into the signature without drawing them, which keeps an appearance that is an
+  image alone (`--lines ""`) free of text; nothing is hidden unless `--hide` names it.
+  Those options need `--visible`, and are refused without it rather than dropped. `--timestamp` adds an RFC 3161 timestamp from `digicert`, `sectigo`,
   `globalsign` or an `http://` or `https://` address you give: tpdf sends that authority a
   hash of the new signature and a random number, nothing of the document, and writes the
   signed copy only if a timestamp comes back whose own signature checks out, covers this
@@ -881,6 +889,9 @@ signed = pdf.sign("input.pdf", "signed.pdf", identity=selected_id)
 visible = pdf.sign("input.pdf", "visible.pdf", identity=selected_id,
                    rect=[40, 40, 220, 80], page=1, no_image=True,
                    lines=["label", "name"], reason="Approved", location="Office")
+stamped = pdf.sign("input.pdf", "stamped.pdf", identity=selected_id,
+                   rect=[40, 40, 220, 80], image="stamp.png", lines=[],
+                   reason="Document approved", hide=["reason"])
 assert pdf.verify("signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
 ```
 
@@ -938,7 +949,7 @@ it signs with it; choose *Always Allow* if a script is to sign without you — w
 lets anything else running as you sign with that key through `tpdf`, until you remove the
 permission in Keychain Access. A visible
 signature reads your saved signature image from the same protected store, and macOS may ask
-about that too; `--no-image` does not read it at all. A smart card or token asks for its PIN in the system's own dialog. tpdf never
+about that too; `--no-image` and `--image <file>` do not read it at all. A smart card or token asks for its PIN in the system's own dialog. tpdf never
 sees what you type, and does nothing to avoid the prompt: if the system asks, the command
 waits for an answer. Signing with a key file (`.p12`) instead of the system store is not
 built.

@@ -101,6 +101,7 @@ pub mod sign_cms;
 pub mod sign_dss;
 pub mod sign_prepare;
 pub mod signature;
+pub mod signature_import;
 pub mod signature_store;
 pub mod startup;
 pub mod structure;

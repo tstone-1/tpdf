@@ -250,6 +250,14 @@ pub enum Request {
     /// written. It carries nothing; the answer is the revision, whose digest the
     /// app process has a timestamp authority stamp.
     PrepareDocumentTimestamp,
+    /// Decode the image file handed over as this worker's second mapping.
+    ///
+    /// `sign --image`: a PNG or JPEG the reader named, decoded here because an
+    /// image file is input like any other and the command-line tool has no
+    /// webview to decode it in (`signature_import`). **It reads nothing of the
+    /// mapped document**; the document is only what the worker was started
+    /// over. The answer is the pixels a visible signature draws.
+    SignatureImage,
     /// Draw a visible signature's appearance before anything is signed.
     ///
     /// [`Request::PrepareSignature`]'s sibling, answered with a picture rather
@@ -550,6 +558,8 @@ pub enum Reply {
     Append(crate::save::Update),
     /// The revision a signature goes into, with its hole still empty.
     PreparedSignature(crate::sign_prepare::Unsigned),
+    /// The pixels of the image file a `sign --image` named.
+    SignatureImage(crate::signature::Image),
     /// A visible signature's appearance, drawn as PNG.
     SignaturePreview(crate::sign_prepare::Preview),
     /// A `/DSS` revision and what the signatures read as with it appended.
@@ -917,6 +927,11 @@ mod tests {
                  document's pool",
             ),
             (
+                "SignatureImage",
+                "asked by `save::InWorker` of a worker it spawned itself with the image \
+                 file as its second mapping, which no pooled worker has",
+            ),
+            (
                 "Unlock",
                 "sent by whoever holds the password before its first real request, on \
                  both the pooled and the save path",
@@ -1241,6 +1256,11 @@ mod tests {
                 digest: vec![7; 32],
                 field: "Signature2".into(),
             }),
+            Reply::SignatureImage(crate::signature::Image {
+                width: 1,
+                height: 2,
+                rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            }),
             Reply::SignaturePreview(crate::sign_prepare::Preview {
                 png: vec![137, 80, 78, 71],
                 width: 480,
@@ -1290,6 +1310,7 @@ mod tests {
                 | Reply::Properties(_)
                 | Reply::Append(_)
                 | Reply::PreparedSignature(_)
+                | Reply::SignatureImage(_)
                 | Reply::SignaturePreview(_)
                 | Reply::Validated(_)
                 | Reply::Reread(_)

@@ -819,6 +819,17 @@ impl Worker {
         Self::spawn_mapped(doc, tile, library_dir, Some(out), Some(inputs))
     }
 
+    /// Spawns a worker that can read one more file and write nothing: the
+    /// image a `sign --image` names, on the mapping a merge's inputs use.
+    ///
+    /// # Errors
+    ///
+    /// As [`Worker::spawn_shared`].
+    pub fn spawn_reading(doc: Arc<Shm>, inputs: &Shm, library_dir: &Path) -> Result<Self, String> {
+        let tile = Shm::create(TILE_CAPACITY)?;
+        Self::spawn_mapped(doc, tile, library_dir, None, Some(inputs))
+    }
+
     /// Spawns a worker over mappings the caller already made.
     ///
     /// # Errors
@@ -872,16 +883,9 @@ impl Worker {
     ) -> Result<Self, String> {
         use std::os::windows::io::AsRawHandle;
 
-        // The same refusal the macOS arm makes, for a different failure. There
-        // the descriptor shuffle would `dup2` a -1; here the child would map the
-        // inputs and have nowhere to put the answer, and `worker_child::merge`
-        // would refuse in words. Both are safe and neither is the same, which is
-        // exactly why it is stated on both arms rather than on the one where the
-        // consequence is worse --- `docs/TRAPS.md` records a platform gate
-        // widened in one of three copies.
-        if inputs.is_some() && out.is_none() {
-            return Err("a worker given merge inputs must also be given somewhere to write".into());
-        }
+        // Inputs without an output file are a worker that reads one more file
+        // and writes nothing (`spawn_reading`); the two are handed over
+        // independently below, as on macOS.
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
         // Bound rather than written inline, because the argv slice borrows them
         // and the output pair is conditional --- a temporary inside a `push`
@@ -1025,16 +1029,10 @@ impl Worker {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
 
-        // **Refused rather than shuffled**, because the descriptor installs below
-        // fill their two optional slots in order: an inputs mapping with no
-        // output file would leave `OUT_FD`'s slot holding -1 and `dup2` it,
-        // which fails inside `pre_exec` where the diagnosis is worst. Nothing
-        // asks for that combination --- the only request that reads the inputs
-        // also writes --- so this is a guard on a caller, said here where it can
-        // be read.
-        if inputs.is_some() && out.is_none() {
-            return Err("a worker given merge inputs must also be given somewhere to write".into());
-        }
+        // Inputs without an output file are a worker that reads one more file
+        // and writes nothing (`spawn_reading`). The two optional descriptors
+        // are installed independently below, so neither leaves the other's
+        // slot holding a -1 for `dup2` to fail on inside `pre_exec`.
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
         let mut command = Command::new(exe);
         command
@@ -1070,20 +1068,13 @@ impl Worker {
         // keeps all source descriptors open until spawn returns.
         unsafe {
             command.pre_exec(move || {
-                let mut mappings = [
-                    (doc_fd, DOC_FD),
-                    (tile_fd, TILE_FD),
-                    (-1, OUT_FD),
-                    (-1, IN_FD),
-                ];
+                let mut mappings = [(doc_fd, DOC_FD), (tile_fd, TILE_FD), (-1, -1), (-1, -1)];
                 let mut count = 2;
-                if let Some(fd) = out_fd {
-                    mappings[2].0 = fd;
-                    count = 3;
-                }
-                if let Some(fd) = in_fd {
-                    mappings[3].0 = fd;
-                    count = 4;
+                for (fd, target) in [(out_fd, OUT_FD), (in_fd, IN_FD)] {
+                    if let Some(fd) = fd {
+                        mappings[count] = (fd, target);
+                        count += 1;
+                    }
                 }
                 remap_fds(&mappings[..count])
             });
