@@ -6316,6 +6316,15 @@ unchanged this cycle), every Windows window phase, *Install command-line tool...
 bundle on either platform (the Windows path it shows changed this cycle and is covered by a
 unit test only), and the disk-watch prompt in a window, which has frontend tests and no
 window phase. CI's Windows gate leg is the Windows evidence.
+Published 2026-10-01 from `5916616` with `scripts/publish_release.py`, after `audit.yml` and
+`ci.yml` passed both legs on that commit; the release run (36885034528) skipped its gates
+because CI had passed that commit, and its packaged CLI/API checks passed on both platforms.
+The draft carried 8 assets. Fetched without an account, the `.dmg`, `.msi` and `-setup.exe`
+answered 200 and `latest.json` offers 26.10.0 for `darwin-aarch64` and `windows-x86_64`. The
+downloaded `.dmg` staples, its bundle verifies with `codesign --deep --strict`, `tpdf-cli` is
+signed `Developer ID Application` with the hardened runtime and answers `--version` with
+26.10.0, and Gatekeeper reports *Notarized Developer ID*. The hand-applied update from
+26.9.24 (step 12) is the owner's and is not recorded here yet.
 
 **26.9.24 verification, macOS arm64, 2026-09-30:** all 29 gates passed on the final tree
 (2,392 Rust tests with nine documented ignored, 1,976 frontend tests), and `check_windows.py`
