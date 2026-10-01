@@ -2904,14 +2904,22 @@ pub(super) fn prepare(
     }
     // The box that goes back to the reader: what they set, or what their text
     // needed, never past the room it had. A wrap's box is every line it set.
+    // A centred line sits in the middle of its box, so a box wider than the
+    // text starts half the difference before it; any other starts with it.
+    let boxed = width.max(used).min(ceiling);
+    let lead = if centred {
+        (boxed - used).max(0.) / 2.
+    } else {
+        0.
+    };
     let rect = match &wrap {
         Some((rect, ..)) => *rect,
         None => display(text_bounds(
             run.matrix,
             [
-                inherited - back,
+                inherited - back - lead,
                 run.size - height,
-                inherited - back + width.max(used).min(ceiling),
+                inherited - back - lead + boxed,
                 run.size,
             ],
         )),

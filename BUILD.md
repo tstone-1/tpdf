@@ -13831,8 +13831,8 @@ a code selected; the other fifteen fixtures regenerate byte for byte.
 distinct em dash is the fix. *CFF Unicode: extend unverified TrueType mappings* was re-aimed at
 the reformatted line and is still caught.
 
-**Not done.** A W-9 edit in the application window, PDFKit readback, a Windows run, the full
-mutation table. The W-4's image refusal and the Harvest invoice's code 105 were not looked at.
+**Not done.** PDFKit readback, a Windows run, the full mutation table. (The W-9 edit in the
+application window is under *The W-9 and a centred title in the application window*.) The W-4's image refusal and the Harvest invoice's code 105 were not looked at.
 
 ### A fallback font from the command line — measured 2026-10-01
 
@@ -13983,8 +13983,8 @@ changed to say a centred block is offered. `python3 scripts/mutate_rust.py --onl
 sixteen, all caught on the first run. *alignment: let a centred block stay editable* became
 *let a right-aligned block stay editable*, on the arm that still pins.
 
-**Not done.** The application window: the worker's preview returns the moved rectangle, but
-whether the editor's dashed box follows it was not looked at. A page displayed a quarter turn
+**Not done.** (The application window is under *The W-9 and a centred title in the application
+window*, which found the dashed box off the text's middle.) A page displayed a quarter turn
 (`centred::settle`'s `turned`) has no test. The room is still the room to the right of the
 run's origin, so a centred line near the right edge is refused although it would grow only half
 as far that way. A centred line with other runs on it, right-aligned text and justified text
@@ -14014,8 +14014,43 @@ permit editing)`. Poppler at 72 dpi: the two renders of page 1 differ only insid
 **Mutations.** `python3 scripts/mutate_rust.py --only 'null slots:'` (3): the page refused
 again, a slot the page lacks kept read-only, and an empty tag adopting the slot as its own.
 
-**Not done.** No run in the application window. The remaining 35 refused pages have 17
-first refusals, none above four pages.
+**Not done.** The remaining 35 refused pages have 17 first refusals, none above four pages.
+
+### The W-9 and a centred title in the application window — measured 2026-10-01
+
+Two phases of `tabs_check.py`, each the whole text-editing workflow (24 checks) on an unchanged
+public document, with the checks application built as in *Existing-text workflow*:
+
+```sh
+python3 scripts/tabs_check.py <checks-binary> scratch/textedit-public/w9.pdf --phase textedit-w9 --saved-copy <dir>/w9-after.pdf
+python3 scripts/tabs_check.py <checks-binary> scratch/textedit-public/healdsburg-slides.pdf --phase textedit-centred --saved-copy <dir>/centred-after.pdf
+```
+
+`textedit-w9` replaces *Before you begin.* on page 1 with *Before you start.*; the font does not
+permit editing, so the text is set in Noto Sans. `textedit-centred` replaces *Items*, one line
+of the centred title on page 3, with *Item*. Each adds one check of its own, on where the
+editor puts the replacement's target against where the source's was: a left-aligned run keeps
+its left edge, a centred one its middle.
+
+**The centred phase found the dashed box off the text.** The text was centred, as the engine
+measurements said. Its box was not: the source's target was 143.9 to 229.5 px and the
+replacement's 151.3 to 236.2, the same width moved 7 px right. `layout::prepare` reported a box
+of the opened width starting where the text now starts, so with a shorter text the box hung
+past it on one side by the whole loss. A centred line's box now starts half the difference
+before the text (`lead`), which leaves the box the editor opened where it was. Longer text
+grows the box with it as before, and other alignments are unchanged. Three mutations,
+`--only 'centred: the box'` and `--only 'centred: every box'`.
+
+A second failure in the first run was the phase's own: it expected a centring sentence for a
+1,000-character draft, and the application answers *no room for more text on this line: it
+reaches the edge of the page*, the same as for any line. The check now expects that.
+
+**After the fix**, both phases pass 24 of 24. In the saved copy `tpdf-cli text-runs` puts
+*Items* at 100.98 to 173.07 and *Item* at 107.16 to 166.95, middles 137.02 and 137.06, in the
+document's own font.
+
+**Not done.** Looking at the window: these are the harness's readings of targets, text and
+pixels, not a person's. Typing a longer centred title in the window. A Windows run.
 
 ### `sign --image` and `sign --hide` — measured 2026-10-01
 

@@ -64,6 +64,34 @@ fn textedit_a_centred_line_is_edited_about_its_centre() {
     // The other line and the tag are untouched.
     let doc = edited("Center", "FIRSTFIRST");
     assert_eq!(span(&doc, "SECOND").0, 80.);
+    // The box the editor outlines: a centred line's box has the line's middle,
+    // also when the text is shorter than the box, and a start-aligned line's
+    // box starts where the line does.
+    for replacement in ["FIRSTFIRST", "IF"] {
+        let outline = |alignment: &str| {
+            let (mut doc, ids) = fixture(LINES);
+            align(&mut doc, ids[3], alignment);
+            let source = runs(&doc)
+                .into_iter()
+                .find(|run| run.text == "FIRST")
+                .unwrap();
+            let change = change(&doc, "FIRST", replacement, true);
+            let placed = textedit::placements(&doc, 0, &[change]).unwrap();
+            (source.display_rect, placed[&source.operator])
+        };
+        let middle = |rect: [f32; 4]| (rect[0] + rect[2]) / 2.;
+        let (source, boxed) = outline("Center");
+        assert!(
+            (middle(boxed) - middle(source)).abs() < 0.01,
+            "{replacement}: {source:?} {boxed:?}"
+        );
+        assert!(
+            boxed[2] - boxed[0] >= source[2] - source[0] - 0.01,
+            "{replacement}"
+        );
+        let (source, boxed) = outline("Start");
+        assert!((boxed[0] - source[0]).abs() < 0.01, "{replacement}");
+    }
 }
 
 #[test]

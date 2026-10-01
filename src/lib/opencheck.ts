@@ -688,6 +688,8 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "textedit-wrapped":
     case "textedit-overhang":
     case "textedit-cid-latin1":
+    case "textedit-w9":
+    case "textedit-centred":
     case "textedit-latin1": {
       const listChild = phase === "textedit-list-child";
       const passport = phase === "textedit-passport";
@@ -708,9 +710,16 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const wideSpacing = phase === "textedit-wide-spacing";
       const grow = phase === "textedit-grow";
       const pushes = phase === "textedit-push";
-      const page = passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 || factsheet ? 1 : 0;
-      const original = factsheetBody ? "Detailed results" : factsheet ? "Action taken" : listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
-      const replacement = factsheetBody ? "Detailed data" : factsheet ? "Action done" : listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
+      // The unchanged IRS W-9, page 1 (BUILD.md, *Content on an empty
+      // parent-tree slot*): a left-aligned run in a font that does not permit
+      // editing, so the replacement is set in Noto Sans.
+      const w9 = phase === "textedit-w9";
+      // The unchanged Healdsburg slides, page 3 (BUILD.md, *Centred lines are
+      // edited about their centre*): one line of a centred title.
+      const centred = phase === "textedit-centred";
+      const page = centred ? 2 : passport ? 15 : phase === "textedit-multipage" || wrapped || agendaPage2 || factsheet ? 1 : 0;
+      const original = w9 ? "Before you begin." : centred ? "Items" : factsheetBody ? "Detailed results" : factsheet ? "Action taken" : listChild ? "SYNTHETIC SECOND" : passport ? "ILB 53 (09.22)" : cffLigatures ? "SYNTHETIC ffi ffi fi fl ff" : cffUnicode ? "SYNTHETIC \u2212\u00a0\u2018\u2019\u2013£" : agendaPage2 ? "Community Hub" : agenda ? "REGULAR" : dash ? "SYNTHETIC\u2013FIRST" : w3c ? "Dummy PDF file" : cidLatin1 ? "SYNTHETIC ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "SYNTHETIC ÄÖÜ ß" : "SYNTHETIC FIRST";
+      const replacement = w9 ? "Before you start." : centred ? "Item" : factsheetBody ? "Detailed data" : factsheet ? "Action done" : listChild ? "EDITED SECOND" : passport ? "ILB 53" : cffLigatures ? "EDITED ffi fi fl ff" : cffUnicode ? "EDITED £\u2013\u2019\u2018\u00a0\u2212" : agendaPage2 ? "Community" : agenda ? "ANNUAL" : dash ? "EDITED\u2013FIRST" : w3c ? "Dummy PDF fill" : overhang ? "ÖÄÜ äöü ß" : cidLatin1 ? "ÄÖÜ äöü ß" : phase === "textedit-latin1" ? "GEPRÜFT ß" : "EDITED FIRST";
       const check = (name: string, ok: boolean) => report.check(name, ok, "text editing workflow");
       const [first, second] = expected.split("|");
       if (!first || !second) throw new Error("two disposable text fixture paths required");
@@ -737,7 +746,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       // only one of the two was found by running a phase. At 1,000 every one of
       // the five is refused, and refused for the room rather than for a
       // character bound (4,096) or a missing glyph.
-      const overflow = (passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : factsheet ? "a" : "S").repeat(1000);
+      const overflow = (centred ? "I" : passport ? "I" : agendaPage2 ? "C" : agenda ? "R" : w3c ? "l" : factsheet ? "a" : "S").repeat(1000);
       // The run's own characters, which is what a longer draft is built from
       // wherever one has to be accepted: a glyph the font lacks, or one wider
       // than the line has room for, would refuse it for a reason of its own.
@@ -915,7 +924,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         const viewer = host.viewer()!, canvas = viewer.compositedSurface;
         const context = canvas?.getContext("2d", { willReadFrequently: true });
         if (!canvas || !context) throw new Error("text check needs a readable composited surface");
-        const a = viewer.screenPoint(page, factsheetBody ? 435 : factsheet ? 55 : passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 55 : 35, factsheetBody ? 20 : factsheet ? 278 : passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, factsheetBody ? 530 : factsheet ? 140 : passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, factsheetBody ? 37 : factsheet ? 296 : passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
+        const a = viewer.screenPoint(page, w9 ? 30 : centred ? 95 : factsheetBody ? 435 : factsheet ? 55 : passport ? 372 : agendaPage2 ? 110 : agenda ? 370 : w3c ? 55 : 35, w9 ? 80 : centred ? 155 : factsheetBody ? 20 : factsheet ? 278 : passport ? 473 : agendaPage2 ? 40 : agenda ? 78 : w3c ? 68 : 40), b = viewer.screenPoint(page, w9 ? 110 : centred ? 180 : factsheetBody ? 530 : factsheet ? 140 : passport ? 388 : agendaPage2 ? 200 : agenda ? 440 : w3c ? 190 : 250, w9 ? 98 : centred ? 205 : factsheetBody ? 37 : factsheet ? 296 : passport ? 525 : agendaPage2 ? 67 : agenda ? 100 : w3c ? 90 : 70), dpr = devicePixelRatio;
         const left = Math.round(a.x*dpr), top = Math.round(a.y*dpr);
         const width = Math.round((b.x-a.x)*dpr), height = Math.round((b.y-a.y)*dpr);
         if (left < 0 || top < 0 || width < 1 || height < 1 || left+width > canvas.width || top+height > canvas.height) throw new Error(`text pixel sample is off screen: ${JSON.stringify({left,top,width,height,canvasWidth:canvas.width,canvasHeight:canvas.height})}`);
@@ -949,7 +958,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         check("mixed-direction selection survives every view turn", true);
       }
       const edited = await read();
-      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(factsheet ? "Consumer" : listChild ? "SYNTHETIC FIRST" : passport ? "Your passport" : agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
+      check("unsaved extraction sees replacement and preserves adjacent text", edited.includes(replacement) && !edited.includes(original) && edited.includes(w9 ? "For guidance" : centred ? "Public Comment" : factsheet ? "Consumer" : listChild ? "SYNTHETIC FIRST" : passport ? "Your passport" : agendaPage2 ? "Parish Council" : agenda ? "PARISH COUNCIL" : w3c ? "Dummy PDF fi" : "SYNTHETIC SECOND"));
       const matches = await call("search_page", { doc: host.edits()!.doc, page: filePage(page), query: replacement, options: { matchCase: true, wholeWord: false, regex: false } });
       check("unsaved search finds the replacement", matches.matches.length === 1);
       host.run("edit.undo"); await host.idle();
@@ -963,7 +972,20 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       check("redo restores edited text", (await read()).includes(replacement));
       const redoPixels = await pixels();
       check("redo restores exactly the edited pixels", redoPixels.length === editedPixels.length && redoPixels.every((value, index) => value === editedPixels[index]));
-      await start(); field()!.value = overflow;
+      await start();
+      if (w9 || centred) {
+        // Where the editor puts the replacement's target, against where the
+        // source's was (`hit`, measured above at the same scroll and zoom). A
+        // left-aligned run keeps its left edge and a centred one its middle.
+        const now = target()!.getBoundingClientRect();
+        const middle = (box: DOMRect) => (box.left + box.right) / 2;
+        if (w9) check("the left-aligned replacement keeps its left edge", Math.abs(now.left - hit.left) < 1.5);
+        // The box is the one the editor opened, as wide as the source run,
+        // so with a shorter text it stays where it was: text in the middle.
+        else check("the centred replacement's box keeps the line's middle",
+          Math.abs(middle(now) - middle(hit)) < 1.5 && now.width > hit.width - 2);
+      }
+      field()!.value = overflow;
       document.querySelector<HTMLButtonElement>(".text-edit-apply")!.click();
       let refused = false; try { await host.idle(); } catch { refused = true; }
       check("an overflowing draft is refused without changing the journal", refused && host.edits()!.state.text_edits?.[0]?.replacement === replacement);
