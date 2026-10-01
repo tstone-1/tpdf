@@ -64,6 +64,18 @@ pub fn id_of(certificate: &[u8]) -> String {
         .collect()
 }
 
+/// SHA-1 of a certificate, lowercase hex: the thumbprint Windows shows for it
+/// (`certmgr`, `Get-ChildItem Cert:`). A second name for a certificate already
+/// in the store, never a check of anything.
+#[must_use]
+pub fn thumbprint_of(certificate: &[u8]) -> String {
+    use sha1::Digest as _;
+    sha1::Sha1::digest(certificate)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 impl Key for Identity {
     fn sign_digest(&self, kind: KeyKind, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
         platform::sign(&self.handle, kind, digest)

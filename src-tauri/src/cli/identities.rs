@@ -60,6 +60,8 @@ impl Subcommand for Identities {
 pub struct Listed {
     /// `keystore::id_of` its certificate.
     pub id: String,
+    /// `keystore::thumbprint_of` its certificate.
+    pub sha1: String,
     /// What `sign_cms::usable` said.
     pub offer: Result<Offer, String>,
 }
@@ -83,6 +85,7 @@ pub fn listing(found: &[(String, Vec<u8>)], now: u64) -> Vec<(Listed, String)> {
         .map(|(id, der)| {
             let listed = Listed {
                 id: id.clone(),
+                sha1: crate::keystore::thumbprint_of(der),
                 offer: sign_cms::usable(der, now),
             };
             let subject = listed.subject(der);
@@ -102,9 +105,10 @@ pub fn identities_report(listed: &[(Listed, String)]) -> report::Identities {
     };
     for (entry, subject) in listed {
         match &entry.offer {
-            Ok(offer) => out.usable.push(usable_of(&entry.id, offer)),
+            Ok(offer) => out.usable.push(usable_of(entry, offer)),
             Err(why) => out.not_usable.push(report::NotUsable {
                 id: entry.id.clone(),
+                sha1: entry.sha1.clone(),
                 subject: subject.clone(),
                 why: why.clone(),
             }),
@@ -113,9 +117,10 @@ pub fn identities_report(listed: &[(Listed, String)]) -> report::Identities {
     out
 }
 
-pub(crate) fn usable_of(id: &str, offer: &Offer) -> report::Usable {
+pub(crate) fn usable_of(entry: &Listed, offer: &Offer) -> report::Usable {
     report::Usable {
-        id: id.to_string(),
+        id: entry.id.clone(),
+        sha1: entry.sha1.clone(),
         subject: offer.subject.clone(),
         issuer: offer.issuer.clone(),
         expires: offer.expires.clone(),
@@ -126,7 +131,9 @@ pub(crate) fn usable_of(id: &str, offer: &Offer) -> report::Usable {
 /// Which certificate `--identity` names, or why none may sign.
 ///
 /// A 64-digit hex string is a certificate's SHA-256 (`keystore::id_of`), any
-/// case. Anything else is a subject as `identities` prints it, matched
+/// case, and a 40-digit one its SHA-1 (`keystore::thumbprint_of`), which is
+/// the thumbprint Windows' own tools show. Anything else is a subject as
+/// `identities` prints it, matched
 /// exactly, **among the certificates that may sign**: a renewed certificate
 /// beside the expired one it replaced is the ordinary case, and the expired one
 /// cannot sign, so it is not a rival. Two that may sign are ambiguous and both
@@ -138,13 +145,25 @@ pub(crate) fn usable_of(id: &str, offer: &Offer) -> report::Usable {
 ///
 /// The sentence for exit code 3.
 pub fn resolve(wanted: &str, listed: &[(Listed, String)]) -> Result<usize, String> {
-    let hex = wanted.len() == 64 && wanted.chars().all(|c| c.is_ascii_hexdigit());
-    if hex {
+    let hex = wanted.chars().all(|c| c.is_ascii_hexdigit());
+    // Which hash a string of hex digits is, by its length alone.
+    let hash = match wanted.len() {
+        64 if hex => Some("SHA-256"),
+        40 if hex => Some("SHA-1"),
+        _ => None,
+    };
+    if let Some(hash) = hash {
         let wanted = wanted.to_ascii_lowercase();
-        let Some(at) = listed.iter().position(|(entry, _)| entry.id == wanted) else {
+        let Some(at) = listed.iter().position(|(entry, _)| {
+            if hash == "SHA-1" {
+                entry.sha1 == wanted
+            } else {
+                entry.id == wanted
+            }
+        }) else {
             return Err(format!(
                 "no certificate with a key in your keychain or certificate store has the \
-                 SHA-256 {wanted} --- `identities` lists the ones there are"
+                 {hash} {wanted} --- `identities` lists the ones there are"
             ));
         };
         return match &listed[at].0.offer {
@@ -250,6 +269,7 @@ pub fn identities_text(report: &report::Identities) -> String {
                 id.subject, id.issuer, id.method, id.expires
             ));
             lines.push(format!("    {}", id.id));
+            lines.push(format!("    SHA-1 {}", id.sha1.to_ascii_uppercase()));
         }
     }
     if !report.not_usable.is_empty() {
@@ -257,6 +277,7 @@ pub fn identities_text(report: &report::Identities) -> String {
         for id in &report.not_usable {
             lines.push(format!("  {} --- {}", id.subject, id.why));
             lines.push(format!("    {}", id.id));
+            lines.push(format!("    SHA-1 {}", id.sha1.to_ascii_uppercase()));
         }
     }
     lines.join("\n")

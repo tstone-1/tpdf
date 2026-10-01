@@ -1272,6 +1272,136 @@ fn a_hidden_reason_or_location_is_written_and_not_drawn() {
     assert!(prepare_visible(original, NOW, None, &placed).is_err());
 }
 
+// `sign --text`: the wording is the caller's, and the signature's own values
+// are filled in where it asks for them.
+#[test]
+fn a_text_is_drawn_in_place_of_the_standard_lines() {
+    let original = two_pages(0);
+    let latin = |text: &str| text.chars().map(|ch| ch as u8).collect::<Vec<u8>>();
+    let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    placed.options = Options {
+        // The three switches are not read with a text: all off, and the
+        // lines are still drawn.
+        label: false,
+        name: false,
+        date: false,
+        reason: "Approved".into(),
+        location: "Hamburg".into(),
+        text: vec![
+            "Digitally signed".into(),
+            "{date}".into(),
+            "by {name} in {location} ({reason}) {{x}}".into(),
+            "Geprüft".into(),
+        ],
+        date_format: "DD.MM.YYYY".into(),
+        ..Options::default()
+    };
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("prepared");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert_eq!(
+        strings_of(&after, &widget),
+        [
+            "Digitally signed",
+            "26.09.2026",
+            "by A. Signer in Hamburg (Approved) {x}",
+            "Geprüft"
+        ]
+    );
+    // A reason the text does not ask for is written and not drawn; no
+    // standard "Reason:" line appears beside the text.
+    placed.options.text = vec!["Signed {date}".into()];
+    placed.options.date_format = String::new();
+    let unsigned = prepare_visible(original.clone(), NOW, None, &placed).expect("prepared");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert_eq!(
+        strings_of(&after, &widget),
+        ["Signed 2026-09-26 00:00:00 UTC"]
+    );
+    let signature = signature_of(&after, &widget);
+    assert_eq!(bytes_of(&signature, b"Reason"), Some(latin("Approved")));
+    assert_eq!(bytes_of(&signature, b"Location"), Some(latin("Hamburg")));
+
+    // Without a text, the format writes the standard date line.
+    let mut dated = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    dated.options.date_format = "YYYY/MM/DD".into();
+    let unsigned = prepare_visible(original.clone(), NOW, None, &dated).expect("prepared");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert_eq!(strings_of(&after, &widget)[2], "Date: 2026/09/26");
+
+    // A name tpdf cannot draw is refused only when the text asks for it.
+    let mut named = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    named.name = "张伟".into();
+    named.options.text = vec!["Signed by {name}".into()];
+    assert!(prepare_visible(original.clone(), NOW, None, &named)
+        .expect_err("the name is drawn")
+        .contains("the certificate's name"));
+    named.options.text = vec!["Signed".into()];
+    assert!(prepare_visible(original.clone(), NOW, None, &named).is_ok());
+
+    for (text, format, why) in [
+        (vec!["by {who}".to_string()], "", "tpdf fills in"),
+        (vec!["a { b".to_string()], "", "never closed"),
+        (vec!["a } b".to_string()], "", "closes nothing"),
+        (vec!["审核通过".to_string()], "", "the text"),
+        (vec!["Appr\u{7}oved".to_string()], "", "the text"),
+        (vec![" ".to_string(), String::new()], "", "no words"),
+        (
+            vec!["x".to_string(); appearance::MAX_TEXT_LINES + 1],
+            "",
+            "more than",
+        ),
+        (
+            vec!["a".repeat(appearance::MAX_NOTE_CHARS + 1)],
+            "",
+            "longer than",
+        ),
+        (vec!["{date}".to_string()], "YYYY\u{7}", "the date format"),
+        (vec!["{date}".to_string()], "年YYYY", "the date format"),
+        (
+            vec!["{date}".to_string()],
+            &*"Y".repeat(appearance::MAX_FORMAT_CHARS + 1),
+            "longer than",
+        ),
+    ] {
+        let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+        placed.options.text = text.clone();
+        placed.options.date_format = format.into();
+        let refused = prepare_visible(original.clone(), NOW, None, &placed).expect_err(why);
+        assert!(refused.contains(why), "{text:?} {format:?}: {refused}");
+    }
+    // The bounds themselves are allowed.
+    let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    placed.options.text = vec!["x".to_string(); appearance::MAX_TEXT_LINES];
+    placed.options.date_format = "Y".repeat(appearance::MAX_FORMAT_CHARS);
+    assert!(prepare_visible(original, NOW, None, &placed).is_ok());
+}
+
+#[test]
+fn a_date_is_written_token_by_token() {
+    let at = "D:20260926134507Z";
+    for (format, written) in [
+        ("", "2026-09-26 13:45:07 UTC"),
+        (" ", "2026-09-26 13:45:07 UTC"),
+        ("DD/MM/YYYY ss:mm:HH", "26/09/2026 07:45:13"),
+        ("YYYYMMDD", "20260926"),
+        ("HH h mm", "13 h 45"),
+        // One letter is not a token, and neither is the wrong case.
+        ("Y M D H m s yyyy", "Y M D H m s yyyy"),
+        ("Día DD", "Día 26"),
+    ] {
+        assert_eq!(appearance::date_text(at, format), written, "{format:?}");
+    }
+    assert_eq!(appearance::DATE_FORMAT, "YYYY-MM-DD HH:mm:ss UTC");
+    // A date too short to hold a part says so in that part.
+    assert_eq!(
+        appearance::date_text("D:2026", ""),
+        "2026-??-?? ??:??:?? UTC"
+    );
+}
+
 #[test]
 fn the_name_is_checked_only_when_it_is_drawn() {
     let original = two_pages(0);
@@ -1313,6 +1443,86 @@ fn utf16(text: &str) -> Vec<u8> {
     out
 }
 
+// `sign --reason`, `--location` and `--contact`: what the dictionary carries
+// with nothing drawn.
+#[test]
+fn an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact() {
+    let original = two_pages(0);
+    let latin = |text: &str| text.chars().map(|ch| ch as u8).collect::<Vec<u8>>();
+    let notes = Notes {
+        reason: " Approved ".into(),
+        location: "東京".into(),
+        contact: "jane@example.com".into(),
+    };
+    let unsigned = prepare_noted(original.clone(), NOW, None, None, &notes).expect("invisible");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    assert!(widget.get(b"AP").is_err(), "nothing is drawn");
+    let signature = signature_of(&after, &widget);
+    assert_eq!(bytes_of(&signature, b"Reason"), Some(latin("Approved")));
+    assert_eq!(bytes_of(&signature, b"Location"), Some(utf16("東京")));
+    assert_eq!(
+        bytes_of(&signature, b"ContactInfo"),
+        Some(latin("jane@example.com"))
+    );
+
+    // Control: with no note, the invisible revision is `prepare`'s, byte for
+    // byte, and its dictionary has none of the three.
+    let bare = prepare_noted(original.clone(), NOW, None, None, &Notes::default()).expect("bare");
+    assert_eq!(bare, prepare(original.clone(), NOW, None).expect("prepare"));
+    let after = reread(&original, &bare);
+    let (_, widget) = new_widget(&after, &bare);
+    let signature = signature_of(&after, &widget);
+    for key in [&b"Reason"[..], b"Location", b"ContactInfo"] {
+        assert_eq!(bytes_of(&signature, key), None);
+    }
+
+    // A visible signature's reason is the one it draws, and the note's is not
+    // read; its contact is the note's, and is not drawn.
+    let mut placed = visible(1, [20.0, 30.0, 220.0, 130.0], None);
+    placed.options.reason = "Drawn".into();
+    let unsigned =
+        prepare_noted(original.clone(), NOW, None, Some(&placed), &notes).expect("visible");
+    let after = reread(&original, &unsigned);
+    let (_, widget) = new_widget(&after, &unsigned);
+    let signature = signature_of(&after, &widget);
+    assert_eq!(bytes_of(&signature, b"Reason"), Some(latin("Drawn")));
+    assert_eq!(bytes_of(&signature, b"Location"), None);
+    assert_eq!(
+        bytes_of(&signature, b"ContactInfo"),
+        Some(latin("jane@example.com"))
+    );
+    let drawn = strings_of(&after, &widget);
+    assert!(drawn.contains(&"Reason: Drawn".to_string()), "{drawn:?}");
+    assert!(!drawn.iter().any(|line| line.contains("jane")), "{drawn:?}");
+    // And a visible signature is still held to what it can draw.
+    placed.name = "张伟".into();
+    assert!(prepare_noted(original.clone(), NOW, None, Some(&placed), &notes).is_err());
+
+    for (reason, location, contact, why) in [
+        ("Appr\noved", "", "", "the reason"),
+        ("", "Ham\u{7}burg", "", "the location"),
+        ("", "", "a\tb", "the contact"),
+        (&*"a".repeat(MAX_NOTE_CHARS + 1), "", "", "the reason"),
+        ("", &*"a".repeat(MAX_NOTE_CHARS + 1), "", "the location"),
+        ("", "", &*"a".repeat(MAX_NOTE_CHARS + 1), "the contact"),
+    ] {
+        let notes = Notes {
+            reason: reason.into(),
+            location: location.into(),
+            contact: contact.into(),
+        };
+        let refused = prepare_noted(original.clone(), NOW, None, None, &notes).expect_err(why);
+        assert!(refused.contains(why), "{refused}");
+    }
+    // The bound itself is carried.
+    let notes = Notes {
+        contact: "a".repeat(MAX_NOTE_CHARS),
+        ..Notes::default()
+    };
+    assert!(prepare_noted(original, NOW, None, None, &notes).is_ok());
+}
+
 #[test]
 fn a_reason_and_location_are_text_strings_inside_the_range() {
     let original = two_pages(0);
@@ -1342,6 +1552,7 @@ fn a_reason_and_location_are_text_strings_inside_the_range() {
         let details = Details {
             reason: Some(reason.into()),
             location: Some(location.into()),
+            contact: None,
             document_timestamp: false,
         };
         let unsigned = build(original.clone(), NOW, None, None, &details).expect(reason);

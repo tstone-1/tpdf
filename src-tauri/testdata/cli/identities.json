@@ -4,6 +4,7 @@
   "usable": [
     {
       "id": "2a144cdb0facc6919f9163d7776c3c2f7f35bbd23021c002d61c29c7f0819c74",
+      "sha1": "9f1c0d3b7a52e84c6d10b2a4f3e85c7791d0a6be",
       "subject": "A. Signer",
       "issuer": "An Issuing CA",
       "expires": "2027-09-26 00:00:00 UTC",
@@ -13,6 +14,7 @@
   "not_usable": [
     {
       "id": "f526049003c94827b7f211c5f5bfecb156d4fdb300ed41ea722431d109b75531",
+      "sha1": "4be07d19c2a3f6508e1d9b47a6c05f3e2d81b7c0",
       "subject": "Developer ID Application: A. Signer (TEAMID1234)",
       "why": "it is issued for code signing, not for signing documents"
     }

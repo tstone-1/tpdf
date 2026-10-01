@@ -337,7 +337,7 @@ fn read_region_source(reader: impl Read, shown: &str) -> Result<Vec<(u32, [f32; 
 }
 
 /// Drives one of the render service's callback-shaped calls to an answer.
-fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
+pub(crate) fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
     call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
 ) -> Result<T, E> {
     let (tx, rx) = std::sync::mpsc::channel();

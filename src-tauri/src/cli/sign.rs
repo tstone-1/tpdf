@@ -18,8 +18,8 @@ use crate::sign_prepare::{Options, Visible};
 /// `sign`, registered.
 pub const COMMAND: Registered = Registered {
     name: "sign",
-    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256>\n        [--visible --rect x,y,w,h [--page N] [--image FILE | --no-image]\n         [--lines label,name,date] [--reason TEXT] [--location TEXT]\n         [--hide reason,location]]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
-    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason and --location are written\n            to the signature and drawn as lines of it; --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
+    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256 | sha1>\n        [--visible (--rect x,y,w,h | --anchor TEXT --size w,h [--offset dx,dy]\n         [--anchor-match N]) [--page N] [--image FILE | --no-image]\n         [--lines label,name,date | --text LINE ...] [--date-format FORMAT]\n         [--hide reason,location]]\n        [--reason TEXT] [--location TEXT] [--contact TEXT]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
+    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason, --location and --contact are\n            written to the signature, with or without --visible; a visible\n            signature draws the reason and location as lines of it. --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --anchor puts it beside text on the page instead: its top-left\n            corner is the text's, moved by --offset, and --size is its width\n            and height; text found more than once needs --anchor-match.\n            --text draws your own lines instead of the standard ones: {name},\n            {date}, {reason} and {location} are filled in, \\n starts a new\n            line, and --text may be given more than once. --date-format writes\n            the date with YYYY, MM, DD, HH, mm and ss; the time is UTC.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
     parse: boxed,
 };
 
@@ -31,7 +31,7 @@ pub struct Sign {
     /// Where the signed copy goes.
     pub output: PathBuf,
     /// A certificate's subject as `tpdf identities` prints it, or the SHA-256
-    /// of the certificate in hex.
+    /// or SHA-1 of the certificate in hex.
     pub identity: String,
     /// Where a visible signature goes; `None` for an invisible one.
     pub visible: Option<Placement>,
@@ -39,12 +39,19 @@ pub struct Sign {
     pub image: Picture,
     /// Which of the three lines a visible signature draws.
     pub lines: Lines,
-    /// `/Reason`, drawn and written; empty for none.
+    /// `/Reason`, written, and drawn by a visible signature; empty for none.
     pub reason: String,
-    /// `/Location`, drawn and written; empty for none.
+    /// `/Location`, written, and drawn by a visible signature; empty for none.
     pub location: String,
+    /// `--contact`: `/ContactInfo`, written and never drawn; empty for none.
+    pub contact: String,
     /// `--hide`: which of the two are written and not drawn.
     pub hide: Hidden,
+    /// `--text`: the lines drawn instead of the standard ones, one template a
+    /// line (`sign_prepare::Options::text`). Empty without it.
+    pub text: Vec<String>,
+    /// `--date-format`; empty for the standard one.
+    pub date_format: String,
     /// The timestamp authority `--timestamp` names, already judged by
     /// `tsa::authority`; `None` asks nobody for anything.
     pub timestamp: Option<url::Url>,
@@ -70,14 +77,39 @@ pub enum Picture {
 }
 
 /// Where a visible signature goes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Placement {
     /// The page, counted from 1 as a reader counts them.
     pub page: u32,
-    /// `[left, top, right, bottom]`, points, measured from the top-left corner
-    /// of the page as it is displayed --- the space the viewer's own placement
-    /// is measured in (`sign_prepare::Visible::rect`).
-    pub rect: [f32; 4],
+    /// The rectangle, given or found.
+    pub at: Where,
+}
+
+/// How a visible signature's rectangle is said.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Where {
+    /// `--rect`: `[left, top, right, bottom]`, points, measured from the
+    /// top-left corner of the page as it is displayed --- the space the
+    /// viewer's own placement is measured in (`sign_prepare::Visible::rect`).
+    Rect([f32; 4]),
+    /// `--anchor`: beside text the page carries.
+    Anchor(Anchor),
+}
+
+/// `--anchor TEXT --size w,h [--offset dx,dy] [--anchor-match N]`: a
+/// rectangle measured from text on the page instead of from its corner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Anchor {
+    /// The text to find, as the viewer's search finds it: case is ignored.
+    pub text: String,
+    /// Which match, counted from 1 in reading order; `None` requires the page
+    /// to hold exactly one.
+    pub nth: Option<u32>,
+    /// How far right and down of the match's top-left corner the rectangle's
+    /// own top-left corner is, in points. Either may be negative.
+    pub offset: [f32; 2],
+    /// The rectangle's width and height, in points.
+    pub size: [f32; 2],
 }
 
 /// The three lines a visible signature can draw. All three by default.
@@ -129,12 +161,19 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut visible = false;
     let mut page: Option<u32> = None;
     let mut rect: Option<[f32; 4]> = None;
+    let mut anchor: Option<String> = None;
+    let mut anchor_match: Option<u32> = None;
+    let mut offset: Option<[f32; 2]> = None;
+    let mut size: Option<[f32; 2]> = None;
     let mut no_image = false;
     let mut image: Option<PathBuf> = None;
     let mut lines: Option<Lines> = None;
     let mut reason: Option<String> = None;
     let mut location: Option<String> = None;
+    let mut contact: Option<String> = None;
     let mut hide: Option<Hidden> = None;
+    let mut text: Vec<String> = Vec::new();
+    let mut date_format: Option<String> = None;
     let mut timestamp: Option<url::Url> = None;
     let mut long_term = false;
     let mut json = false;
@@ -150,12 +189,21 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
             (false, "--visible") => visible = true,
             (false, "--page") => page = Some(page_number(value(arg, &mut rest)?)?),
             (false, "--rect") => rect = Some(rectangle(value(arg, &mut rest)?)?),
+            (false, "--anchor") => anchor = Some(value(arg, &mut rest)?.clone()),
+            (false, "--anchor-match") => {
+                anchor_match = Some(match_number(value(arg, &mut rest)?)?);
+            }
+            (false, "--offset") => offset = Some(pair(arg, value(arg, &mut rest)?, false)?),
+            (false, "--size") => size = Some(pair(arg, value(arg, &mut rest)?, true)?),
             (false, "--no-image") => no_image = true,
             (false, "--image") => image = Some(PathBuf::from(value(arg, &mut rest)?)),
             (false, "--lines") => lines = Some(line_list(value(arg, &mut rest)?)?),
             (false, "--reason") => reason = Some(value(arg, &mut rest)?.clone()),
             (false, "--location") => location = Some(value(arg, &mut rest)?.clone()),
+            (false, "--contact") => contact = Some(value(arg, &mut rest)?.clone()),
             (false, "--hide") => hide = Some(hidden_list(value(arg, &mut rest)?)?),
+            (false, "--text") => text.extend(text_lines(value(arg, &mut rest)?)),
+            (false, "--date-format") => date_format = Some(value(arg, &mut rest)?.clone()),
             // Judged here, so an address tpdf will not ask --- `ftp:`, a
             // typo, a URL with a password in it --- is a malformed line and
             // exit 2, before any worker, key or socket.
@@ -196,23 +244,27 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         );
     }
     let identity = identity.ok_or(
-        "`sign` needs `--identity`: a certificate's subject as `identities` lists it, or its \
-         SHA-256",
+        "`sign` needs `--identity`: a certificate's subject as `identities` lists it, its \
+         SHA-256, or its SHA-1 thumbprint",
     )?;
 
     // The appearance's options belong to a visible signature, and are refused
-    // rather than ignored without one: a reason typed and silently dropped is a
-    // signature that does not say what its signer thinks it says. (An invisible
-    // signature with a reason is not built --- `docs/PLAN.md`, Phase 6.)
+    // rather than ignored without one: a line with one of them and no
+    // `--visible` has a mistake in it. A reason, a location and a contact are
+    // the signature dictionary's, and an invisible signature carries them.
     let appearance = [
         ("--page", page.is_some()),
         ("--rect", rect.is_some()),
+        ("--anchor", anchor.is_some()),
+        ("--anchor-match", anchor_match.is_some()),
+        ("--offset", offset.is_some()),
+        ("--size", size.is_some()),
         ("--no-image", no_image),
         ("--image", image.is_some()),
         ("--lines", lines.is_some()),
-        ("--reason", reason.is_some()),
-        ("--location", location.is_some()),
         ("--hide", hide.is_some()),
+        ("--text", !text.is_empty()),
+        ("--date-format", date_format.is_some()),
     ];
     if !visible {
         if let Some((flag, _)) = appearance.iter().find(|(_, given)| *given) {
@@ -223,6 +275,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     }
     // Hiding what was not given is a line with a mistake in it: the script
     // meant a reason to be written, and none would be.
+    let hide_given = hide.is_some();
     let hide = hide.unwrap_or_default();
     for (word, hidden, given) in [
         ("reason", hide.reason, reason.is_some()),
@@ -233,6 +286,18 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
                 "`--hide {word}` writes the {word} without drawing it, and no `--{word}` was \
                  given"
             ));
+        }
+    }
+    let date_drawn = wording(&text, lines, hide_given, &reason, &location)?;
+    if let Some(format) = &date_format {
+        if format.trim().is_empty() {
+            return Err("`--date-format` was given nothing to write the date with".into());
+        }
+        if !date_drawn {
+            return Err(
+                "`--date-format` says how the date is written, and this signature draws no date"
+                    .into(),
+            );
         }
     }
     // Two answers to one question. Neither wins silently: a script that passes
@@ -254,13 +319,9 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         );
     }
     let placement = if visible {
-        let rect = rect.ok_or(
-            "`--visible` needs `--rect x,y,w,h`: where the signature goes, in points from the \
-             page's top-left corner",
-        )?;
         Some(Placement {
             page: page.unwrap_or(1),
-            rect,
+            at: placed(rect, anchor, anchor_match, offset, size)?,
         })
     } else {
         None
@@ -279,7 +340,10 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         lines: lines.unwrap_or_default(),
         reason: reason.unwrap_or_default(),
         location: location.unwrap_or_default(),
+        contact: contact.unwrap_or_default(),
         hide,
+        text,
+        date_format: date_format.unwrap_or_default(),
         timestamp,
         long_term,
         json,
@@ -377,6 +441,229 @@ fn image_file(
         })
 }
 
+/// Where a visible signature is drawn, in the space `--rect` is given in.
+///
+/// The worker draws the appearance; this is the same layout over the same
+/// rectangle, image size and lines, computed here because it parses nothing.
+/// `at` is the signing time the worker is given, so the date line is the one
+/// drawn. Rounded to a thousandth of a point.
+#[must_use]
+pub fn drawn(visible: &Visible, at: u64) -> report::Appearance {
+    use crate::sign_prepare::appearance;
+    let [left, top, right, bottom] = visible.rect.map(f64::from);
+    let date = save::pdf_date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(at));
+    let lines = appearance::words(&visible.name, &date, &visible.options);
+    let layout = appearance::layout(
+        right - left,
+        bottom - top,
+        visible.image.as_ref().map(|i| (i.width, i.height)),
+        &lines,
+    );
+    let round = |v: f64| (v * 1000.0).round() / 1000.0;
+    report::Appearance {
+        page: visible.page + 1,
+        rect: [left, top, right - left, bottom - top].map(round),
+        image: layout
+            .image
+            .map(|[u, v, w, h]| [left + u, top + v, w, h].map(round)),
+        font_size: round(layout.size),
+        lines: layout
+            .lines
+            .iter()
+            .map(|(u, baseline, text)| {
+                let [u0, v0, u1, v1] = appearance::line_extent(layout.size, *u, *baseline, text);
+                report::DrawnLine {
+                    text: text.clone(),
+                    rect: [left + u0, top + v0, u1 - u0, v1 - v0].map(round),
+                    baseline: round(top + baseline),
+                }
+            })
+            .collect(),
+    }
+}
+
+/// Where a visible signature goes, from the two ways of saying it.
+///
+/// Exactly one of `--rect` and `--anchor`: both is two answers to one
+/// question, and the three options that describe an anchored rectangle are a
+/// mistake without an anchor.
+fn placed(
+    rect: Option<[f32; 4]>,
+    anchor: Option<String>,
+    nth: Option<u32>,
+    offset: Option<[f32; 2]>,
+    size: Option<[f32; 2]>,
+) -> Result<Where, String> {
+    let Some(text) = anchor else {
+        for (flag, given) in [
+            ("--anchor-match", nth.is_some()),
+            ("--offset", offset.is_some()),
+            ("--size", size.is_some()),
+        ] {
+            if given {
+                return Err(format!(
+                    "`{flag}` describes a signature placed beside text --- add `--anchor`, or \
+                     leave it out"
+                ));
+            }
+        }
+        return rect.map(Where::Rect).ok_or_else(|| {
+            "`--visible` needs `--rect x,y,w,h`, where the signature goes in points from the \
+             page's top-left corner, or `--anchor TEXT --size w,h`, to put it beside text on \
+             the page"
+                .to_string()
+        });
+    };
+    if rect.is_some() {
+        return Err(
+            "`--rect` says where the signature goes and `--anchor` finds where --- give one of \
+             them"
+                .into(),
+        );
+    }
+    // The same rule `redact --text` holds a query to, and its sentence.
+    let found = crate::search::Prepared::new(&text, ANCHOR_SEARCH)
+        .map_err(|problem| format!("`--anchor {text}`: {problem}"))?;
+    if found.matches_nothing() {
+        return Err(format!(
+            "`--anchor` needs text to find, and `{text}` can match nothing"
+        ));
+    }
+    let size =
+        size.ok_or("`--anchor` needs `--size w,h`: the signature's width and height in points")?;
+    Ok(Where::Anchor(Anchor {
+        text,
+        nth,
+        offset: offset.unwrap_or([0.0, 0.0]),
+        size,
+    }))
+}
+
+/// How an anchor is searched for: the viewer's plain search, case ignored.
+const ANCHOR_SEARCH: crate::search::Options = crate::search::Options {
+    match_case: false,
+    whole_word: false,
+    regex: false,
+};
+
+/// Finds the anchor on its page and returns the signature's rectangle,
+/// `[left, top, right, bottom]` in the page's display space.
+///
+/// A worker reads the page's text; nothing of the document is parsed here.
+/// Refused, with nothing written: the page does not exist, the text is not on
+/// it, it is there more than once and no `--anchor-match` says which, or the
+/// rectangle measured from it is not one a page can hold.
+fn anchored(env: &Env<'_>, sign: &Sign, page: u32, anchor: &Anchor) -> Result<[f32; 4], Failure> {
+    use super::redact::{search_pages, wait};
+    use super::report::SearchKind;
+    use crate::render::{Backend, RenderService};
+    let refused = |why: String| Failure::new(Exit::Refused, why);
+    let shown = sign.input.display().to_string();
+    let (file, _) = opened(&sign.input).map_err(refused)?;
+    let service = RenderService::start_with(env.library_dir.clone(), Backend::Worker);
+    let info = wait(|reply| {
+        service.open_handed(sign.input.clone(), Some(file), true, None, reply);
+    })
+    .map_err(|why: crate::progressive::Refusal| {
+        refused(format!(
+            "{shown} could not be opened to find the anchor: {}",
+            why.reason
+        ))
+    })?;
+    if page as usize > info.page_count {
+        return Err(refused(format!(
+            "{shown} has {} page{}, and `--page {page}` is not one of them",
+            info.page_count,
+            if info.page_count == 1 { "" } else { "s" }
+        )));
+    }
+    let compiled = crate::search::Prepared::new(&anchor.text, ANCHOR_SEARCH).map_err(refused)?;
+    let queries = [(SearchKind::Text, anchor.text.clone(), compiled)];
+    let found = search_pages(&queries, &[page], |at| {
+        wait(|reply| service.text(info.id, at, None, reply))
+    })
+    .map_err(|why| refused(format!("{shown}: {why}, so the anchor could not be found")))?;
+    // Each match's first box: where its text starts.
+    let boxes: Vec<[f32; 4]> = found
+        .matches
+        .iter()
+        .filter_map(|hit| {
+            let halves = super::regions::halves(std::slice::from_ref(hit));
+            let text = found.texts.get(&(page - 1))?;
+            super::regions::regions_on(text, page - 1, &halves)
+                .first()
+                .copied()
+        })
+        .collect();
+    let text = &anchor.text;
+    let chosen = match (anchor.nth, boxes.len()) {
+        (_, 0) => {
+            return Err(refused(format!(
+                "page {page} of {shown} has no text `{text}` to put the signature beside --- \
+                 nothing was written"
+            )))
+        }
+        (None, 1) => boxes[0],
+        (None, many) => {
+            return Err(refused(format!(
+                "page {page} of {shown} has `{text}` {many} times, so it does not say where the \
+                 signature goes --- give `--anchor-match N` to choose one, counted from 1; \
+                 nothing was written"
+            )))
+        }
+        (Some(nth), many) => *boxes.get(nth as usize - 1).ok_or_else(|| {
+            refused(format!(
+                "page {page} of {shown} has `{text}` {many} time{}, and `--anchor-match {nth}` \
+                 is not one of them --- nothing was written",
+                if many == 1 { "" } else { "s" }
+            ))
+        })?,
+    };
+    let [dx, dy] = anchor.offset;
+    let [w, h] = anchor.size;
+    rectangle_of(chosen[0] + dx, chosen[1] + dy, w, h).ok_or_else(|| {
+        refused(format!(
+            "`{text}` is at {},{} on page {page}, and the offset puts the signature off the \
+             page's top or left edge --- nothing was written",
+            chosen[0], chosen[1]
+        ))
+    })
+}
+
+/// `--anchor-match`: which match, counted from 1.
+fn match_number(text: &str) -> Result<u32, String> {
+    match text.trim().parse::<u32>() {
+        Ok(n) if n >= 1 => Ok(n),
+        _ => Err(format!(
+            "`--anchor-match` is which match to use, counted from 1, and `{text}` is not a \
+             number of one"
+        )),
+    }
+}
+
+/// Two numbers, `a,b`. A size is above zero; an offset is any finite pair.
+fn pair(flag: &str, text: &str, size: bool) -> Result<[f32; 2], String> {
+    let refused = || {
+        if size {
+            format!(
+                "`{flag}` is a width and a height above zero, `w,h` in points --- `{text}` is not"
+            )
+        } else {
+            format!("`{flag}` is two numbers, `dx,dy` in points --- `{text}` is not")
+        }
+    };
+    let numbers: Vec<f32> = text
+        .split(',')
+        .map(|n| n.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| refused())?;
+    let [a, b] = numbers.as_slice() else {
+        return Err(refused());
+    };
+    let fine = a.is_finite() && b.is_finite() && (!size || (*a > 0.0 && *b > 0.0));
+    fine.then_some([*a, *b]).ok_or_else(refused)
+}
+
 /// A page number, counted from 1.
 fn page_number(text: &str) -> Result<u32, String> {
     match text.trim().parse::<u32>() {
@@ -439,6 +726,76 @@ fn line_list(text: &str) -> Result<Lines, String> {
         }
     }
     Ok(lines)
+}
+
+/// The lines one `--text` gives: a real line break and the two characters
+/// `\n` both start a new line, since a line break is awkward to type into most
+/// shells.
+fn text_lines(given: &str) -> Vec<String> {
+    given
+        .replace("\r\n", "\n")
+        .replace("\\n", "\n")
+        .split('\n')
+        .map(str::to_string)
+        .collect()
+}
+
+/// Holds `--text` to the rest of the line, and says whether a date is drawn.
+///
+/// A text is the whole wording, so `--lines` and `--hide` beside it are two
+/// answers to one question. A brace that names nothing is refused here, before
+/// any worker or key, and so is a `{reason}` or `{location}` that was not
+/// given: it would draw as nothing, in a line that says there is one.
+fn wording(
+    text: &[String],
+    lines: Option<Lines>,
+    hide: bool,
+    reason: &Option<String>,
+    location: &Option<String>,
+) -> Result<bool, String> {
+    use crate::sign_prepare::Part;
+    if text.is_empty() {
+        return Ok(lines.unwrap_or_default().date);
+    }
+    for (flag, given) in [("--lines", lines.is_some()), ("--hide", hide)] {
+        if given {
+            return Err(format!(
+                "`--text` is the whole wording of the signature and `{flag}` chooses among the \
+                 standard lines --- give one of them"
+            ));
+        }
+    }
+    let mut date = false;
+    let mut words = false;
+    for line in text {
+        for part in crate::sign_prepare::parts(line)? {
+            match part {
+                Part::Words(own) => words |= !own.trim().is_empty(),
+                Part::Name => words = true,
+                Part::Date => (date, words) = (true, true),
+                Part::Reason | Part::Location => {
+                    let (word, given) = if part == Part::Reason {
+                        ("reason", reason.is_some())
+                    } else {
+                        ("location", location.is_some())
+                    };
+                    if !given {
+                        return Err(format!(
+                            "the text asks for `{{{word}}}`, and no `--{word}` was given"
+                        ));
+                    }
+                    words = true;
+                }
+            }
+        }
+    }
+    if !words {
+        return Err(
+            "`--text` was given no words to draw --- for an image alone, give `--lines \"\"`"
+                .into(),
+        );
+    }
+    Ok(date)
 }
 
 /// `reason,location`, either or both.
@@ -507,6 +864,20 @@ fn run_sign(
         _ => None,
     };
 
+    // The anchor, before the store too: text that is not on the page ends
+    // the run with no certificate listed and no key touched.
+    let rect = match &sign.visible {
+        None => None,
+        Some(Placement {
+            at: Where::Rect(rect),
+            ..
+        }) => Some(*rect),
+        Some(Placement {
+            page,
+            at: Where::Anchor(anchor),
+        }) => Some(anchored(env, sign, *page, anchor)?),
+    };
+
     // The certificate, from the store --- which asks the OS for certificates
     // only. The key is not touched until the digest is signed.
     let held = store_identities(env)?;
@@ -533,9 +904,9 @@ fn run_sign(
     let opened_as = crate::fingerprint::Fingerprint::of_open(&file, &sign.input)
         .map_err(|why| Failure::new(Exit::Refused, why))?;
 
-    let visible = match sign.visible {
+    let visible = match sign.visible.as_ref().zip(rect) {
         None => None,
-        Some(placement) => {
+        Some((placement, rect)) => {
             let image = match &sign.image {
                 Picture::Saved => env.store.saved_image().map_err(|why| {
                     Failure::new(
@@ -551,7 +922,7 @@ fn run_sign(
             };
             Some(Visible {
                 page: placement.page - 1,
-                rect: placement.rect,
+                rect,
                 name: offer.subject.clone(),
                 image,
                 options: Options {
@@ -562,13 +933,21 @@ fn run_sign(
                     location: sign.location.clone(),
                     hide_reason: sign.hide.reason,
                     hide_location: sign.hide.location,
+                    text: sign.text.clone(),
+                    date_format: sign.date_format.clone(),
                 },
             })
         }
     };
 
     let worker = env.worker();
-    let unsigned = worker.prepare_signature(&file, len, env.now, visible)?;
+    let appearance = visible.as_ref().map(|visible| drawn(visible, env.now));
+    let notes = crate::sign_prepare::Notes {
+        reason: sign.reason.clone(),
+        location: sign.location.clone(),
+        contact: sign.contact.clone(),
+    };
+    let unsigned = worker.prepare_signature(&file, len, env.now, visible, notes)?;
     drop(file);
 
     let original = save::read_to_sign(&sign.input, &opened_as)
@@ -723,8 +1102,9 @@ fn run_sign(
         input: sign.input.display().to_string(),
         output: sign.output.display().to_string(),
         field,
-        identity: usable_of(&listed[at].0.id, &offer),
+        identity: usable_of(&listed[at].0, &offer),
         visible: sign.visible.is_some(),
+        appearance,
         signatures: found.iter().map(|s| signature_report(s)).collect(),
         summary: summary.clone(),
     };

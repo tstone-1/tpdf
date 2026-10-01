@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use super::args::{parse, Line};
-use super::identities::{identities_report, listing, resolve, Listed};
+use super::identities::{identities_report, identities_text, listing, resolve, Listed};
 use super::report::{self, ErrorKind};
 use super::sign::{Lines, Placement};
 use super::verify::{verified, verify_exit};
@@ -60,7 +60,7 @@ fn a_whole_visible_signing_line_parses_into_what_the_worker_is_sent() {
         sign.visible,
         Some(Placement {
             page: 3,
-            rect: [10.0, 20.0, 160.0, 80.0],
+            at: sign::Where::Rect([10.0, 20.0, 160.0, 80.0]),
         })
     );
     assert_eq!(sign.image, sign::Picture::None);
@@ -109,6 +109,198 @@ fn an_image_file_is_a_visible_signatures_and_excludes_no_image() {
         assert!(refused(&line).contains("give one of them"), "{line}");
     }
     assert!(refused(&format!("{visible} --image")).contains("--image"));
+}
+
+#[test]
+fn text_is_the_whole_wording_and_is_held_to_the_rest_of_the_line() {
+    let line = |extra: &[&str]| {
+        let mut args = argv("in.pdf -o out.pdf --identity A --visible --rect 0,0,100,40");
+        args.extend(extra.iter().map(|a| (*a).to_string()));
+        sign::parse(&args)
+    };
+    // Nothing without it: the standard lines.
+    let plain = line(&[]).expect("plain");
+    assert!(plain.text.is_empty() && plain.date_format.is_empty());
+    // One line a `--text`, a new one at `\n` typed as two characters or as a
+    // real line break, and the next `--text` after those.
+    let worded = line(&[
+        "--text",
+        "Digitally signed\\n{date}",
+        "--text",
+        "by {name}\nin {location}",
+        "--location",
+        "Hamburg",
+        "--date-format",
+        "DD.MM.YYYY",
+    ])
+    .expect("worded");
+    assert_eq!(
+        worded.text,
+        ["Digitally signed", "{date}", "by {name}", "in {location}"]
+    );
+    assert_eq!(worded.date_format, "DD.MM.YYYY");
+    // A reason beside a text that does not ask for it is fine: it is written.
+    assert!(line(&["--text", "Signed", "--reason", "Approved"]).is_ok());
+    for (extra, says) in [
+        (&["--text", "x", "--lines", "name"][..], "`--lines`"),
+        (
+            &["--text", "x", "--reason", "r", "--hide", "reason"][..],
+            "`--hide`",
+        ),
+        (&["--text", "by {who}"][..], "tpdf fills in"),
+        (&["--text", "a { b"][..], "never closed"),
+        (&["--text", "{reason}"][..], "no `--reason` was given"),
+        (&["--text", "{location}"][..], "no `--location` was given"),
+        (&["--text", ""][..], "no words"),
+        (&["--text", " \\n "][..], "no words"),
+        (
+            &["--date-format", " "][..],
+            "nothing to write the date with",
+        ),
+        (
+            &["--text", "Signed", "--date-format", "YYYY"][..],
+            "draws no date",
+        ),
+        (
+            &["--lines", "label,name", "--date-format", "YYYY"][..],
+            "draws no date",
+        ),
+    ] {
+        let why = line(extra).expect_err(says);
+        assert!(why.contains(says), "{extra:?}: {why}");
+    }
+    // The controls for the two date refusals: a date that is drawn.
+    assert!(line(&["--text", "{date}", "--date-format", "YYYY"]).is_ok());
+    assert!(line(&["--lines", "date", "--date-format", "YYYY"]).is_ok());
+    assert!(line(&["--date-format", "YYYY"]).is_ok());
+    // Both describe a visible signature.
+    for flag in ["--text", "--date-format"] {
+        let args = argv(&format!("in.pdf -o out.pdf --identity A {flag} x"));
+        let why = sign::parse(&args).expect_err("invisible");
+        assert!(
+            why.contains(&format!("`{flag}` describes a visible signature")),
+            "{why}"
+        );
+    }
+}
+
+#[test]
+fn a_reason_a_location_and_a_contact_need_no_visible_signature() {
+    let invisible = signed(
+        "sign in.pdf -o out.pdf --identity A --reason Approved --location Hamburg --contact a@b.example",
+    );
+    assert_eq!(invisible.visible, None);
+    assert_eq!(
+        (
+            invisible.reason.as_str(),
+            invisible.location.as_str(),
+            invisible.contact.as_str()
+        ),
+        ("Approved", "Hamburg", "a@b.example")
+    );
+    // Nothing unless it is said.
+    assert_eq!(signed("sign in.pdf -o out.pdf --identity A").contact, "");
+    let visible = signed(
+        "sign in.pdf -o out.pdf --identity A --visible --rect 0,0,100,40 --contact a@b.example",
+    );
+    assert_eq!(visible.contact, "a@b.example");
+    assert!(refused("sign in.pdf -o out.pdf --identity A --contact").contains("--contact"));
+}
+
+#[test]
+fn an_anchor_says_where_a_visible_signature_goes_instead_of_a_rectangle() {
+    let line = |extra: &[&str]| {
+        let mut args = argv("in.pdf -o out.pdf --identity A --visible");
+        args.extend(extra.iter().map(|a| (*a).to_string()));
+        sign::parse(&args)
+    };
+    let placed = |extra: &[&str]| line(extra).expect("placed").visible.expect("visible");
+    assert_eq!(
+        placed(&["--anchor", "Signed by", "--size", "120,40"]),
+        Placement {
+            page: 1,
+            at: sign::Where::Anchor(sign::Anchor {
+                text: "Signed by".into(),
+                nth: None,
+                offset: [0.0, 0.0],
+                size: [120.0, 40.0],
+            }),
+        }
+    );
+    assert_eq!(
+        placed(&[
+            "--anchor",
+            "___",
+            "--size",
+            "120.5,40",
+            "--offset",
+            "-4,12.5",
+            "--anchor-match",
+            "2",
+            "--page",
+            "3",
+        ]),
+        Placement {
+            page: 3,
+            at: sign::Where::Anchor(sign::Anchor {
+                text: "___".into(),
+                nth: Some(2),
+                offset: [-4.0, 12.5],
+                size: [120.5, 40.0],
+            }),
+        }
+    );
+    for (extra, says) in [
+        (&[][..], "needs `--rect x,y,w,h`"),
+        (&["--anchor", "x"][..], "needs `--size w,h`"),
+        (
+            &["--anchor", "x", "--size", "9,9", "--rect", "0,0,9,9"][..],
+            "give one of them",
+        ),
+        (&["--rect", "0,0,50,50", "--size", "9,9"][..], "`--size`"),
+        (
+            &["--rect", "0,0,50,50", "--offset", "1,1"][..],
+            "`--offset`",
+        ),
+        (
+            &["--rect", "0,0,50,50", "--anchor-match", "1"][..],
+            "`--anchor-match`",
+        ),
+        (&["--anchor", "", "--size", "9,9"][..], "can match nothing"),
+        (&["--anchor", "x", "--size", "0,9"][..], "above zero"),
+        (&["--anchor", "x", "--size", "9,-1"][..], "above zero"),
+        (&["--anchor", "x", "--size", "9"][..], "above zero"),
+        (&["--anchor", "x", "--size", "9,9,9"][..], "above zero"),
+        (
+            &["--anchor", "x", "--size", "9,9", "--offset", "1"][..],
+            "two numbers",
+        ),
+        (
+            &["--anchor", "x", "--size", "9,9", "--offset", "a,b"][..],
+            "two numbers",
+        ),
+        (
+            &["--anchor", "x", "--size", "9,9", "--offset", "inf,0"][..],
+            "two numbers",
+        ),
+        (
+            &["--anchor", "x", "--size", "9,9", "--anchor-match", "0"][..],
+            "counted from 1",
+        ),
+    ] {
+        let why = line(extra).expect_err(says);
+        assert!(why.contains(says), "{extra:?}: {why}");
+    }
+    // All four describe a visible signature.
+    for flag in [
+        "--anchor x",
+        "--size 9,9",
+        "--offset 1,1",
+        "--anchor-match 1",
+    ] {
+        let why = refused(&format!("sign a.pdf -o b.pdf --identity A {flag}"));
+        assert!(why.contains("add `--visible`"), "{flag}: {why}");
+    }
 }
 
 #[test]
@@ -211,14 +403,7 @@ fn a_page_that_is_not_counted_from_one_is_refused() {
 
 #[test]
 fn an_appearance_option_without_visible_is_refused_rather_than_dropped() {
-    for flag in [
-        "--page 2",
-        "--rect 0,0,50,50",
-        "--no-image",
-        "--lines name",
-        "--reason Why",
-        "--location Where",
-    ] {
+    for flag in ["--page 2", "--rect 0,0,50,50", "--no-image", "--lines name"] {
         let why = refused(&format!("sign a.pdf -o b.pdf --identity A {flag}"));
         assert!(why.contains("add `--visible`"), "{flag}: {why}");
     }
@@ -415,6 +600,66 @@ fn an_identity_nobody_holds_is_refused_and_says_where_to_look() {
     );
     let why = resolve(&"ab".repeat(32), &list).expect_err("no such hash");
     assert!(why.contains("SHA-256"), "{why}");
+    let why = resolve(&"ab".repeat(20), &list).expect_err("no such thumbprint");
+    assert!(why.contains("SHA-1") && !why.contains("SHA-256"), "{why}");
+}
+
+#[test]
+fn a_certificate_is_named_by_the_thumbprint_windows_shows_for_it() {
+    let first = cert(3, &Spec::new("Alice"));
+    let second = cert(
+        4,
+        &Spec {
+            serial: 9,
+            ..Spec::new("Alice")
+        },
+    );
+    let code = cert(
+        5,
+        &Spec {
+            purposes: Some(vec!["1.3.6.1.5.5.7.3.3"]),
+            ..Spec::new("Carol")
+        },
+    );
+    let list = listed(&[first.clone(), second.clone(), code.clone()]);
+    let thumbprint = crate::keystore::thumbprint_of;
+    // The digest itself, against one computed here: 40 lowercase hex digits
+    // of SHA-1 over the certificate, which is what Windows prints in capitals.
+    {
+        use sha1::Digest as _;
+        let expected: String = sha1::Sha1::digest(&second)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(thumbprint(&second), expected);
+        assert_eq!(expected.len(), 40);
+        assert_eq!(list[1].0.sha1, expected);
+    }
+    // The two share a subject, so only a hash tells them apart; the
+    // thumbprint does, in either case of hex.
+    assert_eq!(resolve(&thumbprint(&second), &list), Ok(1));
+    assert_eq!(
+        resolve(&thumbprint(&first).to_ascii_uppercase(), &list),
+        Ok(0)
+    );
+    // One that cannot sign is refused with its reason, as by its SHA-256.
+    let why = resolve(&thumbprint(&code), &list).expect_err("code signing");
+    assert!(
+        why.contains("cannot sign") && why.contains("code signing"),
+        "{why}"
+    );
+    // The report carries it for both kinds, and the plain listing prints it
+    // the way Windows does.
+    let report = identities_report(&list);
+    assert_eq!(report.usable[1].sha1, thumbprint(&second));
+    assert_eq!(report.not_usable[0].sha1, thumbprint(&code));
+    let text = identities_text(&report);
+    for der in [&first, &second, &code] {
+        assert!(
+            text.contains(&format!("SHA-1 {}", thumbprint(der).to_ascii_uppercase())),
+            "{text}"
+        );
+    }
 }
 
 #[test]
@@ -1524,6 +1769,7 @@ fn samples() -> Vec<(&'static str, String)> {
     let pretty = |value: &dyn erased::Json| value.pretty();
     let usable = report::Usable {
         id: "2a144cdb0facc6919f9163d7776c3c2f7f35bbd23021c002d61c29c7f0819c74".into(),
+        sha1: "9f1c0d3b7a52e84c6d10b2a4f3e85c7791d0a6be".into(),
         subject: "A. Signer".into(),
         issuer: "An Issuing CA".into(),
         expires: "2027-09-26 00:00:00 UTC".into(),
@@ -1535,6 +1781,7 @@ fn samples() -> Vec<(&'static str, String)> {
         usable: vec![usable.clone()],
         not_usable: vec![report::NotUsable {
             id: "f526049003c94827b7f211c5f5bfecb156d4fdb300ed41ea722431d109b75531".into(),
+            sha1: "4be07d19c2a3f6508e1d9b47a6c05f3e2d81b7c0".into(),
             subject: "Developer ID Application: A. Signer (TEAMID1234)".into(),
             why: "it is issued for code signing, not for signing documents".into(),
         }],
@@ -1582,6 +1829,17 @@ fn samples() -> Vec<(&'static str, String)> {
         field: "Signature2".into(),
         identity: usable,
         visible: true,
+        appearance: Some(report::Appearance {
+            page: 2,
+            rect: [72.0, 600.0, 220.0, 70.0],
+            image: Some([78.0, 610.0, 98.0, 49.0]),
+            font_size: 8.512,
+            lines: vec![report::DrawnLine {
+                text: "Digitally signed by".into(),
+                rect: [185.149, 622.064, 74.851, 9.84],
+                baseline: 629.989,
+            }],
+        }),
         signatures: vec![full_signature(), bare_signature()],
         summary,
     };

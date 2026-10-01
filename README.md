@@ -544,6 +544,10 @@ tpdf identities
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe"
 tpdf sign contract.pdf -o contract-signed.pdf --identity 2a144cdb…c74 \
     --visible --page 2 --rect 72,600,220,70 --reason "Approved" --location "Hamburg"
+tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --visible \
+    --rect 72,640,220,60 --text "Digitally signed\n{date}" --date-format "DD.MM.YYYY"
+tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --visible \
+    --anchor "Signature:" --offset 70,-20 --size 180,50 --contact "jane@example.com"
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp digicert
 tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp sectigo --long-term
 tpdf verify contract-signed.pdf other.pdf
@@ -596,17 +600,41 @@ the page as it is displayed:
   certificate store (Windows) that have a private key: the ones that can sign a document, and
   the ones that cannot with the reason — expired, not yet valid, a key tpdf does not sign
   with, or issued for something else, such as code signing or a web server. The rules are
-  the application's.
-- **`sign <in.pdf> -o <out.pdf> --identity <subject | SHA-256>`** signs with one of them.
-  `--identity` takes the certificate's subject exactly as `identities` prints it, or its
-  SHA-256 in hex. A subject that two certificates able to sign share is refused, and both
+  the application's. Under each certificate it prints the SHA-256 and the SHA-1 of the
+  certificate; the SHA-1 is the thumbprint that `certmgr` and `Get-ChildItem Cert:` show
+  on Windows.
+- **`sign <in.pdf> -o <out.pdf> --identity <subject | SHA-256 | SHA-1>`** signs with one of them.
+  `--identity` takes the certificate's subject exactly as `identities` prints it (its
+  common name, when it has one), its SHA-256 in hex, or its SHA-1 thumbprint in hex,
+  capitals or not. A subject that two certificates able to sign share is refused, and both
   are listed with their SHA-256, because tpdf does not choose a key for you. The original is
   never changed; `-o` must name a new file unless `--force` is given. `--visible` draws the
   signature on a page: `--rect x,y,w,h` in points from the top-left corner of the page as it
-  is displayed, `--page N` counted from 1 (1 by default); your saved signature image is drawn
+  is displayed, `--page N` counted from 1 (1 by default). `--anchor TEXT --size w,h` places
+  it beside text on that page instead of at a rectangle you measured: the signature's
+  top-left corner is the top-left corner of the text, moved right and down by
+  `--offset dx,dy` (either may be negative), and `--size` is its width and height. The text
+  is found as the viewer's search finds it, so case is ignored. Text that is on the page
+  more than once is refused with the count, because tpdf does not choose a place for you;
+  `--anchor-match N` chooses one, counted from 1 in reading order. A line of six
+  underscores holds `___` twice, so a label such as `Signature:` is a steadier anchor than
+  underscores, and a line that is drawn rather than typed is not text and cannot be found.
+  Text that is not on the page ends the command with exit code 3 before any certificate or
+  key is asked for. `--rect` together with `--anchor` is refused. Your saved signature image is drawn
   beside the words unless `--no-image` is given, `--lines label,name,date` chooses which of
   the three lines appear, and `--reason` and `--location` are drawn and written into the
-  signature. `--image <file>` draws a PNG or JPEG file instead of the saved image, for this
+  signature. Without `--visible` they are written and nothing is drawn. `--contact` writes
+  how to reach the signer into the signature (`/ContactInfo`) and is never drawn. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
+  `{reason}` and `{location}` are replaced by the certificate's name, the signing time, and
+  the reason and location you gave, `{{` and `}}` are a brace each, the two characters `\n`
+  start a new line, and `--text` may be given more than once, each adding lines. With
+  `--text` a reason or location is drawn only where the text asks for it, and is written
+  into the signature either way; `--text` with `--lines` or with `--hide` is refused, and so
+  is a text that asks for a reason or location you did not give. The text is drawn in
+  Helvetica, so it is limited to Latin-1 characters and to 16 lines. `--date-format` says
+  how the date is written, in the standard date line or in `{date}`: `YYYY`, `MM`, `DD`,
+  `HH`, `mm` and `ss` are replaced and every other character is kept, so `DD.MM.YYYY`
+  writes `01.10.2026`. The time is UTC, and the default is `YYYY-MM-DD HH:mm:ss UTC`. `--image <file>` draws a PNG or JPEG file instead of the saved image, for this
   signature only: the saved image is neither read nor changed, so a script's result does not
   depend on what a computer has saved. The file is held to the limits of an image imported
   in the application (10 MB, 8 megapixels, no animation), trimmed of its transparent margins
@@ -1017,7 +1045,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   was incomplete. `error` is null on success or the error object described above on
   partial publication. A failure before publication uses the generic error report.
 - `identities`: `usable` and `not_usable`, lists of certificates. Each has `id` (SHA-256 of
-  the certificate, lowercase hex) and `subject` (its common name, or its whole name when it
+  the certificate, lowercase hex), `sha1` (its SHA-1, lowercase hex: the thumbprint Windows
+  shows in capitals) and `subject` (its common name, or its whole name when it
   has none); a usable one also `issuer`, `expires` (`YYYY-MM-DD HH:MM:SS UTC`) and `method`
   (`RSA 3072`, `ECDSA P-256`), and one that is not usable `why`, a clause.
 - `verify`: `strict_passed` (whether `--strict` would pass, present either way) and `files`,
@@ -1084,8 +1113,17 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   (what the removal cannot take there, one sentence each). **The report holds the words it
   removed**, in `hits` and `taking`: keep it where you would keep the original.
 - `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
-  certificate as above), `visible`, `signatures` (every signature in the written file, read
-  back) and `summary` (the sentence the application shows after signing).
+  certificate as above), `visible`, `appearance`, `signatures` (every signature in the
+  written file, read back) and `summary` (the sentence the application shows after signing).
+  `appearance` is `null` for an invisible signature and otherwise says where the signature
+  was drawn: `page` (counted from 1), `rect`, `image` (`null` when no image was drawn),
+  `font_size` in points and `lines`, top to bottom, each with its `text`, its `rect` (the
+  box no ink of the line leaves) and its `baseline` (measured down from the top of the
+  page). Every rectangle is `[x, y, w, h]` in points from the top-left corner of the page as
+  displayed, the space `--rect` is given in, rounded to a thousandth of a point. With words
+  and an image, the image has the left half of a wide rectangle or the top half of a tall
+  one, and the words the other half; without words the image has the whole rectangle. The
+  image keeps its proportions and is centred in its part.
 - A signature: `field`; `document_timestamp` (`true` for an RFC 3161 document or archive
   timestamp, `false` for a document signature, including one with an attached timestamp); `signer` and `issuer` (from its certificate, empty when none could
   be read); `claimed_time` (the time the signer's computer gave; not checked);

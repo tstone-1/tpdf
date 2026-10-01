@@ -2002,6 +2002,7 @@ impl Engine for Workers {
         let request = Request::PrepareSignature {
             at,
             visible: visible.cloned().map(Box::new),
+            notes: crate::sign_prepare::Notes::default(),
         };
         match self.ask(doc, &request)? {
             Reply::PreparedSignature(unsigned) => Ok(unsigned),

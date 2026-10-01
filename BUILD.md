@@ -14163,3 +14163,39 @@ byte limit, a lossless, progressive or twelve-bit JPEG, a scan before the frame,
 header, a PNG end chunk with data, or a PNG without image data. To add a case, edit
 `src-tauri/testdata/signature/headers.py`, run it from the repository root, and raise the two
 counts.
+
+### `sign`: own wording, placement beside text, and where it was drawn — measured 2026-10-01
+
+Six additions to `tpdf sign`, all on the command line and in the Python client; the signing
+panel in the window is unchanged.
+
+- `--identity` takes the certificate's SHA-1 in hex, which is the thumbprint `certmgr` and
+  `Get-ChildItem Cert:` show. `identities` prints it and reports it as `sha1`.
+- `--text` draws the caller's own lines in place of the standard three, with `{name}`,
+  `{date}`, `{reason}` and `{location}` filled in. Braces, because a batch file rewrites a
+  percent sign inside an argument and a POSIX shell rewrites a dollar.
+- `--date-format` writes the date from `YYYY`, `MM`, `DD`, `HH`, `mm` and `ss`. The time is
+  UTC: the date drawn is `/M` read back.
+- `--reason` and `--location` no longer need `--visible`, and `--contact` writes
+  `/ContactInfo`. They reach the worker as `sign_prepare::Notes` in
+  `Request::PrepareSignature`, which the application sends empty.
+- `--anchor TEXT --size w,h [--offset dx,dy] [--anchor-match N]` measures the rectangle from
+  text on the page, found by the search `redact --text` uses. A second worker reads the page's
+  text before the store is asked for anything.
+- `sign --json` reports `appearance`: the rectangle, the image's rectangle, the type size and
+  each line's box and baseline, in the space `--rect` is given in. It is the worker's layout
+  computed a second time in the tool's process from the same rectangle, image size and lines.
+
+**What holds it.** 50 mutations in `scripts/mutate_rust.py` under `identity:`, `sign text:`,
+`sign date:`, `sign notes:` and `sign anchor:`, each caught by the test named for it, and three
+older ones re-aimed after their anchors moved. `tests/cli.rs` gained two groups,
+`sign_text::draws_the_text` and `sign_anchor::places_beside_text`, which sign through the tool
+and read the drawn strings, the text and image matrices, the signature dictionary and the
+anchored rectangle back out of the written file. That binary is outside the mutation table, so
+eight mutations were run by hand against it, each rebuilt and each red: the reported baseline,
+line box and image moved by a point; the anchor's offset dropped on either axis; the match
+number taken off by one; a second match accepted without `--anchor-match`; and the page-count
+check removed.
+
+**Not covered.** The `appearance` comparison signs an upright page; no rotated page is
+compared. Nothing here ran on Windows beyond `scripts/check_windows.py`.

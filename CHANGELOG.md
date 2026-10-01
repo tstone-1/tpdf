@@ -17,6 +17,50 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.1] - Unreleased
+
+### Added
+
+- **`tpdf sign --identity` takes the SHA-1 thumbprint Windows shows.** A
+  certificate could be named by its subject or by its SHA-256, and no Windows tool
+  prints a certificate's SHA-256. `--identity` now also takes the 40-digit SHA-1
+  thumbprint that `certmgr` and `Get-ChildItem Cert:` show, in capitals or not.
+  `tpdf identities` prints it under each certificate, and its JSON carries it as
+  `sha1`, as does the `identity` in the `sign` report.
+
+- **`tpdf sign --text` draws your own wording in a visible signature.** The
+  lines of a visible signature were fixed: *Digitally signed by*, the name and
+  the date, each of which could only be switched off. `--text` draws the lines
+  you give instead. `{name}`, `{date}`, `{reason}` and `{location}` are filled
+  in, `\n` starts a new line, and `--text` may be given more than once. A reason
+  or location is still written into the signature, and is drawn only where the
+  text asks for it. The text is drawn in Helvetica and is limited to Latin-1
+  characters.
+
+- **An invisible signature can carry a reason and a location, and any signature
+  a contact.** `tpdf sign --reason` and `--location` were refused without
+  `--visible`. They are now written into an invisible signature too.
+  `--contact` is new: it writes how to reach the signer into the signature and is
+  never drawn.
+
+- **`tpdf sign --anchor` places a visible signature beside text on the page.**
+  A visible signature needed a rectangle measured by hand. `--anchor TEXT --size
+  w,h` puts the signature's top-left corner at the top-left corner of that text,
+  moved by `--offset dx,dy`. Text that is on the page more than once is refused
+  unless `--anchor-match N` says which, and text that is not there ends the
+  command before any certificate is asked for.
+
+- **`tpdf sign --json` says where a visible signature was drawn.** The report's
+  new `appearance` gives the page, the rectangle, the image's rectangle, the type
+  size, and each line's text, box and baseline, in the space `--rect` is given
+  in. A script can check that a signature sits where it was meant to without
+  rendering the page. It is `null` for an invisible signature.
+
+- **`tpdf sign --date-format` chooses how the date is written.** `YYYY`, `MM`,
+  `DD`, `HH`, `mm` and `ss` are replaced, so `DD.MM.YYYY` writes `01.10.2026`.
+  It applies to the standard date line and to `{date}` in a text. The time is
+  UTC.
+
 ## [26.10.0] - 2026-10-01
 
 ### Added

@@ -10,7 +10,9 @@
 //!
 //! ## What it draws
 //!
-//! Up to five lines of Helvetica, each one the reader's choice ([`Options`]):
+//! Lines of Helvetica. Either the command line's own wording
+//! ([`Options::text`], `sign --text`), or up to five standard lines, each one
+//! the reader's choice ([`Options`]):
 //! *Digitally signed by*, the certificate's subject name, the signing time in
 //! UTC --- which is `/M` read back so the two cannot disagree --- and, when the
 //! reader typed them, *Reason:* and *Location:*, which are the signature
@@ -117,6 +119,14 @@ pub struct Options {
     pub hide_reason: bool,
     /// The same for the location.
     pub hide_location: bool,
+    /// `sign --text`: the lines to draw **instead of** the standard ones, each
+    /// a template [`expand`] fills in. Empty wherever it is not said, which
+    /// draws the standard lines; the three switches and the two `hide_` fields
+    /// are then the whole choice, and with a text they are not read.
+    pub text: Vec<String>,
+    /// `sign --date-format`: how the signing time is written, in
+    /// [`date_text`]'s tokens. Blank for [`DATE_FORMAT`].
+    pub date_format: String,
 }
 
 impl Default for Options {
@@ -130,6 +140,8 @@ impl Default for Options {
             location: String::new(),
             hide_reason: false,
             hide_location: false,
+            text: Vec::new(),
+            date_format: String::new(),
         }
     }
 }
@@ -158,6 +170,167 @@ impl Options {
     pub fn drawn_location(&self) -> Option<&str> {
         self.location().filter(|_| !self.hide_location)
     }
+
+    /// Whether the certificate's name is drawn: the name line, or a text that
+    /// asks for it.
+    #[must_use]
+    pub fn draws_name(&self) -> bool {
+        if self.text.is_empty() {
+            self.name
+        } else {
+            self.text
+                .iter()
+                .any(|line| parts(line).is_ok_and(|parts| parts.contains(&Part::Name)))
+        }
+    }
+}
+
+/// How the signing time is written when no format is given.
+pub const DATE_FORMAT: &str = "YYYY-MM-DD HH:mm:ss UTC";
+
+/// The most lines a text may have. A bound on work: the type shrinks until
+/// they fit, and past this many nothing in a signature's rectangle is legible.
+pub const MAX_TEXT_LINES: usize = 16;
+
+/// The longest date format, in characters.
+pub const MAX_FORMAT_CHARS: usize = 64;
+
+/// One piece of a line of `sign --text`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Part {
+    /// Words drawn as they are.
+    Words(String),
+    /// `{name}`: the certificate's subject name.
+    Name,
+    /// `{date}`: the signing time, `/M` read back.
+    Date,
+    /// `{reason}`: `/Reason`.
+    Reason,
+    /// `{location}`: `/Location`.
+    Location,
+}
+
+/// Reads one line of a text: words, and `{name}`, `{date}`, `{reason}` and
+/// `{location}` where the signature's own values go. `{{` and `}}` are a brace
+/// each.
+///
+/// Braces rather than a percent sign or a dollar: a command prompt, a batch
+/// file and a POSIX shell each rewrite one of those inside an argument, and
+/// none of them touches a brace inside quotes.
+///
+/// # Errors
+///
+/// A brace that opens nothing tpdf fills in, or is never closed.
+pub fn parts(line: &str) -> Result<Vec<Part>, String> {
+    let mut out = Vec::new();
+    let mut words = String::new();
+    let mut rest = line;
+    while let Some(at) = rest.find(['{', '}']) {
+        words.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if let Some(after) = tail.strip_prefix("{{") {
+            words.push('{');
+            rest = after;
+        } else if let Some(after) = tail.strip_prefix("}}") {
+            words.push('}');
+            rest = after;
+        } else if tail.starts_with('}') {
+            return Err(format!(
+                "the text has a `}}` that closes nothing in `{line}` --- write `}}}}` for a brace"
+            ));
+        } else {
+            let Some(end) = tail.find('}') else {
+                return Err(format!(
+                    "the text has a `{{` that is never closed in `{line}` --- write `{{{{` for a \
+                     brace"
+                ));
+            };
+            let part = match &tail[1..end] {
+                "name" => Part::Name,
+                "date" => Part::Date,
+                "reason" => Part::Reason,
+                "location" => Part::Location,
+                other => {
+                    return Err(format!(
+                        "the text asks for `{{{other}}}`, and tpdf fills in `{{name}}`, \
+                         `{{date}}`, `{{reason}}` and `{{location}}` --- write `{{{{` for a brace"
+                    ))
+                }
+            };
+            if !words.is_empty() {
+                out.push(Part::Words(std::mem::take(&mut words)));
+            }
+            out.push(part);
+            rest = &tail[end + 1..];
+        }
+    }
+    words.push_str(rest);
+    if !words.is_empty() {
+        out.push(Part::Words(words));
+    }
+    Ok(out)
+}
+
+/// The signing time as `format` writes it.
+///
+/// `pdf_date` is `/M` as written (`D:YYYYMMDDHHmmSSZ`), so the time is UTC.
+/// `YYYY`, `MM`, `DD`, `HH`, `mm` and `ss` are replaced wherever they stand,
+/// and every other character is drawn as it is. A blank format is
+/// [`DATE_FORMAT`].
+#[must_use]
+pub fn date_text(pdf_date: &str, format: &str) -> String {
+    let digits = pdf_date.trim_start_matches("D:");
+    let part = |from: usize, to: usize| digits.get(from..to).unwrap_or("??");
+    let format = if format.trim().is_empty() {
+        DATE_FORMAT
+    } else {
+        format
+    };
+    let tokens = [
+        ("YYYY", part(0, 4)),
+        ("MM", part(4, 6)),
+        ("DD", part(6, 8)),
+        ("HH", part(8, 10)),
+        ("mm", part(10, 12)),
+        ("ss", part(12, 14)),
+    ];
+    let mut out = String::new();
+    let mut rest = format;
+    'scan: while let Some(ch) = rest.chars().next() {
+        for (token, value) in tokens {
+            if let Some(after) = rest.strip_prefix(token) {
+                out.push_str(value);
+                rest = after;
+                continue 'scan;
+            }
+        }
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
+    }
+    out
+}
+
+/// One line of a text with the signature's own values filled in.
+///
+/// A reason or location the signature does not have fills in as nothing; the
+/// command line refuses a text that asks for one that was not given, so that
+/// is a line somebody else built.
+///
+/// # Errors
+///
+/// [`parts`]' refusals.
+pub fn expand(line: &str, name: &str, pdf_date: &str, options: &Options) -> Result<String, String> {
+    let mut out = String::new();
+    for part in parts(line)? {
+        match part {
+            Part::Words(words) => out.push_str(&words),
+            Part::Name => out.push_str(name),
+            Part::Date => out.push_str(&date_text(pdf_date, &options.date_format)),
+            Part::Reason => out.push_str(options.reason().unwrap_or_default()),
+            Part::Location => out.push_str(options.location().unwrap_or_default()),
+        }
+    }
+    Ok(out)
 }
 
 /// The smallest side a visible signature may have, in points.
@@ -214,10 +387,20 @@ pub(crate) const LEADING: f64 = 1.2;
 /// dictionary by construction. A reason or location is drawn with the words
 /// that say what it is, because a bare "Berlin" under a signature could be
 /// anything.
+///
+/// With a text ([`Options::text`]) the lines are that text's, filled in, and
+/// nothing else: the wording is then the caller's whole responsibility. A
+/// line [`check`] would have refused is drawn as nothing, since [`check`] runs
+/// first on every path that signs.
 #[must_use]
 pub fn words(name: &str, pdf_date: &str, options: &Options) -> Vec<String> {
-    let digits = pdf_date.trim_start_matches("D:");
-    let part = |from: usize, to: usize| digits.get(from..to).unwrap_or("??");
+    if !options.text.is_empty() {
+        return options
+            .text
+            .iter()
+            .map(|line| expand(line, name, pdf_date, options).unwrap_or_default())
+            .collect();
+    }
     let mut lines = Vec::with_capacity(5);
     if options.label {
         lines.push("Digitally signed by".to_string());
@@ -227,13 +410,8 @@ pub fn words(name: &str, pdf_date: &str, options: &Options) -> Vec<String> {
     }
     if options.date {
         lines.push(format!(
-            "Date: {}-{}-{} {}:{}:{} UTC",
-            part(0, 4),
-            part(4, 6),
-            part(6, 8),
-            part(8, 10),
-            part(10, 12),
-            part(12, 14)
+            "Date: {}",
+            date_text(pdf_date, &options.date_format)
         ));
     }
     if let Some(reason) = options.drawn_reason() {
@@ -265,6 +443,66 @@ fn check_note(what: &str, text: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses a text or a date format the appearance cannot draw: too many lines,
+/// a brace that names nothing, a line with no words in any of them, or a
+/// character Helvetica with `/WinAnsiEncoding` has no glyph for.
+///
+/// The name, the reason and the location a line fills in are checked by
+/// [`check`] under their own names; here they stand as nothing, so that the
+/// sentence about a character names the words the caller wrote.
+fn check_text(visible: &Visible) -> Result<(), String> {
+    let options = &visible.options;
+    let format = options.date_format.as_str();
+    if format.chars().count() > MAX_FORMAT_CHARS {
+        return Err(format!(
+            "the date format is longer than the {MAX_FORMAT_CHARS} characters a visible \
+             signature draws"
+        ));
+    }
+    if format.chars().any(char::is_control) || !textbox::encodable(format) {
+        return Err(format!(
+            "the date format, {format}, has characters tpdf cannot draw in a visible signature \
+             yet (it draws Latin-1 only)"
+        ));
+    }
+    if options.text.len() > MAX_TEXT_LINES {
+        return Err(format!(
+            "the text has more than the {MAX_TEXT_LINES} lines a visible signature draws"
+        ));
+    }
+    let mut drawn = options.text.is_empty();
+    for line in &options.text {
+        let own: String = parts(line)?
+            .into_iter()
+            .map(|part| match part {
+                Part::Words(words) => words,
+                _ => {
+                    drawn = true;
+                    String::new()
+                }
+            })
+            .collect();
+        drawn |= !own.trim().is_empty();
+        if own.chars().count() > MAX_NOTE_CHARS {
+            return Err(format!(
+                "a line of the text is longer than the {MAX_NOTE_CHARS} characters a visible \
+                 signature draws"
+            ));
+        }
+        if own.chars().any(char::is_control) || !textbox::encodable(&own) {
+            return Err(format!(
+                "the text, {line}, has characters tpdf cannot draw in a visible signature yet \
+                 (it draws Latin-1 only), and drawing others would put different words on the \
+                 page --- change the text"
+            ));
+        }
+    }
+    if !drawn {
+        return Err("the text has no words in it, so there is nothing to draw".into());
+    }
+    Ok(())
+}
+
 /// Refuses a name, a reason, a location or an image the appearance cannot
 /// honestly draw, and an appearance that would draw nothing.
 ///
@@ -280,11 +518,16 @@ fn check_note(what: &str, text: Option<&str>) -> Result<(), String> {
 /// is not a valid signature raster.
 pub fn check(visible: &Visible) -> Result<(), String> {
     let options = &visible.options;
-    let lines = options.label
-        || options.name
-        || options.date
-        || options.drawn_reason().is_some()
-        || options.drawn_location().is_some();
+    check_text(visible)?;
+    let lines = if options.text.is_empty() {
+        options.label
+            || options.name
+            || options.date
+            || options.drawn_reason().is_some()
+            || options.drawn_location().is_some()
+    } else {
+        true
+    };
     if !lines && visible.image.is_none() {
         return Err(
             "a visible signature has to show something --- choose an image or at least one \
@@ -292,7 +535,7 @@ pub fn check(visible: &Visible) -> Result<(), String> {
                 .into(),
         );
     }
-    if options.name {
+    if options.draws_name() {
         let name = visible.name.as_str();
         if name.trim().is_empty() {
             return Err("the certificate names nobody, so there is no name to draw".into());

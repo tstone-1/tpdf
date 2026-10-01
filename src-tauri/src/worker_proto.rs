@@ -227,6 +227,11 @@ pub enum Request {
         /// nothing the worker could act on outside the document it holds.
         #[serde(default)]
         visible: Option<Box<crate::sign_prepare::Visible>>,
+        /// What the signature dictionary says beside that: a contact, and an
+        /// invisible signature's reason and location. Text, and empty from
+        /// the application, which has no field for any of it.
+        #[serde(default)]
+        notes: crate::sign_prepare::Notes,
     },
     /// Append a signature's long-term validation data to the mapped signed
     /// copy, and read the result.

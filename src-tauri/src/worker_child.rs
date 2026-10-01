@@ -659,8 +659,8 @@ fn handle(
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),
         },
-        Request::PrepareSignature { at, visible } => {
-            match render::run_prepare_signature(document, *at, visible.as_deref()) {
+        Request::PrepareSignature { at, visible, notes } => {
+            match render::run_prepare_signature(document, *at, visible.as_deref(), notes) {
                 Ok(unsigned) => Response::reply(Reply::PreparedSignature(unsigned)),
                 Err(e) => Response::err(e),
             }

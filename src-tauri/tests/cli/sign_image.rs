@@ -13,10 +13,10 @@ use tpdf_lib::signature::Image;
 
 /// What the store was asked for.
 #[derive(Default)]
-struct Asked {
-    identities: Cell<usize>,
-    signed: Cell<usize>,
-    saved_image: Cell<usize>,
+pub(super) struct Asked {
+    pub(super) identities: Cell<usize>,
+    pub(super) signed: Cell<usize>,
+    pub(super) saved_image: Cell<usize>,
 }
 
 struct Counted(p256::ecdsa::SigningKey, Rc<Asked>);
@@ -29,10 +29,10 @@ impl Key for Counted {
 }
 
 /// A store that counts, holding `saved` as the reader's saved image.
-struct Counting {
-    certificate: Vec<u8>,
-    saved: Option<Image>,
-    asked: Rc<Asked>,
+pub(super) struct Counting {
+    pub(super) certificate: Vec<u8>,
+    pub(super) saved: Option<Image>,
+    pub(super) asked: Rc<Asked>,
 }
 
 impl Store for Counting {

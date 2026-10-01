@@ -56,7 +56,7 @@ use crate::encoding::{resolve, MAX_DECODE};
 use crate::pagetree::ordered_pages;
 
 pub mod appearance;
-pub use appearance::{Options, Visible};
+pub use appearance::{parts, Options, Part, Visible, MAX_NOTE_CHARS};
 
 /// The bytes of DER the `/Contents` hole holds: **32 KiB**, 65,536 hex digits.
 ///
@@ -159,9 +159,80 @@ pub fn prepare_visible(
     let details = Details {
         reason: visible.options.reason().map(str::to_string),
         location: visible.options.location().map(str::to_string),
+        contact: None,
         document_timestamp: false,
     };
     build(original, signed_at, password, Some(visible), &details)
+}
+
+/// What a signing says about itself in the signature dictionary, apart from
+/// anything drawn: `sign --reason`, `--location` and `--contact`.
+///
+/// **Crosses the worker boundary** inside `Request::PrepareSignature`. Text
+/// for a dictionary, which carries any Unicode, so none of it is held to what
+/// the page can draw; [`prepare_noted`] bounds its length and refuses a
+/// control character.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Notes {
+    /// `/Reason` for an invisible signature. A visible one's is
+    /// [`Options::reason`], which is also what it draws, and this is not read.
+    pub reason: String,
+    /// `/Location`, on the same terms.
+    pub location: String,
+    /// `/ContactInfo`: how to reach the signer. Never drawn.
+    pub contact: String,
+}
+
+/// [`prepare`] or [`prepare_visible`], with what `notes` adds to the
+/// signature dictionary.
+///
+/// With no note this is exactly one of those two: the same bytes.
+///
+/// # Errors
+///
+/// Everything those refuse; and a note longer than [`MAX_NOTE_CHARS`] or
+/// holding a control character.
+pub fn prepare_noted(
+    original: Vec<u8>,
+    signed_at: u64,
+    password: Option<&str>,
+    visible: Option<&Visible>,
+    notes: &Notes,
+) -> Result<Unsigned, String> {
+    let note = |what: &str, text: &str| -> Result<Option<String>, String> {
+        let text = text.trim();
+        if text.chars().count() > MAX_NOTE_CHARS {
+            return Err(format!(
+                "the {what} is longer than the {MAX_NOTE_CHARS} characters a signature carries"
+            ));
+        }
+        if text.chars().any(char::is_control) {
+            return Err(format!(
+                "the {what} has a control character in it, which a signature does not carry"
+            ));
+        }
+        Ok(Some(text.to_string()).filter(|text| !text.is_empty()))
+    };
+    let contact = note("contact", &notes.contact)?;
+    let details = match visible {
+        Some(visible) => {
+            appearance::check(visible)?;
+            Details {
+                reason: visible.options.reason().map(str::to_string),
+                location: visible.options.location().map(str::to_string),
+                contact,
+                document_timestamp: false,
+            }
+        }
+        None => Details {
+            reason: note("reason", &notes.reason)?,
+            location: note("location", &notes.location)?,
+            contact,
+            document_timestamp: false,
+        },
+    };
+    build(original, signed_at, password, visible, &details)
 }
 
 /// A document timestamp's revision (PDF 2.0 §12.8.5, PAdES B-LTA's archive
@@ -188,13 +259,16 @@ pub fn prepare_document_timestamp(
 ///
 /// Separate from [`Visible`] because it is about the *dictionary*, which can
 /// carry any Unicode, where [`Visible`] is about the page, which draws Latin-1
-/// only. Today only a visible signature fills it, and [`appearance::check`] has
-/// already refused what it could not draw; the dictionary itself is written for
-/// any text (`a_reason_and_location_are_text_strings_inside_the_range`).
+/// only. A visible signature fills the reason and location from what it draws,
+/// which [`appearance::check`] has already held to that; an invisible one fills
+/// them from [`Notes`]. The dictionary itself is written for any text
+/// (`a_reason_and_location_are_text_strings_inside_the_range`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Details {
     reason: Option<String>,
     location: Option<String>,
+    /// `/ContactInfo`.
+    contact: Option<String>,
     /// A document timestamp (`/Type /DocTimeStamp`, `/SubFilter
     /// /ETSI.RFC3161`, no `/M`) rather than a signature: its `/Contents` is a
     /// timestamp token over the range, and nobody's key signs it.
@@ -619,6 +693,9 @@ fn signature_dictionary(date: &str, details: &Details) -> Dictionary {
     }
     if let Some(location) = &details.location {
         sig.set("Location", text_string(location));
+    }
+    if let Some(contact) = &details.contact {
+        sig.set("ContactInfo", text_string(contact));
     }
     sig
 }

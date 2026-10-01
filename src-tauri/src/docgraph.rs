@@ -350,19 +350,12 @@ impl DocumentGraph {
         &self,
         at: u64,
         visible: Option<&crate::sign_prepare::Visible>,
+        notes: &crate::sign_prepare::Notes,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
         let bytes = self
             .bytes()
             .ok_or_else(|| "the document's bytes could not be read".to_string())?;
-        match visible {
-            None => crate::sign_prepare::prepare(bytes.into_owned(), at, self.password()),
-            Some(visible) => crate::sign_prepare::prepare_visible(
-                bytes.into_owned(),
-                at,
-                self.password(),
-                visible,
-            ),
-        }
+        crate::sign_prepare::prepare_noted(bytes.into_owned(), at, self.password(), visible, notes)
     }
 
     /// The revision a document timestamp goes into, over these bytes --- a

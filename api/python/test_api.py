@@ -450,7 +450,33 @@ class ClientTests(unittest.TestCase):
                 'sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID',
                 '--visible', '--rect', '10,20,200,80', '--image', 'stamp.png', '--lines', '',
                 '--hide', 'reason', '--reason', 'Synthetic approval', '--', 'input.pdf'])
+            self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID', rect=[10, 20, 200, 80],
+                text=['Digitally signed', '{date}'], date_format='DD.MM.YYYY')
+            self.assertEqual(popen.call_args.args[0][1:], [
+                'sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID',
+                '--visible', '--rect', '10,20,200,80', '--text', 'Digitally signed',
+                '--text', '{date}', '--date-format', 'DD.MM.YYYY', '--', 'input.pdf'])
+            self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID', anchor='Signature:',
+                size=[120, 40], offset=[-4, 12.5], anchor_match=2, page=3)
+            self.assertEqual(popen.call_args.args[0][1:], [
+                'sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID',
+                '--visible', '--anchor', 'Signature:', '--size', '120,40', '--offset', '-4,12.5',
+                '--anchor-match', '2', '--page', '3', '--', 'input.pdf'])
+            for bad in [dict(anchor='x'), dict(anchor='x', size=[1]), dict(size=[1, 2]),
+                        dict(offset=[1, 2]), dict(anchor_match=1),
+                        dict(anchor='x', size=[1, 2], rect=[0, 0, 9, 9]),
+                        dict(anchor='x', size=[1, 2], offset=[1])]:
+                with self.assertRaises(ValueError, msg=bad):
+                    self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID', **bad)
+            self.pdf.sign('input.pdf', 'output.pdf', identity='SYNTHETIC ID',
+                reason='Synthetic approval', contact='signer@example.com')
+            self.assertEqual(popen.call_args.args[0][1:], [
+                'sign', '--json', '-o', 'output.pdf', '--identity', 'SYNTHETIC ID',
+                '--reason', 'Synthetic approval', '--contact', 'signer@example.com',
+                '--', 'input.pdf'])
             popen.reset_mock()
+            with self.assertRaises(TypeError):
+                self.pdf.sign(self.source, 'unused.pdf', identity='SYNTHETIC ID', text='Digitally signed')
             with self.assertRaises(ValueError):
                 self.pdf.sign(self.source, 'unused.pdf', identity='SYNTHETIC ID', rect=[10, 20, 200, 80],
                     image='stamp.png', no_image=True)

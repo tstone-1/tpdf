@@ -380,17 +380,27 @@ class Tpdf:
     def sign(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         identity: str, rect: Sequence[float] | None = None, page: int | None = None,
+        anchor: str | None = None, size: Sequence[float] | None = None,
+        offset: Sequence[float] | None = None, anchor_match: int | None = None,
         no_image: bool = False, image: str | os.PathLike[str] | None = None,
         lines: Sequence[str] | None = None,
+        text: Sequence[str] | None = None, date_format: str | None = None,
         reason: str | None = None, location: str | None = None,
+        contact: str | None = None,
         hide: Sequence[str] | None = None,
         timestamp: str | None = None, long_term: bool = False, force: bool = False,
     ) -> dict[str, Any]:
         """Sign with an explicitly selected OS-held certificate; no key is exported.
 
-        Use identities()['usable'] to select its SHA-256 id (or exact subject).
+        Use identities()['usable'] to select its SHA-256 id (or its sha1
+        thumbprint, or exact subject).
         rect=[x,y,width,height] creates a visible signature, in display points
-        from top-left; page defaults to 1. Other appearance options require rect.
+        from top-left; page defaults to 1. anchor with size=[width, height]
+        creates one beside text on the page instead: its top-left corner is the
+        text's, moved by offset=[dx, dy]; text found more than once is refused
+        unless anchor_match says which, counted from 1. rect and anchor
+        together are refused. Other appearance options require rect;
+        reason, location and contact do not.
         lines selects any of 'label', 'name', 'date'; [] hides all three.
         Visible signatures use the saved image unless no_image=True. image names
         a PNG or JPEG file to draw instead, for this signature only: the saved
@@ -398,8 +408,16 @@ class Tpdf:
         refused. A file that is missing or is not a usable image is a refusal,
         before any certificate or key is asked for.
 
-        reason and location are written to the signature and drawn as lines of
-        it. hide names which of 'reason', 'location' are written without being
+        text gives the lines to draw instead of the standard three, one string
+        a line: '{name}', '{date}', '{reason}' and '{location}' are filled in,
+        and '{{' and '}}' are a brace each. text and lines together are refused,
+        and so are text and hide. date_format writes the date with the tokens
+        YYYY, MM, DD, HH, mm and ss; the time is UTC.
+
+        reason, location and contact are written to the signature, visible or
+        not. A visible signature draws the reason and location as lines of it;
+        with text they are drawn only where the text asks for them. contact is
+        never drawn. hide names which of 'reason', 'location' are written without being
         drawn; nothing is hidden unless it is named.
 
         timestamp selects a CLI authority name or URL and explicitly enables its
@@ -415,6 +433,20 @@ class Tpdf:
             if isinstance(rect, (str, bytes)) or len(rect) != 4:
                 raise ValueError('rect must contain four numbers: x, y, width, height')
             args += ['--visible', '--rect', ','.join(str(value) for value in rect)]
+        if anchor is not None:
+            if rect is not None:
+                raise ValueError('rect says where the signature goes and anchor finds where; give one')
+            if size is None or isinstance(size, (str, bytes)) or len(size) != 2:
+                raise ValueError('anchor needs size: two numbers, width and height')
+            args += ['--visible', '--anchor', anchor, '--size', ','.join(str(value) for value in size)]
+            if offset is not None:
+                if isinstance(offset, (str, bytes)) or len(offset) != 2:
+                    raise ValueError('offset must contain two numbers: dx, dy')
+                args += ['--offset', ','.join(str(value) for value in offset)]
+            if anchor_match is not None:
+                args += ['--anchor-match', str(anchor_match)]
+        elif size is not None or offset is not None or anchor_match is not None:
+            raise ValueError('size, offset and anchor_match describe a signature placed with anchor')
         if page is not None:
             args += ['--page', str(page)]
         if image is not None and no_image:
@@ -431,7 +463,15 @@ class Tpdf:
             if isinstance(hide, (str, bytes)):
                 raise TypeError('hide must be a sequence of reason, location')
             args += ['--hide', ','.join(hide)]
-        for flag, value in [('--reason', reason), ('--location', location), ('--timestamp', timestamp)]:
+        if text is not None:
+            if isinstance(text, (str, bytes)):
+                raise TypeError('text must be a sequence of lines')
+            for line in text:
+                args += ['--text', line]
+        if date_format is not None:
+            args += ['--date-format', date_format]
+        for flag, value in [('--reason', reason), ('--location', location), ('--contact', contact),
+                            ('--timestamp', timestamp)]:
             if value is not None:
                 args += [flag, value]
         if long_term:

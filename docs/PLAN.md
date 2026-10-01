@@ -15512,7 +15512,10 @@ temporary store certificate, read intact by tpdf, pyHanko and OpenSSL. Installin
 still unexercised. No `.p12`
 option (decided above). No password for `verify`, which reports an encrypted document as
 `locked`; `info` and `text` take one (below).
-Reason and location on an invisible signature, as in the window. Timestamps and step 3. The
+Reason and location on an invisible signature, as in the window (**built 2026-10-01**, with
+`--contact`, `--text`, `--date-format`, `--anchor`, the SHA-1 thumbprint as `--identity` and
+the `appearance` in the report; the window still has no field for a reason on an invisible
+signature). Timestamps and step 3. The
 bundled tool's signature and notarization are checked by `release.yml`'s verification step only
 from the next tag on; no bundle containing the tool has been built yet.
 

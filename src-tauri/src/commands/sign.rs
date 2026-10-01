@@ -635,6 +635,8 @@ mod tests {
                 location: "Köln".into(),
                 hide_reason: false,
                 hide_location: false,
+                text: Vec::new(),
+                date_format: String::new(),
             }
         );
 

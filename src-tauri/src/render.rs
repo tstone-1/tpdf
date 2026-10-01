@@ -1651,7 +1651,12 @@ impl Engine for InProcess {
         at: u64,
         visible: Option<&crate::sign_prepare::Visible>,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
-        run_prepare_signature(open_slot(&self.docs.borrow(), doc)?, at, visible)
+        run_prepare_signature(
+            open_slot(&self.docs.borrow(), doc)?,
+            at,
+            visible,
+            &crate::sign_prepare::Notes::default(),
+        )
     }
 
     fn signature_preview(
@@ -2434,8 +2439,9 @@ pub(crate) fn run_prepare_signature(
     document: &OpenDocument,
     at: u64,
     visible: Option<&crate::sign_prepare::Visible>,
+    notes: &crate::sign_prepare::Notes,
 ) -> Result<crate::sign_prepare::Unsigned, String> {
-    document.graph().prepare_signature(at, visible)
+    document.graph().prepare_signature(at, visible, notes)
 }
 
 /// Appends a signature's long-term validation data to the mapped signed copy

@@ -196,6 +196,9 @@ pub struct Identities {
 pub struct Usable {
     /// SHA-256 of the certificate, lowercase hex: what `--identity` accepts.
     pub id: String,
+    /// SHA-1 of the certificate, lowercase hex: the thumbprint Windows shows
+    /// for it. Also accepted by `--identity`.
+    pub sha1: String,
     /// The subject's common name, or its whole name when it has none. Also
     /// accepted by `--identity`.
     pub subject: String,
@@ -212,6 +215,9 @@ pub struct Usable {
 pub struct NotUsable {
     /// SHA-256 of the certificate, lowercase hex.
     pub id: String,
+    /// SHA-1 of the certificate, lowercase hex: the thumbprint Windows shows
+    /// for it.
+    pub sha1: String,
     /// Who it names, as far as it could be read.
     pub subject: String,
     /// Why it is not offered, as a clause: "it has expired".
@@ -438,8 +444,37 @@ pub struct ChainCertificate {
     pub revocation: RevocationReport,
 }
 
+/// Where a visible signature was drawn. Every rectangle is `[x, y, w, h]` in
+/// points from the top-left corner of the page as it is displayed: the space
+/// `sign --rect` is given in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Appearance {
+    /// The page, counted from 1.
+    pub page: u32,
+    /// The signature's rectangle, as `--rect` gave it.
+    pub rect: [f64; 4],
+    /// The image, or `null` when none was drawn.
+    pub image: Option<[f64; 4]>,
+    /// The type size of the lines, in points; 0 when no line was drawn.
+    pub font_size: f64,
+    /// The lines, top to bottom.
+    pub lines: Vec<DrawnLine>,
+}
+
+/// One line of a visible signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DrawnLine {
+    /// The words drawn.
+    pub text: String,
+    /// The box no ink of the line leaves: the words' width with a small
+    /// bearing each side, and the font's whole height above and below.
+    pub rect: [f64; 4],
+    /// Where the line's baseline is, measured down from the top of the page.
+    pub baseline: f64,
+}
+
 /// `tpdf sign --json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Signed {
     /// Always [`SCHEMA`].
     pub schema: u32,
@@ -455,6 +490,8 @@ pub struct Signed {
     pub identity: Usable,
     /// Whether it has an appearance on a page.
     pub visible: bool,
+    /// Where that appearance was drawn; `null` for an invisible signature.
+    pub appearance: Option<Appearance>,
     /// Every signature in the written file, as a worker read it back after
     /// writing --- the new one included, named by [`Signed::field`].
     pub signatures: Vec<Signature>,

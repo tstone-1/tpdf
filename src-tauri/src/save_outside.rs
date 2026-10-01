@@ -639,6 +639,7 @@ impl InWorker {
         len: usize,
         at: u64,
         visible: Option<crate::sign_prepare::Visible>,
+        notes: crate::sign_prepare::Notes,
     ) -> Result<crate::sign_prepare::Unsigned, Declined> {
         let mapped = Shm::map_open_file(file, len).map_err(Declined::Failed)?;
         let worker = Worker::spawn_shared(std::sync::Arc::new(mapped), &self.library_dir)
@@ -647,6 +648,7 @@ impl InWorker {
         let request = Request::PrepareSignature {
             at,
             visible: visible.map(Box::new),
+            notes,
         };
         let rx = asked_on_a_thread(worker, move |worker| match Self::asked(worker, &request)? {
             Reply::PreparedSignature(unsigned) => Ok(unsigned),
