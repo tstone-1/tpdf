@@ -14199,3 +14199,35 @@ check removed.
 
 **Not covered.** The `appearance` comparison signs an upright page; no rotated page is
 compared. Nothing here ran on Windows beyond `scripts/check_windows.py`.
+
+### The command-line tool on the Windows `PATH` — measured 2026-10-01
+
+The per-user installer (`-setup.exe`) runs `tpdf-cli path --add` after installing and
+`tpdf-cli path --remove` before uninstalling, from `src-tauri/installer-hooks.nsh`; removal is
+skipped when the uninstaller runs as part of an update. *Install command-line tool…* and
+*Uninstall command-line tool…* do the same on Windows. The edit is `userpath.rs`: the user's own
+`HKCU\Environment\Path`, read whole through the registry API. It is not done in the
+installer's script, because an NSIS string is cut at a fixed length and the desktop's user
+`PATH` measured here is 1,899 characters.
+
+**Measured on MOTHERSHIP**, with a debug `tpdf-cli` built from this tree and the value exported
+first: `path` said the folder was not there; `--add` appended it as the last entry and nothing
+else changed; a second `--add` wrote nothing; `--remove` left the value identical to the one
+exported, character for character, with its registry type (`REG_SZ`) unchanged; a second
+`--remove` wrote nothing; `--add --remove` exits 2. `npm run tauri build -- --bundles nsis` then
+built `tpdf_26.10.0_x64-setup.exe` with the hooks included, so both macros compile.
+`python3 scripts/mutate_rust.py --only 'user path:'` runs 12 mutations of the list editing and
+the argument parsing, each caught.
+
+**The installer, run on that desktop**, silently, with tpdf not running and the user `PATH`
+exported first. Install: exit 0, and the value is the exported one with the install folder
+appended, once. The same installer again with `/UPDATE`, and again without: exit 0 both times,
+the value unchanged and the folder still there once. Uninstall (`uninstall.exe /S`): exit 0,
+the value identical to the export, the tool gone, and the same eleven data folders as before.
+The released 26.10.0 installer was then put back.
+
+**Not done.** The menu command in a window on Windows. An update driven by the updater itself,
+which passes its own arguments. A `PATH` stored as `REG_EXPAND_SZ`; the code keeps whatever type
+it reads. `tpdf-cli path` without an option was reworded after these runs to say what is stored
+as well as what the terminal holds, and that wording has only been type-checked for Windows.
+The `.msi` installer does not change `PATH`.

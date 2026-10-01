@@ -304,6 +304,24 @@ fn an_anchor_says_where_a_visible_signature_goes_instead_of_a_rectangle() {
 }
 
 #[test]
+fn path_shows_adds_or_removes_and_never_both() {
+    use super::path::{self, Path};
+    let asked = |line: &str| path::parse(&argv(line));
+    assert_eq!(asked(""), Ok(Path::Show));
+    assert_eq!(asked("--add"), Ok(Path::Add));
+    assert_eq!(asked("--remove"), Ok(Path::Remove));
+    // Said twice is said once.
+    assert_eq!(asked("--add --add"), Ok(Path::Add));
+    for line in ["--add --remove", "--remove --add"] {
+        assert!(asked(line).expect_err(line).contains("opposites"), "{line}");
+    }
+    assert!(asked("--all").is_err());
+    // And it is a command the tool knows.
+    assert!(matches!(parse(&argv("path --add")), Ok(Line::Run(_))));
+    assert!(refused("path --add --remove").contains("opposites"));
+}
+
+#[test]
 fn hide_names_what_is_written_and_not_drawn() {
     let visible = "sign in.pdf -o out.pdf --identity A --visible --rect 0,0,100,40";
     // Nothing is hidden unless it is said.
@@ -542,6 +560,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("comments", "comments a.pdf --json"),
         ("text-runs", "text-runs a.pdf --page 1 --json"),
         ("render", "render a.pdf -o page.png --json"),
+        ("path", "path --add"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());

@@ -513,7 +513,7 @@ both.
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs` and `tpdf render`
-expose document workflows to scripts. The commands do what **Sign document…**, **Document
+expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
 the private key never leaves the operating system, and every signed, filled or redacted file is
@@ -528,8 +528,14 @@ command-line tool…** in the tpdf menu (or the command palette): it links
 password if that folder needs one. **Uninstall command-line tool…** removes the link. A file
 already at that path that tpdf did not put there is left alone. Because it is a link, the
 tool updates with the application. On Windows both installers put `tpdf-cli.exe` beside
-`tpdf.exe`, in the folder tpdf is installed in, and **Install command-line tool…** says
-which; add that folder to `PATH`, or call the tool by its full path. The examples below say `tpdf`; on Windows it is `tpdf-cli`.
+`tpdf.exe`, in the folder tpdf is installed in. The `-setup.exe` installer, which installs
+for you alone and needs no administrator, also adds that folder to your `PATH`, so a
+terminal opened afterwards runs `tpdf-cli` by name; uninstalling takes it out again. After
+the `.msi` installer, choose **Install command-line tool…** once, or run
+`tpdf-cli path --add` by its full path: both add the folder to your own `PATH`, not the
+computer's. **Uninstall command-line tool…** and `tpdf-cli path --remove` take it out, and
+`tpdf-cli path` says whether it is there. Every other entry of your `PATH` is kept as it
+was written. The examples below say `tpdf`; on Windows it is `tpdf-cli`.
 <!-- built: app.installCommandLineTool app.uninstallCommandLineTool -->
 
 ```

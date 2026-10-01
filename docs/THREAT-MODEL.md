@@ -2498,6 +2498,19 @@ argument through `quoted form of`, never as script text. The answer shown is the
 afterwards. A link from a translocated copy (macOS App Translocation) is refused, because it
 would dangle at the next launch.
 
+**The `PATH` entry (Windows, added 2026-10-01).** There is no link on Windows. The same two
+commands, `tpdf-cli path --add` and `--remove`, and the per-user installer's hooks add the
+folder `tpdf-cli.exe` is in to the user's own `PATH` (`HKCU\Environment\Path`) or take it out
+(`userpath.rs`). The webview and the command line name no folder: it is the folder of the
+running executable. The value is read whole through the registry API and written only when the
+read succeeded, the value is text, and the list changed; its type is kept and every other entry
+is kept as written. Nothing under `HKLM` is touched and no administrator is asked for. The
+installer's script reads and writes no `PATH` itself, because an NSIS string is cut at a fixed
+length and a cut value written back would drop the reader's own entries. What the entry grants
+is what the link grants: whoever can replace the files in that folder decides what `tpdf-cli`
+runs, and the per-user install folder is writable by the user's own account, as the
+application beside it already is.
+
 **Residual.** A link in `/usr/local/bin` points into the application bundle, so replacing the
 bundle replaces what `tpdf` runs --- which is the same authority an attacker who can replace the
 bundle already has over the application, and is why the link is not a copy. The Windows tool

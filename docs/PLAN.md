@@ -15509,7 +15509,8 @@ workflow, see `BUILD.md`'s signing checks and *Cutting a release*, including the
 Windows tool ran on a desktop 2026-09-27** (MOTHERSHIP, from a console over SSH): `identities`,
 `verify` on ten fixtures with the macOS verdicts, and a real invisible and visible sign with a
 temporary store certificate, read intact by tpdf, pyHanko and OpenSSL. Installing onto PATH is
-still unexercised. No `.p12`
+still unexercised (**`tpdf-cli path --add` and `--remove` ran there 2026-10-01**; the installer's
+own hooks are recorded in `BUILD.md`). No `.p12`
 option (decided above). No password for `verify`, which reports an encrypted document as
 `locked`; `info` and `text` take one (below).
 Reason and location on an invisible signature, as in the window (**built 2026-10-01**, with

@@ -264,22 +264,57 @@ fn shown(path: &str) -> String {
     }
 }
 
-/// The Windows answer: nothing to link, and where the tool is.
+/// The folder the tool is in, as a reader types it: what goes on `PATH`.
 ///
 /// # Errors
 ///
 /// The tool is not beside the application.
 #[cfg(not(target_os = "macos"))]
-pub fn apply(install: bool) -> Result<String, String> {
+pub fn folder() -> Result<String, String> {
     let tool = tool()?;
-    let dir = tool.parent().map(Path::display);
+    let dir = tool
+        .parent()
+        .ok_or("the command-line tool is in no folder")?;
+    Ok(shown(&dir.display().to_string()))
+}
+
+/// The Windows answer: nothing to link. The tool is installed beside the
+/// application, and its folder is put on the user's `PATH` or taken off it.
+///
+/// # Errors
+///
+/// The tool is not beside the application, or the `PATH` could not be read
+/// or written.
+#[cfg(windows)]
+pub fn apply(install: bool) -> Result<String, String> {
+    use crate::userpath::Outcome;
+    let dir = folder()?;
+    Ok(match (install, crate::userpath::apply(&dir, install)?) {
+        (true, Outcome::Changed) => {
+            format!("Added {dir} to your PATH. Open a new terminal and run tpdf-cli.")
+        }
+        (true, Outcome::Unchanged) => {
+            format!("{dir} is already on your PATH: run tpdf-cli in a terminal.")
+        }
+        (false, Outcome::Changed) => {
+            format!("Removed {dir} from your PATH. The tool itself is removed together with tpdf.")
+        }
+        (false, Outcome::Unchanged) => {
+            format!("{dir} is not on your PATH. The tool itself is removed together with tpdf.")
+        }
+    })
+}
+
+/// Neither macOS nor Windows: where the tool is, and nothing changed.
+///
+/// # Errors
+///
+/// The tool is not beside the application.
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn apply(install: bool) -> Result<String, String> {
+    let dir = folder()?;
     Ok(if install {
-        format!(
-            "The command-line tool is installed with tpdf, as {}. To run it by name, add {} to \
-             your PATH.",
-            shown(&tool.display().to_string()),
-            dir.map_or_else(String::new, |d| shown(&d.to_string()))
-        )
+        format!("The command-line tool is installed with tpdf, in {dir}.")
     } else {
         "The command-line tool is removed together with tpdf; there is nothing to remove \
          separately."

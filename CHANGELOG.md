@@ -28,6 +28,14 @@ have the binary.)
   `tpdf identities` prints it under each certificate, and its JSON carries it as
   `sha1`, as does the `identity` in the `sign` report.
 
+- **The Windows installer puts `tpdf-cli` on your `PATH`.** The command-line
+  tool was installed beside tpdf and had to be called by its full path until you
+  added the folder yourself. The `-setup.exe` installer now adds it to your own
+  `PATH` and the uninstaller removes it. **Install command-line tool…** does the
+  same on Windows, which covers the `.msi` installer, and `tpdf-cli path --add`,
+  `--remove` and `tpdf-cli path` do it from a terminal. No administrator is
+  needed, and the other entries of your `PATH` are not changed.
+
 - **`tpdf sign --text` draws your own wording in a visible signature.** The
   lines of a visible signature were fixed: *Digitally signed by*, the name and
   the date, each of which could only be switched off. `--text` draws the lines

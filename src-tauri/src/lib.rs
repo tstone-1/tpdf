@@ -113,6 +113,7 @@ pub mod trust;
 // Asking a timestamp authority for a token when signing: the application's
 // second network authority, in the app process only (`docs/THREAT-MODEL.md`).
 pub mod tsa;
+pub mod userpath;
 pub mod verify;
 
 /// Helpers shared by this crate's own tests. Not compiled into any binary.
