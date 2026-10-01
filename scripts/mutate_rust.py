@@ -11984,6 +11984,20 @@ MUTATIONS += [
         "raw_tile_bytes_must_match_geometry_and_fit_the_mapping",
     ),
     Mutation(
+        "cli tool: show the verbatim path",
+        "src/clitool.rs",
+        'path.strip_prefix(r"\\\\?\\").unwrap_or(path).to_owned()',
+        "path.to_owned()",
+        "a_shown_path_drops_the_verbatim_prefix_and_nothing_else",
+    ),
+    Mutation(
+        "cli tool: show a share as a drive-less path",
+        "src/clitool.rs",
+        'format!(r"\\\\{share}")',
+        "share.to_owned()",
+        "a_shown_path_drops_the_verbatim_prefix_and_nothing_else",
+    ),
+    Mutation(
         "cli edit: flatten a worker failure into an ordinary refusal",
         "src/cli/edit.rs",
         "            self.0.exit,\n",

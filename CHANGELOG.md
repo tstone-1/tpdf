@@ -67,6 +67,13 @@ have the binary.)
   shared with other text, and right-aligned or justified text, stay read-only.
   In `tpdf edit`, such an operation needs a `font`.
 
+### Fixed
+
+- **Windows: the command-line tool's location is shown as a path you can use.**
+  *Install command-line tool…* showed the folder as `\\?\C:\Users\...`, a form
+  the PATH editor and a command prompt do not accept. It now shows
+  `C:\Users\...`.
+
 ## [26.9.24] - 2026-09-30
 
 ### Added

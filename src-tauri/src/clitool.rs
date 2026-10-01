@@ -252,6 +252,18 @@ fn privileged(install: bool, tool: &Path) -> Result<(), String> {
     Err(format!("Nothing was changed: {}", said.trim()))
 }
 
+/// A path as a reader types it. `canonicalize` on Windows answers in the
+/// verbatim form, `\\?\C:\...` or `\\?\UNC\server\share\...`, which a
+/// command prompt and the PATH editor do not take.
+#[cfg(any(not(target_os = "macos"), test))]
+fn shown(path: &str) -> String {
+    if let Some(share) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{share}")
+    } else {
+        path.strip_prefix(r"\\?\").unwrap_or(path).to_owned()
+    }
+}
+
 /// The Windows answer: nothing to link, and where the tool is.
 ///
 /// # Errors
@@ -265,8 +277,8 @@ pub fn apply(install: bool) -> Result<String, String> {
         format!(
             "The command-line tool is installed with tpdf, as {}. To run it by name, add {} to \
              your PATH.",
-            tool.display(),
-            dir.map_or_else(String::new, |d| d.to_string())
+            shown(&tool.display().to_string()),
+            dir.map_or_else(String::new, |d| shown(&d.to_string()))
         )
     } else {
         "The command-line tool is removed together with tpdf; there is nothing to remove \
@@ -278,6 +290,22 @@ pub fn apply(install: bool) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shown_path_drops_the_verbatim_prefix_and_nothing_else() {
+        for (path, expected) in [
+            (
+                r"\\?\C:\Users\a\AppData\Local\tpdf\tpdf-cli.exe",
+                r"C:\Users\a\AppData\Local\tpdf\tpdf-cli.exe",
+            ),
+            (r"\\?\UNC\server\share\tpdf", r"\\server\share\tpdf"),
+            (r"C:\Program Files\tpdf", r"C:\Program Files\tpdf"),
+            (r"\\server\share\tpdf", r"\\server\share\tpdf"),
+            ("/usr/local/bin/tpdf", "/usr/local/bin/tpdf"),
+        ] {
+            assert_eq!(shown(path), expected);
+        }
+    }
 
     #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
