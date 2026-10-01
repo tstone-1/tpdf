@@ -661,6 +661,97 @@ fn textedit_cff_unicode_missing_maps_glyphs_and_unmapped_fonts_never_guess() {
     }
 }
 
+fn punctuation_fixture(program: &[u8]) -> (Document, lopdf::ObjectId) {
+    let (mut doc, font, _, _) = fixture(program);
+    let f = doc.get_dictionary_mut(font).unwrap();
+    f.set("LastChar", 151);
+    f.set("Widths", vec![Object::Integer(600); 120]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let content = doc.add_object(Stream::new(
+        Dictionary::new(),
+        b"BT /F1 12 Tf 40 180 Td <95204193429497> Tj ET BT /F1 12 Tf 40 140 Td (AB) Tj ET".to_vec(),
+    ));
+    doc.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    (doc, font)
+}
+
+// The IRS forms set WinAnsi's curly double quotes, bullet and em dash in CFF
+// subsets with no ToUnicode map. Each is read and written by its Annex D.2
+// glyph name, and only when the program has that glyph.
+#[test]
+fn textedit_cff_winansi_punctuation_is_read_and_written_by_glyph_name() {
+    let (mut doc, font) = punctuation_fixture(include_bytes!("fixtures/punctuation.cff"));
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    for (text, code) in [
+        ("\u{201c}", 147),
+        ("\u{201d}", 148),
+        ("\u{2022}", 149),
+        ("\u{2014}", 151),
+    ] {
+        assert_eq!(metrics.decode(&[code]).unwrap(), text);
+        assert_eq!(metrics.encode(text).unwrap(), [code]);
+    }
+    // Each code selects its own outline: only the em dash's reaches past its
+    // advance, so a table naming another glyph at its code is seen here.
+    assert_eq!(
+        metrics.horizontal_bounds("\u{2014}", 1000.).unwrap(),
+        [-20., 620.]
+    );
+    assert_eq!(
+        metrics.horizontal_bounds("\u{2022}", 1000.).unwrap(),
+        [0., 600.]
+    );
+    // The rest of the block has no name here, with or without a glyph.
+    assert!(metrics.decode(&[133]).is_err());
+    assert!(metrics.encode("\u{2026}").is_err());
+
+    let before = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(before.runs[0].text, "\u{2022} A\u{201c}B\u{201d}\u{2014}");
+    let objects = doc.objects.clone();
+    let change = Change {
+        layout: None,
+        page: 0,
+        revision: before.revision,
+        operator: before.runs[0].operator,
+        original: before.runs[0].text.clone(),
+        // The dash stays last: its ink reaches past its advance, and a
+        // replacement may not reach outside the text it replaces.
+        replacement: "\u{201d}B\u{201c} \u{2022}\u{2014}".into(),
+    };
+    textedit::write(&mut doc, std::slice::from_ref(&change)).unwrap();
+    let after = textedit::scan(&doc, 0).unwrap();
+    assert_eq!(after.runs[0].text, change.replacement);
+    assert_eq!(after.runs[1], before.runs[1]);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let ops = lopdf::content::Content::decode_strict(&doc.get_page_content(page)).unwrap();
+    assert_eq!(
+        ops.operations[change.operator as usize].operands[0]
+            .as_str()
+            .unwrap(),
+        [148, 66, 147, 32, 149, 151]
+    );
+    for (id, object) in objects {
+        if id != page {
+            assert_eq!(doc.objects[&id], object);
+        }
+    }
+
+    // A program without those glyphs offers none of the four, so the same
+    // page is refused for its first code as it was before.
+    let (doc, font) = punctuation_fixture(NORMAL);
+    let metrics = embedded(&doc, doc.get_dictionary(font).unwrap()).unwrap();
+    for (text, code) in [("\u{201c}", 147), ("\u{2022}", 149), ("\u{2014}", 151)] {
+        assert!(metrics.decode(&[code]).is_err());
+        assert!(metrics.encode(text).is_err());
+    }
+    assert_eq!(
+        textedit::scan(&doc, 0).unwrap_err(),
+        "text contains an unmapped font code"
+    );
+}
+
 fn ligature_fixture(body: &[u8]) -> (Document, lopdf::ObjectId) {
     let (mut doc, font, _, _) = fixture(include_bytes!("fixtures/ligatures.cff"));
     let f = doc.get_dictionary_mut(font).unwrap();

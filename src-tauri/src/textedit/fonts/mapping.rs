@@ -339,7 +339,19 @@ fn parse_single(
             let allowed = |ch| {
                 (32..=126).contains(&ch)
                     || ch == 0x2013
-                    || (cff && matches!(ch, 0x00a0 | 0x00a3 | 0x2018 | 0x2019 | 0x2212))
+                    || (cff
+                        && matches!(
+                            ch,
+                            0x00a0
+                                | 0x00a3
+                                | 0x2014
+                                | 0x2018
+                                | 0x2019
+                                | 0x201c
+                                | 0x201d
+                                | 0x2022
+                                | 0x2212
+                        ))
                     || (winansi
                         && ch != 0x2212
                         && char::from_u32(ch)

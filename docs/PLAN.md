@@ -14923,6 +14923,15 @@ readback (`BUILD.md`, *Passport guide: a list bullet mapped to a control charact
 remaining pages each stop at a different construct: ActualText marked content (three), an inline
 spacing sequence, and an external text graphics state.
 
+**The IRS forms, and a wider sample, 2026-10-01 (unreleased, macOS).** WinAnsi's curly double
+quotes, bullet and em dash are now read and written in a CFF simple font by glyph name, which
+was the first refusal on four W-9 pages: the W-9 is 5/6, the passport guide 12/16 (its page 2
+became editable with the same change), and the six practical documents 37 of 47. Across the 26
+manifest documents that could be surveyed, 350 of 416 pages are editable and 21 hold no text.
+The 45 still refused spread over 18 first refusals with none above seven pages, so the next
+target is a choice of document type rather than of the commonest refusal (`BUILD.md`, *Wider
+public sample, and the IRS forms' punctuation*).
+
 ### Phase 6 — Cryptographic signing
 
 A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,

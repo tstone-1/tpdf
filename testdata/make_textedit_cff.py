@@ -28,6 +28,10 @@ def program(mode="normal"):
         names += ["f_l", "f_f", "f_i", "f_f_i"]
     if mode == "unicode":
         names += ["minus", "uni00A0", "quoteleft", "quoteright", "endash", "sterling"]
+    if mode == "punctuation":
+        # WinAnsi's curly double quotes, bullet and em dash under their Annex
+        # D.2 names, as the IRS forms' Helvetica Neue subsets carry them.
+        names += ["quotedblleft", "quotedblright", "bullet", "emdash"]
     if mode == "cyrillic":
         # A letter outside Latin-1 under its AGL uniXXXX name, as a brochure
         # with a Russian edition names its Cyrillic in every font's Differences.
@@ -36,8 +40,11 @@ def program(mode="normal"):
     for name in names:
         pen = T2CharStringPen(600, None)
         if name not in ("space", "uni00A0") or mode == "broken-space":
-            left = -20 if (mode == "overhang" and name == "A") or name == "minus" else 0
-            right = 620 if name == "minus" else 333 if name == "space" else 400
+            # The minus and the em dash reach past their advance on both
+            # sides, so a test can tell which outline a code selected.
+            wide = name in ("minus", "emdash")
+            left = -20 if (mode == "overhang" and name == "A") or wide else 0
+            right = 620 if wide else 333 if name == "space" else 400
             pen.moveTo((left, 0))
             pen.lineTo((left, 700))
             pen.lineTo((right, 700))
@@ -229,6 +236,7 @@ def main():
         "unknown-postscript",
         "expert-encoding",
         "builtin-encoding",
+        "punctuation",
         "overhang",
         "unicode",
         "ligatures",

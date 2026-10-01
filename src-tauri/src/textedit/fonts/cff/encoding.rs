@@ -56,13 +56,20 @@ pub(super) struct Encoding {
 }
 
 // Exact names, not name normalization: these select the embedded outlines.
-const EXTRA: [(&str, u8); 6] = [
+// WinAnsi's curly double quotes, bullet and em dash joined on 2026-10-01: the
+// IRS forms set them in CFF subsets with no ToUnicode map. The rest of
+// WinAnsi's 0x80-0x9F block stays out until a document needs it.
+const EXTRA: [(&str, u8); 10] = [
     ("minus", 0x80),
     ("uni00A0", 0xa0),
     ("sterling", 0xa3),
     ("quoteleft", 0x91),
     ("quoteright", 0x92),
+    ("quotedblleft", 0x93),
+    ("quotedblright", 0x94),
+    ("bullet", 0x95),
     ("endash", 0x96),
+    ("emdash", 0x97),
 ];
 
 pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, String> {
@@ -75,8 +82,10 @@ pub(super) fn slots(doc: &Document, font: &Dictionary) -> Result<Encoding, Strin
     }
     // WinAnsi names for the supported non-ASCII codes. Its code 160 names
     // space, not uni00A0; do not invent a NBSP glyph or a duplicate space code.
+    // A code is offered only when the program has a glyph of that exact name
+    // whose width agrees (`cff::embedded`), so a name here guesses nothing.
     for (name, slot) in EXTRA {
-        if matches!(slot, 0x91 | 0x92 | 0x96 | 0xa3) {
+        if matches!(slot, 0x91..=0x97 | 0xa3) {
             slots[slot as usize] = Some(slot);
             names[slot as usize] = name;
         }

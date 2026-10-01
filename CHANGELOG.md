@@ -40,6 +40,12 @@ have the binary.)
   now stays as it is, read-only, and the text beside it is editable. In the
   passport application guide used as a test document this takes 10 more of its
   16 pages from refused to editable.
+- **Text with curly double quotes, bullets and em dashes can be edited in more
+  documents.** Pages whose text used those characters in a Type 1C (CFF) font
+  without a character map were refused, which covered most of the IRS W-9. They
+  are now read and written like the single quotes and the en dash already were.
+  Where the document's font does not permit editing, as on the W-9, new text is
+  set in Noto Sans.
 
 ## [26.9.24] - 2026-09-30
 

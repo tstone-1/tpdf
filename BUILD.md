@@ -13771,3 +13771,65 @@ from 14,314 at `INITED`, 95 MB peak RSS, no finding (`--sanitizer=none` on macOS
 edit of the page, PDFKit readback and a Windows run were not made (`scripts/check_windows.py`
 compiles it); the full mutation table was not run. The Wellington agenda was not downloaded
 for this run, so its 2/2 in the six-document total is the earlier measurement.
+
+### Wider public sample, and the IRS forms' punctuation — measured 2026-10-01
+
+**The sample.** Every file in `testdata/textedit-public-corpus.json` that could be downloaded
+with its recorded digest and fits the survey's 128-page bound: 26 documents, 416 pages, of
+which 21 carry no text to edit. Left out: three documents past the bound (LuaTeX manual 328
+pages, ReportLab guide 135, Union County budget 145), and three whose download failed or no
+longer matches its digest (Wellington agenda, Adobe letter, the Wikipedia PDF). It is the
+recipe under *Reproduce the public sample*, looped over every list in the manifest, with
+`qpdf --show-npages` to apply the bound.
+
+| Code | Editable | Refused |
+|---|---:|---:|
+| `33c7cbd`, before the bullet rule above | 335 | 60 |
+| `25e4429`, with it | 345 | 50 |
+| with the punctuation below | 350 | 45 |
+
+The bullet rule moved the passport guide and nothing else, so InDesign's control-character
+bullet is not a general pattern in this sample.
+
+**The forms.** *text contains an unmapped font code* was the first refusal on four W-9 pages,
+two W-4 pages and the Harvest invoice. With the refusal temporarily naming the code, the IRS
+pages gave 147, 149 and 151: WinAnsi's left curly double quote, bullet and em dash, set in
+Helvetica Neue CFF subsets with `/WinAnsiEncoding` and no ToUnicode map. The Type 1 path names
+all of WinAnsi; the CFF path named four characters beyond ASCII. It now names those three and
+the right double quote (`docs/TEXTEDIT.md`).
+
+| Page | Before | Now |
+|---|---|---|
+| W-9 pages 2–5 | text contains an unmapped font code | editable, 190 to 217 runs |
+| W-4 pages 3–4 | text contains an unmapped font code | unsupported image on an editable page |
+| Passport guide page 2 | unsupported inline spacing sequence | editable, 143 runs |
+| Harvest invoice | text contains an unmapped font code (code 105) | the same |
+
+The five-document sample is 35 of 45 editable (W-9 5/6, passport guide 12/16), and the six
+practical documents 37 of 47, the agenda's 2/2 being the earlier measurement.
+
+**One unchanged W-9 page.** Its fonts declare `/FSType 4`, so a replacement in the original
+font is refused, as before, and automatic mode sets the new text in Noto Sans. On page 2 the
+line *• Form 1099-INT (interest earned or paid).* was replaced with *• Form 1099-INT
+(interest paid).* through `textedit::write` with an automatic layout, from a scratch test that
+is not in the tree. `qpdf --check` finds no errors, `pdftotext` reads the new line,
+`pdffonts` lists the four original subsets and one added NotoSans, and Poppler renders of the
+six pages at 100 dpi differ in 1,006 pixels on page 2, inside the run's rectangle to within
+one pixel; the other five pages are identical. The source's digest is unchanged. `tpdf-cli
+edit` cannot make this edit: it sends no layout, so it asks for the original font and is
+refused with *embedded font does not permit this editable use*.
+
+**What is left.** 45 refused pages under 18 first refusals, none above seven pages:
+ActualText marked content (7, three producers), a page with only read-only text (7), a Type3
+outline font (4), and nothing else above three.
+
+**Tests and mutations.** `punctuation.cff` is a new synthetic program from
+`make_textedit_cff.py`, whose em dash reaches past its advance so a test can tell which outline
+a code selected; the other fifteen fixtures regenerate byte for byte.
+`python3 scripts/mutate_rust.py --only 'CFF punctuation'`: four. One survived its first run,
+*name the bullet at the em dash code*, because every synthetic glyph had the same shape; the
+distinct em dash is the fix. *CFF Unicode: extend unverified TrueType mappings* was re-aimed at
+the reformatted line and is still caught.
+
+**Not done.** A W-9 edit in the application window, PDFKit readback, a Windows run, the full
+mutation table. The W-4's image refusal and the Harvest invoice's code 105 were not looked at.

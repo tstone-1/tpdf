@@ -435,6 +435,10 @@ fn textedit_cff_unicode_mapping_stays_bounded_and_font_specific() {
         (0xa3, 0xa3),
         (0x2018, 0x91),
         (0x2019, 0x92),
+        (0x201c, 0x93),
+        (0x201d, 0x94),
+        (0x2022, 0x95),
+        (0x2014, 0x97),
         (0x2212, 0x80),
     ] {
         for code in [0, 26, 128, 255] {
@@ -464,6 +468,9 @@ fn textedit_cff_unicode_mapping_stays_bounded_and_font_specific() {
         "1 beginbfchar <1a> <0080> endbfchar",
         "1 beginbfchar <1a> <0091> endbfchar",
         "1 beginbfchar <1a> <0092> endbfchar",
+        // WinAnsi's other extras stay out of the CFF path: ellipsis, trademark.
+        "1 beginbfchar <1a> <2026> endbfchar",
+        "1 beginbfchar <1a> <2122> endbfchar",
         "1 beginbfchar <1a> <00730074> endbfchar",
         "1 beginbfchar <1a> <fb01> endbfchar",
         "1 beginbfchar <001a> <2212> endbfchar",

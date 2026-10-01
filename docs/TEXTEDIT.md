@@ -468,6 +468,13 @@ stays unsupported. Two-byte fonts keep their Latin-1 and en dash repertoire.
 A continued run's TJ compensation is an exact integer plus an f32 remainder,
 because lopdf stores reals as f32 and Word shows whole lines at `Tf 1`.
 `fonts/winansi_tests.rs` builds its cmaps in the test.
+A WinAnsi **CFF** simple font (`fonts/cff/encoding.rs`) names fewer of them: besides
+ASCII, the two single quotes, en dash and pound sign, and since 2026-10-01 the
+curly double quotes, bullet and em dash (codes 147, 148, 149, 151), which the IRS
+forms set in CFF subsets with no ToUnicode map. A code is offered only when the
+program has a glyph of that exact Annex D.2 name whose width agrees, and a
+ToUnicode map, where there is one, may name the same characters and no others
+(`mapping::parse_cff`). The rest of 0x80-0x9F is still an unmapped code there.
 
 Positive word spacing accepts values up to one million text-space units, with
 the combined advance bounded separately. Negative spacing retains its quarter-
