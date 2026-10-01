@@ -254,10 +254,11 @@ impl Around<'_> {
 /// What it does not do is grow to the **left**. The writer places a replacement
 /// at the run's own origin and replays the source's own positioning to get
 /// there (`source_items`, `restore_line`), so starting a line further left is a
-/// move of the line rather than a wider box for it -- that is reflow, and it is
-/// the next increment. A centred or right-aligned line therefore grows into
-/// whatever follows it, exactly as a left-aligned one does, and is refused when
-/// that is not enough even though the space it wants is sitting to its left.
+/// move of the line rather than a wider box for it -- that is reflow. A
+/// right-aligned line therefore grows into whatever follows it, exactly as a
+/// left-aligned one does. A centred line that is alone on its line is the one
+/// case that starts earlier: `prepare` lays it out here first, with the room
+/// this function finds, and then again half its growth further back.
 pub(super) fn room(
     edges: ([f64; 4], [f64; 4]),
     probe: f64,
@@ -2037,6 +2038,9 @@ impl Shape {
     }
 }
 
+const CENTRED_ONE_LINE: &str = "A centred line cannot be wrapped yet. Keep the text on one line.";
+const CENTRED_NO_ROOM: &str =
+    "There is no room to keep this line centred. Shorten the text or reduce the font size.";
 const RESTRICTED_ORIGINAL: &str =
     "This text's font does not permit editing. Choose automatic fallback or a Noto font.";
 
@@ -2125,6 +2129,19 @@ pub(super) fn prepare(
     // in: automatic layout sets the replacement in Noto, and the reader who
     // asked for the original font is told which to choose instead.
     let restricted = original_metrics.is_restricted();
+    // The source line's width as `lay_out` measures a replacement's, for a
+    // centred line: what the two differ by is what the line grew.
+    let (source_spacing, source_word_spacing) = page.text_spacing[&run.operator];
+    let original_width = original_metrics
+        .gapped_layout(
+            run.text.trim_end_matches(' '),
+            run.size,
+            source_spacing,
+            source_word_spacing,
+            gap,
+        )
+        .ok()
+        .map(|(advance, ink)| advance.max(ink[1] + (-ink[0]).max(0.)));
     // The second choice in automatic mode, before Noto: an installed copy of
     // the document's own font, found by the app process by exact PostScript
     // name and accepted only by `installed::accept`. None is tried for a font
@@ -2311,8 +2328,12 @@ pub(super) fn prepare(
     let lay_out = |kept: Option<&(Vec<Object>, f64, [f64; 2], bool)>,
                    shape: &Shape,
                    moving: bool,
-                   hits: &[([f64; 4], bool)]|
+                   hits: &[([f64; 4], bool)],
+                   // How far before the run's origin the text starts: a centred
+                   // line gives half of what it grew by to each side.
+                   back: f64|
      -> Result<Laid, String> {
+        let inherited = inherited - back;
         // The widest the text itself turned out to be, measured from the
         // run's origin. The box reported back is this rather than the whole
         // ceiling, so a grown box is the size of what the reader typed and
@@ -2429,14 +2450,20 @@ pub(super) fn prepare(
                 inks.push(shown);
                 // A box keeps its lines inside itself, and the box is already
                 // held to the page; a wrap's lines are below the box, so each
-                // one is held to the page on its own.
-                if shape.pitch.is_some()
+                // one is held to the page on its own. So is a centred line,
+                // which starts before its box.
+                if (shape.pitch.is_some() || back != 0.)
                     && (shown[0] < -0.001
                         || shown[1] < -0.001
                         || shown[2] > f64::from(geometry.width) + 0.001
                         || shown[3] > f64::from(geometry.height) + 0.001)
                 {
-                    return Err(wrap::NO_ROOM.into());
+                    return Err(if shape.pitch.is_some() {
+                        wrap::NO_ROOM
+                    } else {
+                        CENTRED_NO_ROOM
+                    }
+                    .into());
                 }
                 for (other, moves) in hits {
                     // A run this plan pushes along is not in the way: it ends up
@@ -2489,6 +2516,11 @@ pub(super) fn prepare(
     // one in XeLaTeX where the general layout has no glyph for a character the
     // source's own items carry. Growth may add room; it may never take a
     // writer away. `--compare` over the corpus is what says so.
+    let centred = page.centred.contains(&run.operator);
+    if centred && (settings.wrap || change.replacement.contains('\n')) {
+        return Err(CENTRED_ONE_LINE.into());
+    }
+    let mut back = 0.;
     let plans: &[(f64, bool)] = if ceiling > width {
         &[
             (ceiling, true),
@@ -2510,7 +2542,29 @@ pub(super) fn prepare(
             &Shape::boxed(limit, settings.wrap),
             limit > free.from,
             &free.hits,
+            0.,
         );
+        // A centred line stays centred: the same plan again, started half the
+        // change in width earlier. The source's own width is measured as the
+        // replacement's is, without the trailing space neither draws.
+        if let (true, Ok((_, _, used, ..))) = (centred, &outcome) {
+            let source = original_width.unwrap_or(run.advance);
+            back = (*used - source) / 2.;
+            if back != 0. {
+                outcome = lay_out(
+                    kept.as_ref(),
+                    // One line: a centred line that wraps was refused above.
+                    &Shape::boxed(limit, false),
+                    limit > free.from,
+                    &free.hits,
+                    back,
+                );
+            }
+            // A plan that fits where the source started and not about its
+            // centre ends the search: a narrower plan has no more room there,
+            // and its refusal would name the box rather than the centring.
+            break;
+        }
         if outcome.is_ok() {
             break;
         }
@@ -2531,7 +2585,7 @@ pub(super) fn prepare(
     };
     let full = had.is_some();
     let mut wrapped = None;
-    if full && placement.inherited == 0. && size == run.size {
+    if full && placement.inherited == 0. && size == run.size && !centred {
         // The room the line has without pushing anything along it.
         let room = if free.line.is_empty() {
             ceiling
@@ -2591,14 +2645,14 @@ pub(super) fn prepare(
                     wrap: true,
                     pitch: Some(plan.pitch),
                 };
-                let (operations, lines, used, end, inks) = lay_out(None, &shape, true, &hits)
+                let (operations, lines, used, end, inks) = lay_out(None, &shape, true, &hits, 0.)
                     .map_err(|error| {
-                        if error.starts_with("Text would overlap another line") {
-                            wrap::NO_ROOM.to_string()
-                        } else {
-                            error
-                        }
-                    })?;
+                    if error.starts_with("Text would overlap another line") {
+                        wrap::NO_ROOM.to_string()
+                    } else {
+                        error
+                    }
+                })?;
                 // A run after the edit wider than a whole line of the block
                 // cannot flow anywhere, and the edit keeps the refusal it had.
                 let cuts: Vec<Cut> = plan
@@ -2855,9 +2909,9 @@ pub(super) fn prepare(
         None => display(text_bounds(
             run.matrix,
             [
-                inherited,
+                inherited - back,
                 run.size - height,
-                inherited + width.max(used).min(ceiling),
+                inherited - back + width.max(used).min(ceiling),
                 run.size,
             ],
         )),

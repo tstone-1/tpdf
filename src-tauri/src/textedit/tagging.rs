@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 mod annotation_tests;
 #[cfg(test)]
+mod centred_tests;
+#[cfg(test)]
 mod container_tests;
 #[cfg(test)]
 mod header_tests;
@@ -656,10 +658,68 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
         Err(_) => Ok(bounded),
         Ok(value) => match name(value)? {
             b"Start" => Ok(bounded),
-            b"Center" | b"End" | b"Justify" => Ok(true),
+            // A centred line is edited about its own centre (`centred`,
+            // `layout::prepare`), so it pins nothing.
+            b"Center" => Ok(bounded),
+            b"End" | b"Justify" => Ok(true),
             _ => Err(INVALID.into()),
         },
     }
+}
+
+// The TextAlign an element declares, in its own attributes before its
+// classes'. Every object here has already passed `attributes`.
+fn declared_alignment<'a>(
+    doc: &'a Document,
+    classes: Option<&'a Dictionary>,
+    element: &'a Dictionary,
+) -> Option<&'a [u8]> {
+    let read = |value: &'a Object| -> Option<&'a [u8]> {
+        let objects = match crate::encoding::resolve(doc, value) {
+            Object::Array(objects) => objects.as_slice(),
+            value => std::slice::from_ref(value),
+        };
+        objects.iter().find_map(|object| {
+            crate::encoding::resolve(doc, object)
+                .as_dict()
+                .ok()?
+                .get(b"TextAlign")
+                .and_then(Object::as_name)
+                .ok()
+        })
+    };
+    element.get(b"A").ok().and_then(read).or_else(|| {
+        let names = match crate::encoding::resolve(doc, element.get(b"C").ok()?) {
+            Object::Array(names) => names.as_slice(),
+            name => std::slice::from_ref(name),
+        };
+        names
+            .iter()
+            .filter_map(|name| classes?.get(name.as_name().ok()?).ok())
+            .find_map(read)
+    })
+}
+
+// Whether content claimed by `id` is centred: TextAlign is inherited (ISO
+// 32000-1 14.8.5.2), so the nearest element that declares one decides.
+fn centred(doc: &Document, classes: Option<&Dictionary>, mut id: ObjectId) -> bool {
+    for _ in 0..64 {
+        let Ok(element) = node(doc, id) else {
+            return false;
+        };
+        if let Some(alignment) = declared_alignment(doc, classes, element) {
+            return alignment == b"Center";
+        }
+        let Some(parent) = element
+            .get(b"P")
+            .ok()
+            .and_then(|value| reference(value).ok())
+        else {
+            return false;
+        };
+        id = parent;
+    }
+    false
 }
 
 // K may be a single child/item or an array. An indirect array is a container,
@@ -1000,6 +1060,8 @@ pub(super) struct Tags {
     // MCIDs under an element whose authored ink bounds are kept on save, so
     // their text must stay where the bounds say it is (ISO 32000-1 Table 344).
     bounded: BTreeSet<usize>,
+    // MCIDs of content set centred, which an edit keeps centred (`centred`).
+    centred: BTreeSet<usize>,
     // MCIDs of a Span pinned only by its own ActualText, with that Span. The
     // scan keeps each only where the Span's ActualText is the text it paints;
     // anywhere else `pin` moves it into `bounded`, which is what it was.
@@ -1232,6 +1294,7 @@ impl Tags {
             .map(|child| (child, root_id, 0, false))
             .collect();
         let mut bounded_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
+        let mut centred_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
         let mut actual_slots: BTreeMap<ObjectId, BTreeMap<usize, ObjectId>> = BTreeMap::new();
         let mut containers = 0;
         while let Some((child, parent_id, depth, bounded)) = pending.pop() {
@@ -1485,6 +1548,8 @@ impl Tags {
                     blocks[mcid] = Some(block);
                     if pinned {
                         bounded_slots.entry(owner).or_default().insert(mcid);
+                    } else if centred(doc, classes, id) {
+                        centred_slots.entry(owner).or_default().insert(mcid);
                     }
                     if actual {
                         actual_slots.entry(owner).or_default().insert(mcid, id);
@@ -1523,6 +1588,7 @@ impl Tags {
             names,
             blocks,
             bounded: bounded_slots.remove(&page).unwrap_or_default(),
+            centred: centred_slots.remove(&page).unwrap_or_default(),
             actual: actual_slots.remove(&page).unwrap_or_default(),
             ..Self::default()
         })
@@ -1715,6 +1781,13 @@ impl Tags {
         self.active
             .flatten()
             .and_then(|mcid| self.blocks.get(mcid).copied().flatten())
+    }
+
+    /// Whether the marked content now open is centred in its block.
+    pub(super) fn centred(&self) -> bool {
+        self.active
+            .flatten()
+            .is_some_and(|mcid| self.centred.contains(&mcid))
     }
 
     pub(super) fn finish(&self) -> Result<(), String> {

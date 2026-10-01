@@ -14938,6 +14938,13 @@ ActualText marked-content sequence* held no unsupported ActualText: InDesign's `
 text inside kept read-only. Two of the seven pages became editable (352 of 416); the other five
 stop at the artwork's own paths and clips (`BUILD.md`, *Placed artwork*).
 
+**Centred lines, 2026-10-01 (unreleased, macOS).** A block tagged `/TextAlign /Center` was
+read-only, which locked every slide title in the PowerPoint export of the sample. A centred run
+that is alone on its line is now edited about its centre: the replacement starts half the
+change in width earlier. 357 of 416 pages are editable. Right-aligned and justified blocks, and
+a centred line shared with other text, stay read-only (`docs/TEXTEDIT.md`, *Centred lines*;
+`BUILD.md`, *Centred lines are edited about their centre*).
+
 ### Phase 6 — Cryptographic signing
 
 A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,

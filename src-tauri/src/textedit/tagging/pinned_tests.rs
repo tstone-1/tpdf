@@ -1,7 +1,7 @@
 // Metadata that describes an element's content as it stands keeps that content
 // read-only instead of refusing the page: alternate text, replacement text, a
 // title, and an
-// alignment an edit would falsify. Classes from the root's ClassMap are held to
+// alignment an edit would falsify (End and Justify; a centred line is edited). Classes from the root's ClassMap are held to
 // the same rules as the element's own attributes, and a table of contents
 // groups ordinary blocks.
 use super::nested_tests::nested;
@@ -117,7 +117,8 @@ fn textedit_alternate_text_and_titles_pin_the_content_they_describe() {
 fn textedit_alignment_pins_a_block_and_line_height_is_kept() {
     for (align, offered_texts) in [
         ("Start", vec!["FIRST", "SECOND"]),
-        ("Center", vec!["SECOND"]),
+        // A centred line is edited about its centre (`centred_tests`).
+        ("Center", vec!["FIRST", "SECOND"]),
         ("End", vec!["SECOND"]),
         ("Justify", vec!["SECOND"]),
     ] {
@@ -195,9 +196,12 @@ fn textedit_classes_apply_the_rules_of_the_elements_own_attributes() {
             vec![name("Indent"), 3.into(), name("Inline")].into(),
             vec!["FIRST", "SECOND"],
         ),
-        (name("Centred"), vec!["SECOND"]),
+        (name("Centred"), vec!["FIRST", "SECOND"]),
         (name("Pair"), vec!["SECOND"]),
-        (vec![name("Indent"), name("Centred")].into(), vec!["SECOND"]),
+        (
+            vec![name("Indent"), name("Centred")].into(),
+            vec!["FIRST", "SECOND"],
+        ),
     ] {
         let (mut doc, ids) = classed(classes(), class.clone());
         assert_eq!(offered(&doc), offered_texts, "{class:?}");

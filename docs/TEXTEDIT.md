@@ -336,8 +336,9 @@ ordinary worker/native textedit checks and independent structure-graph readback.
 Block layout attributes admit bounded numeric StartIndent/EndIndent and
 SpaceBefore/SpaceAfter. These authored allocation constraints are retained. Bounded numeric TextIndent
 also works on paragraph-like blocks, preserving the first-line origin through
-shorter edits. TextAlign Start is accepted; Center/End/Justify pin the block
-read-only (see below), and ink bounds remain refused. The unchanged LibreOffice
+shorter edits. TextAlign Start is accepted; End and Justify pin the block
+read-only (see below), a centred line is edited about its centre (*Centred
+lines* below), and ink bounds remain refused. The unchanged LibreOffice
 exports of `textedit-producer-hanging-indent.rtf` and
 `textedit-producer-first-indent.rtf` exercise both signs. PDFKit readback uses
 `--hanging-indent` / `--first-indent` and checks the authored 12pt line offsets;
@@ -434,7 +435,7 @@ element (each covers every descendant; InDesign sets ActualText on the Span of a
 forced line break; a Span whose ActualText is its own words is rewritten instead,
 *PowerPoint for Microsoft 365* below), a non-empty `/T` on an element owning text, being a child of a
 Figure, a
-non-Start `TextAlign`, or a table `/BBox`. `element()` returns the pin with the
+`TextAlign` of End or Justify, or a table `/BBox`. `element()` returns the pin with the
 page; the walk ORs it into `bounded` and `Group::pinned` carries it through
 `groups` and deferred sublists. Pinned text still needs bounded glyphs
 (`read-only text requires validated glyph outlines`): outlines, a descriptor's
@@ -813,3 +814,22 @@ them on one original page.
   the links a wrap moves; without it the next trial met the new ActualText and found the
   Span pinned.
 
+
+## Centred lines
+
+A run whose nearest declared `TextAlign` is `Center` is editable when it is the
+whole of its line. `TextAlign` is inherited, so the element that claims the
+marked content is asked first and then each parent; an element's own attributes
+are read before its classes (`tagging::centred`). A centred run with other
+non-blank text on its line, editable or read-only, stays read-only
+(`textedit/centred.rs`), because moving one run of a shared line moves the others.
+
+The writer lays the replacement out as it would any other, then again with its
+start moved back by half the change in width (`layout::prepare`, the `back`
+argument of `lay_out`). Both widths are measured the same way, without the
+trailing space neither draws, so an unchanged text does not move. The moved
+line is held to the page, the clip and the other text like any other line.
+Refused: an edit with no layout, which would be written at the run's origin; a
+wrapped or multi-line replacement; a replacement with no room to stay centred.
+`End` and `Justify` still pin. `tagging/centred_tests.rs` covers the rule;
+`python3 scripts/mutate_rust.py --only 'centred:'` is its mutation set.

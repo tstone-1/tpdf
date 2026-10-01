@@ -9,6 +9,7 @@
 mod actual;
 #[doc(hidden)]
 pub mod blocks;
+mod centred;
 mod clipping;
 mod colors;
 mod filters;
@@ -750,6 +751,9 @@ struct Inspection {
     /// Spans whose ActualText turned out not to be their one run's text, so
     /// that the page is scanned again with them read-only (`inspect`).
     demote: BTreeSet<ObjectId>,
+    /// Runs set centred in their block and alone on their line, which an edit
+    /// keeps centred (`centred`, `layout::prepare`).
+    centred: BTreeSet<u32>,
 }
 
 /// One annotation as a wrap sees it: where it is on the displayed page, and,
@@ -979,6 +983,7 @@ fn inspect_pinning(
     // spacer show never becomes a run, which the comparison below sees.
     let mut span_shows: BTreeMap<ObjectId, (Vec<u32>, bool)> = BTreeMap::new();
     let mut preserved = Vec::new();
+    let mut centred = BTreeSet::new();
     let mut form_text_bounds = Vec::new();
     let mut graphics: Vec<[f32; 4]> = Vec::new();
     let mut paths = BTreeMap::new();
@@ -1679,6 +1684,9 @@ fn inspect_pinning(
                 transform: page_transform,
             },
         );
+        if tags.centred() {
+            centred.insert(index as u32);
+        }
         result.runs.push(Run {
             display_rect,
             minimum_height: metrics
@@ -1747,10 +1755,15 @@ fn inspect_pinning(
         structure_actual: BTreeMap::new(),
         span_texts: BTreeMap::new(),
         demote: BTreeSet::new(),
+        centred,
     };
     for span in actual_spans {
         span.finish(&mut inspection)?;
     }
+    centred::settle(
+        &mut inspection,
+        crate::pagetree::displayed_page(doc, id).turns % 2 == 1,
+    );
     if inspection.runs.runs.is_empty() && !inspection.preserved.is_empty() {
         return Err(unusable_font.unwrap_or_else(|| "page contains only read-only text".into()));
     }
@@ -2055,6 +2068,9 @@ fn prepare_batch(doc: &Document, changes: &[Change]) -> Result<BTreeMap<u32, Ins
         }
         if let std::collections::btree_map::Entry::Vacant(entry) = prepared.entry(change.page) {
             entry.insert(inspect(doc, change.page)?);
+        }
+        if change.layout.is_none() && prepared[&change.page].centred.contains(&change.operator) {
+            return Err(centred::NEEDS_LAYOUT.into());
         }
         if change.layout.is_some() {
             let page = prepared.get_mut(&change.page).ok_or("missing text page")?;

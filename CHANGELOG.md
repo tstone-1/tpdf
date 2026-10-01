@@ -59,6 +59,13 @@ have the binary.)
   that mark as an unsupported text annotation and refused the whole page. The
   mark is now accepted. Text inside the placed artwork stays read-only; the rest
   of the page is editable, unless the artwork's own shapes are refused.
+- **Centred text can be edited, and stays centred.** A centred heading, such as
+  a slide title exported from PowerPoint, was read-only, because a replacement
+  written from the old left edge would no longer be centred. tpdf now moves the
+  start of the line by half the change in width, so the edited title keeps its
+  middle. This applies to a centred line that has no other text on it; a line
+  shared with other text, and right-aligned or justified text, stay read-only.
+  In `tpdf edit`, such an operation needs a `font`.
 
 ## [26.9.24] - 2026-09-30
 

@@ -13914,3 +13914,69 @@ inputs, so no test could tell it was there.
 
 **Not done.** A run in the application window, PDFKit readback, a Windows run, the full
 mutation table. Text inside placed artwork is read-only by caution, not by a measured need.
+
+### Centred headings: what *page contains only read-only text* is — measured 2026-10-01
+
+**Seven pages, one rule.** The Healdsburg slides' pages 3, 5, 8, 9, 10 and 29 and the W3C
+headers document's page 1 refuse with *page contains only read-only text*. A temporary print
+at the read-only decision gave the reason for every run on them: the slide number and the
+background text are artifacts, and every heading is tagged content pinned by its element's
+`/A << /O /Layout /TextAlign /Center ... >>` (`H1`, `H2`, the `Span`s under them, one `P`, one
+`Title`). The rule is `attributes()` in `tagging.rs`: Center, End and Justify pin the block,
+because an edit that changes the line's width leaves it where it started and it is no longer
+centred.
+
+**How much the rule holds back.** With that one arm returning the unpinned value, measured and
+then reverted: 352 to 359 editable pages of 416, refused 43 to 36, and 35,223 to 35,252
+editable runs. All 29 runs are in those two documents, 28 of them slide titles on eight of the
+Healdsburg file's 29 pages. No other document in the sample declares a non-Start alignment.
+
+**Why it was not simply switched off.** The writer starts a replacement at the run's own
+origin (`layout::room`'s comment: starting a line further left is a move of the line, *the
+next increment*). An edited centred title would keep its left edge and sit off centre under a
+tag that still says Center. Keeping it centred means moving the line's start by half the
+change in width, and the shows before the edited one with it. The next section does the first
+half of that.
+
+### Centred lines are edited about their centre — measured 2026-10-01
+
+**The slice.** Of the 26 runs the rule locked on the six Healdsburg pages, 20 are alone on
+their line, so the first increment is exactly that case: a centred run with no other non-blank
+text on its line. Nothing before it has to move, and the writer already restores the cursor
+after a replacement, so the whole change is where the replacement starts. `docs/TEXTEDIT.md`,
+*Centred lines*, has the rule.
+
+**Result, 26 documents, 416 pages:** editable 352 to 357, refused 43 to 38, editable runs
+35,223 to 35,244. Healdsburg pages 3, 9, 10 and 29 and the W3C headers page 1 became editable;
+Healdsburg pages 11 and 27 gained one run each. Pages 5 and 8 stay refused: their two heading
+lines each have an artifact with the same words on the same line. No page was lost.
+
+**Edits through `tpdf-cli edit` with `"font":"auto"`, Poppler at 100 dpi.** Each passes
+`qpdf --check`, `pdftotext` reads the new text, and the changed rows are inside the run's own.
+
+| page | edit | old columns, centre | changed columns, centre |
+|---|---|---|---|
+| Healdsburg 3 | *Items* to *Items of note* | 140 to 240, 190.3 | 75 to 306, 190.5 |
+| Healdsburg 3 | *Items* to *It* | 140 to 240, 190.3 | 143 to 239, 191.0 |
+| Healdsburg 29 | *del público* to *público* | 66 to 332, 199.0 | 68 to 329, 198.5 |
+| W3C headers 1 | *Test Document* to *A much longer title for headers* | 336 to 514, 425.1 | 231 to 620, 425.5 |
+| W3C headers 1 | *Test Document* to *Short* | 336 to 514, 425.1 | 336 to 514, 425.0 |
+
+For a shorter replacement the changed columns are the old text's, which the new text sits
+inside, so those rows show that nothing outside the old line changed, not where the new text
+is. Healdsburg 9, *Questions* to *Questions and answers*: columns 40 to 932, centre 486 against
+485.5, and the same text written back differs in no pixel. Healdsburg 10, *Comment* to
+*Comments welcome*, is refused with *There is no room to keep this line centred*: the panel is
+about 250 pixels wide.
+
+**Tests and mutations.** Four tests in `tagging/centred_tests.rs`; two in `pinned_tests.rs`
+changed to say a centred block is offered. `python3 scripts/mutate_rust.py --only 'centred:'`:
+sixteen, all caught on the first run. *alignment: let a centred block stay editable* became
+*let a right-aligned block stay editable*, on the arm that still pins.
+
+**Not done.** The application window: the worker's preview returns the moved rectangle, but
+whether the editor's dashed box follows it was not looked at. A page displayed a quarter turn
+(`centred::settle`'s `turned`) has no test. The room is still the room to the right of the
+run's origin, so a centred line near the right edge is refused although it would grow only half
+as far that way. A centred line with other runs on it, right-aligned text and justified text
+are unchanged. PDFKit readback, a Windows run, the full mutation table.
