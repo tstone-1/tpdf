@@ -32,6 +32,13 @@ have the binary.)
   edits: with edits pending it asks, and offers *Save a copy* first. A file whose
   timestamp moved while its contents stayed the same is not reported.
 
+- **`tpdf edit` can set a replacement in a fallback font.** A `replace_text`
+  operation takes an optional `font`. `"auto"` keeps the document's font and uses
+  Noto Sans for characters it lacks or when the font does not permit editing,
+  which is what the editor does by default; the six Noto values name a font
+  outright. Until now the command line refused such an edit, for example on the
+  IRS W-9, while the editor made it. Without `font` a plan behaves as before.
+
 ### Changed
 
 - **Text on a page with symbol-font list bullets can be edited.** A page was

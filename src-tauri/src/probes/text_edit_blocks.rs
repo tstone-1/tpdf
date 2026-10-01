@@ -72,21 +72,7 @@ const INK_TOLERANCE: i32 = 12;
 /// `text_edit_growth::app_layout` and for the same reason: `app` is what the editor
 /// sends, so a verdict taken under any other layout is about a box no reader has.
 fn app_layout(run: &textedit::Run) -> textedit::Layout {
-    let x = run.matrix[0].hypot(run.matrix[1]);
-    let y = run.matrix[2].hypot(run.matrix[3]);
-    let round = |value: f64| (value * 1000.).ceil() / 1000.;
-    let source_size = run.size * y;
-    let size = round(source_size);
-    let height = (source_size * 1.25).max(run.minimum_height.unwrap_or(0.)) * size / source_size;
-    textedit::Layout {
-        width: round(run.advance * x).max(0.1),
-        height: round(height).max(0.1),
-        size,
-        wrap: false,
-        font: textedit::EditFont::Auto,
-        grow: true,
-        installed: None,
-    }
+    textedit::Layout::opened(run, textedit::EditFont::Auto)
 }
 
 /// The original followed by at least `ceil(n * growth)` characters, drawn by cycling

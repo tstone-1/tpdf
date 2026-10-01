@@ -62,21 +62,7 @@ const LADDER_STEPS: usize = 24;
 /// as it is for a reader who has not touched the width control, so `app` is what
 /// the editor actually sends; `widened` clears it, being a box a reader set.
 fn app_layout(run: &textedit::Run) -> textedit::Layout {
-    let x = run.matrix[0].hypot(run.matrix[1]);
-    let y = run.matrix[2].hypot(run.matrix[3]);
-    let round = |value: f64| (value * 1000.).ceil() / 1000.;
-    let source_size = run.size * y;
-    let size = round(source_size);
-    let height = (source_size * 1.25).max(run.minimum_height.unwrap_or(0.)) * size / source_size;
-    textedit::Layout {
-        width: round(run.advance * x).max(0.1),
-        height: round(height).max(0.1),
-        size,
-        wrap: false,
-        font: textedit::EditFont::Auto,
-        grow: true,
-        installed: None,
-    }
+    textedit::Layout::opened(run, textedit::EditFont::Auto)
 }
 
 /// Same length, still a change: swap the first adjacent pair of distinct visible

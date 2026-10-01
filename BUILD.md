@@ -13833,3 +13833,35 @@ the reformatted line and is still caught.
 
 **Not done.** A W-9 edit in the application window, PDFKit readback, a Windows run, the full
 mutation table. The W-4's image refusal and the Harvest invoice's code 105 were not looked at.
+
+### A fallback font from the command line — measured 2026-10-01
+
+`replace_text` in an edit plan takes an optional `font`, one of the editor's eight choices.
+With it the command builds the box the editor opens on that run (`textedit::Layout::opened`,
+the arithmetic of `defaultTextLayout`, which the two text-edit probes now call too) and the
+change goes down the same layout path as an edit made in the window. It reads the page's runs
+once more, unedited, to get the run's matrix and advance. Without `font` a plan sends no
+layout, as before. This corrects the last sentence of *One unchanged W-9 page* above.
+
+**The W-9 again, through `tpdf-cli edit`.** Page 2, operator 17, *Form W-9 (Rev. 3-2024)*
+replaced by *Edited W-9 (Rev. 3-2024)*, three plans:
+
+- no `font`: exit 3, *embedded font does not permit this editable use*;
+- `"font":"original"`: exit 3, *This text's font does not permit editing. Choose automatic
+  fallback or a Noto font.*;
+- `"font":"auto"`: exit 0. `qpdf --check` finds no errors, `pdftotext` reads the new line,
+  `pdffonts` lists the six original subsets and one NotoSans. Poppler renders at 100 dpi are
+  identical on pages 1 and 3 to 6; page 2 differs in 693 pixels, rows 52 to 62 inside the
+  run's 50.8 to 62.9, columns 50 to 160 against a run that ended at 154.3. Noto Sans is wider
+  than the Helvetica Neue it replaces, and the box is allowed to grow into the empty margin.
+
+**Not the editor's automatic mode in one respect.** The app process looks for an installed
+copy of the document's font before falling back to Noto; the command sends none, so `auto`
+there means the document's font, then Noto Sans.
+
+**Tests and mutations.** `a_named_font_sends_the_box_the_editor_opens_on_that_run` in
+`cli/edit.rs`. `python3 scripts/mutate_rust.py --only 'cli edit'` and `--only 'opened
+layout'`: seven new, all caught on the first run.
+
+**Not done.** The refusal without `font` does not say that `font` exists. The command's report
+does not name the font that was used. Width, height, size and wrapping are not in the plan.

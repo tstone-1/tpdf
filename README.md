@@ -788,9 +788,18 @@ empty list. Annotation readback can therefore serve as an assertion in a test.
 A `replace_text` operation takes `page`, `operator`, `revision`, `original` and
 `replacement`: return the inspected run's operator and text and the report's
 32-byte revision. The worker rejects stale revisions, changed original text,
-unsupported glyphs and replacements that do not fit the original space. This
-version exposes bounded replacement; the GUI's explicit font/layout controls
-are not yet part of the edit schema. Use `tpdf text` to inspect the saved result.
+unsupported glyphs and replacements that do not fit the original space.
+
+An optional `font` gives the replacement the box the editor opens on that run:
+the run's own width and size, one line, free to grow into the room after it.
+`"auto"` keeps the document's font and sets characters it lacks, or a font that
+does not permit editing, in Noto Sans; `"original"` refuses instead. The other
+values name the font outright: `noto_sans`, `noto_sans_bold`, `noto_sans_italic`,
+`noto_sans_bold_italic`, `noto_sans_cjk_sc` and `noto_sans_cjk_sc_bold`. The
+editor's automatic mode also tries an installed copy of the document's font;
+the command line does not, so its result is the same on every computer. Width,
+height, size and wrapping are not yet part of the edit schema. Use `tpdf text`
+to inspect the saved result.
 Text editing is not redaction; use `redact` for confidential content.
 
 **Python API.** Install the client from a checkout with

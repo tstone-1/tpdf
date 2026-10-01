@@ -178,6 +178,8 @@ enum Operation {
         revision: Vec<u8>,
         original: String,
         replacement: String,
+        #[serde(default)]
+        font: Option<crate::textedit::EditFont>,
     },
     RewriteComment {
         page: u32,
@@ -479,6 +481,7 @@ fn apply(
                     revision,
                     original,
                     replacement,
+                    font,
                 } => {
                     let id = page(&state, *n)?;
                     let PageSource::Baseline(baseline_page) = state.pages[(*n - 1) as usize].source
@@ -490,13 +493,35 @@ fn apply(
                             "revision must contain the 32 bytes returned by text-runs".into()
                         );
                     }
+                    // A named font takes the editor's path: the box the editor
+                    // opens on this run, which may leave the run's own font.
+                    let layout = match font {
+                        None => None,
+                        Some(font) => {
+                            let reply = ask(Request::TextRuns {
+                                page: baseline_page,
+                                changes: Vec::new(),
+                            })?;
+                            let Reply::TextRuns(found) = reply else {
+                                return Err(OperationError::failed(
+                                    "worker did not return text runs",
+                                ));
+                            };
+                            let run = found
+                                .runs
+                                .iter()
+                                .find(|run| run.operator == *operator)
+                                .ok_or("text run no longer exists")?;
+                            Some(crate::textedit::Layout::opened(run, *font))
+                        }
+                    };
                     let change = crate::textedit::Change {
                         page: baseline_page,
                         operator: *operator,
                         revision: revision.clone(),
                         original: original.clone(),
                         replacement: replacement.clone(),
-                        layout: None,
+                        layout,
                     };
                     let mut pending: Vec<_> = model
                         .text_changes(1)
@@ -819,6 +844,116 @@ mod tests {
             );
             assert!(response.is_none(), "the worker was actually asked");
         }
+    }
+
+    #[test]
+    fn a_named_font_sends_the_box_the_editor_opens_on_that_run() {
+        use crate::textedit::{EditFont, Layout, PageRuns, Run};
+        let model = Edits::default();
+        model.open(1, 1, None);
+        let baseline = super::super::pages::Input {
+            plan: model.plan(1).unwrap(),
+            sizes: vec![PageSize {
+                width_pt: 200.,
+                height_pt: 300.,
+            }],
+            encrypted: false,
+            signed: None,
+            signatures_unknown: false,
+        };
+        let run = Run {
+            operator: 3,
+            text: "Original".into(),
+            font: "F1".into(),
+            size: 1.,
+            matrix: [0., 12., -10., 0., 40., 50.],
+            advance: 3.25,
+            display_rect: [0.; 4],
+            minimum_height: Some(18.),
+        };
+        let runs = || PageRuns {
+            runs: vec![run.clone()],
+            ..PageRuns::default()
+        };
+        let plan = |font: &str, operator: u32| {
+            let font = if font.is_empty() {
+                String::new()
+            } else {
+                format!(r#","font":"{font}""#)
+            };
+            decode(&format!(
+                r#"{{"schema":1,"operations":[{{"op":"replace_text","page":1,"operator":{operator},"revision":{:?},"original":"Original","replacement":"New"{font}}}]}}"#,
+                vec![0; 32]
+            ))
+        };
+        // No font: one question, and the run keeps its own place and font.
+        let mut asked = Vec::new();
+        let made = apply(&plan("", 3).unwrap(), &baseline, 0, |request| {
+            asked.push(request);
+            Ok(Reply::TextRuns(runs()))
+        })
+        .unwrap();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(made.text_edits[0].change.layout, None);
+
+        // A font: the run is read first, unedited, and the change that is
+        // validated and journalled carries the editor's box for it.
+        let mut asked = Vec::new();
+        let made = apply(
+            &plan("noto_sans_bold", 3).unwrap(),
+            &baseline,
+            0,
+            |request| {
+                asked.push(request);
+                Ok(Reply::TextRuns(runs()))
+            },
+        )
+        .unwrap();
+        let expected = Layout {
+            width: 39.,
+            height: 18.,
+            size: 10.,
+            wrap: false,
+            font: EditFont::NotoSansBold,
+            grow: true,
+            installed: None,
+        };
+        assert_eq!(Layout::opened(&run, EditFont::NotoSansBold), expected);
+        let [Request::TextRuns { changes: first, .. }, Request::TextRuns {
+            changes: second, ..
+        }] = asked.as_slice()
+        else {
+            panic!("{asked:?}");
+        };
+        assert!(first.is_empty());
+        assert_eq!(second[0].layout.as_ref(), Some(&expected));
+        assert_eq!(made.text_edits[0].change.layout.as_ref(), Some(&expected));
+
+        // A run of ordinary depth gets 1.25 em, rounded up to a thousandth.
+        let plain = Run {
+            size: 10.0004,
+            matrix: [1., 0., 0., 1., 0., 0.],
+            minimum_height: None,
+            ..run.clone()
+        };
+        let opened = Layout::opened(&plain, EditFont::Auto);
+        assert_eq!(
+            (opened.width, opened.height, opened.size),
+            (3.25, 12.502, 10.001)
+        );
+
+        // The operator must be one the page has, and the font one tpdf knows.
+        let failure = apply(&plan("auto", 4).unwrap(), &baseline, 0, |_| {
+            Ok(Reply::TextRuns(runs()))
+        })
+        .unwrap_err();
+        assert_eq!(failure.exit, Exit::Refused);
+        assert!(
+            failure.message.contains("no longer exists"),
+            "{}",
+            failure.message
+        );
+        assert!(plan("helvetica", 3).is_err());
     }
 
     #[test]

@@ -269,6 +269,31 @@ pub struct Layout {
     pub installed: Option<Installed>,
 }
 
+impl Layout {
+    /// The box the editor opens on `run`, before a reader sizes it: the run's
+    /// own advance and font size, one line of 1.25 em or the run's minimum,
+    /// free to follow the typed text. The same arithmetic as
+    /// `defaultTextLayout` in `src/lib/textlayout.ts`.
+    pub fn opened(run: &Run, font: EditFont) -> Layout {
+        let x = run.matrix[0].hypot(run.matrix[1]);
+        let y = run.matrix[2].hypot(run.matrix[3]);
+        let round = |value: f64| (value * 1000.).ceil() / 1000.;
+        let source_size = run.size * y;
+        let size = round(source_size);
+        let height =
+            (source_size * 1.25).max(run.minimum_height.unwrap_or(0.)) * size / source_size;
+        Layout {
+            width: round(run.advance * x).max(0.1),
+            height: round(height).max(0.1),
+            size,
+            wrap: false,
+            font,
+            grow: true,
+            installed: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EditFont {
