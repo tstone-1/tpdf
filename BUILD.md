@@ -6295,6 +6295,20 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.10.1 verification, macOS arm64, 2026-10-01:** all 29 gates passed on the final tree
+(2,425 Rust tests with nine documented ignored, 1,999 frontend tests), and `check_windows.py`
+type-checked the Windows tree. CI was green on both legs at the commit before the version
+bump. Every mutation selected `--since v26.10.0` ran and was caught: 186 Rust and 11 frontend.
+The one window mutation that selection names and the window phases were not rerun: no
+frontend source changed since 26.10.0, where they passed. The normal bundle, with the
+development engine hidden: `menu_check.py` (after its self-test) found a clean menu bar,
+`save_check.py` saved over the document twice and refused a print after a second writer, and
+the bundled `tpdf-cli` answered `--version` with 26.10.1 and `verify`. No release mechanics
+were rehearsed under a throwaway tag: the one change to them is `installer-hooks.nsh`, and the
+installer was built from it and run on Windows x64 the same day (*The command-line tool on the
+Windows `PATH`*). On Windows, `print-probe`, `redact-reach-probe` and the window phases were
+not run for this release.
+
 **26.10.0 verification, macOS arm64, 2026-10-01:** all 29 gates passed on the final tree
 (2,415 Rust tests with nine documented ignored, 1,999 frontend tests), and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--since v26.9.24` ran and was caught:

@@ -479,22 +479,22 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.10.0.** tpdf notices when another program rewrites the
-          open file: it says the file changed and offers to reload it, or
-          reloads by itself if you choose that, and never discards unsaved
-          edits. More documents can have their text edited: centred lines such
-          as slide titles, which stay centred; pages with artwork placed in
-          InDesign; pages with symbol-font bullets; text with curly quotes,
-          bullets and em dashes in Type 1C fonts; and the first page of the IRS
-          W-9 and W-4.
+          **New in 26.10.1.** On Windows, the `-setup.exe` installer puts the
+          command-line tool on your PATH and the uninstaller takes it out
+          again; *Install command-line tool...* does the same, and
+          `tpdf-cli path` says whether it is there. No administrator is
+          needed, and the other entries of your PATH are not changed.
 
-          On the command line, `tpdf sign --image <file>` draws a signature
-          image from a PNG or JPEG file instead of the one saved in the
-          application, and `--hide reason,location` writes those into the
-          signature without drawing them. `tpdf edit` can set a replacement in a
-          fallback font and reports which font it used. The Python client has
-          the same options. On Windows, *Install command-line tool...* now
-          shows a folder path that the PATH editor accepts.
+          `tpdf sign` takes its own wording and place. `--text` draws your
+          lines instead of the standard ones, with `{name}`, `{date}`,
+          `{reason}` and `{location}` filled in, and `--date-format` chooses
+          how the date is written. `--anchor TEXT --size w,h` puts a visible
+          signature beside text on the page instead of at a rectangle you
+          measured. `--identity` takes the SHA-1 thumbprint that Windows
+          shows for a certificate. `--reason` and `--location` work on an
+          invisible signature, and `--contact` is new. `sign --json` reports
+          where the signature, its image and each line were drawn. The Python
+          client has the same options.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
