@@ -294,6 +294,12 @@ impl Layout {
     }
 }
 
+/// Whether a change without a layout was refused for a reason another font
+/// answers: the run's font forbids editing, or lacks a typed character.
+pub(crate) fn wants_fallback(refusal: &str) -> bool {
+    refusal == fonts::RESTRICTED || refusal == LATIN_ONLY
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EditFont {
@@ -513,6 +519,9 @@ fn slot_character(slot: u8) -> char {
     }
 }
 
+const LATIN_ONLY: &str =
+    "text editing currently supports printable Latin-1, WinAnsi punctuation and minus only";
+
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
     if bytes.len() > MAX_TEXT || !bytes.iter().all(|&byte| text_byte(byte)) {
         return Err("text editing currently supports printable Latin-1 only".into());
@@ -528,10 +537,7 @@ fn encode_text(text: &str) -> Result<Vec<u8>, String> {
     }
     let bytes = text
         .chars()
-        .map(|ch| {
-            character_slot(ch)
-                .ok_or("text editing currently supports printable Latin-1, WinAnsi punctuation and minus only")
-        })
+        .map(|ch| character_slot(ch).ok_or(LATIN_ONLY))
         .collect::<Result<Vec<_>, _>>()?;
     if bytes.len() > MAX_TEXT {
         return Err("text replacement exceeds its limit".into());

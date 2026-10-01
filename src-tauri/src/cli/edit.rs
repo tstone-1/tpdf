@@ -194,6 +194,9 @@ enum Operation {
     Redo,
 }
 
+/// Appended to a refusal that naming a font in the operation would answer.
+const FONT_HINT: &str = r#"; add "font":"auto" to this operation to allow Noto Sans"#;
+
 fn default_color() -> [f32; 3] {
     [1., 0., 0.]
 }
@@ -535,6 +538,14 @@ fn apply(
                     let reply = ask(Request::TextRuns {
                         page: baseline_page,
                         changes: pending,
+                    })
+                    .map_err(|declined| match declined {
+                        crate::save_outside::Declined::Refused(message)
+                            if font.is_none() && crate::textedit::wants_fallback(&message) =>
+                        {
+                            crate::save_outside::Declined::Refused(format!("{message}{FONT_HINT}"))
+                        }
+                        other => other,
                     })?;
                     if !matches!(reply, Reply::TextRuns(_)) {
                         return Err(OperationError::failed(
@@ -941,6 +952,41 @@ mod tests {
             (opened.width, opened.height, opened.size),
             (3.25, 12.502, 10.001)
         );
+
+        // A refusal another font answers says so, unless a font was named.
+        use crate::save_outside::Declined;
+        for (refusal, font, hinted) in [
+            ("embedded font does not permit this editable use", "", true),
+            (
+                "text editing currently supports printable Latin-1, WinAnsi punctuation and minus only",
+                "",
+                true,
+            ),
+            ("text changed since this run was inspected", "", false),
+            (
+                "text editing currently supports printable Latin-1 only",
+                "",
+                false,
+            ),
+            ("embedded font does not permit this editable use", "original", false),
+        ] {
+            let mut replies = vec![
+                Err(Declined::Refused(refusal.into())),
+                Ok(Reply::TextRuns(runs())),
+            ];
+            if font.is_empty() {
+                replies.pop();
+            }
+            let failure = apply(&plan(font, 3).unwrap(), &baseline, 0, |_| {
+                replies.pop().unwrap()
+            })
+            .unwrap_err();
+            assert_eq!(failure.exit, Exit::Refused);
+            assert_eq!(
+                failure.message,
+                format!("operation 1: {refusal}{}", if hinted { FONT_HINT } else { "" })
+            );
+        }
 
         // The operator must be one the page has, and the font one tpdf knows.
         let failure = apply(&plan("auto", 4).unwrap(), &baseline, 0, |_| {

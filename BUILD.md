@@ -13863,5 +13863,11 @@ there means the document's font, then Noto Sans.
 `cli/edit.rs`. `python3 scripts/mutate_rust.py --only 'cli edit'` and `--only 'opened
 layout'`: seven new, all caught on the first run.
 
-**Not done.** The refusal without `font` does not say that `font` exists. The command's report
-does not name the font that was used. Width, height, size and wrapping are not in the plan.
+**The refusal names the option.** A plan without `font` that is refused because the font
+forbids editing, or because the replacement has a character outside the Latin set, ends its
+message with *add "font":"auto" to this operation to allow Noto Sans*. Both seen on real
+files: the W-9 plan above, and *Ωж* typed into the passport guide's page 3, which `"auto"`
+then writes. No other refusal carries the hint, and none does once a font is named. Four
+more mutations under `--only 'cli edit'`, caught on the first run.
+
+**Not done.** The command's report does not name the font that was used. Width, height, size and wrapping are not in the plan.

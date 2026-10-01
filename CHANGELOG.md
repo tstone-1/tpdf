@@ -37,7 +37,8 @@ have the binary.)
   Noto Sans for characters it lacks or when the font does not permit editing,
   which is what the editor does by default; the six Noto values name a font
   outright. Until now the command line refused such an edit, for example on the
-  IRS W-9, while the editor made it. Without `font` a plan behaves as before.
+  IRS W-9, while the editor made it. Without `font` a plan behaves as before,
+  and a refusal that a fallback font would answer now says to add it.
 
 ### Changed
 

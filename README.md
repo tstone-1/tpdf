@@ -793,7 +793,8 @@ unsupported glyphs and replacements that do not fit the original space.
 An optional `font` gives the replacement the box the editor opens on that run:
 the run's own width and size, one line, free to grow into the room after it.
 `"auto"` keeps the document's font and sets characters it lacks, or a font that
-does not permit editing, in Noto Sans; `"original"` refuses instead. The other
+does not permit editing, in Noto Sans; `"original"` refuses instead. A plan
+without `font` that is refused for either reason says so in its message. The other
 values name the font outright: `noto_sans`, `noto_sans_bold`, `noto_sans_italic`,
 `noto_sans_bold_italic`, `noto_sans_cjk_sc` and `noto_sans_cjk_sc_bold`. The
 editor's automatic mode also tries an installed copy of the document's font;
