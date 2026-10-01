@@ -6295,6 +6295,28 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.10.0 verification, macOS arm64, 2026-10-01:** all 29 gates passed on the final tree
+(2,415 Rust tests with nine documented ignored, 1,999 frontend tests), and `check_windows.py`
+type-checked the Windows tree. Every mutation selected `--since v26.9.24` ran and was caught:
+856 Rust, 67 frontend and 14 window, plus the 8 of the three window-free runners. The window
+phases passed on macOS against the checks build: viewer 318 text-heavy and 223 vector-heavy,
+`tabs` 20, `forms` 18, `signatures` 21, `import` 28, `redact-pages` 34, `textedit` 23 (read
+back by PDFKit with 898 changed pixels inside the edit and none outside), and the two phases
+new this cycle, `textedit-w9` 24 and `textedit-centred` 24. The normal bundle contains no
+harness; with the development engine hidden, `menu_check.py` (after its self-test) found a
+clean menu bar, `save_check.py` saved over the document twice and refused a print after a
+second writer, and the bundled `tpdf-cli` answered `--version` and `verify`. A local build is
+ad-hoc signed, so the Developer ID check belongs to the published artifact. On Windows x64 the
+same day, `sign --image` and `--hide` ran natively on MOTHERSHIP against a certificate-store
+key (*`sign --image` and `sign --hide`*). `docs/THREAT-MODEL.md` gained the two commands that
+watch the open file, which the cycle had added without it; `README.md` gained centred lines.
+`release.yml` changed only in its notes, so no rehearsal tag was cut. **Not run before the
+tag:** `print-probe` and `redact-reach-probe` on Windows (printing and OCR redaction are
+unchanged this cycle), every Windows window phase, *Install command-line tool...* from the
+bundle on either platform (the Windows path it shows changed this cycle and is covered by a
+unit test only), and the disk-watch prompt in a window, which has frontend tests and no
+window phase. CI's Windows gate leg is the Windows evidence.
+
 **26.9.24 verification, macOS arm64, 2026-09-30:** all 29 gates passed on the final tree
 (2,392 Rust tests with nine documented ignored, 1,976 frontend tests), and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--since v26.9.23` ran and was caught:

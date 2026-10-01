@@ -1418,6 +1418,17 @@ one.** A fingerprint that could not be taken refuses the save rather than permit
 not, because a copy risks a bad new file beside an intact original and the refusal above
 names Save a copy as the way out.
 
+**Since 2026-10-01 the window also asks whether the open file changed on disk**, once a second
+while it is visible: `document_stamp` and `document_differs` in `commands/document.rs`. Both
+take the path from the frontend, as the save does, and neither checks it against what the
+render service opened. What a caller naming another path can learn is that file's length and
+modification time, and whether its bytes equal the opened document's. Neither command returns
+content, writes, or parses the file: the app process calls `stat` and hashes. That is less
+than `open_document` already grants a caller who can reach it. A reload that follows is
+`file.reload`, which opens the file again through a worker like any other open; in the
+automatic mode nobody is asked first, so a file another program put there is parsed without a
+click, inside the same sandbox as a file the reader chose.
+
 **The modification time is deliberately not part of the deep comparison, and that narrows
 what this paragraph may claim.** A file whose mtime moved and whose bytes did not is
 *accepted*: `cp -p` preserves a timestamp across a rewrite and a `touch` moves one without

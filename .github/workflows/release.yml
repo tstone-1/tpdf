@@ -479,20 +479,22 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.9.24.** Text in PowerPoint for Microsoft 365 exports can
-          be edited: paragraphs and table cells, with the accessible text that a
-          screen reader or search uses rewritten with the words. When an edit
-          needs a character the document's embedded font lacks, tpdf uses the
-          same font installed on this computer, if it matches the document's copy
-          and its licence permits editing, and embeds only the glyphs it needs;
-          otherwise Noto Sans. The preview names the font it used. OpenType fonts
-          with PostScript outlines are included. The mark colour menu shows each
-          colour, and US or British spelling follows the system language.
+          **New in 26.10.0.** tpdf notices when another program rewrites the
+          open file: it says the file changed and offers to reload it, or
+          reloads by itself if you choose that, and never discards unsaved
+          edits. More documents can have their text edited: centred lines such
+          as slide titles, which stay centred; pages with artwork placed in
+          InDesign; pages with symbol-font bullets; text with curly quotes,
+          bullets and em dashes in Type 1C fonts; and the first page of the IRS
+          W-9 and W-4.
 
-          This release also fixes automatic font choice when a document's font
-          lacks one letter of the new text: the preview used to be refused
-          instead of falling back to another font. The same edits work from the
-          command line and the Python client.
+          On the command line, `tpdf sign --image <file>` draws a signature
+          image from a PNG or JPEG file instead of the one saved in the
+          application, and `--hide reason,location` writes those into the
+          signature without drawing them. `tpdf edit` can set a replacement in a
+          fallback font and reports which font it used. The Python client has
+          the same options. On Windows, *Install command-line tool...* now
+          shows a folder path that the PATH editor accepts.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
