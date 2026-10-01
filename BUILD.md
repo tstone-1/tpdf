@@ -14063,9 +14063,26 @@ image descriptor not handed over. Each turned at least one check red.
 `--image stamp.png --lines ""` and expects no text, but `--lines "" --reason X` is a command
 line that works today and draws the reason, which the same request says must not change.
 
-**Not done.** A signing with a real keychain or certificate-store key, on either platform.
-Anything on Windows beyond the type-check. `api/python/check_signing.py` with `image=`. EXIF
-orientation.
+**On Windows, with a key in the certificate store** (MOTHERSHIP, Windows 11, pwsh 7.6.6,
+`tpdf-cli` built from `458878f`, 2026-10-01). A one-day self-signed RSA certificate made by
+`New-SelfSignedCertificate` in `Cert:\CurrentUser\My`, software key storage provider, key
+usage `DigitalSignature,NonRepudiation`, and
+`-TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.4,1.3.6.1.5.5.7.3.36')`; without that
+extension the certificate is for logging in and web servers and `sign` refuses it by name,
+exit 3. Removed afterwards with `Remove-Item -Path Cert:\CurrentUser\My\<thumbprint>
+-DeleteKey`, and the store listed none left. On a 400 by 300 page, `--rect 40,40,200,80
+--image stamp.png`: with `--lines ""`, with `--lines label,date`, with `--lines "" --reason
+"Document approved" --hide reason`, and the last without `--hide`. All four exit 0 and
+`verify` reads each intact, trust `untrusted` / `root`. Rendered with Poppler at 72 dpi from
+the files copied back (digests equal on both sides): image alone, the page changes only inside
+64 to 216 by 42 to 119, within the rectangle; with lines, 42 to 237 by 55 to 105. With
+`--hide reason`, `/Reason` is `Document approved` and the appearance has no text operator;
+without it the reason is drawn. `--image in.pdf` exits 3 naming the file and writes nothing.
+This ran over ssh, where the key needed no consent; a key that asks at the desktop was not
+tried.
+
+**Not done.** A signing with a real keychain key on macOS, or with a certificate a CA issued
+on either platform. `api/python/check_signing.py` with `image=`. EXIF orientation.
 
 **The two header readers are held to one file of cases** (added the same day).
 `src-tauri/testdata/signature/headers.json` has 46 headers, 10 read and 36 refused, and each
