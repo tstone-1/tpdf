@@ -54,6 +54,11 @@ have the binary.)
   are now read and written like the single quotes and the en dash already were.
   Where the document's font does not permit editing, as on the W-9, new text is
   set in Noto Sans.
+- **Pages with artwork placed in InDesign are no longer refused for it.** InDesign
+  and Illustrator mark a logo or drawing placed from another file, and tpdf read
+  that mark as an unsupported text annotation and refused the whole page. The
+  mark is now accepted. Text inside the placed artwork stays read-only; the rest
+  of the page is editable, unless the artwork's own shapes are refused.
 
 ## [26.9.24] - 2026-09-30
 

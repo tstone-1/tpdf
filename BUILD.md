@@ -13871,3 +13871,46 @@ then writes. No other refusal carries the hint, and none does once a font is nam
 more mutations under `--only 'cli edit'`, caught on the first run.
 
 **Not done.** The command's report does not name the font that was used. Width, height, size and wrapping are not in the plan.
+
+### Placed artwork — measured 2026-10-01
+
+**The refusal named the wrong thing.** Seven pages of the 26-document survey refused with
+*unsupported ActualText marked-content sequence*: the AutoCAD brochure's page 1, the Highmark
+brochure's 25, 27 and 52, the passport guide's 1, 13 and 15. Two of them have no ActualText in
+their content at all, and the ActualText the others have is the tab spacer already supported.
+What all seven share is `/PlacedPDF /MCn BDC` or `/PlacedGraphic /MCn BDC`, InDesign's mark
+around artwork placed from another file, on two pages with `/Metadata /MCn BDC` directly
+inside. Every `BDC` without an MCID that is not a spacer went to `actual::Span::new`, which
+refuses a tag other than `/Span`. The property lists are `<< /Metadata n 0 R >>`, the nested
+one with `/Type /Metadata /Subtype /XML` added.
+
+**The rule** is in `docs/TEXTEDIT.md`: the two tags, outside a text object, a property list
+holding only the packet, one metadata sequence inside at most, text inside read-only.
+
+**Result, 26 documents, 416 pages:** editable 350 to 352, refused 45 to 43, no text 21. No
+page lost and no editable page's run count changed. Passport guide page 1 (30 runs) and
+Highmark page 25 (8 runs) became editable. The other five moved to a later refusal, about the
+artwork itself: *only complete bounded painted paths are editable* (AutoCAD 1, passport 13),
+*only complete unpainted rectangular clips are editable* (Highmark 27 and 52), *empty text
+clipping intersection* (passport 15). The first refusals are still 18; the largest is *page
+contains only read-only text* at seven, and painted paths and rectangular clips are now four
+each.
+
+**Two edits through `tpdf-cli edit` with `"font":"auto"`.** Passport page 1, *We want to help
+you ...* with its first word reversed: exit 0, `qpdf --check` clean, `pdftotext` reads *eW
+want to help*, 1,763 changed pixels at 100 dpi in columns 248 to 537 and rows 92 to 105,
+inside the run's 248.7 to 539.2 and 88.8 to 106.2. Highmark page 25, *To see if your provider
+is in network, visit* replaced by *Is your provider in network? Visit*: exit 0, clean,
+readable, 2,105 pixels in 85 to 364 by 988 to 1004 inside the run's 85.3 to 367.8 by 984.7 to
+1003.8. That font forbids editing, so the text is in Noto Sans, and the same-length reversal
+was refused first because the wider Noto line reached the page edge.
+
+**Tests and mutations.** `textedit_placed_artwork_keeps_its_text_read_only`.
+`python3 scripts/mutate_rust.py --only 'placed artwork'`: twelve. One survived its first run,
+*opens inside a text object*, because the test asserted only that the page was refused and it
+is refused either way; the test now pins the reason. A check that the packet is written as a
+reference was removed before it was committed: the stream check after it refuses the same
+inputs, so no test could tell it was there.
+
+**Not done.** A run in the application window, PDFKit readback, a Windows run, the full
+mutation table. Text inside placed artwork is read-only by caution, not by a measured need.

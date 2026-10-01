@@ -207,6 +207,17 @@ malformed encodings and multiline ActualText layout edits remain refused.
 <text-edit-probe> <new-ignored-directory>` generates synthetic inputs and verifies
 contained preview/save pixels plus independent text, resource and structure readback.
 
+Placed artwork is a separate case. InDesign and Illustrator wrap artwork placed
+from another file in `/PlacedPDF` or `/PlacedGraphic` marked content, sometimes
+with one `/Metadata` sequence directly inside, each naming a property list in the
+page's `/Properties`. The list is accepted when it holds `/Metadata`, a stream,
+and at most `/Type /Metadata` and `/Subtype /XML`; the packet is never decoded.
+The sequence must open outside a text object, nothing else may open inside it,
+and text shown inside stays read-only, as in a layer. The artwork's paths, clips
+and images still pass the ordinary checks. `placed_content` in `textedit.rs`
+owns this; before it, these tags reached `actual.rs` and were refused as an
+unsupported ActualText sequence.
+
 MCID-bearing `BDC`/`EMC` markers also work inside text objects, using the same
 bounded structure, role and ownership validation as markers outside `BT`/`ET`.
 Text objects and marked-content sequences balance independently; tag boundaries

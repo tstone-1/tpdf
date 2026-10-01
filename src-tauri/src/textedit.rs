@@ -349,6 +349,31 @@ fn optional_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Resu
     }
 }
 
+// InDesign and Illustrator wrap artwork placed from another file in
+// `/PlacedPDF` or `/PlacedGraphic` marked content, sometimes with a `/Metadata`
+// sequence directly inside. The property list names that file's XMP packet and
+// nothing else, so it says nothing about the page's text or structure.
+fn placed_content(doc: &Document, resources: &Dictionary, name: &[u8]) -> Result<(), String> {
+    let invalid = || "unsupported placed-artwork marked content".to_string();
+    let properties = dictionary(doc, resources.get(b"Properties").map_err(|_| invalid())?)?;
+    let list = dictionary(doc, properties.get(name).map_err(|_| invalid())?)?;
+    let packet = list.get(b"Metadata").map_err(|_| invalid())?;
+    let name_is = |key: &[u8], expected: &[u8]| {
+        list.get(key)
+            .map_or(true, |value| value.as_name().ok() == Some(expected))
+    };
+    if list
+        .iter()
+        .any(|(key, _)| !matches!(key.as_slice(), b"Metadata" | b"Type" | b"Subtype"))
+        || !name_is(b"Type", b"Metadata")
+        || !name_is(b"Subtype", b"XML")
+        || crate::encoding::resolve(doc, packet).as_stream().is_err()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 // The font named `name` measured for read-only text only, if it is a simple
 // font with the widths and bounding box that takes, or Symbol or ZapfDingbats.
 fn read_only_font(doc: &Document, resources: &Dictionary, name: &[u8]) -> Option<fonts::Metrics> {
@@ -913,6 +938,9 @@ fn inspect_pinning(
     let mut actual: Option<actual::Span> = None;
     // Inside an optional-content (layer) sequence: its text may be hidden.
     let mut layer = false;
+    // Open placed-artwork sequences (`placed_content`): one, or one with its
+    // metadata sequence inside. Text in them is kept read-only.
+    let mut placed = 0_u8;
     let mut actual_spans = Vec::new();
     let mut continued = BTreeSet::new();
     let mut selected_font = None;
@@ -996,6 +1024,12 @@ fn inspect_pinning(
         if layer && matches!(op.operator.as_str(), "BDC" | "BMC") {
             return Err("marked content inside optional content is not editable yet".into());
         }
+        let metadata = placed == 1
+            && op.operator == "BDC"
+            && op.operands.first().and_then(|tag| tag.as_name().ok()) == Some(b"Metadata");
+        if placed > 0 && !metadata && matches!(op.operator.as_str(), "BDC" | "BMC") {
+            return Err("marked content inside placed artwork is not editable yet".into());
+        }
         match (op.operator.as_str(), op.operands.as_slice()) {
             // Marked content and text objects are independently balanced (ISO
             // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
@@ -1011,6 +1045,15 @@ fn inspect_pinning(
                 layer = true;
             }
             ("EMC", []) if layer => layer = false,
+            ("BDC", [tag, Object::Name(resource)])
+                if metadata
+                    || (!inside
+                        && matches!(tag.as_name().ok(), Some(b"PlacedPDF" | b"PlacedGraphic"))) =>
+            {
+                placed_content(doc, resources, resource)?;
+                placed += 1;
+            }
+            ("EMC", []) if placed > 0 => placed -= 1,
             ("BDC", [tag, properties])
                 if tag.as_name().ok() == Some(b"Artifact")
                     && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
@@ -1484,6 +1527,7 @@ fn inspect_pinning(
             || !matches!(fill_components, patterns::Colour::Solid(_))
             || (matches!(render, 1 | 2)
                 && !matches!(stroke_components, patterns::Colour::Solid(_)));
+        let read_only = read_only || placed > 0;
         // The colours the mode paints with; an invisible run paints nothing.
         if let Some(paint) = [Some("f"), Some("S"), Some("B"), None][render as usize] {
             patterns::paint(paint, fill_components, stroke_components)?;
@@ -1653,6 +1697,9 @@ fn inspect_pinning(
     }
     if actual.is_some() || spacer.is_some() {
         return Err("unterminated ActualText marked content".into());
+    }
+    if placed > 0 {
+        return Err("unterminated placed-artwork marked content".into());
     }
     if inside {
         return Err("unterminated text block".into());
@@ -3217,6 +3264,112 @@ pub(crate) mod tests {
         ] {
             let doc = layered(format!("{content} {body}").as_bytes(), group);
             assert!(scan(&doc, 0).is_err(), "{content}");
+        }
+    }
+
+    // InDesign marks artwork placed from another file with `/PlacedPDF` or
+    // `/PlacedGraphic`, whose property list names only that file's XMP packet.
+    // It is accepted as inert; text inside it stays read-only.
+    #[test]
+    fn textedit_placed_artwork_keeps_its_text_read_only() {
+        let packet = || Stream::new(dictionary! {}, b"<x:xmpmeta/>".to_vec());
+        let placed = |content: &str, list: fn(Object) -> Object| {
+            let mut doc = with_content(content.as_bytes());
+            let page = crate::pagetree::ordered_pages(&doc)[0];
+            let packet = Object::Reference(doc.add_object(packet()));
+            let plain = doc.add_object(dictionary! { "Metadata" => packet.clone() });
+            let typed = list(packet);
+            let mut own = resources(&doc, page).unwrap().clone();
+            own.set("Properties", dictionary! { "P1" => plain, "P2" => typed });
+            doc.get_dictionary_mut(page).unwrap().set("Resources", own);
+            doc
+        };
+        let typed: fn(Object) -> Object = |packet| {
+            dictionary! { "Metadata" => packet, "Type" => "Metadata", "Subtype" => "XML" }.into()
+        };
+        let text = |doc: &Document| {
+            scan(doc, 0).map(|page| {
+                page.runs
+                    .into_iter()
+                    .map(|run| run.text)
+                    .collect::<Vec<_>>()
+            })
+        };
+        let body = "BT /F1 12 Tf 40 180 Td (FIRST) Tj ET";
+        let hidden = "BT /F1 12 Tf 40 140 Td (HIDDEN) Tj ET";
+        for content in [
+            format!("/PlacedPDF /P1 BDC 0 0 10 10 re f EMC {body}"),
+            format!("/PlacedGraphic /P1 BDC {hidden} EMC {body}"),
+            format!("/PlacedPDF /P1 BDC /Metadata /P2 BDC {hidden} EMC {hidden} EMC {body}"),
+        ] {
+            assert_eq!(
+                text(&placed(&content, typed)).unwrap(),
+                ["FIRST"],
+                "{content}"
+            );
+        }
+        for (content, reason) in [
+            // Nothing else opens inside, and one metadata sequence at most.
+            (
+                "/PlacedPDF /P1 BDC /Artifact BMC 0 0 10 10 re f EMC EMC",
+                "marked content inside placed artwork is not editable yet",
+            ),
+            (
+                "/PlacedPDF /P1 BDC /Metadata /P2 BDC /Metadata /P2 BDC EMC EMC EMC",
+                "marked content inside placed artwork is not editable yet",
+            ),
+            (
+                "/PlacedPDF /P1 BDC /PlacedPDF /P1 BDC EMC EMC",
+                "marked content inside placed artwork is not editable yet",
+            ),
+            (
+                "/PlacedPDF /P3 BDC 0 0 10 10 re f EMC",
+                "unsupported placed-artwork marked content",
+            ),
+            (
+                "/PlacedPDF /P1 BDC 0 0 10 10 re f",
+                "unterminated placed-artwork marked content",
+            ),
+            // Only the two tags, only outside a text object, and metadata only inside one.
+            (
+                "/Metadata /P2 BDC 0 0 10 10 re f EMC",
+                "unsupported ActualText marked-content sequence",
+            ),
+            (
+                "/Figure /P1 BDC 0 0 10 10 re f EMC",
+                "unsupported ActualText marked-content sequence",
+            ),
+        ] {
+            let doc = placed(&format!("{content} {body}"), typed);
+            assert_eq!(text(&doc).unwrap_err(), reason, "{content}");
+        }
+        let doc = placed(
+            "BT /F1 12 Tf 40 180 Td /PlacedPDF /P1 BDC (FIRST) Tj EMC ET",
+            typed,
+        );
+        assert_eq!(
+            text(&doc).unwrap_err(),
+            "unsupported ActualText marked-content sequence"
+        );
+        // The property list names an XMP packet and nothing about the page.
+        let lists: [fn(Object) -> Object; 6] = [
+            |packet| dictionary! { "Metadata" => packet, "MCID" => 0 }.into(),
+            |packet| dictionary! { "Metadata" => packet, "Type" => "OCG" }.into(),
+            |packet| dictionary! { "Metadata" => packet, "Subtype" => "Image" }.into(),
+            |_| dictionary! { "Type" => "Metadata" }.into(),
+            |_| dictionary! { "Metadata" => dictionary! {} }.into(),
+            |_| dictionary! { "Metadata" => Object::Reference((1, 0)) }.into(),
+        ];
+        for (index, list) in lists.into_iter().enumerate() {
+            let doc = placed(
+                &format!("/PlacedPDF /P2 BDC 0 0 10 10 re f EMC {body}"),
+                list,
+            );
+            assert_eq!(
+                text(&doc).unwrap_err(),
+                "unsupported placed-artwork marked content",
+                "{index}"
+            );
         }
     }
 

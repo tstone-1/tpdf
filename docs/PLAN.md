@@ -14932,6 +14932,12 @@ The 45 still refused spread over 18 first refusals with none above seven pages, 
 target is a choice of document type rather than of the commonest refusal (`BUILD.md`, *Wider
 public sample, and the IRS forms' punctuation*).
 
+**Placed artwork, 2026-10-01 (unreleased, macOS).** The seven pages refused as *unsupported
+ActualText marked-content sequence* held no unsupported ActualText: InDesign's `/PlacedPDF` and
+`/PlacedGraphic` marks around placed artwork fell into that path. They are accepted now, with
+text inside kept read-only. Two of the seven pages became editable (352 of 416); the other five
+stop at the artwork's own paths and clips (`BUILD.md`, *Placed artwork*).
+
 ### Phase 6 — Cryptographic signing
 
 A separate subsystem, not an extension of Phase 4: trust stores, certificate selection,
