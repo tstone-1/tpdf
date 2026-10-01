@@ -628,3 +628,61 @@ pub(crate) fn start_eager_open(service: &RenderService) -> Option<EagerOpen> {
         pending: Mutex::new(Some(rx)),
     })
 }
+
+/// What a `stat` said about a document's file at open, and what it says now.
+///
+/// **The cheap half of noticing that another program rewrote the open file.**
+/// The document's bytes are mapped at open, so a file replaced by rename leaves
+/// every page on screen exactly as it was and nothing in the render path can
+/// say so. The window asks this once a second and compares the two strings;
+/// only when they differ does it ask [`document_differs`], which reads.
+///
+/// Two entries, `[at open, now]`. Either is `None` when it could not be read --- no model, no file at
+/// open, or a path that names nothing at the moment --- and the window treats
+/// that as "cannot tell" and says nothing.
+///
+/// On the blocking pool because the path may be on a network volume, where a
+/// `stat` is a round trip.
+#[tauri::command]
+pub async fn document_stamp(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    path: String,
+) -> Result<Vec<Option<String>>, String> {
+    let opened = edits.stamp_at_open(doc);
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = std::fs::metadata(&path)
+            .ok()
+            .map(|meta| crate::fingerprint::stamp(&meta));
+        vec![opened, now]
+    })
+    .await
+    .map_err(|e| format!("the file check did not run: {e}"))
+}
+
+/// Whether a document's file now holds different bytes than it was opened with.
+///
+/// The half that reads: it waits for the open-time fingerprint, which starts
+/// the hash if nothing has, and hashes the path again. Asked only after
+/// [`document_stamp`] reported a difference that stayed put for two checks, so
+/// a document nobody rewrites never pays for it.
+///
+/// `None` when it could not tell: no fingerprint, or a file that cannot be
+/// read at the moment.
+#[tauri::command]
+pub async fn document_differs(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    path: String,
+) -> Result<Option<bool>, String> {
+    let edits = edits.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        edits
+            .opened_as(doc)
+            .flatten()
+            .and_then(|was| was.same_bytes_as(Path::new(&path)))
+            .map(|same| !same)
+    })
+    .await
+    .map_err(|e| format!("the file check did not run: {e}"))
+}

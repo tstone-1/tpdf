@@ -10300,9 +10300,18 @@ document contradicting itself is worse than one saying nothing**, and this is th
 shape that does it: a claim of absence, written truthfully, that no later commit
 has any reason to revisit.
 
-What is genuinely still absent is narrower and is not a data-loss risk: nothing
+~~What is genuinely still absent is narrower and is not a data-loss risk: nothing
 **watches** the file while it is open, so the reader learns at the moment they
-press Save rather than while they are working. Nothing is overwritten either way.
+press Save rather than while they are working. Nothing is overwritten either way.~~
+(done 2026-10-01 — `diskwatch.ts` asks once a second whether the file's length
+or modification time differs from what `Edits::stamp_at_open` recorded through
+the open handle, confirms a difference by content with
+`Fingerprint::same_bytes_as`, and then asks or reloads according to a remembered
+choice: `file.onDiskChange.ask`, `.reload`, `.ignore`. The stamp is separate from
+the fingerprint so that the watch does not start the whole-file hash at open.
+Unsaved edits get the prompt in every mode. Not watched: a document in a
+background tab, until it is selected; and a change that keeps both length and
+modification time, which the save's own check still refuses.)
 
 #### A rectangle a reader draws — done 2026-08-19
 

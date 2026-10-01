@@ -38,6 +38,7 @@ import {
   parsePageRange,
   parseSplitPoints,
 } from "./pageranges";
+import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import { message, UI_LOCALE, type UiLocale } from "./i18n";
 import { NIBS } from "./marknibs";
@@ -52,6 +53,13 @@ import {
   rangePreview,
   type PreparedImport,
 } from "./pendingimport";
+
+/** One title per choice, each a whole sentence so the palette reads it alone. */
+const DISK_CHANGE_TITLES: Record<DiskChangeMode, string> = {
+  ask: "When the file changes on disk: ask before reloading",
+  reload: "When the file changes on disk: reload automatically",
+  ignore: "When the file changes on disk: do nothing",
+};
 
 /**
  * What each stamp is called in the palette.
@@ -106,6 +114,9 @@ export interface AppActions {
   documentCount(): number;
   /** Open the current document's path again, keeping the reader's place. */
   reloadDocument(): void;
+  /** What happens when the open file changes on disk. See `diskwatch.ts`. */
+  diskChangeMode(): DiskChangeMode;
+  setDiskChangeMode(mode: DiskChangeMode): void;
   /**
    * Whether an open is already in flight.
    *
@@ -596,14 +607,23 @@ export function registerAppCommands(
       //
       // It exists because the backend now tells a reader whose file was
       // truncated to open it again, and until this there was no way to do that
-      // except ⌘O and re-picking the file. It is useful either way: a document
-      // rewritten in the background is not picked up, so this is how you ask for
-      // the new one.
+      // except ⌘O and re-picking the file. It is useful either way: with the
+      // watch below set to "do nothing", this is how you ask for the new file.
       id: "file.reload",
       title: "Reload from disk",
       enabled: withDocument,
       run: () => actions.reloadDocument(),
     },
+    // What happens when another program rewrites the open file: one command per
+    // choice, each offered while it is not the current one --- the shape the
+    // automatic-update pair has. Always enabled otherwise, since this is a
+    // preference and not something done to a document.
+    ...DISK_CHANGE_MODES.map((mode) => ({
+      id: `file.onDiskChange.${mode}`,
+      title: DISK_CHANGE_TITLES[mode],
+      enabled: () => actions.diskChangeMode() !== mode,
+      run: () => actions.setDiskChangeMode(mode),
+    })),
     {
       // Always enabled and asking nothing of the network, which is the whole
       // difference from the command below it. "Which version am I running" is a

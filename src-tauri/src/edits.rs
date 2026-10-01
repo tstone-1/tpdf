@@ -87,6 +87,14 @@ struct Open {
     /// there was never a file to hash. Taken rather than flagged, so starting it
     /// twice is not expressible --- see [`Edits::wake`].
     to_hash: Option<Opened>,
+    /// The file's length and modification time at open, read through the handle
+    /// the document was mapped from. See [`crate::fingerprint::stamp`].
+    ///
+    /// Beside the fingerprint rather than derived from it, because the
+    /// fingerprint is deliberately not computed until the reader edits or saves
+    /// and the watch on an open document runs from the first second. This costs
+    /// one `fstat`. `None` for a document opened with no file.
+    stamp: Option<String>,
     /// The render handle each other file is open under, by the model's id for it.
     ///
     /// **Held here, beside the journal, because this is the only owner that
@@ -747,6 +755,10 @@ impl Edits {
         // save still blocks on the cell, and the handle it hashes is still the
         // one the document was opened through.
         let to_hash = source;
+        let stamp = to_hash
+            .as_ref()
+            .and_then(|opened| opened.file.metadata().ok())
+            .map(|meta| crate::fingerprint::stamp(&meta));
         match &to_hash {
             // A handle to hash later, so the cell stays unset until `wake`.
             Some(_) => {}
@@ -762,6 +774,7 @@ impl Edits {
                 model: Doc::open(pages),
                 opened_as,
                 to_hash,
+                stamp,
                 sources: HashMap::new(),
                 pending: None,
             },
@@ -842,6 +855,21 @@ impl Edits {
             .expect("edits lock")
             .get(&doc)
             .map(|open| open.to_hash.is_none())
+    }
+
+    /// The file's length and modification time when this document was opened.
+    ///
+    /// **Does not start the fingerprint**, which is the reason it exists beside
+    /// [`Edits::opened_as`]: the watch asks this every second from the moment a
+    /// document opens, and a wake here would put the whole-file read back on the
+    /// open path. `None` for a document with no model or no file.
+    #[must_use]
+    pub fn stamp_at_open(&self, doc: u32) -> Option<String> {
+        self.docs
+            .lock()
+            .expect("edits lock")
+            .get(&doc)
+            .and_then(|open| open.stamp.clone())
     }
 
     /// What the file looked like when this document was opened.
@@ -3116,6 +3144,25 @@ mod tests {
                  the whole read"
             );
         }
+    }
+
+    /// The watch's baseline is there from the open, and reading it reads no file.
+    ///
+    /// Both halves matter. The stamp has to be of the handle the document was
+    /// opened through, so it is compared here against a `stat` taken before
+    /// anything else touched the file; and asking for it must not start the
+    /// hash, because the window asks every second from the moment a document
+    /// opens.
+    #[test]
+    fn the_stamp_is_taken_at_open_and_reading_it_does_not_start_the_hash() {
+        let (file, edits) = with_a_file("stamp");
+        let expected = crate::fingerprint::stamp(&std::fs::metadata(&file).expect("stat"));
+        assert_eq!(edits.stamp_at_open(1), Some(expected));
+        assert_eq!(edits.hashing_started(1), Some(false));
+        assert_eq!(edits.stamp_at_open(2), None, "no such document");
+
+        edits.open(3, 1, None);
+        assert_eq!(edits.stamp_at_open(3), None, "a document with no file");
     }
 
     /// Looking at a document is not editing one.

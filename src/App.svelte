@@ -2,6 +2,13 @@
   import { TextEditor } from "./lib/textedit";
   import { FormLayer } from "./lib/forms";
   import { tick } from "svelte";
+  import {
+    afterDiskChange,
+    DiskWatch,
+    readDiskChangeMode,
+    writeDiskChangeMode,
+    type DiskChangeMode,
+  } from "./lib/diskwatch";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     DocumentTabs, DocumentTasks, freshState, keepState, restoredState, type DocumentTab,
@@ -646,6 +653,8 @@
     pageCount: () => status?.pageCount ?? 0,
     openDocument: () => void pickAndOpen(),
     reloadDocument: () => reloadDocument(),
+    diskChangeMode: () => diskChangeMode,
+    setDiskChangeMode: (mode) => setDiskChangeMode(mode),
     closeDocument: () => void closeTab(openDoc),
     closeAllDocuments: () => void closeAllTabs(),
     tabLabels: () => tabLabelSize,
@@ -2567,6 +2576,47 @@
   }
 
   /**
+   * What the reader chose to have happen when the open file changes on disk.
+   * The rules, the watch and the storage are `diskwatch.ts`'s; this is the
+   * current value and the two places it is used.
+   */
+  let diskChangeMode: DiskChangeMode = readDiskChangeMode();
+  const diskWatch = new DiskWatch(
+    {
+      stamp: (doc, path) => call("document_stamp", { doc, path }),
+      differs: (doc, path) => call("document_differs", { doc, path }),
+    },
+    (doc) => {
+      // Not now, rather than not at all: the watch reports again on its next
+      // check. A save's own write is the case that matters --- it changes the
+      // file and then reopens it, and must not be answered with a reload.
+      if (doc !== openDoc || opening || documentBusy) return false;
+      const next = afterDiskChange(diskChangeMode, dirty, title);
+      if (next === "reload") reloadAnyway();
+      else if (next) say(next.message, next.offers);
+      return true;
+    },
+  );
+
+  /** One look at the open document's file. Called on a timer and on focus. */
+  function checkDisk() {
+    if (diskChangeMode === "ignore" || openDoc < 0 || !openPathName) return;
+    if (opening || documentBusy || document.visibilityState !== "visible") return;
+    void diskWatch.check(openDoc, openPathName);
+  }
+
+  function setDiskChangeMode(mode: DiskChangeMode): void {
+    diskChangeMode = mode;
+    const kept = writeDiskChangeMode(mode);
+    notice = {
+      ask: "tpdf will ask before reloading a file that changed on disk.",
+      reload: "tpdf will reload a file that changed on disk, unless it has unsaved edits.",
+      ignore: "tpdf will not check whether the open file changed on disk.",
+    }[mode] + (kept ? "" : " The choice could not be saved and lasts until tpdf closes.");
+    refreshMenu();
+  }
+
+  /**
    * Reloads whatever {@link reloadDocument} was about to, warning or not.
    *
    * Separate so that the Reload button on a warning does not have to re-enter
@@ -2991,6 +3041,12 @@
       // IPC call and the process need not outlive it --- which is why the
       // interval is a second rather than something that leans on this.
       window.addEventListener("pagehide", () => places.flush());
+
+      // Whether another program rewrote the open file. Once a second is a
+      // `stat` and nothing else until one differs; on focus as well, so a
+      // reader coming back from the program that wrote it is not kept waiting.
+      window.setInterval(checkDisk, 1000);
+      window.addEventListener("focus", checkDisk);
 
       // Reopening the last document is the whole of the feature: a reader that
       // starts empty every morning is not the one someone reaches for. It runs

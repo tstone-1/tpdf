@@ -3140,6 +3140,8 @@ async function appCommandChecks(
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
     documentCount: () => 2,
     reloadDocument: () => fired.push("reloadDocument"),
+    diskChangeMode: () => "ask",
+    setDiskChangeMode: (mode) => fired.push(`setDiskChangeMode:${mode}`),
     busyOpening: () => busy,
     busyDocument: () => false,
     printDocument: () => fired.push("printDocument"),
@@ -3495,6 +3497,14 @@ async function appCommandChecks(
     // said "the sweep drives it" for a day while nothing did, which is the same
     // empty promise `update.ts`'s own comment was making about this command.
     { id: "app.about", ...shell("about"), read: () => fired.join(",") },
+    // Two of the three disk-change choices, aimed separately so that a `map`
+    // passing one mode to all three would be seen. The third is the mode this
+    // fixture is in, so it is withheld: see `undriven`.
+    ...(["reload", "ignore"] as const).map((mode) => ({
+      id: `file.onDiskChange.${mode}`,
+      ...shell(`setDiskChangeMode:${mode}`),
+      read: () => fired.join(","),
+    })),
     {
       id: "file.print",
       ...shell("printDocument"),
@@ -4268,6 +4278,10 @@ async function appCommandChecks(
     // `appcommands.test.ts` instead: that it reaches its own action and no
     // other, is withheld with no document, and ranks first for its own name.
     "file.reload": "it reopens the document, discarding the state later checks read",
+    // Withheld here because this fixture's mode is `ask`, and each choice is
+    // offered only while it is not the current one. `appcommands.test.ts`
+    // drives all three from every starting mode.
+    "file.onDiskChange.ask": "it is the fixture's current mode, so it is withheld",
     // Driving it would write the working document over `testdata/<corpus>.pdf`
     // --- the file this run and every other run of this harness is reading ---
     // and then reopen it, which `file.reload` above already rules out on its
@@ -4482,6 +4496,9 @@ async function appCommandChecks(
   // selection, exactly as `find.inSelection` does, and a check that subtracted
   // a count would have absorbed it in silence.
   const NEEDS_MORE_THAN_A_DOCUMENT = [
+    // This fixture's disk-change mode is `ask`, so that choice is the one not
+    // offered. First, because the list is in registry order.
+    "file.onDiskChange.ask",
     // This fixture has automatic checking enabled, so only its disable command
     // is offered. Opening a document does not change that preference.
     "app.enableAutomaticUpdates",
@@ -4577,6 +4594,10 @@ async function appCommandChecks(
   // 26.9.21 release run of this check found.
   const NEEDS_NO_DOCUMENT = [
     "file.open",
+    // A preference rather than something done to a document; `ask` is the
+    // fixture's mode and so is not among them.
+    "file.onDiskChange.reload",
+    "file.onDiskChange.ignore",
     "app.about",
     "app.checkForUpdates",
     "app.disableAutomaticUpdates",

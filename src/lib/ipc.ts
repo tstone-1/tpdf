@@ -202,6 +202,13 @@ export interface Commands {
     args: { path: string; password?: string | undefined };
     reply: DocumentInfo;
   };
+  /** The file's length-and-time stamp at open and now. See `diskwatch.ts`. */
+  document_stamp: {
+    args: { doc: number; path: string };
+    reply: [string | null, string | null];
+  };
+  /** Whether the file's bytes differ from what was opened; `null` for cannot tell. */
+  document_differs: { args: { doc: number; path: string }; reply: boolean | null };
   page_rotate: {
     args: { doc: number; page: PageId; turns: number };
     reply: EditState;

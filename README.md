@@ -114,6 +114,11 @@ the tpdf menu on macOS or command palette to remember an opt-out on this device.
   The tab labels' size is adjustable: Larger, Smaller and Default tab labels, in the
   View menu and the command palette; the choice is remembered.
   <!-- built: file.close file.closeAll view.nextTab view.previousTab view.tabLabelsLarger view.tabLabelsSmaller view.tabLabelsDefault -->
+- Notices when another program rewrites the open file. By default it says so and offers
+  a reload; *When the file changes on disk: reload automatically* reloads at once, keeping
+  your page and zoom, which suits a document a build regenerates. *…: do nothing* turns the
+  check off. Unsaved edits are never discarded without asking. The choice is remembered.
+  <!-- built: file.onDiskChange.ask file.onDiskChange.reload file.onDiskChange.ignore -->
 - Session restore: the most recent document, page, zoom and rotation you left on.
   The full tab list is not restored after restarting.
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for

@@ -5616,6 +5616,9 @@ TEST_FILES = [
     # Added 2026-09-28 with the timestamp chooser, in the same edit as its
     # mutations.
     "src/lib/signtimestamp.test.ts",
+    # Added 2026-10-01 with the watch on the open file, in the same edit as its
+    # mutations.
+    "src/lib/diskwatch.test.ts",
     # Added 2026-09-28 with the window's signing phase, in the same edit as
     # their mutations.
     "src/lib/signphase.test.ts",
@@ -8578,6 +8581,50 @@ MUTATIONS += [
         "src/lib/signing.ts",
         "      await shell.discard(pending);\n", "",
         "drops the signature and says nothing was written when the reader cancels"),
+]
+
+
+# --- the watch on the open file (2026-10-01) ----------------------------------
+# `diskwatch.ts` decides whether the open file changed on disk, what happens
+# then, and what the reader chose. Each mutation removes one thing a reader
+# would notice: a reload of a half-written file, a prompt every second, a
+# prompt for a file that was only touched, or lost edits.
+MUTATIONS += [
+    Mutation("disk watch: act on the first sight of a new stamp", "src/lib/diskwatch.ts",
+        "        this.seen = now;\n        return;\n", "        this.seen = now;\n",
+        "reports a changed file once, and only after the stamp held still"),
+    Mutation("disk watch: report the same change on every check", "src/lib/diskwatch.ts",
+        "      if (now === this.judged) return;\n", "",
+        "reports a changed file once, and only after the stamp held still"),
+    Mutation("disk watch: report a file whose bytes did not change", "src/lib/diskwatch.ts",
+        "      if ((await this.probe.differs(doc, path)) === false) {",
+        "      if ((await this.probe.differs(doc, path)) === undefined) {",
+        "compares a touched file by content once, and stays quiet"),
+    # The `opened` half only. Dropping the `now` half changes nothing: a `null`
+    # now equals the `null` that `judged` starts at, so the next line returns.
+    # Run and it survived, which is how that was found.
+    Mutation("disk watch: report a document that has no stamp from its open", "src/lib/diskwatch.ts",
+        "      if (opened === null || now === null) return;",
+        "      if (now === null) return;",
+        "says nothing when either stamp could not be read"),
+    Mutation("disk watch: drop a report nobody acted on", "src/lib/diskwatch.ts",
+        "      if (this.report(doc)) this.judged = now;",
+        "      this.report(doc);\n      this.judged = now;",
+        "reports again when the report was not acted on"),
+    Mutation("disk watch: carry one document's verdict to the next", "src/lib/diskwatch.ts",
+        "        this.doc = doc;\n        this.seen = null;\n        this.judged = null;\n",
+        "        this.doc = doc;\n",
+        "starts over for another document"),
+    Mutation("disk watch: reload over unsaved edits when set to reload", "src/lib/diskwatch.ts",
+        "  if (dirty) {", '  if (dirty && mode !== "reload") {',
+        "reloads without asking only when there is nothing to lose"),
+    Mutation("disk watch: prompt a reader who chose not to look", "src/lib/diskwatch.ts",
+        '  if (mode === "ignore") return null;\n', "",
+        "does nothing when the reader chose not to look"),
+    Mutation("disk watch: trust a remembered mode tpdf never wrote", "src/lib/diskwatch.ts",
+        "  return DISK_CHANGE_MODES.find((mode) => mode === raw) ?? DEFAULT_DISK_CHANGE_MODE;",
+        "  return (raw as DiskChangeMode | null) ?? DEFAULT_DISK_CHANGE_MODE;",
+        "reads anything tpdf did not write as the default"),
 ]
 
 

@@ -839,6 +839,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_document,
+            document_stamp,
+            document_differs,
             page_rotate,
             page_crop,
             page_content_box,

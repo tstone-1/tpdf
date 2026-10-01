@@ -256,6 +256,26 @@ impl Fingerprint {
         Ok(now)
     }
 
+    /// Whether `path` holds the bytes this fingerprint was taken from.
+    ///
+    /// For the watch on an open document (`commands::document::document_differs`),
+    /// which needs three answers where [`Self::agrees_with`] gives two: an `Err`
+    /// there is both "it changed" and "it could not be read", and a watch that
+    /// reloaded on the second would close a document because a writer was still
+    /// holding its file. `None` is "could not tell".
+    ///
+    /// The timestamp has no vote, for the reason [`Self::agrees_with`] gives: a
+    /// sync client that moves it without changing a byte has not given the
+    /// reader anything new to look at.
+    #[must_use]
+    pub fn same_bytes_as(&self, path: &Path) -> Option<bool> {
+        let now = std::fs::metadata(path).ok()?.len();
+        if now != self.len {
+            return Some(false);
+        }
+        Some(Fingerprint::of(path).ok()?.digest == self.digest)
+    }
+
     /// The length comparison, given a path rather than metadata.
     ///
     /// It handed the metadata back until 2026-08-22, so that
@@ -430,6 +450,25 @@ pub struct Opened {
     pub what: std::path::PathBuf,
 }
 
+/// A file's length and modification time as one string, for the watch on an
+/// open document to compare without reading anything.
+///
+/// A string because the webview carries it back and forth and a nanosecond
+/// count does not fit a JavaScript number. Only ever compared for equality.
+///
+/// A missing modification time is written `-`, so two such stamps of one length
+/// compare equal. That is the opposite of what [`Fingerprint::agrees_with_metadata`]
+/// does with the same gap and it is deliberate: a stamp that differs only starts
+/// the comparison by content, and one that never differs costs a reader a
+/// notice, where the save's guard would cost them a file.
+#[must_use]
+pub fn stamp(meta: &std::fs::Metadata) -> String {
+    match modified_ns(meta) {
+        Some(at) => format!("{}:{at}", meta.len()),
+        None => format!("{}:-", meta.len()),
+    }
+}
+
 fn modified_ns(meta: &std::fs::Metadata) -> Option<u128> {
     meta.modified()
         .ok()
@@ -500,6 +539,73 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    /// The watch's three answers: the same bytes, other bytes, and cannot tell.
+    ///
+    /// The same-length rewrite is the case that reaches the digest; a different
+    /// length is answered by the `stat` and would pass with the digest
+    /// comparison deleted. The touch is the case a stamp alone gets wrong.
+    #[test]
+    fn same_bytes_reads_the_contents_and_ignores_the_timestamp() {
+        let subject = Scratch::new("same-bytes", b"the original");
+        let was = Fingerprint::of(subject.path()).expect("fingerprint");
+        assert_eq!(was.same_bytes_as(subject.path()), Some(true));
+
+        subject.touch();
+        let moved = Fingerprint::of(subject.path()).expect("fingerprint");
+        assert_ne!(
+            moved.modified_ns, was.modified_ns,
+            "the touch did not move the time"
+        );
+        assert_eq!(
+            was.same_bytes_as(subject.path()),
+            Some(true),
+            "touched only"
+        );
+
+        subject.rewrite(b"NOT ORIGINAL");
+        assert_eq!(
+            was.same_bytes_as(subject.path()),
+            Some(false),
+            "same length"
+        );
+        subject.rewrite(b"shorter");
+        assert_eq!(
+            was.same_bytes_as(subject.path()),
+            Some(false),
+            "other length"
+        );
+
+        std::fs::remove_file(subject.path()).expect("remove");
+        assert_eq!(was.same_bytes_as(subject.path()), None, "a missing file");
+    }
+
+    /// A stamp moves with the length and with the timestamp, and with nothing else.
+    #[test]
+    fn a_stamp_moves_with_the_length_and_the_timestamp() {
+        let subject = Scratch::new("stamp", b"the original");
+        let read = || stamp(&std::fs::metadata(subject.path()).expect("stat"));
+        let first = read();
+        assert_eq!(read(), first, "two reads of an untouched file");
+
+        subject.touch();
+        let touched = read();
+        assert_ne!(touched, first, "the timestamp is part of it");
+
+        // Same timestamp, other length: put the time back after the write.
+        let at = std::fs::metadata(subject.path())
+            .expect("stat")
+            .modified()
+            .expect("mtime");
+        subject.rewrite(b"longer than the original");
+        File::options()
+            .write(true)
+            .open(subject.path())
+            .expect("open")
+            .set_times(std::fs::FileTimes::new().set_modified(at))
+            .expect("restore the timestamp");
+        assert_ne!(read(), touched, "the length is part of it");
     }
 
     /// A handle is fingerprinted, never the name it was opened by.

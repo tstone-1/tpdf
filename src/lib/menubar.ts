@@ -116,6 +116,9 @@ export const MENU_LAYOUT: LayoutSection[] = [
     items: [
       "file.open",
       "file.reload",
+      "file.onDiskChange.ask",
+      "file.onDiskChange.reload",
+      "file.onDiskChange.ignore",
       "file.close",
       "file.closeAll",
       SEPARATOR,

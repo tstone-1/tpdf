@@ -23,6 +23,7 @@ import {
   type AppActions,
 } from "./appcommands";
 import { CommandRegistry } from "./commands";
+import { DISK_CHANGE_MODES, type DiskChangeMode } from "./diskwatch";
 import { PALETTE } from "./markcolors";
 import { NIBS } from "./marknibs";
 import type { StampName } from "./pages";
@@ -39,7 +40,7 @@ import { updateLabel } from "./update";
  */
 function harness(
   hasDocument = true,
-  update: { available?: boolean; ready?: boolean; automatic?: boolean } = {},
+  update: { available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
   markOpen = false,
@@ -72,6 +73,7 @@ function harness(
 ) {
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
+  let diskMode: DiskChangeMode = update.disk ?? "ask";
   const actions: AppActions = {
     editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); },
     fillForm: () => { fired.push("fillForm"); },
@@ -100,6 +102,8 @@ function harness(
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
     documentCount: () => 2,
     reloadDocument: () => fired.push("reloadDocument"),
+    diskChangeMode: () => diskMode,
+    setDiskChangeMode: (mode) => { diskMode = mode; fired.push(`setDiskChangeMode:${mode}`); },
     busyOpening: () => false,
     busyDocument: () => busyDocument,
     printDocument: () => fired.push("printDocument"),
@@ -318,6 +322,34 @@ describe("Reload from disk", () => {
 });
 
 /**
+ * What happens when the open file changes on disk: three commands, one choice.
+ *
+ * Each is offered while its mode is not the current one, so the palette shows
+ * the two changes available and never a command that would do nothing.
+ */
+describe("the disk-change commands", () => {
+  it("offers every mode but the current one, and sets the one chosen", () => {
+    for (const current of DISK_CHANGE_MODES) {
+      const { registry, fired } = harness(false, { disk: current });
+      expect(registry.run(`file.onDiskChange.${current}`)).toBe(false);
+      expect(fired).toEqual([]);
+      const other = DISK_CHANGE_MODES.find((mode) => mode !== current)!;
+      expect(registry.run(`file.onDiskChange.${other}`)).toBe(true);
+      expect(fired).toEqual([`setDiskChangeMode:${other}`]);
+      // The choice took: the one just chosen is withdrawn, the old one is back.
+      expect(registry.run(`file.onDiskChange.${other}`)).toBe(false);
+      expect(registry.run(`file.onDiskChange.${current}`)).toBe(true);
+    }
+  });
+
+  it("names each choice so the palette finds all three by one phrase", () => {
+    const { registry } = harness(false, { disk: "ignore" });
+    const found = registry.search("changes on disk").map((ranked) => ranked.command.id);
+    expect(found).toEqual(["file.onDiskChange.ask", "file.onDiskChange.reload"]);
+  });
+});
+
+/**
  * The two update commands.
  *
  * `viewercheck.ts` classifies both as `undriven` --- one would reach the network
@@ -468,6 +500,10 @@ describe("the commands a document is needed for", () => {
     const offered = registry.search("").map((ranked) => ranked.command.id);
     expect(offered).toEqual([
       "file.open",
+      // A preference, not something done to a document, and the default
+      // harness is in `ask` --- so the other two are what is on offer.
+      "file.onDiskChange.reload",
+      "file.onDiskChange.ignore",
       "app.about",
       "app.checkForUpdates",
       "app.disableAutomaticUpdates",
@@ -531,7 +567,7 @@ describe("every registered command", () => {
     // list is exactly where a genuine no-op hides --- so each command has to
     // reach an action in *at least one* of the two, and the two guards
     // themselves are asserted above in both directions.
-    const built = (update: { available?: boolean; ready?: boolean }) => harness(
+    const built = (update: { available?: boolean; ready?: boolean; disk?: DiskChangeMode }) => harness(
       true,
       update,
       { undo: true, redo: true },
@@ -560,7 +596,10 @@ describe("every registered command", () => {
       { pending: 1, pages: 3, name: "other.pdf" },
     );
     const found = built({ available: true });
-    const applied = built({ available: true, ready: true });
+    // The second state also holds the other disk-change mode, for the reason
+    // the update pair needs two: each `file.onDiskChange.*` command is withheld
+    // while its mode is the current one, so no single state offers all three.
+    const applied = built({ available: true, ready: true, disk: "reload" });
     const states = [found, applied];
     const shell = found.registry
       .all()
@@ -1331,6 +1370,8 @@ describe("the window shortcuts for editing", () => {
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
     documentCount: () => 2,
       reloadDocument: () => fired.push("reloadDocument"),
+      diskChangeMode: () => "ask",
+      setDiskChangeMode: (mode) => fired.push(`setDiskChangeMode:${mode}`),
       busyOpening: () => false,
       busyDocument: () => false,
       printDocument: () => fired.push("printDocument"),

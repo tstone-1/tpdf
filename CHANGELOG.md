@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.0] - Unreleased
+
+### Added
+
+- **tpdf notices when another program rewrites the open file.** Until now a file
+  replaced on disk kept showing its old pages, and the first sign was a refused
+  save. tpdf now checks once a second while its window is visible and, by
+  default, says the file changed and offers *Reload from disk*. Three commands in
+  the File menu and the command palette choose what happens: *When the file
+  changes on disk: ask before reloading*, *…: reload automatically*, and
+  *…: do nothing*. The choice is remembered. Automatic reload keeps the page and
+  zoom, waits until the file has stopped changing, and never discards unsaved
+  edits: with edits pending it asks, and offers *Save a copy* first. A file whose
+  timestamp moved while its contents stayed the same is not reported.
+
 ## [26.9.24] - 2026-09-30
 
 ### Added
