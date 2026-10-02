@@ -122,14 +122,22 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=ROOT / "docs" / "img")
     parser.add_argument("--signed", type=Path, default=ROOT / "testdata" / "incr-two-signers.pdf")
     parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--more", action="store_true",
+                        help="also photograph the chrome that appears on demand: the find bar, "
+                             "an armed tool, an open menu, the text editor, a failure message; "
+                             "needs --out")
+    parser.add_argument("--size", metavar="WxH",
+                        help="open the window at this size, such as 1000x800, to see the narrow "
+                             "layouts; the pictures are then kept at their own size; needs --out")
     parser.add_argument("--dark", action="store_true",
                         help="take the pictures with the window in its dark appearance; "
                              "needs --out, because the README's pictures are the light ones")
     args = parser.parse_args()
     if sys.platform != "darwin":
         raise SystemExit("[FAIL] screenshots are taken on macOS only")
-    if args.dark and args.out == ROOT / "docs" / "img":
-        raise SystemExit("[FAIL] --dark needs --out: docs/img holds the README's light pictures")
+    if (args.dark or args.more or args.size) and args.out == ROOT / "docs" / "img":
+        raise SystemExit("[FAIL] --dark, --more and --size need --out: docs/img holds the "
+                         "README's pictures, light and at the default size")
     if not args.signed.is_file():
         raise SystemExit(f"[FAIL] {args.signed} is missing; testdata/make_incremental_pdf.py writes it")
     args.out.mkdir(parents=True, exist_ok=True)
@@ -144,7 +152,9 @@ def main() -> int:
         swift = room / "window.swift"
         swift.write_text(WINDOW_OF)
         env = dict(os.environ,
-                   TPDF_OPENCHECK=f"screenshots:{demo}|{signed}|{json.dumps(regions, separators=(',', ':'))}",
+                   TPDF_OPENCHECK=f"screenshots:{demo}|{signed}|{json.dumps(regions, separators=(',', ':'))}"
+                                  + ("|more" if args.more else ""),
+                   **({"TPDF_WINDOW_SIZE": args.size} if args.size else {}),
                    TPDF_SESSION_FILE=str(room / "session.json"),
                    # Pinned both ways, so the README's pictures do not depend on
                    # how the machine that takes them happens to be set.
@@ -173,9 +183,15 @@ def main() -> int:
                         if len(parts) > 3:
                             # Two thirds of a Retina capture: five pictures at
                             # full size are 2.2 MB in the repository on every regeneration.
-                            subprocess.run(["sips", "--resampleWidth", str(WIDTH_PX), str(picture),
-                                            "--out", str(args.out / f"{parts[3]}.png")],
-                                           check=True, capture_output=True)
+                            if args.size:
+                                # Its own size: enlarging a narrow window to the
+                                # README's width would blur what is being looked at.
+                                shutil.copyfile(picture, args.out / f"{parts[3]}.png")
+                            else:
+                                subprocess.run(["sips", "--resampleWidth", str(WIDTH_PX),
+                                                str(picture), "--out",
+                                                str(args.out / f"{parts[3]}.png")],
+                                               check=True, capture_output=True)
                             taken.append(parts[3])
                     time.sleep(0.1)
             finally:

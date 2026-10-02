@@ -38,7 +38,7 @@ export async function screenshotCheck(
   expected: string,
   report: Report,
 ): Promise<void> {
-  const [demo, signed, encoded] = expected.split("|");
+  const [demo, signed, encoded, more] = expected.split("|");
   if (!demo || !signed || !encoded) {
     throw new Error("the demo document, a signed document and the regions are required");
   }
@@ -120,6 +120,8 @@ export async function screenshotCheck(
     String(host.edits()!.state.redactions.length));
   await shot("redact");
 
+  if (more === "more") await moreStates(host, shot);
+
   // ---- Signatures: a document two people signed, one card each.
   await host.open(signed); await host.idle(); await quiet();
   host.run("file.properties");
@@ -133,4 +135,85 @@ export async function screenshotCheck(
   // And one opened, which only the animation shows.
   cards()[0]!.open = true;
   await frame(2600);
+}
+
+/**
+ * States the README has no picture of, for looking at and not for publishing.
+ *
+ * `screenshots.py --more` asks for them: the chrome that only appears on
+ * demand --- the find bar, an armed tool's row, an open menu, the text editor,
+ * a failure message --- which is where a colour that does not follow the theme
+ * or a row that wraps at a narrow width goes unseen. Each is a still named
+ * `more-...`, and each is put away again before the next.
+ */
+async function moreStates(
+  host: OpenCheckHost,
+  shot: (name: string) => Promise<void>,
+): Promise<void> {
+  const button = (selector: string) => document.querySelector<HTMLButtonElement>(selector);
+  const escape = () =>
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+  // The find bar, with a query that matches and the results listed.
+  button('button[aria-label="Find in document"]')?.click();
+  await pause(200);
+  const find = document.querySelector<HTMLInputElement>("input.find");
+  if (find) {
+    find.value = "pier";
+    find.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await pause(600);
+    document.getElementById("tpdf-tab-results")?.click();
+  }
+  await shot("more-find");
+  [...document.querySelectorAll<HTMLButtonElement>(".find-panel button")]
+    .find((b) => b.textContent === "Close")?.click();
+
+  // A tool armed: its status row, with the colour and width beside Cancel.
+  host.run("edit.drawBox"); await host.idle();
+  await shot("more-armed");
+  [...document.querySelectorAll<HTMLButtonElement>(".tool-state button")]
+    .find((b) => b.textContent === "Cancel")?.click();
+
+  // A menu open, the Highlight one, which carries the swatches.
+  button('button[data-group="highlight"]')?.click();
+  await pause(200);
+  await shot("more-menu");
+  button('button[data-group="highlight"]')?.click();
+
+  // The menu at the end of the row, which has the least room to its right.
+  const last = button('button[data-group="redact"]');
+  if (last && last.offsetParent !== null) {
+    last.click();
+    await pause(200);
+    await shot("more-lastmenu");
+    last.click();
+  }
+
+  // The narrow layout's More menu, when the window is narrow enough to have one.
+  const narrow = button('button[data-group="More tools"]');
+  if (narrow && narrow.offsetParent !== null) {
+    narrow.click();
+    await pause(200);
+    await shot("more-narrow");
+    narrow.click();
+  }
+
+  // The text editor's chrome over the page. It refuses while redactions are
+  // pending, so the two the README's states marked are undone first.
+  host.run("edit.undo"); await host.idle();
+  host.run("edit.undo"); await host.idle();
+  host.run("edit.editText"); await host.idle();
+  await pause(600);
+  await shot("more-edittext");
+  escape();
+  await pause(300);
+
+  // A failure, in the colour a failure is said in.
+  try {
+    await host.open("/nonexistent/tpdf-screenshot-missing.pdf");
+  } catch {
+    // The message on screen is the point; the rejection is not.
+  }
+  await pause(400);
+  await shot("more-problem");
 }

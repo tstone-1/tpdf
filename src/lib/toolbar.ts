@@ -187,3 +187,28 @@ export function styleOptions(tool: {
     width: tool.drawing || STROKED.includes(tool.armed),
   };
 }
+
+/** The least room a menu keeps between itself and the window's edge, in pixels. */
+export const POPUP_MARGIN = 8;
+
+/**
+ * How far to move a menu sideways so that all of it is inside the window.
+ *
+ * A menu opens under its button, aligned to one of its edges, and that is
+ * decided in the stylesheet without knowing where the button is. At 1,000 px
+ * the More button wraps to the start of a second row, and its menu, aligned to
+ * the button's right edge, opened to the left of the window with only its last
+ * letters showing; the Redact menu at the end of the row can run off the right
+ * the same way. So the menu is measured once it is open and moved by this much.
+ *
+ * `left` and `right` are the menu's edges and `viewport` the window's width.
+ * Positive moves right. A menu wider than the window is put at the left margin,
+ * because the start of each line is the part that says which item it is.
+ */
+export function popupShift(left: number, right: number, viewport: number): number {
+  if (left < POPUP_MARGIN || right - left > viewport - 2 * POPUP_MARGIN) {
+    return POPUP_MARGIN - left;
+  }
+  const limit = viewport - POPUP_MARGIN;
+  return right > limit ? limit - right : 0;
+}

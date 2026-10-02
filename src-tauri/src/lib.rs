@@ -842,6 +842,17 @@ pub fn run() {
                 if theme.is_some() {
                     window.set_theme(theme)?;
                 }
+                // `TPDF_WINDOW_SIZE=1000x800`, in the units the configuration
+                // uses: `screenshots.py --size` photographs the narrow layouts
+                // with it. Anything that is not two positive numbers is ignored.
+                let size = std::env::var("TPDF_WINDOW_SIZE").ok().and_then(|raw| {
+                    let (width, height) = raw.split_once('x')?;
+                    let (width, height) = (width.parse::<f64>().ok()?, height.parse::<f64>().ok()?);
+                    (width > 0. && height > 0.).then_some((width, height))
+                });
+                if let Some((width, height)) = size {
+                    window.set_size(tauri::LogicalSize::new(width, height))?;
+                }
             }
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {

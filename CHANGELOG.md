@@ -97,6 +97,16 @@ have the binary.)
 
 ### Fixed
 
+- **A toolbar menu no longer opens outside the window.** At a window width near 1,000
+  pixels the More button wraps to the start of a second row, and its menu opened to the left
+  of the window with only the last letters of each item showing. The Redact menu at the end
+  of the row could run off the right the same way. An open menu is now measured and moved
+  inside the window. Found by photographing the narrow layouts: `scripts/screenshots.py`
+  gained `--size WxH` and `--more`, which adds the find bar, an armed tool, the open menus,
+  the text editor and a failure message to the pictures.
+- **"Cannot edit this text" no longer says "Error:" twice.** The message read "Cannot edit
+  this text: Error: Finish or remove pending redactions…".
+
 - **A failure message is readable in a dark window.** The red was one fixed colour, at
   3.4 to 1 against a dark background; it is now a lighter red there. Found by looking:
   `scripts/screenshots.py --dark` takes the README's pictures with the window forced dark,

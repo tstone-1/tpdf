@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { TOOL_ACTIONS, TOOL_GROUPS, styleOptions, type ArmedTool, type ToolGroup, type ToolItem } from "./lib/toolbar";
+  import { TOOL_ACTIONS, TOOL_GROUPS, popupShift, styleOptions, type ArmedTool, type ToolGroup, type ToolItem } from "./lib/toolbar";
   import { icon } from "./lib/icons";
   import { DEFAULT_SWATCH, swatch, swatchBackground } from "./lib/markcolors";
   import { message } from "./lib/i18n";
@@ -81,6 +81,21 @@
     // Enablement and tool completion can remove the current toolbar tab stop.
     void commandState; void drawing; void active; void erasing; void open; void host; void offered;
     void tick().then(() => rove());
+  });
+
+  $effect(() => {
+    // An open menu is measured and moved inside the window; see `popupShift`.
+    // The transform is cleared first, so the measurement is of where the
+    // stylesheet put the menu and not of where the last correction left it.
+    void open; void host;
+    void tick().then(() => {
+      const popup = host?.querySelector<HTMLElement>(".popup");
+      if (!popup) return;
+      popup.style.transform = "";
+      const box = popup.getBoundingClientRect();
+      const shift = popupShift(box.left, box.right, window.innerWidth);
+      if (shift !== 0) popup.style.transform = `translateX(${shift}px)`;
+    });
   });
 
   function enabled(id: string): boolean {

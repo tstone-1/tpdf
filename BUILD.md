@@ -232,6 +232,21 @@ without changing the system setting: the script sets `TPDF_THEME`, which the app
 reads at start. Run it after a change to a colour, and look at the pictures; they are not
 committed, and `--dark` refuses to write into `docs/img/`.
 
+`--more` adds the chrome that only appears on demand, as stills named `more-...`: the find
+bar with results, an armed tool's status row, the Highlight menu, the last menu of the tool
+row, the narrow layout's More menu, the text editor, and a failure message. `--size 1000x760`
+opens the window at that size (through `TPDF_WINDOW_SIZE`) and keeps the pictures at their
+own size. The three combine, and each needs `--out`:
+
+```
+uv run --with reportlab --with pillow scripts/screenshots.py "<checks binary>" --more --dark --out scratch/dark
+uv run --with reportlab --with pillow scripts/screenshots.py "<checks binary>" --more --size 1000x760 --out scratch/w1000
+```
+
+Run these after a change to the toolbar, a menu or a colour. They found what the five README
+states could not: a menu opening outside the window at 1,000 px, and a failure colour too
+dim on a dark background.
+
 The states are `src/lib/screenshotcheck.ts`, the document is `testdata/make_demo_pdf.py`,
 and the signature cards come from `testdata/incr-two-signers.pdf`. Regenerate after a
 change a reader would see in one of them, and look at each picture before

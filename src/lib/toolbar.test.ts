@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
-import { TOOL_ACTIONS, TOOL_GROUPS, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
+import { POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, popupShift, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
 import { cssColor, MARK_COLORS, PALETTE, swatchBackground } from "./markcolors";
 
 function harness() {
@@ -109,5 +109,30 @@ describe("when the colour and width controls are offered", () => {
 
   it("offers neither while erasing, even if the pen is still reported", () => {
     expect(styleOptions({ ...idle, erasing: true, drawing: true })).toEqual({ color: false, width: false });
+  });
+});
+
+describe("keeping an open menu inside the window", () => {
+  it("leaves a menu that fits where the stylesheet put it", () => {
+    expect(popupShift(200, 510, 1200)).toBe(0);
+    // Touching the margin on either side is still inside.
+    expect(popupShift(POPUP_MARGIN, 300, 1200)).toBe(0);
+    expect(popupShift(900, 1200 - POPUP_MARGIN, 1200)).toBe(0);
+  });
+
+  it("moves a menu that starts left of the window to the left margin", () => {
+    // The More menu at 1,000 px: aligned to a button at the start of a row.
+    expect(popupShift(-235, 75, 1000)).toBe(POPUP_MARGIN + 235);
+    expect(popupShift(0, 310, 1000)).toBe(POPUP_MARGIN);
+  });
+
+  it("moves a menu that ends right of the window back by the overhang", () => {
+    // The Redact menu at the end of the tool row.
+    expect(popupShift(1050, 1290, 1200)).toBe(1200 - POPUP_MARGIN - 1290);
+    expect(popupShift(1050, 1193, 1200)).toBe(-1);
+  });
+
+  it("starts a menu wider than the window at the left margin, not the right", () => {
+    expect(popupShift(100, 500, 300)).toBe(POPUP_MARGIN - 100);
   });
 });

@@ -1407,7 +1407,7 @@
         () => call("document_text_runs", { doc: model.doc, page: page.id }));
       textEditor = editor; editor.update(model.state); editor.setBusy(documentBusy);
     } catch (error) {
-      if (generation === textEditorGeneration && edits === model) say(`Cannot edit this text: ${String(error)}`);
+      if (generation === textEditorGeneration && edits === model) say(`Cannot edit this text: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
