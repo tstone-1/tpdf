@@ -425,6 +425,81 @@ fn the_archive_timestamp_covers_the_signature_and_its_validation_data() {
     assert_eq!(flags, [(true, false), (false, true)]);
 }
 
+/// The four stages of a long-term signing, each read back as the PAdES level
+/// it is called by.
+///
+/// `pades.rs`'s own tests build the verdicts by hand, which proves the rule and
+/// not that a real file produces those verdicts. This makes each stage with
+/// the signer and reads it with `docinfo::scan`, as the properties dialog does.
+///
+/// No committed fixture can stand in for this, and the reason is the reader's
+/// own rule: with an authority this computer does not trust, a certificate is
+/// judged *now*, so a file made today from a test authority would read B-LTA
+/// until its revocation data aged and B-T ever after. The files are made here,
+/// each time.
+#[test]
+fn each_stage_of_a_long_term_signing_reads_back_as_its_pades_level() {
+    use crate::pades::Level;
+    let pki = Pki::start(good());
+    let levels = |bytes: &[u8]| -> Vec<Option<Level>> {
+        crate::docinfo::scan(bytes, 1, None)
+            .expect("scanned")
+            .signatures
+            .into_iter()
+            .filter(|s| s.signed)
+            .map(|s| s.pades)
+            .collect()
+    };
+
+    // B-B: signed, and sealed with no timestamp token.
+    let at = now();
+    let original = plain_pdf();
+    let key = Soft::p256(pki.signer.seed);
+    let unsigned = crate::sign_prepare::prepare(original.clone(), at, None).expect("prepared");
+    let bare = crate::sign_cms::sign(
+        original,
+        unsigned,
+        at,
+        &pki.signer.certificate,
+        &pki.chain,
+        &key,
+    )
+    .expect("made")
+    .seal(None)
+    .expect("sealed");
+    assert_eq!(levels(&bare), [Some(Level::B)]);
+
+    // B-T: the same, with the authority's token on it.
+    let timed = sealed(&pki);
+    assert_eq!(levels(&timed.bytes), [Some(Level::T)]);
+
+    // B-LTA: validation data appended, and an archive timestamp over it.
+    let archived = extended(&timed).expect("extended");
+    assert_eq!(levels(&archived), [Some(Level::Lta), None]);
+
+    // B-LT: that file up to the end of the revision carrying the /DSS, which
+    // is the one before the archive timestamp's. Cut at the revision's own
+    // end-of-file marker, and proved to be a cut between the two by what it
+    // holds: more than the timestamped file, less than the whole, one
+    // signature, and the validation data.
+    let marker = b"%%EOF";
+    let ends: Vec<usize> = archived
+        .windows(marker.len())
+        .enumerate()
+        .filter(|(_, window)| window == marker)
+        .map(|(at, _)| at + marker.len())
+        .collect();
+    let cut = ends[ends.len() - 2];
+    let checkable = &archived[..cut];
+    assert!(checkable.len() > timed.bytes.len() && checkable.len() < archived.len());
+    let (certs, ocsps, _) = dss(checkable);
+    assert!(
+        !certs.is_empty() && ocsps.len() == 2,
+        "the /DSS is in the cut"
+    );
+    assert_eq!(levels(checkable), [Some(Level::Lt)]);
+}
+
 #[test]
 fn an_archive_timestamp_that_does_not_come_writes_nothing() {
     let pki = Pki::start(good());
