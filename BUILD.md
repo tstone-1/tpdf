@@ -6309,6 +6309,19 @@ installer was built from it and run on Windows x64 the same day (*The command-li
 Windows `PATH`*). On Windows, `print-probe`, `redact-reach-probe` and the window phases were
 not run for this release.
 
+**26.10.1 publication, 2026-10-01:** `Audit` and CI were green on the release commit before
+the tag. The `Release` run for `v26.10.1` skipped its gates on that account. Its Windows job
+failed once in the bundler, on a timeout downloading the WiX toolset (`failed to bundle
+project: timeout: global`), after the application had compiled; the job was rerun alone and
+passed, and the macOS job was not rebuilt. The draft then held 8 assets, counted with GraphQL,
+and `scripts/publish_release.py v26.10.1 --publish` published it. Without authentication the
+`.dmg`, the `.msi` and the `-setup.exe` answer 200 and `latest.json` offers 26.10.1 for
+`darwin-aarch64` and `windows-x86_64`. The downloaded `.dmg` staples, `codesign --deep
+--strict` accepts the application, Gatekeeper reads it as Notarized Developer ID, and the
+bundled `tpdf-cli` runs under the hardened runtime and reports 26.10.1. Step 12 is the
+owner's and is not recorded here yet; on Windows it is also the first installation through
+the published installer's `PATH` hooks.
+
 **26.10.0 verification, macOS arm64, 2026-10-01:** all 29 gates passed on the final tree
 (2,415 Rust tests with nine documented ignored, 1,999 frontend tests), and `check_windows.py`
 type-checked the Windows tree. Every mutation selected `--since v26.9.24` ran and was caught:
