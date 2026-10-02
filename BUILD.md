@@ -185,6 +185,55 @@ are in [`docs/PLAN.md`](docs/PLAN.md). This file is only the mechanics.
 
 ---
 
+
+
+## Publishing the Python client
+
+`api/python` is the distribution `tpdf-client` (import name `tpdf`). It is not on PyPI
+yet; the name was free on 2026-10-02. Building and checking it needs no account:
+
+```
+uv build api/python --out-dir scratch/dist
+uvx twine check scratch/dist/*
+uv run --isolated --no-project --with scratch/dist/tpdf_client-*.whl python -c "import tpdf; print(tpdf.Tpdf)"
+```
+
+Publishing is a public and permanent step: a version number can never be reused, and a
+released file can be yanked but not replaced. So it is done by hand, from a clean checkout
+of the commit being released, after the `api` gate is green:
+
+```
+uvx twine upload --repository testpypi scratch/dist/*   # rehearsal: test.pypi.org
+uvx twine upload scratch/dist/*                         # the real one; asks for an API token
+```
+
+Raise `version` in `api/python/pyproject.toml` for every upload. The client's version is
+its own and does not follow the application's: it changes when the client's methods do.
+After the first upload, the README's install line becomes `pip install tpdf-client`.
+
+## README screenshots
+
+The five pictures and `demo.gif` in `docs/img/` are generated, never taken by hand, and
+from one run: every state the application holds is a frame of the animation, and five of
+those frames are the stills.
+
+```
+npm run tauri build -- --config src-tauri/tauri.checks.conf.json --bundles app
+uv run --with reportlab --with pillow scripts/screenshots.py "src-tauri/target/release/bundle/macos/tpdf Checks.app/Contents/MacOS/tpdf"
+npm run build
+```
+
+macOS only. A tpdf window opens for about half a minute and is photographed by its window
+number, so it does not have to be in front and nothing is typed; the screen must be
+unlocked, and the terminal needs the Screen Recording permission. The last line puts the
+normal frontend back in `dist/`: the `bundleshare` gate refuses a checks build.
+
+The states are `src/lib/screenshotcheck.ts`, the document is `testdata/make_demo_pdf.py`,
+and the signature cards come from `testdata/incr-two-signers.pdf`. Regenerate after a
+change a reader would see in one of them, and look at each picture before
+committing it: the first two runs of this script were green and wrong, once photographing
+the menu bar five times and once showing an unmarked page beside an empty mark list.
+
 ## Prerequisites
 
 | Tool | Notes |

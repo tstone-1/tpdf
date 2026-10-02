@@ -4,6 +4,71 @@ A fast, lightweight PDF viewer and editor for macOS and Windows.
 
 SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for a tool.
 
+![tpdf finding a command, marking up a page, marking text for redaction and showing two signatures](docs/img/demo.gif)
+
+**Download:** installers for macOS (Apple silicon) and Windows are on the
+[Releases](https://github.com/tstone-1/tpdf/releases) page. Free, MIT-licensed, no account,
+no telemetry; your documents are not uploaded anywhere.
+
+## What it does
+
+**Fast to open, with the pages beside the text.** From launch to the first page painted
+is 276 ms, measured warm on an Apple silicon Mac.
+
+![tpdf showing a report, with its pages in the sidebar](docs/img/reading.png)
+
+**Every tool is in the command palette.** Type part of its name and press Enter; nothing
+is buried in a menu.
+
+![The command palette, filtered to the redaction commands](docs/img/palette.png)
+
+**Annotate and edit.** Highlight, underline, draw, add boxes, text boxes, stamps and
+comments; turn, move, delete, crop, extract and insert pages; fill forms; change existing
+text within the limits listed further down.
+
+![A highlighted line, a boxed table row and a comment, listed in the sidebar](docs/img/annotate.png)
+
+**Redact for real.** A redaction removes the words from the file; it does not draw a black
+box over them. You mark regions, review them in a list, and tpdf reads the result back and
+tells you whether the removal is verified.
+
+![Two regions marked for removal and listed for review](docs/img/redact.png)
+
+**Sign and check signatures.** Sign with a certificate from the macOS keychain or the
+Windows certificate store, with a timestamp and long-term validation data if you want
+them. For a signed document, tpdf says whether each signature is intact, whether your
+computer trusts the signer, and what was added after signing.
+
+![Document properties, one card for each of two signatures](docs/img/signatures.png)
+
+## Script it
+
+Everything above is also a command-line tool with JSON output, and a Python client on top
+of it. The tool runs the same code as the window, in the same sandboxed worker processes.
+
+```
+tpdf info report.pdf
+tpdf text report.pdf --pages 1-3,7 -o report.txt
+tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
+tpdf fill application.pdf -o filled.pdf --values answers.json
+tpdf sign contract.pdf -o contract-signed.pdf --identity "Jane Doe" --timestamp digicert
+tpdf verify --strict --json *.pdf
+```
+
+```python
+from tpdf import Tpdf
+
+pdf = Tpdf()
+report = pdf.redact("letter.pdf", "letter-redacted.pdf", texts=["Jane Doe"])
+assert report["written"] and report["verified"]
+assert pdf.verify("contract-signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
+```
+
+Eighteen commands in all: [Command-line tool](#command-line-tool) has each of them, how to
+install the tool, and the Python client.
+
+## Status
+
 **Status: released for macOS and Windows, with annotations, page editing, redaction, form filling, visual and certificate signatures, bounded text editing and a command-line tool.**
 The feasibility spikes are done and every load-bearing assumption has a measured verdict;
 on top of that evidence there is a viewer you can read a PDF in, on macOS arm64 and on
@@ -28,50 +93,6 @@ SmartScreen will warn on first launch. See [`docs/PLAN.md`](docs/PLAN.md) for th
 architecture and roadmap, [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) for the security
 position, [`BUILD.md`](BUILD.md) to build it yourself, and [`AGENTS.md`](AGENTS.md) for
 project conventions.
-
-## Code signing policy
-
-Windows releases are currently unsigned. The application to
-[SignPath Foundation](https://signpath.org/) submitted on 2026-09-12 was declined
-because the project has not yet established the required public adoption and
-independent recognition. A new application may follow after broader adoption;
-there is no active signing arrangement. macOS releases use Apple Developer ID
-signing and notarization.
-
-The committer, reviewer and proposed signing approver is
-[Timo Stein (tstone-1)](https://github.com/tstone-1). Under the proposed policy for
-future [SignPath.io](https://signpath.io/) integration,
-each Windows release requires his manual signing approval. GitHub and SignPath
-accounts involved in signing must use two-factor authentication. Only project-owned
-binaries built on GitHub-hosted runners may be submitted; upstream PDFium binaries
-remain covered by their own provenance and notices.
-
-### Privacy
-
-PDF contents, passwords, form answers and signature images are processed locally;
-tpdf does not upload them or include analytics or telemetry. It automatically
-checks GitHub for an update once per launch. This sends an ordinary HTTPS request,
-including the connection's IP address and request metadata, to GitHub. Downloading
-and installing an update requires a click, and finishing it is another: tpdf restarts only
-when asked, and asks first if an open document has unsaved changes. GitHub's handling of those requests is
-covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
-When you sign with a timestamp, and only then, tpdf sends the timestamp authority you chose
-a hash of the new signature and a random number — nothing of the document — along with the
-connection's IP address; DigiCert and GlobalSign are asked over plain HTTP, because that is all
-they offer, so anybody on the network path can see that you signed something at that moment.
-The authority's own privacy policy applies to that request. When you also ask to keep the
-signature verifiable after the certificates expire, tpdf asks the certificate authorities that
-issued your certificate and the timestamp authority's whether those certificates are revoked:
-each request carries a certificate's serial number, so its authority learns that the
-certificate is being used now. Most of those services are plain HTTP as well. It asks them only
-when the timestamp authority's certificate chains to a root this computer trusts. It then asks
-the same timestamp authority a second time, for an archive timestamp over the signed document
-with that data: again a hash and a random number, nothing of the document.
-Links in PDFs open in the browser only after confirmation, where the destination's
-privacy policy applies. Use **Disable automatic update checks** in
-the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
-**Check for updates** remains available. A check already started may finish.
-<!-- built: app.disableAutomaticUpdates app.enableAutomaticUpdates -->
 
 ## What the viewer does today
 
@@ -1179,6 +1200,50 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
 Committed samples of each document are in
 [`src-tauri/testdata/cli/`](src-tauri/testdata/cli/), and a test holds this description to
 them key by key.
+
+## Code signing policy
+
+Windows releases are currently unsigned. The application to
+[SignPath Foundation](https://signpath.org/) submitted on 2026-09-12 was declined
+because the project has not yet established the required public adoption and
+independent recognition. A new application may follow after broader adoption;
+there is no active signing arrangement. macOS releases use Apple Developer ID
+signing and notarization.
+
+The committer, reviewer and proposed signing approver is
+[Timo Stein (tstone-1)](https://github.com/tstone-1). Under the proposed policy for
+future [SignPath.io](https://signpath.io/) integration,
+each Windows release requires his manual signing approval. GitHub and SignPath
+accounts involved in signing must use two-factor authentication. Only project-owned
+binaries built on GitHub-hosted runners may be submitted; upstream PDFium binaries
+remain covered by their own provenance and notices.
+
+### Privacy
+
+PDF contents, passwords, form answers and signature images are processed locally;
+tpdf does not upload them or include analytics or telemetry. It automatically
+checks GitHub for an update once per launch. This sends an ordinary HTTPS request,
+including the connection's IP address and request metadata, to GitHub. Downloading
+and installing an update requires a click, and finishing it is another: tpdf restarts only
+when asked, and asks first if an open document has unsaved changes. GitHub's handling of those requests is
+covered by its [privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+When you sign with a timestamp, and only then, tpdf sends the timestamp authority you chose
+a hash of the new signature and a random number — nothing of the document — along with the
+connection's IP address; DigiCert and GlobalSign are asked over plain HTTP, because that is all
+they offer, so anybody on the network path can see that you signed something at that moment.
+The authority's own privacy policy applies to that request. When you also ask to keep the
+signature verifiable after the certificates expire, tpdf asks the certificate authorities that
+issued your certificate and the timestamp authority's whether those certificates are revoked:
+each request carries a certificate's serial number, so its authority learns that the
+certificate is being used now. Most of those services are plain HTTP as well. It asks them only
+when the timestamp authority's certificate chains to a root this computer trusts. It then asks
+the same timestamp authority a second time, for an archive timestamp over the signed document
+with that data: again a hash and a random number, nothing of the document.
+Links in PDFs open in the browser only after confirmation, where the destination's
+privacy policy applies. Use **Disable automatic update checks** in
+the tpdf menu on macOS or command palette to remember an opt-out on this device. Manual
+**Check for updates** remains available. A check already started may finish.
+<!-- built: app.disableAutomaticUpdates app.enableAutomaticUpdates -->
 
 ## Not built yet
 

@@ -122,6 +122,12 @@ WINDOW_CORPORA: list[tuple[str, str]] = [
 # required to match something, so a family that goes away is reported instead
 # of quietly excusing nothing.
 NOT_WINDOW: list[tuple[str, str]] = [
+    (
+        "demo",
+        "the document scripts/screenshots.py photographs for the README: laid "
+        "out so that everything it marks is in the part of page 1 a window "
+        "shows, which is a property of a picture and of nothing a window run checks",
+    ),
     ("textedit-embedded", "single-page synthetic subset for text-edit-probe and tabs_check.py --phase textedit"),
     (
         "textedit-push",

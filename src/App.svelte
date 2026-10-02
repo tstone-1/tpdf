@@ -3117,6 +3117,7 @@
           tabs: () => tabRows,
           viewer: () => viewer,
           edits: () => edits,
+          apply: (run) => applyEdit(run),
           activate: activateTab,
           close: closeTab,
           run: (id) => { commands.run(id); },

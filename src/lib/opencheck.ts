@@ -28,12 +28,13 @@ import { filePage } from "./pages";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
 import { signingCheck } from "./signingcheck";
+import { screenshotCheck } from "./screenshotcheck";
 
 import { pause, Report, settle } from "./checkreport";
 import { basename } from "./paths";
 import { SIDEBAR_CLASS } from "./sidebar";
 import type { Viewer } from "./viewer";
-import type { Edits } from "./edits";
+import type { Edits, EditState } from "./edits";
 import type { PendingImport } from "./pendingimport";
 
 /** How long to wait for a document that should already be on its way. */
@@ -80,6 +81,13 @@ export interface OpenCheckHost {
   tabs: () => readonly { id: number; path: string }[];
   viewer: () => Viewer | null;
   edits: () => Edits | null;
+  /**
+   * An edit through the application's own path, which adopts the reply and
+   * redraws: the page, the mark list, the review list. An edit made on
+   * `edits()` directly reaches the model and nothing a reader sees, which is
+   * enough for a phase that reads the model and not for one that is looked at.
+   */
+  apply: (run: (edits: Edits) => Promise<EditState>) => Promise<void>;
   activate: (id: number) => Promise<void>;
   close: (id: number) => Promise<void>;
   run: (id: string) => void;
@@ -1023,6 +1031,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     }
     case "signatures": await signatureCheck(host, expected, report); break;
     case "sign": await signingCheck(host, expected, report); break;
+    case "screenshots": await screenshotCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");
       const [first, second] = expected.split("|");

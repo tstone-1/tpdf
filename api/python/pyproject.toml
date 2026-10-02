@@ -6,9 +6,25 @@ build-backend = "setuptools.build_meta"
 name = "tpdf-client"
 version = "0.1.0"
 description = "Python client for the tpdf command-line API"
+readme = "README.md"
+authors = [{ name = "Timo Stein" }]
+keywords = ["pdf", "redaction", "signature", "forms"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business",
+]
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
+
+[project.urls]
+Homepage = "https://github.com/tstone-1/tpdf"
+Documentation = "https://github.com/tstone-1/tpdf#command-line-tool"
+Issues = "https://github.com/tstone-1/tpdf/issues"
 
 [tool.setuptools.packages.find]
 include = ["tpdf"]
