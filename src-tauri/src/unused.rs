@@ -1,4 +1,4 @@
-//! Drops the pictures no remaining page draws.
+//! Drops the pictures and fonts no remaining page uses.
 //!
 //! **The measurement this was written from.** A five-page document kept every
 //! page's pictures in one `/XObject` dictionary that all five pages named.
@@ -10,13 +10,15 @@
 //! a reader who extracts two pages to send them on has said the other three
 //! are not to go along.
 //!
-//! So this removes an `/XObject` entry when no page that reaches the
-//! dictionary mentions its name in its content, and the caller sweeps afterwards.
+//! So this removes an `/XObject` or `/Font` entry when no page that reaches
+//! the dictionary mentions its name in its content, and the caller sweeps
+//! afterwards. Fonts for the same reason as pictures: an embedded subset holds
+//! the outlines of the characters a removed page set, and a `/ToUnicode` map
+//! says which they were.
 //!
-//! **Only `/XObject`, and only where nothing else can be drawing through the
-//! dictionary.** A group of pages is left exactly as it was when any of these
-//! holds, because each is a way a name can be used without a `Do` in a page's
-//! own content:
+//! **Only where nothing else can be drawing through the dictionary.** A group
+//! of pages is left exactly as it was when any of these holds, because each is
+//! a way a name can be used without the page's own content mentioning it:
 //!
 //! - a page's content does not decode completely, or is over the text
 //!   editor's size bound, whose strict decoder this borrows;
@@ -26,8 +28,9 @@
 //!   one of the pages carries no `/Resources` of its own, which by the
 //!   specification means it draws through the page's.
 //!
-//! Fonts are left alone: the bytes and the other pages' pictures were both in
-//! `/XObject`, and a font is named from more places than a picture is.
+//! A form field's `/DA` names a font too, and is no reason to keep one here:
+//! it is looked up in the form's own `/DR`, which names its fonts by reference
+//! and so keeps them reachable.
 //!
 //! **Run it on a swept document.** The referrer check below reads every object
 //! in the map, so a dropped page that is still there counts as something else
@@ -39,10 +42,13 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 
 use crate::sweep;
 
+/// The resource categories pruned, each a dictionary of names a content stream uses.
+const CATEGORIES: [&[u8]; 2] = [b"XObject", b"Font"];
+
 /// How far up the page tree `/Resources` is looked for.
 const MAX_PARENTS: usize = 64;
 
-/// Where a page's `/XObject` dictionary is written.
+/// Where one of a page's resource dictionaries is written.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Home {
     /// It is this object.
@@ -53,7 +59,7 @@ enum Home {
     InHolder(ObjectId),
 }
 
-/// One page's way to its `/XObject` dictionary.
+/// One page's way to one of its resource dictionaries.
 struct Found {
     home: Home,
     /// The object a reference to the home is allowed to sit in.
@@ -66,7 +72,7 @@ struct Group {
     holders: HashSet<ObjectId>,
 }
 
-/// Removes every `/XObject` entry no remaining page draws.
+/// Removes every `/XObject` and `/Font` entry no remaining page mentions.
 ///
 /// Returns how many entries went. The streams they named are still in the
 /// object map; `sweep::collect` is what deletes them.
@@ -75,26 +81,29 @@ struct Group {
 ///
 /// An object nesting deeper than [`sweep::MAX_NESTING`].
 pub fn prune(doc: &mut Document) -> Result<usize, String> {
-    let mut groups: HashMap<Home, Group> = HashMap::new();
+    let mut groups: HashMap<(&[u8], Home), Group> = HashMap::new();
     for page in doc.get_pages().into_values() {
-        let Some(found) = home_of(doc, page) else {
-            continue;
-        };
-        let group = groups.entry(found.home).or_insert_with(|| Group {
-            drawn: Some(HashSet::new()),
-            holders: HashSet::new(),
-        });
-        group.holders.insert(found.holder);
-        match (drawn_by(doc, page), group.drawn.as_mut()) {
-            (Some(names), Some(all)) => all.extend(names),
-            _ => group.drawn = None,
+        let drawn = drawn_by(doc, page);
+        for key in CATEGORIES {
+            let Some(found) = home_of(doc, page, key) else {
+                continue;
+            };
+            let group = groups.entry((key, found.home)).or_insert_with(|| Group {
+                drawn: Some(HashSet::new()),
+                holders: HashSet::new(),
+            });
+            group.holders.insert(found.holder);
+            match (&drawn, group.drawn.as_mut()) {
+                (Some(names), Some(all)) => all.extend(names.iter().cloned()),
+                _ => group.drawn = None,
+            }
         }
     }
 
     // One pass over the map for every dictionary at once: who names it.
     let watched: HashSet<ObjectId> = groups
         .keys()
-        .filter_map(|home| match home {
+        .filter_map(|(_, home)| match home {
             Home::Own(id) | Home::InResources(id) => Some(*id),
             Home::InHolder(_) => None,
         })
@@ -107,7 +116,7 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
             if !watched.contains(&target) {
                 continue;
             }
-            let known = groups.iter().any(|(home, group)| {
+            let known = groups.iter().any(|((_, home), group)| {
                 matches!(home, Home::Own(at) | Home::InResources(at) if *at == target)
                     && group.holders.contains(id)
             });
@@ -121,7 +130,7 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
     strangers.extend(trailer.into_iter().filter(|id| watched.contains(id)));
 
     let mut removed = 0;
-    for (home, group) in groups {
+    for ((key, home), group) in groups {
         let Some(drawn) = group.drawn else {
             continue;
         };
@@ -130,7 +139,7 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
                 continue;
             }
         }
-        let Some(entries) = dictionary_at(doc, home) else {
+        let Some(entries) = dictionary_at(doc, home, key) else {
             continue;
         };
         let unused: Vec<Vec<u8>> = entries
@@ -146,8 +155,8 @@ pub fn prune(doc: &mut Document) -> Result<usize, String> {
     Ok(removed)
 }
 
-/// Where `page` gets its `/XObject` dictionary from, if it has one.
-fn home_of(doc: &Document, page: ObjectId) -> Option<Found> {
+/// Where `page` gets its `key` dictionary from, if it has one.
+fn home_of(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Found> {
     let mut at = page;
     for _ in 0..MAX_PARENTS {
         let dictionary = doc.get_object(at).and_then(Object::as_dict).ok()?;
@@ -156,7 +165,7 @@ fn home_of(doc: &Document, page: ObjectId) -> Option<Found> {
                 Object::Reference(id) => (*id, doc.get_object(*id).ok()?.as_dict().ok()?, false),
                 other => (at, other.as_dict().ok()?, true),
             };
-            return match resources.get(b"XObject").ok()? {
+            return match resources.get(key).ok()? {
                 // The page or node `at` is what names an indirect `/Resources`,
                 // so it is the allowed referrer of that object.
                 Object::Reference(id) => Some(Found {
@@ -182,8 +191,8 @@ fn home_of(doc: &Document, page: ObjectId) -> Option<Found> {
     None
 }
 
-/// The `/XObject` dictionary a [`Home`] names, to change.
-fn dictionary_at(doc: &mut Document, home: Home) -> Option<&mut Dictionary> {
+/// The `key` dictionary a [`Home`] names, to change.
+fn dictionary_at<'a>(doc: &'a mut Document, home: Home, key: &[u8]) -> Option<&'a mut Dictionary> {
     match home {
         Home::Own(id) => doc.get_object_mut(id).ok()?.as_dict_mut().ok(),
         Home::InResources(id) => doc
@@ -191,7 +200,7 @@ fn dictionary_at(doc: &mut Document, home: Home) -> Option<&mut Dictionary> {
             .ok()?
             .as_dict_mut()
             .ok()?
-            .get_mut(b"XObject")
+            .get_mut(key)
             .ok()?
             .as_dict_mut()
             .ok(),
@@ -204,7 +213,7 @@ fn dictionary_at(doc: &mut Document, home: Home) -> Option<&mut Dictionary> {
             .ok()?
             .as_dict_mut()
             .ok()?
-            .get_mut(b"XObject")
+            .get_mut(key)
             .ok()?
             .as_dict_mut()
             .ok(),
@@ -521,6 +530,48 @@ mod tests {
         assert!(
             super::names_in(b"/Im#3 Do").is_none(),
             "a broken escape names something unknown"
+        );
+    }
+
+    #[test]
+    fn a_font_no_page_sets_text_in_leaves_the_file_and_a_used_one_stays() {
+        let (mut doc, _, pages) = shared(true);
+        let font = |doc: &mut Document, name: &str| {
+            doc.add_object(
+                dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => name },
+            )
+        };
+        let (used, unused) = (font(&mut doc, "Helvetica"), font(&mut doc, "Courier"));
+        let resources = doc
+            .get_object(pages[0])
+            .and_then(Object::as_dict)
+            .and_then(|page| page.get(b"Resources"))
+            .and_then(Object::as_reference)
+            .expect("resources");
+        doc.get_object_mut(resources)
+            .and_then(Object::as_dict_mut)
+            .expect("resources")
+            .set("Font", dictionary! { "F1" => used, "F2" => unused });
+        let content = doc
+            .get_object(pages[0])
+            .and_then(Object::as_dict)
+            .and_then(|page| page.get(b"Contents"))
+            .and_then(Object::as_reference)
+            .expect("content");
+        doc.get_object_mut(content)
+            .and_then(Object::as_stream_mut)
+            .expect("stream")
+            .set_plain_content(b"/Im1 Do BT /F1 12 Tf (x) Tj ET".to_vec());
+        // `Im3` and `F2`.
+        assert_eq!(prune(&mut doc).expect("prune"), 2);
+        sweep::collect(&mut doc).expect("sweep");
+        assert!(
+            doc.get_object(unused).is_err(),
+            "the unused font is still there"
+        );
+        assert!(
+            doc.get_object(used).is_ok(),
+            "the font the page sets text in went"
         );
     }
 }

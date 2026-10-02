@@ -564,6 +564,9 @@ describe("sections", () => {
       { text: "not yet signed" },
     ]);
     expect(all.filter((s) => s.card).length).toBe(3);
+    // The PAdES level closes the face when the worker names one, and only then.
+    const levelled = sections({ ...blank(), signatures: [{ ...stamped, pades: "B-T" }, archive] })[1]!;
+    expect(levelled.card).toEqual([{ text: "intact" }, { text: "trusted" }, { text: "B-T" }]);
     expect(all.find((s) => s.title === "File")?.card).toBeUndefined();
   });
 

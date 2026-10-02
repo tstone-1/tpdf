@@ -823,6 +823,9 @@ export function briefly(signature: Signature, rows: Row[]): Brief[] {
     const text = row.value.split(" — ")[0]!.replace(/\.$/, "");
     out.push(row.warn ? { text, warn: true } : { text });
   }
+  // Last, and the level alone: a reader asked "is this B-LTA?" should not have
+  // to open the card and scroll to its last row. The row says what it rests on.
+  if (signature.pades) out.push({ text: signature.pades });
   return out;
 }
 

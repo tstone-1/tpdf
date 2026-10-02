@@ -160,7 +160,9 @@ pub fn outcome(install: bool, after: &Step, tool: &Path) -> String {
              {}). Try `tpdf help`.",
             tool.display()
         ),
-        (false, Step::Absent) => format!("Removed {LINK}. The application is unchanged."),
+        (false, Step::Absent) => {
+            format!("Removed {LINK} and {ALIAS}. The application is unchanged.")
+        }
         (_, Step::Foreign(why)) => format!("{why}, so it was left alone."),
         (true, _) => format!("{LINK} was not installed."),
         (false, _) => format!("{LINK} is still there."),
@@ -588,6 +590,8 @@ mod tests {
         let tool = Path::new("/Applications/tpdf.app/Contents/MacOS/tpdf-cli");
         assert!(outcome(true, &Step::Present, tool).starts_with("Installed."));
         assert!(outcome(false, &Step::Absent, tool).starts_with("Removed"));
+        // Both names are removed, so both are said.
+        assert!(outcome(false, &Step::Absent, tool).contains(ALIAS));
         // A change that did not take is not reported as one.
         assert!(outcome(true, &Step::Create, tool).contains("was not installed"));
         assert!(outcome(false, &Step::Remove, tool).contains("still there"));

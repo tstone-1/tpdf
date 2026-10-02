@@ -21,6 +21,8 @@ have the binary.)
 
 ### Added
 
+- **A signature card shows its PAdES level on its face**, after the verdicts, so the level
+  can be read without opening the card.
 - **Make tpdf the default PDF app.** A command in the palette and the application menu.
   On macOS it makes tpdf the application that opens PDFs and reads the setting back; on
   Windows, where only the user may choose, it opens Settings at Default apps. tpdf does not
@@ -104,12 +106,17 @@ have the binary.)
 
 ### Fixed
 
+- **The fish completion script completes what it should.** Run in fish 4.9 for the first
+  time: descriptions had lost their apostrophes, file names were offered where a command
+  belongs, and `tpdf help ` completed file names instead of commands. All three are fixed.
+- **Uninstalling the command-line tool names both links it removes**, `/usr/local/bin/tpdf`
+  and `/usr/local/bin/tpdf-cli`. The message named only the first.
 - **Extracting, splitting or deleting pages leaves the removed pages' pictures out of the
   file.** Some producers keep every page's pictures in one list that all pages point to. The
   removed pages were gone, but their pictures stayed in the written file, readable with a
   standard tool and counted in its size: two pages extracted from a five-page, 1,024 KB
-  document came to 1,018 KB. tpdf now drops a picture no remaining page draws, and the same
-  extract is 856 KB. The rest is a background and two fonts that every page uses. A page
+  document came to 1,018 KB. tpdf now drops a picture no remaining page draws and a font no
+  remaining page sets text in, and the same extract is 856 KB. The rest is a background and two fonts that every page uses. A page
   whose content tpdf cannot read completely keeps everything, as before.
 - **A long item in a scrolling toolbar menu no longer prints over the next one.** On Windows,
   at a window width near 1,000 pixels, the More menu scrolls and its scrollbar takes room, so

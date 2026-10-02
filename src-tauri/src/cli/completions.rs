@@ -235,7 +235,8 @@ fn fish() -> String {
             text.push_str(&format!(
                 "complete -c {program} -n __fish_use_subcommand -a {} -d '{}'\n",
                 command.name,
-                brief(command).replace('\'', "")
+                // Inside fish's single quotes only `\\` and `\'` are escapes.
+                brief(command).replace('\\', "\\\\").replace('\'', "\\'")
             ));
             for option in options(command) {
                 let flag = match option.strip_prefix("--") {
@@ -250,6 +251,14 @@ fn fish() -> String {
         }
         text.push_str(&format!(
             "complete -c {program} -n __fish_use_subcommand -a help -d 'Lists the commands, or explains one'\n"
+        ));
+        // Measured in fish 4.9: without `-f`, the first word is completed with
+        // file names beside the commands, and `help` with file names only.
+        let names: Vec<&str> = COMMANDS.iter().map(|command| command.name).collect();
+        text.push_str(&format!(
+            "complete -c {program} -n __fish_use_subcommand -f\n\
+             complete -c {program} -n '__fish_seen_subcommand_from help' -f -a '{}'\n",
+            names.join(" ")
         ));
     }
     text

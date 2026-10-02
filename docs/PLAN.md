@@ -4453,6 +4453,11 @@ mangles an edit, this is why.
   matching with a visible warning where they do not. Within-block reflow.
 - **Later:** paragraph reflow across lines, size and style changes, new text blocks in
   arbitrary fonts.
+  (Read 2026-10-02 against the code: wrapping across lines, font size, and regular, bold
+  and italic through the bundled Noto faces are built --- `Layout::wrap`, `Layout::size`,
+  `EditFont`; `docs/TEXTEDIT.md` has the detail. New text is a text-box annotation. What is
+  open of this line is bold or italic in the document's own family, and new text written as
+  page content.)
 
 ### First increment: font-preview feasibility — started 2026-09-12
 
@@ -9227,8 +9232,10 @@ of the order *without* the moved page in it, since that is the order the model i
 `docs/TRAPS.md` has the two symptoms of getting that wrong, which are a page one slot short
 and a refusal on the shortest move there is.
 
-**Dragging thumbnails is not built.** These two commands are the primitive it will call, and
-the page strip's drop handling is its own piece of work.
+~~**Dragging thumbnails is not built.** These two commands are the primitive it will call, and
+the page strip's drop handling is its own piece of work.~~ (Built 2026-08-17, `23300f7`: the
+strip's `onReorder` makes the same `move` call. This sentence stood unmarked until 2026-10-02
+and was read as an open gap.)
 
 ##### The file half: a page tree that has to be rebuilt
 

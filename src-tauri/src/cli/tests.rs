@@ -3218,6 +3218,16 @@ fn every_shell_completes_every_command_and_every_option_its_usage_names() {
         // Both names the tool is run by.
         assert!(text.contains("tpdf-cli"), "{shell:?}");
     }
+    // What running the script in fish 4.9 found: an apostrophe in a description
+    // was dropped, file names were offered where a command belongs, and `help`
+    // completed file names only.
+    let fish = script(Shell::Fish);
+    assert!(
+        fish.contains("each command\\'s options"),
+        "an apostrophe is escaped, not dropped"
+    );
+    assert!(fish.contains("complete -c tpdf -n __fish_use_subcommand -f\n"));
+    assert!(fish.contains("complete -c tpdf -n '__fish_seen_subcommand_from help' -f -a '"));
     assert_eq!(parse(&argv("pwsh")).expect("pwsh").shell, Shell::PowerShell);
     for (line, expected) in [
         ("completions", "needs a shell"),

@@ -195,6 +195,18 @@ mod tests {
     #[test]
     #[ignore = "asks the system which application opens PDFs, and may change it"]
     fn the_system_answers_for_the_installed_application() {
-        println!("{:?}", super::apply_for("/Applications/tpdf.app"));
+        // `TPDF_DEFAULT_APP` names another application, to exercise the change itself.
+        let bundle = std::env::var("TPDF_DEFAULT_APP").unwrap_or("/Applications/tpdf.app".into());
+        println!("{:?}", super::apply_for(&bundle));
+    }
+
+    /// Opens Settings on the desktop of whoever is at the machine. Run by hand,
+    /// in the desktop session: `cargo test --lib defaultapp -- --ignored --nocapture`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "opens the Settings window"]
+    fn settings_opens_at_default_apps() {
+        let said = super::apply("").expect("Settings opens");
+        assert!(said.contains("Default apps"), "{said}");
     }
 }
