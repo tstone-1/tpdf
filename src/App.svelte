@@ -2286,7 +2286,7 @@
     event.stopPropagation();
     const tab = tabs.find(id);
     if (!tab) return;
-    contextMenu?.show(["tab.reveal", "tab.copyPath", "---", "tab.close", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
+    contextMenu?.show(["tab.reveal", "tab.copyPath", "tab.copyName", "---", "tab.close", "file.closeAll"], { x: event.clientX, y: event.clientY }, [{
       id: "tab.reveal",
       title: isMac() ? "Show in Finder" : "Show in Explorer",
       enabled: () => tabs.find(id) === tab,
@@ -2300,6 +2300,13 @@
       run: async () => {
         try { await navigator.clipboard.writeText(tab.path); }
         catch (error) { say(`Could not copy the file path: ${String(error)}`); }
+      },
+    }, {
+      id: "tab.copyName", title: "Copy file name",
+      enabled: () => tabs.find(id) === tab,
+      run: async () => {
+        try { await navigator.clipboard.writeText(basename(tab.path)); }
+        catch (error) { say(`Could not copy the file name: ${String(error)}`); }
       },
     }, {
       id: "tab.close", title: "Close",

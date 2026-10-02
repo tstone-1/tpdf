@@ -17,6 +17,13 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.2] - Unreleased
+
+### Added
+
+- **Right-clicking a tab offers "Copy file name".** The menu could only copy the full
+  path. The new entry copies the name alone, `report.pdf`, and sits below "Copy file path".
+
 ## [26.10.1] - 2026-10-01
 
 ### Added

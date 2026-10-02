@@ -1150,10 +1150,11 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
       const tabActions = Array.from(document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]'));
       // Four since 26.9.18 added *Close all tabs* after the separator; this
       // phase was not run again until the 26.9.21 release, which found it red.
-      report.check("tab menu offers reveal, copy path, close and close all", tabActions.length === 4 &&
+      // Five since 26.10.2 added *Copy file name* below the path.
+      report.check("tab menu offers reveal, copy path, copy name, close and close all", tabActions.length === 5 &&
         /^Show in (Explorer|Finder)$/.test(tabActions[0]?.textContent ?? "") &&
-        tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Close" &&
-        tabActions[3]?.textContent === "Close all tabs",
+        tabActions[1]?.textContent === "Copy file path" && tabActions[2]?.textContent === "Copy file name" &&
+        tabActions[3]?.textContent === "Close" && tabActions[4]?.textContent === "Close all tabs",
         tabActions.map((item) => item.textContent).join(" | "));
       check("right-clicking a background tab keeps the active document", host.edits()?.doc === b.id);
       check("the header does not repeat the document filename", !document.querySelector("header .title"));
@@ -1164,6 +1165,12 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
         tabActions[1]?.click();
         await pause(50);
         check("copy path uses the clicked background tab", copiedPath === first && host.edits()?.doc === b.id);
+        // The menu closed on that click, so the name entry needs it opened again.
+        background?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 }));
+        document.querySelectorAll<HTMLElement>('.context-menu [role="menuitem"]')[2]?.click();
+        await pause(50);
+        check("copy name copies the clicked tab's file name alone",
+          copiedPath === name(first) && copiedPath !== first && host.edits()?.doc === b.id);
       } finally { navigator.clipboard.writeText = clipboardWrite; }
       const button = document.getElementById(`document-tab-${a.id}`);
       button?.click();

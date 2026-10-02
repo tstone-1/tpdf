@@ -200,11 +200,12 @@ describe("what a menu shows", () => {
     const actions = (path: string): Command[] => [
       { id: "tab.reveal", title: "Show in Explorer", run: () => { fired.push(`reveal:${path}`); } },
       { id: "tab.copyPath", title: "Copy file path", run: () => { fired.push(`copy:${path}`); } },
+      { id: "tab.copyName", title: "Copy file name", run: () => { fired.push(`name:${path}`); } },
       { id: "tab.close", title: "Close", run: () => { fired.push(`close:${path}`); } },
     ];
-    for (const [index, name] of ["reveal", "copy", "close"].entries()) {
-      menu.show(["tab.reveal", "tab.copyPath", SEPARATOR, "tab.close"], { x: 10, y: 10 }, actions("second.pdf"));
-      expect(menu.offered).toEqual(["tab.reveal", "tab.copyPath", "tab.close"]);
+    for (const [index, name] of ["reveal", "copy", "name", "close"].entries()) {
+      menu.show(["tab.reveal", "tab.copyPath", "tab.copyName", SEPARATOR, "tab.close"], { x: 10, y: 10 }, actions("second.pdf"));
+      expect(menu.offered).toEqual(["tab.reveal", "tab.copyPath", "tab.copyName", "tab.close"]);
       menu.choose(index);
       expect(fired.at(-1)).toBe(`${name}:second.pdf`);
       expect(menu.isOpen).toBe(false);
