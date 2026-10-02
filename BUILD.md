@@ -6372,6 +6372,25 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.10.2 verification, macOS arm64, 2026-10-02:** all 29 gates passed on the final tree
+(2,451 Rust tests with ten documented ignored, 2,026 frontend tests), and `check_windows.py`
+type-checked the Windows tree. CI was green on both legs at `788a607`, two commits before the
+version bump. Mutations: `--since v26.10.1` names 586 Rust mutations, of which 342 are in
+`textedit.rs` and `save.rs`, where this cycle changed one visibility keyword and added one
+call; those were not run. The 129 in the other changed files ran and were caught, with the
+one that removes the new call in `save.rs` among them, and all 301 frontend mutations the
+selection names ran and were caught. The normal bundle, with the development engine hidden:
+`menu_check.py` (after its self-test) found a clean menu bar, `save_check.py` saved over the
+document twice and refused a print after a second writer, and the bundled `tpdf-cli` answered
+`--version` with 26.10.2, `verify`, and an extract. On Windows 11 the checks build was
+photographed in light, dark and at 1,000 pixels wide with `scripts/screenshots.py` (13/13
+checks in each run), which is where the wrapped menu item was found, and the default-app
+command's Settings call ran in the desktop session. Not run: `print-probe`,
+`redact-reach-probe` and the Windows window phases; and the default-app command's change on
+macOS through a confirmed system question, because tpdf was already the default on the Mac
+that ran it. Its read-back and its declined path were exercised there. No release mechanics
+changed.
+
 **26.10.1 verification, macOS arm64, 2026-10-01:** all 29 gates passed on the final tree
 (2,425 Rust tests with nine documented ignored, 1,999 frontend tests), and `check_windows.py`
 type-checked the Windows tree. CI was green on both legs at the commit before the version

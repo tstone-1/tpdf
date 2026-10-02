@@ -13814,6 +13814,63 @@ MUTATIONS += [
         "                if false {",
         "the_dss_counts_bound_the_decoding_and_what_they_drop_is_counted",
     ),
+    # Dropping what no remaining page uses (`src/unused.rs`), 2026-10-02.
+    Mutation(
+        "unused: a rewrite that dropped a page prunes what is left",
+        "src/save.rs",
+        "    if !dropped.is_empty() && crate::unused::prune(&mut doc)? > 0 {",
+        "    if false && !dropped.is_empty() && crate::unused::prune(&mut doc)? > 0 {",
+        "extracting_a_page_leaves_the_other_pages_pictures_out_of_the_file",
+    ),
+    Mutation(
+        "unused: a dictionary something else reaches is kept whole",
+        "src/unused.rs",
+        "            if strangers.contains(&id) {",
+        "            if false {",
+        "a_dictionary_something_else_reaches_is_left_whole",
+    ),
+    Mutation(
+        "unused: only a name no page mentions goes",
+        "src/unused.rs",
+        "            .filter(|name| !drawn.contains(name))",
+        "            .filter(|_| true)",
+        "a_picture_no_page_draws_leaves_the_file_and_a_drawn_one_stays",
+    ),
+    Mutation(
+        "unused: a form drawing through the page keeps every name",
+        "src/unused.rs",
+        "    if leans_on_page(doc, page) {",
+        "    if false {",
+        "a_form_without_resources_of_its_own_keeps_every_name",
+    ),
+    Mutation(
+        "unused: content that does not decode keeps every name",
+        "src/unused.rs",
+        "    let data = crate::textedit::page_content(doc, page).ok()?;",
+        "    let data = crate::textedit::page_content(doc, page).unwrap_or_default();",
+        "content_that_does_not_decode_keeps_every_name",
+    ),
+    Mutation(
+        "unused: an escaped name is the name it stands for",
+        "src/unused.rs",
+        "            if data[at] == b'#' {",
+        "            if false {",
+        "a_name_is_found_however_the_content_around_it_reads",
+    ),
+    Mutation(
+        "default app: already the default is said as that",
+        "src/defaultapp.rs",
+        '        Some(handler) if same(handler) && already => Ok("tpdf already opens PDF documents.".into()),',
+        '        Some(handler) if same(handler) => Ok("tpdf already opens PDF documents.".into()),',
+        "the_sentence_is_read_from_what_the_system_names_afterwards",
+    ),
+    Mutation(
+        "cli tool: removing says both links",
+        "src/clitool.rs",
+        'format!("Removed {LINK} and {ALIAS}. The application is unchanged.")',
+        'format!("Removed {LINK}. The application is unchanged.")',
+        "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
+    ),
 ]
 
 if __name__ == "__main__":

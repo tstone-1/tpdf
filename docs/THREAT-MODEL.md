@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — eleven of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), and can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — eleven of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
@@ -908,6 +908,19 @@ about *tpdf's own leavings* — the objects this rewrite made unreachable — an
 the document's: an orphan the source arrived with is still carried forward. Extract pages and
 Split go through this same `rewrite`, which is why the distinction matters more than it
 sounds: their names state an exclusion the file has to honour. Residual risks 15 and 16.
+
+**And since 2026-10-02 a rewrite that dropped a page also unlinks what no remaining page
+uses** (`unused::prune`, then a second sweep). The sweep alone was not enough for a document
+whose pages all name one resource dictionary: a dropped page's pictures and fonts stayed
+reachable through a page that was kept, so two pages extracted from five still held the other
+three pages' pictures. An `/XObject` or `/Font` entry goes when no remaining page's content
+mentions its name. The pass leaves a group of pages untouched when it cannot know what they
+use: content that does not decode completely under the text editor's strict decoder, a
+dictionary something other than those pages reaches, or a form, Type 3 font, pattern or
+annotation appearance that carries no `/Resources` of its own. In those cases the file is as
+it was before this pass, so the exclusion is then the sweep's and no stronger. Other resource
+categories (`/ExtGState`, `/ColorSpace`, `/Pattern`, `/Shading`, `/Properties`) are not
+pruned.
 
 #### T6.2 — Deleting and moving a page, added 2026-08-17
 
@@ -2703,6 +2716,25 @@ reads the file (`sysfont.rs`), and the next request carries the bytes to the wor
 
 The same edit can come out differently on a computer without the font, where Noto is used;
 that was accepted with the decision and is residual risk 35 rather than a defect.
+
+#### T6.27 — Making tpdf the default application, added 2026-10-02
+
+*Make tpdf the default PDF app* (`default_pdf_app`) is the one place tpdf touches which
+application opens a PDF. The webview passes nothing: the application is the bundle the
+running executable is inside (`defaultapp::bundle_of`), so the widest thing the webview can
+ask for is that this copy of tpdf becomes the default. Nothing runs it at start, and tpdf
+never asks whether it is the default.
+
+On macOS the change is `NSWorkspace`'s, and the system shows its own confirmation to the
+person at the machine; declining leaves the setting as it was. The answer shown is the
+application the system names afterwards, never the call's result: the older Launch Services
+call returned success and changed nothing on macOS 27. On Windows an application cannot set
+the default, so the command opens Settings at Default apps (`ms-settings:defaultapps`, a
+constant) and the reader chooses there.
+
+A compromised webview could therefore raise the system's question, or open Settings, without
+the reader having asked. It cannot answer the question, and it cannot name another
+application.
 
 ### T7 — Distribution and update
 
