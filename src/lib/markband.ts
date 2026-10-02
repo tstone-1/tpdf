@@ -686,6 +686,40 @@ export function scrimBands(
 export const ICON_SIZE = 20;
 
 /**
+ * Where a comment lands when the button is pressed at `from` and released at
+ * `to`: at the release.
+ *
+ * The bubble follows the pointer while the button is held and is dropped where
+ * it is let go, like anything else that is dragged. It used to land at the
+ * press, with a dashed rectangle stretched to the pointer meanwhile, which
+ * showed a box being dragged out and then ignored it. Reported from use, and
+ * the release was the reader's choice between the two.
+ *
+ * One function for the preview and for the mark, so the bubble a reader is
+ * watching is the one they get.
+ */
+export function commentLandsAt<P>(_from: P, to: P): P {
+  return to;
+}
+
+/**
+ * Where the comment tool's bubble preview goes: where a release now would
+ * drop it while the button is held, under the pointer otherwise.
+ */
+export function commentGhostAt<P>(pointer: P | null, held: { from: P; to: P } | null): P | null {
+  return held ? commentLandsAt(held.from, held.to) : pointer;
+}
+
+/**
+ * Whether a held drag with this tool is previewed as a rubber band from the
+ * press to the pointer. Not for ink, whose preview is the line itself, and not
+ * for a comment, which is placed and has no second corner.
+ */
+export function dragsABox(kind: MarkKind | null): boolean {
+  return kind !== "ink" && kind !== "note";
+}
+
+/**
  * Where a comment's icon goes when a reader drops one at a point.
  *
  * The point is the icon's **top-left**, not its centre: dropping a pin puts the

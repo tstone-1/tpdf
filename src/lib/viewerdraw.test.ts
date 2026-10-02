@@ -626,6 +626,34 @@ describe("placing a comment", () => {
     viewer.destroy();
   });
 
+  it("drops the bubble where the button is released, not where it was pressed", async () => {
+    // Reported from use: holding the button showed a box being dragged out and
+    // the release then put the bubble back at the press. The bubble follows
+    // the pointer now and lands where it is let go, one icon in size --- a
+    // drag does not make it a rectangle.
+    const press = build();
+    await settle();
+    press.armDraw("note");
+    click(100, 100);
+    const [pressLeft, pressTop] = corners();
+    press.destroy();
+    drawn.length = 0;
+
+    const viewer = build();
+    await settle();
+    viewer.armDraw("note");
+    drag({ x: 100, y: 100 }, { x: 300, y: 250 });
+
+    expect(drawn).toHaveLength(1);
+    const [left, top, right, bottom] = corners();
+    expect(right - left).toBeCloseTo(ICON_SIZE, 6);
+    expect(bottom - top).toBeCloseTo(ICON_SIZE, 6);
+    // Moved from the press by the drag, on both axes.
+    expect(left - pressLeft!).toBeGreaterThan(ICON_SIZE);
+    expect(top - pressTop!).toBeGreaterThan(ICON_SIZE);
+    viewer.destroy();
+  });
+
   it("spends the tool on that press, and takes no second comment", async () => {
     // One-shot, like every tool but the pen and the eraser. A comment tool that
     // stayed armed would turn the reader's next press --- on a link, on a word

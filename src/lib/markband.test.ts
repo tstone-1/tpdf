@@ -23,6 +23,9 @@ import {
   strokeTouches,
   sweepLabel,
   type Quad,
+  commentGhostAt,
+  commentLandsAt,
+  dragsABox,
 } from "./markband";
 
 /**
@@ -669,5 +672,23 @@ describe("what a region gesture shades", () => {
     // bands all equal to the rectangle would satisfy the first test.
     expect(scrimBands(true, PAGE, KEPT)).toHaveLength(1);
     expect(scrimBands(false, PAGE, KEPT)).toHaveLength(4);
+  });
+});
+
+describe("the comment tool's preview while the button is held", () => {
+  it("moves the bubble with the pointer, and drops the comment at the release", () => {
+    const pointer = { slot: 0, x: 5, y: 5 };
+    const from = { slot: 0, x: 100, y: 120 };
+    const to = { slot: 0, x: 300, y: 400 };
+    expect(commentLandsAt(from, to)).toBe(to);
+    expect(commentGhostAt(pointer, null)).toBe(pointer);
+    // The preview and the mark are one answer: what is watched is what is got.
+    expect(commentGhostAt(pointer, { from, to })).toBe(commentLandsAt(from, to));
+    expect(commentGhostAt(null, null)).toBeNull();
+  });
+
+  it("draws a rubber band for every dragged shape, and none for a comment or ink", () => {
+    const kinds: MarkKind[] = ["note", "ink", "square", "ellipse", "signature"];
+    expect(kinds.filter((kind) => !dragsABox(kind))).toEqual(["note", "ink"]);
   });
 });

@@ -6469,7 +6469,7 @@ MUTATIONS += [
         "src/lib/viewer.ts",
         "        let quad =\n"
         '          kind === "note"\n'
-        "            ? iconQuad(live.from.x, live.from.y, this.laidSize(live.slot))\n"
+        "            ? iconQuad(lands.x, lands.y, this.laidSize(live.slot))\n"
         "            : boxQuad(live.from, live.to, this.laidSize(live.slot));",
         "        let quad = boxQuad(live.from, live.to, this.laidSize(live.slot));",
         "drops the bubble where the reader pressed, from a click alone",

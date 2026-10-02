@@ -47,6 +47,14 @@ have the binary.)
   certificate it is and its verdicts — `Jane Example · intact · trusted`. A card opens to the
   full rows. A document with one signature looks as before.
 
+### Fixed
+
+- **Holding the mouse button with the comment tool no longer draws a rectangle.** The bubble
+  preview vanished on the press and a dashed box stretched to the pointer, as if a region were
+  being dragged out; on release the comment landed at the press anyway. The bubble preview now
+  follows the pointer while the button is held, the comment is dropped where the button is
+  released, and no box is drawn.
+
 ## [26.10.1] - 2026-10-01
 
 ### Added

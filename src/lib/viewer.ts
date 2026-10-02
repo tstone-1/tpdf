@@ -45,6 +45,9 @@ import {
   boxQuad,
   ERASER_RADIUS,
   ICON_SIZE,
+  commentGhostAt,
+  commentLandsAt,
+  dragsABox,
   iconQuad,
   isMovable,
   isPath,
@@ -1832,17 +1835,16 @@ export class Viewer {
           this.wake();
           return;
         }
-        // **A comment is placed, not dragged out, so it reads the press and not
+        // **A comment is placed, not dragged out, so it reads one point and not
         // the rectangle.** Every other armed kind needs two corners and refuses
         // a click, which is right for a shape and wrong for a pin: a reader
         // choosing *Add comment* has already said what they want and is only
-        // saying where. `live.from` rather than the release point, so a hand
-        // that slips a pixel between press and release still drops the bubble
-        // where it was aimed --- and so that the ghost the reader was watching
-        // is the mark they get.
+        // saying where. The point is the release (`commentLandsAt`), which is
+        // where the ghost the reader was watching is, so it is the mark they get.
+        const lands = commentLandsAt(live.from, live.to);
         let quad =
           kind === "note"
-            ? iconQuad(live.from.x, live.from.y, this.laidSize(live.slot))
+            ? iconQuad(lands.x, lands.y, this.laidSize(live.slot))
             : boxQuad(live.from, live.to, this.laidSize(live.slot));
         const image = this.tool.kind === "draw" ? this.tool.image : undefined;
         if (kind === "signature" && image && quad) quad = fitSignature(quad, image);
@@ -6209,7 +6211,7 @@ export class Viewer {
     this.paintCropPreview(ctx, dpr);
 
     const live = this.drawing;
-    if (!live || this.drawArmed === "ink") return;
+    if (!live || !dragsABox(this.drawArmed)) return;
     const origin = this.scroller.pageOrigin(live.slot);
     const left = Math.min(live.from.x, live.to.x);
     const top = Math.min(live.from.y, live.to.y);
@@ -6337,13 +6339,20 @@ export class Viewer {
    * other gesture in progress, and it goes exactly where the mark will go
    * because {@link iconQuad} is what places both.
    *
-   * Nothing is painted once the press begins: `drawing` being set means the
-   * bubble's position is decided, and a ghost still tracking the pointer would
-   * be a second bubble in a place the mark is not going.
+   * It keeps following the pointer while the button is held, and the release
+   * drops the comment there ({@link commentGhostAt}). No ghost at all during
+   * the press left the rubber band as the only preview, which reads as a box
+   * being dragged out.
    */
   private paintCommentGhost(ctx: CanvasRenderingContext2D, dpr: number): void {
-    if (this.drawArmed !== "note" || this.drawing) return;
-    const at = this.armedAt;
+    if (this.drawArmed !== "note") return;
+    const live = this.drawing;
+    const at = commentGhostAt(
+      this.armedAt,
+      live
+        ? { from: { slot: live.slot, ...live.from }, to: { slot: live.slot, ...live.to } }
+        : null,
+    );
     if (!at) return;
     if (!this.scroller.visiblePages().includes(at.slot)) return;
 
