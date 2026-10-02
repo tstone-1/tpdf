@@ -187,29 +187,28 @@ are in [`docs/PLAN.md`](docs/PLAN.md). This file is only the mechanics.
 
 
 
-## Publishing the Python client
+## The Python client is installed from the repository
 
-`api/python` is the distribution `tpdf-client` (import name `tpdf`). It is not on PyPI
-yet; the name was free on 2026-10-02. Building and checking it needs no account:
+`api/python` is the distribution `tpdf-client` (import name `tpdf`). It is **not published
+on PyPI, by decision (2026-10-02)**, and installs from the repository:
+
+```
+pip install "git+https://github.com/tstone-1/tpdf#subdirectory=api/python"
+```
+
+Why not PyPI: the client only starts the `tpdf` command-line tool, which comes with the
+desktop application, so `pip install tpdf-client` alone would install something that cannot
+run. A PyPI release would also be a second release to keep in step with every change to the
+CLI's JSON reports, and a version there cannot be withdrawn and replaced. Revisit when
+somebody asks for it, or when the report format has been stable over several releases.
+
+The package still has to build, because the line above builds it:
 
 ```
 uv build api/python --out-dir scratch/dist
 uvx twine check scratch/dist/*
 uv run --isolated --no-project --with scratch/dist/tpdf_client-*.whl python -c "import tpdf; print(tpdf.Tpdf)"
 ```
-
-Publishing is a public and permanent step: a version number can never be reused, and a
-released file can be yanked but not replaced. So it is done by hand, from a clean checkout
-of the commit being released, after the `api` gate is green:
-
-```
-uvx twine upload --repository testpypi scratch/dist/*   # rehearsal: test.pypi.org
-uvx twine upload scratch/dist/*                         # the real one; asks for an API token
-```
-
-Raise `version` in `api/python/pyproject.toml` for every upload. The client's version is
-its own and does not follow the application's: it changes when the client's methods do.
-After the first upload, the README's install line becomes `pip install tpdf-client`.
 
 ## README screenshots
 

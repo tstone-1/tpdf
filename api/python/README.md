@@ -8,6 +8,12 @@ It has no dependencies of its own. The tool itself comes with the tpdf applicati
 macOS and Windows, which has to be installed separately; see the
 [installation notes](https://github.com/tstone-1/tpdf#command-line-tool).
 
+```
+pip install "git+https://github.com/tstone-1/tpdf#subdirectory=api/python"
+```
+
+The client is installed from the repository; it is not on PyPI.
+
 ```python
 from tpdf import Tpdf
 

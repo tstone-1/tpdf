@@ -65,7 +65,7 @@ assert report["written"] and report["verified"]
 assert pdf.verify("contract-signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
 ```
 
-Eighteen commands in all: [Command-line tool](#command-line-tool) has each of them, how to
+Nineteen commands in all: [Command-line tool](#command-line-tool) has each of them, how to
 install the tool, and the Python client.
 
 ## Status
@@ -890,8 +890,14 @@ height, size and wrapping are not yet part of the edit schema. Use `tpdf text`
 to inspect the saved result.
 Text editing is not redaction; use `redact` for confidential content.
 
-**Python API.** Install the client from a checkout with
-`uv pip install ./api/python`; the application/CLI must be installed separately.
+**Python API.** Install the client from this repository:
+
+```
+pip install "git+https://github.com/tstone-1/tpdf#subdirectory=api/python"
+```
+
+It is not on PyPI. It starts the command-line tool, so the application has to be installed
+as well; `uv pip install ./api/python` installs it from a checkout.
 The client has no runtime dependencies and requires Python 3.10 or newer.
 
 ```python
