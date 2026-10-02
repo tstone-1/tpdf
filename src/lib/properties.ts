@@ -87,6 +87,12 @@ export interface Appendix {
   kinds: string[];
   catalog_gained: string[];
   pages_touched: number;
+  /**
+   * The touched pages rewritten only to list a new signature or timestamp
+   * field, with the page's content stream unchanged; `timestamp` says every
+   * field the page gained holds a document timestamp.
+   */
+  pages_listing: { page: number; timestamp: boolean }[];
   unread: boolean;
 }
 
@@ -236,6 +242,18 @@ export interface Section {
   rows: Row[];
   /** Shown under the rows, in smaller type, when the block needs a caveat. */
   note?: string;
+  /**
+   * Set on each signature when the document holds more than one: the block is
+   * then a card that opens, and this is what its closed face says. See
+   * {@link briefly}.
+   */
+  card?: Brief[];
+}
+
+/** One phrase on a closed card's face; `warn` as on a {@link Row}. */
+export interface Brief {
+  text: string;
+  warn?: boolean;
 }
 
 /**
@@ -507,7 +525,10 @@ export function certificateRows(signature: Signature): Row[] {
   if (certificate.chain > 1) {
     rows.push({
       name: "Certificates present",
-      value: `${certificate.chain}, of which this is the signer's`,
+      // A document timestamp's own certificate is its authority's.
+      value: `${certificate.chain}, of which this is the ${
+        signature.kind === DOCUMENT_TIMESTAMP ? "authority's" : "signer's"
+      }`,
     });
   }
   if (!certificate.matched_signer) {
@@ -585,13 +606,45 @@ export function appendixRow(signature: Signature): Row | null {
   }
 
   const what = describeAppendix(appendix);
-  const pages =
-    appendix.pages_touched === 0
-      ? "no page was rewritten"
-      : appendix.pages_touched === 1
-        ? "1 page was rewritten"
-        : `${appendix.pages_touched} pages were rewritten`;
-  return { name: "Appended", value: `${what}, and ${pages}`, warn: true };
+  return { name: "Appended", value: `${what}, and ${describePages(appendix)}`, warn: true };
+}
+
+/**
+ * What the append did to pages.
+ *
+ * "1 page was rewritten" under a signature reads as a change to the page, and
+ * the commonest reason a page object is written again changes nothing on it: a
+ * signature or timestamp field has to be listed in the page's annotations. So
+ * when the worker proved that is all that happened to every touched page ---
+ * `docinfo::page_listing` holds the four conditions --- the row says that, and
+ * names the page. **Every other rewrite keeps the bare wording**, including a
+ * mix of the two, so that sentence still means what it meant: a page object
+ * changed and tpdf does not know why.
+ */
+function describePages(appendix: Appendix): string {
+  const touched = appendix.pages_touched;
+  if (touched === 0) return "no page was rewritten";
+  const listing = appendix.pages_listing;
+  if (listing.length !== touched) {
+    return touched === 1 ? "1 page was rewritten" : `${touched} pages were rewritten`;
+  }
+  const field = listing.every((entry) => entry.timestamp)
+    ? "timestamp field"
+    : listing.some((entry) => entry.timestamp)
+      ? "signature or timestamp field"
+      : "signature field";
+  if (touched === 1) {
+    return (
+      `a ${field} was added to page ${listing[0]!.page}'s annotations ` +
+      `(the page's content is unchanged)`
+    );
+  }
+  const numbers = listing.map((entry) => `${entry.page}`);
+  const pages = `${numbers.slice(0, -1).join(", ")} and ${numbers.at(-1)}`;
+  return (
+    `a ${field} was added to the annotations of pages ${pages} ` +
+    `(their content is unchanged)`
+  );
 }
 
 /**
@@ -622,6 +675,12 @@ function describeAppendix(appendix: Appendix): string {
   return `${objects}: ${appendix.kinds.join(", ")}`;
 }
 
+/**
+ * The `/SubFilter` of a document timestamp (PDF 2.0 §12.8.5): a signature field
+ * whose value is a timestamp token over the document, and nobody's signature.
+ */
+const DOCUMENT_TIMESTAMP = "ETSI.RFC3161";
+
 /** Every line of one signature. */
 export function signatureRows(signature: Signature, bytes: number): Row[] {
   if (!signature.signed) {
@@ -639,7 +698,11 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   //
   // Then whose key it is, as far as this computer's trust store can say ---
   // directly under, because it is the question the first answer leaves open.
-  const trusted = trustRow(
+  //
+  // A document timestamp's certificate is its authority's and names no person,
+  // so its standing is said as an authority's, in that row's own words.
+  const document = signature.kind === DOCUMENT_TIMESTAMP;
+  const trusted = (document ? authorityRow : trustRow)(
     signature.trust,
     signature.certificate?.from,
     signature.certificate?.until,
@@ -649,11 +712,11 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   if (trusted) rows.push(trusted);
   // Then whether its issuer has withdrawn it, as far as the document's own
   // revocation data says. A document timestamp's signer is its authority.
-  const withdrawn = revocationRow(signature.revocation, signature.kind === "ETSI.RFC3161");
+  const withdrawn = revocationRow(signature.revocation, document);
   if (withdrawn) rows.push(withdrawn);
   // Then the certificates above it, which it stands or falls with: shown only
   // when there is one, or the chain ran past what tpdf follows.
-  const above = chainRow(signature.revocation_chain ?? null, signature.kind === "ETSI.RFC3161");
+  const above = chainRow(signature.revocation_chain ?? null, document);
   if (above) rows.push(above);
 
   // The certificate goes above what the signer typed, because a reader opening
@@ -677,11 +740,13 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
   const stamp = signature.timestamp;
   if (stamp?.when) {
     const by = stamp.authority?.subject_cn || stamp.authority?.subject || "";
-    const document = signature.kind === "ETSI.RFC3161";
     rows.push(timestampRow(stamp.when, by, stamp.integrity, document));
-    const authority = authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
+    // A document timestamp's authority is the field's own signer: its standing
+    // and its revocation are the rows above, and are not said twice.
+    const authority = document
+      ? null
+      : authorityRow(stamp.trust, stamp.authority?.from, stamp.authority?.until);
     if (authority) rows.push(authority);
-    // A document timestamp's authority revocation is the field's own row above.
     const lapsed = document ? null : revocationRow(stamp.revocation ?? null, true);
     if (lapsed) rows.push(lapsed);
     const lapsedAbove = document ? null : chainRow(stamp.revocation_chain ?? null, true);
@@ -701,6 +766,63 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
 
   return rows;
 }
+
+/**
+ * How many signatures, document timestamps and empty fields, counted apart.
+ *
+ * Apart, because a document timestamp is a signature field in the file and
+ * nobody's signature: "2 signatures" over one of each says a second party
+ * signed. `cli/verify.rs`'s `counted` is the command line's half.
+ */
+export function countedSignatures(signatures: Signature[]): string {
+  const stamps = signatures.filter((s) => s.signed && s.kind === DOCUMENT_TIMESTAMP).length;
+  const empty = signatures.filter((s) => !s.signed).length;
+  const signed = signatures.length - stamps - empty;
+  const parts = [
+    signed === 1 ? "1 signature" : signed > 1 ? `${signed} signatures` : "",
+    stamps === 1 ? "1 document timestamp" : stamps > 1 ? `${stamps} document timestamps` : "",
+    empty === 1 ? "1 empty signature field" : empty > 1 ? `${empty} empty signature fields` : "",
+  ].filter(Boolean);
+  return parts.length > 1
+    ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
+    : (parts[0] ?? "");
+}
+
+/**
+ * What a closed card says: whose certificate, then the leading word of each
+ * verdict row.
+ *
+ * A closed card hides its rows, so every row that carries a verdict has its
+ * verdict on the face, and a warning there stays a warning. The words are cut
+ * from the rows rather than written again: a second wording of "intact" is a
+ * second place for it to be wrong.
+ */
+export function briefly(signature: Signature, rows: Row[]): Brief[] {
+  if (!signature.signed) return [{ text: "not yet signed" }];
+  const who = signature.certificate?.subject_cn || signature.certificate?.subject || "";
+  const out: Brief[] = who ? [{ text: who }] : [];
+  // Its own certificate's rows only. A signature's timestamp has an authority
+  // with a standing too, and "trusted · trusted" on a face says nothing about
+  // which is whose; that row is one click away.
+  const own = signature.kind === DOCUMENT_TIMESTAMP ? AUTHORITY_VERDICTS : SIGNER_VERDICTS;
+  for (const row of rows) {
+    if (row.name !== "Integrity" && !own.has(row.name)) continue;
+    // Up to the dash that separates a verdict from its reason; a row with no
+    // dash is short enough to be said whole.
+    const text = row.value.split(" — ")[0]!.replace(/\.$/, "");
+    out.push(row.warn ? { text, warn: true } : { text });
+  }
+  return out;
+}
+
+/** The rows about a signer's certificate whose leading words are a verdict. */
+const SIGNER_VERDICTS = new Set(["Trust", "Revocation", "Chain revocation"]);
+/** The same rows as a document timestamp names them. */
+const AUTHORITY_VERDICTS = new Set([
+  "Timestamp authority",
+  "Authority revocation",
+  "Authority chain revocation",
+]);
 
 /**
  * The whole readout, in the order a reader wants it.
@@ -731,13 +853,27 @@ export function sections(properties: Properties): Section[] {
       ]
     : [];
 
+  // More than one, and each is a card under a line that counts them: two
+  // blocks of twenty rows under two small headings read as one long signature.
+  const several = properties.signatures.length > 1;
   const signatures: Section[] = properties.signatures.map((signature) => {
-    const title = signature.field ? `Signature — ${signature.field}` : "Signature";
+    // Headed as what it is: a document timestamp under "Signature" reads as a
+    // second party having signed, and nobody did.
+    const what = signature.kind === DOCUMENT_TIMESTAMP ? "Document timestamp" : "Signature";
+    const title = signature.field ? `${what} — ${signature.field}` : what;
     const rows = signatureRows(signature, properties.bytes);
     // The disclaimer goes on a signature that exists, and not on an empty field
     // waiting for one --- there is nothing there to be wrong about.
     return signature.signed ? { title, rows, note: NOT_CHECKED } : { title, rows };
   });
+  if (several) {
+    for (const [at, section] of signatures.entries()) {
+      section.card = briefly(properties.signatures[at]!, section.rows);
+    }
+  }
+  const counted: Section[] = several
+    ? [{ title: countedSignatures(properties.signatures), rows: [] }]
+    : [];
 
   const named = properties.fields.map((field) => ({
     name: labelFor(field.name),
@@ -816,7 +952,7 @@ export function sections(properties: Properties): Section[] {
   // *removed* the signature section instead of moving it, so the disclaimer
   // test went red and the order test never ran. A single expression is both
   // readable and mutable --- swapping two of these is one edit.
-  return [...locked, ...signatures, ...described, ...security, file, ...cut];
+  return [...locked, ...counted, ...signatures, ...described, ...security, file, ...cut];
 }
 
 /** A reader-facing label for an `/Info` key, which is written for a machine. */

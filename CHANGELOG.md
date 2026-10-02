@@ -24,6 +24,29 @@ have the binary.)
 - **Right-clicking a tab offers "Copy file name".** The menu could only copy the full
   path. The new entry copies the name alone, `report.pdf`, and sits below "Copy file path".
 
+### Changed
+
+- **A document timestamp is no longer shown as a second signature.** The archive timestamp
+  that `--long-term` adds was headed `Signature — Signature2`, which read as a second party
+  having signed. Document properties now head it `Document timestamp — Signature2`, and
+  `verify` and `info` print `Document timestamp Signature2` and count it apart:
+  `1 signature and 1 document timestamp`. Its certificate belongs to the timestamp authority,
+  so its standing is the `Timestamp authority` row, in that row's words, once; the `Trust`
+  row that called the authority "the signer" and "the person the certificate names" is gone
+  for it. In `--json`, `trust.sentence` of an entry with `document_timestamp: true` is the
+  authority's sentence. (#1)
+- **"1 page was rewritten" now says why, when the reason is a signature or timestamp field.**
+  A field has to be listed in a page's annotations, so signing or timestamping rewrites that
+  page object without changing the page. The `Appended` row then reads
+  `a timestamp field was added to page 1's annotations (the page's content is unchanged)`.
+  tpdf says so only when the page object differs in its annotation list alone, the list only
+  gained signature fields, and the page's content stream is the same in both revisions. Any
+  other rewritten page keeps the old wording, so the two cases stay apart. (#1)
+- **Several signatures are shown as cards.** With more than one signature field, document
+  properties opens on a line that counts them and one closed card for each, showing whose
+  certificate it is and its verdicts — `Jane Example · intact · trusted`. A card opens to the
+  full rows. A document with one signature looks as before.
+
 ## [26.10.1] - 2026-10-01
 
 ### Added

@@ -88,14 +88,20 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
     let (from, until) = certificate.map_or((String::new(), String::new()), |c| {
         (c.from.clone(), c.until.clone())
     });
+    let document_timestamp = signature.kind == "ETSI.RFC3161";
     let trust = signature.trust.as_ref().map(|trust| TrustReport {
         standing: trust.standing,
         why: trust.why,
         store: trust.store,
         attested_at: trust.attested_at.clone(),
-        sentence: words::trust_sentence(trust, &from, &until),
+        // A document timestamp's certificate is its authority's and names no
+        // person, so the signer's sentence would be wrong about it twice.
+        sentence: if document_timestamp {
+            words::authority_sentence(trust, &from, &until)
+        } else {
+            words::trust_sentence(trust, &from, &until)
+        },
     });
-    let document_timestamp = signature.kind == "ETSI.RFC3161";
     let name = |cn: &str, whole: &str| {
         if cn.is_empty() {
             whole.to_string()
@@ -407,11 +413,7 @@ pub fn verify_text(report: &report::Verified) -> String {
             lines.push(format!("{}: could not be read (see above)", file.path));
             continue;
         }
-        match file.signatures.len() {
-            0 => lines.push(format!("{}: no signatures", file.path)),
-            1 => lines.push(format!("{}: 1 signature", file.path)),
-            n => lines.push(format!("{}: {n} signatures", file.path)),
-        }
+        lines.push(format!("{}: {}", file.path, counted(&file.signatures)));
         for signature in &file.signatures {
             lines.push(signature_text(signature));
         }
@@ -419,7 +421,36 @@ pub fn verify_text(report: &report::Verified) -> String {
     lines.join("\n")
 }
 
+/// How many signatures and how many document timestamps, counted apart: a
+/// document timestamp is a signature field in the file and nobody's signature,
+/// so "2 signatures" over one of each says a second party signed.
+/// `properties.ts`'s `countedSignatures` is the dialog's half.
+#[must_use]
+pub(crate) fn counted(signatures: &[report::Signature]) -> String {
+    let stamps = signatures.iter().filter(|s| s.document_timestamp).count();
+    let signed = match signatures.len() - stamps {
+        0 => "no signatures".to_string(),
+        1 => "1 signature".to_string(),
+        n => format!("{n} signatures"),
+    };
+    match stamps {
+        0 => signed,
+        1 => format!("{signed} and 1 document timestamp"),
+        n => format!("{signed} and {n} document timestamps"),
+    }
+}
+
 pub(crate) fn signature_text(signature: &report::Signature) -> String {
+    // A document timestamp's own certificate is its authority's, so its rows
+    // are the authority's rows and the token's copies below are not repeated.
+    let document = signature.document_timestamp;
+    let authority = |name: &str| {
+        if document {
+            format!("Authority {}", name.to_lowercase())
+        } else {
+            name.to_string()
+        }
+    };
     let who = if signature.signer.is_empty() {
         "a certificate that could not be read".to_string()
     } else {
@@ -428,26 +459,46 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
             signature.signer, signature.issuer
         )
     };
-    let mut lines = vec![format!("  {} --- {who}", signature.field)];
+    let mut lines = vec![if document {
+        format!("  Document timestamp {} --- {who}", signature.field)
+    } else {
+        format!("  {} --- {who}", signature.field)
+    }];
     if !signature.claimed_time.is_empty() {
         lines.push(format!("    Date given: {}", signature.claimed_time));
     }
     lines.push(format!("    Integrity: {}", signature.integrity.sentence));
     if let Some(trust) = &signature.trust {
-        lines.push(format!("    Trust: {}", trust.sentence));
+        let name = if document {
+            "Timestamp authority"
+        } else {
+            "Trust"
+        };
+        lines.push(format!("    {name}: {}", trust.sentence));
     }
     if let Some(revocation) = &signature.revocation {
-        lines.push(format!("    Revocation: {}", revocation.sentence));
+        lines.push(format!(
+            "    {}: {}",
+            authority("Revocation"),
+            revocation.sentence
+        ));
     }
     if let Some(chain) = signature
         .revocation_chain
         .as_ref()
         .filter(|c| chain_shown(c))
     {
-        lines.push(format!("    Chain revocation: {}", chain.sentence));
+        lines.push(format!(
+            "    {}: {}",
+            authority("Chain revocation"),
+            chain.sentence
+        ));
     }
     if let Some(stamp) = &signature.timestamp {
         lines.push(format!("    Timestamped: {}", stamp.integrity.sentence));
+        if document {
+            return lines.join("\n");
+        }
         if let Some(trust) = &stamp.trust {
             lines.push(format!("    Timestamp authority: {}", trust.sentence));
         }

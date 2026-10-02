@@ -5,6 +5,7 @@ import {
   certificationOf,
   conformanceRows,
   appendixRow,
+  countedSignatures,
   coverageOf,
   formatBytes,
   limitRows,
@@ -204,6 +205,7 @@ describe("appendixRow", () => {
       kinds: ["Catalog", "DSS", "VRI", "stream", "untyped", "value"],
       catalog_gained: ["DSS"],
       pages_touched: 0,
+      pages_listing: [],
       unread: false,
     };
   }
@@ -216,6 +218,7 @@ describe("appendixRow", () => {
       kinds: ["Annot/Widget", "FontDescriptor", "Page", "Sig", "stream", "untyped"],
       catalog_gained: [],
       pages_touched: 1,
+      pages_listing: [],
       unread: false,
     };
   }
@@ -275,6 +278,7 @@ describe("appendixRow", () => {
       kinds: ["Metadata", "StructTreeRoot"],
       catalog_gained: ["StructTreeRoot"],
       pages_touched: 0,
+      pages_listing: [],
       unread: false,
     };
     expect(appendixRow({ ...signed(), appendix: other })?.value).toBe(
@@ -292,6 +296,7 @@ describe("appendixRow", () => {
       kinds: [],
       catalog_gained: [],
       pages_touched: 0,
+      pages_listing: [],
       unread: true,
     };
     expect(appendixRow({ ...signed(), appendix: unread })).toEqual({
@@ -299,6 +304,54 @@ describe("appendixRow", () => {
       value: "something, but its contents could not be read",
       warn: true,
     });
+  });
+
+  it("says a page was rewritten to list a field, when that is all that happened", () => {
+    // The row a reader checks for a change to the page. A timestamp or a
+    // signature has to be listed in a page's annotations, and "1 page was
+    // rewritten" said that as if the page had changed.
+    const listed = (timestamp: boolean): Appendix => ({
+      ...validationData(),
+      pages_touched: 1,
+      pages_listing: [{ page: 3, timestamp }],
+    });
+    expect(appendixRow({ ...signed(), appendix: listed(true) })?.value).toBe(
+      "the certificates and revocation records a signature needs to be checked later, " +
+        "and a timestamp field was added to page 3's annotations " +
+        "(the page's content is unchanged)",
+    );
+    expect(appendixRow({ ...signed(), appendix: listed(false) })?.value).toContain(
+      "and a signature field was added to page 3's annotations (the page's content is unchanged)",
+    );
+  });
+
+  it("keeps the bare wording for any page the worker did not account for", () => {
+    // The two cases stay apart: one page accounted for beside one that is
+    // not is two pages rewritten, and no reason is offered for either.
+    const mixed: Appendix = {
+      ...secondSignature(),
+      pages_touched: 2,
+      pages_listing: [{ page: 1, timestamp: true }],
+    };
+    expect(appendixRow({ ...signed(), appendix: mixed })?.value).toBe(
+      "another signature, and 2 pages were rewritten",
+    );
+  });
+
+  it("names every page when several were rewritten to list fields", () => {
+    const several: Appendix = {
+      ...secondSignature(),
+      pages_touched: 3,
+      pages_listing: [
+        { page: 1, timestamp: false },
+        { page: 2, timestamp: true },
+        { page: 5, timestamp: false },
+      ],
+    };
+    expect(appendixRow({ ...signed(), appendix: several })?.value).toBe(
+      "another signature, and a signature or timestamp field was added to the annotations " +
+        "of pages 1, 2 and 5 (their content is unchanged)",
+    );
   });
 
   it("counts pages in the plural where there are several", () => {
@@ -403,6 +456,114 @@ describe("sections", () => {
     const titles = sections(properties).map((section) => section.title);
     expect(titles.indexOf("Signature — Signature1")).toBeLessThan(
       titles.indexOf("File"),
+    );
+  });
+
+  it("heads a document timestamp as one, and words its certificate as the authority's", () => {
+    // GitHub issue 1. Under "Signature" it read as a second party having
+    // signed; its Trust row called the authority "the signer" and "the person".
+    const stampOnly = signed();
+    stampOnly.field = "Signature2";
+    stampOnly.kind = "ETSI.RFC3161";
+    stampOnly.trust = { standing: "trusted", why: null, store: "windows", attested_at: "" };
+    stampOnly.timestamp = {
+      when: "2026-08-21 12:00:00 UTC",
+      authority: null,
+      integrity: stampOnly.integrity,
+      trust: stampOnly.trust,
+      attested: true,
+      revocation: null,
+      revocation_chain: null,
+    };
+    const all = sections({ ...blank(), signatures: [signed(), stampOnly] });
+    const titles = all.map((section) => section.title);
+    expect(titles).toContain("Signature — Signature1");
+    expect(titles).toContain("Document timestamp — Signature2");
+    expect(titles).not.toContain("Signature — Signature2");
+
+    const rows = all.find((s) => s.title === "Document timestamp — Signature2")!.rows;
+    const names = rows.map((row) => row.name);
+    expect(names).not.toContain("Trust");
+    // Once: the field's own standing *is* the token's, so it is not said twice.
+    expect(names.filter((name) => name === "Timestamp authority")).toEqual(["Timestamp authority"]);
+    expect(names.indexOf("Timestamp authority")).toBe(names.indexOf("Integrity") + 1);
+    const said = rows.find((row) => row.name === "Timestamp authority")!.value;
+    expect(said).toContain("the authority's certificate chains to a root this PC trusts");
+    expect(said).toContain("is issued for timestamping");
+    expect(rows.map((row) => row.value).join(" ")).not.toMatch(/the person|the signer's certificate chains/);
+
+    // The control: a signature that carries a timestamp keeps both rows.
+    const both = signed();
+    both.trust = stampOnly.trust;
+    both.timestamp = stampOnly.timestamp;
+    const kept = signatureRows(both, 1024).map((row) => row.name);
+    expect(kept).toContain("Trust");
+    expect(kept).toContain("Timestamp authority");
+  });
+
+  it("makes each of several signatures a card, under a line that counts them", () => {
+    const first = signed();
+    first.integrity = { verdict: "intact", why: null, digest: "SHA-256", method: "RSA" };
+    first.trust = { standing: "untrusted", why: "root", store: "mac", attested_at: "" };
+    const archive = signed();
+    archive.field = "Signature2";
+    archive.kind = "ETSI.RFC3161";
+    archive.integrity = first.integrity;
+    const empty = { ...signed(), field: "Later", signed: false };
+    const all = sections({ ...blank(), signatures: [first, archive, empty] });
+
+    const titles = all.map((section) => section.title);
+    const counted = "1 signature, 1 document timestamp and 1 empty signature field";
+    expect(titles.indexOf(counted)).toBe(titles.indexOf("Signature — Signature1") - 1);
+    expect(all.find((s) => s.title === counted)).toEqual({ title: counted, rows: [] });
+
+    // A closed card hides its rows, so each verdict's word is on its face, cut
+    // from the row itself, and a warning there is still one.
+    const card = all.find((s) => s.title === "Signature — Signature1")!;
+    const head = (name: string) => card.rows.find((r) => r.name === name)!.value.split(" — ")[0];
+    expect(card.card?.slice(-2)).toEqual([
+      { text: head("Integrity") },
+      { text: head("Trust"), warn: true },
+    ]);
+    // A signature's timestamp authority has a standing too, and it stays off
+    // the face: two bare verdicts side by side do not say which is whose.
+    const stamped = signed();
+    stamped.trust = { standing: "trusted", why: null, store: "mac", attested_at: "" };
+    stamped.timestamp = {
+      when: "2026-08-21 12:00:00 UTC",
+      authority: null,
+      integrity: stamped.integrity,
+      trust: stamped.trust,
+      attested: true,
+      revocation: null,
+      revocation_chain: null,
+    };
+    const face = sections({ ...blank(), signatures: [stamped, archive] })[1]!;
+    expect(face.rows.map((r) => r.name)).toContain("Timestamp authority");
+    expect(face.card).toEqual([{ text: "intact" }, { text: "trusted" }]);
+    expect(head("Integrity")).toBe("intact");
+    expect(head("Trust")).toBe("not trusted");
+    expect(all.find((s) => s.title === "Signature — Later")?.card).toEqual([
+      { text: "not yet signed" },
+    ]);
+    expect(all.filter((s) => s.card).length).toBe(3);
+    expect(all.find((s) => s.title === "File")?.card).toBeUndefined();
+  });
+
+  it("leaves a lone signature as it was: no card, no count", () => {
+    const all = sections({ ...blank(), signatures: [signed()] });
+    expect(all.some((s) => s.card)).toBe(false);
+    expect(all[0]?.title).toBe("Signature — Signature1");
+  });
+
+  it("counts signatures, document timestamps and empty fields apart", () => {
+    const archive = { ...signed(), kind: "ETSI.RFC3161" };
+    const empty = { ...signed(), signed: false };
+    expect(countedSignatures([signed(), signed()])).toBe("2 signatures");
+    expect(countedSignatures([signed(), archive])).toBe("1 signature and 1 document timestamp");
+    expect(countedSignatures([archive, archive])).toBe("2 document timestamps");
+    expect(countedSignatures([signed(), empty, empty])).toBe(
+      "1 signature and 2 empty signature fields",
     );
   });
 

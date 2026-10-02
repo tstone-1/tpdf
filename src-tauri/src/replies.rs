@@ -257,6 +257,10 @@ fn samples() -> BTreeMap<&'static str, String> {
                     kinds: vec!["/Annot".into()],
                     catalog_gained: vec!["/AcroForm".into()],
                     pages_touched: 1,
+                    pages_listing: vec![docinfo::PageListing {
+                        page: 1,
+                        timestamp: true,
+                    }],
                     unread: false,
                 }),
                 certification: 1,

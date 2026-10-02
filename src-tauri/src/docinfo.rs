@@ -226,6 +226,17 @@ pub struct Appendix {
     /// count and not a verdict: a page can be replaced for reasons that change
     /// nothing on screen, and this does not claim otherwise.
     pub pages_touched: usize,
+    /// The touched pages whose rewrite did one thing: list a new signature or
+    /// timestamp field among the page's annotations.
+    ///
+    /// A field has to be listed in a page's `/Annots`, so signing or
+    /// timestamping rewrites that page object and changes nothing the page
+    /// draws. Without this a reader is told "1 page was rewritten" under a
+    /// signature and takes it for a change to the page, which is the one
+    /// thing they opened the row to rule out. A page is named here only when
+    /// [`page_listing`] proved every part of that; any other touched page is
+    /// counted in `pages_touched` and nowhere else, so the two stay apart.
+    pub pages_listing: Vec<PageListing>,
     /// Set when the appendix could not be read at all.
     ///
     /// The signed prefix has to parse on its own for the comparison to mean
@@ -234,6 +245,17 @@ pub struct Appendix {
     /// unreadable; it is never reported as an empty one, because empty is the
     /// reassuring answer.
     pub unread: bool,
+}
+
+/// A page an append rewrote only to list a new field. See
+/// [`Appendix::pages_listing`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PageListing {
+    /// The page's number, counted from 1.
+    pub page: u32,
+    /// Whether every field it gained holds a document timestamp
+    /// (`/SubFilter /ETSI.RFC3161`) rather than a signature.
+    pub timestamp: bool,
 }
 
 /// One signature field, and what the document claims about it.
@@ -2853,10 +2875,16 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
         let kind = kind_of(object);
         if kind == "Page" {
             out.pages_touched += 1;
+            if let Some(listing) =
+                before.and_then(|before| page_listing(&signed, &whole, *id, before, object))
+            {
+                out.pages_listing.push(listing);
+            }
         }
         kinds.insert(kind);
     }
     out.kinds = kinds.into_iter().collect();
+    out.pages_listing.sort_by_key(|listing| listing.page);
 
     // The catalog is where an LTV append announces itself: `/DSS` arriving there
     // is the difference between validation data and anything else, and it is one
@@ -2881,6 +2909,129 @@ fn read_appendix(bytes: &[u8], end: usize, password: Option<&str>) -> Appendix {
     }
 
     out
+}
+
+/// Whether a page was rewritten only to list a new signature or timestamp
+/// field, and which of the two.
+///
+/// `Some` only when all four hold, each checked against both parses:
+///
+/// 1. the page dictionary is the same apart from `/Annots`;
+/// 2. the new `/Annots` is the old one with entries added --- none removed,
+///    none replaced;
+/// 3. every added entry is a widget of a signature field (`/FT /Sig`, its own
+///    or inherited);
+/// 4. no object the page's `/Contents` names was added or changed.
+///
+/// Anything else is `None`, and the page is then reported as rewritten with
+/// no reason given: a false "only a field was listed" is the reassuring
+/// answer, so every doubt goes the other way.
+///
+/// **What 4 covers is the content stream, and that is all the wording
+/// claims.** A visible signature draws through its widget's appearance, which
+/// is the field and is what the row names; the page's own stream is what a
+/// reader means by its content.
+fn page_listing(
+    signed: &Document,
+    whole: &Document,
+    id: lopdf::ObjectId,
+    before: &Object,
+    after: &Object,
+) -> Option<PageListing> {
+    let (before, after) = (before.as_dict().ok()?, after.as_dict().ok()?);
+    let apart_from_annots = |dict: &lopdf::Dictionary| {
+        let mut rest = dict.clone();
+        rest.remove(b"Annots");
+        format!("{rest:?}")
+    };
+    if apart_from_annots(before) != apart_from_annots(after) {
+        return None;
+    }
+
+    let annots = |document: &Document, dict: &lopdf::Dictionary| -> Option<Vec<Object>> {
+        match dict.get(b"Annots") {
+            Ok(entry) => resolve(document, entry).as_array().ok().cloned(),
+            Err(_) => Some(Vec::new()),
+        }
+    };
+    let (old, new) = (annots(signed, before)?, annots(whole, after)?);
+    let listed = |entry: &Object| old.iter().any(|o| same_object(o, entry));
+    if !old.iter().all(|o| new.iter().any(|n| same_object(o, n))) {
+        return None;
+    }
+    let gained: Vec<&Object> = new.iter().filter(|entry| !listed(entry)).collect();
+    if gained.is_empty() {
+        return None;
+    }
+    let mut timestamp = true;
+    for entry in gained {
+        let widget = resolve(whole, entry).as_dict().ok()?;
+        let is_widget = widget
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| resolve(whole, o).as_name().ok())
+            == Some(b"Widget".as_slice());
+        if !is_widget || !is_signature_field(whole, widget) {
+            return None;
+        }
+        timestamp &= inherited(whole, widget, b"V")
+            .and_then(|v| resolve(whole, v).as_dict().ok())
+            .is_some_and(|sig| name_of(whole, sig, b"SubFilter") == "ETSI.RFC3161");
+    }
+
+    // `/Contents` is one stream or an array of them; either way every object
+    // it names must be in both parses, unchanged.
+    if let Ok(contents) = after.get(b"Contents") {
+        let named: Vec<&Object> = match contents {
+            Object::Reference(_) => match resolve(whole, contents) {
+                Object::Array(streams) => std::iter::once(contents).chain(streams).collect(),
+                _ => vec![contents],
+            },
+            Object::Array(streams) => streams.iter().collect(),
+            // A direct stream cannot be written inside a dictionary, so this
+            // is a shape the specification does not have.
+            _ => return None,
+        };
+        for entry in named {
+            let reference = entry.as_reference().ok()?;
+            let unchanged = matches!(
+                (signed.objects.get(&reference), whole.objects.get(&reference)),
+                (Some(a), Some(b)) if same_object(a, b)
+            );
+            if !unchanged {
+                return None;
+            }
+        }
+    }
+
+    let page = whole
+        .get_pages()
+        .into_iter()
+        .find_map(|(number, page)| (page == id).then_some(number))?;
+    Some(PageListing { page, timestamp })
+}
+
+/// A field's own entry for `key`, or the nearest ancestor's. Bounded, because
+/// `/Parent` is the document's word and can point in a circle.
+fn inherited<'a>(
+    document: &'a Document,
+    field: &'a lopdf::Dictionary,
+    key: &[u8],
+) -> Option<&'a Object> {
+    let mut at = field;
+    for _ in 0..16 {
+        if let Ok(found) = at.get(key) {
+            return Some(found);
+        }
+        at = resolve(document, at.get(b"Parent").ok()?).as_dict().ok()?;
+    }
+    None
+}
+
+/// Whether a widget belongs to a signature field.
+fn is_signature_field(document: &Document, widget: &lopdf::Dictionary) -> bool {
+    inherited(document, widget, b"FT").and_then(|o| resolve(document, o).as_name().ok())
+        == Some(b"Sig".as_slice())
 }
 
 /// Whether two objects are the same, for the purpose of "did the append rewrite
@@ -3275,6 +3426,104 @@ mod tests {
         );
     }
 
+    /// A page rewritten for any other reason is not excused as a field listing.
+    ///
+    /// The four refusals of [`page_listing`], each on a page built for it, and
+    /// the acceptance beside them so that a function answering `None` to
+    /// everything does not pass.
+    #[test]
+    fn a_page_is_excused_only_when_listing_a_field_is_all_that_changed() {
+        use lopdf::dictionary;
+        use lopdf::Stream;
+
+        let build = |annots: Vec<Object>, rotate: i64, content: &[u8], field: &[u8]| {
+            let mut document = Document::with_version("1.7");
+            document.objects.insert(
+                (3, 0),
+                Object::Stream(Stream::new(dictionary! {}, content.to_vec())),
+            );
+            document.objects.insert(
+                (4, 0),
+                Object::Dictionary(dictionary! {
+                    "Type" => "Annot", "Subtype" => "Widget", "FT" => Object::Name(field.to_vec()),
+                }),
+            );
+            document.objects.insert(
+                (5, 0),
+                Object::Dictionary(dictionary! { "Type" => "Annot", "Subtype" => "Link" }),
+            );
+            document.objects.insert(
+                (2, 0),
+                Object::Dictionary(dictionary! {
+                    "Type" => "Page", "Parent" => Object::Reference((1, 0)),
+                    "Rotate" => rotate, "Contents" => Object::Reference((3, 0)),
+                    "Annots" => annots,
+                }),
+            );
+            document.objects.insert(
+                (1, 0),
+                Object::Dictionary(dictionary! {
+                    "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference((2, 0))],
+                }),
+            );
+            document.objects.insert(
+                (6, 0),
+                Object::Dictionary(
+                    dictionary! { "Type" => "Catalog", "Pages" => Object::Reference((1, 0)) },
+                ),
+            );
+            document.trailer.set("Root", Object::Reference((6, 0)));
+            document
+        };
+        let link = Object::Reference((5, 0));
+        let widget = Object::Reference((4, 0));
+        let signed = build(vec![link.clone()], 0, b"q Q", b"Sig");
+        let ask = |whole: &Document| {
+            page_listing(
+                &signed,
+                whole,
+                (2, 0),
+                &signed.objects[&(2, 0)],
+                &whole.objects[&(2, 0)],
+            )
+        };
+
+        let listed = vec![link.clone(), widget.clone()];
+        assert_eq!(
+            ask(&build(listed.clone(), 0, b"q Q", b"Sig")),
+            Some(PageListing {
+                page: 1,
+                timestamp: false
+            }),
+            "a signature field added to the list, and nothing else"
+        );
+        assert_eq!(
+            ask(&build(listed.clone(), 90, b"q Q", b"Sig")),
+            None,
+            "another key of the page changed with it"
+        );
+        assert_eq!(
+            ask(&build(vec![widget.clone()], 0, b"q Q", b"Sig")),
+            None,
+            "an annotation was taken off the list"
+        );
+        assert_eq!(
+            ask(&build(listed.clone(), 0, b"q Q", b"Tx")),
+            None,
+            "what was added is not a signature field"
+        );
+        assert_eq!(
+            ask(&build(listed, 0, b"q 1 0 0 rg Q", b"Sig")),
+            None,
+            "the content stream changed with it"
+        );
+        assert_eq!(
+            ask(&build(vec![link], 0, b"q Q", b"Sig")),
+            None,
+            "nothing was added to the list"
+        );
+    }
+
     /// A second signature's append is reported as what it is, not as a size.
     ///
     /// `incr-two-signers.pdf` is the one fixture here with a real appendix, and
@@ -3332,6 +3581,17 @@ mod tests {
             appendix.pages_touched, 1,
             "the page holding the new widget was rewritten: {:?}",
             appendix.kinds
+        );
+        // And why it was rewritten: to list the second signer's field, with
+        // the page's own content stream untouched. A signature, so not a
+        // timestamp --- `incr-doc-timestamped.pdf` is the other answer.
+        assert_eq!(
+            appendix.pages_listing,
+            vec![PageListing {
+                page: 1,
+                timestamp: false
+            }],
+            "the page was rewritten only to list the new field"
         );
         // The control on the other half of the classification: this append is
         // not an LTV one, so the catalog gained nothing. Without it, a

@@ -4566,8 +4566,8 @@ MUTATIONS += [
     Mutation(
         "properties: spell a signature's title with the prose dash",
         "src/lib/properties.ts",
-        'const title = signature.field ? `Signature — ${signature.field}` : "Signature";',
-        'const title = signature.field ? `Signature --- ${signature.field}` : "Signature";',
+        "const title = signature.field ? `${what} — ${signature.field}` : what;",
+        "const title = signature.field ? `${what} --- ${signature.field}` : what;",
         "holds no prose dash outside the separator sentinel",
     ),
     Mutation(
@@ -6135,8 +6135,8 @@ MUTATIONS += [
         # who opened this dialog on a signed document opened it about that.
         "properties: list the file's statistics above the signature",
         "src/lib/properties.ts",
-        "  return [...locked, ...signatures, ...described, ...security, file, ...cut];",
-        "  return [...locked, file, ...signatures, ...described, ...security, ...cut];",
+        "  return [...locked, ...counted, ...signatures, ...described, ...security, file, ...cut];",
+        "  return [...locked, file, ...counted, ...signatures, ...described, ...security, ...cut];",
         "puts a signature above the file's own statistics",
     ),
     Mutation(
@@ -6402,8 +6402,8 @@ MUTATIONS += [
         # Word a document timestamp as a signature's.
         "timestamp: word a document timestamp as a signature's",
         "src/lib/properties.ts",
-        '    const document = signature.kind === "ETSI.RFC3161";',
-        "    const document = false;",
+        "  const document = signature.kind === DOCUMENT_TIMESTAMP;",
+        "  const document = false;",
         "says a document timestamp covers the document, not a signature",
     ),
     Mutation(
@@ -8732,7 +8732,7 @@ MUTATIONS += [
     Mutation(
         "revocation: word a document timestamp's revocation as the signer's",
         "src/lib/properties.ts",
-        'revocationRow(signature.revocation, signature.kind === "ETSI.RFC3161");',
+        "revocationRow(signature.revocation, document);",
         "revocationRow(signature.revocation, false);",
         "puts the revocation row under the trust row, the authority's for a document timestamp",
     ),

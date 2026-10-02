@@ -1136,7 +1136,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
   `integrity` with `verdict` (`intact`, `weak`, `altered`, `broken`, `unchecked`), `why`
   (for `unchecked`, else `null`), `digest`, `method` and `sentence`; and `trust`, `null`
-  unless the verdict is `intact` or `weak`, with `standing` (`trusted`,
+  unless the verdict is `intact` or `weak` (for a document timestamp it is the timestamp
+  authority's standing, and its `sentence` says so), with `standing` (`trusted`,
   `trusted_at_timestamp` — judged at the time an intact timestamp from an authority this
   computer trusts attests — `expired`, `not_yet_valid`, `untrusted`, `unchecked`), `why`
   (`not_in_force` among them: the certificate was not in force at that attested time),

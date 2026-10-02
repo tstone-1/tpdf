@@ -358,6 +358,58 @@ fn the_archive_timestamp_covers_the_signature_and_its_validation_data() {
     assert!(!certificates.is_empty(), "the /DSS is there");
     assert!(ours.appended_bytes > 0 && !ours.covers_whole_file);
     assert!(archive.covered_bytes > ours.covered_bytes);
+    // What was appended after the signature rewrote one page, and only to
+    // list the timestamp's field: the readout says so rather than "1 page
+    // was rewritten", which reads as a change to the page.
+    let appendix = ours.appendix.as_ref().expect("an appendix");
+    assert_eq!(
+        (appendix.pages_touched, appendix.pages_listing.as_slice()),
+        (
+            1,
+            [crate::docinfo::PageListing {
+                page: 1,
+                timestamp: true
+            }]
+            .as_slice()
+        ),
+        "{appendix:?}"
+    );
+    // `verify` and `info` head it as a document timestamp, count it apart,
+    // and word its certificate as the authority's: nobody signed twice, and
+    // the certificate names no person.
+    let reports: Vec<_> = found
+        .iter()
+        .map(crate::cli::verify::signature_report)
+        .collect();
+    assert_eq!(
+        crate::cli::verify::counted(&reports),
+        "1 signature and 1 document timestamp"
+    );
+    let (said, stamped) = (
+        crate::cli::verify::signature_text(&reports[0]),
+        crate::cli::verify::signature_text(&reports[1]),
+    );
+    assert!(
+        said.starts_with(&format!("  {} --- ", signed.field)),
+        "{said}"
+    );
+    assert!(said.contains("\n    Trust: "), "{said}");
+    assert!(
+        stamped.starts_with(&format!("  Document timestamp {} --- ", archive.field)),
+        "{stamped}"
+    );
+    assert_eq!(
+        stamped.matches("    Timestamp authority: ").count(),
+        1,
+        "{stamped}"
+    );
+    assert!(
+        !stamped.contains("    Trust: ")
+            && !stamped.contains("signer")
+            && !stamped.contains("the person the certificate names"),
+        "{stamped}"
+    );
+    assert!(stamped.contains("\n    Timestamped: "), "{stamped}");
     // And the report after signing names it as the archive, not as an
     // earlier signature.
     let report = crate::sign_cms::report(String::new(), signed.field.clone(), found.clone());

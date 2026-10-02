@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use super::args::unknown;
 use super::report::{self, Described, ErrorKind, FileError, SCHEMA};
 use super::text::{password, variable};
-use super::verify::{signature_report, signature_text};
+use super::verify::{counted, signature_report, signature_text};
 use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo::Properties;
 use crate::save_outside::{Declined, Session};
@@ -384,7 +384,13 @@ fn document_text(d: &report::Document) -> Vec<String> {
     match d.signatures.len() {
         0 => lines.push("  Signatures: none".into()),
         n => {
-            lines.push(format!("  Signatures: {n}"));
+            // Counted apart, as `verify` does: a document timestamp is a
+            // signature field and nobody's signature.
+            lines.push(if d.signatures.iter().any(|s| s.document_timestamp) {
+                format!("  Signatures: {}", counted(&d.signatures))
+            } else {
+                format!("  Signatures: {n}")
+            });
             for signature in &d.signatures {
                 lines.extend(signature_text(signature).lines().map(|l| format!("  {l}")));
             }

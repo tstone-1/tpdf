@@ -142,7 +142,15 @@ export class PropertiesDialog {
     this.returnFocus = null;
   }
 
-  /** One block: a heading, its rows, and any caveat under them. */
+  /**
+   * One block: a heading, its rows, and any caveat under them.
+   *
+   * A block with a `card` is one of several signatures, and is drawn as a
+   * bordered card that opens: closed, it shows its heading and its verdicts,
+   * so two signatures are two things on screen before anything is read. The
+   * rows stay inside the same `<section>`, under the same `<h3>`, closed or
+   * open --- which is what the window checks read a section by.
+   */
   private section(section: Section): HTMLElement {
     const block = document.createElement("section");
     block.style.cssText = "margin-top:1rem;";
@@ -152,7 +160,41 @@ export class PropertiesDialog {
     title.style.cssText =
       "margin:0 0 0.35rem;font-size:11px;font-weight:600;letter-spacing:0.04em;" +
       "text-transform:uppercase;opacity:0.62;";
-    block.append(title);
+
+    // Where the rows and the caveat go: the block itself, or a card's inside.
+    let inside: HTMLElement = block;
+    if (section.card) {
+      block.style.cssText =
+        "margin-top:0.55rem;border-radius:8px;" +
+        "border:1px solid color-mix(in srgb, CanvasText 20%, transparent);" +
+        "background:color-mix(in srgb, CanvasText 4%, transparent);";
+      const card = document.createElement("details");
+      const face = document.createElement("summary");
+      face.style.cssText = "padding:0.55rem 0.75rem;cursor:pointer;";
+      title.style.cssText =
+        "display:inline;margin:0;font-size:11px;font-weight:600;letter-spacing:0.04em;" +
+        "text-transform:uppercase;opacity:0.8;";
+      const brief = document.createElement("div");
+      brief.style.cssText = "margin:0.15rem 0 0 1.05rem;overflow-wrap:anywhere;";
+      for (const [at, part] of section.card.entries()) {
+        if (at > 0) brief.append(" · ");
+        const phrase = document.createElement("span");
+        phrase.textContent = part.text;
+        if (part.warn) phrase.style.cssText = "font-weight:600;";
+        brief.append(phrase);
+      }
+      face.append(title, brief);
+      inside = document.createElement("div");
+      inside.style.cssText =
+        "padding:0.55rem 0.75rem 0.7rem;" +
+        "border-top:1px solid color-mix(in srgb, CanvasText 12%, transparent);";
+      card.append(face, inside);
+      block.append(card);
+    } else {
+      block.append(title);
+    }
+    // A heading that only counts what follows has no rows to lay out.
+    if (section.rows.length === 0 && !section.note) return block;
 
     const list = document.createElement("dl");
     list.style.cssText =
@@ -169,14 +211,14 @@ export class PropertiesDialog {
         : "margin:0;overflow-wrap:anywhere;";
       list.append(name, value);
     }
-    block.append(list);
+    inside.append(list);
 
     if (section.note) {
       const note = document.createElement("p");
       note.textContent = section.note;
       note.style.cssText =
         "margin:0.45rem 0 0;font-size:11.5px;line-height:1.5;opacity:0.66;";
-      block.append(note);
+      inside.append(note);
     }
 
     return block;

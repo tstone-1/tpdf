@@ -48,6 +48,12 @@
           "/AcroForm"
         ],
         "pages_touched": 1,
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          }
+        ],
         "unread": false
       },
       "certification": 1,
