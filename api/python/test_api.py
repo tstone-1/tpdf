@@ -211,7 +211,8 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search'} <= commands)
+        self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
             {'op': 'insert_blank', 'after': 1, 'width': 200, 'height': 250},
@@ -226,6 +227,32 @@ class ClientTests(unittest.TestCase):
         self.pdf.extract(output, extracted, pages='2')
         self.assertEqual(self.pdf.info(extracted)['files'][0]['document']['pages'], 1)
         self.assertEqual(self.pdf.comments(extracted)['comments'], [])
+
+    def test_search_finds_what_redact_would_remove_and_says_when_nothing_matches(self):
+        merged = self.root / 'merged.pdf'
+        self.pdf.edit(self.source, merged, [{'op': 'insert_blank', 'after': 1, 'width': 200, 'height': 250}])
+        found = self.pdf.search(merged, self.source, texts=['synthetic'], patterns=['ORIG[A-Z]+'])
+        self.assertEqual([q['kind'] for q in found['queries']], ['text', 'pattern'])
+        first, second = found['files']
+        self.assertEqual([(m['page'], m['query'], m['hit']) for m in first['matches']],
+                         [(1, 0, 'SYNTHETIC'), (1, 1, 'ORIGINAL')])
+        # The blank page has nothing to search, and the report says so.
+        self.assertEqual((first['pages_searched'], first['pages_without_text']), (2, [2]))
+        self.assertEqual(len(second['matches']), 2)
+        # Folded unless asked otherwise, and a whole word is a whole word.
+        self.assertEqual(self.pdf.search(self.source, texts=['synthetic'], case_sensitive=True)['files'][0]['matches'], [])
+        self.assertEqual(self.pdf.search(self.source, texts=['SYNTH'], whole_word=True)['files'][0]['matches'], [])
+        self.assertEqual(len(self.pdf.search(self.source, texts=['SYNTH'])['files'][0]['matches']), 1)
+        # The same line removes what it found.
+        dry = self.pdf.redact(self.source, texts=['synthetic'], dry_run=True)
+        self.assertEqual(dry['searches'][0]['matches'], 1)
+        with self.assertRaises(CommandError) as refused:
+            self.pdf.search(self.root / 'missing.pdf', self.source, texts=['synthetic'])
+        self.assertEqual(refused.exception.exit_code, 3)
+        self.assertEqual(len(refused.exception.report['files'][1]['matches']), 1)
+        for bad in [{}, {'texts': 'one string'}]:
+            with self.assertRaises((ValueError, TypeError)):
+                self.pdf.search(self.source, **bad)
 
     def test_page_helpers_merge_extract_and_split_read_back(self):
         second = self.root / 'second.pdf'

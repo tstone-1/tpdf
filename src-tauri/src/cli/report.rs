@@ -871,6 +871,61 @@ pub struct Search {
     pub matches: usize,
 }
 
+/// `tpdf search --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Searched {
+    /// Always [`SCHEMA`].
+    pub schema: u32,
+    /// Always `"search"`.
+    pub command: String,
+    /// Every `--text`, then every `--pattern`; a [`Hit::query`] indexes this.
+    pub queries: Vec<Query>,
+    /// The documents, in the order given.
+    pub files: Vec<SearchedFile>,
+}
+
+/// One `--text` or `--pattern` of a search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Query {
+    /// Which option gave it.
+    pub kind: SearchKind,
+    /// The query, as given.
+    pub query: String,
+}
+
+/// One document `search` was given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchedFile {
+    /// The path as given on the command line.
+    pub path: String,
+    /// Why the document could not be searched; `null` when it was.
+    pub error: Option<FileError>,
+    /// How many pages were searched.
+    pub pages_searched: u32,
+    /// The pages, counted from 1, that held no text at all: a scan has
+    /// nothing to search, which is not the same as holding no match.
+    pub pages_without_text: Vec<u32>,
+    /// Every match, by page and then by where on the page it starts.
+    pub matches: Vec<Hit>,
+}
+
+/// One match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hit {
+    /// The page it starts on, counted from 1.
+    pub page: u32,
+    /// The page it ends on, when a phrase runs over a page break; else `null`.
+    pub end_page: Option<u32>,
+    /// Which of [`Searched::queries`] found it, counted from 0.
+    pub query: usize,
+    /// The text before it, whitespace collapsed.
+    pub before: String,
+    /// The matched text, as the page spells it.
+    pub hit: String,
+    /// The text after it, whitespace collapsed.
+    pub after: String,
+}
+
 /// [`Search::kind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

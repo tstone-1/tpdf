@@ -21,6 +21,21 @@ have the binary.)
 
 ### Added
 
+- **`tpdf search` says where a document mentions something.** `tpdf search *.pdf --text
+  "North Pier"` prints one line per match with the words around it, as `file:page: text`,
+  and `--json` gives the same as data. It takes `redact`'s `--text`, `--pattern`,
+  `--case-sensitive` and `--pages`, and finds exactly what `redact` would remove, so a line
+  can be tried before it is run; `--whole-word` is the find bar's switch. It exits 1 when
+  nothing matched, and names every page that has no text to search, because a scan cannot
+  match and silence would read as "not in there". The Python client has `search()`.
+- **Each command explains itself.** `tpdf help redact` and `tpdf redact --help` print that
+  command's summary and options alone; `--help` after a command used to be refused as an
+  option it does not have. A mistyped command is answered with the nearest one: `tpdf verfy`
+  asks "did you mean `verify`?". The Python client's `help()` takes a command name.
+- **The Python client's reports are typed.** `tpdf.reports` describes every JSON report as
+  a `TypedDict`, so an editor completes `report["files"][0]["matches"]` and a type checker
+  catches a misspelt key. A test holds the types against the committed samples both ways.
+
 - **Right-clicking a tab offers "Copy file name".** The menu could only copy the full
   path. The new entry copies the name alone, `report.pdf`, and sits below "Copy file path".
 
@@ -59,6 +74,11 @@ have the binary.)
   full rows. A document with one signature looks as before.
 
 ### Fixed
+
+- **A failure message is readable in a dark window.** The red was one fixed colour, at
+  3.4 to 1 against a dark background; it is now a lighter red there. Found by looking:
+  `scripts/screenshots.py --dark` takes the README's pictures with the window forced dark,
+  whatever the system is set to (`TPDF_THEME=dark` does the forcing).
 
 - **Holding the mouse button with the comment tool no longer draws a rectangle.** The bubble
   preview vanished on the press and a dashed box stretched to the pointer, as if a region were

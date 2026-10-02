@@ -485,6 +485,7 @@ fn every_other_malformed_line_is_refused_with_its_reason() {
         assert!(why.contains(expected), "`{line}` gave `{why}`");
     }
     assert!(matches!(parse(&[]), Ok(Line::Help)));
+    assert!(matches!(parse(&argv("help --json")), Ok(Line::Help)));
     assert!(matches!(parse(&argv("--version")), Ok(Line::Version)));
     assert_eq!(
         verify::parse(&argv("a.pdf b.pdf --strict --json")).expect("verify"),
@@ -548,6 +549,10 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("identities", "identities --json"),
         ("info", "info a.pdf --json"),
         ("text", "text a.pdf --pages 2"),
+        (
+            "search",
+            "search a.pdf b.pdf --text invoice --pattern '\\d+' --whole-word --json",
+        ),
         ("fields", "fields a.pdf --json"),
         ("fill", "fill a.pdf -o b.pdf --values answers.json"),
         ("redact", "redact a.pdf -o b.pdf --text Secret"),
@@ -580,7 +585,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
     }
     let why = refused("encrypt a.pdf");
     assert!(
-        why.contains("sign, verify, identities, info, text, fields, fill, redact"),
+        why.contains("sign, verify, identities, info, text, search, fields, fill, redact"),
         "{why}"
     );
 }
@@ -1983,6 +1988,7 @@ fn samples() -> Vec<(&'static str, String)> {
         ("wording", pretty(&wording())),
         ("info", pretty(&info_sample())),
         ("text", pretty(&text_sample())),
+        ("search", pretty(&search_sample())),
         ("reading", pretty(&reading_sample())),
         ("fields", pretty(&super::form_tests::fields_sample())),
         ("fill", pretty(&super::form_tests::fill_samples().0)),
@@ -2063,7 +2069,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 19, "the sample table itself");
+    assert_eq!(want.len(), 20, "the sample table itself");
     assert_eq!(found, want);
 }
 
@@ -2710,4 +2716,286 @@ fn signing_treats_flags_after_separator_as_literal_input_paths() {
     assert_eq!(parsed.input, PathBuf::from("--force"));
     assert!(!parsed.force);
     assert!(sign::parse(&argv("-o out.pdf --identity synthetic -- a.pdf b.pdf")).is_err());
+}
+
+/// `help <command>` and `<command> --help` answer with that command alone.
+///
+/// Every command, because the parser reaches `--help` before the command's own
+/// parser does and a command whose parser was asked first would refuse it.
+#[test]
+fn every_command_explains_itself_when_asked() {
+    for command in COMMANDS {
+        for line in [
+            format!("help {}", command.name),
+            format!("help --json {}", command.name),
+            format!("{} --help", command.name),
+            format!("{} a.pdf -h", command.name),
+        ] {
+            match parse(&argv(&line)) {
+                Ok(Line::HelpFor(found)) => assert_eq!(found.name, command.name, "{line}"),
+                other => panic!("`{line}` gave {other:?}"),
+            }
+        }
+        let text = usage_for("tpdf", command);
+        assert!(text.starts_with(&format!("tpdf {} --- ", command.name)));
+        assert!(
+            text.contains(&format!("\n  tpdf {}", command.usage)),
+            "{}",
+            command.name
+        );
+        // One command's help names no other command's synopsis.
+        for other in COMMANDS.iter().filter(|c| c.name != command.name) {
+            assert!(
+                !text.contains(&format!("  tpdf {}", other.usage)),
+                "{}",
+                other.name
+            );
+        }
+    }
+    // After `--` a word is a path, even this one.
+    assert!(!matches!(
+        parse(&argv("verify -- --help")),
+        Ok(Line::HelpFor(_))
+    ));
+    assert!(refused("help frobnicate").contains("not a command"));
+}
+
+/// A mistyped command is answered with the one it most likely meant.
+#[test]
+fn a_mistyped_command_is_offered_the_nearest_one() {
+    let cases = [
+        ("infoo a.pdf", Some("info")),
+        ("verfy a.pdf", Some("verify")),
+        ("text-run a.pdf", Some("text-runs")),
+        ("ident", Some("identities")),
+        ("singn a.pdf", Some("sign")),
+        // Nobody's typo, so no guess.
+        ("encrypt a.pdf", None),
+        ("frobnicate", None),
+        // Too short to guess from: two letters are near half the list.
+        ("fi", None),
+    ];
+    for (line, meant) in cases {
+        let why = refused(line);
+        assert!(why.contains("is not a command"), "{line}");
+        match meant {
+            Some(name) => assert!(
+                why.contains(&format!("did you mean `{name}`?")),
+                "`{line}` gave `{why}`"
+            ),
+            None => assert!(!why.contains("did you mean"), "`{line}` gave `{why}`"),
+        }
+        // The full list is there either way.
+        assert!(why.contains("sign, verify, identities"), "{line}");
+    }
+}
+
+/// `search` over a match, a match across a page break, a document with a page
+/// that has no text, and one that could not be read.
+fn search_sample() -> report::Searched {
+    let hit = |page, end_page, query, before: &str, hit: &str, after: &str| report::Hit {
+        page,
+        end_page,
+        query,
+        before: before.into(),
+        hit: hit.into(),
+        after: after.into(),
+    };
+    report::Searched {
+        schema: report::SCHEMA,
+        command: "search".into(),
+        queries: vec![
+            report::Query {
+                kind: report::SearchKind::Text,
+                query: "North Pier".into(),
+            },
+            report::Query {
+                kind: report::SearchKind::Pattern,
+                query: r"\d\.\d\d m".into(),
+            },
+        ],
+        files: vec![
+            report::SearchedFile {
+                path: "survey.pdf".into(),
+                error: None,
+                pages_searched: 3,
+                pages_without_text: vec![3],
+                matches: vec![
+                    hit(
+                        1,
+                        None,
+                        0,
+                        "water was 4.82 m at the ",
+                        "North Pier",
+                        ", which is",
+                    ),
+                    hit(
+                        1,
+                        None,
+                        1,
+                        "The highest water was ",
+                        "4.82 m",
+                        " at the North",
+                    ),
+                    hit(
+                        1,
+                        Some(2),
+                        0,
+                        "readings taken at the ",
+                        "North Pier",
+                        " in March",
+                    ),
+                ],
+            },
+            report::SearchedFile {
+                path: "locked.pdf".into(),
+                error: Some(report::FileError {
+                    kind: ErrorKind::Locked,
+                    message:
+                        "locked.pdf is encrypted with a password --- give it with --password-env"
+                            .into(),
+                }),
+                pages_searched: 0,
+                pages_without_text: Vec::new(),
+                matches: Vec::new(),
+            },
+        ],
+    }
+}
+
+#[test]
+fn search_reads_its_line_and_refuses_one_with_nothing_to_find() {
+    use super::search::{parse, Search};
+    assert_eq!(
+        parse(&argv("a.pdf b.pdf --text invoice --text total --pattern x+ --case-sensitive --whole-word --pages 2-3 --json")).expect("search"),
+        Search {
+            files: vec![PathBuf::from("a.pdf"), PathBuf::from("b.pdf")],
+            texts: vec!["invoice".into(), "total".into()],
+            patterns: vec!["x+".into()],
+            case_sensitive: true,
+            whole_word: true,
+            pages: Some(vec![2, 3]),
+            password_env: None,
+            json: true,
+        }
+    );
+    let cases = [
+        ("search --text x", "needs a document"),
+        ("search a.pdf", "needs something to find"),
+        ("search a.pdf --text", "needs a value"),
+        ("search a.pdf --pattern (", "--pattern ("),
+        ("search a.pdf --text x --regex", "has no option `--regex`"),
+        ("search a.pdf --text x --pages 3-1", "runs backwards"),
+    ];
+    for (line, expected) in cases {
+        let why = refused(line);
+        assert!(why.contains(expected), "`{line}` gave `{why}`");
+    }
+    // After `--` a word is a document, even one that looks like an option.
+    let dashed = parse(&argv("--text x -- --odd.pdf")).expect("dashed");
+    assert_eq!(dashed.files, vec![PathBuf::from("--odd.pdf")]);
+}
+
+#[test]
+fn search_prints_one_line_per_match_and_names_the_document_only_among_several() {
+    use super::search::{plain, search_exit, textless};
+    let report = search_sample();
+    assert_eq!(
+        plain(&report),
+        "survey.pdf:1: water was 4.82 m at the North Pier, which is\n\
+         survey.pdf:1: The highest water was 4.82 m at the North\n\
+         survey.pdf:1: readings taken at the North Pier in March\n"
+    );
+    let mut one = report.clone();
+    one.files.truncate(1);
+    assert!(plain(&one).starts_with("1: water was"), "{}", plain(&one));
+    assert_eq!(search_exit(&one), Exit::Ok);
+    // A document that could not be read outranks the matches beside it.
+    assert_eq!(search_exit(&report), Exit::Refused);
+
+    assert_eq!(
+        textless(&one.files[0]).as_deref(),
+        Some("survey.pdf: page 3 has no text to search")
+    );
+    one.files[0].pages_without_text = vec![1, 3];
+    assert_eq!(
+        textless(&one.files[0]).as_deref(),
+        Some("survey.pdf: 2 pages have no text to search (1, 3)")
+    );
+    one.files[0].pages_without_text = vec![1, 2, 3];
+    assert!(textless(&one.files[0])
+        .expect("all")
+        .contains("none of its pages has text"));
+    one.files[0].pages_without_text.clear();
+    assert_eq!(textless(&one.files[0]), None);
+
+    // Nothing found is exit 1, as grep's is, and prints nothing.
+    one.files[0].matches.clear();
+    assert_eq!(search_exit(&one), Exit::Strict);
+    assert_eq!(plain(&one), "");
+}
+
+#[test]
+fn search_orders_matches_by_page_and_position_whichever_query_found_them() {
+    use super::redact::search_pages;
+    use super::search::searched;
+    use crate::search::{Options, Prepared};
+    let page = |words: &str| crate::text::PageText {
+        codes: words.chars().map(u32::from).collect(),
+        ..crate::text::PageText::default()
+    };
+    let compile = |query: &str, regex| {
+        Prepared::new(
+            query,
+            Options {
+                match_case: false,
+                whole_word: false,
+                regex,
+            },
+        )
+        .expect("compiles")
+    };
+    let queries = vec![
+        (
+            report::SearchKind::Text,
+            "pier".to_string(),
+            compile("pier", false),
+        ),
+        (
+            report::SearchKind::Pattern,
+            "t.de".to_string(),
+            compile("t.de", true),
+        ),
+    ];
+    let texts = [
+        page("The tide at the North Pier"),
+        page(""),
+        page("pier and tide"),
+    ];
+    let mut empty = Vec::new();
+    let found = search_pages(&queries, &[1, 2, 3], |at| {
+        let text = texts[at as usize].clone();
+        if text.codes.is_empty() {
+            empty.push(at + 1);
+        }
+        Ok(text)
+    })
+    .expect("searched");
+    let file = searched("a.pdf", 3, empty, &found);
+    let order: Vec<(u32, usize, &str)> = file
+        .matches
+        .iter()
+        .map(|hit| (hit.page, hit.query, hit.hit.as_str()))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            (1, 1, "tide"),
+            (1, 0, "Pier"),
+            (3, 0, "pier"),
+            (3, 1, "tide")
+        ]
+    );
+    assert_eq!(file.pages_without_text, vec![2]);
+    assert_eq!(file.pages_searched, 3);
 }

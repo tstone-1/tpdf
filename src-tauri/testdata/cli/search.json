@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "command": "search",
+  "queries": [
+    {
+      "kind": "text",
+      "query": "North Pier"
+    },
+    {
+      "kind": "pattern",
+      "query": "\\d\\.\\d\\d m"
+    }
+  ],
+  "files": [
+    {
+      "path": "survey.pdf",
+      "error": null,
+      "pages_searched": 3,
+      "pages_without_text": [
+        3
+      ],
+      "matches": [
+        {
+          "page": 1,
+          "end_page": null,
+          "query": 0,
+          "before": "water was 4.82 m at the ",
+          "hit": "North Pier",
+          "after": ", which is"
+        },
+        {
+          "page": 1,
+          "end_page": null,
+          "query": 1,
+          "before": "The highest water was ",
+          "hit": "4.82 m",
+          "after": " at the North"
+        },
+        {
+          "page": 1,
+          "end_page": 2,
+          "query": 0,
+          "before": "readings taken at the ",
+          "hit": "North Pier",
+          "after": " in March"
+        }
+      ]
+    },
+    {
+      "path": "locked.pdf",
+      "error": {
+        "kind": "locked",
+        "message": "locked.pdf is encrypted with a password --- give it with --password-env"
+      },
+      "pages_searched": 0,
+      "pages_without_text": [],
+      "matches": []
+    }
+  ]
+}

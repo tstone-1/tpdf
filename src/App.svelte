@@ -4215,10 +4215,15 @@
      way and lights it up. Two literals, one per theme. */
   :global(:root) {
     --tpdf-surround: #666;
+    /* The colour of a message that reports a failure. One literal per theme for
+       the surround's reason: the light one is 3.4 to 1 on a dark window, which
+       is under what small text needs. */
+    --tpdf-problem: #c0392b;
   }
   @media (prefers-color-scheme: dark) {
     :global(:root) {
       --tpdf-surround: #2b2b2b;
+      --tpdf-problem: #ff8a7a;
     }
   }
   main {
@@ -4417,7 +4422,7 @@
      to be fixed. */
   .stat.problem {
     opacity: 1;
-    color: color-mix(in srgb, currentColor 40%, #c0392b);
+    color: color-mix(in srgb, currentColor 40%, var(--tpdf-problem));
   }
   .body {
     flex: 1;
@@ -4444,7 +4449,7 @@
   .error {
     margin: 0;
     padding: 0.5rem 0.7rem;
-    color: #c0392b;
+    color: var(--tpdf-problem);
     white-space: pre-wrap;
   }
   .error, :global([role="alert"]) {

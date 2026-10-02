@@ -19,6 +19,10 @@ report = pdf.redact("letter.pdf", "letter-redacted.pdf", texts=["Jane Doe"])
 assert report["written"] and report["verified"]
 
 pdf.merge(["cover.pdf", "report.pdf"], "combined.pdf")
+
+for file in pdf.search("a.pdf", "b.pdf", texts=["North Pier"])["files"]:
+    for match in file["matches"]:
+        print(file["path"], match["page"], match["hit"])
 ```
 
 Every method is described in the

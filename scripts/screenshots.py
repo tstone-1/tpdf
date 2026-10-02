@@ -122,9 +122,14 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=ROOT / "docs" / "img")
     parser.add_argument("--signed", type=Path, default=ROOT / "testdata" / "incr-two-signers.pdf")
     parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--dark", action="store_true",
+                        help="take the pictures with the window in its dark appearance; "
+                             "needs --out, because the README's pictures are the light ones")
     args = parser.parse_args()
     if sys.platform != "darwin":
         raise SystemExit("[FAIL] screenshots are taken on macOS only")
+    if args.dark and args.out == ROOT / "docs" / "img":
+        raise SystemExit("[FAIL] --dark needs --out: docs/img holds the README's light pictures")
     if not args.signed.is_file():
         raise SystemExit(f"[FAIL] {args.signed} is missing; testdata/make_incremental_pdf.py writes it")
     args.out.mkdir(parents=True, exist_ok=True)
@@ -140,7 +145,10 @@ def main() -> int:
         swift.write_text(WINDOW_OF)
         env = dict(os.environ,
                    TPDF_OPENCHECK=f"screenshots:{demo}|{signed}|{json.dumps(regions, separators=(',', ':'))}",
-                   TPDF_SESSION_FILE=str(room / "session.json"))
+                   TPDF_SESSION_FILE=str(room / "session.json"),
+                   # Pinned both ways, so the README's pictures do not depend on
+                   # how the machine that takes them happens to be set.
+                   TPDF_THEME="dark" if args.dark else "light")
         log = room / "transcript.log"
         taken: list[str] = []
         frames: list[tuple[Path, int]] = []

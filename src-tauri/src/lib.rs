@@ -828,6 +828,20 @@ pub fn run() {
                 // what to load, not once it has loaded it.
                 startup::mark("window built");
             }
+            // `TPDF_THEME=dark|light` pins the window's appearance whatever the
+            // system is set to. `scripts/screenshots.py --dark` is the caller: it
+            // is how the dark window gets looked at without changing a setting
+            // on the machine that takes the pictures. Any other value is ignored.
+            if let Some(window) = app.get_webview_window("main") {
+                let theme = match std::env::var("TPDF_THEME").as_deref() {
+                    Ok("dark") => Some(tauri::Theme::Dark),
+                    Ok("light") => Some(tauri::Theme::Light),
+                    _ => None,
+                };
+                if theme.is_some() {
+                    window.set_theme(theme)?;
+                }
+            }
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
                 let suffix = if tauri::is_dev() { " DEV" } else { "" };

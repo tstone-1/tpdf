@@ -62,6 +62,7 @@ pub mod redact;
 pub mod regions;
 mod render;
 pub mod report;
+pub mod search;
 pub mod sign;
 pub mod text;
 pub mod verify;
@@ -321,7 +322,10 @@ pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Wr
             say(err, &format!("{}: {why}", env.program));
             say(
                 err,
-                &format!("Run `{} help` for the commands.", env.program),
+                &format!(
+                    "Run `{0} help` for the commands, or `{0} help <command>` for one.",
+                    env.program
+                ),
             );
             return Exit::Usage.code();
         }
@@ -347,6 +351,26 @@ pub fn run(args: &[String], env: &Env<'_>, out: &mut dyn Write, err: &mut dyn Wr
                 );
             } else {
                 say(out, &usage(&env.program));
+            }
+            Ok(Exit::Ok)
+        }
+        args::Line::HelpFor(command) => {
+            if wants_json {
+                json(
+                    out,
+                    &report::Help {
+                        schema: report::SCHEMA,
+                        command: "help".into(),
+                        version: env!("CARGO_PKG_VERSION").into(),
+                        commands: vec![report::Command {
+                            name: command.name.into(),
+                            usage: command.usage.into(),
+                            summary: command.summary.into(),
+                        }],
+                    },
+                );
+            } else {
+                say(out, &usage_for(&env.program, command));
             }
             Ok(Exit::Ok)
         }
@@ -414,6 +438,7 @@ pub trait Subcommand: std::fmt::Debug {
 }
 
 /// A command as the dispatch, the usage text and `help` know it.
+#[derive(Debug)]
 pub struct Registered {
     /// The word that selects it.
     pub name: &'static str,
@@ -436,6 +461,7 @@ pub const COMMANDS: &[Registered] = &[
     identities::COMMAND,
     info::COMMAND,
     text::COMMAND,
+    search::COMMAND,
     fields::COMMAND,
     fill::COMMAND,
     redact::COMMAND,
@@ -529,10 +555,24 @@ pub fn usage(program: &str) -> String {
     text.push_str(
         "\nExit codes: 0 done; 1 verify --strict found a signature that is not intact\n\
          and trusted, or a document with none, or redact wrote a copy it could not\n\
-         prove clean; 2 the command line is malformed; 3 refused (identity,\n\
+         prove clean, or search found nothing; 2 the command line is malformed; 3 refused (identity,\n\
          document, answers, output, or the OS); 4 tpdf failed.",
     );
     text
+}
+
+/// One command's help: what it does, then its synopsis.
+#[must_use]
+pub fn usage_for(program: &str, command: &Registered) -> String {
+    // A summary's later lines are indented to sit under the first in the full
+    // list's column; here they start at the margin.
+    let summary: Vec<&str> = command.summary.lines().map(str::trim_start).collect();
+    format!(
+        "{program} {} --- {}\n\nUsage:\n  {program} {}\n\nRun `{program} help` for every command and the exit codes.",
+        command.name,
+        summary.join("\n"),
+        command.usage
+    )
 }
 
 /// Opens `path` and returns the handle and its length, refusing an empty file.

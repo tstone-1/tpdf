@@ -228,6 +228,11 @@ number, so it does not have to be in front and nothing is typed; the screen must
 unlocked, and the terminal needs the Screen Recording permission. The last line puts the
 normal frontend back in `dist/`: the `bundleshare` gate refuses a checks build.
 
+`--dark --out <folder>` takes the same pictures with the window in its dark appearance,
+without changing the system setting: the script sets `TPDF_THEME`, which the application
+reads at start. Run it after a change to a colour, and look at the pictures; they are not
+committed, and `--dark` refuses to write into `docs/img/`.
+
 The states are `src/lib/screenshotcheck.ts`, the document is `testdata/make_demo_pdf.py`,
 and the signature cards come from `testdata/incr-two-signers.pdf`. Regenerate after a
 change a reader would see in one of them, and look at each picture before

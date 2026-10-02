@@ -29,7 +29,9 @@ import signal
 import subprocess
 from typing import Any, Mapping, Sequence
 
-__all__ = ['Tpdf', 'Result', 'CommandError', 'ProtocolError', 'CommandTimeout']
+from . import reports
+
+__all__ = ['Tpdf', 'Result', 'CommandError', 'ProtocolError', 'CommandTimeout', 'reports']
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,15 @@ class Result:
     report: dict[str, Any]
     exit_code: int
     stderr: str
+
+    @property
+    def typed(self) -> Any:
+        """The report, for a method that names its shape in `tpdf.reports`.
+
+        The shape is the CLI's promise, held against its committed samples by
+        `test_reports.py`; nothing here checks a report against it at run time.
+        """
+        return self.report
 
 
 class CommandError(RuntimeError):
@@ -178,56 +189,101 @@ class Tpdf:
             raise CommandError(result)
         return result
 
-    def help(self) -> dict[str, Any]:
-        """Discover the executable's commands and application version."""
-        return self.run('help').report
+    def help(self, command: str | None = None) -> reports.HelpReport:
+        """Discover the executable's commands and application version.
 
-    def info(self, *paths: str | os.PathLike[str], password: str | None = None) -> dict[str, Any]:
+        With command, the report lists that command alone.
+        """
+        if command is None:
+            return self.run('help').typed
+        if not command or command.startswith('-'):
+            raise ValueError('command must be a subcommand name, such as info or edit')
+        return self.run('help', command).typed
+
+    def info(self, *paths: str | os.PathLike[str], password: str | None = None) -> reports.InfoReport:
         """Read document information."""
-        return self.run('info', '--', *paths, password=password).report
+        return self.run('info', '--', *paths, password=password).typed
 
-    def text(self, path: str | os.PathLike[str], *, password: str | None = None) -> dict[str, Any]:
+    def text(self, path: str | os.PathLike[str], *, password: str | None = None) -> reports.TextReport:
         """Extract text and its reading order."""
-        return self.run('text', '--', path, password=password).report
+        return self.run('text', '--', path, password=password).typed
 
-    def fields(self, path: str | os.PathLike[str], *, password: str | None = None) -> dict[str, Any]:
+    def search(
+        self, *paths: str | os.PathLike[str],
+        texts: Sequence[str] = (), patterns: Sequence[str] = (),
+        pages: str | None = None, case_sensitive: bool = False, whole_word: bool = False,
+        password: str | None = None,
+    ) -> reports.SearchReport:
+        """Find text or regex matches, as the viewer's find and redact() find them.
+
+        Returns one entry per document in report['files'], each with its matches
+        (page, before, hit, after) and pages_without_text: a scanned page has
+        nothing to search, which is not the same as holding no match.
+
+        Finding nothing is an answer, not an error: the CLI's exit 1 is returned
+        as a report whose files have empty matches. A document that could not be
+        read raises CommandError, and the report keeps the other documents.
+        """
+        if not paths:
+            raise ValueError('search needs at least one document')
+        args = []
+        for flag, queries in [('--text', texts), ('--pattern', patterns)]:
+            if isinstance(queries, (str, bytes)):
+                raise TypeError(f'{flag} queries must be a sequence of strings, not one string')
+            for query in queries:
+                if not isinstance(query, str):
+                    raise TypeError(f'{flag} queries must be strings')
+                args += [flag, query]
+        if not args:
+            raise ValueError('search needs something to find: texts= or patterns=')
+        if pages is not None:
+            args += ['--pages', pages]
+        for enabled, flag in [(case_sensitive, '--case-sensitive'), (whole_word, '--whole-word')]:
+            if enabled:
+                args.append(flag)
+        result = self.run('search', *args, '--', *paths, password=password, check=False)
+        if result.exit_code not in (0, 1):
+            raise CommandError(result)
+        return result.typed
+
+    def fields(self, path: str | os.PathLike[str], *, password: str | None = None) -> reports.FieldsReport:
         """Inspect form fields and the answers they accept."""
-        return self.run('fields', '--', path, password=password).report
+        return self.run('fields', '--', path, password=password).typed
 
-    def comments(self, path: str | os.PathLike[str], *, password: str | None = None) -> dict[str, Any]:
+    def comments(self, path: str | os.PathLike[str], *, password: str | None = None) -> reports.CommentsReport:
         """Read annotations; incomplete scans raise CommandError with their report."""
-        return self.run('comments', '--', path, password=password).report
+        return self.run('comments', '--', path, password=password).typed
 
-    def text_runs(self, path: str | os.PathLike[str], *, page: int = 1, password: str | None = None) -> dict[str, Any]:
+    def text_runs(self, path: str | os.PathLike[str], *, page: int = 1, password: str | None = None) -> reports.TextRunsReport:
         """Inspect original text runs and the revision required for replacement."""
-        return self.run('text-runs', '--page', str(page), '--', path, password=password).report
+        return self.run('text-runs', '--page', str(page), '--', path, password=password).typed
 
     def render(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         page: int = 1, dpi: int = 144, force: bool = False, password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.RenderReport:
         """Render one page to PNG for visual assertions, without opening a window."""
         args = ['-o', os.fspath(output), '--page', str(page), '--dpi', str(dpi)]
         if force:
             args.append('--force')
-        return self.run('render', *args, '--', source, password=password).report
+        return self.run('render', *args, '--', source, password=password).typed
 
     def fill(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         values: Mapping[str, Any], *, force: bool = False, password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.FillReport:
         """Fill fields from a Python mapping without an intermediate JSON file."""
         args = ['-o', os.fspath(output), '--values', '-']
         if force:
             args.append('--force')
-        return self.run('fill', *args, '--', source, input_json=dict(values), password=password).report
+        return self.run('fill', *args, '--', source, input_json=dict(values), password=password).typed
 
     def edit(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         operations: Sequence[Mapping[str, Any]], *, dry_run: bool = False,
         force: bool = False, invalidate_signatures: bool = False,
         password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.EditReport:
         """Apply ordered schema-1 edits. A rejected plan publishes no output."""
         args = ['--plan', '-', '-o', os.fspath(output)]
         if dry_run:
@@ -240,33 +296,33 @@ class Tpdf:
         return self.run(
             'edit', *args, input_json={'schema': 1, 'operations': list(operations)},
             password=password,
-        ).report
+        ).typed
 
-    def verify(self, *paths: str | os.PathLike[str], strict: bool = False) -> dict[str, Any]:
+    def verify(self, *paths: str | os.PathLike[str], strict: bool = False) -> reports.VerifyReport:
         """Inspect signatures. With strict=True, unsigned/untrusted files raise CommandError.
 
         The exception retains the full verification report and exit code. Use
         run('verify', '--strict', '--', *paths, check=False) for a Result instead.
         """
         args = ['--strict'] if strict else []
-        return self.run('verify', *args, '--', *paths).report
+        return self.run('verify', *args, '--', *paths).typed
 
     def _pages(
         self, command: str, sources: Sequence[str | os.PathLike[str]],
         output: str | os.PathLike[str], options: Sequence[str], *,
         force: bool, invalidate_signatures: bool, password: str | None,
-    ) -> dict[str, Any]:
+    ) -> reports.PagesReport:
         args = ['-o', os.fspath(output), *options]
         if force:
             args.append('--force')
         if invalidate_signatures:
             args.append('--invalidate-signatures')
-        return self.run(command, *args, '--', *sources, password=password).report
+        return self.run(command, *args, '--', *sources, password=password).typed
 
     def merge(
         self, sources: Sequence[str | os.PathLike[str]], output: str | os.PathLike[str], *,
         force: bool = False, invalidate_signatures: bool = False, password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.PagesReport:
         """Combine at least two documents in order. Only the first may be encrypted."""
         if isinstance(sources, (str, bytes, os.PathLike)):
             raise TypeError('sources must be a sequence of document paths, not one path')
@@ -277,7 +333,7 @@ class Tpdf:
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         pages: str, force: bool = False, invalidate_signatures: bool = False,
         password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.PagesReport:
         """Copy a page range (e.g. '1-3,7'), in document order, each page once."""
         return self._pages('extract', [source], output, ['--pages', pages], force=force,
             invalidate_signatures=invalidate_signatures, password=password)
@@ -286,10 +342,10 @@ class Tpdf:
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         every: int = 1, force: bool = False, invalidate_signatures: bool = False,
         password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.PagesReport:
         """Write groups as output-1.pdf, output-2.pdf, etc.; report lists actual paths.
 
-        A publication failure can leave some parts written. CommandError.report
+        A publication failure can leave some parts written. CommandError.typed
         retains those paths; do not interpret an exception as a rollback.
         """
         return self._pages('split', [source], output, ['--every', str(every)], force=force,
@@ -299,7 +355,7 @@ class Tpdf:
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         degrees: int, pages: str | None = None, force: bool = False,
         invalidate_signatures: bool = False, password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.PagesReport:
         """Turn selected pages clockwise by 90, 180 or 270 degrees; default all pages."""
         options = ['--degrees', str(degrees)]
         if pages is not None:
@@ -311,7 +367,7 @@ class Tpdf:
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
         rect: Sequence[float], pages: str | None = None, force: bool = False,
         invalidate_signatures: bool = False, password: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> reports.PagesReport:
         """Set visible x,y,width,height in display points from top-left.
 
         Cropping hides content; it does not redact it. The CLI validates geometry.
@@ -331,7 +387,7 @@ class Tpdf:
         pages: str | None = None, case_sensitive: bool = False, dry_run: bool = False,
         force: bool = False, invalidate_signatures: bool = False,
         password: str | None = None, check: bool = True,
-    ) -> dict[str, Any]:
+    ) -> reports.RedactReport:
         """Remove text, regex matches or rectangles, using the CLI's verified writer.
 
         Regions are {'page': 1, 'rect': [x, y, width, height]} in display points
@@ -367,15 +423,15 @@ class Tpdf:
             if enabled:
                 args.append(flag)
         return self.run('redact', *args, '--', source, input_json=payload,
-                        password=password, check=check).report
+                        password=password, check=check).typed
 
-    def identities(self) -> dict[str, Any]:
+    def identities(self) -> reports.IdentitiesReport:
         """List usable OS-held signing certificates and rejected ones with reasons.
 
         Enumeration does not sign. Pass a chosen certificate's id to sign(); the
         client never chooses the first available identity automatically.
         """
-        return self.run('identities').report
+        return self.run('identities').typed
 
     def sign(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
@@ -389,7 +445,7 @@ class Tpdf:
         contact: str | None = None,
         hide: Sequence[str] | None = None,
         timestamp: str | None = None, long_term: bool = False, force: bool = False,
-    ) -> dict[str, Any]:
+    ) -> reports.SignReport:
         """Sign with an explicitly selected OS-held certificate; no key is exported.
 
         Use identities()['usable'] to select its SHA-256 id (or its sha1
@@ -478,4 +534,4 @@ class Tpdf:
             args.append('--long-term')
         if force:
             args.append('--force')
-        return self.run('sign', *args, '--', source).report
+        return self.run('sign', *args, '--', source).typed
