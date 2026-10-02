@@ -1,12 +1,14 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { TOOL_ACTIONS, TOOL_GROUPS, type ToolGroup, type ToolItem } from "./lib/toolbar";
+  import { TOOL_ACTIONS, TOOL_GROUPS, styleOptions, type ArmedTool, type ToolGroup, type ToolItem } from "./lib/toolbar";
+  import { icon } from "./lib/icons";
   import { DEFAULT_SWATCH, swatch, swatchBackground } from "./lib/markcolors";
   import { message } from "./lib/i18n";
 
   let {
     state: commandState,
     active = null,
+    armed = null,
     drawing = null,
     erasing = false,
     selected = 0,
@@ -18,6 +20,7 @@
   }: {
     state: Record<string, { enabled: boolean; title: string }>;
     active: string | null;
+    armed?: ArmedTool;
     drawing: number | null;
     erasing: boolean;
     selected: number;
@@ -39,9 +42,11 @@
   const options = TOOL_GROUPS.filter((group) =>
     ["color", "width"].includes(group.id),
   );
+  const colors = TOOL_GROUPS.find((group) => group.id === "color")!;
   let selectedSwatch = $derived(swatch(colorId) ?? DEFAULT_SWATCH);
   let unfinished = $derived((drawing ?? 0) > 0);
   let inTool = $derived(active !== null || drawing !== null || erasing);
+  let offered = $derived(styleOptions({ armed, drawing: drawing !== null, erasing }));
 
   function toolPressed(id: string): boolean {
     if (id === "draw") return drawing !== null || erasing || /^(Box|Ellipse|Stamp)/.test(active ?? "");
@@ -74,7 +79,7 @@
 
   $effect(() => {
     // Enablement and tool completion can remove the current toolbar tab stop.
-    void commandState; void drawing; void active; void erasing; void open; void host;
+    void commandState; void drawing; void active; void erasing; void open; void host; void offered;
     void tick().then(() => rove());
   });
 
@@ -85,6 +90,20 @@
   function invoke(id: string) {
     open = null;
     run(id);
+  }
+
+  /**
+   * A colour is a setting, not an action: the menu it was picked from stays open.
+   *
+   * `run` hands the keyboard to the page before it dispatches, and focus leaving
+   * the toolbar closes whatever menu is open. So the menu is put back in the
+   * same turn, before anything is redrawn, and the swatch takes the focus again.
+   */
+  function choose(id: string) {
+    const menu = open;
+    run(id);
+    open = menu;
+    void tick().then(() => host?.querySelector<HTMLButtonElement>(`button[data-choice="${id}"]`)?.focus());
   }
 
   function outside(event: PointerEvent) {
@@ -130,6 +149,11 @@
     buttons[index]?.focus();
   }
 
+  /** The colour and width buttons show a picture only, so this is their name. */
+  function optionLabel(group: ToolGroup): string {
+    return `${group.label}: ${group.id === "color" ? selectedSwatch.name : widthLabel}`;
+  }
+
   function toggle(label: string) {
     open = open === label ? null : label;
   }
@@ -164,9 +188,10 @@
       data-testid={group.id === "color" ? "markcolor" : group.id === "width" ? "marknib" : undefined}
       aria-expanded={open === group.id}
       disabled={unfinished && !option}
-      title={group.id === "highlight" && selected === 0 ? "Select text first, then choose a highlight or underline" : group.label}
+      title={group.id === "highlight" && selected === 0 ? "Select text first, then choose a highlight or underline" : option ? optionLabel(group) : group.label}
+      aria-label={option ? optionLabel(group) : undefined}
       onclick={() => toggle(group.id)}
-    >{#if group.id === "color"}<span class="swatch" style:background={swatchBackground(selectedSwatch)} aria-hidden="true"></span>{/if}{group.label}{group.id === "color" ? `: ${selectedSwatch.name}` : group.id === "width" && widthLabel ? `: ${widthLabel}` : ""}<span class="chevron" aria-hidden="true"></span></button>
+    >{#if group.id === "color"}<span class="swatch" style:background={swatchBackground(selectedSwatch)} aria-hidden="true"></span>{:else if group.icon}<span class="icon" use:icon={group.icon}></span>{/if}{#if !option}{group.label}{/if}<span class="chevron" aria-hidden="true"></span></button>
     {#if open === group.id}
       <div class="popup" aria-label={group.label}>
         {#if group.id === "highlight" && selected === 0}
@@ -175,6 +200,18 @@
         {#each group.items as item}
           {@render itemButton(item, option)}
         {/each}
+        {#if group.id === "highlight"}
+          <p class="hint">{colors.label}: {selectedSwatch.name}</p>
+          <div class="swatches" role="group" aria-label={colors.label}>
+            {#each colors.items as item}
+              <button class="swatch-button" data-choice={item.id} aria-pressed={item.swatch!.id === selectedSwatch.id}
+                aria-label={item.label} title={item.swatch!.id === "default" ? message("defaultColorHint") : item.label}
+                onclick={() => choose(item.id)}>
+                <span class="swatch" style:background={swatchBackground(item.swatch!)} aria-hidden="true"></span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
   </div>
@@ -186,15 +223,15 @@
     {@render dropdown(group)}
   {/each}
   <div class="history">
-    <button disabled={!enabled("edit.undo")} title={commandState["edit.undo"]?.title ?? "Undo"} onclick={() => invoke("edit.undo")}>Undo</button>
-    <button disabled={!enabled("edit.redo")} title={commandState["edit.redo"]?.title ?? "Redo"} onclick={() => invoke("edit.redo")}>Redo</button>
+    <button disabled={!enabled("edit.undo")} title={commandState["edit.undo"]?.title ?? "Undo"} aria-label="Undo" onclick={() => invoke("edit.undo")}><span class="icon" use:icon={"undo"}></span></button>
+    <button disabled={!enabled("edit.redo")} title={commandState["edit.redo"]?.title ?? "Redo"} aria-label="Redo" onclick={() => invoke("edit.redo")}><span class="icon" use:icon={"redo"}></span></button>
   </div>
-  <button class:pressed={!inTool} aria-pressed={!inTool} disabled={unfinished} title={unfinished ? "Finish or discard this drawing first" : "Select text and marks"} onclick={cancel}>Select</button>
+  <button class:pressed={!inTool} aria-pressed={!inTool} disabled={unfinished} title={unfinished ? "Finish or discard this drawing first" : "Select text and marks"} onclick={cancel}><span class="icon" use:icon={"select"}></span>Select</button>
   {#each basicGroups.filter((group) => group.id === "highlight") as group}
     {@render dropdown(group)}
   {/each}
   {#each TOOL_ACTIONS as action}
-    <button class:pressed={toolPressed(action.id)} aria-pressed={toolPressed(action.id)} disabled={!enabled(action.id)} title={commandState[action.id]?.title ?? action.label} onclick={() => invoke(action.id)}>{action.label}</button>
+    <button class:pressed={toolPressed(action.id)} aria-pressed={toolPressed(action.id)} disabled={!enabled(action.id)} title={commandState[action.id]?.title ?? action.label} onclick={() => invoke(action.id)}>{#if action.icon}<span class="icon" use:icon={action.icon}></span>{/if}{action.label}</button>
   {/each}
   {#each basicGroups.filter((group) => group.id === "draw") as group}
     {@render dropdown(group)}
@@ -221,9 +258,6 @@
       </div>
     {/if}
   </div>
-  <div class="options">
-    {#each options as group}{@render dropdown(group, true)}{/each}
-  </div>
   {#if inTool}
     <div class="tool-state" role="status">
       <span data-testid={drawing !== null ? "drawing" : erasing ? "erasing" : "armed"}>{drawing !== null ? `Drawing${drawing > 0 ? `: ${drawing} stroke${drawing === 1 ? "" : "s"}` : " - press and drag"}` : erasing ? "Erasing marks" : active}</span>
@@ -233,13 +267,19 @@
       {:else}
         <button onclick={cancel}>{erasing ? "Stop" : "Cancel"}</button>
       {/if}
+      <!-- What the armed tool draws with, in the row that names it; see `styleOptions`. -->
+      {#if offered.color || offered.width}
+        <div class="options">
+          {#each options.filter((group) => group.id === "color" ? offered.color : offered.width) as group}{@render dropdown(group, true)}{/each}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
 
 <style>
   .tools { display: flex; align-items: center; gap: 3px; min-height: 40px; padding: 3px 10px; box-sizing: border-box; flex-wrap: wrap; flex: none; border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent); background: Canvas; color: CanvasText; font: 13px/1.4 system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
-  button { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 4px; min-height: 32px; padding: 4px 9px; white-space: nowrap; cursor: pointer; }
+  button { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 4px; min-height: 32px; padding: 4px 9px; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
   button:hover:not(:disabled), .pressed { background: color-mix(in srgb, CanvasText 9%, Canvas); }
   button:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
   button:disabled { opacity: .45; cursor: default; }
@@ -248,21 +288,25 @@
   .history { border-right: 1px solid color-mix(in srgb, CanvasText 18%, transparent); padding-right: 6px; margin-right: 3px; }
   .options { margin-left: auto; }
   .dropdown { position: relative; }
-  .chevron { display: inline-block; width: 5px; height: 5px; border-bottom: 1px solid; border-right: 1px solid; transform: rotate(45deg); margin: 0 2px 3px 8px; }
+  .chevron { display: inline-block; width: 5px; height: 5px; border-bottom: 1px solid; border-right: 1px solid; transform: rotate(45deg); margin: 0 2px 3px 2px; }
   .popup { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; display: flex; flex-direction: column; min-width: 175px; max-width: min(310px, calc(100vw - 24px)); max-height: min(65vh, 440px); overflow-y: auto; padding: 5px; border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); background: Canvas; border-radius: 6px; box-shadow: 0 4px 16px #0003; }
   .popup button { text-align: left; white-space: normal; }
-  .swatch { display: inline-block; width: 16px; height: 16px; flex: none; box-sizing: border-box; border-radius: 50%; border: 1px solid color-mix(in srgb, CanvasText 45%, transparent); vertical-align: -3px; margin-right: 7px; }
-  .popup .color-item { display: flex; align-items: center; gap: 3px; }
+  .swatch { display: inline-block; width: 16px; height: 16px; flex: none; box-sizing: border-box; border-radius: 50%; border: 1px solid color-mix(in srgb, CanvasText 45%, transparent); vertical-align: -3px; }
+  .popup button { display: block; }
+  .popup .color-item { display: flex; align-items: center; gap: 8px; }
   .color-item[aria-pressed="true"] { background: color-mix(in srgb, CanvasText 9%, Canvas); }
   .selection { width: 8px; height: 8px; flex: none; margin-left: auto; border-radius: 50%; }
   .selection.selected { background: CanvasText; }
   .options .popup, .more { left: auto; right: 0; }
   .hint { font-size: 12px; margin: 5px 9px; opacity: .7; }
+  .swatches { display: flex; gap: 2px; padding: 0 4px 3px; }
+  .popup .swatch-button { display: inline-flex; min-height: 28px; padding: 4px; }
+  .swatch-button[aria-pressed="true"] { border-color: CanvasText; }
   .compact { display: none; }
   .tool-state { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 32px; border-top: 1px solid color-mix(in srgb, CanvasText 10%, Canvas); }
   .tool-state span { min-width: 0; overflow-wrap: anywhere; }
-  .tool-state button { flex-shrink: 0; border-color: color-mix(in srgb, CanvasText 20%, Canvas); }
+  .tool-state > button, .tool-state .dropdown > button { flex-shrink: 0; border-color: color-mix(in srgb, CanvasText 20%, Canvas); }
   .finish { color: HighlightText; background: Highlight; }
-  @media (max-width: 1100px) { .secondary, .options { display: none; } .compact { display: block; } }
+  @media (max-width: 1180px) { .secondary { display: none; } .compact { display: block; } }
   @media (max-width: 680px) { .tools { gap: 1px; padding-inline: 5px; } button { padding-inline: 6px; } .options { margin-left: 0; } .popup { position: fixed; top: auto; left: 8px; right: 8px; min-width: 0; max-width: none; } .options .popup, .more { left: 8px; right: 8px; } }
 </style>

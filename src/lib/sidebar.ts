@@ -49,6 +49,7 @@
  * table of contents.
  */
 
+import { iconElement, type IconName } from "./icons";
 import { placeholder } from "./panelrow";
 import {
   Expansion,
@@ -203,19 +204,17 @@ export class Sidebar {
     this.tablist = document.createElement("div");
     this.tablist.setAttribute("role", "tablist");
     this.tablist.setAttribute("aria-label", "Sidebar");
-    // **Wraps, because the labels do not fit across 260 pixels.** Measured in a
-    // real window on 2026-08-25, when there were five: the buttons wanted 293 px
-    // of content --- Outline 58, Pages 50, Results 57, Comments 78, Marks 50 ---
-    // and with the row's own padding and gaps that is 318 against 247 available.
-    // Without wrapping the last tab is clipped by the host's `overflow:hidden`:
-    // still in the DOM, still `role="tab"`, and unreachable by a pointer.
+    // **Six pictures in one row, each named by its `aria-label` and `title`.**
+    // They were words until 2026-10-02, and the words did not fit: measured in a
+    // real window on 2026-08-25 with five tabs, the buttons wanted 318 px
+    // against 247 available, so the row wrapped to two and took the list's
+    // space. An icon is 16 px, so six fit with room.
     //
-    // There are six now and the sixth has not been measured, which changes
-    // nothing about the decision and is the reason wrapping was chosen over
-    // trimming the padding: that fit by 6 px at five labels and would have
-    // broken on the next one. Wrapping is correct at every width and takes a
-    // second row exactly when it needs one. `viewer_check.py`'s "every sidebar
-    // tab fits inside the panel" is what says so, and it needs a screen.
+    // `flex-wrap` stays, because it is correct at every width: a tab that does
+    // not fit goes to a second row, where without it the host's
+    // `overflow:hidden` clips it --- still in the DOM, still `role="tab"`, and
+    // unreachable by a pointer. `viewer_check.py`'s "every sidebar tab fits
+    // inside the panel" is what says so, and it needs a screen.
     this.tablist.style.cssText =
       "flex:none;display:flex;flex-wrap:wrap;gap:0.2rem;padding:0.3rem 0.4rem;" +
       "border-bottom:1px solid color-mix(in srgb, currentColor 10%, transparent);";
@@ -245,27 +244,27 @@ export class Sidebar {
       if (id !== undefined) this.focus(id);
     });
 
-    const outlinePanel = this.panel("outline", "Outline");
+    const outlinePanel = this.panel("outline", "Outline", "outline");
     outlinePanel.append(this.notice, this.tree);
     this.host.append(this.tablist, outlinePanel);
 
-    const pagesPanel = this.panel("pages", "Pages");
+    const pagesPanel = this.panel("pages", "Pages", "thumbnails");
     this.host.appendChild(pagesPanel);
     if (opts.pages) this.strip = new Thumbnails(pagesPanel, opts.pages);
 
-    const resultsPanel = this.panel("results", "Results");
+    const resultsPanel = this.panel("results", "Results", "results");
     this.host.appendChild(resultsPanel);
     this.hits = new Results(resultsPanel, opts.results);
 
-    const commentsPanel = this.panel("comments", "Comments");
+    const commentsPanel = this.panel("comments", "Comments", "comment");
     this.host.appendChild(commentsPanel);
     this.notes = new CommentList(commentsPanel, opts.comments);
 
-    const marksPanel = this.panel("marks", "Marks");
+    const marksPanel = this.panel("marks", "Marks", "highlight");
     this.host.appendChild(marksPanel);
     this.mine = new MarkList(marksPanel, opts.marks);
 
-    const redactionsPanel = this.panel("redactions", "Redactions");
+    const redactionsPanel = this.panel("redactions", "Redactions", "redact");
     this.host.appendChild(redactionsPanel);
     this.pending = new RedactList(redactionsPanel, opts.redactions);
 
@@ -274,14 +273,19 @@ export class Sidebar {
   }
 
   /** Builds one tab and its panel, wired to each other by id. */
-  private panel(tab: Tab, label: string): HTMLElement {
+  private panel(tab: Tab, label: string, icon: IconName): HTMLElement {
     const button = document.createElement("button");
     button.setAttribute("role", "tab");
     button.id = `tpdf-tab-${tab}`;
     button.setAttribute("aria-controls", `tpdf-panel-${tab}`);
-    button.textContent = label;
+    // The picture is the face and the word is the name: a screen reader and a
+    // hovering pointer both get the label, and the SVG is `aria-hidden`.
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.appendChild(iconElement(icon));
     button.style.cssText =
-      "font:inherit;flex:1;padding:0.15rem 0.4rem;border:0;background:none;" +
+      "font:inherit;flex:1;display:flex;justify-content:center;align-items:center;" +
+      "padding:0.35rem 0.4rem;border:0;background:none;" +
       "color:inherit;cursor:default;border-radius:4px;";
     button.addEventListener("click", () => this.selectTab(tab));
     this.tablist.appendChild(button);
@@ -405,8 +409,14 @@ export class Sidebar {
       button.tabIndex = on ? 0 : -1;
       button.style.background = on
         ? "color-mix(in srgb, currentColor 12%, transparent)"
-        : "";
-      button.style.fontWeight = on ? "600" : "400";
+        // **`none`, not the empty string.** Clearing the inline value hands the
+        // button back to the web view's own grey face, which is darker than
+        // the selected tint and made every tab but the selected one look
+        // pressed.
+        : "none";
+      // No weight to change now that the face is a picture; the dimmed ones
+      // are what make the selected tab read as selected in both themes.
+      button.style.opacity = on ? "1" : "0.6";
       const panel = this.panels.get(name);
       if (panel) panel.style.display = on ? "flex" : "none";
     }

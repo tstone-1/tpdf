@@ -26,6 +26,17 @@ have the binary.)
 
 ### Changed
 
+- **The window has one row less, and its common buttons are icons.** Open, the
+  sidebar toggle, Save, Print, Find, Undo, Redo, the page arrows and the tab
+  close are drawn as icons with a tooltip and an accessible name each; the tool
+  row keeps its words and gains an icon beside each. The six sidebar tabs are
+  six icons in one row where they were words in two. The colour and width
+  controls no longer hold a row of their own: they sit in the armed tool's
+  status row, shown only for a tool that uses them, and a highlight's colour is
+  chosen in the Highlight menu, which stays open while it is picked. Save a
+  copy left the top row and remains in the Document menu. The icons are
+  Lucide's (ISC), vendored under `vendor/icons/` and listed in the notices.
+
 - **A document timestamp is no longer shown as a second signature.** The archive timestamp
   that `--long-term` adds was headed `Signature — Signature2`, which read as a second party
   having signed. Document properties now head it `Document timestamp — Signature2`, and

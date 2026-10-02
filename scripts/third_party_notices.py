@@ -467,6 +467,33 @@ def render(
     add("```")
     add("")
 
+    # The toolbar icons are copied into `src/lib/icons.ts`, so no package manager
+    # knows about them and neither sweep below can see them. Enumerated from the
+    # directory and held to a digest, for the fonts' reason: a file that changed
+    # or appeared without the manifest saying so is a finding, not a detail.
+    icon_root = ROOT / "vendor" / "icons"
+    icon_manifest = json.loads((icon_root / "manifest.json").read_text(encoding="utf-8"))
+    drawn = {item["file"] for item in icon_manifest["files"]}
+    if drawn != {path.name for path in icon_root.glob("*.svg")}:
+        raise ValueError("bundled icon manifest does not enumerate every icon")
+    if icon_manifest["license"] != "ISC" or not drawn:
+        raise ValueError("bundled icon license or inventory is invalid")
+    for item in icon_manifest["files"]:
+        if hashlib.sha256((icon_root / item["file"]).read_bytes()).hexdigest() != item["sha256"]:
+            raise ValueError("bundled icon bytes differ from the pinned manifest")
+    add("## Bundled icons")
+    add("")
+    add(
+        f"{len(drawn)} toolbar icons are taken from Lucide ({icon_manifest['version']}), "
+        "distributed under the ISC licence; those Lucide derived from Feather are "
+        "under the MIT licence reproduced with it."
+    )
+    add("")
+    add("```")
+    add("\n".join(line.rstrip() for line in (icon_root / icon_manifest["license_file"]).read_text(encoding="utf-8").strip().splitlines()))
+    add("```")
+    add("")
+
     add("## PDFium, and the libraries compiled into it")
     add("")
     add(

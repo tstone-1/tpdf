@@ -1,0 +1,101 @@
+{
+  "license": "ISC",
+  "version": "1.49.0",
+  "commit": "5a92b9ba262de5bf10e864219883267672c05db8",
+  "source": "https://github.com/lucide-icons/lucide/tree/1.49.0/icons",
+  "license_file": "LICENSE",
+  "files": [
+    {
+      "file": "chevron-left.svg",
+      "sha256": "83b0681aa38bf55e9d52a1e4b4cced624abe1fe7678ecafda133a574f1161d93"
+    },
+    {
+      "file": "chevron-right.svg",
+      "sha256": "2758143d7b2434e4aa7307dfd34405c87909ff4052f21b5f3f40d45224b4f19b"
+    },
+    {
+      "file": "file-text.svg",
+      "sha256": "52ca55846c202335fb870c8aa23e9345630ec10489303756d62e750f7109605c"
+    },
+    {
+      "file": "files.svg",
+      "sha256": "97adf06fc0511e7a40be93ecda04466ed196718ab4a5e3a62b1148cc49697775"
+    },
+    {
+      "file": "folder-open.svg",
+      "sha256": "ee57452b40e71df310214091dd9da1941a397c83197b8ff8d7ae66dd4242578b"
+    },
+    {
+      "file": "highlighter.svg",
+      "sha256": "8e6662b0c5bded9e68721e87592270c27af6e89321076e356eba8bb8b0d98a00"
+    },
+    {
+      "file": "layout-grid.svg",
+      "sha256": "b8903f61d09b1d75e55c71158277d26570962f69c2099446a251871e0a2d6678"
+    },
+    {
+      "file": "list-tree.svg",
+      "sha256": "e4c994b829b8b4d0ddc66c1ce14f9f56d0347e37b1b1fb124111831a61ec3890"
+    },
+    {
+      "file": "message-square.svg",
+      "sha256": "5812a3be783fdcd73efd2b6026e03131e4b8c6649e7d52aa2dc7bf2e2023a59d"
+    },
+    {
+      "file": "mouse-pointer.svg",
+      "sha256": "9541b5c7cbf62f65801a1e6206db1290f077556ea9a9abb87a1ae497980eaf8e"
+    },
+    {
+      "file": "panel-left.svg",
+      "sha256": "029f67b9e3eeb7ddf7c7c499b174c50388725e8ea50d4ea59ed7dbaf8d61cb82"
+    },
+    {
+      "file": "pencil.svg",
+      "sha256": "7e1ca7a6f5c1eb949671df762f2baadd32f5bd841d43153c3a15279af7d78d0c"
+    },
+    {
+      "file": "plus.svg",
+      "sha256": "7f6af73bf1ff6c4bca3f18351c8d1bdec6749c0c2530c4de5da85d520c21df17"
+    },
+    {
+      "file": "printer.svg",
+      "sha256": "fa9a6381687bc519a62eb9eac2492d5d51e8e659182822296b6e14bf2f00ecfb"
+    },
+    {
+      "file": "redo-2.svg",
+      "sha256": "4cbd2cdebc70b6b7979c681ed3f313d9cbb102465dcf7d0d2d6a72c937b344bc"
+    },
+    {
+      "file": "save.svg",
+      "sha256": "ee9d56a7fec4b20dd6689546d41f68219ea8cbd67f99bd17a1bdaff5be6edb53"
+    },
+    {
+      "file": "search.svg",
+      "sha256": "283d371c2e433817bb9c0c8310caa6c77fa4177c0f4f1168d9c83b97af7389dc"
+    },
+    {
+      "file": "signature.svg",
+      "sha256": "95f263135c8fd02849c60d5413cd116fdcaaca996ef04fc7c5006967824cf2bf"
+    },
+    {
+      "file": "text-cursor-input.svg",
+      "sha256": "2fb7eae5bb95caed3b961e14d27a2a14ba47ae4c387bd2f9346eed3f5d08de6b"
+    },
+    {
+      "file": "text-search.svg",
+      "sha256": "7714e379a9719102d7d080c8f76f93b51e8bdff211ba9a25d1d408ecd935af48"
+    },
+    {
+      "file": "type.svg",
+      "sha256": "82c514732330f9c36c0f1f7fd1034634fa6ad21ba2016ffa76cf5d9608c3d6b1"
+    },
+    {
+      "file": "undo-2.svg",
+      "sha256": "efad2edbbd2be6038cc23fd64df2d012fad5cc6460dfbf227cfa3d990e9e897f"
+    },
+    {
+      "file": "x.svg",
+      "sha256": "4a9cdab38fbb96162e7dace28e33f4ca0e49d8963a6162abc3d4691b7d675117"
+    }
+  ]
+}

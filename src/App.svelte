@@ -16,6 +16,7 @@
   import { TabLabelSize } from "./lib/tablabels";
   import Toolbar from "./Toolbar.svelte";
   import { toolbarState } from "./lib/toolbar";
+  import { icon } from "./lib/icons";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
@@ -3959,15 +3960,15 @@
 
 <main>
   <header>
-    <button title="Open a PDF" onclick={pickAndOpen} disabled={opening || rasterCopyBusy || documentBusy}>Open</button>
+    <button title="Open a PDF" aria-label="Open a PDF" onclick={pickAndOpen} disabled={opening || rasterCopyBusy || documentBusy}><span class="icon" use:icon={"open"}></span></button>
     {#if title}
-      <button class="sidebar-toggle" aria-pressed={sidebarShown} title="Toggle sidebar" onclick={toggleSidebar}>Sidebar</button>
-      <button title={toolState['file.save']?.title} disabled={!toolState['file.save']?.enabled}
-        onclick={() => runToolbarCommand('file.save')}>Save</button>
-      <button class="secondary-file" disabled={!toolState['file.saveCopy']?.enabled}
-        onclick={() => runToolbarCommand('file.saveCopy')}>Save a copy</button>
-      <button class="secondary-file" disabled={!toolState['file.print']?.enabled}
-        onclick={() => runToolbarCommand('file.print')}>Print</button>
+      <button class="sidebar-toggle" aria-pressed={sidebarShown} title="Toggle sidebar" aria-label="Toggle sidebar" onclick={toggleSidebar}><span class="icon" use:icon={"sidebar"}></span></button>
+      <button title={toolState['file.save']?.title} aria-label="Save" disabled={!toolState['file.save']?.enabled}
+        onclick={() => runToolbarCommand('file.save')}><span class="icon" use:icon={"save"}></span></button>
+      <!-- Save a copy is in the Document menu, one row down, and no longer here too. -->
+      <button class="secondary-file" title={toolState['file.print']?.title} aria-label="Print"
+        disabled={!toolState['file.print']?.enabled}
+        onclick={() => runToolbarCommand('file.print')}><span class="icon" use:icon={"print"}></span></button>
     {/if}
     <span class="document-name">
       {#if !title}<span class="title">tpdf</span>{/if}
@@ -3978,12 +3979,12 @@
     </span>
     {#if status}
       <div class="navigation" aria-label="Page navigation">
-        <button aria-label="Previous page" disabled={!toolState['nav.previousPage']?.enabled}
-          onclick={() => runToolbarCommand('nav.previousPage')}>&lt;</button>
+        <button aria-label="Previous page" title={toolState['nav.previousPage']?.title} disabled={!toolState['nav.previousPage']?.enabled}
+          onclick={() => runToolbarCommand('nav.previousPage')}><span class="icon" use:icon={"previous"}></span></button>
         <button title="Go to page" onclick={() => runToolbarCommand('nav.goToPage')}>
           {status.page} / {status.pageCount}</button>
-        <button aria-label="Next page" disabled={!toolState['nav.nextPage']?.enabled}
-          onclick={() => runToolbarCommand('nav.nextPage')}>&gt;</button>
+        <button aria-label="Next page" title={toolState['nav.nextPage']?.title} disabled={!toolState['nav.nextPage']?.enabled}
+          onclick={() => runToolbarCommand('nav.nextPage')}><span class="icon" use:icon={"next"}></span></button>
       </div>
       <details class="zoom-menu" bind:this={zoomMenu}>
         <summary title={describeFit(status.fit)}>{percentOf(status.zoom)}%</summary>
@@ -3996,7 +3997,7 @@
           {/each}
         </div>
       </details>
-      <button aria-pressed={findShown} title="Find in document" onclick={focusFind}>Find</button>
+      <button aria-pressed={findShown} title="Find in document" aria-label="Find in document" onclick={focusFind}><span class="icon" use:icon={"find"}></span></button>
     {/if}
     <button title="All commands ({label('app.palette')})" onclick={openPaletteFromToolbar}>Commands</button>
     {#if updateLabel(updateState)}
@@ -4015,7 +4016,7 @@
   </header>
   {#if title}
     <Toolbar state={toolState}
-      active={status?.armed ? armedLabel(status.armed) : null}
+      active={status?.armed ? armedLabel(status.armed) : null} armed={status?.armed ?? null}
       drawing={status?.drawing ?? null} erasing={status?.erasing != null}
       colorId={markColor.id} widthLabel={markNib.name}
       selected={status?.selected ?? 0} run={runToolbarCommand}
@@ -4161,11 +4162,11 @@
           </button>
           <button class="tab-close" title={`Close ${tabLabels[index]}`}
             aria-label={`Close ${tabLabels[index]}`} disabled={opening || documentBusy}
-            onclick={() => void closeTab(tab.id)}>x</button>
+            onclick={() => void closeTab(tab.id)}><span class="icon" use:icon={"close"}></span></button>
         </div>
       {/each}
       <button class="tab-open" title="Open PDFs in new tabs" aria-label="Open PDFs in new tabs"
-        disabled={opening || documentBusy} onclick={pickAndOpen}>+</button>
+        disabled={opening || documentBusy} onclick={pickAndOpen}><span class="icon" use:icon={"add"}></span></button>
     </div>
   {/if}
   {#if title}
@@ -4198,7 +4199,7 @@
   .document-tab [role="tab"] { display:flex; flex:1 1 auto; align-items:center; gap:6px; min-width:0; padding:0.4em 0.8em; }
   .tab-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .document-tab [aria-label="Unsaved changes"] { flex:none; }
-  .document-tab .tab-close { padding:0.25em 0.6em; margin:3px; }
+  .document-tab .tab-close { display:flex; align-items:center; padding:0.25em 0.4em; margin:3px; }
   .document-tab .tab-close:hover { background:color-mix(in srgb, CanvasText 14%, transparent); }
   .tab-open { align-self:center; flex-shrink:0; }
 
@@ -4275,6 +4276,12 @@
     border-radius: 5px;
     white-space: nowrap;
     flex: none;
+    /* Centres a button whose whole face is an icon; one holding text is
+       unchanged by it. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
   button:hover:not(:disabled), summary:hover {
     background: color-mix(in srgb, CanvasText 8%, Canvas);

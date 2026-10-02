@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
-import { TOOL_ACTIONS, TOOL_GROUPS, toolbarState } from "./toolbar";
+import { TOOL_ACTIONS, TOOL_GROUPS, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
 import { cssColor, MARK_COLORS, PALETTE, swatchBackground } from "./markcolors";
 
 function harness() {
@@ -75,5 +75,39 @@ describe("toolbar command surface", () => {
     registry.find("file.save")!.keys = "Cmd+S";
     expect(toolbarState(registry)["file.save"]!.title).toBe("Save (Cmd+S)");
     expect(toolbarState(registry)["edit.draw"]).toEqual({ enabled: false, title: "Unavailable" });
+  });
+});
+
+describe("when the colour and width controls are offered", () => {
+  const idle = { armed: null as ArmedTool, drawing: false, erasing: false };
+
+  it("offers neither with nothing armed", () => {
+    expect(styleOptions(idle)).toEqual({ color: false, width: false });
+  });
+
+  it("offers both while the pen is armed, which the viewer reports as drawing", () => {
+    expect(styleOptions({ ...idle, drawing: true })).toEqual({ color: true, width: true });
+  });
+
+  it("offers each tool what it uses", () => {
+    const cases: [ArmedTool, boolean, boolean][] = [
+      ["note", true, false],
+      ["textbox", true, false],
+      ["square", true, true],
+      ["ellipse", true, true],
+      ["ink", true, true],
+      ["stamp", false, false],
+      ["signature", false, false],
+      ["crop", false, false],
+      ["redact", false, false],
+      ["place", false, false],
+    ];
+    for (const [armed, color, width] of cases) {
+      expect(styleOptions({ ...idle, armed }), String(armed)).toEqual({ color, width });
+    }
+  });
+
+  it("offers neither while erasing, even if the pen is still reported", () => {
+    expect(styleOptions({ ...idle, erasing: true, drawing: true })).toEqual({ color: false, width: false });
   });
 });

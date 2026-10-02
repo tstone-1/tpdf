@@ -232,6 +232,9 @@ export function installFakeDom(width = 900, height = 700): FakeDom {
 
   const document = {
     createElement: (tag: string) => new FakeElement(tag),
+    // The icons are SVG, and SVG is the one thing built with the namespaced
+    // call. The fake has no namespaces to keep apart, so the tag is the element.
+    createElementNS: (_namespace: string, tag: string) => new FakeElement(tag),
     /**
      * A text node, modelled as an element with no tag and its text set.
      *
