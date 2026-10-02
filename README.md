@@ -10,6 +10,12 @@ SumatraPDF's speed with Acrobat's capability, and a UI where you never hunt for 
 [Releases](https://github.com/tstone-1/tpdf/releases) page. Free, MIT-licensed, no account,
 no telemetry; your documents are not uploaded anywhere.
 
+With Homebrew on a Mac:
+
+```
+brew install --cask tstone-1/tpdf/tpdf
+```
+
 ## What it does
 
 **Fast to open, with the pages beside the text.** From launch to the first page painted

@@ -6391,6 +6391,19 @@ macOS through a confirmed system question, because tpdf was already the default 
 that ran it. Its read-back and its declined path were exercised there. No release mechanics
 changed.
 
+**26.10.2 publication, 2026-10-02:** `Audit` and CI were green on `a70e6f4` before the tag,
+which is the commit after `Release v26.10.2`: it rewrites the release notes inside
+`release.yml`, which still said "New in 26.10.1" when the release commit was made. The
+`Release` run for `v26.10.2` skipped its gates on that account and both platform jobs passed
+at the first attempt. The draft held 8 assets, counted with GraphQL, and
+`scripts/publish_release.py v26.10.2 --publish` published it. Without authentication the
+`.dmg`, the `.msi` and the `-setup.exe` answer 200 and `latest.json` offers 26.10.2 for
+`darwin-aarch64` and `windows-x86_64`. The downloaded `.dmg` staples, `codesign --deep
+--strict` accepts the application, Gatekeeper reads it as Notarized Developer ID, and the
+bundled `tpdf-cli` reports 26.10.2. Step 12 is the owner's and is not recorded here yet.
+Next time, re-read the notes in `release.yml` before the release commit, so the tag can sit
+on it.
+
 **26.10.1 verification, macOS arm64, 2026-10-01:** all 29 gates passed on the final tree
 (2,425 Rust tests with nine documented ignored, 1,999 frontend tests), and `check_windows.py`
 type-checked the Windows tree. CI was green on both legs at the commit before the version
@@ -8050,6 +8063,14 @@ starts at 0 and increments within the month.
     another step is not a step anybody executes; nothing can go red for it, since no runner
     runs it and no gate covers it. The trap is *A draft release is invisible, and the tag
     beside it says the work shipped*.
+
+    **Then the Homebrew cask** (from 26.10.2). In the tap `tstone-1/homebrew-tpdf`, set
+    `version` and `sha256` in `Casks/tpdf.rb` to the published `.dmg`
+    (`shasum -a 256 tpdf_<version>_aarch64.dmg`), commit and push. Check it with
+    `brew audit --cask --online tstone-1/tpdf/tpdf` and `brew livecheck --cask
+    tstone-1/tpdf/tpdf`. The cask's `livecheck` block reads the latest full release: without
+    it Homebrew takes the engine prerelease tag `pdfium-...` for the version. To install for
+    a test without touching `/Applications`, pass `--appdir=<folder>`.
 
 12. **Apply the update from the previous release, by hand.** This is the only end-to-end
     proof the updater works, and no gate, harness or unit test can stand in for it:
