@@ -566,6 +566,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("text-runs", "text-runs a.pdf --page 1 --json"),
         ("render", "render a.pdf -o page.png --json"),
         ("path", "path --add"),
+        ("completions", "completions zsh"),
     ];
     let names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
     assert_eq!(names, lines.map(|(name, _)| name).to_vec());
@@ -863,6 +864,8 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
         timestamp: None,
         revocation: None,
         revocation_chain: None,
+        pades_level: None,
+        pades: None,
     }
 }
 
@@ -1619,6 +1622,15 @@ fn wording() -> serde_json::Value {
         }
     }
 
+    let pades: Vec<serde_json::Value> = [
+        crate::pades::Level::B,
+        crate::pades::Level::T,
+        crate::pades::Level::Lt,
+        crate::pades::Level::Lta,
+    ]
+    .iter()
+    .map(|level| serde_json::json!({ "level": level, "sentence": words::pades_sentence(*level) }))
+    .collect();
     serde_json::json!({
         "integrity": integrities,
         "trust": trusts,
@@ -1628,6 +1640,7 @@ fn wording() -> serde_json::Value {
         "chain": chains,
         "after_signing": after,
         "after_redaction": after_redaction,
+        "pades": pades,
         // The window offers these by name and the tool takes their names:
         // `signtimestamp.test.ts` holds its list to this one.
         "timestamp_servers": crate::tsa::SERVERS,
@@ -1680,6 +1693,8 @@ fn full_signature() -> report::Signature {
             false,
         )),
         revocation_chain: Some(super::verify::chain_report(&sample_chain(), false)),
+        pades_level: Some(crate::pades::Level::Lta),
+        pades: Some(words::pades_sentence(crate::pades::Level::Lta)),
         timestamp: Some(super::verify::timestamp_report(
             &crate::docinfo::Timestamp {
                 when: "2026-09-26 18:20:14 UTC".into(),
@@ -1785,6 +1800,8 @@ fn bare_signature() -> report::Signature {
         timestamp: None,
         revocation: None,
         revocation_chain: None,
+        pades_level: None,
+        pades: None,
     }
 }
 
@@ -2793,14 +2810,24 @@ fn a_mistyped_command_is_offered_the_nearest_one() {
 /// `search` over a match, a match across a page break, a document with a page
 /// that has no text, and one that could not be read.
 fn search_sample() -> report::Searched {
-    let hit = |page, end_page, query, before: &str, hit: &str, after: &str| report::Hit {
-        page,
-        end_page,
-        query,
-        before: before.into(),
-        hit: hit.into(),
-        after: after.into(),
-    };
+    let hit =
+        |page, end_page: Option<u32>, query, before: &str, hit: &str, after: &str| report::Hit {
+            page,
+            end_page,
+            query,
+            before: before.into(),
+            hit: hit.into(),
+            after: after.into(),
+            // One rectangle on the page it starts on, and one more on the page it
+            // ends on when it runs over a break.
+            rects: std::iter::once(page)
+                .chain(end_page)
+                .map(|page| report::HitRect {
+                    page,
+                    rect: [72.0, 96.5, 61.25, 13.0],
+                })
+                .collect(),
+        };
     report::Searched {
         schema: report::SCHEMA,
         command: "search".into(),
@@ -2877,9 +2904,41 @@ fn search_reads_its_line_and_refuses_one_with_nothing_to_find() {
             pages: Some(vec![2, 3]),
             password_env: None,
             json: true,
+            annotate: None,
+            color: None,
         }
     );
+    let marking = parse(&argv(
+        "a.pdf --text x --annotate squiggly --color 1,0.9,0.2",
+    ))
+    .expect("marking");
+    assert_eq!(marking.annotate, Some(super::search::Markup::Squiggly));
+    assert_eq!(marking.color, Some([1.0, 0.9, 0.2]));
     let cases = [
+        (
+            "search a.pdf --text x --annotate box",
+            "highlight, underline, strikeout and squiggly",
+        ),
+        (
+            "search a.pdf --text x --annotate highlight --json",
+            "leave out `--json`",
+        ),
+        (
+            "search a.pdf b.pdf --text x --annotate highlight",
+            "there are several",
+        ),
+        (
+            "search a.pdf --text x --color 1,0,0",
+            "there is no `--annotate`",
+        ),
+        (
+            "search a.pdf --text x --annotate highlight --color 2,0,0",
+            "from 0 to 1",
+        ),
+        (
+            "search a.pdf --text x --annotate highlight --color 1,0",
+            "from 0 to 1",
+        ),
         ("search --text x", "needs a document"),
         ("search a.pdf", "needs something to find"),
         ("search a.pdf --text", "needs a value"),
@@ -2998,4 +3057,178 @@ fn search_orders_matches_by_page_and_position_whichever_query_found_them() {
     );
     assert_eq!(file.pages_without_text, vec![2]);
     assert_eq!(file.pages_searched, 3);
+}
+
+/// `-` is standard input for the commands that only read, and a file of that
+/// name for the ones that write.
+#[test]
+fn a_reading_command_takes_its_document_from_standard_input() {
+    for line in [
+        "info -",
+        "verify - --strict",
+        "text - --pages 1",
+        "search - --text x",
+        "fields -",
+    ] {
+        assert!(matches!(parse(&argv(line)), Ok(Line::Run(_))), "{line}");
+    }
+    // `render` writes a file and compares it with its input by path, so it
+    // is one of the commands that do not.
+    assert!(refused("render - -o page.png").contains("has no option `-`"));
+
+    use std::io::Read;
+    let document = b"%PDF-1.7 not really, and that is not this function's business".to_vec();
+    let (mut file, len) = super::spooled(&mut document.as_slice()).expect("spooled");
+    assert_eq!(len, document.len());
+    let mut back = Vec::new();
+    file.read_to_end(&mut back)
+        .expect("read back from the start");
+    assert_eq!(back, document);
+    // Two in a row are two files: the name is a counter, not the clock.
+    let (mut second, _) = super::spooled(&mut b"second".as_slice()).expect("second");
+    let mut other = String::new();
+    second.read_to_string(&mut other).expect("read");
+    assert_eq!(other, "second");
+
+    // Nothing on the pipe, which is also what a second `-` finds.
+    let why = super::spooled(&mut std::io::empty()).expect_err("empty");
+    assert!(why.contains("standard input is empty"), "{why}");
+    assert!(why.contains("cannot be given twice"), "{why}");
+
+    // No file is left behind under a name.
+    let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+        .expect("temp dir")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("tpdf-stdin-{}-", std::process::id()))
+        })
+        .collect();
+    #[cfg(unix)]
+    assert!(left.is_empty(), "{left:?}");
+    // On Windows the two handles above are still open, and close with them.
+    #[cfg(windows)]
+    assert!(left.len() <= 2, "{left:?}");
+}
+
+#[test]
+fn a_search_plan_marks_every_rectangle_of_every_match_and_refuses_one_it_cannot_place() {
+    use super::search::{plan, Markup, MAX_PLAN_OPERATIONS};
+    let report = search_sample();
+    let file = &report.files[0];
+    let value = |plan: &super::search::Plan| serde_json::to_value(plan).expect("json");
+    let made = value(&plan(file, Markup::Underline, Some([0.0, 0.5, 1.0])).expect("plan"));
+    assert_eq!(made["schema"], 1);
+    let operations = made["operations"].as_array().expect("operations");
+    // Three matches, the last over a page break: four rectangles.
+    assert_eq!(operations.len(), 4);
+    assert_eq!(
+        operations[0],
+        serde_json::json!({
+            "op": "annotate", "page": 1, "kind": "underline",
+            "rect": [72.0, 96.5, 61.25, 13.0], "color": [0.0, 0.5, 1.0],
+        })
+    );
+    let pages: Vec<u64> = operations
+        .iter()
+        .map(|o| o["page"].as_u64().expect("page"))
+        .collect();
+    assert_eq!(pages, vec![1, 1, 1, 2]);
+    // No colour asked for: `edit`'s own default applies, so none is written.
+    let plain = value(&plan(file, Markup::Highlight, None).expect("plan"));
+    assert!(plain["operations"][0].get("color").is_none());
+    // As the shortest decimal, not the float widened: 0.9, not 0.8999999761581421.
+    let yellow = plan(file, Markup::Highlight, Some([1.0, 0.9, 0.2])).expect("plan");
+    let text = serde_json::to_string(&yellow).expect("json");
+    assert!(text.contains(r#""color":[1.0,0.9,0.2]"#), "{text}");
+    assert_eq!(plain["operations"][0]["kind"], "highlight");
+
+    // A match with no position would be silently left unmarked.
+    let mut placeless = file.clone();
+    placeless.matches[1].rects.clear();
+    let why = plan(&placeless, Markup::Highlight, None).expect_err("refused");
+    assert!(
+        why.contains("have no position") && why.contains("4.82 m"),
+        "{why}"
+    );
+
+    // More than one plan holds.
+    let mut many = file.clone();
+    let one = many.matches[0].clone();
+    many.matches = vec![one; MAX_PLAN_OPERATIONS + 1];
+    let why = plan(&many, Markup::Highlight, None).expect_err("too many");
+    assert!(why.contains("1001 rectangles"), "{why}");
+    many.matches.truncate(MAX_PLAN_OPERATIONS);
+    assert!(plan(&many, Markup::Highlight, None).is_ok());
+}
+
+#[test]
+fn every_shell_completes_every_command_and_every_option_its_usage_names() {
+    use super::completions::{options, parse, script, Shell};
+    // The options come out of the usage line, so the control is that reading:
+    // known options found, and a hyphen inside a word not taken for one.
+    let of = |name: &str| options(COMMANDS.iter().find(|c| c.name == name).expect(name));
+    assert_eq!(
+        of("search"),
+        [
+            "--annotate",
+            "--case-sensitive",
+            "--color",
+            "--help",
+            "--json",
+            "--pages",
+            "--password-env",
+            "--pattern",
+            "--text",
+            "--whole-word"
+        ]
+    );
+    assert!(of("text").contains(&"-o".to_string()));
+    assert!(of("sign").contains(&"--long-term".to_string()));
+    assert_eq!(of("identities"), ["--help", "--json"]);
+    // `text-runs` is a command and `--page` its option; `-runs` is nothing.
+    assert_eq!(
+        of("text-runs"),
+        ["--help", "--json", "--page", "--password-env"]
+    );
+
+    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell] {
+        let text = script(shell);
+        for command in COMMANDS {
+            assert!(
+                text.contains(command.name),
+                "{shell:?} lacks {}",
+                command.name
+            );
+            for option in options(command) {
+                let needle = match shell {
+                    // fish names an option without its dashes.
+                    Shell::Fish => option.trim_start_matches('-').to_string(),
+                    _ => option.clone(),
+                };
+                assert!(
+                    text.contains(&needle),
+                    "{shell:?} lacks {} {option}",
+                    command.name
+                );
+            }
+        }
+        // Both names the tool is run by.
+        assert!(text.contains("tpdf-cli"), "{shell:?}");
+    }
+    assert_eq!(parse(&argv("pwsh")).expect("pwsh").shell, Shell::PowerShell);
+    for (line, expected) in [
+        ("completions", "needs a shell"),
+        (
+            "completions tcsh",
+            "the shells are bash, zsh, fish and powershell",
+        ),
+        ("completions bash zsh", "takes one shell"),
+        ("completions --install", "has no option"),
+    ] {
+        let why = refused(line);
+        assert!(why.contains(expected), "`{line}` gave `{why}`");
+    }
 }

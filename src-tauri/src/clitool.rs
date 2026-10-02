@@ -22,6 +22,15 @@
 //! reader is shown is [`plan`] asked again after the change, not the exit code
 //! of the command that made it.
 //!
+//! **Two links since 2026-10-02, `tpdf` and `tpdf-cli`, for one reason:** on
+//! Windows the tool can only be `tpdf-cli`, because `tpdf.exe` is the
+//! application, so a script written on one platform did not run on the other.
+//! `tpdf-cli` is now a name on both. [`LINK`] stays the one that decides
+//! everything --- whether the tool counts as installed, and whether a refusal
+//! is an error --- and [`ALIAS`] follows it: made, repointed and removed with
+//! it under the same rule, and left alone, with a sentence, when the path
+//! holds something that is not tpdf's.
+//!
 //! Windows has no counterpart to install: `tpdf-cli.exe` is installed beside
 //! `tpdf.exe` by both installers, and the answer says where.
 
@@ -29,6 +38,9 @@ use std::path::{Path, PathBuf};
 
 /// Where the link goes.
 pub const LINK: &str = "/usr/local/bin/tpdf";
+
+/// The same tool under the name it has on Windows, so one script runs on both.
+pub const ALIAS: &str = "/usr/local/bin/tpdf-cli";
 
 /// The tool's file name inside the bundle.
 pub const TOOL: &str = if cfg!(windows) {
@@ -167,13 +179,16 @@ pub fn apply(install: bool) -> Result<String, String> {
     let tool = tool()?;
     let link = Path::new(LINK);
     match plan(install, link, &tool) {
-        Step::Present => {
+        // Settled only when the second name is too: an installation from
+        // before 2026-10-02 has the link and not the alias, and installing
+        // again is how it gains it.
+        Step::Present if changes(install, link, Path::new(ALIAS), &tool).is_empty() => {
             return Ok(format!(
                 "Already installed: {LINK} links to {}.",
                 tool.display()
             ))
         }
-        Step::Absent => {
+        Step::Absent if changes(install, link, Path::new(ALIAS), &tool).is_empty() => {
             return Ok(format!(
                 "The command-line tool is not installed ({LINK} does not exist)."
             ))
@@ -183,13 +198,23 @@ pub fn apply(install: bool) -> Result<String, String> {
                 "{why}, so it was left alone. Remove it yourself to install tpdf's."
             ))
         }
-        Step::Create | Step::Repoint(_) | Step::Remove => {}
+        Step::Create | Step::Repoint(_) | Step::Remove | Step::Present | Step::Absent => {}
     }
-    if unprivileged(install, link, &tool).is_err() {
-        privileged(install, &tool)?;
+    let alias = Path::new(ALIAS);
+    let both = changes(install, link, alias, &tool);
+    if both
+        .iter()
+        .any(|path| unprivileged(install, path, &tool).is_err())
+    {
+        // Asked again: what the unprivileged attempt managed is not redone.
+        privileged(install, &tool, &changes(install, link, alias, &tool))?;
     }
     let after = plan(install, link, &tool);
-    let text = outcome(install, &after, &tool);
+    let mut text = outcome(install, &after, &tool);
+    if let Some(also) = alias_outcome(install, &plan(install, alias, &tool)) {
+        text.push(' ');
+        text.push_str(&also);
+    }
     if matches!(
         (install, &after),
         (true, Step::Present) | (false, Step::Absent)
@@ -197,6 +222,38 @@ pub fn apply(install: bool) -> Result<String, String> {
         Ok(text)
     } else {
         Err(text)
+    }
+}
+
+/// Which of the two paths installing or removing has to change, the link first.
+///
+/// A path holding something that is not tpdf's is never among them.
+#[must_use]
+pub fn changes<'a>(install: bool, link: &'a Path, alias: &'a Path, tool: &Path) -> Vec<&'a Path> {
+    [link, alias]
+        .into_iter()
+        .filter(|path| {
+            matches!(
+                plan(install, path, tool),
+                Step::Create | Step::Repoint(_) | Step::Remove
+            )
+        })
+        .collect()
+}
+
+/// What to add about [`ALIAS`], asked after the change; `None` when it is as
+/// the link is and there is nothing to add.
+#[must_use]
+pub fn alias_outcome(install: bool, after: &Step) -> Option<String> {
+    match (install, after) {
+        (true, Step::Present) => Some(
+            "`tpdf-cli` runs it too, which is its name on Windows, so one script runs on both."
+                .into(),
+        ),
+        (false, Step::Absent) => None,
+        (_, Step::Foreign(why)) => Some(format!("{why}, so it was left alone.")),
+        (true, _) => Some(format!("{ALIAS} was not installed.")),
+        (false, _) => Some(format!("{ALIAS} is still there.")),
     }
 }
 
@@ -220,25 +277,11 @@ fn unprivileged(install: bool, link: &Path, tool: &Path) -> std::io::Result<()> 
 
 /// The change, through the system's administrator prompt.
 #[cfg(target_os = "macos")]
-fn privileged(install: bool, tool: &Path) -> Result<(), String> {
-    // `quoted form of` is AppleScript's own shell quoting, applied to an
-    // argument rather than to text spliced into the script: the tool's path is
-    // never part of either program.
-    let script = if install {
-        "on run argv\n\
-         do shell script \"/bin/mkdir -p /usr/local/bin && /bin/ln -sfn \" & quoted form of \
-         (item 1 of argv) & \" /usr/local/bin/tpdf\" with prompt \"tpdf wants to install its \
-         command-line tool as /usr/local/bin/tpdf.\" with administrator privileges\n\
-         end run"
-    } else {
-        "on run argv\n\
-         do shell script \"/bin/rm -f /usr/local/bin/tpdf\" with prompt \"tpdf wants to \
-         remove its command-line tool, /usr/local/bin/tpdf.\" with administrator privileges\n\
-         end run"
-    };
+fn privileged(install: bool, tool: &Path, paths: &[&Path]) -> Result<(), String> {
+    let script = admin_script(install, paths);
     let out = std::process::Command::new("/usr/bin/osascript")
         .arg("-e")
-        .arg(script)
+        .arg(&script)
         .arg(tool)
         .output()
         .map_err(|e| format!("the administrator prompt could not be shown: {e}"))?;
@@ -250,6 +293,44 @@ fn privileged(install: bool, tool: &Path) -> Result<(), String> {
         return Err("Nothing was changed: the administrator prompt was cancelled.".into());
     }
     Err(format!("Nothing was changed: {}", said.trim()))
+}
+
+/// The AppleScript that makes or removes `paths` behind the administrator
+/// prompt, in one prompt for both.
+///
+/// `quoted form of` is AppleScript's own shell quoting, applied to an argument
+/// rather than to text spliced into the script: the tool's path is never part
+/// of either program. The link paths *are* spliced, and may be, because they
+/// are [`LINK`] and [`ALIAS`] --- constants with no character a shell reads ---
+/// and anything else is refused here rather than quoted.
+#[cfg(any(target_os = "macos", test))]
+fn admin_script(install: bool, paths: &[&Path]) -> String {
+    let named: Vec<&str> = paths
+        .iter()
+        .filter_map(|path| path.to_str())
+        .filter(|path| *path == LINK || *path == ALIAS)
+        .collect();
+    let list = named.join(" and ");
+    let shell = if install {
+        let links: Vec<String> = named
+            .iter()
+            .map(|path| {
+                format!(" && /bin/ln -sfn \" & quoted form of (item 1 of argv) & \" {path}")
+            })
+            .collect();
+        format!("\"/bin/mkdir -p /usr/local/bin{}\"", links.concat())
+    } else {
+        format!("\"/bin/rm -f {}\"", named.join(" "))
+    };
+    let prompt = if install {
+        format!("tpdf wants to install its command-line tool as {list}.")
+    } else {
+        format!("tpdf wants to remove its command-line tool, {list}.")
+    };
+    format!(
+        "on run argv\ndo shell script {shell} with prompt \"{prompt}\" with administrator \
+         privileges\nend run"
+    )
 }
 
 /// A path as a reader types it. `canonicalize` on Windows answers in the
@@ -422,6 +503,84 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_second_name_follows_the_first_and_a_foreign_one_is_left_alone() {
+        let dir = scratch("alias");
+        let tool = dir.join("tpdf.app/Contents/MacOS").join(TOOL);
+        std::fs::write(&tool, b"#!").expect("tool");
+        let (link, alias) = (dir.join("tpdf"), dir.join("tpdf-cli"));
+
+        // A fresh machine: both are made.
+        assert_eq!(
+            changes(true, &link, &alias, &tool),
+            vec![link.as_path(), alias.as_path()]
+        );
+        assert!(changes(false, &link, &alias, &tool).is_empty());
+
+        // An installation from before the alias existed: only the alias is owed.
+        std::os::unix::fs::symlink(&tool, &link).expect("link");
+        assert_eq!(changes(true, &link, &alias, &tool), vec![alias.as_path()]);
+        std::os::unix::fs::symlink(&tool, &alias).expect("alias");
+        assert!(changes(true, &link, &alias, &tool).is_empty());
+        assert_eq!(
+            changes(false, &link, &alias, &tool),
+            vec![link.as_path(), alias.as_path()]
+        );
+
+        // Somebody else's `tpdf-cli`: never among the changes, either way, and said.
+        std::fs::remove_file(&alias).expect("unlink");
+        std::fs::write(&alias, b"somebody's script").expect("file");
+        assert!(changes(true, &link, &alias, &tool).is_empty());
+        assert_eq!(changes(false, &link, &alias, &tool), vec![link.as_path()]);
+        let said = alias_outcome(true, &plan(true, &alias, &tool)).expect("said");
+        assert!(said.contains("left alone"), "{said}");
+        assert_eq!(std::fs::read(&alias).expect("kept"), b"somebody's script");
+
+        assert!(alias_outcome(true, &Step::Present)
+            .expect("said")
+            .contains("Windows"));
+        assert_eq!(alias_outcome(false, &Step::Absent), None);
+        assert!(alias_outcome(true, &Step::Create)
+            .expect("said")
+            .contains("was not installed"));
+        assert!(alias_outcome(false, &Step::Remove)
+            .expect("said")
+            .contains("still there"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_administrator_script_names_only_tpdfs_two_paths() {
+        let (link, alias) = (Path::new(LINK), Path::new(ALIAS));
+        let both = admin_script(true, &[link, alias]);
+        assert_eq!(
+            both,
+            "on run argv\ndo shell script \"/bin/mkdir -p /usr/local/bin && /bin/ln -sfn \" & \
+             quoted form of (item 1 of argv) & \" /usr/local/bin/tpdf && /bin/ln -sfn \" & quoted \
+             form of (item 1 of argv) & \" /usr/local/bin/tpdf-cli\" with prompt \"tpdf wants to \
+             install its command-line tool as /usr/local/bin/tpdf and /usr/local/bin/tpdf-cli.\" \
+             with administrator privileges\nend run"
+        );
+        let one = admin_script(true, &[alias]);
+        assert!(
+            one.contains("/usr/local/bin/tpdf-cli\" with prompt"),
+            "{one}"
+        );
+        assert!(!one.contains("/usr/local/bin/tpdf &&"), "{one}");
+        assert_eq!(
+            admin_script(false, &[link, alias]),
+            "on run argv\ndo shell script \"/bin/rm -f /usr/local/bin/tpdf \
+             /usr/local/bin/tpdf-cli\" with prompt \"tpdf wants to remove its command-line tool, \
+             /usr/local/bin/tpdf and /usr/local/bin/tpdf-cli.\" with administrator \
+             privileges\nend run"
+        );
+        // A path that is not one of the two never reaches the script.
+        let odd = admin_script(false, &[Path::new("/etc/passwd; rm -rf /"), link]);
+        assert!(!odd.contains("passwd"), "{odd}");
+        assert!(odd.contains("/bin/rm -f /usr/local/bin/tpdf\""), "{odd}");
     }
 
     #[test]

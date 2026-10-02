@@ -347,6 +347,10 @@ fn the_archive_timestamp_covers_the_signature_and_its_validation_data() {
     };
     assert_eq!(ours.field, signed.field);
     assert_eq!(archive.kind, "ETSI.RFC3161");
+    // The whole of what `--long-term` is for, by name: the signature has every
+    // part of B-LTA, and the timestamp that seals it has no level of its own.
+    assert_eq!(ours.pades, Some(crate::pades::Level::Lta), "{ours:?}");
+    assert_eq!(archive.pades, None);
     assert!(archive.covers_whole_file, "{archive:?}");
     assert_eq!(
         archive.integrity.as_ref().map(|i| i.verdict),

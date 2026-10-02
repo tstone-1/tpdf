@@ -209,7 +209,9 @@
                 }
               ],
               "sentence": "not revoked — the document's revocation data says neither the signer's certificate nor the issuing certificate tpdf test issuing CA had been revoked, and it reaches 2026-09-26 18:20:13 UTC, the signing date the signer gave, which is their own claim."
-            }
+            },
+            "pades_level": "B-LTA",
+            "pades": "B-LTA by its parts — signed, timestamped, carrying revocation data that answers for every certificate, and sealed by a document timestamp. Conformance to the standard is not tested."
           }
         ],
         "unsigned_signature_fields": 1,

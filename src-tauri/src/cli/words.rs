@@ -495,6 +495,36 @@ pub fn timestamp_sentence(
 }
 
 /// The timestamp authority's row: `integrity.ts`'s
+/// `padesRow(level).value`: the PAdES level a signature has the parts of.
+///
+/// Every answer ends by saying what was not done. The level is read from the
+/// parts the document carries; a validator's conformance test is a different
+/// and larger thing, and a reader handed "B-LTA" with no qualification would
+/// take it for that.
+#[must_use]
+pub fn pades_sentence(level: crate::pades::Level) -> String {
+    use crate::pades::Level;
+    let parts = match level {
+        Level::B => "a CAdES signature with no timestamp, so its only date is the signer's own",
+        Level::T => {
+            "signed and timestamped; the document does not carry revocation data that \
+             answers for every certificate"
+        }
+        Level::Lt => {
+            "signed, timestamped, and carrying revocation data that answers for every \
+             certificate; no document timestamp seals that data"
+        }
+        Level::Lta => {
+            "signed, timestamped, carrying revocation data that answers for every \
+             certificate, and sealed by a document timestamp"
+        }
+    };
+    format!(
+        "{} by its parts — {parts}. Conformance to the standard is not tested.",
+        level.name()
+    )
+}
+
 /// `authorityRow(trust, from, until).value`. `from` and `until` are the
 /// authority's certificate's dates, empty when unknown.
 #[must_use]

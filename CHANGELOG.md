@@ -21,6 +21,28 @@ have the binary.)
 
 ### Added
 
+- **A signature's PAdES level is named.** Document properties show a `PAdES level` row
+  under Format, and `verify` and `info` print it: `B-B`, `B-T`, `B-LT` or `B-LTA`, with the
+  parts that make it up. The JSON reports gain `pades_level` and `pades`. The level is read
+  from what the document carries and tpdf already checked: the signature holds, a timestamp
+  is attested, the document's own revocation data answers `good` for every certificate, and
+  a later document timestamp seals that. It is never rounded up, and every answer ends
+  "Conformance to the standard is not tested", because this is not a validator's verdict.
+  Shown for CAdES signatures only (`ETSI.CAdES.detached`). This was the last open point of
+  issue 1.
+- **`tpdf search` says where each match is, and can mark them.** Each match in `--json`
+  carries `rects`. `--annotate highlight|underline|strikeout|squiggly` prints an edit plan
+  with one mark per match, so `tpdf search a.pdf --text X --annotate highlight | tpdf edit
+  a.pdf --plan - -o marked.pdf` highlights every X. The Python client has `mark_matches()`.
+- **The reading commands take a document from a pipe.** `info`, `verify`, `text`, `search`
+  and `fields` read standard input when the document is `-`.
+- **Shell completion.** `tpdf completions bash|zsh|fish|powershell` prints a completion
+  script, generated from the same registry `help` prints, so it cannot fall behind it.
+- **`tpdf-cli` is the tool's name on macOS too.** *Install command-line tool…* now links
+  both `/usr/local/bin/tpdf` and `/usr/local/bin/tpdf-cli`, so a script written for
+  Windows, where the tool can only be `tpdf-cli`, runs unchanged. Choose the menu item once
+  more on an existing installation to add the second name.
+
 - **`tpdf search` says where a document mentions something.** `tpdf search *.pdf --text
   "North Pier"` prints one line per match with the words around it, as `file:page: text`,
   and `--json` gives the same as data. It takes `redact`'s `--text`, `--pattern`,

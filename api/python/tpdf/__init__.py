@@ -298,6 +298,50 @@ class Tpdf:
             password=password,
         ).typed
 
+    def mark_matches(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        texts: Sequence[str] = (), patterns: Sequence[str] = (),
+        kind: str = 'highlight', color: Sequence[float] | None = None,
+        pages: str | None = None, case_sensitive: bool = False, whole_word: bool = False,
+        force: bool = False, invalidate_signatures: bool = False,
+        password: str | None = None,
+    ) -> reports.EditReport | None:
+        """Highlight, underline, strike out or squiggle every match, into output.
+
+        search() finds the matches and edit() marks each of their rectangles.
+        Returns the edit report, or None when nothing matched: no file is
+        written then, so an output that exists means something was marked.
+        color is red, green and blue from 0 to 1; without it edit's default applies.
+
+        A match whose characters have no position on the page raises ValueError
+        before anything is written, rather than being left unmarked in silence.
+        """
+        if kind not in ('highlight', 'underline', 'strikeout', 'squiggly'):
+            raise ValueError('kind must be highlight, underline, strikeout or squiggly')
+        if color is not None:
+            color = [float(channel) for channel in color]
+            if len(color) != 3 or not all(0 <= channel <= 1 for channel in color):
+                raise ValueError('color must be red, green and blue from 0 to 1')
+        found = self.search(source, texts=texts, patterns=patterns, pages=pages,
+                            case_sensitive=case_sensitive, whole_word=whole_word,
+                            password=password)['files'][0]
+        operations = []
+        for match in found['matches']:
+            if not match['rects']:
+                raise ValueError(
+                    f"page {match['page']}: {match['hit']!r} matched and has no position, "
+                    'so it cannot be marked'
+                )
+            for area in match['rects']:
+                operation = {'op': 'annotate', 'page': area['page'], 'kind': kind, 'rect': area['rect']}
+                if color is not None:
+                    operation['color'] = color
+                operations.append(operation)
+        if not operations:
+            return None
+        return self.edit(source, output, operations, force=force,
+                         invalidate_signatures=invalidate_signatures, password=password)
+
     def verify(self, *paths: str | os.PathLike[str], strict: bool = False) -> reports.VerifyReport:
         """Inspect signatures. With strict=True, unsigned/untrusted files raise CommandError.
 

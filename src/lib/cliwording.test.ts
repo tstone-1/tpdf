@@ -25,11 +25,13 @@ import {
   chainSentence,
   integrityRow,
   issuingCertificate,
+  padesRow,
   revocationRow,
   timestampRow,
   trustRow,
   type Chain,
   type Integrity,
+  type PadesLevel,
   type Revocation,
   type Trust,
 } from "./integrity";
@@ -128,6 +130,15 @@ describe("the command-line tool's wording", () => {
       });
     }
     expect(shown).toBeGreaterThan(0);
+  });
+
+  it("names each PAdES level as the properties dialog does", () => {
+    expect(wording.pades.map((c) => c.level)).toEqual(["B-B", "B-T", "B-LT", "B-LTA"]);
+    for (const c of wording.pades) {
+      expect(padesRow(c.level as PadesLevel)?.value, c.level).toBe(c.sentence);
+      expect(c.sentence.endsWith("Conformance to the standard is not tested.")).toBe(true);
+    }
+    expect(padesRow(null)).toBeNull();
   });
 
   it("reports a redaction as the window does", () => {

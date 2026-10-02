@@ -428,6 +428,23 @@ describe("signatureRows", () => {
       value: "certified, no changes permitted",
     });
   });
+
+  it("names the PAdES level directly under Format, and only when the worker named one", () => {
+    const rows = signatureRows({ ...signed(), pades: "B-LTA" }, 1024);
+    const names = rows.map((row) => row.name);
+    expect(names.indexOf("PAdES level")).toBe(names.indexOf("Format") + 1);
+    const value = rows.find((row) => row.name === "PAdES level")!.value;
+    expect(value.startsWith("B-LTA by its parts — ")).toBe(true);
+    expect(value).toContain("sealed by a document timestamp");
+    // The qualification is the point: a bare level reads as a validator's verdict.
+    expect(value.endsWith("Conformance to the standard is not tested.")).toBe(true);
+    // `null` from the worker, and absent from a reply older than the field.
+    for (const without of [{ ...signed(), pades: null }, signed()]) {
+      const names = signatureRows(without, 1024).map((row) => row.name);
+      expect(names).toContain("Format");
+      expect(names).not.toContain("PAdES level");
+    }
+  });
 });
 
 describe("certificationOf", () => {

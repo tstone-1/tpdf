@@ -315,6 +315,13 @@ pub struct Signature {
     /// to its root; `null` exactly when `revocation` is. Added to schema 1 on
     /// 2026-09-28, a new key.
     pub revocation_chain: Option<ChainReport>,
+    /// The PAdES baseline level the signature has the parts of --- `B-B`,
+    /// `B-T`, `B-LT` or `B-LTA` --- or `null` for a document timestamp, a
+    /// signature that is not CAdES, and one that does not hold. Read from the
+    /// parts present; conformance to the standard is not tested.
+    pub pades_level: Option<crate::pades::Level>,
+    /// That level as the properties dialog words it; `null` when the level is.
+    pub pades: Option<String>,
 }
 
 /// `docinfo::Timestamp`, with the sentences the application shows.
@@ -872,7 +879,7 @@ pub struct Search {
 }
 
 /// `tpdf search --json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Searched {
     /// Always [`SCHEMA`].
     pub schema: u32,
@@ -894,7 +901,7 @@ pub struct Query {
 }
 
 /// One document `search` was given.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchedFile {
     /// The path as given on the command line.
     pub path: String,
@@ -910,7 +917,7 @@ pub struct SearchedFile {
 }
 
 /// One match.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Hit {
     /// The page it starts on, counted from 1.
     pub page: u32,
@@ -924,6 +931,21 @@ pub struct Hit {
     pub hit: String,
     /// The text after it, whitespace collapsed.
     pub after: String,
+    /// Where it is on the page: one rectangle per run of text on a line, so a
+    /// match that wraps has two and one over a page break names two pages.
+    /// Empty when its characters have no position, which a script must not
+    /// take for "nowhere": the match is real and cannot be marked.
+    pub rects: Vec<HitRect>,
+}
+
+/// One rectangle of a [`Hit`], in the form `edit`'s `annotate` and `redact
+/// --regions` take.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HitRect {
+    /// The page, counted from 1.
+    pub page: u32,
+    /// `[x, y, width, height]` in points from the page's top-left corner.
+    pub rect: [f32; 4],
 }
 
 /// [`Search::kind`].

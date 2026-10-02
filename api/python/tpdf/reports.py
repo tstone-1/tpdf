@@ -17,6 +17,8 @@ from typing import Literal, TypedDict
 
 __all__ = [
     "REPORTS",
+    "HitRect",
+    "PadesLevel",
     "Appearance",
     "ChainCertificate",
     "ChainEnd",
@@ -173,6 +175,8 @@ RevocationReason = Literal[
 RevocationBasis = Literal["now", "claimed", "stated", "attested"]
 
 ChainEnd = Literal["root", "no_issuer", "loop"]
+
+PadesLevel = Literal["B-B", "B-T", "B-LT", "B-LTA"]
 
 TextOrder = Literal["tagged", "geometric", "none"]
 
@@ -645,6 +649,12 @@ class Signature(TypedDict):
     revocation: RevocationReport | None
     # None exactly when `revocation` is.
     revocation_chain: ChainReport | None
+    # The PAdES level the signature has the parts of; None for a document
+    # timestamp, a signature that is not CAdES, and one that does not hold.
+    # Read from the parts present; conformance to the standard is not tested.
+    pades_level: PadesLevel | None
+    # That level as a sentence; None when the level is.
+    pades: str | None
 
 
 class VerifiedFile(TypedDict):
@@ -1058,6 +1068,15 @@ class SearchQuery(TypedDict):
     query: str
 
 
+class HitRect(TypedDict):
+    """One rectangle of a match, as edit's annotate and redact's regions take it."""
+
+    # The page, counted from 1.
+    page: int
+    # [x, y, width, height] in points from the page's top-left corner.
+    rect: list[float]
+
+
 class SearchHit(TypedDict):
     """One match."""
 
@@ -1073,6 +1092,9 @@ class SearchHit(TypedDict):
     hit: str
     # The text after it, whitespace collapsed.
     after: str
+    # Where it is: one rectangle per run of text on a line. Empty when its
+    # characters have no position; the match is real and cannot be marked.
+    rects: list[HitRect]
 
 
 class SearchedFile(TypedDict):

@@ -26,7 +26,18 @@
           "query": 0,
           "before": "water was 4.82 m at the ",
           "hit": "North Pier",
-          "after": ", which is"
+          "after": ", which is",
+          "rects": [
+            {
+              "page": 1,
+              "rect": [
+                72.0,
+                96.5,
+                61.25,
+                13.0
+              ]
+            }
+          ]
         },
         {
           "page": 1,
@@ -34,7 +45,18 @@
           "query": 1,
           "before": "The highest water was ",
           "hit": "4.82 m",
-          "after": " at the North"
+          "after": " at the North",
+          "rects": [
+            {
+              "page": 1,
+              "rect": [
+                72.0,
+                96.5,
+                61.25,
+                13.0
+              ]
+            }
+          ]
         },
         {
           "page": 1,
@@ -42,7 +64,27 @@
           "query": 0,
           "before": "readings taken at the ",
           "hit": "North Pier",
-          "after": " in March"
+          "after": " in March",
+          "rects": [
+            {
+              "page": 1,
+              "rect": [
+                72.0,
+                96.5,
+                61.25,
+                13.0
+              ]
+            },
+            {
+              "page": 2,
+              "rect": [
+                72.0,
+                96.5,
+                61.25,
+                13.0
+              ]
+            }
+          ]
         }
       ]
     },

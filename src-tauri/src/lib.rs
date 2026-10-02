@@ -63,6 +63,7 @@ pub mod textview;
 // reaching the window server.
 pub mod opener;
 pub mod outline;
+pub mod pades;
 pub mod pagetree;
 pub mod print;
 #[cfg(target_os = "macos")]

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use super::args::{lexically_same, unknown, value};
 use super::report::{self, Encoding, Order, SCHEMA};
-use super::{opened, Env, Exit, Failure, Registered, Subcommand};
+use super::{Env, Exit, Failure, Registered, Subcommand};
 use crate::reading;
 use crate::save_outside::{Declined, Session};
 use crate::worker_proto::{Reply, Request};
@@ -275,7 +275,8 @@ fn read_text(
     password: Option<&str>,
 ) -> Result<report::Text, Failure> {
     let shown = command.input.display().to_string();
-    let (file, len) = opened(&command.input).map_err(|why| Failure::new(Exit::Refused, why))?;
+    let (file, len) =
+        super::opened_or_stdin(&command.input).map_err(|why| Failure::new(Exit::Refused, why))?;
     let mut session = env
         .worker()
         .session(&file, len, password)

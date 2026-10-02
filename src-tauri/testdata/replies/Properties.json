@@ -234,7 +234,8 @@
         "decided_by": 1,
         "dropped": 1,
         "end": "no_issuer"
-      }
+      },
+      "pades": "B-LTA"
     }
   ],
   "tagged": true,

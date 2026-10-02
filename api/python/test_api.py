@@ -254,6 +254,31 @@ class ClientTests(unittest.TestCase):
             with self.assertRaises((ValueError, TypeError)):
                 self.pdf.search(self.source, **bad)
 
+    def test_mark_matches_puts_a_mark_on_every_match_and_writes_nothing_for_none(self):
+        hit = self.pdf.search(self.source, texts=['ORIGINAL'])['files'][0]['matches'][0]
+        self.assertEqual([area['page'] for area in hit['rects']], [1])
+        x, y, width, height = hit['rects'][0]['rect']
+        self.assertTrue(width > 20 and 5 < height < 20, hit['rects'])
+        marked = self.root / 'marked.pdf'
+        report = self.pdf.mark_matches(self.source, marked, texts=['synthetic', 'original'],
+                                       kind='underline', color=[0, 0.5, 1])
+        self.assertEqual((report['written'], report['operations']), (True, 2))
+        comments = self.pdf.comments(marked)['comments']
+        self.assertEqual([(c['page'], c['kind']) for c in comments], [(1, 'underline')] * 2)
+        # The mark is where the match is: [left, top, right, bottom] against [x, y, w, h].
+        placed = sorted(comments, key=lambda c: c['rect'][0])[-1]['rect']
+        for got, want in zip(placed, [x, y, x + width, y + height]):
+            self.assertAlmostEqual(got, want, delta=1.5)
+        self.assertEqual(self.pdf.comments(marked)['comments'][0]['color'], [0, 0.5, 1])
+        # Nothing matched: nothing is written, and the answer says so.
+        nothing = self.root / 'nothing.pdf'
+        self.assertIsNone(self.pdf.mark_matches(self.source, nothing, texts=['zebra']))
+        self.assertFalse(nothing.exists())
+        for bad in [{'kind': 'box'}, {'color': [2, 0, 0]}, {'color': [1, 0]}]:
+            with self.assertRaises(ValueError):
+                self.pdf.mark_matches(self.source, nothing, texts=['synthetic'], **bad)
+        self.assertFalse(nothing.exists())
+
     def test_page_helpers_merge_extract_and_split_read_back(self):
         second = self.root / 'second.pdf'
         self.pdf.edit(self.source, second, [

@@ -10,7 +10,7 @@ use super::report::{
     self, ChainCertificate, ChainReport, ErrorKind, FileError, IntegrityReport, RevocationReport,
     TrustReport, SCHEMA,
 };
-use super::{json, opened, say, words, Env, Exit, Failure, Registered, Subcommand};
+use super::{json, say, words, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo;
 use crate::save_outside::Declined;
 
@@ -143,6 +143,8 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
             .revocation_chain
             .as_ref()
             .map(|c| chain_report(c, document_timestamp)),
+        pades_level: signature.pades,
+        pades: signature.pades.map(words::pades_sentence),
     }
 }
 
@@ -308,7 +310,7 @@ fn verify_one(env: &Env<'_>, path: &Path) -> report::File {
         error: Some(FileError { kind, message }),
         signatures: Vec::new(),
     };
-    let (file, len) = match opened(path) {
+    let (file, len) = match super::opened_or_stdin(path) {
         Ok(opened) => opened,
         Err(why) => return failed(ErrorKind::Unreadable, why),
     };
@@ -511,6 +513,9 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
                 chain.sentence
             ));
         }
+    }
+    if let Some(level) = &signature.pades {
+        lines.push(format!("    PAdES level: {level}"));
     }
     lines.join("\n")
 }

@@ -407,6 +407,38 @@ export function timestampRow(
   }
 }
 
+/** A PAdES baseline level, as the worker names it; see `pades.rs`. */
+export type PadesLevel = "B-B" | "B-T" | "B-LT" | "B-LTA";
+
+const PADES_PARTS: Record<PadesLevel, string> = {
+  "B-B": "a CAdES signature with no timestamp, so its only date is the signer's own",
+  "B-T":
+    "signed and timestamped; the document does not carry revocation data that answers for every certificate",
+  "B-LT":
+    "signed, timestamped, and carrying revocation data that answers for every certificate; no document timestamp seals that data",
+  "B-LTA":
+    "signed, timestamped, carrying revocation data that answers for every certificate, and sealed by a document timestamp",
+};
+
+/**
+ * The row that names the PAdES level a signature has the parts of.
+ *
+ * `null` when the worker named none: a document timestamp, a signature that
+ * is not CAdES, and one that does not hold. The level is decided in the worker
+ * (`pades.rs`) and only worded here.
+ *
+ * **Every answer ends by saying what was not done.** The level is read from
+ * the parts the document carries. A validator's conformance test is a larger
+ * thing, and "B-LTA" with no qualification would be taken for it.
+ */
+export function padesRow(level: PadesLevel | null | undefined): Row | null {
+  if (!level) return null;
+  return {
+    name: "PAdES level",
+    value: `${level} by its parts — ${PADES_PARTS[level]}. Conformance to the standard is not tested.`,
+  };
+}
+
 /**
  * The row that says whether the operating system's store vouches for the
  * timestamp authority, for timestamping.

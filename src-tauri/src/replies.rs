@@ -306,6 +306,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 }),
                 revocation: Some(revocation_sample()),
                 revocation_chain: Some(chain_sample()),
+                pades: Some(crate::pades::Level::Lta),
             }],
             tagged: Some(true),
             language: "en-GB".into(),

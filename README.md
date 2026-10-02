@@ -65,7 +65,7 @@ assert report["written"] and report["verified"]
 assert pdf.verify("contract-signed.pdf")["files"][0]["signatures"][0]["integrity"]["verdict"] == "intact"
 ```
 
-Nineteen commands in all: [Command-line tool](#command-line-tool) has each of them, how to
+Twenty commands in all: [Command-line tool](#command-line-tool) has each of them, how to
 install the tool, and the Python client.
 
 ## Status
@@ -535,7 +535,8 @@ both.
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs` and `tpdf render`
-expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows. The commands do what **Sign document…**, **Document
+expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
+and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
 window, with the same code: the document is read only by the same sandboxed worker processes,
 the private key never leaves the operating system, and every signed, filled or redacted file is
@@ -546,9 +547,10 @@ request to the same timestamp authority for the archive timestamp.
 
 **Installing it.** On macOS the tool is inside the application. Choose **Install
 command-line tool…** in the tpdf menu (or the command palette): it links
-`/usr/local/bin/tpdf` to the tool inside `tpdf.app`, and macOS asks for an administrator
-password if that folder needs one. **Uninstall command-line tool…** removes the link. A file
-already at that path that tpdf did not put there is left alone. Because it is a link, the
+`/usr/local/bin/tpdf` and `/usr/local/bin/tpdf-cli` to the tool inside `tpdf.app`, and macOS
+asks for an administrator password if that folder needs one. **Uninstall command-line
+tool…** removes both links. A file already at either path that tpdf did not put there is
+left alone. Because it is a link, the
 tool updates with the application. On Windows both installers put `tpdf-cli.exe` beside
 `tpdf.exe`, in the folder tpdf is installed in. The `-setup.exe` installer, which installs
 for you alone and needs no administrator, also adds that folder to your `PATH`, so a
@@ -557,7 +559,10 @@ the `.msi` installer, choose **Install command-line tool…** once, or run
 `tpdf-cli path --add` by its full path: both add the folder to your own `PATH`, not the
 computer's. **Uninstall command-line tool…** and `tpdf-cli path --remove` take it out, and
 `tpdf-cli path` says whether it is there. Every other entry of your `PATH` is kept as it
-was written. The examples below say `tpdf`; on Windows it is `tpdf-cli`.
+was written. The examples below say `tpdf`; on Windows it is `tpdf-cli`. `tpdf-cli` is
+the name that works on both: a script meant for both platforms should use it. (A macOS
+installation made before 26.10.2 has only `tpdf`; choose **Install command-line tool…**
+once more to add the second name.)
 <!-- built: app.installCommandLineTool app.uninstallCommandLineTool -->
 
 ```
@@ -611,6 +616,36 @@ over a page break is found and listed on the page it starts on. A page with no t
 a scan — is named on stderr, because nothing can match there and silence would read as
 "not in the document". It exits 1 when nothing matched, so `tpdf search … && …` works in a
 shell, and stops with a refusal past 10,000 matches in one document.
+
+**Marking what a search finds.** `--annotate highlight` (or `underline`, `strikeout`,
+`squiggly`) prints an edit plan with one mark per match in place of the list, and `edit`
+applies it, so highlighting every occurrence of a phrase is one line:
+
+```
+tpdf search report.pdf --text "North Pier" --annotate highlight --color 1,0.9,0.2 \
+  | tpdf edit report.pdf --plan - -o marked.pdf
+```
+
+`--color` is red, green and blue from 0 to 1; without it the marks take `edit`'s default.
+The plan is for one document, and holds at most 1,000 marks. Nothing is printed when
+nothing matched, and a match whose characters have no position on the page stops the plan
+with a refusal, since it would otherwise be left unmarked with nothing said.
+
+**Reading from a pipe.** `info`, `verify`, `text`, `search` and `fields` take `-` for the
+document and read it from standard input: `curl -s https://example.org/a.pdf | tpdf text -`.
+The commands that write a file do not, because each compares its output with its input by
+path.
+
+**Completion.** `tpdf completions bash`, `zsh`, `fish` or `powershell` prints a completion
+script for the commands, each command's options and file names, under both names of the
+tool. Load it from your shell's start-up file:
+
+```
+source <(tpdf completions bash)                                   # ~/.bashrc
+source <(tpdf completions zsh)                                    # ~/.zshrc, after compinit
+tpdf completions fish | source                                    # ~/.config/fish/config.fish
+tpdf-cli completions powershell | Out-String | Invoke-Expression  # $PROFILE
+```
 
 `tpdf help <command>`, or `--help` after a command, prints that command's summary and
 options alone. A mistyped command is answered with the nearest one.
@@ -716,6 +751,11 @@ the page as it is displayed:
   checks out and covers it, and whether this computer trusts the authority that made it —
   and what the revocation data the document itself carries says about each certificate, and
   about every certificate above the signer's and the authority's.
+  For a CAdES signature that holds it also names the **PAdES level** it has the parts of —
+  `B-B`, `B-T`, `B-LT` or `B-LTA` — as the properties dialog does under Format. The level is
+  read from the answers above and is never rounded up: an archive timestamp over a signature
+  whose revocation data does not answer for every certificate is `B-T`. It is not a
+  conformance test, and each answer says so.
   Nothing is fetched to check a signature, so a document carrying no revocation data is
   reported as not checked for it. When a signature carries an intact timestamp from an
   authority this computer trusts, its signer is judged at the time that timestamp attests
@@ -1137,7 +1177,11 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   Each match has `page` (counted from 1), `end_page` (the page it ends on when it runs over
   a page break, else null), `query` (which of `queries` found it, counted from 0), and
   `before`, `hit` and `after`: the matched text as the page spells it and the words either
-  side, whitespace collapsed. Matches are in page order, then in the order they start.
+  side, whitespace collapsed; and `rects`, where it is: one `{page, rect}` per run of text
+  on a line, `rect` being `[x, y, width, height]` in points from the page's top-left corner,
+  the form `edit`'s `annotate` and `redact --regions` take. `rects` is empty for a match
+  whose characters have no position. Matches are in page order, then in the order they
+  start.
 - `text`: `path` and `pages`, one per page read in document order, each with `page`
   (counted from 1), `order` — `tagged` (the document's own tags), `geometric` (recovered from
   the layout, as the viewer recovers it) or `none` (a page with no text) — `encoding` —
@@ -1214,7 +1258,10 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `key_compromise`, or `null`), `basis` (whose clock `moment` is: `attested`, `stated` — the
   time a timestamp states, for its own authority — `claimed`, the signer's own date, or
   `now`), `moment`, `after_moment` (revoked after an attested time, which does not undo the
-  signature) and `sentence`; `revocation_chain`, `null` exactly when `revocation` is, the same
+  signature) and `sentence`; `pades_level` (`B-B`, `B-T`, `B-LT` or `B-LTA`: the PAdES level the signature has
+  the parts of, or `null` for a document timestamp, a signature that is not CAdES and one
+  that does not hold — read from the parts present, not a conformance test) and `pades`, that
+  level as a sentence; `revocation_chain`, `null` exactly when `revocation` is, the same
   data's answer for every certificate from the signer's up to its root, judged at the same
   moment: `standing` (`revoked` when any certificate on it is revoked, `good` when every one
   is good, otherwise the most telling of `unknown`, `unchecked`, `none` and a revocation after

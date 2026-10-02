@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use super::args::unknown;
 use super::report::{self, FieldKind, FieldOption, NotEditable, SCHEMA};
 use super::text::{declined, password, variable};
-use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
+use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::forms::{self, Control, Form, Value, Widget};
 use crate::save_outside::{Declined, Session};
 use crate::worker_proto::{Reply, Request};
@@ -96,7 +96,8 @@ impl Subcommand for Fields {
     ) -> Result<Exit, Failure> {
         let password = password(self.password_env.as_deref())?;
         let shown = self.input.display().to_string();
-        let (file, len) = opened(&self.input).map_err(|why| Failure::new(Exit::Refused, why))?;
+        let (file, len) =
+            super::opened_or_stdin(&self.input).map_err(|why| Failure::new(Exit::Refused, why))?;
         let mut session = env
             .worker()
             .session(&file, len, password.as_deref())

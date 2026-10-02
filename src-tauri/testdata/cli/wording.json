@@ -38655,6 +38655,24 @@
       "trust_follows": true
     }
   ],
+  "pades": [
+    {
+      "level": "B-B",
+      "sentence": "B-B by its parts — a CAdES signature with no timestamp, so its only date is the signer's own. Conformance to the standard is not tested."
+    },
+    {
+      "level": "B-T",
+      "sentence": "B-T by its parts — signed and timestamped; the document does not carry revocation data that answers for every certificate. Conformance to the standard is not tested."
+    },
+    {
+      "level": "B-LT",
+      "sentence": "B-LT by its parts — signed, timestamped, and carrying revocation data that answers for every certificate; no document timestamp seals that data. Conformance to the standard is not tested."
+    },
+    {
+      "level": "B-LTA",
+      "sentence": "B-LTA by its parts — signed, timestamped, carrying revocation data that answers for every certificate, and sealed by a document timestamp. Conformance to the standard is not tested."
+    }
+  ],
   "revocation": [
     {
       "authority": false,

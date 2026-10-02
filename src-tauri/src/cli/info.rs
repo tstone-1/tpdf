@@ -20,7 +20,7 @@ use super::args::unknown;
 use super::report::{self, Described, ErrorKind, FileError, SCHEMA};
 use super::text::{password, variable};
 use super::verify::{counted, signature_report, signature_text};
-use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
+use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo::Properties;
 use crate::save_outside::{Declined, Session};
 use crate::worker_proto::{Reply, Request};
@@ -136,7 +136,7 @@ fn describe_one(env: &Env<'_>, path: &Path, password: Option<&str>) -> Described
         error: Some(FileError { kind, message }),
         document: None,
     };
-    let (file, len) = match opened(path) {
+    let (file, len) = match super::opened_or_stdin(path) {
         Ok(opened) => opened,
         Err(why) => return failed(ErrorKind::Unreadable, why),
     };

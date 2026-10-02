@@ -17,6 +17,14 @@
 //! works in a shell. It is the code `verify --strict` uses for "read, and the
 //! answer is no". A document that could not be read outranks it.
 //!
+//! **Every match says where it is**, as rectangles in the form `edit`'s
+//! `annotate` and `redact --regions` take, so a script can mark what it found.
+//! `--annotate KIND` does that in one step: it prints an edit plan, one
+//! `annotate` per rectangle, and `tpdf search a.pdf --text X --annotate
+//! highlight | tpdf edit a.pdf --plan - -o marked.pdf` is the whole of
+//! "highlight every X". The plan is `edit`'s input and nothing more: nothing is
+//! written here, and `edit` validates it as it does any other.
+//!
 //! **A page with no text is said, not passed over.** A scan has nothing to
 //! search, and "no matches" for it reads as "it is not in there". Every page
 //! that held no characters is listed.
@@ -28,7 +36,7 @@ use super::args::{unknown, value};
 use super::redact::{search_pages, Found};
 use super::report::{self, ErrorKind, FileError, SearchKind, SCHEMA};
 use super::text::{page_list, password, selected, variable};
-use super::{json, opened, say, Env, Exit, Failure, Registered, Subcommand};
+use super::{json, say, Env, Exit, Failure, Registered, Subcommand};
 use crate::save_outside::Declined;
 use crate::search::{Options, Prepared};
 use crate::text::PageText;
@@ -37,8 +45,8 @@ use crate::worker_proto::{Reply, Request};
 /// `search`, registered.
 pub const COMMAND: Registered = Registered {
     name: "search",
-    usage: "search <file.pdf>... (--text STR | --pattern REGEX)...\n        [--case-sensitive] [--whole-word] [--pages 1-3,7] [--password-env VAR] [--json]",
-    summary: "Prints every match of each --text and --pattern with the words\n            around it, one line per match, found as the viewer's find and\n            `redact` find it. Exit 1 when nothing matched. A page with no\n            text to search is named.",
+    usage: "search <file.pdf | ->... (--text STR | --pattern REGEX)...\n        [--case-sensitive] [--whole-word] [--pages 1-3,7] [--password-env VAR]\n        [--json | --annotate highlight|underline|strikeout|squiggly [--color r,g,b]]",
+    summary: "Prints every match of each --text and --pattern with the words\n            around it, one line per match, found as the viewer's find and\n            `redact` find it. Exit 1 when nothing matched. A page with no\n            text to search is named. --annotate prints an edit plan that\n            marks every match, for `edit --plan -`.",
     parse: boxed,
 };
 
@@ -49,7 +57,7 @@ pub const COMMAND: Registered = Registered {
 pub const MAX_MATCHES: usize = 10_000;
 
 /// `tpdf search`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Search {
     /// The documents, in the order given.
     pub files: Vec<PathBuf>,
@@ -67,7 +75,40 @@ pub struct Search {
     pub password_env: Option<String>,
     /// `--json`.
     pub json: bool,
+    /// `--annotate`: print an edit plan marking every match, in this kind.
+    pub annotate: Option<Markup>,
+    /// `--color`, for `--annotate`: red, green and blue, each 0 to 1.
+    pub color: Option<[f32; 3]>,
 }
+
+/// The kinds of mark that follow text, which are the ones a match can take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Markup {
+    /// A highlight over the words.
+    Highlight,
+    /// A line under them.
+    Underline,
+    /// A line through them.
+    Strikeout,
+    /// A wavy line under them.
+    Squiggly,
+}
+
+impl Markup {
+    /// The word `--annotate` takes and `edit`'s `annotate` calls it.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Markup::Highlight => "highlight",
+            Markup::Underline => "underline",
+            Markup::Strikeout => "strikeout",
+            Markup::Squiggly => "squiggly",
+        }
+    }
+}
+
+/// The most operations `edit` takes in one plan.
+pub const MAX_PLAN_OPERATIONS: usize = 1_000;
 
 fn boxed(args: &[String]) -> Result<Box<dyn Subcommand>, String> {
     parse(args).map(|c| Box::new(c) as Box<dyn Subcommand>)
@@ -88,6 +129,8 @@ pub fn parse(args: &[String]) -> Result<Search, String> {
         pages: None,
         password_env: None,
         json: false,
+        annotate: None,
+        color: None,
     };
     let mut positional = false;
     let mut rest = args.iter();
@@ -103,7 +146,25 @@ pub fn parse(args: &[String]) -> Result<Search, String> {
                 command.password_env = Some(variable(value(arg, &mut rest)?)?);
             }
             (false, "--json") => command.json = true,
-            (false, flag) if flag.starts_with('-') => return Err(unknown("search", flag)),
+            (false, "--annotate") => {
+                let kind = value(arg, &mut rest)?;
+                command.annotate = Some(match kind.as_str() {
+                    "highlight" => Markup::Highlight,
+                    "underline" => Markup::Underline,
+                    "strikeout" => Markup::Strikeout,
+                    "squiggly" => Markup::Squiggly,
+                    other => {
+                        return Err(format!(
+                            "`--annotate {other}`: the marks that follow text are highlight, \
+                             underline, strikeout and squiggly"
+                        ))
+                    }
+                });
+            }
+            (false, "--color") => command.color = Some(color(value(arg, &mut rest)?)?),
+            (false, flag) if flag.starts_with('-') && flag != "-" => {
+                return Err(unknown("search", flag))
+            }
             (_, path) => command.files.push(PathBuf::from(path)),
         }
     }
@@ -117,10 +178,113 @@ pub fn parse(args: &[String]) -> Result<Search, String> {
                 .into(),
         );
     }
+    if command.annotate.is_some() {
+        if command.json {
+            return Err(
+                "`--annotate` prints an edit plan, which is JSON already; leave out `--json`"
+                    .into(),
+            );
+        }
+        if command.files.len() > 1 {
+            return Err(
+                "`--annotate` writes one plan for one document, and there are several".into(),
+            );
+        }
+    } else if command.color.is_some() {
+        return Err(
+            "`--color` colours the marks `--annotate` plans, and there is no `--annotate`".into(),
+        );
+    }
     // Compiled here as well as in `run`, so a pattern that does not compile is
     // exit 2 with no document opened.
     queries(&command)?;
     Ok(command)
+}
+
+/// `--color`'s value: `r,g,b`, each from 0 to 1.
+fn color(raw: &str) -> Result<[f32; 3], String> {
+    let parts: Vec<f32> = raw
+        .split(',')
+        .filter_map(|part| part.trim().parse::<f32>().ok())
+        .filter(|channel| (0. ..=1.).contains(channel))
+        .collect();
+    <[f32; 3]>::try_from(parts).map_err(|_| {
+        format!(
+            "`--color {raw}` is not red, green and blue from 0 to 1 --- yellow is `--color 1,0.9,0.2`"
+        )
+    })
+}
+
+/// An edit plan, as `edit --plan` reads it. A type rather than a
+/// `serde_json::Value` so that an `f32` is written as the shortest decimal
+/// that names it: through a `Value` it widens, and 0.9 prints as
+/// 0.8999999761581421.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Plan {
+    /// `edit`'s schema, 1.
+    pub schema: u32,
+    /// One `annotate` per rectangle.
+    pub operations: Vec<PlanOperation>,
+}
+
+/// One `annotate` operation of a [`Plan`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PlanOperation {
+    /// Always `annotate`.
+    pub op: &'static str,
+    /// The page, counted from 1.
+    pub page: u32,
+    /// The mark.
+    pub kind: &'static str,
+    /// `[x, y, width, height]`.
+    pub rect: [f32; 4],
+    /// `--color`; left out when none was given, so `edit`'s default applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<[f32; 3]>,
+}
+
+/// The edit plan that marks every match of `file`, or the reason there is none.
+///
+/// # Errors
+///
+/// A match with no position, which would be left unmarked with nothing said,
+/// or more rectangles than one plan may hold.
+pub fn plan(
+    file: &report::SearchedFile,
+    kind: Markup,
+    color: Option<[f32; 3]>,
+) -> Result<Plan, String> {
+    if let Some(hit) = file.matches.iter().find(|hit| hit.rects.is_empty()) {
+        return Err(format!(
+            "{}: page {}: {:?} matched, but its characters have no position on the page, so it \
+             cannot be marked and no plan is printed",
+            file.path, hit.page, hit.hit
+        ));
+    }
+    let operations: Vec<PlanOperation> = file
+        .matches
+        .iter()
+        .flat_map(|hit| &hit.rects)
+        .map(|area| PlanOperation {
+            op: "annotate",
+            page: area.page,
+            kind: kind.name(),
+            rect: area.rect,
+            color,
+        })
+        .collect();
+    if operations.len() > MAX_PLAN_OPERATIONS {
+        return Err(format!(
+            "{}: {} rectangles to mark, and one edit plan holds {MAX_PLAN_OPERATIONS} --- narrow \
+             the search, or mark fewer pages at a time with --pages",
+            file.path,
+            operations.len()
+        ));
+    }
+    Ok(Plan {
+        schema: 1,
+        operations,
+    })
 }
 
 /// The queries, compiled, in report order: every `--text`, then every `--pattern`.
@@ -185,6 +349,18 @@ impl Subcommand for Search {
             if let Some(note) = textless(file) {
                 say(err, &format!("{}: {note}", env.program));
             }
+        }
+        if let Some(kind) = self.annotate {
+            // One document, by `parse`. Printed only when there is something
+            // to mark: an empty plan piped into `edit` would write a copy of
+            // the document and report success for a search that found nothing.
+            let exit = search_exit(&report);
+            if exit == Exit::Ok {
+                let plan = plan(&report.files[0], kind, self.color)
+                    .map_err(|why| Failure::new(Exit::Refused, why))?;
+                json(out, &plan);
+            }
+            return Ok(exit);
         }
         if self.json {
             json(out, &report);
@@ -286,6 +462,7 @@ pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> rep
                     before: hit.before.clone(),
                     hit: hit.hit.clone(),
                     after: hit.after.clone(),
+                    rects: rects_of(hit, found),
                 },
             )
         })
@@ -298,6 +475,27 @@ pub fn searched(path: &str, pages: usize, empty: Vec<u32>, found: &Found) -> rep
         pages_without_text: empty,
         matches: hits.into_iter().map(|(_, _, hit)| hit).collect(),
     }
+}
+
+/// Where one match is: `regions.rs`'s rectangles for each page it touches, as
+/// `[x, y, width, height]`.
+fn rects_of(hit: &crate::search::Match, found: &Found) -> Vec<report::HitRect> {
+    super::regions::halves(std::slice::from_ref(hit))
+        .iter()
+        .flat_map(|half| {
+            let areas = found
+                .texts
+                .get(&half.page)
+                .map(|text| super::regions::regions_on(text, half.page, &[*half]))
+                .unwrap_or_default();
+            areas
+                .into_iter()
+                .map(|[left, top, right, bottom]| report::HitRect {
+                    page: half.page + 1,
+                    rect: [left, top, right - left, bottom - top],
+                })
+        })
+        .collect()
 }
 
 /// One document, searched, or the reason it was not.
@@ -328,7 +526,7 @@ fn search_one(
         Declined::Refused(why) => failed(ErrorKind::Refused, format!("{shown}: {why}")),
         Declined::Failed(why) => failed(ErrorKind::Failed, format!("{shown}: {why}")),
     };
-    let (file, len) = match opened(path) {
+    let (file, len) = match super::opened_or_stdin(path) {
         Ok(opened) => opened,
         Err(why) => return failed(ErrorKind::Unreadable, why),
     };

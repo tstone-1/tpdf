@@ -41,6 +41,7 @@
 
 import {
   authorityRow,
+  padesRow,
   chainRow,
   integrityRow,
   revocationRow,
@@ -48,6 +49,7 @@ import {
   trustRow,
   type Chain,
   type Integrity,
+  type PadesLevel,
   type Revocation,
   type Trust,
 } from "./integrity";
@@ -131,6 +133,11 @@ export interface Signature {
    * which one decides it; `null` exactly when `revocation` is.
    */
   revocation_chain: Chain | null;
+  /**
+   * The PAdES baseline level this signature has the parts of, or `null`.
+   * Optional so a reply from before 2026-10-02 still reads.
+   */
+  pades?: PadesLevel | null;
 }
 
 /**
@@ -763,6 +770,10 @@ export function signatureRows(signature: Signature, bytes: number): Row[] {
 
   const how = [signature.handler, signature.kind].filter(Boolean).join(" / ");
   claimed("Format", how);
+  // Under Format, which names the encoding: this names what that encoding,
+  // with the timestamp and revocation rows above, adds up to.
+  const pades = padesRow(signature.pades);
+  if (pades) rows.push(pades);
 
   return rows;
 }

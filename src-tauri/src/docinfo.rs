@@ -356,6 +356,12 @@ pub struct Signature {
     /// first certificate is the signer's, with that answer. See
     /// [`crate::revocation::chain`]. Since 2026-09-28.
     pub revocation_chain: Option<crate::revocation::chain::Chain>,
+    /// The PAdES baseline level this signature has the parts of, when it is a
+    /// CAdES signature that holds. Set once every signature of the document
+    /// has been read, because a level depends on the document timestamps made
+    /// after it. See [`crate::pades`] for what this does and does not claim.
+    #[serde(default)]
+    pub pades: Option<crate::pades::Level>,
 }
 
 /// What the signing certificate says, as against what the signer typed.
@@ -747,6 +753,7 @@ fn scan_judged(
         let end = (bytes.len() as u64).saturating_sub(signature.appended_bytes);
         signature.appendix = Some(read_appendix(bytes, end as usize, password));
     }
+    crate::pades::assign(&mut signatures);
 
     let catalog = if readable {
         document.catalog().ok()
@@ -4486,6 +4493,10 @@ mod tests {
             // The same verdict for every certificate above the signer's, in
             // `revocation/chain.rs`, present exactly when `revocation` is.
             revocation_chain: _,
+            // **Not a fourth verdict.** A name for which of the three above
+            // are present and good, derived in `pades.rs` from their answers
+            // and from nothing else; it is `None` unless the first holds.
+            pades: _,
         } = signature;
     }
 

@@ -51,6 +51,7 @@
 //! since other documents in the same run may have been read.
 
 pub mod args;
+pub mod completions;
 mod edit;
 pub mod fields;
 pub mod fill;
@@ -475,6 +476,7 @@ pub const COMMANDS: &[Registered] = &[
     edit::TEXT_RUNS,
     render::COMMAND,
     path::COMMAND,
+    completions::COMMAND,
 ];
 
 impl Env<'_> {
@@ -573,6 +575,83 @@ pub fn usage_for(program: &str, command: &Registered) -> String {
         summary.join("\n"),
         command.usage
     )
+}
+
+/// Opens the document a reading command was given, where `-` is standard input.
+///
+/// `tpdf text - < report.pdf`, and `curl ... | tpdf search - --text invoice`:
+/// the commands that only read take a document from a pipe. The commands that
+/// write do not --- each of them compares its output with its input by path,
+/// and refuses to overwrite one with the other, which has no meaning for a
+/// stream --- so they call [`opened`] and answer `-` as a file of that name.
+///
+/// A worker reads a document through a file handle, never through this
+/// process, so the stream is spooled to a file nothing else can name and that
+/// is gone when the handle closes.
+///
+/// # Errors
+///
+/// The sentence to print: nothing on standard input, or a spool that failed.
+pub(crate) fn opened_or_stdin(path: &Path) -> Result<(std::fs::File, usize), String> {
+    if path != Path::new("-") {
+        return opened(path);
+    }
+    spooled(&mut std::io::stdin().lock())
+}
+
+/// `from`, copied to a file with no name, and its length.
+fn spooled(from: &mut dyn std::io::Read) -> Result<(std::fs::File, usize), String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = unnamed_file().map_err(|e| {
+        format!("could not make a temporary file for the document on standard input: {e}")
+    })?;
+    let len = std::io::copy(from, &mut file)
+        .map_err(|e| format!("could not read the document on standard input: {e}"))?;
+    if len == 0 {
+        return Err(
+            "standard input is empty --- `-` reads the document from a pipe, once, so it \
+             cannot be given twice"
+                .into(),
+        );
+    }
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("could not rewind the document read from standard input: {e}"))?;
+    let len = usize::try_from(len).map_err(|_| "standard input is too large".to_string())?;
+    Ok((file, len))
+}
+
+/// A read-write file in the temporary directory that no path leads to once
+/// this returns, and that the OS removes when the last handle closes.
+fn unnamed_file() -> std::io::Result<std::fs::File> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // The reader's own, whatever the umask: it is a copy of their document.
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_DELETE_ON_CLOSE: Windows cannot unlink an open file, so
+        // the removal is asked for at the open instead.
+        options.custom_flags(0x0400_0000);
+    }
+    // A counter and the process id, not the clock: two files made in the same
+    // microsecond collide on a timestamp (`docs/TRAPS.md`), and `create_new`
+    // turns a collision into an error rather than a shared file.
+    let name = format!(
+        "tpdf-stdin-{}-{}.pdf",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let path = std::env::temp_dir().join(name);
+    let file = options.open(&path)?;
+    #[cfg(unix)]
+    std::fs::remove_file(&path)?;
+    Ok(file)
 }
 
 /// Opens `path` and returns the handle and its length, refusing an empty file.
