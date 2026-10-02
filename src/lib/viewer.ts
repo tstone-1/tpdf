@@ -49,6 +49,7 @@ import {
   commentLandsAt,
   dragsABox,
   iconQuad,
+  overlayBlend,
   isMovable,
   isPath,
   paintOf,
@@ -1463,6 +1464,7 @@ export class Viewer {
     this.overlay = document.createElement("canvas");
     this.overlay.style.cssText =
       "position:absolute;left:0;top:0;pointer-events:none;";
+    this.overlay.style.mixBlendMode = overlayBlend(this.invert);
     this.overlay.setAttribute("aria-hidden", "true");
     root.appendChild(this.overlay);
     this.overlayCtx = this.overlay.getContext("2d");
@@ -2461,6 +2463,7 @@ export class Viewer {
     if (invert === this.invert) return;
     this.invert = invert;
     this.scroller.setInvert(invert);
+    this.overlay.style.mixBlendMode = overlayBlend(invert);
     this.wake();
   }
 
@@ -5875,8 +5878,10 @@ export class Viewer {
     const dpr = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
 
-    // Multiply keeps the glyphs legible underneath, which a flat fill over the
-    // tile would not: the text is already painted into the pixels.
+    // Multiply between the marks themselves, so two washes that overlap
+    // darken each other. It does nothing for the glyphs: they are on another
+    // canvas, and what keeps them legible is the overlay's own
+    // `mix-blend-mode` --- see `overlayBlend`.
     ctx.globalCompositeOperation = "multiply";
     // Marks first, and **the order no longer fails to matter**. It used to:
     // under `multiply` each layer contributes a factor independent of what is

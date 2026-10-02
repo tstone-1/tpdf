@@ -54,6 +54,12 @@ have the binary.)
   being dragged out; on release the comment landed at the press anyway. The bubble preview now
   follows the pointer while the button is held, the comment is dropped where the button is
   released, and no box is drawn.
+- **A highlight you have just made no longer fades the words under it.** Until the file was
+  saved and reopened, a new highlight was drawn as a nearly opaque yellow block and the text
+  under it showed through faintly. It is now blended with the page, so the words stay dark, as
+  they do in the saved file. Search matches and the selection are blended the same way. With
+  inverted page colours the old drawing is kept, because blending onto a dark page would hide
+  the highlight.
 
 ## [26.10.1] - 2026-10-01
 

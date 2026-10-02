@@ -26,6 +26,7 @@ import {
   commentGhostAt,
   commentLandsAt,
   dragsABox,
+  overlayBlend,
 } from "./markband";
 
 /**
@@ -690,5 +691,15 @@ describe("the comment tool's preview while the button is held", () => {
   it("draws a rubber band for every dragged shape, and none for a comment or ink", () => {
     const kinds: MarkKind[] = ["note", "ink", "square", "ellipse", "signature"];
     expect(kinds.filter((kind) => !dragsABox(kind))).toEqual(["note", "ink"]);
+  });
+});
+
+describe("how the overlay is blended with the page", () => {
+  it("multiplies on a light page, so words under a highlight stay dark", () => {
+    expect(overlayBlend(false)).toBe("multiply");
+  });
+
+  it("stays a plain overlay on an inverted page, where multiply would hide a highlight", () => {
+    expect(overlayBlend(true)).toBe("normal");
   });
 });

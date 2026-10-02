@@ -686,6 +686,22 @@ export function scrimBands(
 export const ICON_SIZE = 20;
 
 /**
+ * How the overlay canvas is blended with the page under it.
+ *
+ * The overlay is its own transparent canvas above the page tiles, so a canvas
+ * `multiply` inside it multiplies with nothing: until 2026-10-02 a fresh
+ * highlight was simply an 85% yellow rectangle over the page, and the words
+ * under it showed at 15%. It was found in the README's own screenshot. The
+ * multiply has to happen between the two canvases, which is this CSS property.
+ *
+ * **Not on an inverted page.** Multiplying onto a dark page leaves it dark, so
+ * a highlight there would vanish; the plain overlay it had is kept.
+ */
+export function overlayBlend(inverted: boolean): "multiply" | "normal" {
+  return inverted ? "normal" : "multiply";
+}
+
+/**
  * Where a comment lands when the button is pressed at `from` and released at
  * `to`: at the release.
  *

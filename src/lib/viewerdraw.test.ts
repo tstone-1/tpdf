@@ -187,6 +187,19 @@ describe("arming the tool", () => {
     viewer.destroy();
   });
 
+  it("blends the overlay with the page, and stops on an inverted page", async () => {
+    // What keeps the words under a fresh highlight dark. The canvas's own
+    // multiply cannot: the page is another canvas.
+    const viewer = build();
+    await settle();
+    expect(viewer.overlaySurface.style.mixBlendMode).toBe("multiply");
+    viewer.setInverted(true);
+    expect(viewer.overlaySurface.style.mixBlendMode).toBe("normal");
+    viewer.setInverted(false);
+    expect(viewer.overlaySurface.style.mixBlendMode).toBe("multiply");
+    viewer.destroy();
+  });
+
   it("draws nothing when a drag happens with no tool armed", async () => {
     // The control for every test below. A viewer that reported a box on any
     // drag would pass all of them, and this is the only assertion that says
