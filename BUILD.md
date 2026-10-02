@@ -8072,6 +8072,17 @@ starts at 0 and increments within the month.
     it Homebrew takes the engine prerelease tag `pdfium-...` for the version. To install for
     a test without touching `/Applications`, pass `--appdir=<folder>`.
 
+    **And winget** (first submitted for 26.10.2, as `tstone-1.tpdf`, pull request 445804 to
+    `microsoft/winget-pkgs`; not merged when this was written, so the README does not name
+    winget yet). A new version is three files under
+    `manifests/t/tstone-1/tpdf/<version>/`, copied from the previous version with
+    `PackageVersion`, `InstallerUrl`, `InstallerSha256` (of the `-setup.exe`) and
+    `ReleaseNotesUrl` changed, on a branch of the fork `tstone-1/winget-pkgs`, titled
+    `Update: tstone-1.tpdf to <version>`. Run `winget validate --manifest <folder>` first.
+    `winget install --manifest` needs local manifests enabled by an administrator; without
+    that, run the downloaded `setup.exe /S` and read `winget list tpdf`. The installer is
+    `nullsoft`, user scope.
+
 12. **Apply the update from the previous release, by hand.** This is the only end-to-end
     proof the updater works, and no gate, harness or unit test can stand in for it:
     `update.test.ts` fakes the plugin, so what it covers is the state machine and not
