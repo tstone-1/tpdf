@@ -3165,6 +3165,7 @@ async function appCommandChecks(
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
     commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
+    makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
     automaticUpdates: () => true,
     setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
     applyUpdate: () => fired.push("applyUpdate"),
@@ -4314,6 +4315,9 @@ async function appCommandChecks(
     // over a scratch directory; the wiring is `appcommands.test.ts`.
     "app.installCommandLineTool": "it writes /usr/local/bin and can raise an administrator prompt",
     "app.uninstallCommandLineTool": "it removes /usr/local/bin/tpdf and can raise an administrator prompt",
+    // It would change which application opens PDFs on the machine running the
+    // check. The sentence is `defaultapp.rs`'s test; the wiring is `appcommands.test.ts`.
+    "app.makeDefaultPdfApp": "it changes the machine's default application for PDFs",
     // Driving either from the palette would time the layout against a chain of
     // two IPC round trips --- measure the ink, then ask what size the page
     // becomes --- and the probe framework's settle is a frame-loop wait, not a
@@ -4603,6 +4607,7 @@ async function appCommandChecks(
     "app.disableAutomaticUpdates",
     "app.installCommandLineTool",
     "app.uninstallCommandLineTool",
+    "app.makeDefaultPdfApp",
   ];
 
   viewer.clearSelection();

@@ -5291,6 +5291,7 @@ version = "26.10.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "block2",
  "caseless",
  "cms",
  "core-foundation 0.10.1",

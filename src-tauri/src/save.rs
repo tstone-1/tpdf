@@ -3896,6 +3896,15 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     {
         sweep::collect(&mut doc)?;
     }
+    // **After that sweep, and only when a page went.** A document that keeps
+    // every page's pictures in one shared resource dictionary keeps them all
+    // reachable from any page that stays, so the sweep above leaves a dropped
+    // page's pictures in the file. `unused::prune` unlinks what no remaining
+    // page draws; it reads every object for who names the dictionary, which is
+    // why the dropped pages have to be gone first. See that module.
+    if !dropped.is_empty() && crate::unused::prune(&mut doc)? > 0 {
+        sweep::collect(&mut doc)?;
+    }
 
     // **Last, and after the sweep.** `Document::encrypt` walks every object in
     // the map and encrypts its strings and streams, so anything added after it

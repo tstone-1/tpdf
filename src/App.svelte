@@ -683,6 +683,12 @@
         (why: unknown) => (notice = String(why)),
       );
     },
+    makeDefaultPdfApp: () => {
+      void call("default_pdf_app").then(
+        (said) => (notice = said),
+        (why: unknown) => (notice = String(why)),
+      );
+    },
     // Wrapped rather than passed straight through, because a check that lands on
     // `current` shows nothing in the header by design -- so before this, pressing
     // "Check for updates" and being up to date was indistinguishable from a

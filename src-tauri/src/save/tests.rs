@@ -7927,6 +7927,94 @@ fn a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file() {
     );
 }
 
+/// Extracting a page leaves the other pages' pictures out of the file, when
+/// every page names one shared resource dictionary.
+///
+/// **The measurement this was written from.** A five-page file whose pages all
+/// named one `/XObject` dictionary: extracting two pages wrote 1,017,555 bytes
+/// from 1,023,780, with the other three pages' pictures still in it. The sweep
+/// was right that they were reachable; `unused::prune` is what unlinks them.
+#[test]
+fn extracting_a_page_leaves_the_other_pages_pictures_out_of_the_file() {
+    use lopdf::Stream;
+    let scratch = Scratch::new("extract-shared-pictures");
+    let source = scratch.join("in.pdf");
+    // Uncompressed, and each eight bytes occur nowhere else in the file.
+    const PIXELS: [&[u8]; 3] = [
+        &[0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8],
+        &[0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8],
+        &[0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8],
+    ];
+    let mut doc = Document::with_version("1.7");
+    let mut names = lopdf::Dictionary::new();
+    for (at, pixels) in PIXELS.iter().enumerate() {
+        let image = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 8, "Height" => 1,
+                "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+            },
+            pixels.to_vec(),
+        ));
+        names.set(format!("Im{at}"), image);
+    }
+    let resources = doc.add_object(dictionary! { "XObject" => names });
+    let pages_id = doc.new_object_id();
+    let mut kids: Vec<Object> = Vec::new();
+    for at in 0..PIXELS.len() {
+        let content = doc.add_object(Stream::new(
+            dictionary! {},
+            format!("q 10 0 0 10 0 0 cm /Im{at} Do Q\n").into_bytes(),
+        ));
+        kids.push(
+            doc.add_object(dictionary! {
+                "Type" => "Page", "Parent" => pages_id, "Contents" => content,
+                "Resources" => resources,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            })
+            .into(),
+        );
+    }
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! { "Type" => "Pages", "Count" => 3, "Kids" => kids }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    doc.save(&source).expect("write fixture");
+
+    let holds = |path: &Path, pixels: &[u8]| {
+        let bytes = std::fs::read(path).expect("read back");
+        bytes.windows(pixels.len()).any(|w| w == pixels)
+    };
+    assert!(
+        PIXELS.iter().all(|p| holds(&source, p)),
+        "the fixture holds all three"
+    );
+
+    let out = scratch.join("one.pdf");
+    copy_here(&source, &keeping(3, &[(1, 0)]), &out, None).expect("write");
+    assert!(
+        holds(&out, PIXELS[1]),
+        "the kept page's own picture is gone"
+    );
+    assert!(
+        !holds(&out, PIXELS[0]),
+        "the first page's picture came along"
+    );
+    assert!(
+        !holds(&out, PIXELS[2]),
+        "the third page's picture came along"
+    );
+
+    // The control: a copy that drops no page changes nothing about what it holds.
+    let whole = scratch.join("whole.pdf");
+    copy_here(&source, &plan_of(&[0, 0, 0]), &whole, None).expect("write");
+    assert!(
+        PIXELS.iter().all(|p| holds(&whole, p)),
+        "nothing was dropped"
+    );
+}
+
 /// A one-page document drawing one uncompressed image.
 fn document_drawing_an_image(pixels: &[u8]) -> Vec<u8> {
     use lopdf::Stream;

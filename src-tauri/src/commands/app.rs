@@ -74,3 +74,16 @@ pub async fn command_line_tool(install: bool) -> Result<String, String> {
         .await
         .map_err(|e| format!("the command-line tool change did not run: {e}"))?
 }
+
+/// *Make tpdf the default PDF app*.
+///
+/// Run only when the reader chooses it; nothing asks at start (`defaultapp.rs`).
+/// The application is named by this bundle's own identifier, so the webview
+/// cannot name another one. The answer is a sentence for the reader.
+#[tauri::command]
+pub async fn default_pdf_app(app: tauri::AppHandle) -> Result<String, String> {
+    let identifier = app.config().identifier.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::defaultapp::apply(&identifier))
+        .await
+        .map_err(|e| format!("the default application change did not run: {e}"))?
+}

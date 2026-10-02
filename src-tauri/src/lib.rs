@@ -20,6 +20,7 @@ pub mod clitool;
 /// touches. The registry below stays here; the bodies do not.
 mod commands;
 pub mod content;
+pub mod defaultapp;
 pub mod diag;
 pub mod docgraph;
 pub mod docinfo;
@@ -114,6 +115,7 @@ pub mod trust;
 // Asking a timestamp authority for a token when signing: the application's
 // second network authority, in the app process only (`docs/THREAT-MODEL.md`).
 pub mod tsa;
+pub mod unused;
 pub mod userpath;
 pub mod verify;
 
@@ -931,6 +933,7 @@ pub fn run() {
             launch_open_event,
             app_version,
             command_line_tool,
+            default_pdf_app,
             take_launch_paths,
             session_load,
             session_remember,

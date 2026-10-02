@@ -571,7 +571,10 @@ fn encode_text(text: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
+// `pub(crate)` for `unused.rs`, which needs the same property the editor does:
+// every stream decoded completely or the page refused, where `lopdf`'s own
+// `get_page_content` falls back to the raw bytes of a stream it cannot decode.
+pub(crate) fn page_content(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
     let page = doc.get_dictionary(id).map_err(|e| e.to_string())?;
     let contents = page.get(b"Contents").map_err(|e| e.to_string())?;
     let contents = crate::encoding::resolve(doc, contents);

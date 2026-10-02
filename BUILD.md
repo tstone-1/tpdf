@@ -222,10 +222,19 @@ uv run --with reportlab --with pillow scripts/screenshots.py "src-tauri/target/r
 npm run build
 ```
 
-macOS only. A tpdf window opens for about half a minute and is photographed by its window
-number, so it does not have to be in front and nothing is typed; the screen must be
-unlocked, and the terminal needs the Screen Recording permission. The last line puts the
+A tpdf window opens for about half a minute and nothing is typed; the screen must be
+unlocked. On macOS the window is photographed by its window number, so it does not have to
+be in front, and the terminal needs the Screen Recording permission. The last line puts the
 normal frontend back in `dist/`: the `bundleshare` gate refuses a checks build.
+
+The same script runs on Windows, against `src-tauri\target\release\tpdf.exe` from a
+`--no-bundle` checks build, and `--out` is required there because `docs/img/` holds the macOS
+pictures. The picture is a copy of the screen, so the script keeps the window above the
+others without activating it. It has to run in the desktop session: from a console there, or
+from another machine through a one-shot `/IT` scheduled task. Run it before a release that
+changed the toolbar or a menu. 2026-10-02 on Windows 11 it found what the macOS pictures
+could not: a scrolling menu's scrollbar takes room there, an item wrapped, and its second
+line was printed over the next item.
 
 `--dark --out <folder>` takes the same pictures with the window in its dark appearance,
 without changing the system setting: the script sets `TPDF_THEME`, which the application

@@ -109,7 +109,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "app.disableAutomaticUpdates", "app.enableAutomaticUpdates", SEPARATOR,
       // Where a Mac reader looks for it: VS Code and others put their
       // equivalent in the application menu.
-      "app.installCommandLineTool", "app.uninstallCommandLineTool"],
+      "app.installCommandLineTool", "app.uninstallCommandLineTool", SEPARATOR,
+      "app.makeDefaultPdfApp"],
   },
   {
     title: "File",

@@ -21,6 +21,10 @@ have the binary.)
 
 ### Added
 
+- **Make tpdf the default PDF app.** A command in the palette and the application menu.
+  On macOS it makes tpdf the application that opens PDFs and reads the setting back; on
+  Windows, where only the user may choose, it opens Settings at Default apps. tpdf does not
+  check at start whether it is the default and never asks.
 - **A signature's PAdES level is named.** Document properties show a `PAdES level` row
   under Format, and `verify` and `info` print it: `B-B`, `B-T`, `B-LT` or `B-LTA`, with the
   parts that make it up. The JSON reports gain `pades_level` and `pades`. The level is read
@@ -63,6 +67,9 @@ have the binary.)
 
 ### Changed
 
+- **`scripts/screenshots.py` runs on Windows as well as macOS.** The same command, with
+  `--out`, photographs the Windows build's window. Its first run there found the wrapped
+  menu item listed under Fixed.
 - **The window has one row less, and its common buttons are icons.** Open, the
   sidebar toggle, Save, Print, Find, Undo, Redo, the page arrows and the tab
   close are drawn as icons with a tooltip and an accessible name each; the tool
@@ -97,6 +104,18 @@ have the binary.)
 
 ### Fixed
 
+- **Extracting, splitting or deleting pages leaves the removed pages' pictures out of the
+  file.** Some producers keep every page's pictures in one list that all pages point to. The
+  removed pages were gone, but their pictures stayed in the written file, readable with a
+  standard tool and counted in its size: two pages extracted from a five-page, 1,024 KB
+  document came to 1,018 KB. tpdf now drops a picture no remaining page draws, and the same
+  extract is 856 KB. The rest is a background and two fonts that every page uses. A page
+  whose content tpdf cannot read completely keeps everything, as before.
+- **A long item in a scrolling toolbar menu no longer prints over the next one.** On Windows,
+  at a window width near 1,000 pixels, the More menu scrolls and its scrollbar takes room, so
+  "Rotate page counterclockwise" wraps to two lines; the menu squeezed it back to one line's
+  height and the second line lay on "Crop by dragging". Menu items now keep their own height,
+  and the menu's scrollbar is the thin one. Found by photographing the Windows build.
 - **A toolbar menu no longer opens outside the window.** At a window width near 1,000
   pixels the More button wraps to the start of a second row, and its menu opened to the left
   of the window with only the last letters of each item showing. The Redact menu at the end

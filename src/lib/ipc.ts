@@ -445,6 +445,11 @@ export interface Commands {
    * The reply is the sentence to show; a refusal is the error.
    */
   command_line_tool: { args: { install: boolean }; reply: string };
+  /**
+   * Makes tpdf the default application for PDFs (`defaultapp.rs`); on Windows,
+   * opens Settings where the reader chooses. The reply is the sentence to show.
+   */
+  default_pdf_app: { args: NoArgs; reply: string };
   take_launch_paths: { args: NoArgs; reply: string[] };
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };

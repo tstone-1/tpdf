@@ -6,16 +6,21 @@
 Five stills and `demo.gif`, from one run: every state the application holds is
 a frame of the animation, and five of those frames are also the stills.
 
-macOS only, and it needs a visible, unlocked desktop: it opens a tpdf window
-for about half a minute and photographs that window, and nothing else on the
-screen, each time the application reports a state is ready. The window does not
-need to be in front and nothing is typed, so the machine stays usable.
+It needs a visible, unlocked desktop: it opens a tpdf window for about half a
+minute and photographs that window each time the application reports a state
+is ready. Nothing is typed. On macOS the window is photographed by its number
+and does not need to be in front. On Windows the picture is a copy of the
+screen where the window is, so the window is kept above the others without
+being activated; and `--out` is required there, because the README's pictures
+are the macOS ones.
 
 `<checks-binary>` is a check build, as for `tabs_check.py` (BUILD.md has the
 command): a release binary ignores TPDF_OPENCHECK and would sit there until the
-timeout. The terminal running this needs the Screen Recording permission, or
-`screencapture` writes a picture of the desktop with no window in it --- which
-is why the size of every picture is checked against the window's.
+timeout. On macOS the terminal running this needs the Screen Recording
+permission, or `screencapture` writes a picture of the desktop with no window
+in it --- which is why the size of every picture is checked against the
+window's. On Windows it has to run in the desktop session: over ssh there is no
+desktop to copy, so start it from a console there or a `/IT` scheduled task.
 
 What it shows comes from two documents, both generated: `testdata/demo.pdf`,
 written here by `testdata/make_demo_pdf.py`, and `testdata/incr-two-signers.pdf`
@@ -100,13 +105,70 @@ if best.number != 0 { print(best.number) }
 
 
 def window_of(pid: int, script: Path, deadline: float) -> int:
-    """The window's number, once the application has made one."""
+    """The window's number (macOS) or handle (Windows), once the application has made one."""
+    if sys.platform == "win32":
+        return windows_window_of(pid, deadline)
     while time.monotonic() < deadline:
         found = subprocess.run(["swift", str(script), str(pid)], capture_output=True, text=True)
         if found.stdout.strip().isdigit():
             return int(found.stdout.strip())
         time.sleep(0.5)
     raise SystemExit("[FAIL] the application opened no window")
+
+
+def windows_window_of(pid: int, deadline: float) -> int:
+    """The tallest visible top-level window the process owns."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    # Per-monitor: the rectangle below is then in the pixels the screen copy uses.
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    found: list[tuple[int, int]] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            box = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(box))
+            if box.bottom - box.top > 300:
+                found.append((box.bottom - box.top, hwnd))
+        return True
+
+    while time.monotonic() < deadline:
+        found.clear()
+        user32.EnumWindows(each, 0)
+        if found:
+            return max(found)[1]
+        time.sleep(0.3)
+    raise SystemExit("[FAIL] the application opened no window")
+
+
+def photograph(window: int, picture: Path) -> None:
+    """Writes a picture of the window, and of nothing else."""
+    if sys.platform != "win32":
+        # -o: no drop shadow, so the picture is the window. -x: no sound.
+        subprocess.run(["screencapture", "-x", "-o", f"-l{window}", str(picture)], check=True)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    from PIL import ImageGrab
+
+    user32 = ctypes.windll.user32
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    # HWND_TOPMOST with SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE, before every
+    # picture: this is a copy of the screen, so whatever lies over the window
+    # is in it. Measured: a console window covered every picture of a run. The
+    # handle must be passed as a pointer; a bare -1 is truncated and does nothing.
+    user32.SetWindowPos(window, wintypes.HWND(-1), 0, 0, 0, 0, 0x13)
+    time.sleep(0.25)
+    box = wintypes.RECT()
+    user32.GetWindowRect(window, ctypes.byref(box))
+    ImageGrab.grab(bbox=(box.left, box.top, box.right, box.bottom), all_screens=True).save(picture)
 
 
 def png_size(path: Path) -> tuple[int, int]:
@@ -133,8 +195,11 @@ def main() -> int:
                         help="take the pictures with the window in its dark appearance; "
                              "needs --out, because the README's pictures are the light ones")
     args = parser.parse_args()
-    if sys.platform != "darwin":
-        raise SystemExit("[FAIL] screenshots are taken on macOS only")
+    if sys.platform not in ("darwin", "win32"):
+        raise SystemExit("[FAIL] screenshots are taken on macOS and Windows only")
+    if sys.platform == "win32" and args.out == ROOT / "docs" / "img":
+        raise SystemExit("[FAIL] on Windows this needs --out: docs/img holds the README's "
+                         "pictures, which are the macOS ones")
     if (args.dark or args.more or args.size) and args.out == ROOT / "docs" / "img":
         raise SystemExit("[FAIL] --dark, --more and --size need --out: docs/img holds the "
                          "README's pictures, light and at the default size")
@@ -150,7 +215,8 @@ def main() -> int:
         shutil.copyfile(demo, ROOT / "testdata" / "demo.pdf")
         shutil.copyfile(args.signed, signed)
         swift = room / "window.swift"
-        swift.write_text(WINDOW_OF)
+        if sys.platform == "darwin":
+            swift.write_text(WINDOW_OF)
         env = dict(os.environ,
                    TPDF_OPENCHECK=f"screenshots:{demo}|{signed}|{json.dumps(regions, separators=(',', ':'))}"
                                   + ("|more" if args.more else ""),
@@ -165,7 +231,8 @@ def main() -> int:
         (room / "frames").mkdir()
         with log.open("wb") as output:
             process = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=output,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+                                       stderr=subprocess.STDOUT,
+                                       start_new_session=sys.platform != "win32")
             deadline = time.monotonic() + args.timeout
             try:
                 window = window_of(process.pid, swift, deadline)
@@ -176,16 +243,15 @@ def main() -> int:
                         if not line.startswith("FRAME ") or int(parts[1]) < len(frames):
                             continue
                         picture = room / "frames" / f"{int(parts[1]):03}.png"
-                        # -o: no drop shadow, so the picture is the window. -x: no sound.
-                        subprocess.run(["screencapture", "-x", "-o", f"-l{window}", str(picture)],
-                                       check=True)
+                        photograph(window, picture)
                         frames.append((picture, int(parts[2])))
                         if len(parts) > 3:
                             # Two thirds of a Retina capture: five pictures at
                             # full size are 2.2 MB in the repository on every regeneration.
-                            if args.size:
+                            if args.size or sys.platform == "win32":
                                 # Its own size: enlarging a narrow window to the
-                                # README's width would blur what is being looked at.
+                                # README's width would blur what is being looked at,
+                                # and a Windows window at 100% is narrower than that.
                                 shutil.copyfile(picture, args.out / f"{parts[3]}.png")
                             else:
                                 subprocess.run(["sips", "--resampleWidth", str(WIDTH_PX),
@@ -196,7 +262,10 @@ def main() -> int:
                     time.sleep(0.1)
             finally:
                 if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    if sys.platform == "win32":
+                        process.kill()
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
                     print("[FAIL] the application did not finish in time")
                 code = process.wait(timeout=10)
         passed = report(log.read_text(encoding="utf-8", errors="replace"), code, phase="screenshots")

@@ -153,6 +153,11 @@ export interface AppActions {
    * the sentence.
    */
   commandLineTool(install: boolean): void;
+  /**
+   * Make tpdf the application that opens PDFs; on Windows, open Settings where
+   * that is chosen. Only ever run from this command: tpdf does not ask.
+   */
+  makeDefaultPdfApp(): void;
   automaticUpdates(): boolean;
   setAutomaticUpdates(enabled: boolean): void;
   /** Download and apply the update the last check found. */
@@ -705,6 +710,13 @@ export function registerAppCommands(
       id: "app.uninstallCommandLineTool",
       title: "Uninstall command-line tool…",
       run: () => actions.commandLineTool(false),
+    },
+    {
+      // Always enabled, for the pair's reason: whether tpdf is the default is
+      // the system's to say, and the backend asks it each time.
+      id: "app.makeDefaultPdfApp",
+      title: "Make tpdf the default PDF app",
+      run: () => actions.makeDefaultPdfApp(),
     },
     {
       id: "file.properties",

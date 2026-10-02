@@ -255,8 +255,13 @@ security-framework = "3"
 # Already in the tree beneath `security-framework`; MIT OR Apache-2.0.
 core-foundation = "0.10"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL"] }
+# `NSError`: what `setDefaultApplicationAtURL:...`'s completion block is handed (`defaultapp.rs`).
+objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL", "NSError"] }
+# The completion block itself. Already in the tree beneath `objc2-app-kit`; MIT.
+block2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
+    # Gates the `NSWorkspace` methods that take a completion block.
+    "block2",
     "NSPrintInfo",
     "NSPrintOperation",
     # `NSWorkspace openURL:`, the OS opener a confirmed web link is handed to.

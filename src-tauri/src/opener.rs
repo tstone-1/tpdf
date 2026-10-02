@@ -65,6 +65,13 @@ fn open_url(url: &str) -> Result<(), String> {
     }
 }
 
+/// Opens a `ms-settings:` page. Not a web address, so it does not go through
+/// [`open`]'s checks; the one caller passes a constant (`defaultapp.rs`).
+#[cfg(windows)]
+pub(crate) fn open_settings(page: &'static str) -> Result<(), String> {
+    open_url(page)
+}
+
 #[cfg(windows)]
 fn open_url(url: &str) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;

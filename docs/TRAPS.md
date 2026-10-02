@@ -261,6 +261,8 @@ hop through the index.
 - ttf-parser decodes no Macintosh Roman name, and Apple's Helvetica carries no other kind
 
 - A text's own ActualText rule has to admit the empty text a deletion leaves
+- A swept extract still held the dropped pages' pictures, because every page named one resource dictionary
+
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
 - `RunEvent::Opened` fires before the setup hook, so managed state is not there yet
@@ -25370,3 +25372,20 @@ same mutation. The general shape: a pointer is only tested by a fixture in which
 at is non-empty and differs from what lies at a wrong address. A size of zero makes every
 address correct.
 
+### A swept extract still held the dropped pages' pictures, because every page named one resource dictionary
+
+Extracting two of five pages wrote 1,017,555 bytes from a source of 1,023,780. The three
+dropped pages were gone and `sweep::collect` was correct: the producer wrote one `/XObject`
+dictionary naming every page's pictures and pointed all five pages at it, so each picture was
+still reachable from a page that stayed. Reachable is a weaker property than drawn, and a
+reader who extracts pages to send them on needs the stronger one. `unused::prune` removes an
+`/XObject` entry no remaining page mentions, after the first sweep, and a second sweep deletes
+the streams; the same two pages are then 855,674 bytes and render identically.
+
+Two `lopdf` behaviours had to be worked around, and each would have deleted a picture a page
+draws. `Content::decode` returns `Ok` for `/Im2 Do ((`, having read one operation of a stream
+it could not finish. `get_page_content_with_limit` appends the raw bytes of a stream whose
+filter fails, and skips a content reference that names no stream. So the pass uses the text
+editor's complete decoder, and it collects every name token in the content instead of parsing
+operators: a `Do` operand is always among them. The test that found the first of these was the
+pass's own "damaged content keeps every name" control, which failed on its first run.

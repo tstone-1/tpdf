@@ -116,6 +116,7 @@ function harness(
     about: () => fired.push("about"),
     checkForUpdates: () => fired.push("checkForUpdates"),
     commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
+    makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
     automaticUpdates: () => automatic,
     setAutomaticUpdates: (enabled) => { automatic = enabled; fired.push(`setAutomaticUpdates:${enabled}`); },
     applyUpdate: () => fired.push("applyUpdate"),
@@ -509,7 +510,15 @@ describe("the commands a document is needed for", () => {
       "app.disableAutomaticUpdates",
       "app.installCommandLineTool",
       "app.uninstallCommandLineTool",
+      "app.makeDefaultPdfApp",
     ]);
+  });
+
+  it("makes tpdf the default only when the command is run", () => {
+    const { registry, fired } = harness(false);
+    expect(fired).toEqual([]);
+    expect(registry.run("app.makeDefaultPdfApp")).toBe(true);
+    expect(fired).toEqual(["makeDefaultPdfApp"]);
   });
 
   it("asks the backend to install or remove the command-line tool, and nothing else", () => {
@@ -1384,6 +1393,7 @@ describe("the window shortcuts for editing", () => {
       about: () => fired.push("about"),
       checkForUpdates: () => fired.push("checkForUpdates"),
       commandLineTool: (install) => fired.push(`commandLineTool:${install}`),
+    makeDefaultPdfApp: () => fired.push("makeDefaultPdfApp"),
       automaticUpdates: () => true,
       setAutomaticUpdates: (enabled) => fired.push(`setAutomaticUpdates:${enabled}`),
       applyUpdate: () => fired.push("applyUpdate"),

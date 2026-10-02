@@ -155,6 +155,11 @@ project conventions.
   carries, for the signer's certificate and every one above it; a document carrying none
   says it was not checked.
   <!-- built: file.properties -->
+- **Make tpdf the default PDF app** when you want it, from the command palette or the
+  application menu. tpdf never asks: nothing checks at start whether it is the default. On
+  macOS the command sets it and says so; Windows lets only you choose, so there it opens
+  Settings at Default apps.
+  <!-- built: app.makeDefaultPdfApp -->
 - Printing through the system print panel, on both platforms — and every print job is read
   back through the operating system's own PDF parser before the panel opens, which is a
   parser independent of the one that wrote the job and the one that drew what you saw.
