@@ -32,6 +32,7 @@ import {
 import { colorFor, type MarkColor } from "./markcolors";
 import { INK_WIDTH } from "./markband";
 import type { PreparedImport } from "./pendingimport";
+import type { Pictures, Shrinkage } from "./compress";
 import type { Recognised } from "./recognise";
 
 // Re-exported because this is the module a reader of the edit state comes to
@@ -796,6 +797,26 @@ export class Edits {
   async protectCopy(source: string, path: string, password: string | null): Promise<Copied> {
     await this.beforeWrite();
     return await call("protect_copy", { doc: this.doc, source, path, password });
+  }
+
+  /**
+   * What a smaller copy of the file this document was opened from would come
+   * to. Nothing is written, so no consent is asked for.
+   */
+  async compressEstimate(source: string, pictures: Pictures | null): Promise<Shrinkage> {
+    return await call("compress_estimate", { doc: this.doc, source, pictures });
+  }
+
+  /**
+   * Writes a smaller copy: pictures as they are when `pictures` is `null`,
+   * shrunk to those numbers otherwise.
+   *
+   * {@link saveCopy} with the copy made smaller, so the open document and
+   * {@link dirty} are untouched and a signed document is asked about first.
+   */
+  async compressCopy(source: string, path: string, pictures: Pictures | null): Promise<Copied> {
+    await this.beforeWrite();
+    return await call("compress_copy", { doc: this.doc, source, path, pictures });
   }
 
   /**

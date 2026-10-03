@@ -128,6 +128,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "file.saveCopy",
       // A copy too, and the one of them that destroys nothing.
       "file.recogniseText",
+      "file.compress",
       "file.protect",
       "file.unprotect",
       // Beside the copy, because it is one --- and after it rather than before,

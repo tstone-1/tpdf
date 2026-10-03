@@ -491,6 +491,11 @@ pub(crate) enum Job {
         doc: u32,
         reply: Reply<Properties>,
     },
+    Shrink {
+        doc: u32,
+        compress: crate::compress::Compress,
+        reply: Reply<crate::compress::Estimate>,
+    },
     Append {
         doc: u32,
         /// Boxed because a plan is the one large thing any job carries, and
@@ -1034,6 +1039,24 @@ impl RenderService {
         }
     }
 
+    /// Works out what a smaller copy of the file a document was opened from
+    /// would come to, invoking `reply` on a service thread. Nothing is written.
+    pub fn shrink(
+        &self,
+        doc: u32,
+        compress: crate::compress::Compress,
+        reply: Reply<crate::compress::Estimate>,
+    ) {
+        let job = Job::Shrink {
+            doc,
+            compress,
+            reply,
+        };
+        if self.tx.send(job).is_err() {
+            // Render thread is gone; nothing left to reply with.
+        }
+    }
+
     /// Reports, per page, whether the text means anything, on a service thread.
     ///
     /// Asked for lazily --- see [`crate::encoding`] and `RawDocument::mapping`.
@@ -1280,6 +1303,11 @@ pub(crate) trait Engine {
     fn links(&self, doc: u32) -> Result<Links, String>;
     fn mapping(&self, doc: u32) -> Result<Vec<PageMapping>, String>;
     fn properties(&self, doc: u32) -> Result<Properties, String>;
+    fn shrink(
+        &self,
+        doc: u32,
+        compress: crate::compress::Compress,
+    ) -> Result<crate::compress::Estimate, String>;
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String>;
     fn prepare_signature(
         &self,
@@ -1368,6 +1396,11 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
         } => reply(engine.text_runs(doc, page, &changes, outlines)),
         Job::Comments { doc, reply } => reply(engine.comments(doc)),
         Job::Properties { doc, reply } => reply(engine.properties(doc)),
+        Job::Shrink {
+            doc,
+            compress,
+            reply,
+        } => reply(engine.shrink(doc, compress)),
         Job::Links { doc, reply } => reply(engine.links(doc)),
         Job::Mapping { doc, reply } => reply(engine.mapping(doc)),
         Job::Append { doc, plan, reply } => reply(engine.append(doc, &plan)),
@@ -1420,6 +1453,7 @@ fn drain(rx: Receiver<Job>, error: &str) {
             Job::Links { reply, .. } => reply(Err(error.to_string())),
             Job::Mapping { reply, .. } => reply(Err(error.to_string())),
             Job::Properties { reply, .. } => reply(Err(error.to_string())),
+            Job::Shrink { reply, .. } => reply(Err(error.to_string())),
             Job::Append { reply, .. } => reply(Err(error.to_string())),
             Job::PrepareSignature { reply, .. } => reply(Err(error.to_string())),
             Job::SignaturePreview { reply, .. } => reply(Err(error.to_string())),
@@ -1639,6 +1673,18 @@ impl Engine for InProcess {
 
     fn properties(&self, doc: u32) -> Result<Properties, String> {
         run_properties(open_slot(&self.docs.borrow(), doc)?)
+    }
+
+    fn shrink(
+        &self,
+        doc: u32,
+        compress: crate::compress::Compress,
+    ) -> Result<crate::compress::Estimate, String> {
+        run_shrink(
+            self.bindings,
+            open_slot(&self.docs.borrow(), doc)?,
+            compress,
+        )
     }
 
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String> {
@@ -2636,6 +2682,85 @@ pub(crate) fn run_mapping(document: &OpenDocument) -> Vec<PageMapping> {
 /// reader who opens the properties dialog twice pays for the `lopdf` parse once.
 pub(crate) fn run_properties(document: &OpenDocument) -> Result<Properties, String> {
     document.graph().properties(document.page_count())
+}
+
+/// Works out what a smaller copy would come to, on the render thread.
+///
+/// From the graph's one `lopdf` parse, which is the file as it was opened: an
+/// edit not yet saved is not in it.
+///
+/// When a picture changes, the page that draws the most reduced one is drawn
+/// from this document and from the copy, and the part where the two differ
+/// most is the estimate's sample. A sample that cannot be made is left out;
+/// the size is the answer either way.
+pub(crate) fn run_shrink(
+    bindings: Bindings,
+    document: &OpenDocument,
+    compress: crate::compress::Compress,
+) -> Result<crate::compress::Estimate, String> {
+    let estimated = document.graph().shrink(compress)?;
+    let mut estimate = estimated.estimate;
+    if let Some(focus) = estimated.focus {
+        estimate.sample = page_sample(bindings, document, estimated.bytes, focus).unwrap_or(None);
+    }
+    Ok(estimate)
+}
+
+/// The most pixels a page is drawn at, on its longer side, for a sample.
+const SAMPLE_PAGE_SIDE: f32 = 3000.0;
+
+/// One page of `document` and of the copy in `bytes`, drawn alike, and the
+/// part where they differ most.
+fn page_sample(
+    bindings: Bindings,
+    document: &OpenDocument,
+    bytes: Vec<u8>,
+    focus: crate::compress::Focus,
+) -> Result<Option<crate::compress::Sample>, String> {
+    let copy = OpenDocument::open_owned(bindings, bytes.into()).map_err(|why| why.reason)?;
+    let (width_pt, height_pt) = {
+        let page = document.page(focus.page)?;
+        (page.width_pt(), page.height_pt())
+    };
+    // Enlarged, unless the page is so large that the drawing would be huge.
+    let longer = width_pt.max(height_pt).max(1.0);
+    let scale = crate::compress::SAMPLE_ZOOM.min(SAMPLE_PAGE_SIDE / longer);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (width, height) = (
+        (width_pt * scale).floor().clamp(1.0, SAMPLE_PAGE_SIDE) as u16,
+        (height_pt * scale).floor().clamp(1.0, SAMPLE_PAGE_SIDE) as u16,
+    );
+    let request = TileRequest {
+        rid: 0,
+        doc: 0,
+        page: focus.page,
+        scale,
+        turns: 0,
+        invert: false,
+        x: 0,
+        y: 0,
+        width,
+        height,
+        format: TileFormat::Raw,
+        crop: None,
+    };
+    let drawn = |of: &OpenDocument| -> Result<Vec<u8>, String> {
+        match render_tile(bindings, of, &request, &CancelToken::default())? {
+            TileOutcome::Rendered(tile) => Ok(tile.bytes),
+            TileOutcome::Abandoned => Err("the drawing was abandoned".to_string()),
+        }
+    };
+    let (before, after) = (drawn(document)?, drawn(&copy)?);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let zoom_percent = (scale * 100.0).round() as u32;
+    Ok(crate::compress::Sample::of_page(
+        &before,
+        &after,
+        u32::from(width),
+        u32::from(height),
+        focus,
+        zoom_percent,
+    ))
 }
 
 #[cfg(test)]

@@ -3252,6 +3252,7 @@ async function appCommandChecks(
     recogniseText: () => fired.push("recogniseText"),
     protectCopy: () => fired.push("protectCopy"),
     unprotectCopy: () => fired.push("unprotectCopy"),
+    compressCopy: () => fired.push("compressCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -4161,6 +4162,11 @@ async function appCommandChecks(
     {
       id: "file.recogniseText",
       ...shell("recogniseText"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.compress",
+      ...shell("compressCopy"),
       read: () => fired.join(","),
     },
     {

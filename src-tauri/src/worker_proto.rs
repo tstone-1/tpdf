@@ -193,6 +193,14 @@ pub enum Request {
     /// Document-level and the laziest of the three `lopdf` requests: nothing
     /// asks for it until a reader opens the properties dialog.
     Properties,
+    /// Work out what a smaller copy would come to, without writing one.
+    ///
+    /// Document-level, from the same `lopdf` parse. The answer is
+    /// [`Reply::Shrunk`]: the size, and one picture before and after.
+    Shrink {
+        /// How the copy would be made smaller.
+        compress: crate::compress::Compress,
+    },
     /// Build the update section for a save that only adds marks.
     ///
     /// **The one request that produces bytes for a file**, and it is here rather
@@ -574,6 +582,9 @@ pub enum Reply {
     /// allocation on a path that has just done a whole `lopdf` parse. The wire
     /// is unchanged: serde serialises a `Box<T>` as its `T`.
     Properties(Box<crate::docinfo::Properties>),
+    /// What a smaller copy would come to. Boxed for [`Reply::Properties`]'
+    /// reason: it carries a sample of pixels.
+    Shrunk(Box<crate::compress::Estimate>),
     /// The update section for a save that only adds marks.
     Append(crate::save::Update),
     /// The revision a signature goes into, with its hole still empty.
@@ -890,6 +901,7 @@ mod tests {
             ("Links", "links"),
             ("Mapping", "mapping"),
             ("Properties", "properties"),
+            ("Shrink", "shrink"),
             ("Append", "append"),
             ("PrepareSignature", "prepare_signature"),
             ("SignaturePreview", "signature_preview"),
@@ -1269,6 +1281,7 @@ mod tests {
             // that the indirection `large_enum_variant` asked for changed the
             // wire by nothing.
             Reply::Properties(Box::default()),
+            Reply::Shrunk(Box::default()),
             Reply::Append(crate::save::Update {
                 update: vec![1, 2, 3],
                 pages: 2,
@@ -1333,6 +1346,7 @@ mod tests {
                 | Reply::Links(_)
                 | Reply::Mapping(_)
                 | Reply::Properties(_)
+                | Reply::Shrunk(_)
                 | Reply::Append(_)
                 | Reply::PreparedSignature(_)
                 | Reply::SignatureImage(_)

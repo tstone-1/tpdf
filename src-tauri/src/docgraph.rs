@@ -597,6 +597,21 @@ impl DocumentGraph {
         redact::path_clips(document, page, paths)
     }
 
+    /// What a smaller copy of this document would come to.
+    ///
+    /// `compress::estimate` over the parsed graph. Not cached: the answer
+    /// depends on the settings, and a reader moving a slider asks again.
+    ///
+    /// # Errors
+    ///
+    /// The graph will not parse, or the copy will not serialise.
+    pub fn shrink(
+        &self,
+        compress: crate::compress::Compress,
+    ) -> Result<crate::compress::Estimated, String> {
+        crate::compress::estimate(self.parsed()?, compress)
+    }
+
     /// What each path one page paints is, for cutting at a region's edge, or
     /// `None` when its paths cannot be addressed by position.
     ///

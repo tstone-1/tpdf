@@ -30,6 +30,19 @@ have the binary.)
   which pages are considered and `--language` names the language to expect. The copy is read
   back before it is published, and `--json` reports which pages were read, which were left
   alone and which engine read them. The Python client gains `ocr()`.
+- **`tpdf compress` writes a smaller copy, and says first what it would come to.** On its
+  own it changes nothing a reader sees: streams are compressed and the copy is written with
+  object streams, which saved 3.1% over 65 documents. `--pictures screen`, `balanced` or
+  `print` also scales pictures down to 110, 150 or 300 pixels an inch and stores photographs
+  as JPEG, which saved 56%, 46% and 35% on the same documents; `--dpi`, `--quality` and
+  `--no-jpeg` set each number directly. `--dry-run` reports the size without writing, and
+  `--preview` writes a PNG of the part of a page that changes most, before and after at
+  200%. A copy that would not be smaller is not written. The Python client gains
+  `compress()`.
+- **Save a smaller copy**, in the File menu and the command palette, offers the same
+  choices in a dialog. Each is listed with the size the copy would have, the selected one
+  shows a part of a page as it is and as the copy would draw it, and *Your own numbers*
+  sets the resolution and the JPEG quality directly. The open document is not changed.
 - **`tpdf images` makes a document from pictures.** `tpdf images front.jpg plan.png -o
   album.pdf` writes one page for each PNG or JPEG file, in order. A page is the picture's
   own size at the resolution its file states; `--paper a4` or `letter` and `--dpi` change

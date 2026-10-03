@@ -40,6 +40,9 @@ flate2 = "1"
 # Bounded JPEG decoding for preserved images during text editing. Both are
 # already in the image/PDFium dependency graph. MIT OR Apache-2.0 OR Zlib.
 zune-core = "0.5"
+# The JPEG encoder a smaller copy stores photographs with. Already in the tree
+# with this feature through pdfium-render, so it adds no package.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 zune-jpeg = "0.5"
 # Bounded CCITT Group 4 decoding for preserved stencil masks (scanned pages).
 # From the pdf-rs project; no required dependencies. MIT.
@@ -491,6 +494,10 @@ path = "examples/geometry_probe.rs"
 [[example]]
 name = "turned-probe"
 path = "examples/turned_probe.rs"
+
+[[example]]
+name = "compress-probe"
+path = "examples/compress_probe.rs"
 
 [[example]]
 name = "merge-probe"

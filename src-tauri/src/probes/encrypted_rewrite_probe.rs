@@ -123,6 +123,7 @@ fn dropping_last(pages: usize) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
     }
 }
 

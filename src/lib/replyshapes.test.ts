@@ -72,6 +72,8 @@ import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
 import type { Made } from "./pictures";
 import Made_ from "../../src-tauri/testdata/replies/Made.json";
+import type { Shrinkage } from "./compress";
+import Shrinkage_ from "../../src-tauri/testdata/replies/Shrinkage.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
 import type { Outline } from "./outline";
@@ -214,6 +216,13 @@ const SCHEMA = {
   Made: {
     pages: ["number"],
   } satisfies Shape<Made>,
+  Shrinkage: {
+    bytesBefore: ["number"],
+    bytesAfter: ["number"],
+    pictures: ["number"],
+    picturesChanged: ["number"],
+    sample: ["object", "null"],
+  } satisfies Shape<Shrinkage>,
   Merged: {
     changed: ["boolean"],
     pages: ["number"],
@@ -334,6 +343,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,
   Made: Made_ satisfies Widen<Made>,
+  Shrinkage: Shrinkage_ satisfies Widen<Shrinkage>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,

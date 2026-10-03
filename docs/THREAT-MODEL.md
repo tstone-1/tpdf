@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — fourteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — fifteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
@@ -89,10 +89,10 @@ mounts a viewer. Resource limits remain per worker, not an aggregate limit acros
 The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
-`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `sign_document` and `sign_resume`, and all fourteen write a file at the
+`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `images_to_pdf`, `compress_copy`, `sign_document` and `sign_resume`, and all fifteen write a file at the
 process's authority with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf sign_document sign_resume --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for fourteen specific writes; the flat version reads as the
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy images_to_pdf compress_copy sign_document sign_resume --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for fifteen specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -848,7 +848,7 @@ summary going stale, and re-pointing it every time would erase its own evidence.
 **nine** as of 2026-09-07 with `redact_raster_copy`, **ten** as of 2026-09-26 with
 `sign_document` (§T6.21), and **eleven** as of 2026-09-28 with `sign_resume`, which writes the
 signature `sign_document` made and held when its timestamp did not come, to the path that call
-named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31). It reached eight on 2026-08-30 without anybody adding three of them here or
+named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30), and **fourteen** with `images_to_pdf` (§T6.31), and **fifteen** with `compress_copy` (§T6.32). It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names —
@@ -2904,6 +2904,46 @@ a camera's position, is in the document that is written. The README says so.
 publishes it only if it has one page for each picture; `tests/cli/images.rs` renders the
 page and compares it with the picture pixel for pixel, and reads a turned photograph's
 corner. The window's document is opened in the viewer, where the reader sees it.
+
+#### T6.32 — A smaller copy, added 2026-10-03
+
+`tpdf compress` and the window's *Save a smaller copy* write a copy made smaller, through
+`compress_copy`, the fifteenth command that writes a file (§3). The write is
+`save::write_copy`, the path every copy takes, with one field more in the plan
+(`compress::Compress`). `compress_estimate` writes nothing.
+
+**New decoding, in the worker.** Shrinking a picture decodes it: `FlateDecode` through
+`lopdf`, bounded to the bytes the picture's own width, height and components imply, and
+`DCTDecode` through `zune-jpeg` in strict mode, bounded to the same size and refused when
+its component count is not the colour space's. A picture of more than 40 megapixels is not
+decoded. The walk that finds where pictures are drawn follows Form XObjects eight deep and
+stops after 200,000 `Do` operations, and each content stream is bounded as every other
+decode is. Deflating a stream again inflates it first, to at most 64 MiB, and a stream
+past that is left. The JPEG encoder is the `image` crate's, which was already in the tree
+and now has a caller; it is given pixels this process decoded and writes into memory.
+
+**The estimate opens a second document in the worker.** `run_shrink` serialises the
+smaller copy and opens those bytes with PDFium beside the document the worker holds, to
+draw one page of each. The bytes are tpdf's own serialisation of a document the worker has
+already parsed with both engines, and the profile and limits are unchanged; what is new is
+that a worker holds two documents for the length of one request.
+
+**What reaches the webview.** Two PNGs of one part of one page, as `data:` URLs, and
+numbers. They are shown in `img` elements and dropped when the dialog closes.
+
+**A copy that loses pictures cannot be undone, so the source is never the target.** Both
+routes write a copy, the tool refuses an output that names its input, and the window's
+document stays the one that was opened. A signed document is asked about first, as for
+every rewrite.
+
+**What is checked.** The tool opens the staged copy in a fresh PDFium worker and publishes
+it only when it has the source's pages, is encrypted exactly when the source was, and is
+smaller. `tests/cli/compress.rs` renders a lossless copy and compares it with the source
+pixel for pixel, and reads the text of a lossy one. Over 65 documents every lossless copy
+rendered identically to its source (`docs/PLAN.md` *A smaller copy*). **Not checked:** how
+a lossy copy looks is not judged by anything but the reader, which is what the preview is
+for; a picture in a colour space this leaves alone is simply left, so a document of CMYK
+or indexed pictures shrinks less than its size suggests and nothing says why.
 
 ### T7 — Distribution and update
 

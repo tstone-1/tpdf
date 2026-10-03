@@ -497,6 +497,8 @@ export interface AppActions {
   protectCopy(): void;
   /** Ask for a name and write a copy that opens without the password. */
   unprotectCopy(): void;
+  /** Offer the ways to make a copy smaller, ask for a name and write it. */
+  compressCopy(): void;
   /**
    * Removes every marked region from the file the reader opened.
    *
@@ -1550,6 +1552,14 @@ export function registerAppCommands(
       title: "Recognise text and save as...",
       enabled: withDocument,
       run: () => actions.recogniseText(),
+    },
+    {
+      // A copy, because shrinking pictures cannot be undone: the open
+      // document and the file it came from keep every pixel.
+      id: "file.compress",
+      title: "Save a smaller copy...",
+      enabled: withDocument,
+      run: () => actions.compressCopy(),
     },
     {
       // Copies, like every command that changes what a file is: the open

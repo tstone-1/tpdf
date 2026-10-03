@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "command": "compress",
+  "input": "scan.pdf",
+  "output": "scan smaller.pdf",
+  "written": true,
+  "pages": 12,
+  "preset": "balanced",
+  "dpi": 150,
+  "quality": 75,
+  "jpeg": true,
+  "bytes_before": 8412330,
+  "bytes_after": 1902118,
+  "saved_percent": 77,
+  "pictures_total": 14,
+  "pictures_changed": 9,
+  "preview": "scan preview.png",
+  "signatures_invalidated": 0,
+  "signatures_unknown": false
+}

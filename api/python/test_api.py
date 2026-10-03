@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -713,6 +713,53 @@ class ClientTests(unittest.TestCase):
                 self.pdf.images(picture, album)
             with self.assertRaises(CommandError):
                 self.pdf.images([self.source], album, force=True)
+
+    def test_compress_builds_the_line_its_options_ask_for(self):
+        with patch('tpdf.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.returncode = 0
+            process.communicate.return_value = (b'{"schema":1,"command":"compress"}', b'')
+            self.pdf.compress(self.source, 'out.pdf')
+            self.assertEqual(popen.call_args[0][0][1:], ['compress', '--json', '-o', 'out.pdf', '--', os.fspath(self.source)])
+            self.pdf.compress(self.source)
+            self.assertIn('--dry-run', popen.call_args[0][0])
+            self.assertNotIn('-o', popen.call_args[0][0])
+            self.pdf.compress(
+                self.source, 'out.pdf', pictures='screen', dpi=96, quality=40, jpeg=False,
+                preview='p.png', force=True, invalidate_signatures=True,
+            )
+            line = popen.call_args[0][0]
+            for part in (['--pictures', 'screen'], ['--dpi', '96'], ['--quality', '40'], ['--preview', 'p.png']):
+                at = line.index(part[0])
+                self.assertEqual(line[at:at + 2], part)
+            for flag in ('--no-jpeg', '--force', '--invalidate-signatures'):
+                self.assertIn(flag, line)
+            for wrong in (96.0, '96', True):
+                with self.assertRaises(TypeError):
+                    self.pdf.compress(self.source, 'out.pdf', dpi=wrong)
+                with self.assertRaises(TypeError):
+                    self.pdf.compress(self.source, 'out.pdf', quality=wrong)
+
+    def test_compress_estimates_and_refuses_what_would_not_be_smaller(self):
+        estimate = self.pdf.compress(self.source, pictures='screen')
+        self.assertFalse(estimate['written'])
+        self.assertIsNone(estimate['output'])
+        self.assertEqual((estimate['preset'], estimate['dpi'], estimate['quality']), ('screen', 110, 60))
+        self.assertEqual(estimate['bytes_before'], os.path.getsize(self.source))
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, 'smaller.pdf')
+            if estimate['bytes_after'] < estimate['bytes_before']:
+                report = self.pdf.compress(self.source, out, pictures='screen')
+                self.assertTrue(report['written'])
+                self.assertEqual(report['bytes_after'], os.path.getsize(out))
+                self.assertEqual(self.pdf.text(out)['pages'], self.pdf.text(self.source)['pages'])
+                # A second pass has nothing left to save.
+                with self.assertRaises(CommandError):
+                    self.pdf.compress(out, os.path.join(directory, 'again.pdf'), pictures='screen')
+            else:
+                with self.assertRaises(CommandError):
+                    self.pdf.compress(self.source, out, pictures='screen')
+                self.assertFalse(os.path.exists(out))
 
     def test_protect_and_unprotect_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -29,6 +29,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
     let mut plan = Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         baseline: 1,
         opened_as: Some(fingerprint.clone()),
         pages: vec![PageView {

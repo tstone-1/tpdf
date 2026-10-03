@@ -1775,6 +1775,64 @@ shipped tool; orientations 5 and 6 match Quick Look's rendering of the same file
 Not done: CMYK JPEG, other formats, a paper size in the window, removing EXIF data, and
 adding pictures as pages to a document that is already open.
 
+#### A smaller copy — 2026-10-03
+
+`tpdf compress` and *Save a smaller copy* write a copy that is smaller. `compress.rs` is
+the work, a field of the plan (`Plan::compress`) carries the choice to the one rewrite
+every copy takes, and `save::serialise_packed` writes object streams and a cross-reference
+stream where `serialise` writes neither.
+
+**Measured before it was designed.** On 59 documents of the author's own, 242 MB, pictures
+are 81% of the bytes and a lossless rewrite saves 2%. So there are two modes and the lossy
+one has to be asked for: without it nothing a reader sees changes, and with it pictures
+are scaled to a resolution and photographs stored as JPEG. `compress-probe` over 65
+documents, 255 MB (macOS arm64, 2026-10-03):
+
+| | size | saved | pictures stored smaller |
+|---|---|---|---|
+| as they are | 255.0 MB | | |
+| lossless | 247.1 MB | 3.1% | none |
+| print, 300 px/in, quality 85 | 166.3 MB | 34.8% | 64 of 1,201 |
+| balanced, 150, quality 75 | 138.1 MB | 45.9% | 379 of 1,201 |
+| screen, 110, quality 60 | 113.3 MB | 55.6% | 444 of 1,201 |
+
+All 260 copies were read by `qpdf --check`: 256 clean, and 4 with a warning their one
+source already has. Every lossless copy renders pixel for pixel as its source in PDFium at
+108 pixels an inch, three pages a document. The lossy copies differ by a mean of at most
+4.9 in 255 on the worst page.
+
+**What a picture is shown at is read from the pages.** `drawn` walks each page's content
+and the content of the Form XObjects it draws, eight deep, for the matrix at every `Do`. A
+picture drawn finer than the limit by more than a fifth is scaled to it by averaging the
+area each new pixel covers; one a page does not draw is left, because nothing says how
+large it is shown. A picture is stored as JPEG when it was one, or when deflating its
+pixels leaves more than a quarter of them, which separates a photograph from a screenshot.
+The module documentation lists what is left as it is, and each item is there because
+changing it could change more than resolution.
+
+**The question a percentage does not answer is how it will look.** `compress::estimate`
+does the work on a copy of the parsed document and serialises it, and `render::run_shrink`
+draws the page with the most reduced picture from the document and from that copy at 200%
+and cuts the 320 pixel window where the two differ most (`Sample::of_page`). It is the
+page and not the picture, so text over a picture is in it and stays sharp. The tool writes
+it with `--preview`; the dialog shows it for the selected choice. An estimate of a 95 MB
+document takes 2.5 to 4 s.
+
+**The reader has the numbers too.** The three presets are `Pictures { dpi, quality, jpeg }`
+values, and `--dpi`, `--quality`, `--no-jpeg` and the dialog's *Your own numbers* set each
+field. The dialog lists every ready choice with its size as each estimate arrives and
+offers Save only for one that is smaller.
+
+**A copy that is not smaller is not written.** The tool compares the staged file with the
+source and refuses; the window does not offer the choice.
+
+**An encrypted document keeps its password and gets no object streams**: `lopdf` writes
+them only in the clear, and says so. An estimate for one is the size before encryption.
+
+Not done: recompressing a JPEG without scaling it; indexed, CMYK and JPEG 2000 pictures;
+pictures in patterns and annotation appearances; removing unused fonts or subsetting;
+linearisation; the dialog looked at by a person.
+
 #### Setting and removing a password — 2026-10-03
 
 The stack table said on 2026-08-28 that `Document::encrypt` had made QPDF unnecessary for

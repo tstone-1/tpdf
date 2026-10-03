@@ -986,6 +986,7 @@ fn form_plan(
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
     }
 }
 
@@ -1045,6 +1046,7 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
     }
 }
 

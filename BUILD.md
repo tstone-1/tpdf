@@ -470,6 +470,13 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase pr
 # document with the tool.
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase pictures
 
+# Save a smaller copy in the window (`src/lib/compresscheck.ts`): the dialog
+# fills each choice with its size, the smallest shows two loaded pictures of
+# the page, a number that is no number is refused, and two copies are written.
+# The script then checks each is smaller than the one before and has the
+# page. RAN 2026-10-03 on macOS: 17/17 and 4 disk checks.
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase compress
+
 # Signing with a certificate, through the window a reader signs in
 # (`src/lib/signingcheck.ts`). NEVER in scripts/gates.py or in CI, and never
 # started by an agent: it signs with a real key from the login keychain, so
@@ -3786,6 +3793,23 @@ was the first allowance and passed a layer whose every word ran 2.4% long.
 **Rebuild after restoring a mutation.** The probe is a binary; restoring the source does not
 restore it. One run here reported every fixture red against correct source, because the
 binary on disk was the last mutant's.
+
+### `compress-probe`: how much smaller a copy gets, over a corpus
+
+Not a check. It is the instrument behind `docs/PLAN.md` *A smaller copy*: each document in
+a directory is made smaller in the four ways `tpdf compress` offers and serialised as that
+command serialises it, and the totals are printed. Sizes and counts only.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example compress-probe -- \
+    ~/Downloads --emit /tmp/smaller
+```
+
+`--emit` keeps every copy, for `qpdf --check` and for a pixel comparison against the
+source. It loads with `lopdf` in its own process and not in a worker, so point it at
+documents you trust. A document that opens with an empty password is decrypted on load
+and its copies are written without encryption, which the tool itself does not do. 65
+documents and 255 MB take 104 s.
 
 ### `redact-reach-probe`: how much of a redaction can be proved, over a corpus
 

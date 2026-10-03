@@ -94,6 +94,8 @@
   import { NewPasswordDialog } from "./lib/newpassworddialog";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
+  import { afterCompress, suggestedName as smallerName } from "./lib/compress";
+  import { CompressDialog } from "./lib/compressdialog";
   import {
     WebLinkDialog,
     confirmAndOpen,
@@ -480,6 +482,7 @@
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
+  let compressDialog: CompressDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
 
   /**
@@ -771,6 +774,7 @@
     recogniseText: () => void recogniseText(),
     protectCopy: () => void protectCopy(true),
     unprotectCopy: () => void protectCopy(false),
+    compressCopy: () => void compressCopy(),
     redactDocument: () => redactDocument(),
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
@@ -1917,6 +1921,64 @@
       copyTaskBusy = false;
       refreshMenu();
     }
+    });
+  }
+
+  /**
+   * Offers the ways to make a copy smaller, and writes the one chosen.
+   *
+   * `saveCopy`'s shape. The dialog comes before the name, as the password
+   * does in `protectCopy`, and it is handed the estimate to ask: each choice
+   * is shown with the size it comes to, and saving is offered only for one
+   * that is smaller. The copy is not opened; the sentence says its size.
+   */
+  async function compressCopy(): Promise<void> {
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || copyTaskBusy) return;
+      commitPopups();
+      copyTaskBusy = true;
+      refreshMenu();
+      try {
+        await pendingEdit;
+        await formLayer?.settle();
+        await textEditor?.settle();
+        if (!edits || !openPathName) return;
+        const source = openPathName;
+        const working = edits;
+        // The choices are shown with what each comes to, so the dialog is
+        // handed the question and asks it itself.
+        const chosen = await compressDialog?.ask(basename(source), (pictures) =>
+          working.compressEstimate(source, pictures),
+        ) ?? null;
+        if (!chosen || !edits) return;
+        const suggested = smallerName(source);
+        const panel = () =>
+          saveDialog({
+            title: "Save a smaller copy",
+            defaultPath: suggested,
+            filters: [{ name: "PDF", extensions: ["pdf"] }],
+          });
+        // The checks build answers the panel; see `saveanswer.ts`.
+        const path = __TPDF_CHECKS__ && signSaves
+          ? await signSaves.ask(suggested, panel)
+          : await panel();
+        if (!path || !edits) return;
+        blockingTask = "Saving the smaller copy...";
+        await tick();
+        say(afterCompress(
+          await edits.compressCopy(source, path, chosen.pictures),
+          path,
+          chosen.shrinkage,
+        ));
+      } catch (e) {
+        if (e instanceof SaveCancelled) return;
+        say(String(e));
+      } finally {
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
     });
   }
 
@@ -3127,6 +3189,7 @@
       // `passworddialog.ts`.
       passwordDialog = new PasswordDialog(document.body);
       newPasswordDialog = new NewPasswordDialog(document.body);
+      compressDialog = new CompressDialog(document.body);
 
       // And beside that. A web link is asked about rather than followed, and
       // the dialog is the whole of the confirmation --- see

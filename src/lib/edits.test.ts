@@ -719,12 +719,41 @@ it("sends the new password with a protected copy, and null to remove one", async
   });
 });
 
+it("asks what a smaller copy comes to without asking for consent, and writes one with it", async () => {
+  core.invoke.mockReset();
+  core.invoke.mockResolvedValue({ changed: false });
+  let asked = 0;
+  const edits = new Edits(7, 1, async () => {
+    asked += 1;
+  });
+  const pictures = { dpi: 150, quality: 75, jpeg: true };
+  await edits.compressEstimate("source", pictures);
+  expect(core.invoke).toHaveBeenLastCalledWith("compress_estimate", {
+    doc: 7, source: "source", pictures,
+  });
+  await edits.compressEstimate("source", null);
+  expect(core.invoke).toHaveBeenLastCalledWith("compress_estimate", {
+    doc: 7, source: "source", pictures: null,
+  });
+  expect(asked).toBe(0);
+  await edits.compressCopy("source", "copy", pictures);
+  expect(core.invoke).toHaveBeenLastCalledWith("compress_copy", {
+    doc: 7, source: "source", path: "copy", pictures,
+  });
+  await edits.compressCopy("source", "copy", null);
+  expect(core.invoke).toHaveBeenLastCalledWith("compress_copy", {
+    doc: 7, source: "source", path: "copy", pictures: null,
+  });
+  expect(asked).toBe(2);
+});
+
 it("awaits save consent before every writing command and sends nothing when declined", async () => {
   const writes = [
     (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
     (e: Edits)=>e.redactCopy("source","copy"), (e: Edits)=>e.redactRasterCopy("source","copy"),
     (e: Edits)=>e.ocrCopy("source","copy",1),
     (e: Edits)=>e.protectCopy("source","copy","tr0ub4dor"), (e: Edits)=>e.protectCopy("source","copy",null),
+    (e: Edits)=>e.compressCopy("source","copy",null),
     (e: Edits)=>e.redactDocument("source"), (e: Edits)=>e.extractPages("source","copy",[0]),
     (e: Edits)=>e.splitDocument("source","copy",[[0]]), (e: Edits)=>e.mergeDocuments("source","copy",["other"]),
   ];

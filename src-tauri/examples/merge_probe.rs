@@ -317,6 +317,7 @@ fn whole(pages: u32) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: Vec::new(),
     }
 }

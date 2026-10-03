@@ -188,6 +188,7 @@ function harness(
     recogniseText: () => fired.push("recogniseText"),
     protectCopy: () => fired.push("protectCopy"),
     unprotectCopy: () => fired.push("unprotectCopy"),
+    compressCopy: () => fired.push("compressCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -920,6 +921,17 @@ describe("the page operations", () => {
     expect(closed.fired).toEqual([]);
   });
 
+  it("offers a smaller copy on any open document", () => {
+    const { registry, fired } = harness();
+    const titles = new Map(registry.all().map((entry) => [entry.id, entry.title]));
+    expect(titles.get("file.compress")).toBe("Save a smaller copy...");
+    expect(registry.run("file.compress")).toBe(true);
+    expect(fired).toEqual(["compressCopy"]);
+    const closed = harness(false);
+    expect(closed.registry.run("file.compress")).toBe(false);
+    expect(closed.fired).toEqual([]);
+  });
+
   it("sets and removes a password through two commands, on any open document", () => {
     const { registry, fired } = harness();
     const titles = new Map(registry.all().map((entry) => [entry.id, entry.title]));
@@ -1483,6 +1495,7 @@ describe("the window shortcuts for editing", () => {
       recogniseText: () => fired.push("recogniseText"),
       protectCopy: () => fired.push("protectCopy"),
       unprotectCopy: () => fired.push("unprotectCopy"),
+      compressCopy: () => fired.push("compressCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>

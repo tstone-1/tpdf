@@ -126,6 +126,7 @@ fn plan_with(baseline: u32, pages: Vec<PageView>, other: &Path) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         forms: Vec::new(),
         baseline,
         opened_as: None,

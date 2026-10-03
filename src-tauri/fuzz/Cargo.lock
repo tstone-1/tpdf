@@ -5322,6 +5322,7 @@ dependencies = [
  "fax",
  "flate2",
  "getrandom 0.4.3",
+ "image",
  "libc",
  "lopdf",
  "objc2",

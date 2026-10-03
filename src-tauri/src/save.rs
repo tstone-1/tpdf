@@ -4090,6 +4090,11 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         sweep::collect(&mut doc)?;
     }
 
+    // **Before the encryption, after everything that adds or removes.** A
+    // smaller copy deflates and re-encodes streams, which have to be in the
+    // clear for that and have to be the ones that are written.
+    let _ = crate::compress::apply(&mut doc, plan.compress);
+
     // **Last, and after the sweep.** `Document::encrypt` walks every object in
     // the map and encrypts its strings and streams, so anything added after it
     // would be written in the clear beside objects that are not --- a file no
@@ -4119,7 +4124,11 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     crate::protect::finish(&mut doc, &plan.protection)?;
 
     let kept = doc.get_pages().len();
-    let bytes = serialise(&mut doc, "the document")?;
+    let bytes = if plan.compress == crate::compress::Compress::No {
+        serialise(&mut doc, "the document")?
+    } else {
+        serialise_packed(&mut doc, "the document")?
+    };
     crate::protect::written_as_asked(&plan.protection, &bytes, kept)?;
     Ok(bytes)
 }
@@ -4440,6 +4449,24 @@ struct Redacted {
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
+    serialise_as(doc, what, false)
+}
+
+/// [`serialise`] with object streams and a cross-reference stream, which is
+/// how a smaller copy is written.
+///
+/// `lopdf` writes an encrypted document without object streams: its objects
+/// are already encrypted when they reach the writer, and an object stream
+/// built from them could only be written in the clear.
+///
+/// # Errors
+///
+/// As [`serialise`].
+pub fn serialise_packed(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
+    serialise_as(doc, what, true)
+}
+
+fn serialise_as(doc: &mut Document, what: &str, packed: bool) -> Result<Vec<u8>, String> {
     // **`/Size` made right rather than checked**, and the difference is the
     // whole reason this is two lines instead of a guard.
     //
@@ -4467,8 +4494,17 @@ pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {
     // it holds for every path, including a copy that dropped nothing.
     doc.max_id = doc.objects.keys().map(|id| id.0).max().unwrap_or(0);
     let mut bytes = Vec::new();
-    doc.save_to(&mut bytes)
-        .map_err(|e| format!("could not serialise {what}: {e}"))?;
+    if packed {
+        let options = lopdf::SaveOptions {
+            use_object_streams: true,
+            use_xref_streams: true,
+            ..Default::default()
+        };
+        doc.save_with_options(&mut bytes, options)
+    } else {
+        doc.save_to(&mut bytes)
+    }
+    .map_err(|e| format!("could not serialise {what}: {e}"))?;
     let wrong = verify::structure(&bytes);
     if wrong.is_empty() {
         return Ok(bytes);

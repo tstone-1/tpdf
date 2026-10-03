@@ -333,6 +333,39 @@ class Tpdf:
             'protect', *args, '--', source, password=password, new_password=new_password,
         ).typed
 
+    def compress(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str] | None = None, *,
+        pictures: str | None = None, dpi: int | None = None, quality: int | None = None,
+        jpeg: bool = True, preview: str | os.PathLike[str] | None = None,
+        force: bool = False, invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.CompressReport:
+        """Write a smaller copy, or with no `output` say what one would come to.
+
+        On its own nothing a reader sees changes. `pictures` names a preset
+        (`screen`, `balanced`, `print`) that scales pictures down and stores
+        photographs as JPEG; `dpi` and `quality` set those numbers directly,
+        and `jpeg=False` keeps lossless pictures lossless. `preview` writes one
+        part of one page before and after as a PNG. A copy that would not be
+        smaller is refused.
+        """
+        args: list[str] = ['--dry-run'] if output is None else ['-o', os.fspath(output)]
+        if pictures is not None:
+            args += ['--pictures', pictures]
+        for flag, number in (('--dpi', dpi), ('--quality', quality)):
+            if number is not None:
+                if isinstance(number, bool) or not isinstance(number, int):
+                    raise TypeError(f'{flag[2:]} is a whole number')
+                args += [flag, str(number)]
+        if not jpeg:
+            args.append('--no-jpeg')
+        if preview is not None:
+            args += ['--preview', os.fspath(preview)]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run('compress', *args, '--', source, password=password).typed
+
     def unprotect(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         password: str, *, force: bool = False, invalidate_signatures: bool = False,

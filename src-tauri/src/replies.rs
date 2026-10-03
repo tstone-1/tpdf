@@ -691,6 +691,26 @@ fn samples() -> BTreeMap<&'static str, String> {
     put("Made", &save::Made { pages: 3 });
 
     put(
+        "Shrinkage",
+        &crate::commands::compress::Shrinkage {
+            bytes_before: 8_412_330,
+            bytes_after: 1_902_118,
+            pictures: 14,
+            pictures_changed: 9,
+            sample: Some(crate::commands::compress::SampleView {
+                width: 320,
+                height: 320,
+                before: "data:image/png;base64,iVBORw0KGgo=".into(),
+                after: "data:image/png;base64,iVBORw0KGgp=".into(),
+                page: 3,
+                zoom_percent: 200,
+                dpi_before: 520,
+                dpi_after: 150,
+            }),
+        },
+    );
+
+    put(
         "Recognised",
         &crate::commands::ocr::Recognised {
             pages: vec![crate::commands::ocr::LayerPage { page: 1, words: 40 }],

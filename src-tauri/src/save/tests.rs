@@ -166,6 +166,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: Vec::new(),
     }
 }
@@ -195,6 +196,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: Vec::new(),
     }
 }
@@ -3603,6 +3605,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: vec![PlannedMark {
             kind,
             // The biconditional the model enforces, restated here because
@@ -3702,6 +3705,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
     };
     assert!(
         plan.is_appendable(),
@@ -7171,6 +7175,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -7230,6 +7235,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -7294,6 +7300,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: Vec::new(),
     };
     assert!(plain.is_identity());
@@ -7334,6 +7341,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: Vec::new(),
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
@@ -10785,6 +10793,142 @@ fn a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names() {
 
     let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
     assert_eq!(shows_per_page(&written), [0, 1]);
+}
+
+#[test]
+fn a_plan_that_asks_for_a_smaller_copy_is_neither_the_file_nor_an_append() {
+    use crate::compress::{Compress, Preset};
+    for way in [Compress::Lossless, Compress::Pictures(Preset::Print.into())] {
+        let mut plain = plan_of(&[0, 0]);
+        assert!(plain.is_identity(), "the control: nothing to write yet");
+        plain.compress = way;
+        assert!(!plain.is_identity(), "{way:?}");
+
+        let mut marked = plan_of_kind(
+            MarkKind::Highlight,
+            vec![crate::docmodel::Quad {
+                left: 20.0,
+                top: 20.0,
+                right: 80.0,
+                bottom: 35.0,
+            }],
+        );
+        assert!(
+            marked.is_appendable(),
+            "the control: a mark alone is an append"
+        );
+        marked.compress = way;
+        assert!(
+            !marked.is_appendable(),
+            "{way:?}: an append rewrites no object"
+        );
+    }
+}
+
+/// **The plan's field reaching the writer**, which `compress.rs`'s own tests
+/// cannot see: they call `apply` themselves.
+#[test]
+fn a_smaller_copy_is_packed_shrinks_its_pictures_and_keeps_every_page() {
+    use crate::compress::{Compress, Preset};
+    let scratch = Scratch::new("compress-copy");
+    let source = scratch.join("in.pdf");
+    // One page drawing a 300 by 300 photograph one inch square, and a long
+    // content stream stored plainly.
+    let mut state = 7u32;
+    let pixels: Vec<u8> = (0..300 * 300 * 3)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 24) as u8
+        })
+        .collect();
+    let mut doc = lopdf::Document::with_version("1.4");
+    let pages = doc.new_object_id();
+    let picture = doc.add_object(
+        lopdf::Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => 300, "Height" => 300,
+                "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8,
+            },
+            pixels,
+        )
+        .with_compression(false),
+    );
+    let body = format!(
+        "q 72 0 0 72 100 100 cm /Im Do Q\n{}",
+        "0 0 m 10 10 l S\n".repeat(400)
+    );
+    let content = doc.add_object(
+        lopdf::Stream::new(Dictionary::new(), body.into_bytes()).with_compression(false),
+    );
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 300.into(), 300.into()],
+        "Resources" => dictionary! { "XObject" => dictionary! { "Im" => picture } },
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    let root = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", root);
+    doc.save(&source).expect("write fixture");
+    let before = std::fs::metadata(&source).expect("the fixture").len();
+
+    let width_of = |path: &Path| -> (i64, usize, bool) {
+        let bytes = std::fs::read(path).expect("read back");
+        let written = lopdf::Document::load_mem(&bytes).expect("loads");
+        let width = written
+            .objects
+            .values()
+            .filter_map(|object| object.as_stream().ok())
+            .find(|stream| {
+                stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Image")
+            })
+            .and_then(|stream| stream.dict.get(b"Width").and_then(Object::as_i64).ok())
+            .expect("the picture");
+        let packed = bytes.windows(7).any(|window| window == b"/ObjStm");
+        (width, written.get_pages().len(), packed)
+    };
+
+    // The control: an ordinary copy is neither packed nor smaller.
+    let plain = scratch.join("plain.pdf");
+    copy_here(&source, &plan_of(&[0]), &plain, None).expect("copy");
+    assert_eq!(width_of(&plain), (300, 1, false));
+
+    let lossless = scratch.join("lossless.pdf");
+    let mut plan = plan_of(&[0]);
+    plan.compress = Compress::Lossless;
+    copy_here(&source, &plan, &lossless, None).expect("copy");
+    assert_eq!(
+        width_of(&lossless),
+        (300, 1, true),
+        "packed, the picture as it was"
+    );
+    let after = std::fs::metadata(&lossless).expect("the copy").len();
+    assert!(after < before, "{after} against {before}");
+
+    let shrunk = scratch.join("shrunk.pdf");
+    plan.compress = Compress::Pictures(Preset::Screen.into());
+    copy_here(&source, &plan, &shrunk, None).expect("copy");
+    assert_eq!(width_of(&shrunk), (110, 1, true));
+    let least = std::fs::metadata(&shrunk).expect("the copy").len();
+    assert!(least * 4 < after, "{least} against {after}");
+}
+
+#[test]
+fn a_smaller_copy_of_an_encrypted_document_keeps_its_password() {
+    let Some(source) = fixture("incr-encrypted-pw.pdf") else {
+        println!("[SKIP] a_smaller_copy_of_an_encrypted_document_keeps_its_password: generate testdata/ (BUILD.md)");
+        return;
+    };
+    let scratch = Scratch::new("compress-encrypted");
+    let out = scratch.0.join("out.pdf");
+    let mut plan = keeping(2, &[(0, 0), (1, 0)]);
+    plan.compress = crate::compress::Compress::Lossless;
+    copy_here(&source, &plan, &out, Some("swordfish")).expect("rewrite");
+    assert!(is_locked(&out), "the copy opens without a password");
+    assert_eq!(page_count_with(&out, "swordfish"), 2);
 }
 
 #[test]

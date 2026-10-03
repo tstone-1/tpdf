@@ -77,6 +77,7 @@ mod tests {
             text_edits: Vec::new(),
             text_layers: Vec::new(),
             protection: Protection::Keep,
+            compress: Default::default(),
             marks: Vec::new(),
         }
     }

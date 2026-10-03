@@ -93,7 +93,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -148,6 +148,21 @@ def main() -> int:
             copied = room / "copies"
             copied.mkdir()
             copies = [first, copied]
+        if args.phase == "compress":
+            # A picture of the fixture's first page at 200 pixels an inch, and a
+            # directory for the copies.
+            copied = room / "copies"
+            copied.mkdir()
+            scan = room / "scan.pdf"
+            picture = room / "page.png"
+            tool = args.binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+            made = subprocess.run([str(tool), "render", str(first), "-o", str(picture), "--dpi", "200"],
+                                  capture_output=True, text=True, timeout=120, check=False)
+            if made.returncode != 0:
+                print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
+                return 1
+            scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
+            copies = [scan, copied]
         if args.phase == "pictures":
             # Two renders of the fixture's first page at different sizes, and a
             # directory for what the phase writes.
@@ -215,6 +230,8 @@ def main() -> int:
             passed = protected_files(room / "copies", args.binary) and passed
         if args.phase == "pictures":
             passed = picture_files(room / "copies", args.binary) and passed
+        if args.phase == "compress":
+            passed = smaller_files(room / "scan.pdf", room / "copies", args.binary) and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
@@ -303,6 +320,39 @@ def recognised_files(directory: Path) -> bool:
     extra = sorted(p.name for p in directory.iterdir() if p.name != "copy.pdf")
     print(f"[{'OK' if not extra else 'FAIL'}]   nothing else is left in the directory: {extra}")
     return ok and not extra
+
+
+def smaller_files(source: Path, directory: Path, binary: Path) -> bool:
+    """What the compress phase left on disk, read by the tool from outside the app.
+
+    `small.pdf` was made for a screen and `tiny.pdf` with coarser numbers, so
+    each is smaller than the one before it; both still have the source's page.
+    """
+    tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+
+    def pages(path: Path) -> object:
+        done = subprocess.run([str(tool), "info", str(path), "--json"],
+                              capture_output=True, text=True, timeout=120, check=False)
+        try:
+            return json.loads(done.stdout)["files"][0]["document"]["pages"]
+        except (ValueError, KeyError, IndexError):
+            return None
+
+    small, tiny = directory / "small.pdf", directory / "tiny.pdf"
+    if small.is_file() and tiny.is_file():
+        sizes = [source.stat().st_size, small.stat().st_size, tiny.stat().st_size]
+        checks = [
+            (f"each copy is smaller than the one before: {sizes}", sizes[0] > sizes[1] > sizes[2]),
+            ("small.pdf has the source's one page", pages(small) == 1),
+            ("tiny.pdf has the source's one page", pages(tiny) == 1),
+        ]
+    else:
+        checks = [("small.pdf and tiny.pdf were written", False)]
+    extra = sorted(p.name for p in directory.iterdir() if p.name not in ("small.pdf", "tiny.pdf"))
+    checks.append((f"nothing else is left in the directory: {extra}", not extra))
+    for what, good in checks:
+        print(f"[{'OK' if good else 'FAIL'}]   {what}")
+    return all(good for _, good in checks)
 
 
 def picture_files(directory: Path, binary: Path) -> bool:

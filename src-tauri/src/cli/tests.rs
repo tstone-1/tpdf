@@ -566,6 +566,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("text-runs", "text-runs a.pdf --page 1 --json"),
         ("render", "render a.pdf -o page.png --json"),
         ("ocr", "ocr a.pdf -o b.pdf --language de-DE --pages 1-2"),
+        ("compress", "compress a.pdf -o b.pdf --pictures screen"),
         ("protect", "protect a.pdf -o b.pdf --new-password-env NEW"),
         ("unprotect", "unprotect a.pdf -o b.pdf --password-env OLD"),
         ("images", "images a.png b.jpg -o c.pdf --paper a4"),
@@ -1984,6 +1985,29 @@ fn samples() -> Vec<(&'static str, String)> {
             }),
         ),
         (
+            "compress",
+            pretty(&report::Compressed {
+                schema: report::SCHEMA,
+                command: "compress".into(),
+                input: "scan.pdf".into(),
+                output: Some("scan smaller.pdf".into()),
+                written: true,
+                pages: 12,
+                preset: Some("balanced".into()),
+                dpi: Some(150),
+                quality: Some(75),
+                jpeg: Some(true),
+                bytes_before: 8_412_330,
+                bytes_after: 1_902_118,
+                saved_percent: 77,
+                pictures_total: Some(14),
+                pictures_changed: Some(9),
+                preview: Some("scan preview.png".into()),
+                signatures_invalidated: 0,
+                signatures_unknown: false,
+            }),
+        ),
+        (
             "command-error",
             pretty(&report::Failed {
                 schema: report::SCHEMA,
@@ -2171,7 +2195,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 23, "the sample table itself");
+    assert_eq!(want.len(), 24, "the sample table itself");
     assert_eq!(found, want);
 }
 

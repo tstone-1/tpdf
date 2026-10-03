@@ -403,6 +403,7 @@ fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,

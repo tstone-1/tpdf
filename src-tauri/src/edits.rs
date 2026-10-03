@@ -1901,6 +1901,7 @@ impl Edits {
             forms: model.form_changes(),
             text_layers: Vec::new(),
             protection: Default::default(),
+            compress: Default::default(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -2048,6 +2049,7 @@ impl Edits {
             forms: model.form_changes(),
             text_layers: Vec::new(),
             protection: Default::default(),
+            compress: Default::default(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -2261,6 +2263,13 @@ pub struct Plan {
     /// an ordinary save, copy, extract or print leaves the encryption as it was.
     #[serde(default)]
     pub protection: crate::protect::Protection,
+    /// Whether the written file is made smaller, and how.
+    ///
+    /// **Always [`Compress::No`](crate::compress::Compress) out of the model**,
+    /// as [`Plan::protection`] is always `Keep`: only the command that writes a
+    /// smaller copy sets it.
+    #[serde(default)]
+    pub compress: crate::compress::Compress,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -2623,6 +2632,9 @@ impl Plan {
         if self.protection != crate::protect::Protection::Keep {
             return false;
         }
+        if self.compress != crate::compress::Compress::No {
+            return false;
+        }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
     }
 
@@ -2666,6 +2678,8 @@ impl Plan {
             // An append adds objects under the encryption the file has, so a
             // plan that changes the password is a rewrite.
             && self.protection == crate::protect::Protection::Keep
+            // And a smaller copy is every object written again.
+            && self.compress == crate::compress::Compress::No
     }
 
     /// Whether the pages are the file's, in the file's order and shape.

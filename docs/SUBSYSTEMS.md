@@ -362,6 +362,27 @@ differently in `written_as_asked`. And `lopdf` authenticates with the empty pass
 itself, which is why `allowed` decides a removal by loading the bytes with no password and
 not by whether one was given.
 
+## A smaller copy (`tpdf compress`, *Save a smaller copy*)
+
+`compress.rs` makes a parsed document smaller before the rewrite encrypts and writes it:
+`Plan::compress` is `No`, `Lossless` or `Pictures { dpi, quality, jpeg }`, and
+`save::rewrite` calls `compress::apply` after the sweep and before `Document::encrypt`,
+then `serialise_packed` in place of `serialise`. A plan that asks for it is neither the
+file nor an append.
+
+Lossless deflates plain streams and deflates deflated ones again, keeping what is smaller.
+Pictures are found by `drawn`, which walks page content and the blocks it draws for the
+matrix at each `Do`; `shrink` scales and re-encodes one picture and leaves it when the new
+form is not a tenth smaller. The JPEG encoder is the `image` crate's, already in the tree
+through `pdfium-render`; the decoder is `zune-jpeg`, as for `tpdf images`.
+
+The estimate is a worker request, `Request::Shrink`, answered from the graph's one
+`lopdf` parse (`DocumentGraph::shrink`), so it is of the file as opened. `render::run_shrink`
+adds the sample: it opens the estimate's bytes as a second document in the same worker and
+draws one page from each. `commands/compress.rs` turns the sample into two PNG `data:` URLs
+for `compressdialog.ts`. `docs/PLAN.md` *A smaller copy* has the measurements and
+`docs/THREAT-MODEL.md` §T6.32 what the decoders are given.
+
 ## A text layer over a scanned page (`tpdf ocr`, *Recognise text and save as*)
 
 `textlayer.rs` writes recognised words into a page as invisible text; `ocr_layer.rs` decides

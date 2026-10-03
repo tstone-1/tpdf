@@ -326,6 +326,19 @@ export interface Commands {
     args: { doc: number; source: string; path: string; password: string | null };
     reply: Copied;
   };
+  compress_estimate: {
+    args: { doc: number; source: string; pictures: import("./compress").Pictures | null };
+    reply: import("./compress").Shrinkage;
+  };
+  compress_copy: {
+    args: {
+      doc: number;
+      source: string;
+      path: string;
+      pictures: import("./compress").Pictures | null;
+    };
+    reply: Copied;
+  };
   extract_pages: {
     args: { doc: number; source: string; path: string; slots: number[] };
     reply: Copied;

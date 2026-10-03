@@ -19,6 +19,7 @@ pub mod clitool;
 /// Every `#[tauri::command]` this crate registers, grouped by the state it
 /// touches. The registry below stays here; the bodies do not.
 mod commands;
+pub mod compress;
 pub mod content;
 pub mod defaultapp;
 pub mod diag;
@@ -163,8 +164,8 @@ use tauri::Manager;
 // moved and what decides which file a new one goes in.
 use commands::document::start_eager_open;
 use commands::{
-    app::*, document::*, edit::*, menubar::*, ocr::*, print::*, protect::*, read::*, redact::*,
-    save::*, session::*, sign::*, spike::*,
+    app::*, compress::*, document::*, edit::*, menubar::*, ocr::*, print::*, protect::*, read::*,
+    redact::*, save::*, session::*, sign::*, spike::*,
 };
 
 /// The window's *Redact and save as*, without the window.
@@ -922,6 +923,8 @@ pub fn run() {
             save_document,
             save_copy,
             protect_copy,
+            compress_estimate,
+            compress_copy,
             extract_pages,
             split_document,
             merge_documents,
@@ -1367,6 +1370,7 @@ mod tests {
             text_edits: Vec::new(),
             text_layers: Vec::new(),
             protection: Default::default(),
+            compress: Default::default(),
         }
     }
 

@@ -1986,6 +1986,17 @@ impl Engine for Workers {
         }
     }
 
+    fn shrink(
+        &self,
+        doc: u32,
+        compress: crate::compress::Compress,
+    ) -> Result<crate::compress::Estimate, String> {
+        match self.ask(doc, &Request::Shrink { compress })? {
+            Reply::Shrunk(estimate) => Ok(*estimate),
+            other => Err(mismatched("shrink", &other)),
+        }
+    }
+
     fn append(&self, doc: u32, plan: &edits::Plan) -> Result<save::Update, String> {
         match self.ask(doc, &Request::Append { plan: plan.clone() })? {
             Reply::Append(update) => Ok(update),

@@ -469,6 +469,19 @@ measured the Windows render constants come out 1.5–1.8x worse.
   copying keeps those restrictions: tpdf does not remove them.
   <!-- built: file.protect -->
   <!-- built: file.unprotect -->
+- **Save a smaller copy** offers four ways to make the file smaller and shows what each
+  comes to before you choose: *Keep every picture as it is*, which changes nothing you can
+  see, and three that also scale pictures down, for printing (300 pixels an inch), for
+  screen and office printing (150) and for reading on a screen (110). Each is listed with
+  the size the copy would have. Select one that changes pictures and the dialog shows a
+  part of a page as it is now beside the same part as the copy would draw it, enlarged to
+  200%, so you see how soft the pictures become and not only a percentage. *Your own
+  numbers* sets the resolution and the JPEG quality directly, and whether photographs may
+  be stored as JPEG at all. A choice that would not make the file smaller cannot be saved.
+  The open document and the file it came from keep every pixel; the copy includes changes
+  you have not saved yet, and the sizes shown are worked out from the file as it is on
+  disk. Text and line drawings are never made coarser: only pictures are.
+  <!-- built: file.compress -->
 - **New document from pictures** makes a PDF from PNG and JPEG files, one page for each,
   in the order the panel returns them, and opens it. A page is the picture's own size at
   the resolution its file states, or one point a pixel when it states none. A photograph
@@ -583,7 +596,7 @@ both.
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
-`tpdf protect`, `tpdf unprotect` and `tpdf images`
+`tpdf protect`, `tpdf unprotect`, `tpdf compress` and `tpdf images`
 expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
@@ -623,6 +636,8 @@ tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json
 NEW=... tpdf protect report.pdf -o locked.pdf --new-password-env NEW --json
 KEY=... tpdf unprotect locked.pdf -o open.pdf --password-env KEY --json
 tpdf images front.jpg back.jpg plan.png -o album.pdf --paper a4 --json
+tpdf compress scan.pdf --dry-run --pictures balanced --preview preview.png --json
+tpdf compress scan.pdf -o smaller.pdf --pictures balanced --json
 tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
@@ -1014,7 +1029,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `ocr()`, `images()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -1200,7 +1215,44 @@ whether the copy is `protected`, whether the source `was_protected`,
 password* and *Save a copy without its password* write the same copies from the open
 document.
 
-**Passwords.** `protect`, `unprotect`, `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**A smaller copy.** `tpdf compress report.pdf -o smaller.pdf` writes a copy that is
+smaller and looks exactly the same: streams stored loosely are compressed and the file is
+written with object streams. On ordinary documents that saves a few percent, because
+pictures are most of a PDF's size and this does not touch them.
+
+`--pictures screen`, `balanced` or `print` also shrinks pictures. A picture drawn at more
+than 110, 150 or 300 pixels an inch is scaled down to that, and a photograph or a scan is
+stored as JPEG at quality 60, 75 or 85. `--dpi N` (20 to 1200) and `--quality N` (1 to 100)
+set those two numbers yourself, starting from `balanced` when no preset is named, and
+`--no-jpeg` keeps a picture that is stored without loss stored without loss. Text and line
+drawings are not pictures and stay sharp at any zoom.
+
+Before you write anything, `--dry-run` reports the size the copy would have, and
+`--preview preview.png` writes a picture of what changes: the part of a page that differs
+most, as it is now on the left and as the copy would draw it on the right, at 200%.
+Together they answer how much space is saved and how soft the pictures get.
+
+Left exactly as they are: a picture no page draws directly, a black-and-white scan (JBIG2,
+CCITT) or a JPEG 2000 picture, one in an indexed, CMYK or other special colour space, one
+with a colour-key mask, a JPEG that needs no scaling, and any picture whose new form would
+not be at least a tenth smaller. A picture's transparency is scaled with it and never
+stored as JPEG.
+
+A copy that would not be smaller is refused and not written. The copy is staged and opened
+again before it is published: it must have the source's pages and be protected exactly
+when the source was. A document with a password keeps it, and is written without object
+streams. A signed document needs `--invalidate-signatures`, an existing output needs
+`--force`, and the input is never replaced. The JSON report carries `schema`, `command`,
+`input`, `output` and `written` (`null` and `false` for a dry run), `pages`, `preset`
+(`screen`, `balanced`, `print`, `custom`, or `null` when no picture was asked to change),
+`dpi`, `quality`, `jpeg`, `bytes_before`, `bytes_after`, `saved_percent` (rounded down),
+`pictures_total` and `pictures_changed` (counted only by a dry run or a preview, `null`
+otherwise), `preview`, `signatures_invalidated` and `signatures_unknown`. For a document
+with a password a dry run's `bytes_after` is the size before encryption, a few bytes a
+stream less than the copy. The window's *Save a smaller copy* offers the same choices with
+their sizes and the same before and after.
+
+**Passwords.** `protect`, `unprotect`, `compress`, `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's

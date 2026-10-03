@@ -137,6 +137,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         text_edits: changes.into_iter().map(textedit::Edit::opened).collect(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
     };
     let mut previews = Vec::new();
     for (page, size) in pages.iter().enumerate() {

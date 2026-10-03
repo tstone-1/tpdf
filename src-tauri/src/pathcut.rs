@@ -57,9 +57,9 @@ pub enum Verdict {
 }
 
 /// A matrix as PDF writes one: `[a b c d e f]`.
-type Matrix = [f64; 6];
+pub(crate) type Matrix = [f64; 6];
 
-const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+pub(crate) const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 /// The part of the graphics state a cut depends on.
 ///
@@ -107,7 +107,7 @@ fn numbers<const N: usize>(operation: &Operation) -> Option<[f64; N]> {
 }
 
 /// `first` applied, then `then`: what `cm` does to the current matrix.
-fn concat(first: Matrix, then: Matrix) -> Matrix {
+pub(crate) fn concat(first: Matrix, then: Matrix) -> Matrix {
     [
         first[0] * then[0] + first[1] * then[2],
         first[0] * then[1] + first[1] * then[3],

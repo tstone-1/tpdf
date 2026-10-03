@@ -655,6 +655,10 @@ fn handle(
             Ok(properties) => Response::reply(Reply::Properties(Box::new(properties))),
             Err(e) => Response::err(e),
         },
+        Request::Shrink { compress } => match render::run_shrink(bindings, document, *compress) {
+            Ok(estimate) => Response::reply(Reply::Shrunk(Box::new(estimate))),
+            Err(e) => Response::err(e),
+        },
         Request::Append { plan } => match render::run_append(document, plan) {
             Ok(update) => Response::reply(Reply::Append(update)),
             Err(e) => Response::err(e),

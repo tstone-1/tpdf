@@ -145,6 +145,7 @@ fn main() {
     let plan = Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
         text_edits: vec![textedit::Edit::imported(
             1,
             textedit::Change {

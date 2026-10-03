@@ -66,6 +66,7 @@ __all__ = [
     "OcrPage",
     "OcrReport",
     "PageOutput",
+    "CompressReport",
     "ProtectReport",
     "PageSize",
     "PageText",
@@ -374,6 +375,39 @@ class ProtectReport(TypedDict):
     protected: bool
     # Whether the source was encrypted.
     was_protected: bool
+    signatures_invalidated: int
+    signatures_unknown: bool
+
+
+class CompressReport(TypedDict):
+    """`compress --json`: a smaller copy, or what one would come to."""
+
+    schema: int
+    command: str
+    input: str
+    # The published copy. `None` for a dry run.
+    output: str | None
+    # Whether a copy was written. `False` for a dry run.
+    written: bool
+    pages: int
+    # `screen`, `balanced`, `print`, or `custom` for numbers that are no
+    # preset. `None` when no picture was asked to change, and then `dpi`,
+    # `quality` and `jpeg` are `None` too.
+    preset: str | None
+    dpi: int | None
+    quality: int | None
+    jpeg: bool | None
+    bytes_before: int
+    # The copy's size; for a dry run, the size it would have.
+    bytes_after: int
+    # The share saved, in whole percent, rounded down.
+    saved_percent: int
+    # Pictures the pages draw, and how many are stored smaller. `None` unless
+    # the run was a dry run or wrote a preview.
+    pictures_total: int | None
+    pictures_changed: int | None
+    # The PNG a preview was written to.
+    preview: str | None
     signatures_invalidated: int
     signatures_unknown: bool
 
@@ -1211,6 +1245,7 @@ REPORTS: dict[str, type] = {
     "fill-refused": FillReport,
     "identities": IdentitiesReport,
     "images": ImagesReport,
+    "compress": CompressReport,
     "info": InfoReport,
     "ocr": OcrReport,
     "pages": PagesReport,

@@ -223,6 +223,7 @@ fn run(
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
+        compress: Default::default(),
     };
 
     // **The shipped writer, across the process boundary.** `save::Here` is

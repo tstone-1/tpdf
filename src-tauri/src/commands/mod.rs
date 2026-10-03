@@ -25,6 +25,7 @@
 //! parse happens.
 
 pub mod app;
+pub mod compress;
 pub mod document;
 pub mod edit;
 pub mod menubar;

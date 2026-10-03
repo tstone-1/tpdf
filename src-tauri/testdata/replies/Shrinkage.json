@@ -1,0 +1,16 @@
+{
+  "bytesBefore": 8412330,
+  "bytesAfter": 1902118,
+  "pictures": 14,
+  "picturesChanged": 9,
+  "sample": {
+    "width": 320,
+    "height": 320,
+    "before": "data:image/png;base64,iVBORw0KGgo=",
+    "after": "data:image/png;base64,iVBORw0KGgp=",
+    "page": 3,
+    "zoomPercent": 200,
+    "dpiBefore": 520,
+    "dpiAfter": 150
+  }
+}

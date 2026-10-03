@@ -110,6 +110,51 @@ pub struct Protected {
     pub signatures_unknown: bool,
 }
 
+/// A smaller copy, or what one would come to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Compressed {
+    /// Schema version.
+    pub schema: u32,
+    /// `compress`.
+    pub command: String,
+    /// Source path.
+    pub input: String,
+    /// The published copy. `null` for a dry run.
+    pub output: Option<String>,
+    /// Whether a copy was written. `false` for a dry run.
+    pub written: bool,
+    /// How many pages the document has.
+    pub pages: u32,
+    /// How pictures were shrunk: `screen`, `balanced`, `print`, or `custom`
+    /// for numbers that are no preset. `null` when nothing a reader sees was
+    /// changed, and then `dpi`, `quality` and `jpeg` are `null` too.
+    pub preset: Option<String>,
+    /// The resolution pictures were scaled down to, in pixels an inch.
+    pub dpi: Option<u32>,
+    /// The JPEG quality, 1 to 100.
+    pub quality: Option<u8>,
+    /// Whether a lossless picture may be stored as JPEG.
+    pub jpeg: Option<bool>,
+    /// The source's size in bytes.
+    pub bytes_before: u64,
+    /// The copy's size in bytes; for a dry run, the size it would have.
+    pub bytes_after: u64,
+    /// The share saved, in whole percent, rounded down.
+    pub saved_percent: u64,
+    /// Pictures the pages draw. `null` unless the run was a dry run or wrote
+    /// a preview: only the estimate counts them.
+    pub pictures_total: Option<usize>,
+    /// Of those, the ones stored smaller. `null` as `pictures_total` is.
+    pub pictures_changed: Option<usize>,
+    /// The PNG `--preview` wrote. `null` when it was not asked for or no
+    /// picture changes.
+    pub preview: Option<String>,
+    /// Number of source signatures affected by this rewrite.
+    pub signatures_invalidated: usize,
+    /// Signature enumeration was incomplete.
+    pub signatures_unknown: bool,
+}
+
 /// One page given a text layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OcrPage {
