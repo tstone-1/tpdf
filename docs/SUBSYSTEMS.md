@@ -336,6 +336,23 @@ of what the redaction gate asks: this caller wants recall and is not a safety ch
 `docs/PLAN.md` §9 *Cross-cutting* has the measurements and what is not built, and
 `BUILD.md`'s `textlayer-probe` is the read-back through PDFium.
 
+## Drawings under a redaction (`redact::remove_paths`)
+
+A redaction takes four kinds of page content, each addressed by its place among its own
+kind: text (`remove_shows`), text inside a form (`remove_form_shows`), pictures
+(`remove_images`) and, since 2026-10-03, paths (`remove_paths`). `redact::covered` decides
+from PDFium's object list which of each a region takes. A picture goes when the region
+touches it; a path goes only when the region holds all of it (`objects::contains`), because
+a rule or a border that runs on past the region is on a third of all regions.
+
+`painted_paths` is the walk that finds a page's paths in its content stream, and it has to
+agree with PDFium about which paths are objects; `docs/PLAN.md` §6 *Drawings a region holds
+all of* has the rule and the measurement. Two findings are made while the plan is built and
+not by the writer (`leave_unplaced`, through `DocumentGraph::path_clips`): a path that also
+sets the clip, and a page whose counts disagree. The count travels as `path_objects` in
+`RegionPlan` and `PlannedRedaction`, beside `paths`, the way `image_objects` travels beside
+`images`. `docs/THREAT-MODEL.md` §T6.29 says what `verified` does and does not cover.
+
 ## A signature image from a file (`sign --image`)
 
 The signature chooser decodes an imported image with the webview's decoder and scales it on a

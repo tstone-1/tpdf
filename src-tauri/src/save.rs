@@ -4136,6 +4136,13 @@ fn apply_redactions(
             .map_err(Refusal::from)?;
         done.images += took.removed;
 
+        // **Then the drawings the region holds all of.** A path is addressed by
+        // its place among the paths the page paints, and its construction
+        // operators go with the paint, so the outline is not left in the bytes.
+        let took = redact::remove_paths(doc, page, &redaction.paths, redaction.path_objects)
+            .map_err(Refusal::from)?;
+        done.paths += took.removed;
+
         // **The annotations, and every reference to them.** An annotation over
         // the region is `docs/PLAN.md` §6's *Annotations* row: its `/Contents`
         // is a comment about the words, routinely quoting them, and every reader
@@ -4283,6 +4290,8 @@ struct Redacted {
     fields: usize,
     /// Images removed, counted by the `Do` operations that drew them.
     images: usize,
+    /// Paths removed, counted by the operators that painted them.
+    paths: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {

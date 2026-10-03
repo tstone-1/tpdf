@@ -326,8 +326,9 @@ fn page_stream(doc: &Document, page: lopdf::ObjectId) -> Result<String, String> 
     Ok(String::from_utf8_lossy(&data).into_owned())
 }
 
-/// A region over a drawing is not redactable by this module, and says so ---
-/// while the picture beside it now is.
+/// A region over **part** of a drawing is not redactable by this module, and
+/// says so --- while the picture beside it is, and since 2026-10-03 so is a
+/// drawing the region holds all of.
 ///
 /// **This checked an image until 2026-08-27**, when a region over a picture
 /// stopped being a refusal and became a removal. It went on passing, on the two
@@ -353,11 +354,37 @@ fn incomplete(pdfium: &Pdfium, root: &Path) -> Result<String, String> {
         f32::MAX / 4.0,
         f32::MAX / 4.0,
     ];
-    let plan = redact::covered(&objects, &[], whole);
-    if plan.is_complete() {
+    // The whole plane holds every drawing, so each is planned for removal and
+    // none is reported. This half was a refusal until paths became removable.
+    let all = redact::covered(&objects, &[], whole);
+    let paths = objects.iter().filter(|o| o.kind == "path").count();
+    if paths == 0 || all.paths.len() != paths || !all.is_complete() {
+        return Err(format!(
+            "{file} has {paths} path(s) and a region holding all of them plans {} and reports \
+             {} object(s), so a drawing wholly inside a region is not being taken",
+            all.paths.len(),
+            all.unhandled.len()
+        ));
+    }
+    // A region that stops halfway across the first drawing holds none of it
+    // whole, so that drawing is reported and not planned. The image under the
+    // same region is still named, which is what the two checks below read.
+    let first = objects
+        .iter()
+        .find(|o| o.kind == "path")
+        .map(|o| o.bounds)
+        .ok_or("no path")?;
+    let half = [
+        f32::MIN / 4.0,
+        f32::MIN / 4.0,
+        (first[0] + first[2]) / 2.0,
+        f32::MAX / 4.0,
+    ];
+    let plan = redact::covered(&objects, &[], half);
+    if plan.is_complete() || !plan.unhandled.iter().any(|o| o.kind == "path") {
         return Err(
-            "a region covering a drawing reports a complete plan, so a caller acting on it \
-             would take the words and leave the picture of the words"
+            "a region over part of a drawing reports a complete plan, so a caller acting on it \
+             would take the words and leave the rest of the picture of the words"
                 .to_string(),
         );
     }

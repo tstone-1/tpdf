@@ -64,6 +64,8 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
                 mapped.taking.clear();
                 mapped.images.clear();
                 mapped.image_objects = 0;
+                mapped.paths.clear();
+                mapped.path_objects = 0;
                 mapped.form_shows.clear();
                 mapped.form_text_objects.clear();
                 result.redactions.push(mapped);
@@ -164,6 +166,8 @@ mod tests {
             taking: vec!["SYNTHETIC REMOVAL".into()],
             images: vec![2],
             image_objects: 3,
+            paths: Vec::new(),
+            path_objects: 0,
             form_shows: vec![(1, 2)],
             form_text_objects: vec![(1, 3)],
         }

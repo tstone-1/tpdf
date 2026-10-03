@@ -582,6 +582,21 @@ impl DocumentGraph {
         redact::shared_draws(document, page, images, forms)
     }
 
+    /// Whether each path one page paints also sets the clip, or `None` when
+    /// its paths cannot be addressed by position.
+    ///
+    /// `redact::path_clips` over the parsed graph, with [`Self::shared_draws`]'s
+    /// rule for a graph that will not parse or a page it cannot place: the
+    /// answer that leaves everything where it is.
+    #[must_use]
+    pub fn path_clips(&self, index: u32, paths: usize) -> Option<Vec<bool>> {
+        let document = self.parsed().ok()?;
+        let page = pagetree::ordered_pages(document)
+            .get(index as usize)
+            .copied()?;
+        redact::path_clips(document, page, paths)
+    }
+
     #[must_use]
     pub fn sheet(&self, index: u32, pages: usize) -> Option<[f32; 4]> {
         self.sheets

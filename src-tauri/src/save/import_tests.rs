@@ -683,6 +683,8 @@ fn a_rewrite_removes_from_the_reader_s_page_and_carries_the_inserted_ones_whole(
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
+        paths: Vec::new(),
+        path_objects: 0,
     }];
 
     write_copy(&source, &plan, &out, None, &Here).expect("the copy");
@@ -774,6 +776,8 @@ fn a_word_surviving_on_an_inserted_page_is_placed_there_and_not_on_the_marked_on
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
+        paths: Vec::new(),
+        path_objects: 0,
     }];
     write_copy(&source, &plan, &out, None, &Here).expect("the copy");
 

@@ -78,7 +78,7 @@ use crate::{annots, docmodel, edits, fields, forms, ocr_gate, pagetree, sweep, t
 /// module does not have to import from this one --- but they are re-exported
 /// here because a redaction *is* what they are for, and `redact-probe` and
 /// `redact-apply-probe` name `redact::Rect` and `redact::PageObject`.
-pub use crate::objects::{overlaps, FormObject, FormOther, FormText, PageObject, Rect};
+pub use crate::objects::{contains, overlaps, FormObject, FormOther, FormText, PageObject, Rect};
 
 /// Ceiling on a decoded content stream.
 ///
@@ -128,6 +128,18 @@ pub struct Plan {
     /// operator in the form's. Merging them into one list would give
     /// `remove_shows` a number it could not tell apart from its own.
     pub form_shows: Vec<(usize, usize)>,
+    /// Ordinals among the page's **path objects**, ascending.
+    ///
+    /// The same ordinals [`remove_paths`] addresses painted paths by.
+    ///
+    /// **Only a path the region holds all of.** A picture is taken whole when a
+    /// region touches it; a path is not, and the difference is a measurement:
+    /// 49,521 of 154,095 realistic regions touch a path, almost always a rule
+    /// or a border that runs on past the region, and taking those would strip
+    /// the lines from every table a reader redacts one cell of. A path that
+    /// reaches beyond the region stays in [`unhandled`](Self::unhandled), as
+    /// every path did before 2026-10-03.
+    pub paths: Vec<usize>,
 }
 
 /// One object a region covers that this cannot remove.
@@ -178,6 +190,29 @@ impl Unhandled {
     #[must_use]
     pub fn sentence(&self) -> String {
         let Unhandled { at, kind, drawn } = self;
+        // The drawing kinds first: each stays for a reason of its own, and "only
+        // text is removed" is true of neither.
+        match (kind.as_str(), drawn) {
+            ("path", None) => {
+                return format!(
+                    "object {at} is a drawing that reaches beyond the region; a drawing is \
+                     removed only when the region covers all of it, so it was left"
+                )
+            }
+            (CLIP_PATH, None) => {
+                return format!(
+                    "object {at} is a drawing that also clips what is drawn after it, so it \
+                     was left"
+                )
+            }
+            (UNPLACED_PATH, None) => {
+                return format!(
+                    "object {at} is a drawing inside the region that could not be found in the \
+                     page's content by position, so it was left"
+                )
+            }
+            _ => {}
+        }
         match drawn {
             Some(times) => format!(
                 "object {at} is of kind {kind} and is drawn {times} time(s) in this document; \
@@ -190,6 +225,17 @@ impl Unhandled {
         }
     }
 }
+
+/// The kind a path is reported under when it is inside the region and also
+/// sets the clip, so taking its operators out would change what is drawn after.
+///
+/// One word with a hyphen, because the review panel puts an article in front of
+/// a kind and an `s` after its first word.
+pub const CLIP_PATH: &str = "clip-path";
+
+/// The kind a path is reported under when it is inside the region and the
+/// page's content could not be matched to PDFium's objects by position.
+pub const UNPLACED_PATH: &str = "unplaced-path";
 
 /// What removing one region would take, as somebody outside this process reads it.
 ///
@@ -256,6 +302,19 @@ pub struct RegionPlan {
     /// missing exactly when another region needed it.
     #[serde(default)]
     pub form_text_objects: Vec<(usize, usize)>,
+    /// Which of the page's paths the removal would delete.
+    ///
+    /// [`Plan::paths`], carried through. The frontend reads how many there are
+    /// and the coordinator hands them to [`remove_paths`].
+    #[serde(default)]
+    pub paths: Vec<usize>,
+    /// How many path objects PDFium found on the page this region is on.
+    ///
+    /// [`text_objects`](Self::text_objects) for paths, carried for the same
+    /// reason: [`remove_paths`] refuses when it disagrees with the paths
+    /// `lopdf` finds painted.
+    #[serde(default)]
+    pub path_objects: usize,
     /// The region itself, in the page's own absolute space.
     ///
     /// **Carried because the writer cannot work it out**, and a second attempt
@@ -354,6 +413,7 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
     let mut plan = Plan::default();
     let mut text_ordinal = 0usize;
     let mut images = 0usize;
+    let mut paths = 0usize;
     for (at, object) in objects.iter().enumerate() {
         let is_text = object.kind == "text";
         let ordinal = text_ordinal;
@@ -366,6 +426,11 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
         let image_ordinal = images;
         if object.kind == "image" {
             images += 1;
+        }
+        // And for every path, for the same reason.
+        let path_ordinal = paths;
+        if object.kind == "path" {
+            paths += 1;
         }
         // A form whose text this *can* reach is not unhandled, so the decision
         // about it is made below rather than here. Asking `forms` rather than
@@ -381,6 +446,11 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
             plan.shows.push(ordinal);
         } else if object.kind == "image" {
             plan.images.push(image_ordinal);
+        } else if object.kind == "path" && contains(region, object.bounds) {
+            // All of it is inside, so taking it takes nothing a reader did not
+            // mark. One that reaches beyond the region falls through to the
+            // last arm and is reported, as before. See [`Plan::paths`].
+            plan.paths.push(path_ordinal);
         } else if let Some(form) = inside {
             for (ordinal, text) in form.text.iter().enumerate() {
                 if overlaps(text.bounds, region) {
@@ -595,6 +665,63 @@ pub fn leave_shared(
     // already reported for its unreachable children keep their order beside the
     // form's own.
     plan.unhandled.sort_by_key(|object| object.at);
+}
+
+/// Whether each path a page paints also sets the clip, in [`Plan::paths`]'s
+/// ordinals; `None` when the paths cannot be addressed by position.
+///
+/// `expected` is how many path objects PDFium enumerated on the page, and it is
+/// [`remove_paths`]'s correspondence guard asked early: a count that disagrees
+/// with what `lopdf` finds painted, or a content stream that will not decode,
+/// answers `None`, and [`leave_unplaced`] then leaves every path where it is.
+#[must_use]
+pub fn path_clips(doc: &Document, page: ObjectId, expected: usize) -> Option<Vec<bool>> {
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .ok()?;
+    let content = Content::decode(&data).ok()?;
+    let painted = painted_paths(&content);
+    (painted.len() == expected).then(|| painted.iter().map(|path| path.clips).collect())
+}
+
+/// Takes the paths a removal could not take cleanly out of a plan.
+///
+/// [`leave_shared`] for paths, and for its reason: a fact the planner can find
+/// belongs in the plan, where the reader sees it before anything is written,
+/// and not in a writer's refusal that cancels the rest of the page.
+///
+/// Two kinds stay. A path that also sets the clip (`W`): its operators shape
+/// everything drawn after it, so deleting them would change the page outside
+/// the region, and keeping them keeps its outline in the file. And every path,
+/// when `clips` is `None`: an ordinal means nothing once the positions are in
+/// doubt. Both are reported through [`Plan::unhandled`] under a kind of their
+/// own, so the review panel and the verdict say which.
+pub fn leave_unplaced(plan: &mut Plan, clips: Option<&[bool]>, objects: &[PageObject]) {
+    let path_at: Vec<usize> = objects
+        .iter()
+        .enumerate()
+        .filter(|(_, object)| object.kind == "path")
+        .map(|(at, _)| at)
+        .collect();
+    let mut left: Vec<Unhandled> = Vec::new();
+    plan.paths.retain(|ordinal| {
+        let kind = match clips.map(|clips| clips.get(*ordinal).copied()) {
+            Some(Some(false)) => return true,
+            Some(Some(true)) => CLIP_PATH,
+            Some(None) | None => UNPLACED_PATH,
+        };
+        left.push(Unhandled {
+            at: path_at.get(*ordinal).copied().unwrap_or(*ordinal),
+            kind: kind.to_string(),
+            drawn: None,
+        });
+        false
+    });
+    if left.is_empty() {
+        return;
+    }
+    plan.unhandled.extend(left);
+    plan.unhandled.sort_by_key(|left| left.at);
 }
 
 /// Which of a page's annotations a set of regions covers.
@@ -1540,6 +1667,104 @@ pub fn remove_images(
     })
 }
 
+/// Deletes the numbered paths from a page's content stream.
+///
+/// `ordinals` are positions among the paths the page paints, as [`covered`]
+/// produces them, and `path_objects` is how many path objects PDFium reported.
+/// The construction operators go with the operator that paints them, so the
+/// outline is not left in the stream for a reader of the bytes: replacing the
+/// paint with `n` would stop the drawing and keep every coordinate of it.
+///
+/// A span of marked content the removal falls inside loses its shadow text, as
+/// it does for [`remove_shows`]: a figure's `/Alt` describes the drawing that
+/// is being taken out.
+///
+/// # Errors
+///
+/// The page having no content or it not decoding within [`MAX_CONTENT_BYTES`];
+/// the painted-path count disagreeing with `path_objects`; an ordinal naming no
+/// path; a path that also sets the clip, which [`leave_unplaced`] takes out of
+/// a plan before it gets here; everything [`clear_shadow_text`] refuses; or the
+/// rewritten stream not encoding.
+pub fn remove_paths(
+    doc: &mut Document,
+    page: ObjectId,
+    ordinals: &[usize],
+    path_objects: usize,
+) -> Result<Removed, String> {
+    // Before anything is read, for `remove_images`' reason: a call that removes
+    // nothing cannot get a position wrong, so a page whose counts disagree must
+    // still succeed when no drawing was marked.
+    let nothing_marked = ordinals.is_empty();
+    if nothing_marked {
+        return Ok(Removed {
+            shows_before: 0,
+            removed: 0,
+            carriers: 0,
+            struct_carriers: 0,
+        });
+    }
+
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    let mut content = Content::decode(&data)
+        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+
+    let painted = painted_paths(&content);
+    if painted.len() != path_objects {
+        return Err(format!(
+            "the page paints {} path(s) and PDFium reported {path_objects}. Removing one by \
+             position needs those to agree, so nothing was removed.",
+            painted.len()
+        ));
+    }
+
+    let mut wanted: Vec<usize> = ordinals.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut positions: Vec<usize> = Vec::new();
+    for &ordinal in &wanted {
+        let path = painted.get(ordinal).ok_or_else(|| {
+            format!(
+                "there is no path {ordinal} on this page, which paints {}",
+                painted.len()
+            )
+        })?;
+        if path.clips {
+            return Err(
+                "a drawing you marked also clips what is drawn after it, and removing it would \
+                 change the page outside the region \u{2014} so nothing was removed."
+                    .to_string(),
+            );
+        }
+        positions.extend(path.operations.iter().copied());
+    }
+    positions.sort_unstable();
+    positions.dedup();
+
+    // Before the removal, for `remove_shows`' reason: a span is addressed by
+    // where its `BDC` sits, and deleting an operation renumbers the rest.
+    let cleared = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
+    for at in positions.into_iter().rev() {
+        content.operations.remove(at);
+    }
+    let in_structure = clear_struct_shadow_text(doc, page, &cleared.mcids);
+
+    let encoded = content
+        .encode()
+        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+    doc.change_page_content(page, encoded)
+        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+
+    Ok(Removed {
+        shows_before: painted.len(),
+        removed: wanted.len(),
+        carriers: cleared.keys,
+        struct_carriers: in_structure,
+    })
+}
+
 /// Drops these names from a page's `/Resources /XObject`.
 ///
 /// What makes the objects unreachable, so the rewrite's own `sweep::collect`
@@ -1729,6 +1954,106 @@ fn references_to(doc: &Document, id: ObjectId) -> usize {
         .filter(|(other, _)| **other != id)
         .map(|(_, object)| count(object, id, sweep::MAX_NESTING))
         .sum()
+}
+
+/// One path a content stream paints: where its operations are, and whether it
+/// also sets the clip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PaintedPath {
+    /// The indices of its construction operators and of the operator that
+    /// paints it, ascending. `W` and `W*` are among them.
+    operations: Vec<usize>,
+    /// Whether the path is also intersected into the clip (`W` or `W*`).
+    clips: bool,
+}
+
+/// The paths a content stream paints, in the order it paints them.
+///
+/// **PDFium's rule for when a path becomes a page object, restated**, because
+/// the k-th entry here has to be the k-th `path` object it enumerates and
+/// nothing connects the two but order. From `CPDF_StreamContentParser`
+/// (`AddPathPoint`, `AddPathObject`): a path is an object when it is filled or
+/// stroked and holds at least two points, where a move that follows a move
+/// replaces it. So `n`, which ends a path without painting, makes none --- that
+/// is the ordinary clip, `re W n` --- and neither does a lone `m` that is
+/// painted. Points are counted, not coordinates read: `l` is one, a curve
+/// three, `re` five.
+///
+/// The path is not reset by `q`, `Q`, `BT` or `ET`; PDFium keeps its points
+/// until an operator paints or ends it, and so does this.
+fn painted_paths(content: &Content) -> Vec<PaintedPath> {
+    let mut found = Vec::new();
+    let mut operations: Vec<usize> = Vec::new();
+    let mut points = 0usize;
+    let mut last_is_move = false;
+    let mut clips = false;
+    for (at, operation) in content.operations.iter().enumerate() {
+        match operation.operator.as_str() {
+            "m" => {
+                if !(points > 0 && last_is_move) {
+                    points += 1;
+                }
+                last_is_move = true;
+                operations.push(at);
+            }
+            "l" => {
+                points += 1;
+                last_is_move = false;
+                operations.push(at);
+            }
+            "c" | "v" | "y" => {
+                points += 3;
+                last_is_move = false;
+                operations.push(at);
+            }
+            "re" => {
+                points += if points > 0 && last_is_move { 4 } else { 5 };
+                last_is_move = false;
+                operations.push(at);
+            }
+            // Closing adds at most a line back to the start, which cannot take
+            // a path from one point to two: with one point the start is the
+            // current point and nothing is added.
+            "h" => operations.push(at),
+            "W" | "W*" => {
+                clips = true;
+                operations.push(at);
+            }
+            "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n" => {
+                let painted = operation.operator != "n" && points >= 2;
+                let mut taken = std::mem::take(&mut operations);
+                if painted {
+                    taken.push(at);
+                    found.push(PaintedPath {
+                        operations: taken,
+                        clips,
+                    });
+                }
+                points = 0;
+                last_is_move = false;
+                clips = false;
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// How many paths a page's own content paints, as [`painted_paths`] counts them.
+///
+/// For `redact-apply-probe --survey`, which compares it with PDFium's count
+/// over every fixture: the removal addresses a path by its place among these.
+///
+/// # Errors
+///
+/// The page's content cannot be read or decoded within [`MAX_CONTENT_BYTES`].
+pub fn painted_path_count(doc: &Document, page: ObjectId) -> Result<usize, String> {
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    let content = Content::decode(&data)
+        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+    Ok(painted_paths(&content).len())
 }
 
 /// The four text-showing operators.
@@ -2502,6 +2827,8 @@ pub struct PageSummary {
     pub form_text: usize,
     /// Image draws that go, merged.
     pub images: usize,
+    /// Painted paths that go, merged.
+    pub paths: usize,
     /// What the removed operations draw, one string per region that took any.
     ///
     /// Wider than what a region covers whenever an operation runs past it:
@@ -2523,6 +2850,7 @@ impl PageAggregate {
             text: self.planned.shows.len(),
             form_text: self.planned.form_shows.len(),
             images: self.planned.images.len(),
+            paths: self.planned.paths.len(),
             taking: self.planned.taking.clone(),
             left: self.concerns.clone(),
         }
@@ -2582,11 +2910,16 @@ pub fn aggregate(
     // `text_objects` and is taken from the last plan for the same reason.
     let mut images: Vec<usize> = Vec::new();
     let mut image_objects = 0usize;
+    // And the drawings, the same way.
+    let mut paths: Vec<usize> = Vec::new();
+    let mut path_objects = 0usize;
 
     for plan in plans {
         text_objects = plan.text_objects;
         image_objects = plan.image_objects;
         images.extend(plan.images.iter().copied());
+        path_objects = plan.path_objects;
+        paths.extend(plan.paths.iter().copied());
         form_text_objects = plan.form_text_objects.clone();
         for object in &plan.unhandled {
             concerns.push(format!("page {}: {}", page + 1, object.sentence()));
@@ -2617,6 +2950,10 @@ pub fn aggregate(
     images.sort_unstable();
     images.dedup();
     total += images.len();
+    // And two regions that each hold one drawing name the same path.
+    paths.sort_unstable();
+    paths.dedup();
+    total += paths.len();
 
     let (words, width_pt, height_pt) = match text {
         Some(text) => (ocr_gate::words_from(text), text.width_pt, text.height_pt),
@@ -2640,6 +2977,8 @@ pub fn aggregate(
         form_text_objects,
         images,
         image_objects,
+        paths,
+        path_objects,
     };
     PageAggregate {
         planned,
@@ -2894,6 +3233,8 @@ mod tests {
             text_objects: 9,
             images: Vec::new(),
             image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
             area: [1.0, 2.0, 3.0, 4.0],
@@ -3065,9 +3406,10 @@ mod tests {
     }
 
     use super::{
-        covered, covered_annots, is_show, leave_shared, overlaps, parent_tree_entry,
-        remove_form_shows, remove_images, remove_shows, shared_draws, FormObject, FormOther,
-        FormText, PageObject, Plan, SharedDraws, Unhandled, MAX_CONTENT_BYTES,
+        aggregate, covered, covered_annots, is_show, leave_shared, leave_unplaced, overlaps,
+        painted_paths, parent_tree_entry, path_clips, remove_form_shows, remove_images,
+        remove_paths, remove_shows, shared_draws, FormObject, FormOther, FormText, PageObject,
+        Plan, RegionPlan, SharedDraws, Unhandled, CLIP_PATH, MAX_CONTENT_BYTES, UNPLACED_PATH,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -4159,13 +4501,221 @@ mod tests {
             }],
             "the finding names which object and what it is"
         );
-        assert!(
-            plan.unhandled[0]
-                .sentence()
-                .contains("object 1 is of kind path"),
-            "and the sentence it renders as names both: {:?}",
-            plan.unhandled[0].sentence()
+        assert_eq!(
+            plan.unhandled[0].sentence(),
+            "object 1 is a drawing that reaches beyond the region; a drawing is removed only \
+             when the region covers all of it, so it was left",
+            "and the sentence it renders as says which object and why, word for word"
         );
+        assert!(
+            plan.paths.is_empty(),
+            "nothing of it is planned for removal"
+        );
+    }
+
+    fn path(bounds: [f32; 4]) -> PageObject {
+        PageObject {
+            bounds,
+            kind: "path".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_drawing_the_region_holds_all_of_is_removed_and_one_reaching_beyond_is_left() {
+        // Three paths: a rule running on past the region, a scribble inside it,
+        // and one elsewhere. Only the second is taken, and by its place among
+        // the page's paths, not among its objects.
+        let objects = [
+            text([0.0, 0.0, 100.0, 20.0]),
+            path([0.0, 9.0, 500.0, 10.0]),
+            path([12.0, 6.0, 18.0, 14.0]),
+            path([300.0, 300.0, 310.0, 310.0]),
+        ];
+        let plan = covered(&objects, &[], [10.0, 5.0, 20.0, 15.0]);
+        assert_eq!(plan.paths, vec![1], "the second path, counted among paths");
+        assert_eq!(
+            plan.unhandled,
+            vec![Unhandled {
+                at: 1,
+                kind: "path".to_string(),
+                drawn: None,
+            }],
+            "the rule is reported and the far path is not mentioned"
+        );
+    }
+
+    #[test]
+    fn a_drawing_flush_with_the_region_s_edges_is_inside_it() {
+        let plan = covered(
+            &[path([10.0, 5.0, 20.0, 15.0])],
+            &[],
+            [10.0, 5.0, 20.0, 15.0],
+        );
+        assert_eq!(plan.paths, vec![0]);
+        assert!(plan.is_complete());
+        // One hundredth past one edge is beyond it.
+        let plan = covered(
+            &[path([10.0, 5.0, 20.01, 15.0])],
+            &[],
+            [10.0, 5.0, 20.0, 15.0],
+        );
+        assert!(plan.paths.is_empty() && !plan.is_complete());
+    }
+
+    /// The operators of the paths a stream paints, joined, one string a path.
+    fn painted(stream: &str) -> Vec<(String, bool)> {
+        let content = Content::decode(stream.as_bytes()).expect("decodes");
+        painted_paths(&content)
+            .into_iter()
+            .map(|path| {
+                let ops: Vec<&str> = path
+                    .operations
+                    .iter()
+                    .map(|at| content.operations[*at].operator.as_str())
+                    .collect();
+                (ops.join(" "), path.clips)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_path_is_counted_when_it_is_painted_and_has_two_points() {
+        assert_eq!(
+            painted("0 0 m 10 10 l S\n1 1 5 5 re f\n0 0 m 1 1 2 2 3 3 c h B*"),
+            vec![
+                ("m l S".to_string(), false),
+                ("re f".to_string(), false),
+                ("m c h B*".to_string(), false),
+            ]
+        );
+        // The ordinary clip paints nothing, and neither does a lone point.
+        assert_eq!(painted("0 0 9 9 re W n\n5 5 m S\n5 5 m 6 6 m f"), vec![]);
+        // A path that clips and paints is counted, and says that it clips.
+        assert_eq!(
+            painted("0 0 9 9 re W* f"),
+            vec![("re W* f".to_string(), true)]
+        );
+    }
+
+    #[test]
+    fn a_path_keeps_its_points_across_text_and_saved_state() {
+        // PDFium does not reset the path at `q` or `BT`, so neither may this:
+        // the operators between are not the path's and are not taken with it.
+        assert_eq!(
+            painted("0 0 m q BT (x) Tj ET Q 10 10 l S"),
+            vec![("m l S".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn removing_a_path_takes_its_outline_and_leaves_its_neighbours() {
+        let (mut doc, page) = one_page(
+            "q 1 w\n0 0 m 10 10 l S\n20 20 m 30 30 l 40 20 l h f\nBT (kept) Tj ET\n5 5 9 9 re S\nQ",
+        );
+        let took = remove_paths(&mut doc, page, &[1], 3).expect("removed");
+        assert_eq!((took.removed, took.shows_before), (1, 3));
+        assert_eq!(
+            operators(&doc, page),
+            ["q", "w", "m", "l", "S", "BT", "Tj", "ET", "re", "S", "Q"]
+        );
+        let stored = stream(&doc, page);
+        assert!(
+            !stored.contains("30 30") && !stored.contains("40 20"),
+            "the outline's coordinates are not left in the stream: {stored}"
+        );
+    }
+
+    #[test]
+    fn a_disagreeing_path_count_refuses_only_a_real_removal() {
+        let (mut doc, page) = one_page("0 0 m 10 10 l S");
+        remove_paths(&mut doc, page, &[], 99).expect("nothing was being removed");
+        let before = operators(&doc, page);
+        let why = remove_paths(&mut doc, page, &[0], 2).unwrap_err();
+        assert!(why.contains("paints 1 path(s)"), "{why}");
+        remove_paths(&mut doc, page, &[4], 1).expect_err("no such path");
+        assert_eq!(operators(&doc, page), before, "and nothing was changed");
+    }
+
+    #[test]
+    fn a_path_that_also_clips_is_refused_by_the_writer_and_left_by_the_planner() {
+        let (mut doc, page) = one_page("0 0 9 9 re W f\n20 20 m 30 30 l S");
+        let before = operators(&doc, page);
+        let why = remove_paths(&mut doc, page, &[0], 2).unwrap_err();
+        assert!(why.contains("clips"), "{why}");
+        assert_eq!(operators(&doc, page), before);
+
+        // The planner asks first, so the writer's refusal is not what a reader
+        // meets: the clipping path is reported and the other one still goes.
+        assert_eq!(path_clips(&doc, page, 2), Some(vec![true, false]));
+        let objects = [path([0.0, 0.0, 9.0, 9.0]), path([20.0, 20.0, 30.0, 30.0])];
+        let mut plan = covered(&objects, &[], [0.0, 0.0, 40.0, 40.0]);
+        assert_eq!(plan.paths, vec![0, 1]);
+        leave_unplaced(&mut plan, path_clips(&doc, page, 2).as_deref(), &objects);
+        assert_eq!(plan.paths, vec![1]);
+        assert_eq!(
+            plan.unhandled,
+            vec![Unhandled {
+                at: 0,
+                kind: CLIP_PATH.to_string(),
+                drawn: None,
+            }]
+        );
+        assert!(plan.unhandled[0].sentence().contains("also clips"));
+    }
+
+    #[test]
+    fn paths_that_cannot_be_placed_are_all_left_and_say_so() {
+        let (doc, page) = one_page("0 0 m 10 10 l S");
+        assert_eq!(path_clips(&doc, page, 2), None, "one painted, two reported");
+        let objects = [
+            text([0.0, 0.0, 5.0, 5.0]),
+            path([1.0, 1.0, 2.0, 2.0]),
+            path([3.0, 3.0, 4.0, 4.0]),
+        ];
+        let mut plan = covered(&objects, &[], [0.0, 0.0, 40.0, 40.0]);
+        leave_unplaced(&mut plan, None, &objects);
+        assert!(plan.paths.is_empty());
+        let kinds: Vec<(usize, &str)> = plan
+            .unhandled
+            .iter()
+            .map(|object| (object.at, object.kind.as_str()))
+            .collect();
+        assert_eq!(kinds, [(1, UNPLACED_PATH), (2, UNPLACED_PATH)]);
+        assert!(plan.unhandled[0].sentence().contains("by position"));
+
+        // The control: paths that can be placed and do not clip are untouched.
+        let mut plan = covered(&objects, &[], [0.0, 0.0, 40.0, 40.0]);
+        leave_unplaced(&mut plan, Some(&[false, false]), &objects);
+        assert_eq!(plan.paths, vec![0, 1]);
+        assert!(plan.is_complete());
+    }
+
+    #[test]
+    fn a_figure_s_description_goes_with_the_drawing_it_describes() {
+        let (mut doc, page) = one_page(
+            "/Figure << /Alt (a signature of J. Doe) >> BDC\n0 0 m 10 10 l S\nEMC\n/Figure << /Alt (a border) >> BDC\n1 1 5 5 re S\nEMC",
+        );
+        let took = remove_paths(&mut doc, page, &[0], 2).expect("removed");
+        assert_eq!(took.carriers, 1);
+        let stored = stream(&doc, page);
+        assert!(!stored.contains("J. Doe"), "{stored}");
+        assert!(
+            stored.contains("a border"),
+            "the other figure keeps its own"
+        );
+    }
+
+    #[test]
+    fn two_regions_holding_one_drawing_remove_it_once() {
+        let plan = |paths: Vec<usize>| RegionPlan {
+            paths,
+            path_objects: 3,
+            ..RegionPlan::default()
+        };
+        let merged = aggregate(0, Vec::new(), vec![plan(vec![2, 0]), plan(vec![2])], None);
+        assert_eq!(merged.planned.paths, vec![0, 2]);
+        assert_eq!(merged.planned.path_objects, 3);
+        assert_eq!(merged.shows, 2, "counted in what the reader is shown");
     }
 
     #[test]

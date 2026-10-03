@@ -3214,15 +3214,60 @@ which it does — on the two **path** objects that page also carries. The image 
 being the reason and nothing went red. It now asserts both halves: no image is reported
 unremovable, at least one is named removable, and the paths are still refused.
 
-**Not done, and stated rather than discovered.** Paths are still reported and left —
+**Not done, and stated rather than discovered.** ~~Paths are still reported and left~~ —
 49,521 of 154,095 regions, and a rule under a line of text is what almost every document
-has, so taking them wholesale would damage every redaction. An **inline** image
+has, so taking them wholesale would damage every redaction. **Since 2026-10-03 a path the
+region holds all of is removed**; see *Drawings a region holds all of* below. An **inline** image
 (`BI…ID…EI`) has no `Do` to remove, so the correspondence guard refuses; measured across
 41 documents and 1,189 pages there are **zero** of them, and the guard is what makes the
 rare file safe rather than wrong. ~~And `docs/PLAN.md`'s own 39.1% figure predates both
 this and the form carrier, so it is now too high by an amount nobody has measured.~~
 **Measured 2026-08-27 by the section below**, and it was too high for a reason nobody
 predicted.
+
+#### Drawings a region holds all of — 2026-10-03
+
+A path whose bounds lie wholly inside a region is removed: `redact::covered` lists it in
+`Plan::paths`, and `redact::remove_paths` deletes its construction operators together with
+the operator that paints it. Replacing the paint with `n` would stop the drawing and leave
+every coordinate of the outline in the stream, which is the recoverable-bytes defect §6
+forbids. A path that reaches beyond the region is reported exactly as before, so the
+measurement that kept paths out — a rule under a line of text on a third of regions — still
+decides the common case, and nothing outside a region is taken with it.
+
+**The correspondence is measured, not assumed.** A path is addressed by its place among the
+paths the page paints, and nothing connects PDFium's objects to `lopdf`'s operators but
+order. `painted_paths` restates PDFium's rule for when a path becomes an object: filled or
+stroked, at least two points, a move after a move replacing it; `n` makes none. `redact-apply-probe
+--survey` compares the two counts on every fixture page: **1,755 pages, 355,266 paths, 0
+disagreements** (macOS arm64, 2026-10-03, with `testdata/`'s limit as stated for text).
+`remove_paths` refuses on a disagreement, as `remove_shows` does.
+
+**Two kinds are left by the planner and say why**, on `leave_shared`'s reasoning that a fact
+the planner can find belongs in the plan. A path that also sets the clip (`W`) is reported as
+`clip-path`: its operators shape what is drawn after it. And when the counts disagree every
+path is reported as `unplaced-path`. `DocumentGraph::path_clips` answers both from the parsed
+graph, and only for a page that has paths.
+
+**A figure's description goes with it.** A span of marked content a removal falls inside
+loses `/Alt`, `/ActualText` and `/E`, in the stream and in the structure tree, through the
+same two functions text uses.
+
+**End to end** (`tests/cli/redact.rs`, *redact removes a drawing the region holds all of*):
+a region around a typed name with a scribble and a box over it removes all three and is
+verified; a region over 50 pt of a 467 pt rule and one around a clipping square are written,
+not verified, and name the drawing left.
+
+**Not done:**
+
+- A region that holds a drawing and **no text** is removed from and reported *not verified*.
+  The OCR gate sizes its control from the words a region held, and there are none. The gate
+  needs a control for a region of drawings; until then the image-only copy is the verified
+  route for a vector signature standing alone.
+- Cutting a path at the region's edge. A straight rule or a rectangle could be split
+  exactly; a curve needs path clipping. Both re-emit geometry, which is route A's risk.
+- Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
+- The review panel was not driven by a person with a drawing under a region.
 
 #### What a removal can take, re-measured — 2026-08-27
 

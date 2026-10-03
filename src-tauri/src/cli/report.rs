@@ -1008,6 +1008,8 @@ pub struct RedactedPage {
     pub form_text_removals: usize,
     /// Image draws that go.
     pub image_removals: usize,
+    /// Drawings that go: paths the region holds all of.
+    pub path_removals: usize,
     /// What the removed operations draw, one string per region that took any
     /// --- often more than the match, because a whole operation goes.
     pub taking: Vec<String>,

@@ -525,6 +525,8 @@ fn measure(
         let mut taking: Vec<String> = Vec::new();
         let mut text_objects = 0usize;
         let mut image_objects = 0usize;
+        let mut paths: Vec<usize> = Vec::new();
+        let mut path_objects = 0usize;
         let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
         // Only the regions the removal reports taking whole. Handing the gate
         // an incomplete one would make its verdict unattributable: a reason
@@ -575,6 +577,8 @@ fn measure(
             shows.extend(plan.shows.iter().copied());
             form_shows.extend(plan.form_shows.iter().copied());
             images.extend(plan.images.iter().copied());
+            paths.extend(plan.paths.iter().copied());
+            path_objects = plan.path_objects;
             areas.push(plan.area);
             let what = plan.taking.trim();
             if !what.is_empty() {
@@ -587,7 +591,9 @@ fn measure(
         form_shows.dedup();
         images.sort_unstable();
         images.dedup();
-        if shows.is_empty() && form_shows.is_empty() && images.is_empty() {
+        paths.sort_unstable();
+        paths.dedup();
+        if shows.is_empty() && form_shows.is_empty() && images.is_empty() && paths.is_empty() {
             continue;
         }
         if gate && !provable.is_empty() {
@@ -610,6 +616,8 @@ fn measure(
             form_text_objects,
             images,
             image_objects,
+            paths,
+            path_objects,
         });
     }
 

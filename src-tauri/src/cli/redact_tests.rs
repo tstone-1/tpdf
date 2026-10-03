@@ -390,6 +390,7 @@ pub(super) fn redact_samples() -> (report::Redacted, report::Redacted) {
             text_removals: 2,
             form_text_removals: 0,
             image_removals: 0,
+            path_removals: 2,
             taking: vec![
                 "Contact: jane.doe@example.com".into(),
                 "Account DE89 3704 0044 0532 0130 00".into(),
@@ -403,6 +404,7 @@ pub(super) fn redact_samples() -> (report::Redacted, report::Redacted) {
             text_removals: 0,
             form_text_removals: 0,
             image_removals: 1,
+            path_removals: 0,
             taking: Vec::new(),
             left: Vec::new(),
         },

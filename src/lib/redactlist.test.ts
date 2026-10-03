@@ -200,6 +200,17 @@ describe("what a row says a removal will take", () => {
     );
   });
 
+  it("says a drawing inside the region goes, and counts them", () => {
+    const drawn = (paths: number[], images: number[] = []) => ({ ...taking(0), paths, images });
+    expect(takesFor(drawn([4]))).toBe("Also removes a drawing inside it");
+    expect(takesFor(drawn([1, 4]))).toBe("Also removes 2 drawings inside it");
+    expect(takesFor(drawn([1, 4], [0]))).toBe(
+      "Also removes a picture it covers, whole and 2 drawings inside it",
+    );
+    // The control: no drawing listed, no sentence about one.
+    expect(takesFor(drawn([]))).toBe("");
+  });
+
   it("survives a plan written before pictures were removable", () => {
     // The field is optional because a reply from an older build carries none,
     // and reading `.length` off `undefined` would break the panel rather than

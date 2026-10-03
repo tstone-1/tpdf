@@ -2774,6 +2774,34 @@ through its own control (§5.1), never this layer.
 learned that the recogniser did not report it, not that the page does not show it. And a
 redaction by search on such a copy marks only what was recognised.
 
+#### T6.29 — A drawing inside a region is removed, added 2026-10-03
+
+A path whose bounds lie wholly inside a marked region is taken out of the page's content
+(`redact::remove_paths`), outline included. No new command, process or authority: the plan is
+still made in the worker from PDFium's object list, and the removal is still the coordinator's
+`lopdf` rewrite (§T6.11).
+
+**Addressed by position, behind the guard text has.** The k-th path object PDFium enumerates
+is taken to be the k-th path the content stream paints. `painted_paths` restates PDFium's rule
+for which paths become objects, and the two counts agreed on all 1,755 fixture pages
+(355,266 paths). A page where they disagree is not removed from by position: the planner
+reports its paths as `unplaced-path`, and `remove_paths` refuses. A document built to make
+the counts agree while the *order* differs would have the wrong path removed; PDFium
+enumerates in content order, and no such document is known.
+
+**What `verified` says about a drawing: nothing more than before.** The byte scan looks for
+the words a removal took, and the OCR gate reads the rendered region for legible text. A
+removed scribble is in neither. So `verified` on a region that held a drawing means the words
+are gone and nothing legible is left there, which covers text set as outlines and does not
+cover a signature's strokes. The removal of the strokes rests on the operators having been
+deleted, which the unit and integration tests check on fixtures, not on a read-back of each
+written file. Pictures have stood the same way since 2026-08-27.
+
+**Residual.** A drawing that reaches beyond the region stays whole, the part inside the
+region included, and the result is *not verified* with that named as the reason. The same
+holds for a drawing that also sets the clip, for shadings, and for drawings inside a Form
+XObject. A reader who needs those gone uses the image-only copy.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

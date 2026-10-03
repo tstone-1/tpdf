@@ -262,6 +262,7 @@ const SCHEMA = {
     taking: ["string"],
     unhandled: ["array"],
     images: ["array"],
+    paths: ["array"],
   } satisfies Shape<RegionPlan>,
   ScrollBenchConfig: {
     path: ["string"],
@@ -462,6 +463,7 @@ const UNMIRRORED: Partial<Record<keyof typeof SCHEMA, Record<string, string>>> =
   RegionPlan: {
     text_objects: "how many text operations, which only the writer's refusal reads",
     image_objects: "the same count for images, and the same reader",
+    path_objects: "the same count for paths, and the same reader",
     form_shows: "the form-level half of `shows`, addressed by (form, ordinal)",
     form_text_objects: "the form-level half of `text_objects`",
     area: "the region in the page's own space, which the writer re-derives against",

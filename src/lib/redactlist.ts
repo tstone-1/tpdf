@@ -353,11 +353,18 @@ export function warningFor(plan: RegionPlan | undefined): string {
  * about, and afterwards there is no copy of it in the file.
  */
 export function takesFor(plan: RegionPlan | undefined): string {
-  const many = plan?.images?.length ?? 0;
-  if (many === 0) return "";
-  return many === 1
-    ? "Also removes a picture it covers, whole"
-    : `Also removes ${many} pictures it covers, whole`;
+  const pictures = plan?.images?.length ?? 0;
+  const drawings = plan?.paths?.length ?? 0;
+  // A drawing goes only when the region holds all of it, so it has no "whole"
+  // to warn about: nothing of it was outside what the reader marked.
+  const said: string[] = [];
+  if (pictures > 0) {
+    said.push(pictures === 1 ? "a picture it covers, whole" : `${pictures} pictures it covers, whole`);
+  }
+  if (drawings > 0) {
+    said.push(drawings === 1 ? "a drawing inside it" : `${drawings} drawings inside it`);
+  }
+  return said.length === 0 ? "" : `Also removes ${said.join(" and ")}`;
 }
 
 /** The redactions panel: a row per pending region, in page order. */

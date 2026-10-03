@@ -211,6 +211,8 @@ struct RawRedaction {
     taking: Vec<String>,
     images: Vec<u16>,
     image_objects: u16,
+    paths: Vec<u16>,
+    path_objects: u16,
     form_shows: Vec<(u16, u16)>,
     form_text_objects: Vec<(u16, u16)>,
 }
@@ -355,6 +357,8 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
                 taking: region.taking,
                 images: region.images.into_iter().map(usize::from).collect(),
                 image_objects: usize::from(region.image_objects),
+                paths: region.paths.into_iter().map(usize::from).collect(),
+                path_objects: usize::from(region.path_objects),
                 form_shows: region
                     .form_shows
                     .into_iter()

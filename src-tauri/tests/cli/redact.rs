@@ -328,6 +328,150 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// One page with a line of text and four drawings: a rule across the page, a
+/// scribble over a typed name with a small box beside it, and a square that is
+/// also a clip.
+///
+/// The coordinates are odd on purpose, so each drawing can be looked for in the
+/// written content by a number nothing else on the page uses.
+fn drawings_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let body = "BT /F1 10 Tf 72 700 Td (CONTROL-KEEP alpha) Tj ET\n\
+                BT /F1 12 Tf 200 465 Td (Signed J. Doe) Tj ET\n\
+                72 600.25 m 539.5 600.25 l S\n\
+                q 2 w 200 500 m 217.31 533.77 240 470 260 500 c 280 520 l S Q\n\
+                210 480 6.125 6.125 re f\n\
+                q 400 480 20.375 20.375 re W f Q\n";
+    let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }
+            .into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialises");
+    bytes
+}
+
+/// The first page's content as it is stored in `path`, decoded.
+fn content_of(path: &Path) -> String {
+    let doc = Document::load(path).expect("the written file loads");
+    let page = *doc.get_pages().values().next().expect("a page");
+    String::from_utf8_lossy(&doc.get_page_content(page)).into_owned()
+}
+
+/// A drawing the region holds all of is taken out of the content; one that
+/// reaches beyond the region, and one that is also a clip, are left and said.
+pub(super) fn drawings_are_removed(report: &mut Report) {
+    const SCRIBBLE: &str = "217.31";
+    const BOX: &str = "6.125";
+    const RULE: &str = "539.5";
+    const CLIP: &str = "20.375";
+    let dir = scratch("redact-drawings");
+    let input = dir.join("drawings.pdf");
+    std::fs::write(&input, drawings_pdf()).expect("drawings input");
+    let before = content_of(&input);
+    report.check(
+        "control: the page's content holds all four drawings",
+        [SCRIBBLE, BOX, RULE, CLIP]
+            .iter()
+            .all(|mark| before.contains(mark)),
+        &before,
+    );
+
+    // `[x, y, width, height]` as displayed, y down from the top of a 792 pt page.
+    let redact = |name: &str, rect: &str| {
+        let output = dir.join(format!("{name}.pdf"));
+        let regions = dir.join(format!("{name}.json"));
+        std::fs::write(&regions, format!(r#"[{{"page":1,"rect":{rect}}}]"#)).expect("regions");
+        let (code, json, stderr) = run(
+            &strings(&[
+                "redact",
+                &s(&input),
+                "-o",
+                &s(&output),
+                "--regions",
+                &s(&regions),
+                "--json",
+            ]),
+            &[],
+        );
+        let after = if output.exists() {
+            content_of(&output)
+        } else {
+            String::new()
+        };
+        (code, json, stderr, after)
+    };
+
+    // Around the scribble, the box and the typed name under them.
+    let (code, json, stderr, after) = redact("inside", "[190,247,110,85]");
+    report.check(
+        "a region holding a name and two drawings removes all three and is verified",
+        code == 0
+            && json["written"] == true
+            && json["verified"] == true
+            && json["pages"][0]["text_removals"] == 1
+            && json["pages"][0]["path_removals"] == 2
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    report.check(
+        "their outlines are gone from the content, and the other drawings and the text are not",
+        !after.contains(SCRIBBLE)
+            && !after.contains(BOX)
+            && !after.contains("J. Doe")
+            && after.contains(RULE)
+            && after.contains(CLIP)
+            && after.contains("CONTROL-KEEP alpha"),
+        &after,
+    );
+
+    // Over 50 pt of the rule, which runs 467 pt across the page.
+    let (code, json, stderr, after) = redact("rule", "[100,182,50,20]");
+    let left = json["pages"][0]["left"].to_string();
+    report.check(
+        "a rule reaching beyond the region is left, said, and the copy is not called clean",
+        json["written"] == true
+            && json["verified"] == false
+            && json["pages"][0]["path_removals"] == 0
+            && left.contains("reaches beyond the region")
+            && [SCRIBBLE, BOX, RULE, CLIP]
+                .iter()
+                .all(|mark| after.contains(mark)),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // Around the square that is also a clip.
+    let (code, json, stderr, after) = redact("clip", "[395,287,30,30]");
+    let left = json["pages"][0]["left"].to_string();
+    report.check(
+        "a drawing that also clips is left, said, and the copy is not called clean",
+        json["written"] == true
+            && json["verified"] == false
+            && json["pages"][0]["path_removals"] == 0
+            && left.contains("also clips")
+            && after.contains(CLIP),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// `contacts_pdf` with an `/AcroForm` carrying an `/XFA` packet.
 fn xfa_pdf() -> Vec<u8> {
     let mut doc = Document::load_mem(&contacts_pdf()).expect("parses");

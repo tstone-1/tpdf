@@ -164,6 +164,18 @@ fn normalised(rect: Rect) -> Rect {
     ]
 }
 
+/// Whether `inner` lies wholly inside `outer`, edges included.
+///
+/// What decides whether a drawing is removed: [`crate::redact::covered`] takes
+/// a path only when the region holds all of it, so nothing outside the region
+/// goes with it.
+#[must_use]
+pub fn contains(outer: Rect, inner: Rect) -> bool {
+    let outer = normalised(outer);
+    let inner = normalised(inner);
+    outer[0] <= inner[0] && inner[2] <= outer[2] && outer[1] <= inner[1] && inner[3] <= outer[3]
+}
+
 /// Whether two page-space rectangles share any area.
 ///
 /// Strict comparisons throughout: two rectangles sharing only an edge do not

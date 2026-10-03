@@ -74,6 +74,8 @@ fn plan(turns: u8) -> Plan {
             taking: vec!["TARGET".into()],
             images: vec![],
             image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
             form_shows: vec![],
             form_text_objects: vec![],
         }],

@@ -1049,6 +1049,8 @@ class RedactedPage(TypedDict):
     form_text_removals: int
     # Image draws that go.
     image_removals: int
+    # Drawings that go: paths the region holds all of.
+    path_removals: int
     # What the removed operations draw, one string per region that took any.
     taking: list[str]
     # What the removal cannot take, one sentence each.

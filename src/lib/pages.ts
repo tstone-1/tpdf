@@ -268,6 +268,14 @@ export interface RegionPlan {
    * such field, and a panel that read `undefined.length` would break on it.
    */
   images?: number[];
+  /**
+   * Which of the page's drawings the removal would delete.
+   *
+   * Ordinals like {@link images}, read for how many there are. A drawing is
+   * listed only when the region holds all of it; one that reaches beyond the
+   * region is in {@link unhandled} as a `path`. Optional for `images`' reason.
+   */
+  paths?: number[];
 }
 
 /**

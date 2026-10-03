@@ -184,6 +184,8 @@ MUTATIONS = [
     Mutation("recognise: list every page", "src/lib/recognise.ts", "const SHOWN = 8;", "const SHOWN = 8000;", "does not list three hundred pages"),
     Mutation("recognise: keep the extension in the name", "src/lib/recognise.ts", '.replace(/\\.pdf$/i, "")', '.replace(/\\.pdf$/, "")', "keeps the name and says what the copy is"),
     Mutation("recognise: listen for another event", "src/lib/recognise.ts", 'export const PROGRESS_EVENT = "tpdf://ocr-progress";', 'export const PROGRESS_EVENT = "tpdf://ocr";', "listens for the event the backend emits"),
+    Mutation("redact list: say nothing about a drawing that goes", "src/lib/redactlist.ts", "  if (drawings > 0) {", "  if (drawings > 9000) {", "says a drawing inside the region goes, and counts them"),
+    Mutation("redact list: count the pictures as drawings", "src/lib/redactlist.ts", "const drawings = plan?.paths?.length ?? 0;", "const drawings = plan?.images?.length ?? 0;", "says a drawing inside the region goes, and counts them"),
     Mutation("assurance: redactDocument write guard", "src/lib/edits.ts", "  async redactDocument(source: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactDocument(source: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("choices: compare selection arrays by identity", "src/lib/forms.ts", "a.length === b.length && a.every((v, i) => v === b[i])", "a === b", "keeps duplicate exports distinct and compares selections across IPC replies"),
     Mutation("choices: accept too many selected options", "src/lib/forms.ts", "&& value.length > 1) return", "&& value.length > 100) return", "validates option indices and selection cardinality"),
@@ -4827,8 +4829,8 @@ MUTATIONS += [
         # from the file, whole, with no copy left.
         "redactlist: take a picture without saying so",
         "src/lib/redactlist.ts",
-        "  const many = plan?.images?.length ?? 0;\n  if (many === 0) return \"\";",
-        "  const many = plan?.images?.length ?? 0;\n  if (many >= 0) return \"\";",
+        "  if (pictures > 0) {",
+        "  if (pictures > 9000) {",
         "says a picture goes whole, because that cannot be undone afterwards",
     ),
     Mutation(
@@ -4836,8 +4838,8 @@ MUTATIONS += [
         # stops seeing, which costs exactly the regions where it matters.
         "redactlist: claim every region takes a picture",
         "src/lib/redactlist.ts",
-        "  if (many === 0) return \"\";\n  return many === 1",
-        "  if (false) return \"\";\n  return many === 1",
+        "  return said.length === 0 ? \"\" : ",
+        "  return false ? \"\" : ",
         "says nothing when the region takes no picture",
     ),
     Mutation(
@@ -4846,8 +4848,8 @@ MUTATIONS += [
         # than the sentence.
         "redactlist: assume every plan carries a picture list",
         "src/lib/redactlist.ts",
-        "  const many = plan?.images?.length ?? 0;",
-        "  const many = (plan as { images: number[] }).images.length;",
+        "  const pictures = plan?.images?.length ?? 0;",
+        "  const pictures = (plan as { images: number[] }).images.length;",
         "survives a plan written before pictures were removable",
     ),
     Mutation(

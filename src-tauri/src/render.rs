@@ -2153,6 +2153,16 @@ pub fn redaction_plans_of(
     let shared = document
         .graph()
         .shared_draws(index, image_objects, objects.forms.len());
+    let path_objects = objects
+        .all
+        .iter()
+        .filter(|object| object.kind == "path")
+        .count();
+    // Asked only of a page that has paths, so a page of plain text does not
+    // pay for a second decode of its content.
+    let clips = (path_objects > 0)
+        .then(|| document.graph().path_clips(index, path_objects))
+        .flatten();
     Ok(regions
         .iter()
         .map(|region| {
@@ -2162,7 +2172,10 @@ pub fn redaction_plans_of(
             // reported to the reader reviewing the removal rather than refused
             // by the writer afterwards. See `redact::leave_shared`.
             redact::leave_shared(&mut plan, &shared, &objects.all, &objects.forms);
+            redact::leave_unplaced(&mut plan, clips.as_deref(), &objects.all);
             redact::RegionPlan {
+                paths: plan.paths.clone(),
+                path_objects,
                 text_objects: objects.text.len(),
                 images: plan.images.clone(),
                 image_objects,

@@ -527,6 +527,7 @@ fn survey(library: &Path) -> Result<bool, String> {
     let mut differ = 0usize;
     let mut unreadable = 0usize;
     let mut files = 0usize;
+    let (mut paths_agree, mut paths_differ, mut paths_seen) = (0usize, 0usize, 0usize);
 
     let mut paths: Vec<PathBuf> = std::fs::read_dir(root.join("testdata"))
         .map_err(|why| why.to_string())?
@@ -573,6 +574,26 @@ fn survey(library: &Path) -> Result<bool, String> {
                     objects.text.len()
                 );
             }
+            // The same question for paths, which `remove_paths` addresses by
+            // position the way `remove_shows` addresses text.
+            let seen = objects.all.iter().filter(|o| o.kind == "path").count();
+            match tpdf_lib::redact::painted_path_count(&lopdf, *page_id) {
+                Ok(painted) if painted == seen => {
+                    paths_agree += 1;
+                    paths_seen += seen;
+                }
+                Ok(painted) => {
+                    paths_differ += 1;
+                    println!(
+                        "    {name} page {}: {painted} painted path(s), {seen} path object(s)",
+                        at + 1
+                    );
+                }
+                Err(why) => {
+                    paths_differ += 1;
+                    println!("    {name} page {}: paths not counted: {why}", at + 1);
+                }
+            }
         }
     }
 
@@ -585,6 +606,9 @@ fn survey(library: &Path) -> Result<bool, String> {
         } else {
             100.0 * differ as f64 / total as f64
         }
+    );
+    println!(
+        "[..] paths: {paths_agree} page(s) agree over {paths_seen} path(s), {paths_differ} differ"
     );
     Ok(true)
 }
@@ -951,6 +975,8 @@ fn form_plan(
                 .collect(),
             images: Vec::new(),
             image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
         }],
         notes: Vec::new(),
         discards: Vec::new(),
@@ -1006,6 +1032,8 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
         }],
         notes: Vec::new(),
         discards: Vec::new(),

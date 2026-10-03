@@ -2489,6 +2489,18 @@ pub struct PlannedRedaction {
     /// with what `lopdf` finds, and the writer has no other way to learn it.
     #[serde(default)]
     pub form_text_objects: Vec<(usize, usize)>,
+    /// Which of the page's paths the removal deletes, ascending.
+    ///
+    /// `redact::RegionPlan::paths`, merged across the page's regions the way
+    /// [`shows`](Self::shows) is.
+    #[serde(default)]
+    pub paths: Vec<usize>,
+    /// How many path objects PDFium found on this page.
+    ///
+    /// [`text_objects`](Self::text_objects) for paths, carried for the same
+    /// reason: `redact::remove_paths` refuses when it disagrees.
+    #[serde(default)]
+    pub path_objects: usize,
 }
 
 /// One mark as the writer needs it.

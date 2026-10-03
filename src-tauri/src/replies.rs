@@ -670,6 +670,8 @@ fn samples() -> BTreeMap<&'static str, String> {
             text_objects: 2,
             images: vec![3],
             image_objects: 1,
+            paths: Vec::new(),
+            path_objects: 0,
             form_shows: vec![(4, 5)],
             form_text_objects: vec![(4, 6)],
             area: [10.0, 20.0, 110.0, 60.0],

@@ -175,6 +175,8 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
         }],
         notes: Vec::new(),
         discards: Vec::new(),

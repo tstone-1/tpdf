@@ -208,6 +208,8 @@ fn run(
             form_text_objects: planned.form_text_objects.clone(),
             images: planned.images.clone(),
             image_objects: planned.image_objects,
+            paths: Vec::new(),
+            path_objects: 0,
         }],
         notes: Vec::new(),
         discards: Vec::new(),

@@ -861,6 +861,11 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example redact-apply-
 #
 #   macOS arm64, 2026-08-26   48 files, 1720 pages, 0 disagreements
 #
+# Since 2026-10-03 it asks the same of paths, which `remove_paths` addresses by
+# position: the paths lopdf finds painted against PDFium's path objects.
+#
+#   macOS arm64, 2026-10-03   67 files, 1755 pages, 355,266 paths, 0 disagreements
+#
 # Read that with its limit: testdata/ is mostly fixtures this project generates,
 # so it is not a sample of the wild. It does include the hostile set, the signed
 # contracts and the multi-column and multilingual pages. What the number

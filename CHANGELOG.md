@@ -36,6 +36,16 @@ have the binary.)
   as soon as it is done. A document with unsaved changes is asked to be saved first, and a
   signed one is asked about before its signatures are invalidated.
 
+### Changed
+
+- **A redaction removes a drawing that lies wholly inside the region.** A signature, a logo
+  or text set as outlines under a marked region used to be left in the file and reported.
+  It is now taken out of the page's content, outline included, by *Redact and save as*,
+  *Redact and save* and `tpdf redact`; the review panel says "Also removes a drawing inside
+  it" before anything is written, and the tool's report gains `path_removals`. A drawing
+  that reaches beyond the region is still left and reported, so a rule or a table border is
+  not stripped from parts of the page nobody marked. So is one that also clips what follows.
+
 ## [26.10.2] - 2026-10-02
 
 ### Added
