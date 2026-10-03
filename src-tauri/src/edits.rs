@@ -2589,6 +2589,17 @@ pub struct PlannedRedaction {
     /// with what `lopdf` finds, and the writer has no other way to learn it.
     #[serde(default)]
     pub form_text_objects: Vec<(usize, usize)>,
+    /// Pictures inside a Form XObject the removal deletes: `(form position,
+    /// ordinal among that form's pictures)`, as [`form_shows`](Self::form_shows)
+    /// addresses a form's text. `redact::RegionPlan::form_images`, merged.
+    #[serde(default)]
+    pub form_images: Vec<(usize, usize)>,
+    /// How many pictures each Form XObject on this page holds, as
+    /// [`form_text_objects`](Self::form_text_objects) counts its text, and for
+    /// that field's reason: `redact::remove_form_images` refuses when it
+    /// disagrees with what `lopdf` finds.
+    #[serde(default)]
+    pub form_image_objects: Vec<(usize, usize)>,
     /// Which of the page's paths the removal deletes, ascending.
     ///
     /// `redact::RegionPlan::paths`, merged across the page's regions the way

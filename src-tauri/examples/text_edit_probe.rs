@@ -563,6 +563,8 @@ fn run() -> Result<(), String> {
         path_objects: 0,
         cuts: Vec::new(),
         form_shows: vec![],
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: vec![],
     });
     let mut rejected =

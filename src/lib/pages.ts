@@ -286,6 +286,13 @@ export interface RegionPlan {
    */
   images?: number[];
   /**
+   * Pictures inside a reusable block (a Form XObject) the removal would
+   * delete: one `[block, picture]` pair each. Read for the same thing
+   * {@link images} is, their number; the pairs address a content stream this
+   * process has never parsed.
+   */
+  form_images?: [number, number][];
+  /**
    * Which of the page's drawings the removal would delete.
    *
    * Ordinals like {@link images}, read for how many there are. A drawing is

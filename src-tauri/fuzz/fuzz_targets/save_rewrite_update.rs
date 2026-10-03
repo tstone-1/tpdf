@@ -369,6 +369,8 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
                     .into_iter()
                     .map(|(form, at)| (usize::from(form), usize::from(at)))
                     .collect(),
+                form_images: Vec::new(),
+                form_image_objects: Vec::new(),
                 form_text_objects: region
                     .form_text_objects
                     .into_iter()

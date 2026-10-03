@@ -7368,6 +7368,8 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         areas: Vec::new(),
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -7407,6 +7409,8 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         areas: Vec::new(),
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -7438,6 +7442,8 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
             areas: Vec::new(),
             taking: Vec::new(),
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,
@@ -7452,6 +7458,8 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
             areas: Vec::new(),
             taking: Vec::new(),
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,
@@ -7519,6 +7527,8 @@ fn an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not() {
             areas: vec![[90.0, 90.0, 210.0, 130.0]],
             taking: Vec::new(),
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,
@@ -7604,6 +7614,8 @@ fn a_redacted_annotation_loses_the_references_that_are_not_on_the_page() {
             areas: vec![[90.0, 90.0, 210.0, 130.0]],
             taking: Vec::new(),
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,
@@ -7971,6 +7983,8 @@ fn naming_the_secret(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedacti
         areas: Vec::new(),
         taking: vec!["Holding the secret account here".to_string()],
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -8294,6 +8308,8 @@ fn a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file() {
         areas: Vec::new(),
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: vec![0],
         image_objects: 1,
@@ -8346,6 +8362,8 @@ fn a_rewrite_takes_a_planned_drawing_out_of_the_page() {
         areas: Vec::new(),
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -8401,6 +8419,8 @@ fn a_rewrite_cuts_a_planned_rule_at_the_region_s_edge() {
         areas: vec![[200.0, 90.0, 250.0, 110.0]],
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -8820,6 +8840,8 @@ fn over_the_widget(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction
         areas: vec![[90.0, 90.0, 210.0, 160.0]],
         taking: vec!["DEFAULT-SECRET HELD-SECRET".to_string()],
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -8879,6 +8901,8 @@ fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
         areas: Vec::new(),
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -8905,6 +8929,8 @@ fn a_redaction_naming_a_page_that_is_not_kept_is_refused() {
         areas: Vec::new(),
         taking: Vec::new(),
         form_shows: Vec::new(),
+        form_images: Vec::new(),
+        form_image_objects: Vec::new(),
         form_text_objects: Vec::new(),
         images: Vec::new(),
         image_objects: 0,
@@ -10810,6 +10836,101 @@ fn a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names() {
 
     let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
     assert_eq!(shows_per_page(&written), [0, 1]);
+}
+
+#[test]
+fn a_planned_removal_takes_a_picture_out_of_a_block_and_its_bytes_out_of_the_file() {
+    use lopdf::{dictionary, Stream};
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let picture = |doc: &mut Document, data: &str| {
+        doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => data.len() as i64,
+                "Height" => 1, "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+            },
+            data.as_bytes().to_vec(),
+        ))
+    };
+    let (first, second) = (
+        picture(&mut doc, "PICTURE-A-BYTES"),
+        picture(&mut doc, "PICTURE-B-BYTES"),
+    );
+    let block = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "BBox" => vec![0.into(), 0.into(), 300.into(), 100.into()],
+            "Resources" => dictionary! {
+                "XObject" => dictionary! { "ImA" => first, "ImB" => second },
+            },
+        },
+        b"q 40 0 0 40 0 0 cm /ImA Do Q\nq 40 0 0 40 100 0 cm /ImB Do Q\n".to_vec(),
+    ));
+    let content = doc.add_object(Stream::new(dictionary! {}, b"/Fm0 Do\n".to_vec()));
+    let resources = doc.add_object(dictionary! { "XObject" => dictionary! { "Fm0" => block } });
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages, "Resources" => resources,
+        "MediaBox" => vec![0.into(), 0.into(), 600.into(), 800.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }
+            .into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut original = Vec::new();
+    doc.save_to(&mut original).expect("serialises");
+    let holds = |bytes: &[u8], needle: &str| {
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    };
+    assert!(holds(&original, "PICTURE-A-BYTES") && holds(&original, "PICTURE-B-BYTES"));
+
+    let removal = |form_images: Vec<(usize, usize)>| {
+        let mut plan = plan_of(&[0]);
+        plan.redactions = vec![crate::edits::PlannedRedaction {
+            source: 0,
+            shows: Vec::new(),
+            text_objects: 0,
+            areas: Vec::new(),
+            taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_images,
+            // One block on the page, the page's only object, holding two pictures.
+            form_image_objects: vec![(0, 2)],
+            form_text_objects: vec![(0, 0)],
+            images: Vec::new(),
+            image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
+            cuts: Vec::new(),
+        }];
+        plan
+    };
+    let written =
+        rewrite_update(&original, &removal(vec![(0, 0)]), Job::Save, None).expect("rewritten");
+    assert!(
+        !holds(&written, "PICTURE-A-BYTES"),
+        "the picture's bytes are still in the file"
+    );
+    assert!(
+        holds(&written, "PICTURE-B-BYTES"),
+        "the other picture went with it"
+    );
+    // The control: a plan that names no picture of the block leaves both.
+    let untouched =
+        rewrite_update(&original, &removal(Vec::new()), Job::Save, None).expect("rewritten");
+    assert!(holds(&untouched, "PICTURE-A-BYTES") && holds(&untouched, "PICTURE-B-BYTES"));
+    // And one that disagrees with the block about how many it holds writes nothing.
+    let mut wrong = removal(vec![(0, 0)]);
+    wrong.redactions[0].form_image_objects = vec![(0, 5)];
+    assert!(rewrite_update(&original, &wrong, Job::Save, None)
+        .expect_err("refused")
+        .to_string()
+        .contains("draws 2 picture(s) and PDFium reported 5"));
 }
 
 #[test]

@@ -115,6 +115,14 @@ pub struct FormObject {
     /// Each carries its box now, and [`crate::redact::covered`] asks the same
     /// question of it that it asks of a page object.
     pub unreachable: Vec<FormOther>,
+    /// Its pictures, in PDFium's order, each with its box in page space.
+    ///
+    /// The order is the order the form's own content draws them in, which is
+    /// what [`crate::redact::remove_form_images`] addresses them by. Until
+    /// 2026-10-03 a picture inside a form was in
+    /// [`unreachable`](Self::unreachable): on 64 real documents, 350 of 4,616
+    /// word-sized regions touched one and could take nothing of it.
+    pub images: Vec<Rect>,
 }
 
 /// One thing inside a Form XObject that a removal cannot address.
@@ -365,6 +373,7 @@ fn descend(
         at,
         text: Vec::new(),
         unreachable: Vec::new(),
+        images: Vec::new(),
     };
     for index in 0..count.max(0) {
         // `c_ulong` rather than a width: PDFium takes this index as `unsigned
@@ -382,6 +391,12 @@ fn descend(
             // SAFETY: `child` is a valid page object owned by the form.
             kind_of(unsafe { bindings.FPDFPageObj_GetType(child) })
         };
+        if kind == "image" && !child.is_null() {
+            // A picture is addressed by its place among the form's pictures,
+            // as the form's text is by its place among the text.
+            out.images.push(through(matrix, bounds_of(page, child)));
+            continue;
+        }
         if kind != "text" {
             // Placed, and not only named. Every child can be measured --- a
             // nested form has a box of its own even though its contents are not

@@ -4297,6 +4297,18 @@ fn apply_redactions(
         // redact. Removing the `Do` stops the page drawing it; dropping the
         // resource entry is what leaves the object unreachable, so the sweep
         // this rewrite already runs takes the bytes with it.
+        let mut pictures_by_form: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (at, ordinal) in &redaction.form_images {
+            pictures_by_form.entry(*at).or_default().push(*ordinal);
+        }
+        for (at, ordinals) in pictures_by_form {
+            let took =
+                redact::remove_form_images(doc, page, &redaction.form_image_objects, at, &ordinals)
+                    .map_err(Refusal::from)?;
+            done.images += took.removed;
+        }
+
         let took = redact::remove_images(doc, page, &redaction.images, redaction.image_objects)
             .map_err(Refusal::from)?;
         done.images += took.removed;

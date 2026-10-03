@@ -678,6 +678,8 @@ fn samples() -> BTreeMap<&'static str, String> {
             path_objects: 0,
             cuts: Vec::new(),
             form_shows: vec![(4, 5)],
+            form_images: vec![(4, 1)],
+            form_image_objects: vec![(4, 2)],
             form_text_objects: vec![(4, 6)],
             area: [10.0, 20.0, 110.0, 60.0],
             taking: "the quick brown fox".into(),

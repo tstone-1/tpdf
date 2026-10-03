@@ -353,7 +353,9 @@ export function warningFor(plan: RegionPlan | undefined): string {
  * about, and afterwards there is no copy of it in the file.
  */
 export function takesFor(plan: RegionPlan | undefined): string {
-  const pictures = plan?.images?.length ?? 0;
+  // A picture is one to a reader whether the page draws it or a reusable block
+  // on the page does, so the two are one count.
+  const pictures = (plan?.images?.length ?? 0) + (plan?.form_images?.length ?? 0);
   const drawings = plan?.paths?.length ?? 0;
   // A drawing goes only when the region holds all of it, so it has no "whole"
   // to warn about: nothing of it was outside what the reader marked.

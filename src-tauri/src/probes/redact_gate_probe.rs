@@ -172,6 +172,8 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             areas: vec![plan_for_region.area],
             taking: vec![plan_for_region.taking.clone()],
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,

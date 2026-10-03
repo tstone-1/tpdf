@@ -2196,9 +2196,10 @@ pub fn redaction_plans_of(
     // letterhead drawn on all of them is a fact about the object graph, and the
     // graph is parsed at most once for the life of the document --- so this costs
     // a content-stream decode, and the regions on a page share it.
+    let form_pictures: Vec<usize> = objects.forms.iter().map(|form| form.images.len()).collect();
     let shared = document
         .graph()
-        .shared_draws(index, image_objects, objects.forms.len());
+        .shared_draws(index, image_objects, &form_pictures);
     let path_objects = objects
         .all
         .iter()
@@ -2239,6 +2240,12 @@ pub fn redaction_plans_of(
                 // See the field: a plan merges a page's regions, and a count
                 // present only when some region covered that form would be
                 // missing exactly when another region needed it.
+                form_images: plan.form_images.clone(),
+                form_image_objects: objects
+                    .forms
+                    .iter()
+                    .map(|form| (form.at, form.images.len()))
+                    .collect(),
                 form_text_objects: objects
                     .forms
                     .iter()

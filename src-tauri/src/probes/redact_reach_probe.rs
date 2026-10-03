@@ -533,6 +533,8 @@ fn measure(
         let mut path_objects = 0usize;
         let mut cuts: Vec<(usize, [f32; 4])> = Vec::new();
         let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
+        let mut form_images: Vec<(usize, usize)> = Vec::new();
+        let mut form_image_objects: Vec<(usize, usize)> = Vec::new();
         // Only the regions the removal reports taking whole. Handing the gate
         // an incomplete one would make its verdict unattributable: a reason
         // could be the carrier nobody removed rather than a leak.
@@ -543,6 +545,8 @@ fn measure(
             text_objects = plan.text_objects;
             image_objects = plan.image_objects;
             form_text_objects = plan.form_text_objects.clone();
+            form_image_objects = plan.form_image_objects.clone();
+            form_images.extend(plan.form_images.iter().copied());
             if !plan.cuts.is_empty() {
                 tally.cutting += 1;
                 if plan.is_complete() {
@@ -603,12 +607,15 @@ fn measure(
         form_shows.dedup();
         images.sort_unstable();
         images.dedup();
+        form_images.sort_unstable();
+        form_images.dedup();
         paths.sort_unstable();
         paths.dedup();
         cuts.retain(|(ordinal, _)| paths.binary_search(ordinal).is_err());
         if shows.is_empty()
             && form_shows.is_empty()
             && images.is_empty()
+            && form_images.is_empty()
             && paths.is_empty()
             && cuts.is_empty()
         {
@@ -631,6 +638,8 @@ fn measure(
             areas,
             taking,
             form_shows,
+            form_images,
+            form_image_objects,
             form_text_objects,
             images,
             image_objects,

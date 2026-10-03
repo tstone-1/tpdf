@@ -3518,6 +3518,72 @@ not verified, and name the drawing left.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
 - The review panel was not driven by a person with a drawing under a region.
 
+#### Pictures inside a block, and where a page keeps its names — 2026-10-03
+
+`docs/DEMAND.md` did not ask for this; the reach measurement did. Of 4,616 word-sized
+regions on 64 of the author's documents, 350 touched a picture inside a Form XObject and
+630 a drawing inside one, and both were reported and left.
+
+**Measured before it was designed, and the measurement redirected it.** Counting each
+child a region touches inside a form: 1,503 drawings that cross the region's edge, 760
+pictures, 66 drawings wholly inside, 63 nested forms. So taking a form's drawings whole
+would fix one in twenty-three; they need `pathcut` at the form's level, which is the
+next step and not this one. Pictures are taken whole wherever they are touched, so they
+came first.
+
+*What was built.* `objects::descend` lists a form's pictures with their page-space
+boxes (`FormObject::images`); `Plan::form_images` names the ones a region touches, by
+form and by ordinal, as `form_shows` names a form's text; `remove_form_images` takes
+the `Do` out of the form's own stream and the name out of the form's own resources, so
+the sweep takes the bytes. `leave_shared` leaves a picture whose form, or which itself,
+is drawn more than once, and one named by a list that is not the form's alone.
+
+*What it found.* The first run through the built tool, a whole-first-page region on
+59 documents, refused 28 with *the page draws 0 form XObject(s) and PDFium reported N*.
+The same run on the commit before refused the same 28: the defect was older than the
+change. `form_id` read `get_page_resources(page).0`, which is the dictionary only when
+`/Resources` is written into the page; 22 of the 59 keep it as an object of its own.
+Every count then came out as zero and the whole redaction was refused. `forget_xobjects`
+had the mirror image of it, looking for a `/Resources` key inside a resources object.
+Both now go through `nearest_resources`: the nearest `/Resources` up the page tree and
+that one alone, which is how the entry is inherited.
+
+Resolving those lists opened a case the old code could not reach. A resources object
+several pages point at, or one inherited from the tree, names a picture once for all of
+them, so `references_to` says *once* about a letterhead every page draws.
+`list_is_shared` recognises such a list and `draws_across_pages` then counts the pages'
+own draws. Without it, removing the name would have removed the picture from pages
+nobody marked.
+
+*What it measured, on the same 59 documents, whole first page:*
+
+| | before | after |
+|---|---|---|
+| written | 31 | 57 |
+| refused | 28 | 2 |
+| pictures removed | 30 in 13 documents | 126 in 34 |
+
+The other pages of all 57 written files were rendered and compared with the source:
+119 pages, none changed. The two still refused fail the writer's own check on the
+output (*the file has 4 %%EOF markers*), which is a separate question.
+
+**The plan-level figure went down, and that is the honest direction.** Regions the plan
+calls complete: 3,827 of 4,616 before, 3,268 after. The 538 regions that now report a
+picture as left touch one the document draws on several pages, and 59 more touch text
+in a block drawn several times. Before, those plans said *complete* and the save then
+refused, because the lookup that would have found the sharing was the lookup that was
+broken. A plan-level measurement that never applies its plans cannot see that, and
+this one did not.
+
+Not done: a drawing inside a form (630 regions), a form inside a form (63 pairs), and
+a picture the document draws on several pages, which stays everywhere. The last is the
+largest: 11.7% of regions. Taking this page's draw and leaving the object is possible
+and is a decision about what a redaction of a repeated picture should mean.
+
+Verified: 8 tests of the form-level removal, 3 of the resource lookup over six ways a
+page keeps its names, one of the save, 7 checks through the built tool with PDFium,
+and 34 mutations each caught by the test named for it.
+
 #### A rule cut at the region's edge — 2026-10-03
 
 A path that reaches beyond a region was reported and left, and that was the largest single

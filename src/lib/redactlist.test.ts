@@ -194,6 +194,15 @@ describe("what a row says a removal will take", () => {
     expect(takesFor(taking(1))).toBe("Also removes a picture it covers, whole");
   });
 
+  it("counts a picture inside a reusable block with the page's own", () => {
+    expect(takesFor({ ...taking(0), form_images: [[2, 0]] })).toBe(
+      "Also removes a picture it covers, whole",
+    );
+    expect(takesFor({ ...taking(1), form_images: [[2, 0], [5, 1]] })).toBe(
+      "Also removes 3 pictures it covers, whole",
+    );
+  });
+
   it("counts them when there is more than one", () => {
     expect(takesFor(taking(3))).toBe(
       "Also removes 3 pictures it covers, whole",

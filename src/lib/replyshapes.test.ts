@@ -277,6 +277,7 @@ const SCHEMA = {
     taking: ["string"],
     unhandled: ["array"],
     images: ["array"],
+    form_images: ["array"],
     paths: ["array"],
     cuts: ["array"],
   } satisfies Shape<RegionPlan>,
@@ -487,6 +488,7 @@ const UNMIRRORED: Partial<Record<keyof typeof SCHEMA, Record<string, string>>> =
     path_objects: "the same count for paths, and the same reader",
     form_shows: "the form-level half of `shows`, addressed by (form, ordinal)",
     form_text_objects: "the form-level half of `text_objects`",
+    form_image_objects: "the form-level half of `image_objects`",
     area: "the region in the page's own space, which the writer re-derives against",
   },
 };

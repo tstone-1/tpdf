@@ -968,6 +968,12 @@ fn form_plan(
             areas: vec![region],
             taking: Vec::new(),
             form_shows: plan.form_shows.clone(),
+            form_images: plan.form_images.clone(),
+            form_image_objects: objects
+                .forms
+                .iter()
+                .map(|form| (form.at, form.images.len()))
+                .collect(),
             form_text_objects: objects
                 .forms
                 .iter()
@@ -1033,6 +1039,8 @@ fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
             // the outline carrier through the same input the command does.
             taking: vec![region.taking.trim().to_string()],
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             images: Vec::new(),
             image_objects: 0,

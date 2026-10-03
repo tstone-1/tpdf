@@ -414,10 +414,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   hairline rule, a line the region covers only part of the thickness of — is left where it is
   and reported, in the panel and in the report: taking it would strip it from parts of the
   page you did not mark, and a file with the words gone and a picture of the words still in
-  it must not be called clean. Text a page draws through a
-  reusable block — a letterhead, a table cell, a stamp — is removed like any other,
-  unless the document draws that block more than once, in which case it is left and
-  reported as unverified. It also takes whole lines —
+  it must not be called clean. Text and pictures a page draws through a
+  reusable block — a letterhead, a table cell, a stamp — are removed like any other,
+  unless the document draws that block, or that picture, more than once, in which case it
+  is left and reported as unverified. It also takes whole lines —
   removing part of one means removing the instruction that drew it, so a word beside the one
   you marked goes with it. On a document tagged for accessibility it takes the second copy
   of those words that the tag keeps beside them — both where it sits beside the words and
@@ -1603,8 +1603,10 @@ unbuilt while they shipped.
   hairline rule, a shape that is filled and outlined at once, or a line the region covers
   only part of the thickness of. A drawing that lies wholly inside the region is removed, and
   a straight line or a rectangle that crosses it is cut at its edge. Still reported and left: a drawing that also clips what is
-  drawn after it, a shading, a picture or a drawing sitting inside a reusable block, and a
-  block drawn inside another block. A picture on the page itself is removed, bytes included.
+  drawn after it, a shading, a drawing sitting inside a reusable block, and a
+  block drawn inside another block. A picture is removed, bytes included, whether the page
+  draws it or a reusable block on the page does; one the document draws more than once, on
+  this page or on several, is left and reported.
 - Adding long-term-validation data, or a further archive timestamp, to a document that is
   already signed, and certification signatures. Signing adds long-term validation data and an
   archive timestamp when you ask for them with a timestamp; what is not built is adding them

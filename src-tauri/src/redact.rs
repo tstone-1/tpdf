@@ -149,6 +149,12 @@ pub struct Plan {
     /// split exactly is a fact about its operators, which PDFium's bounds do
     /// not say. A path listed here is not in [`unhandled`](Self::unhandled).
     pub cuts: Vec<usize>,
+    /// Pictures inside a Form XObject that the region touches.
+    ///
+    /// `(form position in the page's object list, ordinal among that form's
+    /// pictures)`, as [`form_shows`](Self::form_shows) addresses a form's text.
+    /// Taken whole, for the reason [`images`](Self::images) gives.
+    pub form_images: Vec<(usize, usize)>,
 }
 
 /// One object a region covers that this cannot remove.
@@ -311,6 +317,15 @@ pub struct RegionPlan {
     /// missing exactly when another region needed it.
     #[serde(default)]
     pub form_text_objects: Vec<(usize, usize)>,
+    /// Pictures inside a form the removal would delete. [`Plan::form_images`],
+    /// carried through.
+    #[serde(default)]
+    pub form_images: Vec<(usize, usize)>,
+    /// How many pictures each Form XObject on the page holds, as
+    /// [`form_text_objects`](Self::form_text_objects) counts its text and
+    /// present for every form for that field's reason.
+    #[serde(default)]
+    pub form_image_objects: Vec<(usize, usize)>,
     /// Which of the page's paths the removal would delete.
     ///
     /// [`Plan::paths`], carried through. The frontend reads how many there are
@@ -480,6 +495,11 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
                     plan.form_shows.push((at, ordinal));
                 }
             }
+            for (ordinal, bounds) in form.images.iter().enumerate() {
+                if overlaps(*bounds, region) {
+                    plan.form_images.push((at, ordinal));
+                }
+            }
             // Whatever the descent could not read **and the region covers** is
             // reported, whether or not any of the form's text was covered. Those
             // are two different questions and this asked neither: a region over
@@ -528,6 +548,11 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
 /// reader it was a repeat, which is a claim about a document nobody parsed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SharedDraws {
+    /// For each form, in the order `forms` lists them, how many times the
+    /// document draws each picture inside it. Empty when nobody asked, which
+    /// reads as *drawn once* for [`SharedDraws`]'s reason: the removal asks
+    /// again with the document in hand and refuses if that was wrong.
+    pub form_images: Vec<Vec<Option<usize>>>,
     /// Per image on the page, in [`Plan::images`]'s ordinals.
     pub images: Vec<Option<usize>>,
     /// Per Form XObject on the page, in the order `FormObject`s are listed.
@@ -545,6 +570,7 @@ impl SharedDraws {
         Self {
             images: vec![None; images],
             forms: vec![None; forms],
+            form_images: Vec::new(),
         }
     }
 }
@@ -576,6 +602,7 @@ pub fn shared_draws(doc: &Document, page: ObjectId, images: usize, forms: usize)
         .map(|(_, name)| name)
         .collect();
     SharedDraws {
+        form_images: Vec::new(),
         images: times_drawn(doc, page, &drawn, images),
         forms: times_drawn(
             doc,
@@ -590,6 +617,166 @@ pub fn shared_draws(doc: &Document, page: ObjectId, images: usize, forms: usize)
 ///
 /// `expected` is how many PDFium reported; a disagreement answers `None`
 /// throughout for [`SharedDraws`]'s reason.
+impl SharedDraws {
+    /// Fills [`form_images`](Self::form_images): for each form the page draws,
+    /// how many times the document draws each of its pictures.
+    ///
+    /// `counts` is how many pictures PDFium reported in each form, in the
+    /// page's form order. A form whose content does not agree with that count,
+    /// or that cannot be read, gets `None` throughout, which is the direction
+    /// the type's note explains.
+    #[must_use]
+    pub fn with_form_images(mut self, doc: &Document, page: ObjectId, counts: &[usize]) -> Self {
+        let names = doc
+            .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+            .ok()
+            .and_then(|data| Content::decode(&data).ok())
+            .and_then(|content| form_draws(doc, page, &content).ok())
+            .unwrap_or_default();
+        self.form_images = counts
+            .iter()
+            .enumerate()
+            .map(|(which, expected)| {
+                let unknown = vec![None; *expected];
+                if names.len() != counts.len() {
+                    return unknown;
+                }
+                let Ok(form) = form_id(doc, page, &names[which]) else {
+                    return unknown;
+                };
+                let Ok(inside) = form_content(doc, form) else {
+                    return unknown;
+                };
+                let drawn = picture_draws(doc, page, form, &inside);
+                if drawn.len() != *expected {
+                    return unknown;
+                }
+                drawn
+                    .iter()
+                    .map(|(_, _, id)| picture_times(doc, form, &drawn, *id))
+                    .collect()
+            })
+            .collect();
+        self
+    }
+}
+
+/// How many times the document draws a picture a form draws, when that is
+/// more than once: in the form itself, or by a reference from anywhere else.
+///
+/// **And at least twice when the list that names it is not this form's
+/// alone.** A resources object two forms point at, or the page's list when the
+/// form has no resources of its own, names the picture once for everything
+/// that reads it, so one reference there is not one draw. Nothing counts the
+/// draws in that case; the picture stays, which is the direction that takes
+/// nothing a reader did not mark.
+fn picture_times(
+    doc: &Document,
+    form: ObjectId,
+    drawn: &[(usize, String, ObjectId)],
+    id: ObjectId,
+) -> Option<usize> {
+    let in_form = drawn.iter().filter(|(_, _, other)| *other == id).count();
+    let elsewhere = references_to(doc, id);
+    let shared_list = usize::from(form_list_is_shared(doc, form)) * 2;
+    let most = in_form.max(elsewhere).max(shared_list);
+    (most > 1).then_some(most)
+}
+
+/// Whether the list a form reads `id`'s name from can be read by anything else.
+fn form_list_is_shared(doc: &Document, form: ObjectId) -> bool {
+    let Some(resources) = doc
+        .get_object(form)
+        .and_then(|object| object.as_stream())
+        .ok()
+        .and_then(|stream| stream.dict.get(b"Resources").ok())
+    else {
+        // No resources of its own, which a form written before PDF 1.2 may
+        // lack: the name is the page's, and the page's own content and every
+        // other such form read the same list. Nothing here counts those.
+        return true;
+    };
+    let object = resources.as_reference().ok();
+    let list = doc
+        .dereference(resources)
+        .ok()
+        .and_then(|(_, value)| value.as_dict().ok())
+        .and_then(|dict| dict.get(b"XObject").ok())
+        .and_then(|value| value.as_reference().ok());
+    object.is_some_and(|object| references_to(doc, object) > 1)
+        || list.is_some_and(|list| references_to(doc, list) > 1)
+}
+
+/// A form's content, decoded.
+fn form_content(doc: &Document, form: ObjectId) -> Result<Content, String> {
+    let stream = doc
+        .get_object(form)
+        .and_then(|object| object.as_stream())
+        .map_err(|why| format!("the form's content stream could not be read: {why}"))?;
+    let body = stream
+        .decompressed_content_with_limit(MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the form's content stream will not decode: {why}"))?;
+    Content::decode(&body)
+        .map_err(|why| format!("the form's content stream will not decode: {why}"))
+}
+
+/// The XObject a form's content means by `name`: from the form's own
+/// resources, or from the page's when the form has none of its own, which is
+/// what a form written before PDF 1.2 relies on.
+fn form_xobject(doc: &Document, page: ObjectId, form: ObjectId, name: &str) -> Option<ObjectId> {
+    let own = doc
+        .get_object(form)
+        .and_then(|object| object.as_stream())
+        .ok()
+        .and_then(|stream| stream.dict.get(b"Resources").ok())
+        .and_then(|value| doc.dereference(value).ok())
+        .and_then(|(_, value)| value.as_dict().ok());
+    match own {
+        Some(resources) => resources
+            .get(b"XObject")
+            .ok()
+            .and_then(|value| doc.dereference(value).ok())
+            .and_then(|(_, value)| value.as_dict().ok())
+            .and_then(|xobjects| xobjects.get(name.as_bytes()).ok())
+            .and_then(|value| value.as_reference().ok()),
+        None => form_id(doc, page, name).ok(),
+    }
+}
+
+/// The pictures a form's content draws: where in its operations, under what
+/// name, and which object. In content order, which is PDFium's.
+fn picture_draws(
+    doc: &Document,
+    page: ObjectId,
+    form: ObjectId,
+    inside: &Content,
+) -> Vec<(usize, String, ObjectId)> {
+    let mut out = Vec::new();
+    for (at, operation) in inside.operations.iter().enumerate() {
+        if operation.operator != "Do" {
+            continue;
+        }
+        let Some(Object::Name(raw)) = operation.operands.first() else {
+            continue;
+        };
+        let name = String::from_utf8_lossy(raw).into_owned();
+        let Some(id) = form_xobject(doc, page, form, &name) else {
+            continue;
+        };
+        let is_picture = doc
+            .get_object(id)
+            .and_then(|object| object.as_stream())
+            .ok()
+            .and_then(|stream| stream.dict.get(b"Subtype").ok())
+            .and_then(|value| value.as_name().ok())
+            .is_some_and(|found| found == b"Image");
+        if is_picture {
+            out.push((at, name, id));
+        }
+    }
+    out
+}
+
 fn times_drawn(
     doc: &Document,
     page: ObjectId,
@@ -604,7 +791,7 @@ fn times_drawn(
         .map(|name| {
             form_id(doc, page, name)
                 .ok()
-                .and_then(|id| drawn_more_than_once(doc, id, names, name))
+                .and_then(|id| drawn_more_than_once(doc, page, id, names, name))
         })
         .collect()
 }
@@ -679,6 +866,39 @@ pub fn leave_shared(
                 drawn: Some(times),
             });
         }
+        false
+    });
+
+    // A picture inside a form stays for either of two reasons: the form is
+    // drawn more than once, so changing it changes places nobody marked, or
+    // the picture is, so its bytes would stay in the file behind the others.
+    plan.form_images.retain(|(at, ordinal)| {
+        let which = forms.iter().position(|form| form.at == *at);
+        let form_times = which.and_then(|which| shared.forms.get(which).copied().flatten());
+        if let Some(times) = form_times {
+            if !left
+                .iter()
+                .any(|other| other.at == *at && other.kind == "form")
+            {
+                left.push(Unhandled {
+                    at: *at,
+                    kind: "form".to_string(),
+                    drawn: Some(times),
+                });
+            }
+            return false;
+        }
+        let picture_times = which
+            .and_then(|which| shared.form_images.get(which))
+            .and_then(|pictures| pictures.get(*ordinal).copied().flatten());
+        let Some(times) = picture_times else {
+            return true;
+        };
+        left.push(Unhandled {
+            at: *at,
+            kind: "image".to_string(),
+            drawn: Some(times),
+        });
         false
     });
 
@@ -1574,7 +1794,7 @@ pub fn remove_form_shows(
     }
     let name = &names[which];
     let id = form_id(doc, page, name)?;
-    if let Some(times) = drawn_more_than_once(doc, id, &names, name) {
+    if let Some(times) = drawn_more_than_once(doc, page, id, &names, name) {
         return Err(format!(
             "the text you marked is inside a form that this document draws {times} time(s). \
              Removing it would change every one of them, including places you did not mark, so \
@@ -1694,6 +1914,193 @@ pub fn remove_form_shows(
 /// the image-`Do` count disagreeing with `image_objects`; an ordinal naming no
 /// image; an image drawn more than once anywhere; or the rewritten stream not
 /// encoding.
+/// Takes pictures out of one Form XObject the page draws.
+///
+/// [`remove_form_shows`]'s twin for a form's pictures, and [`remove_images`]'s
+/// one level down. `forms` is every form on the page with how many pictures
+/// PDFium reported in it, `at` the form's position in the page's object list,
+/// and `ordinals` which of its pictures, counted in the order its content draws
+/// them.
+///
+/// The draw is removed from the form's content and the picture's name from the
+/// form's own resources, so that nothing names the picture and the sweep takes
+/// its bytes.
+///
+/// # Errors
+///
+/// When the page's forms or the form's pictures do not agree in number with
+/// what PDFium reported, when the form or the picture is drawn more than once,
+/// or when the form's content cannot be read or written. Nothing is changed.
+pub fn remove_form_images(
+    doc: &mut Document,
+    page: ObjectId,
+    forms: &[(usize, usize)],
+    at: usize,
+    ordinals: &[usize],
+) -> Result<Removed, String> {
+    let which = forms
+        .iter()
+        .position(|(where_, _)| *where_ == at)
+        .ok_or_else(|| {
+            format!(
+                "object {at} is not one of the {} form(s) on this page",
+                forms.len()
+            )
+        })?;
+    let pictures = forms[which].1;
+
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    let content = Content::decode(&data)
+        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+    let names = form_draws(doc, page, &content)?;
+    if names.len() != forms.len() {
+        return Err(format!(
+            "the page draws {} form XObject(s) and PDFium reported {}. Removing from one by \
+             position needs those to agree, so nothing was removed.",
+            names.len(),
+            forms.len()
+        ));
+    }
+    let name = &names[which];
+    let id = form_id(doc, page, name)?;
+    if let Some(times) = drawn_more_than_once(doc, page, id, &names, name) {
+        return Err(format!(
+            "the picture you marked is inside a form that this document draws {times} time(s). \
+             Removing it would change every one of them, including places you did not mark, so \
+             nothing was removed."
+        ));
+    }
+
+    let mut inside = form_content(doc, id)?;
+    let drawn = picture_draws(doc, page, id, &inside);
+    if drawn.len() != pictures {
+        return Err(format!(
+            "this form draws {} picture(s) and PDFium reported {pictures}. Removing one by \
+             position needs those to agree, so nothing was removed.",
+            drawn.len()
+        ));
+    }
+
+    let mut positions: Vec<usize> = Vec::with_capacity(ordinals.len());
+    let mut forgotten: Vec<String> = Vec::new();
+    for &ordinal in ordinals {
+        let (where_, picture, object) = drawn.get(ordinal).ok_or_else(|| {
+            format!(
+                "there is no picture {ordinal} in this form, which draws {}",
+                drawn.len()
+            )
+        })?;
+        if let Some(times) = picture_times(doc, id, &drawn, *object) {
+            return Err(format!(
+                "the picture you marked is drawn {times} time(s) in this document. Removing it \
+                 here would leave every other copy, and the picture itself, in the file \u{2014} \
+                 so nothing was removed."
+            ));
+        }
+        positions.push(*where_);
+        forgotten.push(picture.clone());
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    let removed = positions.len();
+    for where_ in positions.into_iter().rev() {
+        inside.operations.remove(where_);
+    }
+
+    let encoded = inside
+        .encode()
+        .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+    forget_form_xobjects(doc, id, &forgotten)?;
+    let stream = doc
+        .get_object_mut(id)
+        .and_then(|object| object.as_stream_mut())
+        .map_err(|why| format!("the form's content stream could not be replaced: {why}"))?;
+    stream.set_plain_content(encoded);
+    stream
+        .compress()
+        .map_err(|why| format!("the rewritten form stream will not compress: {why}"))?;
+
+    Ok(Removed {
+        shows_before: drawn.len(),
+        removed,
+        carriers: 0,
+        struct_carriers: 0,
+    })
+}
+
+/// Takes names out of a form's own XObject resources, wherever they are held:
+/// in the stream's dictionary, or in objects it refers to.
+///
+/// A form with no resources of its own drew the picture through the page's,
+/// and the name stays there: the page's list is the page's, and another draw
+/// on the page may mean the same name.
+fn forget_form_xobjects(
+    doc: &mut Document,
+    form: ObjectId,
+    names: &[String],
+) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let dict = &doc
+        .get_object(form)
+        .and_then(|object| object.as_stream())
+        .map_err(|why| format!("the form could not be read: {why}"))?
+        .dict;
+    let Ok(resources) = dict.get(b"Resources") else {
+        return Ok(());
+    };
+    // Follow at most two references: to the resources, then to the list.
+    let resources_id = resources.as_reference().ok();
+    let list = match resources_id {
+        Some(id) => doc
+            .get_dictionary(id)
+            .ok()
+            .and_then(|d| d.get(b"XObject").ok()),
+        None => resources
+            .as_dict()
+            .ok()
+            .and_then(|d| d.get(b"XObject").ok()),
+    };
+    let list_id = list.and_then(|value| value.as_reference().ok());
+    let strip = |xobjects: &mut Dictionary| {
+        for name in names {
+            xobjects.remove(name.as_bytes());
+        }
+    };
+    if let Some(id) = list_id {
+        let xobjects = doc
+            .get_object_mut(id)
+            .and_then(|object| object.as_dict_mut())
+            .map_err(|why| format!("the form's XObject list could not be read: {why}"))?;
+        strip(xobjects);
+        return Ok(());
+    }
+    let holder: &mut Dictionary = match resources_id {
+        Some(id) => doc
+            .get_object_mut(id)
+            .and_then(|object| object.as_dict_mut())
+            .map_err(|why| format!("the form's resources could not be read: {why}"))?,
+        None => doc
+            .get_object_mut(form)
+            .and_then(|object| object.as_stream_mut())
+            .map_err(|why| format!("the form could not be read: {why}"))?
+            .dict
+            .get_mut(b"Resources")
+            .and_then(|value| value.as_dict_mut())
+            .map_err(|why| format!("the form's resources could not be read: {why}"))?,
+    };
+    if let Ok(xobjects) = holder
+        .get_mut(b"XObject")
+        .and_then(|value| value.as_dict_mut())
+    {
+        strip(xobjects);
+    }
+    Ok(())
+}
+
 pub fn remove_images(
     doc: &mut Document,
     page: ObjectId,
@@ -1744,7 +2151,7 @@ pub fn remove_images(
         })?;
         let id = form_id(doc, page, name)?;
         let here: Vec<String> = drawn.iter().map(|(_, other)| other.clone()).collect();
-        if let Some(times) = drawn_more_than_once(doc, id, &here, name) {
+        if let Some(times) = drawn_more_than_once(doc, page, id, &here, name) {
             return Err(format!(
                 "the picture you marked is drawn {times} time(s) in this document. Removing it \
                  here would leave every other copy, and the picture itself, in the file \u{2014} so \
@@ -1996,53 +2403,42 @@ pub fn take_paths(
 /// into `doc.objects` would have to know what else points at it, which is
 /// exactly the question the sweep answers by walking.
 fn forget_xobjects(doc: &mut Document, page: ObjectId, names: &[String]) -> Result<(), String> {
-    // Nothing to forget is not a page without a resource list, and the two must
-    // not share an outcome: the second is a contradiction worth refusing, the
-    // first is the ordinary case.
     if names.is_empty() {
         return Ok(());
     }
-    let (resources, ids) = doc
-        .get_page_resources(page)
-        .map_err(|why| format!("the page's resources could not be read: {why}"))?;
-    // The dictionary may be the page's own or inherited through an indirect
-    // object; only the second can be edited in place, and the first is edited
-    // through the page. Both are reached the same way `get_page_resources`
-    // found them.
-    let xobject_id = resources
-        .and_then(|dict| dict.get(b"XObject").ok().cloned())
-        .and_then(|value| value.as_reference().ok());
-    if let Some(id) = xobject_id {
-        let dict = doc
+    // The list `form_id` resolved the names through, wherever it is written.
+    // Until 2026-10-03 this looked for a `/Resources` key *inside* a resources
+    // object, found none, and refused every page whose resources are an
+    // object of their own.
+    let missing = || "the page's resources name no XObject list to remove from".to_string();
+    let (holder, _) = nearest_resources(doc, page).ok_or_else(missing)?;
+    let list = held(doc, holder)
+        .and_then(|resources| resources.get(b"XObject").ok())
+        .ok_or_else(missing)?
+        .as_reference()
+        .ok();
+    let xobjects: &mut Dictionary = match (list, holder) {
+        (Some(id), _) => doc.get_object_mut(id).and_then(Object::as_dict_mut).ok(),
+        (None, Holder::Object(id)) => doc
             .get_object_mut(id)
-            .and_then(|object| object.as_dict_mut())
-            .map_err(|why| format!("the page's XObject list could not be read: {why}"))?;
-        for name in names {
-            dict.remove(name.as_bytes());
-        }
-        return Ok(());
-    }
-    for id in ids.into_iter().chain(std::iter::once(page)) {
-        let Ok(dict) = doc
-            .get_object_mut(id)
-            .and_then(|object| object.as_dict_mut())
-        else {
-            continue;
-        };
-        let Some(Object::Dictionary(xobjects)) = dict
-            .get_mut(b"Resources")
+            .and_then(Object::as_dict_mut)
             .ok()
+            .and_then(|resources| resources.get_mut(b"XObject").ok())
+            .and_then(|value| value.as_dict_mut().ok()),
+        (None, Holder::Inline(node)) => doc
+            .get_object_mut(node)
+            .and_then(Object::as_dict_mut)
+            .ok()
+            .and_then(|dict| dict.get_mut(b"Resources").ok())
             .and_then(|value| value.as_dict_mut().ok())
-            .and_then(|res| res.get_mut(b"XObject").ok())
-        else {
-            continue;
-        };
-        for name in names {
-            xobjects.remove(name.as_bytes());
-        }
-        return Ok(());
+            .and_then(|resources| resources.get_mut(b"XObject").ok())
+            .and_then(|value| value.as_dict_mut().ok()),
     }
-    Err("the page's resources name no XObject list to remove from".to_string())
+    .ok_or_else(missing)?;
+    for name in names {
+        xobjects.remove(name.as_bytes());
+    }
+    Ok(())
 }
 
 /// The XObject names a page's content draws whose `/Subtype` is `subtype`.
@@ -2095,11 +2491,59 @@ fn form_draws(doc: &Document, page: ObjectId, content: &Content) -> Result<Vec<S
 }
 
 /// The object a page's `/Resources /XObject` gives that name.
+/// Where the resources a page draws through are written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Holder {
+    /// Into this page-tree node's own dictionary: the page, or an ancestor.
+    Inline(ObjectId),
+    /// In an object of their own.
+    Object(ObjectId),
+}
+
+/// The resources a page draws through, and whether it inherits them.
+///
+/// **The nearest `/Resources` on the way up the page tree, and that one
+/// alone.** The entry is inherited whole: a page that has one of its own does
+/// not also read its ancestors', so a name missing from it is a name the page
+/// cannot draw, whatever a node above it lists.
+///
+/// Until 2026-10-03 this was `get_page_resources(page).0`, which is the
+/// dictionary only when it is written into the page. On a page whose
+/// `/Resources` is a reference nothing was found, every count came out as
+/// zero, and a removal of a picture or of text inside a form was refused as
+/// *the page draws 0*. Measured on 59 real documents: 22 hold their resources
+/// that way, and a redaction of the whole first page was refused on 28.
+fn nearest_resources(doc: &Document, page: ObjectId) -> Option<(Holder, bool)> {
+    let mut node = page;
+    for _ in 0..sweep::MAX_NESTING {
+        let dict = doc.get_dictionary(node).ok()?;
+        match dict.get(b"Resources") {
+            Ok(Object::Dictionary(_)) => return Some((Holder::Inline(node), node != page)),
+            Ok(Object::Reference(id)) => return Some((Holder::Object(*id), node != page)),
+            _ => {}
+        }
+        node = dict.get(b"Parent").and_then(Object::as_reference).ok()?;
+    }
+    None
+}
+
+/// The dictionary a [`Holder`] holds.
+fn held(doc: &Document, holder: Holder) -> Option<&Dictionary> {
+    match holder {
+        Holder::Inline(node) => doc
+            .get_dictionary(node)
+            .ok()?
+            .get(b"Resources")
+            .ok()?
+            .as_dict()
+            .ok(),
+        Holder::Object(id) => doc.get_dictionary(id).ok(),
+    }
+}
+
 fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, String> {
-    let resources = doc
-        .get_page_resources(page)
-        .map_err(|why| format!("the page's resources could not be read: {why}"))?
-        .0
+    let resources = nearest_resources(doc, page)
+        .and_then(|(holder, _)| held(doc, holder))
         .ok_or_else(|| "the page has no resource dictionary".to_string())?;
     let xobjects = resources
         .get(b"XObject")
@@ -2108,10 +2552,6 @@ fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, Strin
         .map_err(|_| "the page's resources list no XObjects".to_string())?;
     match xobjects.get(name.as_bytes()) {
         Ok(Object::Reference(id)) => Ok(*id),
-        // A direct stream cannot be addressed by object id, so it cannot be
-        // rewritten in place and it cannot be shared either. Refused rather than
-        // copied out and re-linked, which would be a structural change made by a
-        // removal that was asked only to delete text.
         Ok(_) => Err(format!(
             "the form named {name} is written into the page rather than being its own object, \
              which this cannot rewrite"
@@ -2137,13 +2577,76 @@ fn form_id(doc: &Document, page: ObjectId, name: &str) -> Result<ObjectId, Strin
 /// split [`Unhandled::sentence`] makes.
 fn drawn_more_than_once(
     doc: &Document,
+    page: ObjectId,
     id: ObjectId,
     names: &[String],
     name: &str,
 ) -> Option<usize> {
     let here = names.iter().filter(|other| *other == name).count();
     let elsewhere = references_to(doc, id);
-    (here > 1 || elsewhere > 1).then(|| here.max(elsewhere))
+    // **A list other pages read is one reference however many of them draw
+    // from it.** A page whose resources are an object several pages point at,
+    // or are inherited from the page tree, names the picture once for all of
+    // them --- so the reference count says *once* about a letterhead every
+    // page draws, and taking the name out of the list would take it from all
+    // of them. There the pages themselves are counted.
+    let across = if list_is_shared(doc, page) {
+        draws_across_pages(doc, id)
+    } else {
+        here
+    };
+    // `across` is this page's own draws at the least, so it stands for them.
+    let most = elsewhere.max(across);
+    (most > 1).then_some(most)
+}
+
+/// Whether the XObject list that gives `name` to this page is one another page
+/// can be reading too: an inherited one, or an object more than one thing
+/// refers to. A list written into the page itself is the page's alone.
+fn list_is_shared(doc: &Document, page: ObjectId) -> bool {
+    let Some((holder, inherited)) = nearest_resources(doc, page) else {
+        return false;
+    };
+    // Inherited resources are every page's under that node.
+    if inherited {
+        return true;
+    }
+    let list = held(doc, holder)
+        .and_then(|resources| resources.get(b"XObject").ok())
+        .and_then(|value| value.as_reference().ok());
+    let object_shared = match holder {
+        Holder::Inline(_) => false,
+        Holder::Object(id) => references_to(doc, id) > 1,
+    };
+    object_shared || list.is_some_and(|list| references_to(doc, list) > 1)
+}
+
+/// How many times the document's pages draw `id`, each through its own
+/// resources. Only what a page's own content draws: a draw from inside a form
+/// is a reference from that form's resources, which `references_to` counts.
+fn draws_across_pages(doc: &Document, id: ObjectId) -> usize {
+    doc.get_pages()
+        .into_values()
+        .map(|page| {
+            let Some(content) = doc
+                .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+                .ok()
+                .and_then(|data| Content::decode(&data).ok())
+            else {
+                return 0;
+            };
+            content
+                .operations
+                .iter()
+                .filter(|operation| operation.operator == "Do")
+                .filter_map(|operation| match operation.operands.first() {
+                    Some(Object::Name(raw)) => Some(String::from_utf8_lossy(raw).into_owned()),
+                    _ => None,
+                })
+                .filter(|name| form_id(doc, page, name).ok() == Some(id))
+                .count()
+        })
+        .sum()
 }
 
 /// How many times the document's object graph refers to `id`.
@@ -3083,7 +3586,8 @@ impl PageAggregate {
             regions: self.planned.areas.len(),
             text: self.planned.shows.len(),
             form_text: self.planned.form_shows.len(),
-            images: self.planned.images.len(),
+            // A picture is a picture to a reader, whichever stream draws it.
+            images: self.planned.images.len() + self.planned.form_images.len(),
             paths: self.planned.paths.len(),
             cuts: cut_paths(&self.planned.cuts),
             taking: self.planned.taking.clone(),
@@ -3141,6 +3645,8 @@ pub fn aggregate(
     // for the same reason.
     let mut form_shows: Vec<(usize, usize)> = Vec::new();
     let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
+    let mut form_images: Vec<(usize, usize)> = Vec::new();
+    let mut form_image_objects: Vec<(usize, usize)> = Vec::new();
     // And the pictures. `image_objects` is a property of the page like
     // `text_objects` and is taken from the last plan for the same reason.
     let mut images: Vec<usize> = Vec::new();
@@ -3160,6 +3666,8 @@ pub fn aggregate(
         path_objects = plan.path_objects;
         paths.extend(plan.paths.iter().copied());
         form_text_objects = plan.form_text_objects.clone();
+        form_image_objects = plan.form_image_objects.clone();
+        form_images.extend(plan.form_images.iter().copied());
         for object in &plan.unhandled {
             concerns.push(format!("page {}: {}", page + 1, object.sentence()));
         }
@@ -3189,6 +3697,9 @@ pub fn aggregate(
     images.sort_unstable();
     images.dedup();
     total += images.len();
+    form_images.sort_unstable();
+    form_images.dedup();
+    total += form_images.len();
     // And two regions that each hold one drawing name the same path.
     paths.sort_unstable();
     paths.dedup();
@@ -3216,6 +3727,8 @@ pub fn aggregate(
         areas,
         taking: taken,
         form_shows,
+        form_images,
+        form_image_objects,
         form_text_objects,
         images,
         image_objects,
@@ -3396,6 +3909,11 @@ pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<Stri
 }
 
 #[cfg(test)]
+mod form_image_tests;
+#[cfg(test)]
+mod resource_tests;
+
+#[cfg(test)]
 mod tests {
 
     /// A text widget on `page` at `rect`, for [`super::covered_answers`].
@@ -3480,6 +3998,8 @@ mod tests {
             path_objects: 0,
             cuts: Vec::new(),
             form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
             form_text_objects: Vec::new(),
             area: [1.0, 2.0, 3.0, 4.0],
             taking: taking.to_string(),
@@ -3723,6 +4243,7 @@ mod tests {
                     draws: String::new(),
                 })
                 .collect(),
+            images: Vec::new(),
             unreachable: Vec::new(),
         }
     }
@@ -3981,6 +4502,7 @@ mod tests {
         let objects = [image_at([0.0, 0.0, 100.0, 100.0])];
         let mut plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
         let shared = SharedDraws {
+            form_images: Vec::new(),
             images: vec![Some(22)],
             forms: Vec::new(),
         };
@@ -4023,6 +4545,7 @@ mod tests {
         ];
         let mut plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
         let shared = SharedDraws {
+            form_images: Vec::new(),
             images: vec![Some(3)],
             forms: Vec::new(),
         };
@@ -4046,6 +4569,7 @@ mod tests {
         let mut plan = covered(&objects, &forms, [0.0, 0.0, 100.0, 100.0]);
         assert_eq!(plan.form_shows.len(), 3, "the region covers three lines");
         let shared = SharedDraws {
+            form_images: Vec::new(),
             images: Vec::new(),
             forms: vec![Some(4)],
         };
@@ -4075,6 +4599,7 @@ mod tests {
         ];
         let mut plan = covered(&objects, &forms, [0.0, 0.0, 100.0, 100.0]);
         let shared = SharedDraws {
+            form_images: Vec::new(),
             images: Vec::new(),
             forms: vec![Some(4), None],
         };
@@ -4098,6 +4623,7 @@ mod tests {
         let mut plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
         assert_eq!(plan.unhandled[0].at, 1, "the shading, reported on its own");
         let shared = SharedDraws {
+            form_images: Vec::new(),
             images: vec![Some(2)],
             forms: Vec::new(),
         };
@@ -4281,6 +4807,7 @@ mod tests {
         let forms = [FormObject {
             at: 0,
             text: Vec::new(),
+            images: Vec::new(),
             unreachable: vec![FormOther {
                 bounds: [0.0, 40.0, 100.0, 60.0],
                 kind: "form".to_string(),
@@ -4305,6 +4832,7 @@ mod tests {
                 bounds: [0.0, 40.0, 100.0, 60.0],
                 draws: String::new(),
             }],
+            images: Vec::new(),
             unreachable: vec![FormOther {
                 // Along the top of the sheet; the region is in the middle.
                 bounds: [0.0, 0.0, 100.0, 10.0],
@@ -4330,6 +4858,7 @@ mod tests {
         let forms = [FormObject {
             at: 0,
             text: Vec::new(),
+            images: Vec::new(),
             unreachable: vec![FormOther {
                 bounds: [0.0, 40.0, 100.0, 60.0],
                 kind: "image".to_string(),
@@ -4353,6 +4882,7 @@ mod tests {
         let forms = [FormObject {
             at: 0,
             text: Vec::new(),
+            images: Vec::new(),
             unreachable: vec![FormOther {
                 bounds: [f32::MIN, f32::MIN, f32::MAX, f32::MAX],
                 kind: "unsupported".to_string(),
@@ -4372,6 +4902,7 @@ mod tests {
                 bounds: [0.0, 0.0, 100.0, 20.0],
                 draws: String::new(),
             }],
+            images: Vec::new(),
             unreachable: vec![FormOther {
                 bounds: [0.0, 0.0, 100.0, 20.0],
                 kind: "image".to_string(),

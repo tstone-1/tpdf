@@ -205,6 +205,8 @@ fn run(
             areas: vec![planned.area],
             taking: vec![planned.taking.trim().to_string()],
             form_shows: planned.form_shows.clone(),
+            form_images: planned.form_images.clone(),
+            form_image_objects: planned.form_image_objects.clone(),
             form_text_objects: planned.form_text_objects.clone(),
             images: planned.images.clone(),
             image_objects: planned.image_objects,

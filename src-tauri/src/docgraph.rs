@@ -569,7 +569,14 @@ impl DocumentGraph {
     /// page tree cannot place, answers `unknown` throughout rather than
     /// guessing. `redact::SharedDraws` says why that is the safe direction.
     #[must_use]
-    pub fn shared_draws(&self, index: u32, images: usize, forms: usize) -> redact::SharedDraws {
+    pub fn shared_draws(
+        &self,
+        index: u32,
+        images: usize,
+        form_pictures: &[usize],
+    ) -> redact::SharedDraws {
+        // One entry per form the page draws: how many pictures PDFium found in it.
+        let forms = form_pictures.len();
         let Ok(document) = self.parsed() else {
             return redact::SharedDraws::unknown(images, forms);
         };
@@ -579,7 +586,11 @@ impl DocumentGraph {
         else {
             return redact::SharedDraws::unknown(images, forms);
         };
-        redact::shared_draws(document, page, images, forms)
+        redact::shared_draws(document, page, images, forms).with_form_images(
+            document,
+            page,
+            form_pictures,
+        )
     }
 
     /// Whether each path one page paints also sets the clip, or `None` when

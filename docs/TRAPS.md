@@ -266,6 +266,7 @@ hop through the index.
 - A text's own ActualText rule has to admit the empty text a deletion leaves
 - A swept extract still held the dropped pages' pictures, because every page named one resource dictionary
 - `lopdf` writes a crypt filter without its key length, and two readers that both assume it agreed the file was fine
+- A plan measured without being applied called regions removable that the save refused
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -25548,3 +25549,30 @@ redacting a dozen regions that had nothing in common and looking at which verifi
 
 When a floor like this is set for an engine, measure it through the gate, over many regions
 of one page, and count verdicts.
+
+### A plan measured without being applied called regions removable that the save refused
+
+`redact-reach-probe` asks, for thousands of regions on real documents, what a removal
+would take and what it would leave, and reports the share *taken whole*. It reported
+82.9% on 2026-10-03. It builds plans and never applies them.
+
+That day a region covering the whole first page was run through the built tool on 59
+documents, and 28 were refused with *the page draws 0 form XObject(s) and PDFium
+reported N*. `form_id` read `lopdf`'s `get_page_resources(page).0`, which is the page's
+resources only when they are written into the page. For a page whose `/Resources` is a
+reference, which 22 of the 59 are, it is `None`, and the ids are in the second half of
+the tuple. So every XObject lookup failed, every count the writer checks came out as
+zero, and the removal refused. The planner asked the same broken lookup whether a
+picture was shared, got no answer, read no answer as *drawn once*, and called the
+region complete. The probe counted that as a success.
+
+Fixed, the figure fell to 70.8%, and that is the true one: 538 regions touch a picture
+several pages draw, which the plan now says is left. The earlier number was not wrong
+arithmetic. It counted intentions.
+
+Three things to take from it. A measurement of plans is a measurement of the planner,
+and the planner shared a blind spot with what would have contradicted it. `None` meant
+both *drawn once* and *could not be asked*, and the second was the common case, not the
+rare one the type's note assumed. And the control was one command away for months:
+apply the plan and look at the exit code. When a probe reports a rate of success, run
+the thing it predicts on the same inputs at least once.

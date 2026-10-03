@@ -21,6 +21,11 @@ have the binary.)
 
 ### Added
 
+- **Redaction takes a picture inside a reusable block.** A page often draws a
+  letterhead, a chart or a stamp as one block, and a picture in such a block was
+  reported and left. It is now taken out of the block, bytes included, like a picture
+  on the page. A block or a picture the document draws more than once stays and is
+  reported, as before.
 - **Form fields can be placed in the window.** *Add a form field: text*, *text on
   several lines* and *checkbox*, in the Edit menu and the command palette, arm a drag;
   the rectangle you drag becomes a field. Until the document is saved it shows as a
@@ -124,6 +129,18 @@ have the binary.)
 
 ### Fixed
 
+- **Redaction was refused outright on many ordinary documents.** A page can keep the
+  list of what it draws inside itself or as a separate object, and tpdf read only the
+  first. On a page of the second kind, a region that touched a picture or text inside a
+  reusable block ended in *the page draws 0 image(s) and PDFium reported 2*, and nothing
+  was written. On 59 of the author's documents, 22 keep their resources that way, and a
+  redaction of the whole first page was refused on 28. It is written on 57 now, and the
+  pictures removed went from 30 to 126. The two left are refused for another reason.
+- **A picture several pages draw from one shared list is now recognised as shared.** One
+  entry in a list every page reads counted as one use, however many pages drew it. Such
+  a picture is left and reported, as a shared picture already was; removing it from the
+  list would have removed it from pages nobody marked. On the same documents, the other
+  pages of all 57 redacted files render exactly as before, 119 pages compared.
 - **A text field between 14 and 16.4 points high could not be filled.** tpdf chose a
   type size from the field's inset alone, and in that band one line of it then did not
   fit, so the answer was refused with *does not fit visibly in this field*. The size is

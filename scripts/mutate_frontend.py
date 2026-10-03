@@ -294,6 +294,7 @@ MUTATIONS = [
     Mutation("field border: turn off when storage cannot be read", "src/lib/fieldnames.ts", "  } catch {\n    return true;\n  }", "  } catch {\n    return false;\n  }", "reads anything tpdf did not write as on, and survives storage that throws"),
     Mutation("field border: offer both choices at once", "src/lib/appcommands.ts", "      enabled: () => !actions.fieldBorder(),", "      enabled: () => true,", "offers only the choice that is not the current one, with or without a document"),
     Mutation("field border: offer the current choice", "src/lib/appcommands.ts", "      enabled: () => actions.fieldBorder(),\n      run: () => actions.setFieldBorder(false),", "      enabled: () => !actions.fieldBorder(),\n      run: () => actions.setFieldBorder(false),", "offers only the choice that is not the current one, with or without a document"),
+    Mutation("redact list: leave a block's pictures out of what a region takes", "src/lib/redactlist.ts", "  const pictures = (plan?.images?.length ?? 0) + (plan?.form_images?.length ?? 0);", "  const pictures = plan?.images?.length ?? 0;", "counts a picture inside a reusable block with the page's own"),
     Mutation("compress dialog: take any data URL for a PNG", "src/lib/compressdialog.ts", "  return /^data:image\\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(url);", "  return /^data:/.test(url);", "puts nothing in a picture but a PNG the backend encoded"),
     Mutation("redact list: count the pictures as drawings", "src/lib/redactlist.ts", "const drawings = plan?.paths?.length ?? 0;", "const drawings = plan?.images?.length ?? 0;", "says a drawing inside the region goes, and counts them"),
     Mutation("recovery: drop the note from a clean verdict", "src/lib/recovery.ts", '(applied.notes?.length ? ` Note: ${applied.notes.join("; ")}.` : "")', '""', "reports a redaction as the window does"),
@@ -4959,8 +4960,8 @@ MUTATIONS += [
         # than the sentence.
         "redactlist: assume every plan carries a picture list",
         "src/lib/redactlist.ts",
-        "  const pictures = plan?.images?.length ?? 0;",
-        "  const pictures = (plan as { images: number[] }).images.length;",
+        "  const pictures = (plan?.images?.length ?? 0) + (plan?.form_images?.length ?? 0);",
+        "  const pictures = (plan as { images: number[] }).images.length + (plan?.form_images?.length ?? 0);",
         "survives a plan written before pictures were removable",
     ),
     Mutation(

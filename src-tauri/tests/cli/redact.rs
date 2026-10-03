@@ -640,6 +640,181 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Two pages. The first keeps its resources in an object of their own and
+/// draws one reusable block, which holds a word and three pictures; the third
+/// picture is drawn by the second page as well.
+///
+/// Each picture's data is a run of bytes nothing else in the file has, so the
+/// written file can be searched for it.
+fn block_pictures_pdf() -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let picture = |doc: &mut Document, data: &str| {
+        doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Image", "Width" => data.len() as i64,
+                "Height" => 1, "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+            },
+            data.as_bytes().to_vec(),
+        ))
+    };
+    let first = picture(&mut doc, "PICTURE-A-BYTES");
+    let second = picture(&mut doc, "PICTURE-B-BYTES");
+    let shared = picture(&mut doc, "PICTURE-C-BYTES");
+    // The block's own space: placed on the page at (100, 500).
+    let inside = "BT /F1 12 Tf 0 60 Td (INSIDE-BLOCK) Tj ET\n\
+                  q 40 0 0 40 0 0 cm /ImA Do Q\n\
+                  q 40 0 0 40 100 0 cm /ImB Do Q\n\
+                  q 40 0 0 40 200 0 cm /ImC Do Q\n";
+    let block = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "BBox" => vec![0.into(), 0.into(), 300.into(), 100.into()],
+            "Resources" => dictionary! {
+                "Font" => dictionary! { "F1" => font },
+                "XObject" => dictionary! { "ImA" => first, "ImB" => second, "ImC" => shared },
+            },
+        },
+        inside.as_bytes().to_vec(),
+    ));
+    let body =
+        "BT /F1 10 Tf 72 700 Td (CONTROL-KEEP alpha) Tj ET\nq 1 0 0 1 100 500 cm /Fm0 Do Q\n";
+    let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
+    // An object of its own, which is how most producers write a page's resources.
+    let resources = doc.add_object(dictionary! {
+        "Font" => dictionary! { "F1" => font },
+        "XObject" => dictionary! { "Fm0" => block },
+    });
+    let one = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages, "Resources" => resources,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content,
+    });
+    let other = doc.add_object(Stream::new(
+        dictionary! {},
+        b"q 40 0 0 40 72 600 cm /ImC Do Q\n".to_vec(),
+    ));
+    let two = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "Resources" => dictionary! { "XObject" => dictionary! { "ImC" => shared } },
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => other,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! {
+            "Type" => "Pages", "Count" => 2,
+            "Kids" => vec![Object::Reference(one), Object::Reference(two)],
+        }
+        .into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialises");
+    bytes
+}
+
+/// A picture inside a reusable block is taken out of the block, on a page that
+/// keeps its resources in an object of their own; one another page draws too
+/// is left and said.
+pub(super) fn pictures_in_blocks_are_removed(report: &mut Report) {
+    let dir = scratch("redact-block-pictures");
+    let input = dir.join("blocks.pdf");
+    std::fs::write(&input, block_pictures_pdf()).expect("the input");
+    let holds =
+        |path: &Path, needle: &str| std::fs::read(path).is_ok_and(|bytes| contains(&bytes, needle));
+    report.check(
+        "control: the input holds all three pictures",
+        ["PICTURE-A-BYTES", "PICTURE-B-BYTES", "PICTURE-C-BYTES"]
+            .iter()
+            .all(|needle| holds(&input, needle)),
+        "",
+    );
+    // `[x, y, width, height]` as displayed, y down from the top of a 792 pt page.
+    let redact = |name: &str, rect: &str| {
+        let output = dir.join(format!("{name}.pdf"));
+        let regions = dir.join(format!("{name}.json"));
+        std::fs::write(&regions, format!(r#"[{{"page":1,"rect":{rect}}}]"#)).expect("regions");
+        let (code, json, stderr) = run(
+            &strings(&[
+                "redact",
+                &s(&input),
+                "-o",
+                &s(&output),
+                "--regions",
+                &s(&regions),
+                "--json",
+            ]),
+            &[],
+        );
+        (code, json, stderr, output)
+    };
+
+    // The first picture sits at (100..140, 500..540): 252..292 from the top.
+    let (code, json, stderr, output) = redact("first", "[105,257,20,20]");
+    report.check(
+        "a region on a picture inside a block removes that picture and reports nothing left",
+        json["written"] == true
+            && json["pages"][0]["image_removals"] == 1
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    report.check(
+        "its bytes are gone from the file, and the other two pictures' are not",
+        !holds(&output, "PICTURE-A-BYTES")
+            && holds(&output, "PICTURE-B-BYTES")
+            && holds(&output, "PICTURE-C-BYTES"),
+        "",
+    );
+    let (_, words, _) = tool(&["text", &s(&output)], &[]);
+    report.check(
+        "the block's own word and the page's are still there",
+        words.contains("INSIDE-BLOCK") && words.contains("CONTROL-KEEP"),
+        &words,
+    );
+
+    // The third picture, at (300..340, 500..540), is drawn by page 2 as well.
+    let (code, json, stderr, output) = redact("shared", "[305,257,20,20]");
+    let left = json["pages"][0]["left"].to_string();
+    report.check(
+        "a picture another page draws too is left, and the report says how often it is drawn",
+        json["pages"][0]["image_removals"] == 0
+            && left.contains("drawn 2 time(s)")
+            && holds(&output, "PICTURE-C-BYTES"),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // Over the first two pictures at once.
+    let (code, json, stderr, output) = redact("both", "[105,257,120,20]");
+    report.check(
+        "a region over two pictures of one block removes both",
+        json["written"] == true
+            && json["pages"][0]["image_removals"] == 2
+            && !holds(&output, "PICTURE-A-BYTES")
+            && !holds(&output, "PICTURE-B-BYTES")
+            && holds(&output, "PICTURE-C-BYTES"),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    match Command::new("qpdf").arg("--check").arg(&output).output() {
+        Ok(out) => report.check(
+            "qpdf finds nothing wrong with the copy",
+            out.status.code() == Some(0),
+            &String::from_utf8_lossy(&out.stderr),
+        ),
+        Err(_) => report.skip(
+            "qpdf checks the copy without its pictures",
+            "qpdf is unavailable",
+        ),
+    }
+}
+
 /// `contacts_pdf` with an `/AcroForm` carrying an `/XFA` packet.
 fn xfa_pdf() -> Vec<u8> {
     let mut doc = Document::load_mem(&contacts_pdf()).expect("parses");
