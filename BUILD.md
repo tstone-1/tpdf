@@ -6494,6 +6494,34 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.10.3 verification, macOS arm64, 2026-10-03:** all 29 gates passed on the final tree
+(2,650 Rust tests with ten documented ignored, 2,144 frontend tests), and `check_windows.py`
+type-checked the Windows tree. Every Rust and frontend mutation selected `--since v26.10.2`
+ran and was caught: 929 Rust and 460 frontend. The 55 window mutations that selection names
+were not run; the field-placement and corner-resize window phases passed when those features
+landed, on the checks build. The command-line suite and the unit tests also passed on Windows
+11 through `scripts/run_on_windows.py` (2,674 unit tests, 479 command-line checks), on the tree
+before the version bump. The normal bundle, with the development engine hidden:
+`menu_check.py` (after its self-test) found a clean menu bar, and the bundled `tpdf-cli`
+answered `--version` with 26.10.3, `verify`, and a text extract. `save_check.py` was not run
+before this commit: the screen was locked, and the check refuses rather than guesses. The
+*26.10.3 publication* note says whether it ran before the tag. `docs/THREAT-MODEL.md` was
+corrected in this step: it still said a drawing inside a Form XObject is left, and it did not
+cover form fields or the reopening of tabs. The release notes in `release.yml` were rewritten
+before the release commit. No release mechanics changed.
+
+**26.10.3, `redact-reach-probe` on Windows 11, 2026-10-03, with the gate:** 160 documents,
+none refused, 13,524 regions, 60.5 s. Taken whole: 12,389 (91.6%); holding something that
+cannot be taken: 1,135 (8.4%) in 47 documents, of which a drawing on the page 712, a block
+drawn more than once 299, a drawing in a block 146. Read back: 12,133 regions on 346 pages.
+Shown unreadable 4,037 (33.27%); could not be shown unreadable 8,041 (66.27%); still reads as
+text 55 (0.45%), every span inside the region's own columns. The 2026-09-02 run read 0.00%,
+37.89% and 62.11% on 109 documents; the corpus is not the same one, and the control is 32 px
+on Windows since this cycle. All three outcomes other than *shown unreadable* are reported as
+*not verified*. Of the 1,000 controls not read back, 589 were rendered at 12 to 16 px, under
+the 32 px floor, and the probe attributes them to neither the scale ceiling nor a halved
+image. That is not explained yet.
+
 **26.10.2 verification, macOS arm64, 2026-10-02:** all 29 gates passed on the final tree
 (2,451 Rust tests with ten documented ignored, 2,026 frontend tests), and `check_windows.py`
 type-checked the Windows tree. CI was green on both legs at `788a607`, two commits before the

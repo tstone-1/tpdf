@@ -479,25 +479,28 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.10.2.** The window draws its common buttons as icons
-          and has one toolbar row less; colour and line width sit in the row
-          of the tool they belong to. *Make tpdf the default PDF app* is a
-          command, and tpdf never asks at start whether it is the default.
-          A signature's PAdES level (B-B, B-T, B-LT or B-LTA) is named in the
-          document properties and by `verify` and `info`.
+          **New in 26.10.3.** A scanned document can be made searchable:
+          *Recognise text and save as* and `tpdf ocr` write a copy with the
+          recognised words behind the page. *Save a smaller copy* and
+          `tpdf compress` write a smaller file and say first what it would
+          come to. *New document from pictures* and `tpdf images` make a PDF
+          from image files. A copy can be saved with a password or without
+          its password, also with `tpdf protect` and `tpdf unprotect`.
 
-          Extracting, splitting or deleting pages now leaves the removed
-          pages' pictures and fonts out of the file, also when the document
-          keeps every page's in one shared list.
+          Form fields can be added: a text field, a text field on several
+          lines or a checkbox, dragged out in the window or listed for
+          `tpdf form`. A placed rectangle can be resized by its corner. A
+          launch can reopen every tab of the last session when you turn
+          that on.
 
-          `tpdf search` finds text in documents, says where each match is,
-          and can highlight every match through `tpdf edit`. `info`, `verify`,
-          `text`, `search` and `fields` read a document from a pipe.
-          `tpdf help <command>` explains one command, a mistyped command gets
-          a suggestion, and `tpdf completions` prints a completion script for
-          bash, zsh, fish or PowerShell. On macOS the tool is installed as
-          `tpdf` and `tpdf-cli`, the name it has on Windows. The Python client
-          has typed results, `search()` and `mark_matches()`.
+          Redaction takes more. A drawing inside a region is removed, and a
+          straight line or a rectangle that runs past the region is cut at
+          its edge. Pictures and drawings inside a reusable block are taken
+          like those on the page. A picture the document draws on several
+          pages is taken off the page you marked. Redaction is no longer
+          refused on documents that keep a page's resources in a separate
+          object, and on Windows the read-back no longer reports "not
+          verified" when nothing was wrong.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
@@ -556,7 +559,8 @@ jobs:
           engine corrects what it reads and cannot be told not to.
 
           Two things it does not do, and says so before you commit rather than
-          after. A region over a drawing leaves the drawing where it is. And it
+          after. A curve or a dashed line that runs past a region stays where
+          it is and is reported. And it
           takes whole lines, because removing part of one means removing the
           instruction that drew it — so a word beside the one you marked goes
           with it.

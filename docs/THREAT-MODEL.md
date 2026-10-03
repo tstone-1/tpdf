@@ -1637,8 +1637,8 @@ which is reported as unverified rather than passed over.
 redaction and of nothing else.** A copy, an extract, a split, a merge and a print job all still
 carry `/Info`, XMP, every bookmark and every answer across untouched, which is §T6.1's position
 and is held by **one** condition guarding all three — so one mutation of it reddens all three
-controls, which is why only one of them names it. An image or a
-vector drawing inside the region is reported and left. A CID-encoded document cannot be
+controls, which is why only one of them names it. What a region takes of a picture or a
+vector drawing, and what it leaves and reports, is §T6.29. A CID-encoded document cannot be
 scanned at the byte level at all, which `verify::scan` reports as a blind spot rather than as
 a pass. None of that makes the answer *wrong* — it makes the answer *not verified*, which is
 what the reader is told.
@@ -2821,8 +2821,28 @@ under it. A wrong model would leave a sliver of a rule under the mark, not text.
 stays whole, the part inside the region included, and the result is *not verified* with that
 named as the reason: a curve, a dashed or hairline stroke, a shape filled and stroked
 together, a line the region covers only part of the thickness of. The same holds for a
-drawing that also sets the clip, for shadings, and for drawings inside a Form XObject. A
-reader who needs those gone uses the image-only copy.
+drawing that also sets the clip and for shadings. A reader who needs those gone uses the
+image-only copy.
+
+**Inside a Form XObject the same rules apply, one level down (2026-10-03).** Text, pictures
+and drawings a page draws through a form are addressed by their place in the form's own
+content, behind the same count guard: `remove_form_shows`, `remove_form_images` and
+`take_form_paths` refuse when PDFium's count for that form and `lopdf`'s disagree. A cut
+inside a form is worked out in the state the form's content starts in, which is the page's
+at the `Do` with the form's `/Matrix` applied (`pathcut::drawings_in_form`). A form the
+document draws more than once is not changed: its content is one stream, and editing it
+would change places nobody marked. It is left and the result is *not verified*. A form
+drawn inside a form is not followed and is reported the same way.
+
+**A picture drawn in several places leaves the marked page and stays in the file
+(2026-10-03).** Its draw on the marked page is removed. The image object stays while any
+other page or form draws it, so its bytes are still in the written file, and a clean
+verdict does not say otherwise: the report's `notes` and the review panel name the picture
+and how many times the document draws it. This is the one case where `verified` is given
+for a file that still holds the bytes of something a region covered, and it is given
+because nothing the region covers is drawn on that page any more. A reader who needs the
+picture out of the file marks it on every page that draws it; the last removal drops the
+resource name and the sweep takes the object.
 
 #### T6.30 — Setting and removing a password, added 2026-10-03
 
@@ -2985,6 +3005,30 @@ nothing re-checks that a published artifact still validates once the signing cer
 expires (2031-07-26) or if it were revoked. **There is an update channel to carry a fix as
 of 26.8.2** — see §T9, which is where the residual for it lives; this paragraph read "there
 is no update channel ... since tpdf ships no updater" until then.
+
+#### T6.33 — Adding form fields, added 2026-10-03
+
+`tpdf form` and the window's *Add a form field* commands write new AcroForm fields: a text
+field, a text field on several lines, or a checkbox. No new process or authority: the
+fields are part of the plan the coordinator's `lopdf` rewrite already carries
+(`formfields::place`). A field's name is checked before anything is written
+(`formfields::name_problem`: not empty, no space at either end, no period, no control
+character, at most 255 characters; and not a name the document or the same call already
+uses), one call adds at most 1,000, and a box
+smaller than the minimum is refused. A field on a page that is turned is refused rather
+than placed wrongly. What is written is a widget with a default appearance string and the
+standard Helvetica resource; no script, action or calculation is ever attached. A document
+that carries a digital signature gets the same warning before the write as any other
+change.
+
+#### T6.34 — Reopening every tab at launch, added 2026-10-03
+
+Off unless the reader turns it on. When on, the session record holds the paths of the
+documents open as tabs and which one was showing, beside the reading places it already
+held for recent documents; it is the same local file, and it holds paths and no content.
+At launch each path is opened through the ordinary open path, so each document is parsed
+in a worker like any other, and one that will not open does not stop the others. The
+record has no field for a password, so a protected document asks for it again.
 
 ### T9 — The updater
 
