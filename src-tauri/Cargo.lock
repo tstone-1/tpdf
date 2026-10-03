@@ -5300,6 +5300,7 @@ dependencies = [
  "fax",
  "flagset",
  "flate2",
+ "getrandom 0.4.3",
  "libc",
  "lopdf",
  "objc2",

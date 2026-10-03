@@ -1755,6 +1755,38 @@ documents' encryption; and a print job, because the bytes go to `NSPrintOperatio
 different decision that has not been measured. A signature over the original bytes is broken
 either way, which is already true of every rewrite.
 
+#### Setting and removing a password — 2026-10-03
+
+The stack table said on 2026-08-28 that `Document::encrypt` had made QPDF unnecessary for
+encryption. This is the feature that sentence allowed: `tpdf protect`, `tpdf unprotect` and
+the window's two *Save a copy* commands, all through `Plan::protection` and `protect.rs`.
+`docs/SUBSYSTEMS.md` has the structure and `docs/THREAT-MODEL.md` §T6.30 what it does with
+the password.
+
+Decided here, and each could have gone the other way. **One password and no permission
+flags**: a flag that no reader enforces, tpdf included, is a promise the file cannot keep.
+**AES-256 only**: every reader tested opens it, and offering RC4 or AES-128 would be
+offering something weaker with no reader that needs it. **No removal from a document that
+opens without a password**: its restrictions are its author's. **Copies only**: the open
+document keeps what it has, so a mistyped password costs a file the reader can delete.
+
+Measured: `qpdf --check` reads the copy as `R = 6`, AESv3 for streams, strings and file,
+with no warning, after the key length and a file identifier were added to what `lopdf`
+writes. PDFium opens it with the password and refuses without. PDFKit opens it with an
+ASCII password and reads the text. 28 Rust and 18 frontend mutations are caught, and 14
+checks in `tests/cli/protect.rs` pass through the shipped tool.
+
+**What the first PDFKit run found was not about this feature.** A rewrite that *kept* an
+encrypted document's password had been producing files Preview draws blank since
+2026-08-28. `encrypted_rewrite_probe` compared 17 encryption fields through `qpdf` and
+they agreed, because the missing field, the crypt filter's `/Length`, is one `qpdf` does
+not print and does not need. Two readers that share a tolerance do not corroborate each
+other about it; the third reader was on this machine the whole time.
+
+Not done: permission flags, a separate owner password, changing a password in place,
+and the Windows worker's access to the system random generator, which `check_windows.py`
+compiles and nothing has run.
+
 ---
 
 ## 6. Redaction

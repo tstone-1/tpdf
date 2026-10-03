@@ -916,6 +916,7 @@ fn run_gate(
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
     };
     if save::write_copy(file, &plan, &out, None, &save::Here).is_err() {
         let _ = std::fs::remove_file(&out);

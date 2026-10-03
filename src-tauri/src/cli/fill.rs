@@ -538,6 +538,7 @@ pub fn plan(pages: u32, answers: &[Resolved], opened_as: crate::fingerprint::Fin
     Plan {
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         forms: answers
             .iter()
             .map(|a| Change {

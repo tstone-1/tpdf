@@ -1900,6 +1900,7 @@ impl Edits {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
             text_layers: Vec::new(),
+            protection: Default::default(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -2046,6 +2047,7 @@ impl Edits {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
             text_layers: Vec::new(),
+            protection: Default::default(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -2252,6 +2254,13 @@ pub struct Plan {
     /// none.
     #[serde(default)]
     pub text_layers: Vec<crate::textlayer::Layer>,
+    /// What the written file's password is: the source's, none, or a new one.
+    ///
+    /// **Always [`Protection::Keep`] out of the model**, as [`Plan::text_layers`]
+    /// is always empty: only the two commands that change a password set it, so
+    /// an ordinary save, copy, extract or print leaves the encryption as it was.
+    #[serde(default)]
+    pub protection: crate::protect::Protection,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -2603,6 +2612,9 @@ impl Plan {
         if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {
             return false;
         }
+        if self.protection != crate::protect::Protection::Keep {
+            return false;
+        }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
     }
 
@@ -2643,6 +2655,9 @@ impl Plan {
             // answer false either way. `docs/TRAPS.md` has that.
             && self.discards.is_empty()
             && self.pages_are_the_file()
+            // An append adds objects under the encryption the file has, so a
+            // plan that changes the password is a rewrite.
+            && self.protection == crate::protect::Protection::Keep
     }
 
     /// Whether the pages are the file's, in the file's order and shape.

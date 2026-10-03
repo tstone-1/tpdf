@@ -30,6 +30,7 @@ pub mod edit;
 pub mod menubar;
 pub mod ocr;
 pub mod print;
+pub mod protect;
 pub mod read;
 pub mod redact;
 pub mod save;

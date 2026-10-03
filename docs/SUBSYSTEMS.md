@@ -307,6 +307,38 @@ where PDFium generates them: the note icon fills 637 of the 756 pixels in its ow
 the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
 reach before `annots.rs` was the *text*.
 
+## Setting and removing a password (`tpdf protect`, `tpdf unprotect`, the two *Save a copy* commands)
+
+`protect.rs` is the whole of it on the writing side. `Plan::protection` says what the copy's
+password is: `Keep`, which every plan out of the model carries, `Remove` or `Set`. `save::checked`
+asks `protect::allowed` before anything is built, `save::rewrite` asks `protect::resolve` for
+the state to encrypt with, and `protect::written_as_asked` loads the serialised bytes with and
+without the password before they are returned. That last call has no failing input in the
+tests: nothing short of a defect in `lopdf`'s writer makes it fire, so a mutation that deletes
+it survives. A plan that changes the password is never an append and never the identity.
+
+**`protect::finish` runs after every `Document::encrypt`, also when the password is kept.**
+`lopdf` writes each crypt filter without its key length. `qpdf` and PDFium assume the length
+from the method; CoreGraphics refuses the filter, takes the password and draws every page
+blank. That shipped from 2026-08-28 to 2026-10-03 in the rewrite, the merge and the
+image-only redaction, and was found by opening this feature's first output with PDFKit
+instead of only with `qpdf`. A new password also gets `/Length 256`, a file identifier when
+the source had none, and a header of at least 1.7.
+
+A new password is one string used as both the user and the owner password, with every
+permission granted, under `V 5`/`R 6`. `cli/protect.rs` is the tool's two commands, which
+open the staged copy in fresh PDFium workers before publishing it; `commands/protect.rs` is
+the window's one command, `protect_copy`, where a password sets and its absence removes. On
+the frontend the rules and sentences are `src/lib/protect.ts` and the dialog is
+`newpassworddialog.ts`; `App.svelte` keeps the two dialogs in order and the `invoke`.
+
+Three limits, each measured. PDFKit does not open a document whose password has a character
+outside ASCII, on a file `qpdf` wrote as well as on tpdf's. `lopdf` answers a wrong password
+with an error and no password with an empty, locked document, so the two are read
+differently in `written_as_asked`. And `lopdf` authenticates with the empty password by
+itself, which is why `allowed` decides a removal by loading the bytes with no password and
+not by whether one was given.
+
 ## A text layer over a scanned page (`tpdf ocr`, *Recognise text and save as*)
 
 `textlayer.rs` writes recognised words into a page as invisible text; `ocr_layer.rs` decides

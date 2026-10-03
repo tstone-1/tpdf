@@ -74,6 +74,7 @@ pub mod print_macos;
 #[cfg(windows)]
 pub mod print_win;
 pub mod progressive;
+pub mod protect;
 mod protocol;
 mod queue;
 pub mod raster_redact;
@@ -160,8 +161,8 @@ use tauri::Manager;
 // moved and what decides which file a new one goes in.
 use commands::document::start_eager_open;
 use commands::{
-    app::*, document::*, edit::*, menubar::*, ocr::*, print::*, read::*, redact::*, save::*,
-    session::*, sign::*, spike::*,
+    app::*, document::*, edit::*, menubar::*, ocr::*, print::*, protect::*, read::*, redact::*,
+    save::*, session::*, sign::*, spike::*,
 };
 
 /// The window's *Redact and save as*, without the window.
@@ -918,6 +919,7 @@ pub fn run() {
             edit_state,
             save_document,
             save_copy,
+            protect_copy,
             extract_pages,
             split_document,
             merge_documents,
@@ -1361,6 +1363,7 @@ mod tests {
             forms: Vec::new(),
             text_edits: Vec::new(),
             text_layers: Vec::new(),
+            protection: Default::default(),
         }
     }
 

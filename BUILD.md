@@ -456,6 +456,14 @@ uv run scripts/tabs_check.py <checks-binary> testdata/redact-pages.pdf --phase r
 # before its command being cleared by it (`docs/TRAPS.md`).
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase recognise
 
+# The two password commands in the window (`src/lib/protectcheck.ts`): the
+# new-password dialog before the save panel, a repeat that differs refused in
+# the dialog, the copy, opening it through the password prompt, and removing
+# the password again. The script then reads both copies with the tool: the
+# protected one must give no text without the password. RAN 2026-10-03 on
+# macOS: 15/15 and 6 disk checks.
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase protect
+
 # Signing with a certificate, through the window a reader signs in
 # (`src/lib/signingcheck.ts`). NEVER in scripts/gates.py or in CI, and never
 # started by an agent: it signs with a real key from the login keychain, so

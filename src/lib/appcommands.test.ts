@@ -186,6 +186,8 @@ function harness(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    protectCopy: () => fired.push("protectCopy"),
+    unprotectCopy: () => fired.push("unprotectCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -915,6 +917,20 @@ describe("the page operations", () => {
     expect(closed.fired).toEqual([]);
   });
 
+  it("sets and removes a password through two commands, on any open document", () => {
+    const { registry, fired } = harness();
+    const titles = new Map(registry.all().map((entry) => [entry.id, entry.title]));
+    expect(titles.get("file.protect")).toBe("Save a copy with a password...");
+    expect(titles.get("file.unprotect")).toBe("Save a copy without its password...");
+    expect(registry.run("file.protect")).toBe(true);
+    expect(registry.run("file.unprotect")).toBe(true);
+    expect(fired).toEqual(["protectCopy", "unprotectCopy"]);
+    const closed = harness(false);
+    expect(closed.registry.run("file.protect")).toBe(false);
+    expect(closed.registry.run("file.unprotect")).toBe(false);
+    expect(closed.fired).toEqual([]);
+  });
+
   it("withholds document commands while an image-only copy is being made", () => {
     const { registry, fired } = harness(
       true, {}, { undo: true, redo: true }, true, false, true, {}, false,
@@ -922,6 +938,8 @@ describe("the page operations", () => {
     );
     expect(registry.run("file.redactRasterCopy")).toBe(false);
     expect(registry.run("file.recogniseText")).toBe(false);
+    expect(registry.run("file.protect")).toBe(false);
+    expect(registry.run("file.unprotect")).toBe(false);
     expect(registry.run("edit.redactRegion")).toBe(false);
     expect(registry.run("file.save")).toBe(false);
     expect(registry.run("edit.undo")).toBe(false);
@@ -1460,6 +1478,8 @@ describe("the window shortcuts for editing", () => {
       redactCopy: () => fired.push("redactCopy"),
       redactRasterCopy: () => fired.push("redactRasterCopy"),
       recogniseText: () => fired.push("recogniseText"),
+      protectCopy: () => fired.push("protectCopy"),
+      unprotectCopy: () => fired.push("unprotectCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>

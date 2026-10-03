@@ -179,6 +179,24 @@ MUTATIONS = [
     Mutation("assurance: redactCopy write guard", "src/lib/edits.ts", "  async redactCopy(source: string, path: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactCopy(source: string, path: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: redactRasterCopy write guard", "src/lib/edits.ts", "  async redactRasterCopy(source: string, path: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactRasterCopy(source: string, path: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: ocrCopy write guard", "src/lib/edits.ts", "  async ocrCopy(source: string, path: string, run: number): Promise<Recognised> {\n    await this.beforeWrite();", "  async ocrCopy(source: string, path: string, run: number): Promise<Recognised> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
+    Mutation("assurance: protectCopy write guard", "src/lib/edits.ts", "  async protectCopy(source: string, path: string, password: string | null): Promise<Copied> {\n    await this.beforeWrite();", "  async protectCopy(source: string, path: string, password: string | null): Promise<Copied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
+    Mutation("protect: send no password", "src/lib/edits.ts", 'return await call("protect_copy", { doc: this.doc, source, path, password });', 'return await call("protect_copy", { doc: this.doc, source, path, password: null });', "sends the new password with a protected copy, and null to remove one"),
+    Mutation("protect: accept two passwords that differ", "src/lib/protect.ts", '  if (first !== second) return "The two passwords are not the same.";\n', "", "refuses two that differ, by case as well"),
+    Mutation("protect: count characters instead of bytes", "src/lib/protect.ts", "const bytes = new TextEncoder().encode(first).length;", "const bytes = first.length;", "counts the length in bytes, which is what the file format reads"),
+    Mutation("protect: accept an empty password", "src/lib/protect.ts", '  if (first === "") return "Type a password.";\n', "", "refuses an empty one before comparing anything"),
+    Mutation("protect: accept the C1 controls", "src/lib/protect.ts", "/[\\u0000-\\u001f\\u007f-\\u009f]/.test(first)", "/[\\u0000-\\u001f]/.test(first)", "refuses a character nobody can type back"),
+    Mutation("protect: say an unprotected copy needs a password", "src/lib/protect.ts", ": `Saved ${basename(path)}. It opens without a password.`;", ": `Saved ${basename(path)}. It needs the new password to open.`;", "says whether the copy needs a password, by its name"),
+    Mutation("protect: drop the changed-source warning", "src/lib/protect.ts", "return changed ? `${said} ${changed}` : said;", "return said;", "adds what a copy from a changed source is told"),
+    Mutation("protect: name both copies protected", "src/lib/protect.ts", '${set ? "protected" : "unprotected"}.pdf', '${set ? "protected" : "protected"}.pdf', "names the copy after what was done to it"),
+    Mutation("protect: call every character beyond ASCII fine", "src/lib/protect.ts", "return /[^\\u0000-\\u007f]/.test(password);", "return /[^\\u0000-\\uffff]/.test(password);", "is about characters Preview does not accept, not about length"),
+    Mutation("new password: save without judging", "src/lib/newpassworddialog.ts", "    if (why) {\n      this.problem.textContent = why;\n      return;\n    }\n", "", "stays open and says why when the two differ, then takes the correction"),
+    Mutation("new password: judge the first field against itself", "src/lib/newpassworddialog.ts", "const why = judge(this.first.value, this.second.value);", "const why = judge(this.first.value, this.first.value);", "stays open and says why when the two differ, then takes the correction"),
+    Mutation("new password: keep the repeat after closing", "src/lib/newpassworddialog.ts", '    this.second.value = "";\n', "", "clears both fields after a password was given"),
+    Mutation("new password: keep the password after closing", "src/lib/newpassworddialog.ts", '    this.first.value = "";\n', "", "clears both fields after a password was given"),
+    Mutation("new password: keep the last refusal", "src/lib/newpassworddialog.ts", '    this.note.textContent = ADVICE;\n    this.problem.textContent = "";\n', "    this.note.textContent = ADVICE;\n", "starts each question without the last one's refusal"),
+    Mutation("new password: never warn about Preview", "src/lib/newpassworddialog.ts", 'beyondAscii(this.first.value) ? NOT_ASCII : "";', '"";', "warns about Preview while the password has a character it does not accept"),
+    Mutation("new password: stack a second question", "src/lib/newpassworddialog.ts", "  ask(name: string): Promise<string | null> {\n    this.settle(null);\n", "  ask(name: string): Promise<string | null> {\n", "settles the first question when a second is asked"),
+    Mutation("appcommands: unprotect asks for a new password", "src/lib/appcommands.ts", "run: () => actions.unprotectCopy(),", "run: () => actions.protectCopy(),", "sets and removes a password through two commands, on any open document"),
     Mutation("recognise: count pages given a layer only", "src/lib/recognise.ts", "read.pages.length + read.alreadyText.length + read.nothingRead.length + read.tooLarge.length;", "read.pages.length;", "names the pages that got no layer, each kind in its own sentence"),
     Mutation("recognise: report the last page's words", "src/lib/recognise.ts", "read.pages.reduce((sum, page) => sum + page.words, 0);", "read.pages.reduce((_sum, page) => page.words, 0);", "adds the words of every page given a layer"),
     Mutation("recognise: list every page", "src/lib/recognise.ts", "const SHOWN = 8;", "const SHOWN = 8000;", "does not list three hundred pages"),
@@ -5861,6 +5879,9 @@ TEST_FILES = [
     "src/lib/session.test.ts",
     # Added 2026-10-03 with the window's text recognition, with its mutations.
     "src/lib/recognise.test.ts",
+    # Added 2026-10-03 with the two password commands, with their mutations.
+    "src/lib/protect.test.ts",
+    "src/lib/newpassworddialog.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.

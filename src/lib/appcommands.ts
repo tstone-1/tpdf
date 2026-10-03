@@ -493,6 +493,10 @@ export interface AppActions {
   redactRasterCopy(): void;
   /** Ask for a name and write a copy whose scanned pages can be searched. */
   recogniseText(): void;
+  /** Ask for a new password and a name, and write a copy that needs it. */
+  protectCopy(): void;
+  /** Ask for a name and write a copy that opens without the password. */
+  unprotectCopy(): void;
   /**
    * Removes every marked region from the file the reader opened.
    *
@@ -1536,6 +1540,23 @@ export function registerAppCommands(
       title: "Recognise text and save as...",
       enabled: withDocument,
       run: () => actions.recogniseText(),
+    },
+    {
+      // Copies, like every command that changes what a file is: the open
+      // document keeps the password it has, or none.
+      id: "file.protect",
+      title: "Save a copy with a password...",
+      enabled: withDocument,
+      run: () => actions.protectCopy(),
+    },
+    {
+      // Offered on any open document rather than only on one that asked for a
+      // password: a document that never asked is told why there is nothing to
+      // remove, which a missing command would not say.
+      id: "file.unprotect",
+      title: "Save a copy without its password...",
+      enabled: withDocument,
+      run: () => actions.unprotectCopy(),
     },
     {
       // A separate fallback rather than a mode of `file.redactCopy`: the result

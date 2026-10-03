@@ -566,6 +566,8 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("text-runs", "text-runs a.pdf --page 1 --json"),
         ("render", "render a.pdf -o page.png --json"),
         ("ocr", "ocr a.pdf -o b.pdf --language de-DE --pages 1-2"),
+        ("protect", "protect a.pdf -o b.pdf --new-password-env NEW"),
+        ("unprotect", "unprotect a.pdf -o b.pdf --password-env OLD"),
         ("path", "path --add"),
         ("completions", "completions zsh"),
     ];
@@ -1945,6 +1947,20 @@ fn samples() -> Vec<(&'static str, String)> {
             }),
         ),
         (
+            "protect",
+            pretty(&report::Protected {
+                schema: report::SCHEMA,
+                command: "protect".into(),
+                input: "report.pdf".into(),
+                output: "report protected.pdf".into(),
+                pages: 12,
+                protected: true,
+                was_protected: false,
+                signatures_invalidated: 0,
+                signatures_unknown: false,
+            }),
+        ),
+        (
             "command-error",
             pretty(&report::Failed {
                 schema: report::SCHEMA,
@@ -2132,7 +2148,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 21, "the sample table itself");
+    assert_eq!(want.len(), 22, "the sample table itself");
     assert_eq!(found, want);
 }
 

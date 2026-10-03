@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -678,6 +678,47 @@ class ClientTests(unittest.TestCase):
             self.assertNotIn('synthetic-password', args[0])
             self.assertEqual(kwargs['env']['TPDF_API_DOCUMENT_PASSWORD'], 'synthetic-password')
             self.assertEqual(dict(os.environ), before)
+
+    def test_a_new_password_is_child_only_and_not_in_argv(self):
+        with patch('tpdf.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.returncode = 0
+            process.communicate.return_value = (b'{"schema":1,"command":"protect"}', b'')
+            before = dict(os.environ)
+            self.pdf.protect(self.source, 'out.pdf', 'synthetic-new', password='synthetic-old')
+            args, kwargs = popen.call_args
+            self.assertNotIn('synthetic-new', args[0])
+            self.assertNotIn('synthetic-old', args[0])
+            self.assertIn('--new-password-env', args[0])
+            self.assertEqual(kwargs['env']['TPDF_API_NEW_PASSWORD'], 'synthetic-new')
+            self.assertEqual(kwargs['env']['TPDF_API_DOCUMENT_PASSWORD'], 'synthetic-old')
+            self.assertEqual(dict(os.environ), before)
+            process.communicate.return_value = (b'{"schema":1,"command":"unprotect"}', b'')
+            self.pdf.unprotect(self.source, 'out.pdf', 'synthetic-old')
+            args, kwargs = popen.call_args
+            self.assertEqual(args[0][1], 'unprotect')
+            self.assertNotIn('--new-password-env', args[0])
+            self.assertNotIn('TPDF_API_NEW_PASSWORD', kwargs['env'])
+
+    def test_protect_and_unprotect_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            locked = os.path.join(directory, 'locked.pdf')
+            back = os.path.join(directory, 'back.pdf')
+            report = self.pdf.protect(self.source, locked, 'synthetic-new')
+            self.assertTrue(report['protected'])
+            self.assertFalse(report['was_protected'])
+            with self.assertRaises(CommandError):
+                self.pdf.text(locked)
+            self.assertEqual(
+                self.pdf.text(locked, password='synthetic-new')['pages'],
+                self.pdf.text(self.source)['pages'],
+            )
+            report = self.pdf.unprotect(locked, back, 'synthetic-new')
+            self.assertFalse(report['protected'])
+            self.assertTrue(report['was_protected'])
+            self.assertEqual(self.pdf.text(back)['pages'], self.pdf.text(self.source)['pages'])
+            with self.assertRaises(CommandError):
+                self.pdf.unprotect(back, locked, 'synthetic-new', force=True)
 
     def test_malformed_and_incompatible_reports_are_not_success(self):
         for response in [b'', b'not JSON', b'{}{}', b'[]', b'{"schema":2,"command":"help"}', b'{"schema":true,"command":"help"}', b'{"schema":1,"command":"info"}']:

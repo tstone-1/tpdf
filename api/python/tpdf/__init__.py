@@ -121,6 +121,7 @@ class Tpdf:
         *arguments: str | os.PathLike[str],
         input_json: Any = None,
         password: str | None = None,
+        new_password: str | None = None,
         check: bool = True,
     ) -> Result:
         """Run any JSON-capable command with literal arguments (never shell syntax).
@@ -140,6 +141,9 @@ class Tpdf:
         if password is not None:
             env['TPDF_API_DOCUMENT_PASSWORD'] = password
             options += ['--password-env', 'TPDF_API_DOCUMENT_PASSWORD']
+        if new_password is not None:
+            env['TPDF_API_NEW_PASSWORD'] = new_password
+            options += ['--new-password-env', 'TPDF_API_NEW_PASSWORD']
         payload = None if input_json is None else json.dumps(
             input_json, ensure_ascii=False, allow_nan=False, separators=(',', ':'),
         ).encode('utf-8')
@@ -289,6 +293,41 @@ class Tpdf:
         if invalidate_signatures:
             args.append('--invalidate-signatures')
         return self.run('ocr', *args, '--', source, password=password).typed
+
+    def protect(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str],
+        new_password: str, *, force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.ProtectReport:
+        """Write a copy that needs `new_password` to open, encrypted with AES-256.
+
+        `password` opens a source that already has one; the copy gets the new
+        one instead. Neither password is put on the command line.
+        """
+        args = ['-o', os.fspath(output)]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run(
+            'protect', *args, '--', source, password=password, new_password=new_password,
+        ).typed
+
+    def unprotect(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str],
+        password: str, *, force: bool = False, invalidate_signatures: bool = False,
+    ) -> reports.ProtectReport:
+        """Write a copy that opens without a password, from a source that needs one.
+
+        Refused for a source that opens without a password: restrictions such a
+        document carries are left in place.
+        """
+        args = ['-o', os.fspath(output)]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run('unprotect', *args, '--', source, password=password).typed
 
     def fill(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],

@@ -27,6 +27,7 @@ import { call } from "./ipc";
 import { filePage } from "./pages";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
+import { protectCheck } from "./protectcheck";
 import { recogniseCheck } from "./recognisecheck";
 import { signingCheck } from "./signingcheck";
 import { screenshotCheck } from "./screenshotcheck";
@@ -1033,6 +1034,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "signatures": await signatureCheck(host, expected, report); break;
     case "sign": await signingCheck(host, expected, report); break;
     case "recognise": await recogniseCheck(host, expected, report); break;
+    case "protect": await protectCheck(host, expected, report); break;
     case "screenshots": await screenshotCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "command": "protect",
+  "input": "report.pdf",
+  "output": "report protected.pdf",
+  "pages": 12,
+  "protected": true,
+  "was_protected": false,
+  "signatures_invalidated": 0,
+  "signatures_unknown": false
+}

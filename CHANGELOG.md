@@ -30,6 +30,17 @@ have the binary.)
   which pages are considered and `--language` names the language to expect. The copy is read
   back before it is published, and `--json` reports which pages were read, which were left
   alone and which engine read them. The Python client gains `ocr()`.
+- **`tpdf protect` and `tpdf unprotect` set and remove a document's password.** `tpdf
+  protect report.pdf -o locked.pdf --new-password-env NEW` writes a copy encrypted with
+  AES-256 that needs the password to open; `tpdf unprotect` writes a copy that opens
+  without one, from a document that needed one. Neither password goes on the command
+  line. The copy is opened again before it is published, with and without the password.
+  A document that opens without a password but carries restrictions keeps them. The
+  Python client gains `protect()` and `unprotect()`.
+- **Save a copy with a password** and **Save a copy without its password**, in the File
+  menu and the command palette, do the same from the window. The new password is typed
+  twice, and the dialog says when it holds a character Preview on macOS does not accept.
+  Unsaved changes go into the copy; the open document is not changed.
 - **Recognise text and save as**, in the File menu and the command palette, does the same
   from the window. It asks for a name, shows which page is being read with a Stop button
   beside it, reads the copy back before giving it that name, and opens it, so a search works
@@ -51,6 +62,16 @@ have the binary.)
   "Note: page 1: the marked areas held no text, so the check was sized from the smallest
   print left on the page: nothing 8.7 pt or larger is readable there." `tpdf redact` reports
   the same sentences under `notes`.
+
+### Fixed
+
+- **An encrypted document that tpdf had rewritten showed blank pages in Preview.** Since
+  26.8.12, saving a password-protected document after deleting, moving or editing anything
+  kept its password, and Preview on macOS then accepted that password and drew nothing.
+  The library that writes the encryption left the key length out of each crypt filter;
+  `qpdf` and PDFium assume it, and CoreGraphics does not. tpdf now writes it, in a save,
+  a merge and an image-only redaction. A file written by an earlier version is repaired
+  by opening it and choosing *Save a copy*.
 
 ## [26.10.2] - 2026-10-02
 

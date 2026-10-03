@@ -263,6 +263,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
     };
     let plan = Plan {
         text_layers: Vec::new(),
+        protection: Default::default(),
         text_edits: raw
             .text_edits
             .into_iter()

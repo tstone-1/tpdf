@@ -49,6 +49,11 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase protect runs the two password commands in the window: the new-password dialog,
+  a refused repeat, the copy, opening it with the password and removing it again.
+
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase protect
+
 --phase recognise runs Recognise text and save as in the window: the palette, the
 save panel's suggestion, the toolbar's page line and Stop button, the sentence
 afterwards, the copy opened and searched, the refusal of unsaved changes, and a
@@ -83,7 +88,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -134,6 +139,10 @@ def main() -> int:
             scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
             long.write_bytes(scan_pdf(picture.read_bytes(), 200, 6))
             copies = [scan, long, copied]
+        if args.phase == "protect":
+            copied = room / "copies"
+            copied.mkdir()
+            copies = [first, copied]
         if args.phase == "sign":
             # The fixture, a directory of its own for the signed copies, and the
             # identity; the copy itself is signed and never written.
@@ -182,6 +191,8 @@ def main() -> int:
             passed = signed_files(room / "signed") and passed
         if args.phase == "recognise":
             passed = recognised_files(room / "copies") and passed
+        if args.phase == "protect":
+            passed = protected_files(room / "copies", args.binary) and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
@@ -270,6 +281,43 @@ def recognised_files(directory: Path) -> bool:
     extra = sorted(p.name for p in directory.iterdir() if p.name != "copy.pdf")
     print(f"[{'OK' if not extra else 'FAIL'}]   nothing else is left in the directory: {extra}")
     return ok and not extra
+
+
+def protected_files(directory: Path, binary: Path) -> bool:
+    """What the password phase left on disk, read by the tool from outside the app.
+
+    `locked.pdf` must refuse to give its text without the password the phase
+    typed and give it with; `open.pdf` must give it unasked. The refused and
+    the dismissed copies were never written.
+    """
+    tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+
+    def text(path: Path, password: str | None) -> tuple[int, str]:
+        command = [str(tool), "text", str(path)]
+        env = dict(os.environ)
+        if password is not None:
+            command += ["--password-env", "TPDF_CHECK_PASSWORD"]
+            env["TPDF_CHECK_PASSWORD"] = password
+        done = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False, env=env)
+        return done.returncode, done.stdout
+
+    locked, opened = directory / "locked.pdf", directory / "open.pdf"
+    checks = []
+    if locked.is_file() and opened.is_file():
+        checks = [
+            ("locked.pdf gives no text without the password", text(locked, None)[0] == 3),
+            ("locked.pdf gives no text with another password", text(locked, "another")[0] == 3),
+            ("locked.pdf gives its text with the password", "quartz" in text(locked, "tr0ub4dor")[1]),
+            ("open.pdf gives its text unasked", "quartz" in text(opened, None)[1]),
+            ("open.pdf holds no encryption dictionary", b"/Encrypt" not in opened.read_bytes()),
+        ]
+    else:
+        checks = [("locked.pdf and open.pdf were written", False)]
+    extra = sorted(p.name for p in directory.iterdir() if p.name not in ("locked.pdf", "open.pdf"))
+    checks.append((f"nothing else is left in the directory: {extra}", not extra))
+    for what, good in checks:
+        print(f"[{'OK' if good else 'FAIL'}]   {what}")
+    return all(good for _, good in checks)
 
 
 def signed_files(directory: Path) -> bool:

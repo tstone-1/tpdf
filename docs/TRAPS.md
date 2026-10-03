@@ -265,6 +265,7 @@ hop through the index.
 
 - A text's own ActualText rule has to admit the empty text a deletion leaves
 - A swept extract still held the dropped pages' pictures, because every page named one resource dictionary
+- `lopdf` writes a crypt filter without its key length, and two readers that both assume it agreed the file was fine
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -25498,3 +25499,25 @@ shown, `ocr_cancel` stores the number it is for, and the run compares. Nothing i
 the order of the two calls does not matter. The general form: a cancel that can be issued
 before its target exists must name the target, and state that one side resets is state the
 other side's message can be lost in.
+
+### `lopdf` writes a crypt filter without its key length, and two readers that both assume it agreed the file was fine
+
+A rewrite that kept an encrypted document's password shipped on 2026-08-28 and was checked
+through `qpdf`: 17 encryption fields agreed between source and output. From then until
+2026-10-03 every such file opened in Preview with its password and showed blank pages.
+CoreGraphics logs *unsupported crypt filter key length*: `EncryptionState::encode` writes
+`/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 >> >>` with no `/Length`, and for a new
+`V 5` state no top-level `/Length` either.
+
+`qpdf` does not print that field and does not need it, and neither does PDFium, which is the
+reader every other check here goes through. So the two instruments shared the tolerance the
+defect lived in, and their agreement said nothing about it. It was found by opening the first
+output of `tpdf protect` with PDFKit, a third reader that had been on the machine the whole
+time, and reproduced on the older path within a minute.
+
+`protect::finish` writes the lengths and must follow every `Document::encrypt`; there are
+three callers. A new password also needs a file identifier when the source had none, which
+`qpdf --check` warns about. The general form: before calling a written file correct, open it
+with a reader that is not the one the writer was developed against, and prefer the strict one.
+On this machine that is `swift` with `PDFDocument`, reading the page's `string` after
+`unlock(withPassword:)`, with `CG_PDF_VERBOSE=1` for the reason.

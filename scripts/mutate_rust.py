@@ -8408,6 +8408,230 @@ MUTATIONS += [
         "an_unmeasurable_child_stays_unmeasurable",
     ),
     Mutation(
+        # The copy that was to open for anybody still asks for the password.
+        'protect: a removal keeps the encryption',
+        'src/protect.rs',
+        '        Protection::Remove => Ok(None),',
+        '        Protection::Remove => Ok(source),',
+        'keep_and_remove_resolve_without_a_key',
+    ),
+    Mutation(
+        # Somebody else's restrictions, dropped for a reader who was never asked for a password.
+        'protect: remove restrictions from a document that opens unasked',
+        'src/protect.rs',
+        '            if plain.is_ok_and(|doc| doc.is_encrypted()) {',
+        '            if true {',
+        'a_removal_needs_a_document_that_a_password_opens',
+    ),
+    Mutation(
+        # The wrong sentence: a document with no encryption has no restrictions either.
+        'protect: tell a plain document it opens without a password',
+        'src/protect.rs',
+        '        Protection::Remove if !had => {',
+        '        Protection::Remove if false => {',
+        'a_removal_needs_a_document_that_a_password_opens',
+    ),
+    Mutation(
+        # Off by one at the limit revision 6 reads.
+        'protect: refuse a password of exactly the longest length',
+        'src/protect.rs',
+        '    if password.len() > MAX_BYTES {',
+        '    if password.len() >= MAX_BYTES {',
+        'a_password_nobody_could_type_back_is_refused',
+    ),
+    Mutation(
+        # A tab pasted into the field is a password nobody can type into another reader.
+        'protect: accept a control character',
+        'src/protect.rs',
+        '    if password.chars().any(char::is_control) {',
+        '    if false {',
+        'a_password_nobody_could_type_back_is_refused',
+    ),
+    Mutation(
+        # An empty user password opens for everybody: a protected copy that is not.
+        'protect: accept an empty password',
+        'src/protect.rs',
+        '    if password.is_empty() {',
+        '    if false {',
+        'a_password_nobody_could_type_back_is_refused',
+    ),
+    Mutation(
+        # The key stays all zeroes, so every protected copy is encrypted with the same one.
+        'protect: one file key for every copy',
+        'src/protect.rs',
+        '    getrandom::fill(&mut key)\n        .map_err(|e| format!("tpdf could not get random bytes for the encryption key: {e}"))?;',
+        '',
+        'two_copies_get_two_keys',
+    ),
+    Mutation(
+        # A copy written in the clear opens with any password, the new one included.
+        'protect: do not ask whether the copy opens unasked',
+        'src/protect.rs',
+        '            if !load(None)?.is_encrypted() {',
+        '            if false {',
+        'a_copy_written_in_the_clear_is_not_one_with_a_password',
+    ),
+    Mutation(
+        # A copy that opens and is missing a page is not the document.
+        "protect: do not count the protected copy's pages",
+        'src/protect.rs',
+        '                .is_ok_and(|doc| !doc.is_encrypted() && doc.get_pages().len() == pages);',
+        '                .is_ok_and(|doc| !doc.is_encrypted());',
+        'a_copy_that_lost_a_page_is_refused',
+    ),
+    Mutation(
+        # The same, for the copy with no password.
+        "protect: do not count the unprotected copy's pages",
+        'src/protect.rs',
+        '            if plain.is_encrypted() || plain.was_encrypted() || plain.get_pages().len() != pages {',
+        '            if plain.is_encrypted() || plain.was_encrypted() {',
+        'a_copy_that_lost_a_page_is_refused',
+    ),
+    Mutation(
+        # What lopdf writes alone: Preview takes the password and shows blank pages.
+        'protect: leave the key length out of the crypt filter',
+        'src/protect.rs',
+        '                Ok(b"AESV3") => 32,',
+        '                Ok(b"AESV3") => continue,',
+        'a_new_password_states_its_key_length_and_identifies_the_file',
+    ),
+    Mutation(
+        # qpdf warns about an encrypted file with no /ID.
+        'protect: write no file identifier',
+        'src/protect.rs',
+        '    if !identified {',
+        '    if false {',
+        'a_new_password_states_its_key_length_and_identifies_the_file',
+    ),
+    Mutation(
+        # The identifier is the file's, and other tools match revisions by it.
+        'protect: replace the identifier a file has',
+        'src/protect.rs',
+        '    if !identified {',
+        '    if true {',
+        'a_new_password_states_its_key_length_and_identifies_the_file',
+    ),
+    Mutation(
+        # A PDF 1.4 header on a file whose handler arrived with 1.7.
+        'protect: leave an old header on a revision 6 file',
+        'src/protect.rs',
+        '    if doc.version.as_str() < "1.7" {',
+        '    if false {',
+        'a_new_password_states_its_key_length_and_identifies_the_file',
+    ),
+    Mutation(
+        # A save that keeps the password must change nothing else about the file.
+        'protect: give kept encryption a new header and identifier',
+        'src/protect.rs',
+        '    if !matches!(protection, Protection::Set(_)) {\n        return Ok(());\n    }\n    if doc.version',
+        '    if doc.version',
+        'a_new_password_states_its_key_length_and_identifies_the_file',
+    ),
+    Mutation(
+        # A plan is printed by {:?} in refusals and test output.
+        'protect: print the password in the debug form',
+        'src/protect.rs',
+        '            Protection::Set(_) => "Set(<password>)",',
+        '            Protection::Set(password) => password,',
+        'the_password_is_not_in_the_debug_form',
+    ),
+    Mutation(
+        # The guard's call, rather than the guard.
+        'save: do not ask whether a removal is allowed',
+        'src/save.rs',
+        '    crate::protect::allowed(&plan.protection, encryption.is_some(), original)?;\n',
+        '',
+        'a_password_is_not_removed_from_a_document_that_has_none_to_ask_for',
+    ),
+    Mutation(
+        # The copy keeps what the source had, whatever was asked.
+        'save: ignore the password the plan asks for',
+        'src/save.rs',
+        '    let encryption = crate::protect::resolve(&plan.protection, encryption)?;\n',
+        '',
+        'a_copy_without_the_password_opens_for_anybody',
+    ),
+    Mutation(
+        # The call in the rewrite: shipped without it for five weeks.
+        'save: do not complete the encryption a rewrite writes',
+        'src/save.rs',
+        '    crate::protect::finish(&mut doc, &plan.protection)?;\n',
+        '',
+        'a_rewrite_of_an_encrypted_document_stays_encrypted',
+    ),
+    Mutation(
+        # The same call, in the second of the three places that encrypt.
+        'save: do not complete the encryption a merge writes',
+        'src/save.rs',
+        '    crate::protect::finish(&mut merged, &plan.protection)?;\n',
+        '',
+        'a_merge_whose_base_is_password_protected_keeps_its_encryption',
+    ),
+    Mutation(
+        # An identity plan is handed over byte for byte, with the old password.
+        'plan: a password change is still the file',
+        'src/edits.rs',
+        '        if self.protection != crate::protect::Protection::Keep {\n            return false;\n        }\n',
+        '',
+        'a_plan_that_changes_the_password_is_neither_the_file_nor_an_append',
+    ),
+    Mutation(
+        # An append writes under the encryption the file has.
+        'plan: a password change can be an append',
+        'src/edits.rs',
+        '            && self.protection == crate::protect::Protection::Keep\n',
+        '',
+        'a_plan_that_changes_the_password_is_neither_the_file_nor_an_append',
+    ),
+    Mutation(
+        # An option that would be read and then ignored.
+        'cli protect: unprotect takes a new password',
+        'src/cli/protect.rs',
+        '            "--new-password-env" if set => {',
+        '            "--new-password-env" => {',
+        'unprotect_needs_the_password_and_takes_no_new_one',
+    ),
+    Mutation(
+        # It would run as a removal.
+        'cli protect: protect without a new password',
+        'src/cli/protect.rs',
+        '    if set && command.new_password_env.is_none() {',
+        '    if false {',
+        'protect_needs_a_variable_for_the_new_password',
+    ),
+    Mutation(
+        # Refused late, by the worker, in a sentence about a locked document.
+        'cli protect: unprotect without the password',
+        'src/cli/protect.rs',
+        '    if !set && command.password_env.is_none() {',
+        '    if false {',
+        'unprotect_needs_the_password_and_takes_no_new_one',
+    ),
+    Mutation(
+        # The sentence a reader acts on when they send the copy to somebody.
+        'cli protect: say the old password still opens it',
+        'src/cli/protect.rs',
+        '        (true, false) => format!(',
+        '        (true, _) => format!(',
+        'the_sentences_say_which_password_opens_the_copy',
+    ),
+    Mutation(
+        # The window's check, before a worker is started.
+        'window protect: read an empty password as acceptable',
+        'src/commands/protect.rs',
+        '            protect::acceptable(&new)?;\n',
+        '',
+        'an_empty_password_is_refused_rather_than_read_as_a_removal',
+    ),
+    Mutation(
+        # The reader typed a password twice and got a copy with none.
+        'window protect: remove a password when one was given',
+        'src/commands/protect.rs',
+        '            Protection::Set(new)\n',
+        '            let _ = new;\n            Protection::Remove\n',
+        'a_password_is_set_and_none_removes_it',
+    ),
+    Mutation(
         # Keep the columns outside the region instead of blanking them, which is
         # what the gate did until 2026-08-27: `strip` renders full-width rows, so
         # every word beside the region on those rows was read back as though the

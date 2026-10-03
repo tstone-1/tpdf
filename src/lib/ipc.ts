@@ -322,6 +322,10 @@ export interface Commands {
     args: { doc: number; source: string; path: string };
     reply: Copied;
   };
+  protect_copy: {
+    args: { doc: number; source: string; path: string; password: string | null };
+    reply: Copied;
+  };
   extract_pages: {
     args: { doc: number; source: string; path: string; slots: number[] };
     reply: Copied;

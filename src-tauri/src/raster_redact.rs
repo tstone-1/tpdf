@@ -464,6 +464,8 @@ fn rewrite_inner(document: &OpenDocument, plan: &Plan) -> Result<Vec<u8>, String
         out.encrypt(state)
             .map_err(|e| format!("could not preserve raster output encryption: {e}"))?;
     }
+    // The crypt filter lengths `lopdf` leaves out; see `protect::finish`.
+    crate::protect::finish(&mut out, &crate::protect::Protection::Keep)?;
     let mut result = Vec::new();
     out.save_to(&mut result).map_err(|e| e.to_string())?;
     if result.len() > MAX_BYTES {

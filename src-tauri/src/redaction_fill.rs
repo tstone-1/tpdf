@@ -220,6 +220,7 @@ mod tests {
                 baseline: 2,
                 opened_as: None,
                 text_layers: Vec::new(),
+                protection: Default::default(),
                 pages: vec![
                     PageView {
                         id: 9,
@@ -304,6 +305,7 @@ mod tests {
             forms: Vec::new(),
             text_edits: Vec::new(),
             text_layers: Vec::new(),
+            protection: Default::default(),
             redactions: vec![
                 region(0, [30.0, 40.0, 60.0, 70.0]),
                 region(1, [1.0, 2.0, 3.0, 4.0]),

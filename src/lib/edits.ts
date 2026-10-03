@@ -787,6 +787,18 @@ export class Edits {
   }
 
   /**
+   * Writes the working document to `path` with `password` as its password, or
+   * with none when `password` is `null`.
+   *
+   * {@link saveCopy} with the encryption changed, so the open document and
+   * {@link dirty} are untouched and a signed document is asked about first.
+   */
+  async protectCopy(source: string, path: string, password: string | null): Promise<Copied> {
+    await this.beforeWrite();
+    return await call("protect_copy", { doc: this.doc, source, path, password });
+  }
+
+  /**
    * Writes a copy with every marked region removed, and reports whether it
    * could be proved clean.
    *

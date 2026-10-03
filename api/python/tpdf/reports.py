@@ -64,6 +64,7 @@ __all__ = [
     "OcrPage",
     "OcrReport",
     "PageOutput",
+    "ProtectReport",
     "PageSize",
     "PageText",
     "PagesReport",
@@ -337,6 +338,22 @@ class OcrReport(TypedDict):
     already_text: list[int]
     # Selected pages without text on which nothing was recognised.
     nothing_read: list[int]
+    signatures_invalidated: int
+    signatures_unknown: bool
+
+
+class ProtectReport(TypedDict):
+    """`protect --json` and `unprotect --json`: a copy with a password set or removed."""
+
+    schema: int
+    command: str
+    input: str
+    output: str
+    pages: int
+    # Whether the copy needs a password to open.
+    protected: bool
+    # Whether the source was encrypted.
+    was_protected: bool
     signatures_invalidated: int
     signatures_unknown: bool
 
@@ -1173,6 +1190,7 @@ REPORTS: dict[str, type] = {
     "info": InfoReport,
     "ocr": OcrReport,
     "pages": PagesReport,
+    "protect": ProtectReport,
     "redact": RedactReport,
     "redact-dry-run": RedactReport,
     "render": RenderReport,

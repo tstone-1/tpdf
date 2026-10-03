@@ -3250,6 +3250,8 @@ async function appCommandChecks(
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
     recogniseText: () => fired.push("recogniseText"),
+    protectCopy: () => fired.push("protectCopy"),
+    unprotectCopy: () => fired.push("unprotectCopy"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -4158,6 +4160,16 @@ async function appCommandChecks(
     {
       id: "file.recogniseText",
       ...shell("recogniseText"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.protect",
+      ...shell("protectCopy"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.unprotect",
+      ...shell("unprotectCopy"),
       read: () => fired.join(","),
     },
     {

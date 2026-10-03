@@ -31,6 +31,7 @@ use lopdf::{dictionary, Dictionary};
 
 use crate::docmodel::MarkKind;
 use crate::edits::PlannedMark;
+use crate::protect::Protection;
 use crate::textbox;
 
 // The marks module's own items, which `use super::*` cannot reach: `save::tests`
@@ -164,6 +165,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: Vec::new(),
     }
 }
@@ -192,6 +194,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: Vec::new(),
     }
 }
@@ -334,6 +337,116 @@ fn a_rewrite_of_an_encrypted_document_stays_encrypted() {
         raw.windows(8).any(|w| w == b"/Encrypt"),
         "the rewritten document has no /Encrypt dictionary, so it was written in the clear"
     );
+    // What CoreGraphics needs to decrypt a single stream: without it Preview
+    // takes the password and shows blank pages. `protect::finish` has why.
+    assert!(
+        has_filter_length(&raw),
+        "the crypt filter does not state its key length"
+    );
+}
+
+/// Whether the AES-256 crypt filter in `raw` states its key length.
+fn has_filter_length(raw: &[u8]) -> bool {
+    let wanted = b"/CFM/AESV3/Length 32";
+    raw.windows(wanted.len()).any(|w| w == wanted)
+}
+
+/// Whether `path` is a document nothing opens without a password.
+fn is_locked(path: &Path) -> bool {
+    Document::load_mem_with_options(
+        &std::fs::read(path).expect("read back"),
+        lopdf::LoadOptions::default(),
+    )
+    .expect("load")
+    .is_encrypted()
+}
+
+#[test]
+fn a_copy_with_a_new_password_needs_it_and_keeps_every_page() {
+    let Some(source) = fixture("incr-encrypted-pw.pdf") else {
+        println!("[SKIP] a_copy_with_a_new_password_needs_it_and_keeps_every_page: generate testdata/ (BUILD.md)");
+        return;
+    };
+    let scratch = Scratch::new("protect-set");
+    let out = scratch.0.join("out.pdf");
+    let mut plan = keeping(2, &[(0, 0), (1, 0)]);
+    plan.protection = Protection::Set("tr0ub4dor".into());
+    copy_here(&source, &plan, &out, Some("swordfish")).expect("rewrite");
+
+    assert!(is_locked(&out), "the copy opens without a password");
+    assert_eq!(page_count_with(&out, "tr0ub4dor"), 2);
+    // The password it had is not the one it has: `lopdf` refuses the load.
+    let old = Document::load_mem_with_options(
+        &std::fs::read(&out).expect("read back"),
+        lopdf::LoadOptions {
+            password: Some("swordfish".into()),
+            ..Default::default()
+        },
+    );
+    assert!(old.is_err(), "the old password still opens the copy");
+}
+
+#[test]
+fn a_copy_without_the_password_opens_for_anybody() {
+    let Some(source) = fixture("incr-encrypted-pw.pdf") else {
+        println!(
+            "[SKIP] a_copy_without_the_password_opens_for_anybody: generate testdata/ (BUILD.md)"
+        );
+        return;
+    };
+    let scratch = Scratch::new("protect-remove");
+    let out = scratch.0.join("out.pdf");
+    let mut plan = keeping(2, &[(0, 0), (1, 0)]);
+    plan.protection = Protection::Remove;
+    copy_here(&source, &plan, &out, Some("swordfish")).expect("rewrite");
+
+    assert!(!is_locked(&out));
+    let raw = std::fs::read(&out).expect("read back");
+    assert!(
+        !raw.windows(8).any(|w| w == b"/Encrypt"),
+        "the copy still has an /Encrypt dictionary"
+    );
+    let plain = Document::load_mem_with_options(&raw, lopdf::LoadOptions::default()).expect("load");
+    assert_eq!(plain.get_pages().len(), 2);
+    assert!(!plain.was_encrypted());
+}
+
+#[test]
+fn a_password_is_not_removed_from_a_document_that_has_none_to_ask_for() {
+    let (Some(open), Some(plain)) = (fixture("incr-encrypted-open.pdf"), fixture("rotated.pdf"))
+    else {
+        println!("[SKIP] a_password_is_not_removed_from_a_document_that_has_none_to_ask_for: generate testdata/ (BUILD.md)");
+        return;
+    };
+    let scratch = Scratch::new("protect-refuse");
+    let out = scratch.0.join("out.pdf");
+
+    let mut plan = keeping(2, &[(0, 0), (1, 0)]);
+    plan.protection = Protection::Remove;
+    let why = copy_here(&open, &plan, &out, None).expect_err("restrictions are not removed");
+    assert!(
+        why.message.contains("opens without a password"),
+        "{}",
+        why.message
+    );
+    assert!(!out.exists(), "a refusal writes nothing");
+
+    let pages = page_count_with(&plain, "");
+    let all: Vec<(u32, u8)> = (0..pages as u32).map(|at| (at, 0)).collect();
+    let mut plan = keeping(pages as u32, &all);
+    plan.protection = Protection::Remove;
+    let why = copy_here(&plain, &plan, &out, None).expect_err("there is nothing to remove");
+    assert!(why.message.contains("has no password"), "{}", why.message);
+
+    // And the same plain document takes a password, with its header moved to
+    // a version that has the handler.
+    plan.protection = Protection::Set("tr0ub4dor".into());
+    copy_here(&plain, &plan, &out, None).expect("rewrite");
+    assert!(is_locked(&out));
+    assert_eq!(page_count_with(&out, "tr0ub4dor"), pages);
+    let raw = std::fs::read(&out).expect("read back");
+    let version = std::str::from_utf8(&raw[5..8]).expect("header");
+    assert!(version >= "1.7", "the header says {version}");
 }
 
 #[test]
@@ -590,6 +703,10 @@ fn a_merge_whose_base_is_password_protected_keeps_its_encryption() {
     assert!(
         raw.windows(8).any(|w| w == b"/Encrypt"),
         "the merge of an encrypted base was written in the clear"
+    );
+    assert!(
+        has_filter_length(&raw),
+        "the crypt filter does not state its key length"
     );
 }
 
@@ -3485,6 +3602,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: vec![PlannedMark {
             kind,
             // The biconditional the model enforces, restated here because
@@ -3583,6 +3701,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
     };
     assert!(
         plan.is_appendable(),
@@ -6928,6 +7047,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6986,6 +7106,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -7049,6 +7170,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: Vec::new(),
     };
     assert!(plain.is_identity());
@@ -7088,6 +7210,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: Vec::new(),
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
@@ -10475,6 +10598,33 @@ fn a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names() {
 
     let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
     assert_eq!(shows_per_page(&written), [0, 1]);
+}
+
+#[test]
+fn a_plan_that_changes_the_password_is_neither_the_file_nor_an_append() {
+    let mut plain = plan_of(&[0, 0]);
+    assert!(plain.is_identity(), "the control: nothing to write yet");
+    plain.protection = Protection::Remove;
+    assert!(!plain.is_identity());
+
+    let mut marked = plan_of_kind(
+        MarkKind::Highlight,
+        vec![crate::docmodel::Quad {
+            left: 20.0,
+            top: 20.0,
+            right: 80.0,
+            bottom: 35.0,
+        }],
+    );
+    assert!(
+        marked.is_appendable(),
+        "the control: a mark alone is an append"
+    );
+    marked.protection = Protection::Set("tr0ub4dor".into());
+    assert!(
+        !marked.is_appendable(),
+        "an append keeps the encryption the file has"
+    );
 }
 
 #[test]

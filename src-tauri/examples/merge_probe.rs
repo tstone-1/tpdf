@@ -316,6 +316,7 @@ fn whole(pages: u32) -> Plan {
         forms: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
+        protection: Default::default(),
         marks: Vec::new(),
     }
 }

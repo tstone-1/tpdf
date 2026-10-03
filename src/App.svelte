@@ -91,6 +91,8 @@
   import { SaveAnswers } from "./lib/saveanswer";
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
+  import { NewPasswordDialog } from "./lib/newpassworddialog";
+  import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import {
     WebLinkDialog,
     confirmAndOpen,
@@ -474,6 +476,7 @@
   const signSaves = __TPDF_CHECKS__ ? new SaveAnswers() : null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
+  let newPasswordDialog: NewPasswordDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
 
   /**
@@ -763,6 +766,8 @@
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
     recogniseText: () => void recogniseText(),
+    protectCopy: () => void protectCopy(true),
+    unprotectCopy: () => void protectCopy(false),
     redactDocument: () => redactDocument(),
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
@@ -1912,6 +1917,58 @@
   }
 
   /**
+   * Writes a copy that needs a new password, or one that needs none.
+   *
+   * `saveCopy`'s shape, with the task blocking document commands while the
+   * copy is written. The password is asked for before the name, so a reader
+   * who dismisses the first dialog is not shown the second. The copy is not
+   * opened: the window keeps the document the reader has, and the sentence
+   * says what the file on disk now needs.
+   */
+  async function protectCopy(set: boolean): Promise<void> {
+    if (opening) return;
+    return documentTasks.run(async () => {
+      if (!edits || !openPathName || copyTaskBusy) return;
+      commitPopups();
+      copyTaskBusy = true;
+      refreshMenu();
+      try {
+        await pendingEdit;
+        await formLayer?.settle();
+        await textEditor?.settle();
+        if (!edits || !openPathName) return;
+        const source = openPathName;
+        const password = set
+          ? await newPasswordDialog?.ask(basename(source)) ?? null
+          : null;
+        if (set && password === null) return;
+        const suggested = protectedName(source, set);
+        const panel = () =>
+          saveDialog({
+            title: set ? "Save a copy with a password" : "Save a copy without its password",
+            defaultPath: suggested,
+            filters: [{ name: "PDF", extensions: ["pdf"] }],
+          });
+        // The checks build answers the panel; see `saveanswer.ts`.
+        const chosen = __TPDF_CHECKS__ && signSaves
+          ? await signSaves.ask(suggested, panel)
+          : await panel();
+        if (!chosen || !edits) return;
+        blockingTask = "Saving the copy...";
+        await tick();
+        say(afterProtect(await edits.protectCopy(source, chosen, password), chosen, set));
+      } catch (e) {
+        if (e instanceof SaveCancelled) return;
+        say(String(e));
+      } finally {
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+  }
+
+  /**
    * Writes a copy in which the scanned pages can be searched, and opens it.
    *
    * `redactRasterCopy`'s shape: the task blocks document commands, because the
@@ -3008,6 +3065,7 @@
       // rather than reported, which is the whole of what this adds --- see
       // `passworddialog.ts`.
       passwordDialog = new PasswordDialog(document.body);
+      newPasswordDialog = new NewPasswordDialog(document.body);
 
       // And beside that. A web link is asked about rather than followed, and
       // the dialog is the whole of the confirmation --- see

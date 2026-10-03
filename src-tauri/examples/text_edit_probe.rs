@@ -370,6 +370,7 @@ fn run() -> Result<(), String> {
     }
     let mut plan = Plan {
         text_layers: Vec::new(),
+        protection: Default::default(),
         baseline: page_count,
         opened_as: Some(tpdf_lib::fingerprint::Fingerprint::of(&source)?),
         pages: (0..page_count)

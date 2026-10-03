@@ -95,6 +95,8 @@ mod ocr;
 mod os_key;
 #[path = "cli/pages.rs"]
 mod pages;
+#[path = "cli/protect.rs"]
+mod protect;
 #[path = "cli/render.rs"]
 mod render;
 #[path = "cli/sign_anchor.rs"]
@@ -128,7 +130,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 25] = [
+    let checks: [Check; 26] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -170,6 +172,10 @@ fn main() {
         (
             "ocr makes a scanned page searchable",
             ocr::makes_a_scan_searchable,
+        ),
+        (
+            "protect and unprotect set and remove a password",
+            protect::sets_and_removes_a_password,
         ),
         ("info agrees with the in-process reader", info_agrees),
         ("text agrees with the in-process extraction", text_agrees),

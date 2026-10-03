@@ -72,7 +72,7 @@ Five principals, each trusting only what is below it in the table; the command-l
 
 | Principal | Authority it holds | Authority it does not |
 |---|---|---|
-| **Webview** (Svelte) | Draws, receives tiles, issues commands — twelve of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
+| **Webview** (Svelte) | Draws, receives tiles, issues commands — thirteen of which write files on its behalf (§T6.1), drives the updater's optional launch check and can ask for the process to be ended and started again once an update is applied (§T9), can ask for a document web link to be opened (§T8), reads signature images explicitly selected through its file input (§T6.17), can ask for a second PDF to be opened for reading so its pages can be inserted (§T6.20), can ask for the command-line tool's link in `/usr/local/bin` to be made or removed (§T6.23), and can ask for tpdf to be made the default application for PDFs (§T6.27) | No general filesystem access, no network reach of its own and no PDF parsing. It can name an address only in two ways: a document web link the reader confirms (§T8), and the timestamp authority `sign_document` and `sign_resume` are handed --- any `http` or `https` host without credentials, loopback and private addresses included on purpose (§T10) |
 | **Coordinator** (Rust, the Tauri process) | Opens files the user chose, owns the window, spawns and kills workers, owns every shared mapping; asks the OS key store to sign one digest when the reader signs a document (§T6.21); asks the timestamp authority the reader chose for a token over that signature, when they chose one, and the certificate authorities for revocation data, when they also asked for long-term data (§T10) | Parses no PDF syntax on the *viewing* path — with one exception, printing, described below; holds no private key, and parses no part of a document it signs |
 | **Command-line tool** (`tpdf-cli`, the same crate) | A coordinator without a window, run by the reader's own account: opens the files named on its command line, spawns and kills the same workers, asks the OS key store to sign one digest, writes signed, filled or redacted copies, page-operation outputs or a document's text, and reads a document's password from an environment variable it is told the name of (§T6.23) | The coordinator's limits exactly --- parses no part of a document, holds no private key --- and no webview, no updater, and no network but the timestamp authority `sign --timestamp` names and the certificate authorities `--long-term` asks (§T10) |
 | **Worker** (Rust + PDFium) | Parses and renders whatever bytes it is handed | No path to the document and cannot create a file, on both platforms; no filesystem and no network on **macOS** — on Windows, no writes, and reads and sockets are the disclosed ceiling |
@@ -89,10 +89,10 @@ mounts a viewer. Resource limits remain per worker, not an aggregate limit acros
 The dialog permissions open panels and write nothing; the message
 permission provides the image-only redaction confirmation. But it can issue `save_copy`,
 `save_document`, `extract_pages`, `split_document`, `merge_documents`, `print_document`,
-`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `sign_document` and `sign_resume`, and all twelve write a file at the
+`redact_copy`, `redact_document`, `redact_raster_copy`, `ocr_copy`, `protect_copy`, `sign_document` and `sign_resume`, and all thirteen write a file at the
 process's authority with a path the caller chose.
-<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy sign_document sign_resume --> So the accurate statement is that the webview cannot touch the
-filesystem *itself* and can ask for twelve specific writes; the flat version reads as the
+<!-- writers: save_copy save_document extract_pages split_document merge_documents print_document redact_copy redact_document redact_raster_copy ocr_copy protect_copy sign_document sign_resume --> So the accurate statement is that the webview cannot touch the
+filesystem *itself* and can ask for thirteen specific writes; the flat version reads as the
 stronger claim, and a reader who stops at this table gets the wrong answer. §T6.1 has the worked-out version and says why neither path checks its argument
 against the document actually open.
 
@@ -848,7 +848,7 @@ summary going stale, and re-pointing it every time would erase its own evidence.
 **nine** as of 2026-09-07 with `redact_raster_copy`, **ten** as of 2026-09-26 with
 `sign_document` (§T6.21), and **eleven** as of 2026-09-28 with `sign_resume`, which writes the
 signature `sign_document` made and held when its timestamp did not come, to the path that call
-named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28). It reached eight on 2026-08-30 without anybody adding three of them here or
+named (§T10), and **twelve** as of 2026-10-03 with `ocr_copy` (§T6.28), and **thirteen** the same day with `protect_copy` (§T6.30). It reached eight on 2026-08-30 without anybody adding three of them here or
 there: `split_document`, `redact_copy` and `redact_document` were each disclosed in their own
 entries and absent from the one place that answers *how many*. That is this paragraph's own
 subject arriving a third time, which is the argument for the mechanical check §3 now names —
@@ -2811,6 +2811,52 @@ written file. Pictures have stood the same way since 2026-08-27.
 region included, and the result is *not verified* with that named as the reason. The same
 holds for a drawing that also sets the clip, for shadings, and for drawings inside a Form
 XObject. A reader who needs those gone uses the image-only copy.
+
+#### T6.30 — Setting and removing a password, added 2026-10-03
+
+`tpdf protect` and `tpdf unprotect` write a copy with a new password or with none, and the
+window's *Save a copy with a password* and *Save a copy without its password* do the same
+through `protect_copy`, the thirteenth command that writes a file (§3). The write is
+`save::write_copy`, the path every copy takes, with one field more in the plan
+(`protect::Protection`).
+
+**What a new password is.** AES-256 under the PDF 2.0 handler (`V 5`, `R 6`), built by
+`lopdf`. One password is both the user and the owner password and no permission is
+withheld, because a permission bit binds no reader. The 32-byte file key and the
+identifier of a file that had none come from the operating system's generator
+(`getrandom`), read inside the sandboxed worker, which needs no file or network authority
+for it; `lopdf` draws its own salts the same way. Measured on macOS under the shipped
+profile. **On Windows the low-integrity worker has not been run through this path.**
+
+**Where the new password travels.** From the dialog's two fields to `protect_copy` as an
+argument, into the plan, and over the worker's request pipe with the rest of the plan. It
+is never on a command line: the tool reads it from an environment variable, as it reads
+the one that opens the input. `Protection`'s `Debug` form prints no password, because a
+plan is printed in refusals and in test output. It is not stored. A reader who loses it
+has lost the copy, and the dialog and the README say so.
+
+**What is checked before the copy has its name.** The writing worker loads the bytes it
+built twice with `lopdf`: without a password, where a protected copy must stay locked and
+an unprotected one must open with no trace of encryption, and with the new password,
+where the page count must be the one written. That is the writer reading its own output.
+The tool adds a reader that shares no code with it: the staged file is opened in fresh
+PDFium workers before it is published, and `tests/cli/protect.rs` asks `qpdf` as a third.
+The window has the first check only.
+
+**Removal is refused for a document that opens without a password.** Such a file carries
+restrictions somebody else chose, and `lopdf` authenticates it with the empty password by
+itself, so a removal would drop them for a reader who was never asked for anything. The
+rule is asked of the bytes, by loading them with no password, because a wrong password
+given to such a document still arrives decrypted. tpdf itself does not enforce those
+restrictions while the document is open; what it will not do is write a file without them.
+
+**A defect this found, in what was already shipped.** `lopdf` leaves the key length out of
+each crypt filter it writes. `qpdf` and PDFium assume it from the method; CoreGraphics does
+not, so Preview took the password of any encrypted document tpdf had rewritten since
+2026-08-28 and showed its pages blank. `protect::finish` now writes the length after every
+`Document::encrypt`: the rewrite, the merge and the image-only redaction. Measured with
+PDFKit before and after. PDFKit also refuses a password with a character outside ASCII,
+on a file `qpdf` wrote as well as on tpdf's; that is PDFKit's, and the dialog warns of it.
 
 ### T7 — Distribution and update
 

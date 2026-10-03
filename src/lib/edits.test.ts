@@ -705,11 +705,26 @@ describe("Edits", () => {
 });
 
 
+it("sends the new password with a protected copy, and null to remove one", async () => {
+  core.invoke.mockReset();
+  core.invoke.mockResolvedValue({ changed: false });
+  const edits = new Edits(7, 1, async () => {});
+  await edits.protectCopy("source", "copy", "tr0ub4dor");
+  expect(core.invoke).toHaveBeenLastCalledWith("protect_copy", {
+    doc: 7, source: "source", path: "copy", password: "tr0ub4dor",
+  });
+  await edits.protectCopy("source", "copy", null);
+  expect(core.invoke).toHaveBeenLastCalledWith("protect_copy", {
+    doc: 7, source: "source", path: "copy", password: null,
+  });
+});
+
 it("awaits save consent before every writing command and sends nothing when declined", async () => {
   const writes = [
     (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
     (e: Edits)=>e.redactCopy("source","copy"), (e: Edits)=>e.redactRasterCopy("source","copy"),
     (e: Edits)=>e.ocrCopy("source","copy",1),
+    (e: Edits)=>e.protectCopy("source","copy","tr0ub4dor"), (e: Edits)=>e.protectCopy("source","copy",null),
     (e: Edits)=>e.redactDocument("source"), (e: Edits)=>e.extractPages("source","copy",[0]),
     (e: Edits)=>e.splitDocument("source","copy",[[0]]), (e: Edits)=>e.mergeDocuments("source","copy",["other"]),
   ];

@@ -3363,6 +3363,7 @@ pub fn merge_update(
             format!("tpdf could not restore this document's encryption: {e}")
         })?;
     }
+    crate::protect::finish(&mut merged, &plan.protection)?;
 
     let pages = merged.get_pages().len() as u32;
     Ok((serialise(&mut merged, "the merged document")?, pages))
@@ -3460,6 +3461,10 @@ fn checked(
                 .into(),
         );
     }
+    // Below the locked refusal, which is the truer sentence about a document
+    // nobody unlocked, and above the page walk: a removal the document does not
+    // support is refused before anything is built.
+    crate::protect::allowed(&plan.protection, encryption.is_some(), original)?;
 
     let pages = ordered_pages(&doc);
     if pages.len() != plan.baseline as usize {
@@ -3978,6 +3983,10 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // rebuilt, so the algorithm, the permission bits and both passwords come
     // back unchanged. `examples/encrypted_rewrite_probe.rs` is the evidence,
     // through `qpdf` rather than through the writer that produced them.
+    //
+    // A plan that sets or removes the password replaces that state here, in
+    // the same place for the same reason.
+    let encryption = crate::protect::resolve(&plan.protection, encryption)?;
     if let Some(state) = &encryption {
         doc.encrypt(state).map_err(|e| {
             // Not a sentence about the reader's document: the state came out of
@@ -3987,7 +3996,12 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         })?;
     }
 
-    Ok(serialise(&mut doc, "the document")?)
+    crate::protect::finish(&mut doc, &plan.protection)?;
+
+    let kept = doc.get_pages().len();
+    let bytes = serialise(&mut doc, "the document")?;
+    crate::protect::written_as_asked(&plan.protection, &bytes, kept)?;
+    Ok(bytes)
 }
 
 /// Turns a document into the bytes that will be written, and checks them.

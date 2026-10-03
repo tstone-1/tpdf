@@ -453,6 +453,18 @@ measured the Windows render constants come out 1.5–1.8x worse.
   Pages that already have text are left as they are. A document with unsaved changes is
   asked to be saved first. The engine and its limits are under *Text recognition* below.
   <!-- built: file.recogniseText -->
+- **Save a copy with a password** writes a copy that cannot be opened without the
+  password you type, encrypted with AES-256. You type it twice. The one password opens
+  the copy and nothing in it is restricted. A document that already has a password gets
+  the new one in the copy. **Save a copy without its password** writes a copy that opens
+  for anybody, from a document you opened with its password. Both leave the open document
+  and the file it came from as they were, and both include changes you have not saved
+  yet. tpdf cannot recover a password that is lost. Preview on macOS does not open a
+  document whose password has accented or non-Latin characters; the dialog says so when
+  you type one. A document that opens without a password but restricts printing or
+  copying keeps those restrictions: tpdf does not remove them.
+  <!-- built: file.protect -->
+  <!-- built: file.unprotect -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it. The
@@ -558,7 +570,8 @@ both.
 
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
-`tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render` and `tpdf ocr`
+`tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
+`tpdf protect` and `tpdf unprotect`
 expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
@@ -595,6 +608,8 @@ tpdf help redact
 tpdf redact --help
 tpdf render report.pdf --page 2 --dpi 144 -o page.png --json
 tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json
+NEW=... tpdf protect report.pdf -o locked.pdf --new-password-env NEW --json
+KEY=... tpdf unprotect locked.pdf -o open.pdf --password-env KEY --json
 tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
@@ -986,7 +1001,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `ocr()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -1124,7 +1139,33 @@ pages, `pages` (each with `page` and the number of `words` written), `already_te
 left alone because they had text), `nothing_read` (pages without text on which nothing was
 recognised), `signatures_invalidated` and `signatures_unknown`.
 
-**Passwords.** `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Setting and removing a password.** `tpdf protect report.pdf -o locked.pdf
+--new-password-env NEW` writes a copy that cannot be opened without the password held in
+the environment variable `NEW`. The copy is encrypted with AES-256, the PDF 2.0 handler.
+The one password opens it and nothing in it is restricted; tpdf does not offer permission
+flags, because no reader is bound by them. A source that already has a password needs
+`--password-env` as well, and its copy gets the new password instead of the old one.
+`tpdf unprotect locked.pdf -o open.pdf --password-env KEY` writes a copy that opens for
+anybody. It is refused for a document with no password, and for one that opens without a
+password but restricts printing or copying: those restrictions were set by whoever made
+the document, and tpdf leaves them in place.
+
+A new password is at most 127 bytes of UTF-8, is not empty and holds no control
+character. Preview on macOS does not open a document whose password has a character
+outside ASCII, whichever program wrote it; other readers do. tpdf cannot recover a
+password that is lost.
+
+The copy is staged and opened again before it is published: a protected copy must refuse
+to open without the password and open with it, an unprotected one must open with none,
+and either must have the source's pages. A signed document needs
+`--invalidate-signatures`, an existing output needs `--force`, and the input is never
+replaced. The JSON report carries `schema`, `command`, `input`, `output`, `pages`,
+whether the copy is `protected`, whether the source `was_protected`,
+`signatures_invalidated` and `signatures_unknown`. The window's *Save a copy with a
+password* and *Save a copy without its password* write the same copies from the open
+document.
+
+**Passwords.** `protect`, `unprotect`, `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's

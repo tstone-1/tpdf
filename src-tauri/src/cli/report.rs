@@ -61,6 +61,29 @@ pub struct Ocr {
     pub signatures_unknown: bool,
 }
 
+/// A copy with a password set or removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Protected {
+    /// Schema version.
+    pub schema: u32,
+    /// `protect` or `unprotect`.
+    pub command: String,
+    /// Source path.
+    pub input: String,
+    /// The published copy.
+    pub output: String,
+    /// How many pages the copy has.
+    pub pages: u32,
+    /// Whether the copy needs a password to open.
+    pub protected: bool,
+    /// Whether the source was encrypted.
+    pub was_protected: bool,
+    /// Number of source signatures affected by this rewrite.
+    pub signatures_invalidated: usize,
+    /// Signature enumeration was incomplete.
+    pub signatures_unknown: bool,
+}
+
 /// One page given a text layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OcrPage {

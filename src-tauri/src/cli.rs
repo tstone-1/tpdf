@@ -60,6 +60,7 @@ pub mod info;
 mod ocr;
 mod pages;
 pub mod path;
+mod protect;
 pub mod redact;
 pub mod regions;
 mod render;
@@ -477,6 +478,8 @@ pub const COMMANDS: &[Registered] = &[
     edit::TEXT_RUNS,
     render::COMMAND,
     ocr::COMMAND,
+    protect::PROTECT,
+    protect::UNPROTECT,
     path::COMMAND,
     completions::COMMAND,
 ];
