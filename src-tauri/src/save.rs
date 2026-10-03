@@ -3905,6 +3905,9 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         textedit::write(into, &changes)?;
     }
     textedit::write(&mut doc, &split.base)?;
+    // Before the answers, so that a field can be added and answered in one
+    // write. Addressed to the file's own pages, like everything above.
+    crate::formfields::add(&mut doc, &plan.new_fields)?;
     forms::write(&mut doc, &plan.forms)?;
     // **While `doc` is still the file as it was loaded**, for the reason the
     // text edits above give: a layer names a baseline page, and the order this

@@ -567,6 +567,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("render", "render a.pdf -o page.png --json"),
         ("ocr", "ocr a.pdf -o b.pdf --language de-DE --pages 1-2"),
         ("compress", "compress a.pdf -o b.pdf --pictures screen"),
+        ("form", "form a.pdf -o b.pdf --fields fields.json"),
         ("protect", "protect a.pdf -o b.pdf --new-password-env NEW"),
         ("unprotect", "unprotect a.pdf -o b.pdf --password-env OLD"),
         ("images", "images a.png b.jpg -o c.pdf --paper a4"),
@@ -2008,6 +2009,36 @@ fn samples() -> Vec<(&'static str, String)> {
             }),
         ),
         (
+            "form",
+            pretty(&report::FormAdded {
+                schema: report::SCHEMA,
+                command: "form".into(),
+                input: "letter.pdf".into(),
+                output: "letter form.pdf".into(),
+                pages: 2,
+                added: vec![
+                    report::AddedField {
+                        name: "Name".into(),
+                        kind: report::FieldKind::Text,
+                        multiline: false,
+                        page: 1,
+                        rect: [72.0, 100.0, 250.0, 20.0],
+                    },
+                    report::AddedField {
+                        name: "Agree".into(),
+                        kind: report::FieldKind::Checkbox,
+                        multiline: false,
+                        page: 2,
+                        rect: [72.0, 240.5, 14.0, 14.0],
+                    },
+                ],
+                fields_before: 0,
+                fields_after: 2,
+                signatures_invalidated: 0,
+                signatures_unknown: false,
+            }),
+        ),
+        (
             "command-error",
             pretty(&report::Failed {
                 schema: report::SCHEMA,
@@ -2195,7 +2226,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 24, "the sample table itself");
+    assert_eq!(want.len(), 25, "the sample table itself");
     assert_eq!(found, want);
 }
 

@@ -70,6 +70,7 @@ fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -117,6 +118,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,

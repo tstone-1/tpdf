@@ -56,6 +56,7 @@ mod compress;
 mod edit;
 pub mod fields;
 pub mod fill;
+mod form;
 pub mod identities;
 mod images;
 pub mod info;
@@ -481,6 +482,7 @@ pub const COMMANDS: &[Registered] = &[
     render::COMMAND,
     ocr::COMMAND,
     compress::COMPRESS,
+    form::COMMAND,
     protect::PROTECT,
     protect::UNPROTECT,
     images::COMMAND,

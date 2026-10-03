@@ -89,6 +89,8 @@ use x509_cert::time::{Time, Validity};
 mod compress;
 #[path = "cli/edit.rs"]
 mod edit;
+#[path = "cli/form_add.rs"]
+mod form_add;
 #[path = "cli/forms.rs"]
 mod forms;
 #[path = "cli/images.rs"]
@@ -134,7 +136,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 28] = [
+    let checks: [Check; 29] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -188,6 +190,10 @@ fn main() {
         (
             "compress writes a smaller copy and says what one would come to",
             compress::writes_a_smaller_copy,
+        ),
+        (
+            "form adds fields that can be listed and filled",
+            form_add::adds_fields_that_can_be_filled,
         ),
         ("info agrees with the in-process reader", info_agrees),
         ("text agrees with the in-process extraction", text_agrees),

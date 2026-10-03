@@ -1023,6 +1023,7 @@ mod tests {
             text_layers: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
+            new_fields: Vec::new(),
         };
         let snapshot = super::raster_snapshot(&mut source, 18, &plan).unwrap();
         source.seek(SeekFrom::Start(0)).unwrap();

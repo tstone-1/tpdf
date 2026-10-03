@@ -21,6 +21,18 @@ have the binary.)
 
 ### Added
 
+- **`tpdf form` adds form fields to a document.** `tpdf form letter.pdf -o form.pdf
+  --fields fields.json` writes a copy with the text fields (one line or several) and
+  checkboxes a JSON list asks for, each with a name, a page and a rectangle, and
+  optionally a tooltip, a required mark and a most characters. A document with no form
+  gets one; a document with one keeps every field and answer it had. `tpdf fill`, tpdf's
+  window and other readers can then fill them. Every field is checked before anything is
+  written and all problems are named at once; the copy is opened again and each field
+  must read back as asked before it is published. A signed document needs
+  `--invalidate-signatures`. Not yet: dropdowns, radio buttons and list boxes, a field
+  on a page the document turns, and adding fields in the window. `add_fields()` is the
+  same from Python.
+
 - **A launch can reopen every tab, not only the last document.** *At launch: reopen all
   tabs*, in the File menu and the command palette, brings the strip back in the order it
   had, with the tab you were on in front. It is off until you choose it. The other tabs

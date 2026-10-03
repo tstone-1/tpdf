@@ -167,6 +167,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -197,6 +198,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -3606,6 +3608,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: vec![PlannedMark {
             kind,
             // The biconditional the model enforces, restated here because
@@ -3706,6 +3709,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
     };
     assert!(
         plan.is_appendable(),
@@ -7176,6 +7180,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -7236,6 +7241,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -7301,6 +7307,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plain.is_identity());
@@ -7342,6 +7349,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
@@ -10793,6 +10801,54 @@ fn a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names() {
 
     let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
     assert_eq!(shows_per_page(&written), [0, 1]);
+}
+
+#[test]
+fn a_plan_that_adds_a_field_is_a_rewrite_and_the_field_lands_on_the_page_it_names() {
+    use crate::formfields::{Kind, NewField};
+    let original = two_blank_pages();
+    let field = NewField {
+        name: "Name".into(),
+        kind: Kind::Text,
+        page: 1,
+        rect: [20.0, 20.0, 100.0, 20.0],
+        tooltip: None,
+        required: false,
+        max_length: None,
+    };
+
+    let mut plain = plan_of(&[0, 0]);
+    assert!(plain.is_identity(), "the control: nothing to write yet");
+    plain.new_fields = vec![field.clone()];
+    assert!(
+        !plain.is_identity(),
+        "a field is a change the file does not have"
+    );
+
+    let mut marked = plan_of_kind(
+        MarkKind::Highlight,
+        vec![crate::docmodel::Quad {
+            left: 20.0,
+            top: 20.0,
+            right: 80.0,
+            bottom: 35.0,
+        }],
+    );
+    assert!(
+        marked.is_appendable(),
+        "the control: a mark alone is an append"
+    );
+    marked.new_fields = vec![NewField { page: 0, ..field }];
+    assert!(!marked.is_appendable(), "the appender writes no form");
+
+    let written = rewrite_update(&original, &plain, Job::Save, None).expect("rewritten");
+    let doc = Document::load_mem(&written).expect("the copy parses");
+    let form = crate::forms::scan(&doc).expect("a form");
+    assert_eq!(form.widgets.len(), 1);
+    assert_eq!(
+        (form.widgets[0].name.as_str(), form.widgets[0].page),
+        ("Name", 1)
+    );
 }
 
 #[test]

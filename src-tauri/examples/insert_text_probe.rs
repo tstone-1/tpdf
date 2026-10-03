@@ -146,6 +146,7 @@ fn main() {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         text_edits: vec![textedit::Edit::imported(
             1,
             textedit::Change {

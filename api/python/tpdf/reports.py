@@ -67,6 +67,8 @@ __all__ = [
     "OcrReport",
     "PageOutput",
     "CompressReport",
+    "AddedField",
+    "FormReport",
     "ProtectReport",
     "PageSize",
     "PageText",
@@ -408,6 +410,37 @@ class CompressReport(TypedDict):
     pictures_changed: int | None
     # The PNG a preview was written to.
     preview: str | None
+    signatures_invalidated: int
+    signatures_unknown: bool
+
+
+class AddedField(TypedDict):
+    """One field `form` added, as it reads back from the copy."""
+
+    # The name `fill` answers it by.
+    name: str
+    # `text` or `checkbox`.
+    kind: "FieldKind"
+    # Whether a text field wraps over several lines.
+    multiline: bool
+    # The page it is on, counted from 1.
+    page: int
+    # `[left, top, width, height]` in points from the page's top-left corner.
+    rect: list[float]
+
+
+class FormReport(TypedDict):
+    """`form --json`: a copy with form fields added."""
+
+    schema: int
+    command: str
+    input: str
+    output: str
+    pages: int
+    added: list[AddedField]
+    # How many fields the source had, and how many the copy has.
+    fields_before: int
+    fields_after: int
     signatures_invalidated: int
     signatures_unknown: bool
 
@@ -1246,6 +1279,7 @@ REPORTS: dict[str, type] = {
     "identities": IdentitiesReport,
     "images": ImagesReport,
     "compress": CompressReport,
+    "form": FormReport,
     "info": InfoReport,
     "ocr": OcrReport,
     "pages": PagesReport,

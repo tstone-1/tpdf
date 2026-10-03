@@ -110,6 +110,47 @@ pub struct Protected {
     pub signatures_unknown: bool,
 }
 
+/// A copy with form fields added.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FormAdded {
+    /// Schema version.
+    pub schema: u32,
+    /// `form`.
+    pub command: String,
+    /// Source path.
+    pub input: String,
+    /// The published copy.
+    pub output: String,
+    /// How many pages the document has.
+    pub pages: u32,
+    /// The fields added, as they read back from the copy.
+    pub added: Vec<AddedField>,
+    /// How many fields the source had.
+    pub fields_before: usize,
+    /// How many the copy has.
+    pub fields_after: usize,
+    /// Number of source signatures affected by this rewrite.
+    pub signatures_invalidated: usize,
+    /// Signature enumeration was incomplete.
+    pub signatures_unknown: bool,
+}
+
+/// One field of [`FormAdded::added`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AddedField {
+    /// The name `fill` answers it by.
+    pub name: String,
+    /// `text` or `checkbox`.
+    pub kind: FieldKind,
+    /// Whether a text field wraps over several lines.
+    pub multiline: bool,
+    /// The page it is on, counted from 1.
+    pub page: u32,
+    /// `[left, top, width, height]` in points from the displayed page's
+    /// top-left corner, as the copy holds it.
+    pub rect: [f32; 4],
+}
+
 /// A smaller copy, or what one would come to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Compressed {

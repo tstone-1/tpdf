@@ -68,6 +68,7 @@ fn plan(turns: u8) -> Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         redactions: vec![PlannedRedaction {
             source: 0,
             shows: vec![0],

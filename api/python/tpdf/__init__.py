@@ -366,6 +366,29 @@ class Tpdf:
             args.append('--invalidate-signatures')
         return self.run('compress', *args, '--', source, password=password).typed
 
+    def add_fields(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str],
+        fields: Sequence[Mapping[str, Any]], *, force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.FormReport:
+        """Write a copy with form fields added, which `fill` can then answer.
+
+        Each field is a mapping with `name`, `kind` (`text`, `multiline` or
+        `checkbox`), `page` counted from 1 and `rect` as `[left, top, width,
+        height]` in points from the page's top-left corner; `tooltip`,
+        `required` and `max_length` are optional. One field that cannot be
+        added means none is, and the error names every problem.
+        """
+        args = ['-o', os.fspath(output), '--fields', '-']
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run(
+            'form', *args, '--', source, input_json=[dict(field) for field in fields],
+            password=password,
+        ).typed
+
     def unprotect(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         password: str, *, force: bool = False, invalidate_signatures: bool = False,

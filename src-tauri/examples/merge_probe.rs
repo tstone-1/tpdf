@@ -318,6 +318,7 @@ fn whole(pages: u32) -> Plan {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         marks: Vec::new(),
     }
 }

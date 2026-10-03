@@ -1780,6 +1780,53 @@ shipped tool; orientations 5 and 6 match Quick Look's rendering of the same file
 Not done: CMYK JPEG, other formats, a paper size in the window, removing EXIF data, and
 adding pictures as pages to a document that is already open.
 
+#### Making a form field exist — 2026-10-03
+
+tpdf read a form and answered it and could not add a field. `docs/DEMAND.md` puts that
+first among what it lacks: people replacing Acrobat Pro ask for it together with editing
+text and OCR.
+
+**Measured first, and the measurement decided little.** Of 81 PDFs of the author's own,
+8 carry a form: 439 text fields (3 of them several lines), 15 dropdowns, 8 signature
+fields, no checkbox, no radio button, no script on any field, and every default
+appearance names `/Helv`. One document holds 450 of those fields, so this is a sample of
+about eight forms and not a ranking of field kinds. What it did settle: Helvetica under
+the name `Helv` is what a field should name, and nothing here needed a calculation.
+Text fields and checkboxes come first on general grounds, not on this count.
+
+`formfields.rs` is the writer. A new field is a single object that is field and widget
+at once, carries its own appearance (the empty `/Tx BMC EMC` for text, an empty and a
+crossed box for a checkbox, the same two `forms::write` draws when it ticks one), and
+goes into the page's `/Annots` and the form's `/Fields` together, since `forms::scan`
+refuses a widget that is in one and not the other. The form dictionary is made when the
+catalog has none, moved into an object of its own when it was written into the catalog,
+and given a `/DR` font `Helv` and a `/DA` when it lacks them; what a form already has is
+kept. `Plan::new_fields` carries the fields to the one rewrite every copy takes, which
+adds them before it writes answers, so a plan is neither the file itself nor an append
+once it holds one.
+
+Everything is checked before anything is written, and all problems are returned
+together: the name (not empty, no period, no control character, not one the form's
+top level has, not twice in the list), the page, the rectangle (inside the displayed
+page, at least 8 by 8 points for text and 6 by 6 for a checkbox), and a page the
+document turns, which is refused because the appearance would have to be turned to
+match and `forms::write` does not turn one either.
+
+`tpdf form` is the first caller: a JSON list in, a staged copy opened again and read
+back field by field through `forms::scan` before it is published, and a report of what
+was added. `add_fields()` is the same from Python.
+
+Verified: 10 unit tests of the writer, 4 of the command, 15 checks through the built
+tool (a document without a form, one with every kind of control, a signed one, one
+behind a password, a turned page, and `tpdf fill` answering the new fields), `qpdf
+--check` on the copy, and 47 mutations each caught by the test named for it. Rendered
+through PDFium and through macOS Quick Look, empty and filled, the fields draw the
+same. Not checked: Acrobat, which is where a form made here is most likely to be
+filled.
+
+Next: placing a field in the window; then dropdowns, radio buttons and list boxes;
+then turned pages.
+
 #### Every tab back at launch — 2026-10-03
 
 A launch reopened the last document and nothing else; the README said so in as many

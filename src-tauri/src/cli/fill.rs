@@ -540,6 +540,7 @@ pub fn plan(pages: u32, answers: &[Resolved], opened_as: crate::fingerprint::Fin
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         forms: answers
             .iter()
             .map(|a| Change {
@@ -639,7 +640,7 @@ pub fn read_back(asked: &[Resolved], after: &Form) -> Vec<report::FilledField> {
 }
 
 /// The answers text, from the file or standard input, bounded.
-fn read_answers(values: &Values) -> Result<String, Failure> {
+pub(super) fn read_values(values: &Values, noun: &str) -> Result<String, Failure> {
     let mut text = String::new();
     let (what, read) = match values {
         Values::Stdin => (
@@ -658,14 +659,14 @@ fn read_answers(values: &Values) -> Result<String, Failure> {
     read.map_err(|e| {
         Failure::new(
             Exit::Refused,
-            format!("could not read the answers from {what}: {e}"),
+            format!("could not read the {noun} from {what}: {e}"),
         )
     })?;
     if text.len() as u64 > MAX_ANSWERS_BYTES {
         return Err(Failure::new(
             Exit::Refused,
             format!(
-                "the answers in {what} pass {} MiB, which is not an answers file",
+                "the {noun} in {what} pass {} MiB, which is not a file of {noun}",
                 MAX_ANSWERS_BYTES / (1024 * 1024)
             ),
         ));
@@ -797,8 +798,8 @@ fn run_fill(
         ));
     }
     let password = password(fill.password_env.as_deref())?;
-    let answers =
-        answers(&read_answers(&fill.values)?).map_err(|why| Failure::new(Exit::Refused, why))?;
+    let answers = answers(&read_values(&fill.values, "answers")?)
+        .map_err(|why| Failure::new(Exit::Refused, why))?;
 
     let shown = fill.input.display().to_string();
     let (file, len) = opened(&fill.input).map_err(|why| Failure::new(Exit::Refused, why))?;

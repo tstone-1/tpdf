@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "command": "form",
+  "input": "letter.pdf",
+  "output": "letter form.pdf",
+  "pages": 2,
+  "added": [
+    {
+      "name": "Name",
+      "kind": "text",
+      "multiline": false,
+      "page": 1,
+      "rect": [
+        72.0,
+        100.0,
+        250.0,
+        20.0
+      ]
+    },
+    {
+      "name": "Agree",
+      "kind": "checkbox",
+      "multiline": false,
+      "page": 2,
+      "rect": [
+        72.0,
+        240.5,
+        14.0,
+        14.0
+      ]
+    }
+  ],
+  "fields_before": 0,
+  "fields_after": 2,
+  "signatures_invalidated": 0,
+  "signatures_unknown": false
+}

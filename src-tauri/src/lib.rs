@@ -32,6 +32,7 @@ pub mod encoding;
 pub mod failure;
 pub mod fields;
 pub mod fingerprint;
+pub mod formfields;
 pub mod forms;
 pub mod imagepages;
 pub mod images;
@@ -1373,6 +1374,7 @@ mod tests {
             text_layers: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
+            new_fields: Vec::new(),
         }
     }
 

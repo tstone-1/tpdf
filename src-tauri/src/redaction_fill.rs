@@ -224,6 +224,7 @@ mod tests {
                 text_layers: Vec::new(),
                 protection: Default::default(),
                 compress: Default::default(),
+                new_fields: Vec::new(),
                 pages: vec![
                     PageView {
                         id: 9,
@@ -310,6 +311,7 @@ mod tests {
             text_layers: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
+            new_fields: Vec::new(),
             redactions: vec![
                 region(0, [30.0, 40.0, 60.0, 70.0]),
                 region(1, [1.0, 2.0, 3.0, 4.0]),

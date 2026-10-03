@@ -114,6 +114,12 @@ an explicit-appearance rewrite; ordinary save, copy, print and raster redaction
 share that writer. Text fields, checkboxes, radio groups, dropdowns (including
 editable choices), and single/multiple-selection lists are supported. XFA,
 read-only, password, file-select, comb and rich-text controls are not editable.
+Fields are made by `formfields.rs`: `Plan.new_fields` carries them to the same
+rewrite, which adds them before it writes answers. A new field is one object that is
+both field and widget, with its own appearance, appended to the page's annotations and
+the form's field list together; the form dictionary and its `Helv` font are made when
+the document has none. Text fields and checkboxes only, on pages the document does not
+turn. `tpdf form` is the one caller so far.
 Text uses Helvetica with the same supported character set as `textbox.rs`.
 `FormLayer` commits and drains validation before a tab transition or save.
 `tabs_check.py --phase forms` drives the application on disposable synthetic forms;

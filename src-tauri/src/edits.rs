@@ -1902,6 +1902,7 @@ impl Edits {
             text_layers: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
+            new_fields: Vec::new(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -2050,6 +2051,7 @@ impl Edits {
             text_layers: Vec::new(),
             protection: Default::default(),
             compress: Default::default(),
+            new_fields: Vec::new(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -2270,6 +2272,12 @@ pub struct Plan {
     /// smaller copy sets it.
     #[serde(default)]
     pub compress: crate::compress::Compress,
+    /// Form fields to add, addressed to pages of the file as it is on disk.
+    ///
+    /// **Always empty out of the model** so far, as [`Plan::compress`] is
+    /// always `No`: only the command that adds fields sets it.
+    #[serde(default)]
+    pub new_fields: Vec<crate::formfields::NewField>,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -2635,6 +2643,9 @@ impl Plan {
         if self.compress != crate::compress::Compress::No {
             return false;
         }
+        if !self.new_fields.is_empty() {
+            return false;
+        }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
     }
 
@@ -2680,6 +2691,9 @@ impl Plan {
             && self.protection == crate::protect::Protection::Keep
             // And a smaller copy is every object written again.
             && self.compress == crate::compress::Compress::No
+            // A new field changes the catalog's form and a page's annotations,
+            // which the appender does not write.
+            && self.new_fields.is_empty()
     }
 
     /// Whether the pages are the file's, in the file's order and shape.

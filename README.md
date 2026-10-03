@@ -603,7 +603,7 @@ both.
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
-`tpdf protect`, `tpdf unprotect`, `tpdf compress` and `tpdf images`
+`tpdf protect`, `tpdf unprotect`, `tpdf compress`, `tpdf form` and `tpdf images`
 expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
@@ -645,6 +645,7 @@ KEY=... tpdf unprotect locked.pdf -o open.pdf --password-env KEY --json
 tpdf images front.jpg back.jpg plan.png -o album.pdf --paper a4 --json
 tpdf compress scan.pdf --dry-run --pictures balanced --preview preview.png --json
 tpdf compress scan.pdf -o smaller.pdf --pictures balanced --json
+tpdf form letter.pdf -o "letter form.pdf" --fields fields.json --json
 tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
@@ -1036,7 +1037,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `images()`, `compress()`, `add_fields()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -1259,7 +1260,42 @@ with a password a dry run's `bytes_after` is the size before encryption, a few b
 stream less than the copy. The window's *Save a smaller copy* offers the same choices with
 their sizes and the same before and after.
 
-**Passwords.** `protect`, `unprotect`, `compress`, `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Adding form fields.** `tpdf form letter.pdf -o form.pdf --fields fields.json` writes a
+copy with form fields added, which `tpdf fill`, tpdf's window and any other reader can
+then fill. A document that has no form gets one; a document that has one keeps every field
+and answer it had. The list is a JSON array (`--fields -` reads it from standard input):
+
+```json
+[
+  {"name": "Name", "kind": "text", "page": 1, "rect": [72, 100, 250, 20],
+   "tooltip": "Your full name", "required": true, "max_length": 40},
+  {"name": "Remarks", "kind": "multiline", "page": 1, "rect": [72, 140, 250, 80]},
+  {"name": "Agree", "kind": "checkbox", "page": 1, "rect": [72, 240, 14, 14]}
+]
+```
+
+`kind` is `text` (one line), `multiline` or `checkbox`. `page` counts from 1, and `rect`
+is `[left, top, width, height]` in points from the top-left corner of the page as it is
+displayed, the way `tpdf crop --rect` measures. `tooltip`, `required` and `max_length` are
+optional. A text field is at least 8 by 8 points and a checkbox 6 by 6. An empty text
+field draws nothing on the page, as in most forms, so put it where the page already shows
+a line or a box; a checkbox draws its own box.
+
+Every field is checked before anything is written, and one problem means no file: a name
+the form already has, a name used twice or containing a period, a rectangle outside the
+page, a page the document does not have. All of them are named at once. Not supported
+yet: dropdowns, radio buttons and list boxes; a field on a page the document turns
+(`/Rotate`); calculations and formatting, which are scripts in the document and tpdf runs
+none; and an XFA form. The copy is staged and opened again before it is published: each
+field must read back once, of the kind, on the page and at the place asked for, empty and
+fillable, and every field the source had must still hold what it held. A signed document
+needs `--invalidate-signatures`, an existing output needs `--force`, and the input is
+never replaced. The JSON report carries `schema`, `command`, `input`, `output`, `pages`,
+`added` (each field's `name`, `kind`, `multiline`, `page` and `rect` as read back from
+the copy), `fields_before`, `fields_after`, `signatures_invalidated` and
+`signatures_unknown`.
+
+**Passwords.** `form`, `protect`, `unprotect`, `compress`, `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's

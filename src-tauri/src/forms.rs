@@ -772,13 +772,13 @@ fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String
     Ok((size, lines))
 }
 
-fn pdf_string(text: &str) -> Object {
+pub(crate) fn pdf_string(text: &str) -> Object {
     let mut bytes = vec![0xfe, 0xff];
     bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
     Object::String(bytes, lopdf::StringFormat::Hexadecimal)
 }
 
-fn appearance(
+pub(crate) fn appearance(
     doc: &mut Document,
     width: f64,
     height: f64,
@@ -836,6 +836,44 @@ fn write_text_appearance(
     w.set("AP", dictionary! { "N" => ap });
     w.remove(b"AS");
     Ok(())
+}
+
+/// A checkbox's two looks: an empty bordered box, and the same box crossed.
+///
+/// One drawing for a box `write` answers and a box `formfields::add` creates,
+/// so a checkbox does not change its look the first time it is ticked.
+pub(crate) fn checkbox_appearances(
+    doc: &mut Document,
+    width: f64,
+    height: f64,
+) -> (ObjectId, ObjectId) {
+    let base = format!(
+        "q 1 1 1 rg 0 0 {width} {height} re f 0 0 0 RG 1 w 0.5 0.5 {} {} re S ",
+        width - 1.0,
+        height - 1.0
+    );
+    let off = appearance(
+        doc,
+        width,
+        height,
+        format!("{base} Q").into_bytes(),
+        Dictionary::new(),
+    );
+    let on = appearance(
+        doc,
+        width,
+        height,
+        format!(
+            "{base} 2 2 m {} {} l 2 {} m {} 2 l S Q",
+            width - 2.0,
+            height - 2.0,
+            height - 2.0,
+            width - 2.0
+        )
+        .into_bytes(),
+        Dictionary::new(),
+    );
+    (off, on)
 }
 
 /// Writes all widgets of a shared field, plus its value, in one rewrite.
@@ -919,32 +957,7 @@ pub fn write(doc: &mut Document, changes: &[Change]) -> Result<(), String> {
                         return Err("Shared checkboxes have incompatible on states".into());
                     }
                     on_name = Some(name.clone());
-                    let base = format!(
-                        "q 1 1 1 rg 0 0 {width} {height} re f 0 0 0 RG 1 w 0.5 0.5 {} {} re S ",
-                        width - 1.0,
-                        height - 1.0
-                    );
-                    let off = appearance(
-                        doc,
-                        width,
-                        height,
-                        format!("{base} Q").into_bytes(),
-                        Dictionary::new(),
-                    );
-                    let on = appearance(
-                        doc,
-                        width,
-                        height,
-                        format!(
-                            "{base} 2 2 m {} {} l 2 {} m {} 2 l S Q",
-                            width - 2.0,
-                            height - 2.0,
-                            height - 2.0,
-                            width - 2.0
-                        )
-                        .into_bytes(),
-                        Dictionary::new(),
-                    );
+                    let (off, on) = checkbox_appearances(doc, width, height);
                     let mut normal = dictionary! { "Off" => off };
                     normal.set(name.clone(), on);
                     let w = doc

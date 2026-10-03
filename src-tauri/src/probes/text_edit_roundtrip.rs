@@ -138,6 +138,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
     };
     let mut previews = Vec::new();
     for (page, size) in pages.iter().enumerate() {

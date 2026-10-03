@@ -30,6 +30,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         baseline: 1,
         opened_as: Some(fingerprint.clone()),
         pages: vec![PageView {

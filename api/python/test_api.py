@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images', 'compress', 'form'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -713,6 +713,51 @@ class ClientTests(unittest.TestCase):
                 self.pdf.images(picture, album)
             with self.assertRaises(CommandError):
                 self.pdf.images([self.source], album, force=True)
+
+    def test_add_fields_makes_fields_that_fill_then_answers(self):
+        fields = [
+            {'name': 'Name', 'kind': 'text', 'page': 1, 'rect': [72, 100, 200, 20], 'max_length': 40},
+            {'name': 'Agree', 'kind': 'checkbox', 'page': 1, 'rect': [72, 140, 12, 12]},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            made = os.path.join(directory, 'form.pdf')
+            report = self.pdf.add_fields(self.source, made, fields)
+            self.assertEqual(report['command'], 'form')
+            self.assertEqual([field['name'] for field in report['added']], ['Name', 'Agree'])
+            self.assertEqual(report['added'][0]['rect'], [72.0, 100.0, 200.0, 20.0])
+            self.assertEqual((report['fields_before'], report['fields_after']), (0, 2))
+            listed = {field['name']: field for field in self.pdf.fields(made)['fields']}
+            self.assertEqual(listed['Name']['max_length'], 40)
+            self.assertEqual(listed['Agree']['value'], False)
+            filled = os.path.join(directory, 'filled.pdf')
+            self.pdf.fill(made, filled, {'Name': 'Ada', 'Agree': True})
+            answers = {field['name']: field['value'] for field in self.pdf.fields(filled)['fields']}
+            self.assertEqual(answers, {'Name': 'Ada', 'Agree': True})
+            # One problem, and nothing is written.
+            again = os.path.join(directory, 'again.pdf')
+            with self.assertRaises(CommandError) as refused:
+                self.pdf.add_fields(made, again, [dict(fields[0]), {**fields[1], 'name': 'Other'}])
+            self.assertIn('already has a field of this name', str(refused.exception))
+            self.assertFalse(os.path.exists(again))
+            with self.assertRaises(CommandError):
+                self.pdf.add_fields(self.source, made, fields)
+            self.pdf.add_fields(self.source, made, fields[:1], force=True)
+            self.assertEqual(len(self.pdf.fields(made)['fields']), 1)
+
+    def test_add_fields_builds_the_line_its_options_ask_for(self):
+        with patch('tpdf.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.returncode = 0
+            process.communicate.return_value = (b'{"schema":1,"command":"form"}', b'')
+            self.pdf.add_fields(self.source, 'out.pdf', [{'name': 'N'}])
+            self.assertEqual(
+                popen.call_args[0][0][1:],
+                ['form', '--json', '-o', 'out.pdf', '--fields', '-', '--', os.fspath(self.source)],
+            )
+            self.assertEqual(process.communicate.call_args[0][0], b'[{"name":"N"}]')
+            self.pdf.add_fields(self.source, 'out.pdf', [], force=True, invalidate_signatures=True)
+            for flag in ('--force', '--invalidate-signatures'):
+                self.assertIn(flag, popen.call_args[0][0])
 
     def test_compress_builds_the_line_its_options_ask_for(self):
         with patch('tpdf.subprocess.Popen') as popen:

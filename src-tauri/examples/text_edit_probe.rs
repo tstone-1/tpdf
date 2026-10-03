@@ -372,6 +372,7 @@ fn run() -> Result<(), String> {
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),
+        new_fields: Vec::new(),
         baseline: page_count,
         opened_as: Some(tpdf_lib::fingerprint::Fingerprint::of(&source)?),
         pages: (0..page_count)
