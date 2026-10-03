@@ -269,6 +269,7 @@ const SCHEMA = {
     unhandled: ["array"],
     images: ["array"],
     paths: ["array"],
+    cuts: ["array"],
   } satisfies Shape<RegionPlan>,
   ScrollBenchConfig: {
     path: ["string"],

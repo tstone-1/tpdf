@@ -386,10 +386,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   draws more than once is left in place and reported as unverified. Other removable
   content is still taken. A **drawing** that lies wholly inside a region — a signature, a
   logo, a small chart, text set as outlines — is removed, its outline included, and the panel
-  says so before you commit. A drawing that reaches beyond the region, such as a rule under a
-  line or a table border, is left where it is and reported, in the panel and in the report:
-  taking it would strip lines from parts of the page you did not mark, and a file with the
-  words gone and a picture of the words still in it must not be called clean. Text a page draws through a
+  says so before you commit. A **straight line or a rectangle** that runs on past the region,
+  such as a rule under a line, a table border or a shaded cell, is cut at the region's edge:
+  the part inside goes and the part outside is drawn as it was, and the panel says "Cuts a
+  line at its edge". Any other drawing that reaches beyond the region — a curve, a dashed or
+  hairline rule, a line the region covers only part of the thickness of — is left where it is
+  and reported, in the panel and in the report: taking it would strip it from parts of the
+  page you did not mark, and a file with the words gone and a picture of the words still in
+  it must not be called clean. Text a page draws through a
   reusable block — a letterhead, a table cell, a stamp — is removed like any other,
   unless the document draws that block more than once, in which case it is left and
   reported as unverified. It also takes whole lines —
@@ -1350,7 +1354,8 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   `pattern`), `query` and `matches` — and `pages`, each page with a match or a region: `page`
   (counted from 1), `hits` (each match starting there, as the page spells it), `regions`,
   `text_removals`, `form_text_removals` (text inside a form the page draws),
-  `image_removals`, `path_removals` (drawings the region holds all of), `taking` (what the removed runs draw, often more than the match) and `left`
+  `image_removals`, `path_removals` (drawings the region holds all of), `path_cuts` (straight
+  lines and rectangles cut at the region's edge), `taking` (what the removed runs draw, often more than the match) and `left`
   (what the removal cannot take there, one sentence each). **The report holds the words it
   removed**, in `hits` and `taking`: keep it where you would keep the original.
 - `sign`: `input`, `output`, `field` (the new signature's field), `identity` (a usable
@@ -1484,10 +1489,11 @@ are literals nowhere on disk. The scan this replaced was blind to all eleven of 
 including the four stamps the paragraph above is about, which it would have passed as
 unbuilt while they shipped.
 
-- A region over **part of a drawing** is reported rather than removed — a vector rule under
-  a line of text is on almost every page, so taking those whole would damage nearly every
-  redaction, and cutting one at the region's edge is not built. A drawing that lies wholly
-  inside the region is removed. Still reported and left: a drawing that also clips what is
+- A region over **part of a drawing that is not a straight line or a rectangle** is
+  reported rather than removed: a curve cannot be split exactly, and neither can a dashed or
+  hairline rule, a shape that is filled and outlined at once, or a line the region covers
+  only part of the thickness of. A drawing that lies wholly inside the region is removed, and
+  a straight line or a rectangle that crosses it is cut at its edge. Still reported and left: a drawing that also clips what is
   drawn after it, a shading, a picture or a drawing sitting inside a reusable block, and a
   block drawn inside another block. A picture on the page itself is removed, bytes included.
 - Adding long-term-validation data, or a further archive timestamp, to a document that is

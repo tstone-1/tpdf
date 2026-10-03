@@ -64,6 +64,15 @@ have the binary.)
   it" before anything is written, and the tool's report gains `path_removals`. A drawing
   that reaches beyond the region is still left and reported, so a rule or a table border is
   not stripped from parts of the page nobody marked. So is one that also clips what follows.
+- **A redaction cuts a straight line or a rectangle at the region's edge.** A rule under a
+  line of text, a table border or a shaded cell that runs on past a marked region used to be
+  left whole and reported, which made the result *not verified*. The part inside the region
+  is now removed and the part outside is drawn as it was, by the same operator. The review
+  panel says "Cuts a line at its edge" and the tool's report gains `path_cuts`. On 64
+  documents and 4,616 sampled regions, the regions reporting a drawing left behind fell from
+  743 to 141. Still left and reported: a curve, a dashed or hairline rule, a shape filled and
+  outlined at once, a line the region covers only part of the thickness of, and anything
+  drawn under a skew.
 - **A redaction over a drawing or a picture with no text can be verified.** The read-back
   check used to need removed text to size itself and reported such a region as not verified.
   It now sizes itself from the smallest print left on the page, and the result says so:

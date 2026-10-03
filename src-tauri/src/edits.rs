@@ -2510,6 +2510,14 @@ pub struct PlannedRedaction {
     /// reason: `redact::remove_paths` refuses when it disagrees.
     #[serde(default)]
     pub path_objects: usize,
+    /// The paths cut at a region's edge: a path's ordinal and one region that
+    /// crosses it, in the page's own space.
+    ///
+    /// `redact::RegionPlan::cuts` with each region's `area` beside it. Not
+    /// merged the way [`paths`](Self::paths) is: a rule two regions cross is
+    /// listed twice, because it is cut twice.
+    #[serde(default)]
+    pub cuts: Vec<(usize, [f32; 4])>,
 }
 
 /// One mark as the writer needs it.

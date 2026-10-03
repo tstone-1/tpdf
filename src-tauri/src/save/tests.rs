@@ -7349,6 +7349,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }];
     assert!(
         !plan.is_identity(),
@@ -7387,6 +7388,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }];
     assert!(
         !both.is_appendable(),
@@ -7417,6 +7419,7 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
             image_objects: 0,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
         },
         crate::edits::PlannedRedaction {
             source: 0,
@@ -7430,6 +7433,7 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
             image_objects: 0,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
         },
     ];
     let mut doc = Document::with_version("1.7");
@@ -7496,6 +7500,7 @@ fn an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not() {
             image_objects: 0,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
         }],
     )
     .expect("the plan is applicable");
@@ -7580,6 +7585,7 @@ fn a_redacted_annotation_loses_the_references_that_are_not_on_the_page() {
             image_objects: 0,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
         }],
     )
     .expect("the plan is applicable");
@@ -7946,6 +7952,7 @@ fn naming_the_secret(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedacti
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }]
 }
 
@@ -8268,6 +8275,7 @@ fn a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file() {
         image_objects: 1,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }];
     copy_here(&source, &plan, &out, None).expect("save");
     let bytes = std::fs::read(&out).expect("read back");
@@ -8319,6 +8327,7 @@ fn a_rewrite_takes_a_planned_drawing_out_of_the_page() {
         image_objects: 0,
         paths: vec![0],
         path_objects: 2,
+        cuts: Vec::new(),
     }];
     copy_here(&source, &plan, &out, None).expect("save");
     let written = lopdf::Document::load(&out).expect("loads");
@@ -8331,6 +8340,58 @@ fn a_rewrite_takes_a_planned_drawing_out_of_the_page() {
     assert!(
         stored.contains("77.125"),
         "and its neighbour is not: {stored}"
+    );
+}
+
+/// **The cut list reaching the writer**, for the same reason as the test
+/// above: `redact.rs`'s tests call `take_paths` themselves.
+#[test]
+fn a_rewrite_cuts_a_planned_rule_at_the_region_s_edge() {
+    let scratch = Scratch::new("redact-cut");
+    let source = scratch.join("in.pdf");
+    let out = scratch.join("out.pdf");
+    let mut doc = lopdf::Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let content = doc.add_object(lopdf::Stream::new(
+        Dictionary::new(),
+        b"1 w 72.5 100 m 539.25 100 l S\n".to_vec(),
+    ));
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages,
+        "MediaBox" => vec![0.into(), 0.into(), 700.into(), 700.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into(),
+    );
+    let root = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", root);
+    doc.save(&source).expect("write fixture");
+
+    let mut plan = plan_of(&[0]);
+    plan.redactions = vec![crate::edits::PlannedRedaction {
+        source: 0,
+        shows: Vec::new(),
+        text_objects: 0,
+        areas: vec![[200.0, 90.0, 250.0, 110.0]],
+        taking: Vec::new(),
+        form_shows: Vec::new(),
+        form_text_objects: Vec::new(),
+        images: Vec::new(),
+        image_objects: 0,
+        paths: Vec::new(),
+        path_objects: 1,
+        cuts: vec![(0, [200.0, 90.0, 250.0, 110.0])],
+    }];
+    copy_here(&source, &plan, &out, None).expect("save");
+    let written = lopdf::Document::load(&out).expect("loads");
+    let page = *written.get_pages().values().next().expect("a page");
+    let stored = String::from_utf8_lossy(&written.get_page_content(page)).into_owned();
+    let stored = stored.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        stored.contains("72.5 100 m 200 100 l 250 100 m 539.25 100 l S"),
+        "the rule is not cut at the region's edges: {stored}"
     );
 }
 
@@ -8740,6 +8801,7 @@ fn over_the_widget(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }]
 }
 
@@ -8798,6 +8860,7 @@ fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }]
 }
 
@@ -8823,6 +8886,7 @@ fn a_redaction_naming_a_page_that_is_not_kept_is_refused() {
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
     }];
     let mut doc = Document::with_version("1.7");
     let why = apply_redactions(&mut doc, &[(1, 0)], &past)

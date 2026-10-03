@@ -68,7 +68,9 @@ use lopdf::{Dictionary, Document, Object, ObjectId};
 
 // Every module this one reaches, named here rather than in the body, so the
 // top of the file is the whole of its coupling (`save_outside.rs`'s header).
-use crate::{annots, docmodel, edits, fields, forms, ocr_gate, pagetree, sweep, text, verify};
+use crate::{
+    annots, docmodel, edits, fields, forms, ocr_gate, pagetree, pathcut, sweep, text, verify,
+};
 
 /// The page-object vocabulary, re-exported from where the objects are read.
 ///
@@ -140,6 +142,13 @@ pub struct Plan {
     /// reaches beyond the region stays in [`unhandled`](Self::unhandled), as
     /// every path did before 2026-10-03.
     pub paths: Vec<usize>,
+    /// Ordinals among the page's path objects, ascending: the straight
+    /// drawings that cross the region's edge and are cut there.
+    ///
+    /// Filled by [`cut_crossing`], never by [`covered`]: whether a path can be
+    /// split exactly is a fact about its operators, which PDFium's bounds do
+    /// not say. A path listed here is not in [`unhandled`](Self::unhandled).
+    pub cuts: Vec<usize>,
 }
 
 /// One object a region covers that this cannot remove.
@@ -195,8 +204,8 @@ impl Unhandled {
         match (kind.as_str(), drawn) {
             ("path", None) => {
                 return format!(
-                    "object {at} is a drawing that reaches beyond the region; a drawing is \
-                     removed only when the region covers all of it, so it was left"
+                    "object {at} is a drawing that reaches beyond the region and is not a \
+                     straight line or a rectangle that can be cut at its edge, so it was left"
                 )
             }
             (CLIP_PATH, None) => {
@@ -315,6 +324,13 @@ pub struct RegionPlan {
     /// `lopdf` finds painted.
     #[serde(default)]
     pub path_objects: usize,
+    /// Which of the page's paths the removal would cut at this region's edge.
+    ///
+    /// [`Plan::cuts`], carried through. The frontend reads how many there are
+    /// and the coordinator hands them, with [`area`](Self::area), to
+    /// [`take_paths`].
+    #[serde(default)]
+    pub cuts: Vec<usize>,
     /// The region itself, in the page's own absolute space.
     ///
     /// **Carried because the writer cannot work it out**, and a second attempt
@@ -729,6 +745,95 @@ pub fn leave_unplaced(plan: &mut Plan, clips: Option<&[bool]>, objects: &[PageOb
     }
     plan.unhandled.extend(left);
     plan.unhandled.sort_by_key(|left| left.at);
+}
+
+/// What each path a page paints is, for cutting at a region's edge, in
+/// [`Plan::paths`]'s ordinals; `None` when the paths cannot be addressed by
+/// position.
+///
+/// [`path_clips`]' guard and its answer for a page whose counts disagree. An
+/// entry is `None` for a path [`pathcut`] cannot split exactly.
+#[must_use]
+pub fn path_drawings(
+    doc: &Document,
+    page: ObjectId,
+    expected: usize,
+) -> Option<Vec<Option<pathcut::Drawing>>> {
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .ok()?;
+    let content = Content::decode(&data).ok()?;
+    let painted = painted_paths(&content);
+    if painted.len() != expected {
+        return None;
+    }
+    let paths: Vec<&[usize]> = painted
+        .iter()
+        .map(|path| path.operations.as_slice())
+        .collect();
+    Some(pathcut::drawings(doc, page, &content, &paths))
+}
+
+/// Settles the drawings that reach beyond a region: cut at its edge when they
+/// can be, left and reported when they cannot.
+///
+/// [`covered`] reports every path that overlaps the region without lying
+/// inside it. This asks [`pathcut`] about each one, from the operators that
+/// draw it:
+///
+/// - a rule or a rectangle the region crosses moves to [`Plan::cuts`];
+/// - one whose ink is all inside the region, though its bounds are not, moves
+///   to [`Plan::paths`] and is removed;
+/// - one whose bounds overlap and whose ink does not is dropped from the
+///   report, because nothing of it is in the region;
+/// - everything else stays in [`Plan::unhandled`], as before.
+///
+/// `drawings` is `None` when the page's paths cannot be addressed by position,
+/// and then nothing moves. Run after [`leave_unplaced`]; the order does not
+/// change the answer, because this reads only entries of kind `path`.
+pub fn cut_crossing(
+    plan: &mut Plan,
+    drawings: Option<&[Option<pathcut::Drawing>]>,
+    region: Rect,
+    objects: &[PageObject],
+) {
+    let Some(drawings) = drawings else {
+        return;
+    };
+    let mut cuts: Vec<usize> = Vec::new();
+    let mut gone: Vec<usize> = Vec::new();
+    plan.unhandled.retain(|left| {
+        // A drawing inside a reusable block is reported under the block's
+        // position with the kind `path`. It is not one of the page's paths.
+        let on_page = left.kind == "path"
+            && left.drawn.is_none()
+            && objects
+                .get(left.at)
+                .is_some_and(|object| object.kind == "path");
+        if !on_page {
+            return true;
+        }
+        let ordinal = objects[..left.at]
+            .iter()
+            .filter(|object| object.kind == "path")
+            .count();
+        let Some(Some(drawing)) = drawings.get(ordinal) else {
+            return true;
+        };
+        match drawing.cut(&[region]) {
+            pathcut::Verdict::Cut(_) => cuts.push(ordinal),
+            pathcut::Verdict::Gone => gone.push(ordinal),
+            pathcut::Verdict::Outside => {}
+            pathcut::Verdict::Unsupported => return true,
+        }
+        false
+    });
+    plan.cuts.extend(cuts);
+    plan.cuts.sort_unstable();
+    plan.cuts.dedup();
+    plan.paths.extend(gone);
+    plan.paths.sort_unstable();
+    plan.paths.dedup();
 }
 
 /// Which of a page's annotations a set of regions covers.
@@ -1699,16 +1804,53 @@ pub fn remove_paths(
     ordinals: &[usize],
     path_objects: usize,
 ) -> Result<Removed, String> {
+    take_paths(doc, page, ordinals, &[], path_objects).map(|took| took.removed)
+}
+
+/// What [`take_paths`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathsTaken {
+    /// The paths deleted whole, as [`remove_paths`] reports them. A path that
+    /// was to be cut and had all of its ink inside the regions is among them.
+    pub removed: Removed,
+    /// How many paths were cut at a region's edge and are still drawn in part.
+    pub cut: usize,
+}
+
+/// Deletes the numbered paths from a page's content stream, and cuts others at
+/// the edges of the regions that cross them.
+///
+/// `cuts` pairs a path's ordinal with one region, in the page's own space; a
+/// path crossed by two regions is listed twice. What is left of a cut path is
+/// written by [`pathcut`] in place of its operators, as one path, so the
+/// ordinals of the paths after it do not move. A path named in both lists is
+/// removed.
+///
+/// # Errors
+///
+/// Everything [`remove_paths`] refuses, and a path in `cuts` that cannot be
+/// split exactly. [`cut_crossing`] keeps those out of a plan, so reaching that
+/// here means the page is not the one the plan was made from.
+pub fn take_paths(
+    doc: &mut Document,
+    page: ObjectId,
+    ordinals: &[usize],
+    cuts: &[(usize, Rect)],
+    path_objects: usize,
+) -> Result<PathsTaken, String> {
     // Before anything is read, for `remove_images`' reason: a call that removes
     // nothing cannot get a position wrong, so a page whose counts disagree must
     // still succeed when no drawing was marked.
-    let nothing_marked = ordinals.is_empty();
+    let nothing_marked = ordinals.is_empty() && cuts.is_empty();
     if nothing_marked {
-        return Ok(Removed {
-            shows_before: 0,
-            removed: 0,
-            carriers: 0,
-            struct_carriers: 0,
+        return Ok(PathsTaken {
+            removed: Removed {
+                shows_before: 0,
+                removed: 0,
+                carriers: 0,
+                struct_carriers: 0,
+            },
+            cut: 0,
         });
     }
 
@@ -1747,14 +1889,86 @@ pub fn remove_paths(
         }
         positions.extend(path.operations.iter().copied());
     }
+
+    // The regions each cut path is crossed by, less the paths already going.
+    let mut crossed: std::collections::BTreeMap<usize, Vec<Rect>> =
+        std::collections::BTreeMap::new();
+    for (ordinal, region) in cuts {
+        if wanted.binary_search(ordinal).is_err() {
+            crossed.entry(*ordinal).or_default().push(*region);
+        }
+    }
+    // What is written in place of each cut path, by its first operation.
+    let mut rewritten: Vec<(std::ops::RangeInclusive<usize>, Vec<Operation>)> = Vec::new();
+    if !crossed.is_empty() {
+        let paths: Vec<&[usize]> = painted
+            .iter()
+            .map(|path| path.operations.as_slice())
+            .collect();
+        let drawings = pathcut::drawings(doc, page, &content, &paths);
+        for (ordinal, regions) in &crossed {
+            let path = painted.get(*ordinal).ok_or_else(|| {
+                format!(
+                    "there is no path {ordinal} on this page, which paints {}",
+                    painted.len()
+                )
+            })?;
+            let verdict = drawings
+                .get(*ordinal)
+                .and_then(Option::as_ref)
+                .map_or(pathcut::Verdict::Unsupported, |drawing| {
+                    drawing.cut(regions)
+                });
+            match verdict {
+                pathcut::Verdict::Cut(operations) => {
+                    // `pathcut::drawings` answers only for a path whose
+                    // operators are next to each other.
+                    let first = path.operations[0];
+                    let last = path.operations[path.operations.len() - 1];
+                    positions.extend(path.operations.iter().copied());
+                    rewritten.push((first..=last, operations));
+                }
+                pathcut::Verdict::Gone => {
+                    positions.extend(path.operations.iter().copied());
+                    wanted.push(*ordinal);
+                }
+                pathcut::Verdict::Outside => {}
+                pathcut::Verdict::Unsupported => {
+                    return Err(
+                        "a drawing that was to be cut at the region's edge cannot be split \
+                         exactly on this page \u{2014} so nothing was removed."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
     positions.sort_unstable();
     positions.dedup();
+    let cut = rewritten.len();
 
     // Before the removal, for `remove_shows`' reason: a span is addressed by
     // where its `BDC` sits, and deleting an operation renumbers the rest.
     let cleared = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
-    for at in positions.into_iter().rev() {
-        content.operations.remove(at);
+    // From the back, so an index is still good when it is reached. A cut
+    // path's operators are replaced where they stood; the rest are deleted.
+    let mut at = positions.len();
+    while at > 0 {
+        at -= 1;
+        let position = positions[at];
+        match rewritten
+            .iter()
+            .position(|(range, _)| *range.end() == position)
+        {
+            Some(found) => {
+                let (range, operations) = rewritten.swap_remove(found);
+                at -= range.end() - range.start();
+                content.operations.splice(range, operations);
+            }
+            None => {
+                content.operations.remove(position);
+            }
+        }
     }
     let in_structure = clear_struct_shadow_text(doc, page, &cleared.mcids);
 
@@ -1764,11 +1978,14 @@ pub fn remove_paths(
     doc.change_page_content(page, encoded)
         .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
 
-    Ok(Removed {
-        shows_before: painted.len(),
-        removed: wanted.len(),
-        carriers: cleared.keys,
-        struct_carriers: in_structure,
+    Ok(PathsTaken {
+        cut,
+        removed: Removed {
+            shows_before: painted.len(),
+            removed: wanted.len(),
+            carriers: cleared.keys,
+            struct_carriers: in_structure,
+        },
     })
 }
 
@@ -2836,6 +3053,8 @@ pub struct PageSummary {
     pub images: usize,
     /// Painted paths that go, merged.
     pub paths: usize,
+    /// Painted paths cut at a region's edge, each counted once.
+    pub cuts: usize,
     /// What the removed operations draw, one string per region that took any.
     ///
     /// Wider than what a region covers whenever an operation runs past it:
@@ -2845,6 +3064,14 @@ pub struct PageSummary {
     /// What the removal cannot take, one sentence each: the reasons the file
     /// will not be called clean before anything is written.
     pub left: Vec<String>,
+}
+
+/// How many different paths a list of cuts names.
+fn cut_paths(cuts: &[(usize, [f32; 4])]) -> usize {
+    let mut ordinals: Vec<usize> = cuts.iter().map(|(ordinal, _)| *ordinal).collect();
+    ordinals.sort_unstable();
+    ordinals.dedup();
+    ordinals.len()
 }
 
 impl PageAggregate {
@@ -2858,6 +3085,7 @@ impl PageAggregate {
             form_text: self.planned.form_shows.len(),
             images: self.planned.images.len(),
             paths: self.planned.paths.len(),
+            cuts: cut_paths(&self.planned.cuts),
             taking: self.planned.taking.clone(),
             left: self.concerns.clone(),
         }
@@ -2920,8 +3148,12 @@ pub fn aggregate(
     // And the drawings, the same way.
     let mut paths: Vec<usize> = Vec::new();
     let mut path_objects = 0usize;
+    // A cut is a path and the region that crosses it, so two regions over one
+    // rule are two cuts of one path and neither is dropped.
+    let mut cuts: Vec<(usize, [f32; 4])> = Vec::new();
 
     for plan in plans {
+        cuts.extend(plan.cuts.iter().map(|ordinal| (*ordinal, plan.area)));
         text_objects = plan.text_objects;
         image_objects = plan.image_objects;
         images.extend(plan.images.iter().copied());
@@ -2961,6 +3193,9 @@ pub fn aggregate(
     paths.sort_unstable();
     paths.dedup();
     total += paths.len();
+    // A path one region holds all of goes whole, whatever another cuts off it.
+    cuts.retain(|(ordinal, _)| paths.binary_search(ordinal).is_err());
+    total += cut_paths(&cuts);
 
     let (words, width_pt, height_pt) = match text {
         Some(text) => (ocr_gate::words_from(text), text.width_pt, text.height_pt),
@@ -2986,6 +3221,7 @@ pub fn aggregate(
         image_objects,
         paths,
         path_objects,
+        cuts,
     };
     PageAggregate {
         planned,
@@ -3242,6 +3478,7 @@ mod tests {
             image_objects: 0,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
             form_shows: Vec::new(),
             form_text_objects: Vec::new(),
             area: [1.0, 2.0, 3.0, 4.0],
@@ -3413,10 +3650,11 @@ mod tests {
     }
 
     use super::{
-        aggregate, covered, covered_annots, is_show, leave_shared, leave_unplaced, overlaps,
-        painted_paths, parent_tree_entry, path_clips, remove_form_shows, remove_images,
-        remove_paths, remove_shows, shared_draws, FormObject, FormOther, FormText, PageObject,
-        Plan, RegionPlan, SharedDraws, Unhandled, CLIP_PATH, MAX_CONTENT_BYTES, UNPLACED_PATH,
+        aggregate, covered, covered_annots, cut_crossing, is_show, leave_shared, leave_unplaced,
+        overlaps, painted_path_count, painted_paths, parent_tree_entry, path_clips, path_drawings,
+        remove_form_shows, remove_images, remove_paths, remove_shows, shared_draws, take_paths,
+        FormObject, FormOther, FormText, PageObject, Plan, RegionPlan, SharedDraws, Unhandled,
+        CLIP_PATH, MAX_CONTENT_BYTES, UNPLACED_PATH,
     };
     use lopdf::content::Content;
     use lopdf::{dictionary, Dictionary, Document, Object, Stream};
@@ -4510,8 +4748,8 @@ mod tests {
         );
         assert_eq!(
             plan.unhandled[0].sentence(),
-            "object 1 is a drawing that reaches beyond the region; a drawing is removed only \
-             when the region covers all of it, so it was left",
+            "object 1 is a drawing that reaches beyond the region and is not a straight line \
+             or a rectangle that can be cut at its edge, so it was left",
             "and the sentence it renders as says which object and why, word for word"
         );
         assert!(
@@ -4723,6 +4961,256 @@ mod tests {
         assert_eq!(merged.planned.paths, vec![0, 2]);
         assert_eq!(merged.planned.path_objects, 3);
         assert_eq!(merged.shows, 2, "counted in what the reader is shown");
+    }
+
+    /// A rule and the planner's four answers about it, each from the operators
+    /// that draw it rather than from the bounds PDFium reports.
+    #[test]
+    fn a_drawing_that_crosses_the_region_is_cut_when_it_can_be() {
+        // The bounds are the ones PDFium reports for a stroke: a whole line
+        // width past the path on every side.
+        //
+        // Five paths: a rule, a curve, a short rule inside the region, a rule
+        // that only touches the region, and one far away. The text is first in
+        // PDFium's list, so a path's place among the paths is not its place
+        // among the objects.
+        let (doc, page) = one_page(
+            "1 w 0 100 m 500 100 l S\n0 100 m 250 150 500 100 v S\n\
+             210 100 m 240 100 l S\n250 100 m 400 100 l S\n0 700 m 500 700 l S",
+        );
+        let objects = [
+            text([200.0, 95.0, 250.0, 105.0]),
+            path([-1.0, 99.0, 501.0, 101.0]),
+            path([0.0, 100.0, 500.0, 125.0]),
+            path([209.0, 99.0, 241.0, 101.0]),
+            path([249.0, 99.0, 401.0, 101.0]),
+            path([-1.0, 699.0, 501.0, 701.0]),
+        ];
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let drawings = path_drawings(&doc, page, 5).expect("the counts agree");
+        let mut plan = covered(&objects, &[], region);
+        assert_eq!(
+            plan.unhandled
+                .iter()
+                .map(|left| left.at)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 4],
+            "before: every path reaching beyond the region is reported"
+        );
+        assert_eq!(plan.paths, vec![2], "and the one inside it goes");
+        cut_crossing(&mut plan, Some(&drawings), region, &objects);
+        assert_eq!(plan.cuts, vec![0], "the rule is cut");
+        assert_eq!(plan.paths, vec![2]);
+        assert_eq!(
+            plan.unhandled,
+            vec![Unhandled {
+                at: 2,
+                kind: "path".to_string(),
+                drawn: None
+            }],
+            "the curve is still reported, and the rule that only touches is not"
+        );
+
+        // A page whose paths cannot be placed moves nothing.
+        let mut plan = covered(&objects, &[], region);
+        cut_crossing(&mut plan, None, region, &objects);
+        assert!(plan.cuts.is_empty() && plan.unhandled.len() == 3);
+        assert!(
+            path_drawings(&doc, page, 4).is_none(),
+            "a count that disagrees"
+        );
+    }
+
+    #[test]
+    fn a_rule_the_region_covers_part_of_the_thickness_of_is_still_reported() {
+        // 6 pt thick, inked from 105 to 111, under a region that stops at 110.
+        let (doc, page) = one_page("6 w 0 108 m 500 108 l S");
+        let objects = [path([-6.0, 102.0, 506.0, 114.0])];
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let drawings = path_drawings(&doc, page, 1).expect("the counts agree");
+        assert!(
+            drawings[0].is_some(),
+            "it is a rule, and could be cut elsewhere"
+        );
+        let mut plan = covered(&objects, &[], region);
+        cut_crossing(&mut plan, Some(&drawings), region, &objects);
+        assert!(plan.cuts.is_empty() && plan.paths.is_empty());
+        assert_eq!(plan.unhandled.len(), 1, "left, and said");
+        // The control: one point taller, the region takes its whole thickness.
+        let region = [200.0, 90.0, 250.0, 111.0];
+        let mut plan = covered(&objects, &[], region);
+        cut_crossing(&mut plan, Some(&drawings), region, &objects);
+        assert!(plan.cuts == vec![0] && plan.is_complete());
+    }
+
+    #[test]
+    fn a_rule_whose_ink_the_region_holds_goes_whole() {
+        // PDFium's bounds reach a whole width past it on every side, so
+        // `covered` reports it.
+        let (doc, page) = one_page("1 w 210 100 m 240 100 l S");
+        let objects = [path([209.0, 99.0, 241.0, 101.0])];
+        let region = [210.0, 90.0, 240.0, 110.0];
+        let drawings = path_drawings(&doc, page, 1).expect("the counts agree");
+        let mut plan = covered(&objects, &[], region);
+        assert!(!plan.is_complete() && plan.paths.is_empty());
+        cut_crossing(&mut plan, Some(&drawings), region, &objects);
+        assert_eq!(plan.paths, vec![0]);
+        assert!(plan.cuts.is_empty() && plan.is_complete());
+    }
+
+    #[test]
+    fn a_drawing_inside_a_reusable_block_is_not_one_of_the_page_s_paths() {
+        // The block is object 0 and reports its child under its own position
+        // with the kind `path`. The page's first path is a rule the region
+        // crosses, and it must not be cut on the block's behalf.
+        let (doc, page) = one_page("1 w 0 100 m 500 100 l S");
+        let objects = [
+            form_object([0.0, 0.0, 500.0, 200.0]),
+            path([-1.0, 99.0, 501.0, 101.0]),
+        ];
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let drawings = path_drawings(&doc, page, 1).expect("the counts agree");
+        let mut plan = Plan {
+            unhandled: vec![Unhandled {
+                at: 0,
+                kind: "path".to_string(),
+                drawn: None,
+            }],
+            ..Plan::default()
+        };
+        cut_crossing(&mut plan, Some(&drawings), region, &objects);
+        assert!(plan.cuts.is_empty() && plan.unhandled.len() == 1);
+        // The control: the same entry naming the rule itself is cut.
+        plan.unhandled[0].at = 1;
+        cut_crossing(&mut plan, Some(&drawings), region, &objects);
+        assert!(plan.cuts == vec![0] && plan.unhandled.is_empty());
+    }
+
+    #[test]
+    fn cutting_a_path_rewrites_it_where_it_stood_and_leaves_its_neighbours() {
+        let (mut doc, page) = one_page(
+            "q 1 w\n0 0 m 10 10 l S\n0 100 m 500 100 l S\nBT (kept) Tj ET\n5 5 9 9 re S\nQ",
+        );
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let took = take_paths(&mut doc, page, &[], &[(1, region)], 3).expect("cut");
+        assert_eq!((took.cut, took.removed.removed), (1, 0));
+        assert_eq!(
+            operators(&doc, page),
+            ["q", "w", "m", "l", "S", "m", "l", "m", "l", "S", "BT", "Tj", "ET", "re", "S", "Q"]
+        );
+        let stored = stream(&doc, page);
+        assert!(
+            stored.contains("200 100 l") && stored.contains("250 100 m"),
+            "{stored}"
+        );
+        assert!(
+            !stored.contains("0 100 m 500 100 l"),
+            "the whole rule is gone: {stored}"
+        );
+        // Still three paths, so the ordinals after it did not move.
+        assert_eq!(painted_path_count(&doc, page), Ok(3));
+    }
+
+    #[test]
+    fn a_cut_and_a_removal_on_one_page_each_land_on_their_own_path() {
+        let (mut doc, page) = one_page(
+            "1 w 0 100 m 500 100 l S\n210 95 20 10 re f\n0 200 m 500 200 l S\n\
+             220 195 5 10 re f",
+        );
+        let low = [200.0, 90.0, 250.0, 110.0];
+        let high = [200.0, 190.0, 250.0, 210.0];
+        let took = take_paths(&mut doc, page, &[1, 3], &[(0, low), (2, high)], 4).expect("both");
+        assert_eq!((took.cut, took.removed.removed), (2, 2));
+        let stored = stream(&doc, page);
+        assert_eq!(
+            stored.split_whitespace().collect::<Vec<_>>().join(" "),
+            "1 w 0 100 m 200 100 l 250 100 m 500 100 l S \
+             0 200 m 200 200 l 250 200 m 500 200 l S"
+        );
+    }
+
+    #[test]
+    fn a_path_that_is_both_removed_and_cut_is_removed() {
+        let (mut doc, page) = one_page("1 w 0 100 m 500 100 l S");
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let took = take_paths(&mut doc, page, &[0], &[(0, region)], 1).expect("removed");
+        assert_eq!((took.cut, took.removed.removed), (0, 1));
+        assert_eq!(operators(&doc, page), ["w"]);
+    }
+
+    #[test]
+    fn a_cut_whose_regions_together_hold_all_the_ink_removes_the_path() {
+        let (mut doc, page) = one_page("1 w 100 100 m 300 100 l S");
+        let cuts = [
+            (0, [100.0, 90.0, 200.0, 110.0]),
+            (0, [200.0, 90.0, 300.0, 110.0]),
+        ];
+        let took = take_paths(&mut doc, page, &[], &cuts, 1).expect("gone");
+        assert_eq!((took.cut, took.removed.removed), (0, 1));
+        assert_eq!(operators(&doc, page), ["w"]);
+    }
+
+    #[test]
+    fn the_writer_refuses_a_cut_it_cannot_make_and_one_on_a_count_that_disagrees() {
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let (mut doc, page) = one_page("1 w 0 100 m 250 150 500 100 v S");
+        let before = stream(&doc, page);
+        let why = take_paths(&mut doc, page, &[], &[(0, region)], 1).unwrap_err();
+        assert!(why.contains("cannot be split exactly"), "{why}");
+        assert_eq!(stream(&doc, page), before, "and nothing was written");
+
+        let (mut doc, page) = one_page("1 w 0 100 m 500 100 l S");
+        let why = take_paths(&mut doc, page, &[], &[(0, region)], 2).unwrap_err();
+        assert!(why.contains("paints 1 path(s)"), "{why}");
+        take_paths(&mut doc, page, &[], &[(3, region)], 1).expect_err("no such path");
+        // The control: the same call with the right count cuts.
+        assert_eq!(
+            take_paths(&mut doc, page, &[], &[(0, region)], 1).map(|took| took.cut),
+            Ok(1)
+        );
+    }
+
+    #[test]
+    fn a_cut_takes_a_figure_s_description_as_a_removal_does() {
+        let (mut doc, page) = one_page(
+            "/Figure <</Alt (the signature line of J. Doe)>> BDC\n1 w 0 100 m 500 100 l S\nEMC",
+        );
+        let region = [200.0, 90.0, 250.0, 110.0];
+        let took = take_paths(&mut doc, page, &[], &[(0, region)], 1).expect("cut");
+        assert_eq!(took.removed.carriers, 1);
+        assert!(!stream(&doc, page).contains("J. Doe"));
+    }
+
+    #[test]
+    fn two_regions_over_one_rule_cut_it_twice_and_count_it_once() {
+        let plan = |cuts: Vec<usize>, paths: Vec<usize>, area: [f32; 4]| RegionPlan {
+            cuts,
+            paths,
+            path_objects: 4,
+            area,
+            ..RegionPlan::default()
+        };
+        let (first, second) = ([0.0, 0.0, 10.0, 10.0], [50.0, 0.0, 60.0, 10.0]);
+        let merged = aggregate(
+            0,
+            Vec::new(),
+            vec![
+                plan(vec![1, 3], vec![], first),
+                plan(vec![1, 2], vec![3], second),
+            ],
+            None,
+        );
+        // Path 3 is held whole by the second region, so it is removed, not cut.
+        assert_eq!(merged.planned.paths, vec![3]);
+        assert_eq!(
+            merged.planned.cuts,
+            vec![(1, first), (1, second), (2, second)]
+        );
+        assert_eq!(merged.summary().cuts, 2, "two paths are cut");
+        assert_eq!(
+            merged.shows, 3,
+            "one removed and two cut, as the reader is shown"
+        );
     }
 
     #[test]

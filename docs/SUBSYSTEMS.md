@@ -408,6 +408,14 @@ sets the clip, and a page whose counts disagree. The count travels as `path_obje
 `RegionPlan` and `PlannedRedaction`, beside `paths`, the way `image_objects` travels beside
 `images`. `docs/THREAT-MODEL.md` §T6.29 says what `verified` does and does not cover.
 
+A path that reaches beyond the region is cut at its edge when it is a straight rule or a
+rectangle (`pathcut.rs`). `redact::cut_crossing` decides that in the worker from the path's
+operators, after `leave_unplaced`, and lists it in `Plan::cuts`; `aggregate` pairs each cut
+with its region in `PlannedRedaction::cuts`, and `redact::take_paths` makes the cuts and the
+removals in one pass. `remove_paths` is `take_paths` with no cuts. `pathcut`'s module
+documentation lists what is cut and what is not; `docs/PLAN.md` §6 *A rule cut at the
+region's edge* has the model of a stroke's ink and the measurement.
+
 ## A signature image from a file (`sign --image`)
 
 The signature chooser decodes an imported image with the webview's decoder and scales it on a

@@ -328,9 +328,9 @@ pub(super) fn widgets_are_removed(report: &mut Report) {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// One page with a line of text and four drawings: a rule across the page, a
-/// scribble over a typed name with a small box beside it, and a square that is
-/// also a clip.
+/// One page with a line of text and five drawings: a rule across the page, a
+/// scribble over a typed name with a small box beside it, a square that is
+/// also a clip, and a grey panel.
 ///
 /// The coordinates are odd on purpose, so each drawing can be looked for in the
 /// written content by a number nothing else on the page uses.
@@ -347,7 +347,8 @@ fn drawings_pdf() -> Vec<u8> {
                 q 2 w 200 500 m 217.31 533.77 240 470 260 500 c 280 520 l S Q\n\
                 210 480 6.125 6.125 re f\n\
                 100 300 7.375 7.375 re f\n\
-                q 400 480 20.375 20.375 re W f Q\n";
+                q 400 480 20.375 20.375 re W f Q\n\
+                q 0.5 g 300 640 200.625 40 re f Q\n";
     let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
     let page = doc.add_object(dictionary! {
         "Type" => "Page", "Parent" => pages,
@@ -374,8 +375,10 @@ fn content_of(path: &Path) -> String {
     String::from_utf8_lossy(&doc.get_page_content(page)).into_owned()
 }
 
-/// A drawing the region holds all of is taken out of the content; one that
-/// reaches beyond the region, and one that is also a clip, are left and said.
+/// A drawing the region holds all of is taken out of the content; a rule and a
+/// filled rectangle the region crosses are cut at its edge; a curve that
+/// reaches beyond the region, and a drawing that is also a clip, are left and
+/// said.
 pub(super) fn drawings_are_removed(report: &mut Report) {
     const SCRIBBLE: &str = "217.31";
     const BOX: &str = "6.125";
@@ -463,14 +466,157 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
         &format!("exit {code}: {stderr}; {json}"),
     );
 
-    // Over 50 pt of the rule, which runs 467 pt across the page.
+    // What the page draws at a point, at one pixel a point: `[r, g, b]`.
+    let drawn = |name: &str| {
+        let picture = dir.join(format!("{name}.png"));
+        let (code, _, stderr) = tool(
+            &[
+                "render",
+                &s(&dir.join(format!("{name}.pdf"))),
+                "--dpi",
+                "72",
+                "-o",
+                &s(&picture),
+            ],
+            &[],
+        );
+        assert_eq!(code, 0, "the written copy renders: {stderr}");
+        let (width, _, data) = super::images::pixels(&s(&picture));
+        move |x: u32, from_top: u32| -> [u8; 3] {
+            let at = ((from_top * width + x) * 4) as usize;
+            [data[at], data[at + 1], data[at + 2]]
+        }
+    };
+    let dark = |pixel: [u8; 3]| pixel.iter().all(|channel| *channel < 128);
+    // The copy paints its own black mark over each region, so what a region
+    // shows afterwards says nothing about what was under it. The content
+    // checks say that; the pixels say what is still drawn beside the region.
+    const MARK: [u8; 3] = [0, 0, 0];
+    const PAPER: [u8; 3] = [255, 255, 255];
+
+    // Over 50 pt of the rule, which runs 467 pt across the page at y 600.25:
+    // 191.75 pt from the top, so it darkens pixel rows 191 and 192.
     let (code, json, stderr, after) = redact("rule", "[100,182,50,20]");
+    let flat = after.split_whitespace().collect::<Vec<_>>().join(" ");
+    report.check(
+        "a rule the region crosses is cut at both of its edges, and the copy is verified",
+        code == 0
+            && json["verified"] == true
+            && json["pages"][0]["path_cuts"] == 1
+            && json["pages"][0]["path_removals"] == 0
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            && flat.contains("72 600.25 m 100 600.25 l 150 600.25 m 539.5 600.25 l S")
+            && [SCRIBBLE, BOX, CLIP]
+                .iter()
+                .all(|mark| after.contains(mark)),
+        &format!("exit {code}: {stderr}; {json}; {flat}"),
+    );
+    let pixel = drawn("rule");
+    report.check(
+        "the page still draws the rule up to both edges of the region",
+        (73..99).all(|x| dark(pixel(x, 191)) || dark(pixel(x, 192)))
+            && (151..538).all(|x| dark(pixel(x, 191)) || dark(pixel(x, 192)))
+            && pixel(98, 185) == PAPER,
+        &format!(
+            "above {:?}, before {:?} {:?}, after {:?} {:?}",
+            pixel(98, 185),
+            pixel(98, 191),
+            pixel(98, 192),
+            pixel(151, 191),
+            pixel(151, 192)
+        ),
+    );
+    let whole = {
+        std::fs::copy(&input, dir.join("whole.pdf")).expect("a copy of the input");
+        drawn("whole")
+    };
+    report.check(
+        "control: before the cut the page draws the rule across the region too",
+        (73..538).all(|x| dark(whole(x, 191)) || dark(whole(x, 192))),
+        &format!("{:?} {:?}", whole(125, 191), whole(125, 192)),
+    );
+
+    // Beside the rule: the region's lower edge is 0.15 pt above its ink, which
+    // is 599.75 to 600.75, and inside the bounds PDFium reports for it.
+    let (code, json, stderr, after) = redact("beside", "[100,171,50,20.1]");
+    report.check(
+        "a region that overlaps a rule's bounds and not its ink leaves it whole and unreported",
+        code == 0
+            && json["pages"][0]["path_cuts"] == 0
+            && json["pages"][0]["path_removals"] == 0
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            && after
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("72 600.25 m 539.5 600.25 l S"),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // The copy that was cut, redacted again over the same region.
+    let again = dir.join("again.pdf");
+    let regions = dir.join("rule.json");
+    let (code, json, stderr) = run(
+        &strings(&[
+            "redact",
+            &s(&dir.join("rule.pdf")),
+            "-o",
+            &s(&again),
+            "--regions",
+            &s(&regions),
+            "--json",
+        ]),
+        &[],
+    );
+    report.check(
+        "a second redaction over a region already cut finds nothing of the rule there",
+        code == 0
+            && json["pages"][0]["path_cuts"] == 0
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // Inside the grey panel, which is 300 to 500.625 across and 112 to 152 pt
+    // from the top. The hole is 350 to 380 across and 122 to 142 from the top.
+    let (code, json, stderr, after) = redact("panel", "[350,122,30,20]");
+    let flat = after.split_whitespace().collect::<Vec<_>>().join(" ");
+    let pixel = drawn("panel");
+    let grey = whole(310, 115);
+    report.check(
+        "a filled rectangle loses what the region covers and is drawn around it without a seam",
+        code == 0
+            && json["verified"] == true
+            && json["pages"][0]["path_cuts"] == 1
+            && flat.contains("300 640 50 40 re 380 640 120.625 40 re 350 640 30 10 re 350 670 30 10 re f")
+            && grey != PAPER
+            && grey != MARK
+            && (350..380).all(|x| (122..142).all(|y| pixel(x, y) == MARK))
+            // Everywhere else in the panel is the grey it was, the lines where
+            // two of the four pieces meet included.
+            && (301..500).all(|x| {
+                (113..151).all(|y| {
+                    let hole = (350..380).contains(&x) && (122..142).contains(&y);
+                    hole || pixel(x, y) == grey
+                })
+            }),
+        &format!("exit {code}: {stderr}; {json}; {flat}; grey {grey:?}"),
+    );
+
+    // Over the first 30 pt of the scribble, which is a curve.
+    let (code, json, stderr, after) = redact("curve", "[195,252,35,40]");
     let left = json["pages"][0]["left"].to_string();
     report.check(
-        "a rule reaching beyond the region is left, said, and the copy is not called clean",
+        "a curve reaching beyond the region is left, said, and the copy is not called clean",
         json["written"] == true
             && json["verified"] == false
             && json["pages"][0]["path_removals"] == 0
+            && json["pages"][0]["path_cuts"] == 0
             && left.contains("reaches beyond the region")
             && json["notes"].as_array().is_some_and(Vec::is_empty)
             && [SCRIBBLE, BOX, RULE, CLIP]

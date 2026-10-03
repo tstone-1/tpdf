@@ -597,6 +597,24 @@ impl DocumentGraph {
         redact::path_clips(document, page, paths)
     }
 
+    /// What each path one page paints is, for cutting at a region's edge, or
+    /// `None` when its paths cannot be addressed by position.
+    ///
+    /// `redact::path_drawings` over the parsed graph, with
+    /// [`Self::path_clips`]'s rule for a graph that will not parse.
+    #[must_use]
+    pub fn path_drawings(
+        &self,
+        index: u32,
+        paths: usize,
+    ) -> Option<Vec<Option<crate::pathcut::Drawing>>> {
+        let document = self.parsed().ok()?;
+        let page = pagetree::ordered_pages(document)
+            .get(index as usize)
+            .copied()?;
+        redact::path_drawings(document, page, paths)
+    }
+
     #[must_use]
     pub fn sheet(&self, index: u32, pages: usize) -> Option<[f32; 4]> {
         self.sheets

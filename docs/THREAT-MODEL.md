@@ -2807,10 +2807,22 @@ cover a signature's strokes. The removal of the strokes rests on the operators h
 deleted, which the unit and integration tests check on fixtures, not on a read-back of each
 written file. Pictures have stood the same way since 2026-08-27.
 
-**Residual.** A drawing that reaches beyond the region stays whole, the part inside the
-region included, and the result is *not verified* with that named as the reason. The same
-holds for a drawing that also sets the clip, for shadings, and for drawings inside a Form
-XObject. A reader who needs those gone uses the image-only copy.
+**A straight rule or a rectangle that crosses the region is cut at its edge (2026-10-03).**
+`pathcut.rs` splits it from its own operators: a filled rectangle loses the region, and a
+horizontal or vertical stroke is cut where the region covers its whole thickness. The part
+inside is not in the written content. This rests on a model of what a stroke inks (half the
+width either side, half a width past a corner and past a round or projecting cap), which
+errs outward, and on the graphics state read from the content stream. It is checked on
+fixtures by unit tests and by rendering the written copy, not by a read-back of each written
+file: the copy paints its own mark over the region, so the pixels there cannot say what is
+under it. A wrong model would leave a sliver of a rule under the mark, not text.
+
+**Residual.** A drawing that reaches beyond the region and is not such a rule or rectangle
+stays whole, the part inside the region included, and the result is *not verified* with that
+named as the reason: a curve, a dashed or hairline stroke, a shape filled and stroked
+together, a line the region covers only part of the thickness of. The same holds for a
+drawing that also sets the clip, for shadings, and for drawings inside a Form XObject. A
+reader who needs those gone uses the image-only copy.
 
 #### T6.30 — Setting and removing a password, added 2026-10-03
 

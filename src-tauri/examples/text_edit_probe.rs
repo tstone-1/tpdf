@@ -559,6 +559,7 @@ fn run() -> Result<(), String> {
         image_objects: 0,
         paths: Vec::new(),
         path_objects: 0,
+        cuts: Vec::new(),
         form_shows: vec![],
         form_text_objects: vec![],
     });

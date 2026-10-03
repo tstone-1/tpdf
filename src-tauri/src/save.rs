@@ -4270,12 +4270,21 @@ fn apply_redactions(
             .map_err(Refusal::from)?;
         done.images += took.removed;
 
-        // **Then the drawings the region holds all of.** A path is addressed by
-        // its place among the paths the page paints, and its construction
-        // operators go with the paint, so the outline is not left in the bytes.
-        let took = redact::remove_paths(doc, page, &redaction.paths, redaction.path_objects)
-            .map_err(Refusal::from)?;
-        done.paths += took.removed;
+        // **Then the drawings.** A path is addressed by its place among the
+        // paths the page paints. One the region holds all of goes, its
+        // construction operators with the paint, so the outline is not left in
+        // the bytes; a rule or a rectangle that crosses the region's edge is
+        // cut there and the part outside is drawn as it was.
+        let took = redact::take_paths(
+            doc,
+            page,
+            &redaction.paths,
+            &redaction.cuts,
+            redaction.path_objects,
+        )
+        .map_err(Refusal::from)?;
+        done.paths += took.removed.removed;
+        done.cuts += took.cut;
 
         // **The annotations, and every reference to them.** An annotation over
         // the region is `docs/PLAN.md` §6's *Annotations* row: its `/Contents`
@@ -4426,6 +4435,8 @@ struct Redacted {
     images: usize,
     /// Paths removed, counted by the operators that painted them.
     paths: usize,
+    /// Paths cut at a region's edge and still drawn in part.
+    cuts: usize,
 }
 
 pub fn serialise(doc: &mut Document, what: &str) -> Result<Vec<u8>, String> {

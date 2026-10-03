@@ -364,7 +364,12 @@ export function takesFor(plan: RegionPlan | undefined): string {
   if (drawings > 0) {
     said.push(drawings === 1 ? "a drawing inside it" : `${drawings} drawings inside it`);
   }
-  return said.length === 0 ? "" : `Also removes ${said.join(" and ")}`;
+  const cuts = plan?.cuts?.length ?? 0;
+  // A line or a rectangle that runs on past the region keeps what is outside.
+  const cut = cuts === 1 ? "a line at its edge" : `${cuts} lines at its edge`;
+  if (said.length === 0) return cuts > 0 ? `Cuts ${cut}` : "";
+  const removes = `Also removes ${said.join(" and ")}`;
+  return cuts > 0 ? `${removes}, and cuts ${cut}` : removes;
 }
 
 /** The redactions panel: a row per pending region, in page order. */

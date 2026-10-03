@@ -1088,6 +1088,9 @@ class RedactedPage(TypedDict):
     image_removals: int
     # Drawings that go: paths the region holds all of.
     path_removals: int
+    # Drawings cut at a region's edge: a straight rule or a rectangle the
+    # region crosses, which keeps the part outside it.
+    path_cuts: int
     # What the removed operations draw, one string per region that took any.
     taking: list[str]
     # What the removal cannot take, one sentence each.

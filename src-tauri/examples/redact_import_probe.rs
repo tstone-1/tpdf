@@ -210,6 +210,7 @@ fn run(
             image_objects: planned.image_objects,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
         }],
         notes: Vec::new(),
         discards: Vec::new(),

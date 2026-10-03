@@ -2163,6 +2163,9 @@ pub fn redaction_plans_of(
     let clips = (path_objects > 0)
         .then(|| document.graph().path_clips(index, path_objects))
         .flatten();
+    // What each path is, for cutting at a region's edge. Decoded only when a
+    // region reports a drawing that reaches beyond it, and then once.
+    let drawings = std::cell::OnceCell::new();
     Ok(regions
         .iter()
         .map(|region| {
@@ -2173,9 +2176,15 @@ pub fn redaction_plans_of(
             // by the writer afterwards. See `redact::leave_shared`.
             redact::leave_shared(&mut plan, &shared, &objects.all, &objects.forms);
             redact::leave_unplaced(&mut plan, clips.as_deref(), &objects.all);
+            if plan.unhandled.iter().any(|left| left.kind == "path") {
+                let drawings =
+                    drawings.get_or_init(|| document.graph().path_drawings(index, path_objects));
+                redact::cut_crossing(&mut plan, drawings.as_deref(), want, &objects.all);
+            }
             redact::RegionPlan {
                 paths: plan.paths.clone(),
                 path_objects,
+                cuts: plan.cuts.clone(),
                 text_objects: objects.text.len(),
                 images: plan.images.clone(),
                 image_objects,

@@ -11,7 +11,7 @@ use super::{fixture, scratch, tool, Report};
 const JPEG: &[u8] = include_bytes!("../../src/textedit/images/synthetic-rgb.jpg");
 
 /// A PNG's size and its pixels as RGBA.
-fn pixels(path: &str) -> (u32, u32, Vec<u8>) {
+pub(super) fn pixels(path: &str) -> (u32, u32, Vec<u8>) {
     let mut decoder = png::Decoder::new(std::io::BufReader::new(
         std::fs::File::open(path).expect("the PNG opens"),
     ));

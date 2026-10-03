@@ -1063,6 +1063,9 @@ pub struct RedactedPage {
     pub image_removals: usize,
     /// Drawings that go: paths the region holds all of.
     pub path_removals: usize,
+    /// Drawings cut at a region's edge: a straight rule or a rectangle the
+    /// region crosses, which keeps the part outside it.
+    pub path_cuts: usize,
     /// What the removed operations draw, one string per region that took any
     /// --- often more than the match, because a whole operation goes.
     pub taking: Vec<String>,

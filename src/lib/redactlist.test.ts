@@ -211,6 +211,18 @@ describe("what a row says a removal will take", () => {
     expect(takesFor(drawn([]))).toBe("");
   });
 
+  it("says a line that crosses the region is cut at its edge, and counts them", () => {
+    const cut = (cuts: number[], paths: number[] = []) => ({ ...taking(0), cuts, paths });
+    expect(takesFor(cut([3]))).toBe("Cuts a line at its edge");
+    expect(takesFor(cut([0, 3]))).toBe("Cuts 2 lines at its edge");
+    expect(takesFor(cut([0, 3], [1]))).toBe(
+      "Also removes a drawing inside it, and cuts 2 lines at its edge",
+    );
+    // The controls: none listed, and a plan from a build that had no such field.
+    expect(takesFor(cut([], [1]))).toBe("Also removes a drawing inside it");
+    expect(takesFor({ ...taking(0) })).toBe("");
+  });
+
   it("survives a plan written before pictures were removable", () => {
     // The field is optional because a reply from an older build carries none,
     // and reading `.length` off `undefined` would break the panel rather than

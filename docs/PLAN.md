@@ -3321,10 +3321,83 @@ not verified, and name the drawing left.
   applies to a region over a picture of words. A page with no word of four characters
   outside the regions is still not verified. What the rule gives up is stated in
   `docs/THREAT-MODEL.md` §T6.29: outlined text smaller than the page's smallest print.
-- Cutting a path at the region's edge. A straight rule or a rectangle could be split
-  exactly; a curve needs path clipping. Both re-emit geometry, which is route A's risk.
+- ~~Cutting a path at the region's edge.~~ **Built 2026-10-03 for the two shapes that
+  split exactly**; see *A rule cut at the region's edge* below. A curve needs path clipping
+  and is still reported.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
 - The review panel was not driven by a person with a drawing under a region.
+
+#### A rule cut at the region's edge — 2026-10-03
+
+A path that reaches beyond a region was reported and left, and that was the largest single
+reason a region came back *not verified*. `pathcut.rs` cuts the two shapes that can be split
+without approximating anything, and leaves the rest reported.
+
+**What is cut.** A filled path made only of rectangles: the region is subtracted from each
+and the remainder is written as rectangles in the same path, under the same fill. A stroked
+path made only of horizontal and vertical lines, under a known width above zero, a known cap
+and no dash: each line is cut where the region covers its whole thickness, and lines that
+still meet at a corner stay one run so the join there is drawn as it was. Both need the
+matrix in effect to keep the axes. A cut path stays one path, so the ordinals of the paths
+after it do not move.
+
+**What is not, and is reported as before.** A curve; a dashed or zero-width stroke; fill and
+stroke together; a path that also clips; a region that covers only part of a line's
+thickness, because the strip left over cannot be drawn by a stroke of that width; a skewed
+matrix; a line width set by an `ExtGState` that cannot be found; several filled rectangles
+under the even-odd rule or running opposite ways, where the fill is not their union.
+
+**The geometry is done in the path's own space.** The region goes through the inverse
+matrix, which maps a rectangle to a rectangle exactly when the axes are kept. A coordinate
+that is not at a cut is written back as the number it was.
+
+**A stroke's ink is modelled, outward.** Half the width either side; half a width past a
+corner, which holds a miter, a round and a bevel join at a right angle; half a width past an
+open end for a round or projecting cap and nothing for a butt cap. A new end is pulled back
+by its cap's reach. `Drawing::cut` checks its own result against that model and answers
+*unsupported* when a join still reaches into a region.
+
+**PDFium's bounds are not the ink.** Its bounds for a stroke reach a whole line width past
+the path on every side, whatever the cap: a 4 pt rule from 72 to 300 at y 200 is reported as
+68, 196, 304, 204, under a butt, a round and a projecting cap alike, where its ink is 198 to
+202 high (measured 2026-10-03 with PDFium 7999 through `pypdfium2`; the pinned 8066 agrees
+in the two cases `tests/cli/redact.rs` holds, which go red when `cut_crossing` is made to
+keep reporting such a rule). So a rule that stops at the region's edge, or runs beside it within one width,
+overlaps the region by its bounds and not by what it draws. `redact::cut_crossing` asks the operators:
+such a rule is dropped from the report, one whose ink is all inside though its bounds are
+not is removed, and a second redaction over a region already cut reports nothing.
+
+**Where each decision is made.** `covered` is unchanged and still reports every path that
+overlaps without lying inside. `cut_crossing` runs after it in the worker, per region, and
+moves a path to `Plan::cuts` only on `pathcut`'s answer; called with no drawings it moves
+nothing, which is the answer for a page whose path counts disagree. `aggregate` pairs each
+cut with its region, `PlannedRedaction::cuts`, and `take_paths` makes the cuts and the
+removals in one pass over the content, refusing the page if a cut the plan named cannot be
+made.
+
+**Measured** on 64 documents of the author's own, 3 pages each, 40 regions a page, one
+region per word of four characters or more (`redact-reach-probe --no-gate`, macOS arm64,
+2026-10-03), with the cut switched off and on:
+
+| | off | on |
+|---|---|---|
+| regions asked about | 4,616 | 4,616 |
+| taken whole | 2,929 (63.5%) | 3,497 (75.8%) |
+| reporting a path on the page | 743 (16.1%) | 141 (3.1%) |
+| cutting a drawing at the edge | — | 651, of which 565 taken whole |
+
+The other carriers did not move: a path inside a form is 630 regions (13.6%) and is now the
+largest. `testdata/` holds no rule under a word, so the same run there cuts nothing.
+
+**Checked by rendering.** `tests/cli/redact.rs` cuts a rule and a grey rectangle through
+the shipped tool and renders the copy at one pixel a point: the rule is drawn up to both
+edges of the region, and every pixel of the rectangle outside the hole is the grey it was,
+the lines where two of its four pieces meet included. CoreGraphics draws the same four
+pieces at fractional coordinates without a seam.
+
+**Not done:** a hairline (`0 w`), which is as thin as the device draws and has no width to
+reason about; a dashed rule, whose pattern would restart at each cut; a path inside a Form
+XObject; the review panel driven by a person with a rule under a region.
 
 #### What a removal can take, re-measured — 2026-08-27
 

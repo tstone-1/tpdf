@@ -69,6 +69,7 @@ pub mod opener;
 pub mod outline;
 pub mod pades;
 pub mod pagetree;
+pub mod pathcut;
 pub mod print;
 #[cfg(target_os = "macos")]
 pub mod print_macos;

@@ -3812,6 +3812,10 @@ what it read is one nobody can run twice.
 | `--no-gate` | skip the write-and-read-back half, which is 40x the cost |
 | `--full-width` | widen every region to the page. A **control** over the gate, not the removal |
 
+Under *taken whole* it prints how many regions cut a drawing at their edge and how many of
+those were then taken whole, which is the measure of `pathcut.rs` (`docs/PLAN.md` §6 *A rule
+cut at the region's edge*): 651 and 565 of 4,616 on the 2026-10-03 sample.
+
 The cheap half is 1.8 s over 40 documents and 2,893 regions; with the gate on it is about 12 s
 for a twentieth of that sample, which is why the two halves are separable.
 

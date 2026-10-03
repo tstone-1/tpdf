@@ -207,6 +207,9 @@ MUTATIONS = [
     Mutation("recognise: keep the extension in the name", "src/lib/recognise.ts", '.replace(/\\.pdf$/i, "")', '.replace(/\\.pdf$/, "")', "keeps the name and says what the copy is"),
     Mutation("recognise: listen for another event", "src/lib/recognise.ts", 'export const PROGRESS_EVENT = "tpdf://ocr-progress";', 'export const PROGRESS_EVENT = "tpdf://ocr";', "listens for the event the backend emits"),
     Mutation("redact list: say nothing about a drawing that goes", "src/lib/redactlist.ts", "  if (drawings > 0) {", "  if (drawings > 9000) {", "says a drawing inside the region goes, and counts them"),
+    Mutation("redact list: say nothing about a line that is cut", "src/lib/redactlist.ts", "  if (said.length === 0) return cuts > 0 ? `Cuts ${cut}` : \"\";", "  if (said.length === 0) return \"\";", "says a line that crosses the region is cut at its edge, and counts them"),
+    Mutation("redact list: count the drawings as cuts", "src/lib/redactlist.ts", "  const cuts = plan?.cuts?.length ?? 0;", "  const cuts = plan?.paths?.length ?? 0;", "says a line that crosses the region is cut at its edge, and counts them"),
+    Mutation("redact list: leave the cut out when something is also removed", "src/lib/redactlist.ts", "  return cuts > 0 ? `${removes}, and cuts ${cut}` : removes;", "  return removes;", "says a line that crosses the region is cut at its edge, and counts them"),
     Mutation("redact list: count the pictures as drawings", "src/lib/redactlist.ts", "const drawings = plan?.paths?.length ?? 0;", "const drawings = plan?.images?.length ?? 0;", "says a drawing inside the region goes, and counts them"),
     Mutation("recovery: drop the note from a clean verdict", "src/lib/recovery.ts", '(applied.notes?.length ? ` Note: ${applied.notes.join("; ")}.` : "")', '""', "reports a redaction as the window does"),
     Mutation("assurance: redactDocument write guard", "src/lib/edits.ts", "  async redactDocument(source: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactDocument(source: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
@@ -4861,8 +4864,8 @@ MUTATIONS += [
         # stops seeing, which costs exactly the regions where it matters.
         "redactlist: claim every region takes a picture",
         "src/lib/redactlist.ts",
-        "  return said.length === 0 ? \"\" : ",
-        "  return false ? \"\" : ",
+        "  if (said.length === 0) return cuts > 0",
+        "  if (false) return cuts > 0",
         "says nothing when the region takes no picture",
     ),
     Mutation(

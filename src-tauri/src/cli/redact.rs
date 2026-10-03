@@ -620,6 +620,7 @@ fn report_pages(
         form_text_removals: 0,
         image_removals: 0,
         path_removals: 0,
+        path_cuts: 0,
         taking: Vec::new(),
         left: Vec::new(),
     };
@@ -642,6 +643,7 @@ fn report_pages(
         entry.form_text_removals = summary.form_text;
         entry.image_removals = summary.images;
         entry.path_removals = summary.paths;
+        entry.path_cuts = summary.cuts;
         entry.taking.clone_from(&summary.taking);
         entry.left.clone_from(&summary.left);
     }
@@ -717,7 +719,8 @@ pub fn plain(report: &report::Redacted) -> String {
         );
         if page.regions > 0 {
             line.push_str(&format!(
-                ", removing {} text operation{}, {} in forms, {} image{}, {} drawing{}",
+                ", removing {} text operation{}, {} in forms, {} image{}, {} drawing{}, \
+                 cutting {} at the edge",
                 page.text_removals,
                 if page.text_removals == 1 { "" } else { "s" },
                 page.form_text_removals,
@@ -725,6 +728,7 @@ pub fn plain(report: &report::Redacted) -> String {
                 if page.image_removals == 1 { "" } else { "s" },
                 page.path_removals,
                 if page.path_removals == 1 { "" } else { "s" },
+                page.path_cuts,
             ));
         }
         lines.push(line);

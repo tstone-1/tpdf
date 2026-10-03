@@ -66,6 +66,7 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
                 mapped.image_objects = 0;
                 mapped.paths.clear();
                 mapped.path_objects = 0;
+                mapped.cuts.clear();
                 mapped.form_shows.clear();
                 mapped.form_text_objects.clear();
                 result.redactions.push(mapped);
@@ -166,8 +167,9 @@ mod tests {
             taking: vec!["SYNTHETIC REMOVAL".into()],
             images: vec![2],
             image_objects: 3,
-            paths: Vec::new(),
-            path_objects: 0,
+            paths: vec![1],
+            path_objects: 5,
+            cuts: vec![(0, area)],
             form_shows: vec![(1, 2)],
             form_text_objects: vec![(1, 3)],
         }
@@ -329,6 +331,9 @@ mod tests {
         }
         for r in mapped.redactions {
             assert!(r.shows.is_empty() && r.images.is_empty() && r.form_shows.is_empty());
+            // The drawings went with the removal too. A cut asked for again
+            // would be made against a page the first pass already changed.
+            assert!(r.paths.is_empty() && r.cuts.is_empty() && r.path_objects == 0);
             assert!(r.taking.is_empty() && r.form_text_objects.is_empty());
             assert_eq!((r.text_objects, r.image_objects), (0, 0));
         }

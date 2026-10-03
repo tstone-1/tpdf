@@ -177,6 +177,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             image_objects: 0,
             paths: Vec::new(),
             path_objects: 0,
+            cuts: Vec::new(),
         }],
         notes: Vec::new(),
         discards: Vec::new(),

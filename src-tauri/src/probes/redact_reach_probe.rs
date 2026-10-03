@@ -92,6 +92,10 @@ struct Tally {
     /// Regions asked about, and how many the removal takes whole.
     regions: usize,
     complete: usize,
+    /// Regions that cut a drawing at their edge, and of those the ones taken
+    /// whole: the regions the cut is the reason for.
+    cutting: usize,
+    cutting_complete: usize,
     /// Documents with at least one incomplete region.
     docs_incomplete: usize,
     /// Regions holding each kind of object the removal cannot take. A region
@@ -527,6 +531,7 @@ fn measure(
         let mut image_objects = 0usize;
         let mut paths: Vec<usize> = Vec::new();
         let mut path_objects = 0usize;
+        let mut cuts: Vec<(usize, [f32; 4])> = Vec::new();
         let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
         // Only the regions the removal reports taking whole. Handing the gate
         // an incomplete one would make its verdict unattributable: a reason
@@ -538,6 +543,12 @@ fn measure(
             text_objects = plan.text_objects;
             image_objects = plan.image_objects;
             form_text_objects = plan.form_text_objects.clone();
+            if !plan.cuts.is_empty() {
+                tally.cutting += 1;
+                if plan.is_complete() {
+                    tally.cutting_complete += 1;
+                }
+            }
             if plan.is_complete() {
                 here_complete += 1;
                 provable.push(if full_width {
@@ -579,6 +590,7 @@ fn measure(
             images.extend(plan.images.iter().copied());
             paths.extend(plan.paths.iter().copied());
             path_objects = plan.path_objects;
+            cuts.extend(plan.cuts.iter().map(|ordinal| (*ordinal, plan.area)));
             areas.push(plan.area);
             let what = plan.taking.trim();
             if !what.is_empty() {
@@ -593,7 +605,13 @@ fn measure(
         images.dedup();
         paths.sort_unstable();
         paths.dedup();
-        if shows.is_empty() && form_shows.is_empty() && images.is_empty() && paths.is_empty() {
+        cuts.retain(|(ordinal, _)| paths.binary_search(ordinal).is_err());
+        if shows.is_empty()
+            && form_shows.is_empty()
+            && images.is_empty()
+            && paths.is_empty()
+            && cuts.is_empty()
+        {
             continue;
         }
         if gate && !provable.is_empty() {
@@ -618,6 +636,7 @@ fn measure(
             image_objects,
             paths,
             path_objects,
+            cuts,
         });
     }
 
@@ -1135,6 +1154,12 @@ fn report(t: &Tally, seconds: f32) {
         "  taken whole                {:>6}  ({:.1}%)",
         t.complete,
         pct(t.complete, t.regions)
+    );
+    println!(
+        "    cutting a drawing at the edge {:>6}  ({:.1}%), {} of them taken whole",
+        t.cutting,
+        pct(t.cutting, t.regions),
+        t.cutting_complete
     );
     let incomplete = t.regions - t.complete;
     println!(

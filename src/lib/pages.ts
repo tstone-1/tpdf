@@ -276,6 +276,14 @@ export interface RegionPlan {
    * region is in {@link unhandled} as a `path`. Optional for `images`' reason.
    */
   paths?: number[];
+  /**
+   * Which of the page's drawings the removal would cut at the region's edge.
+   *
+   * A straight rule or a rectangle the region crosses: the part inside goes
+   * and the part outside stays. Read for how many there are. Optional for
+   * `images`' reason.
+   */
+  cuts?: number[];
 }
 
 /**

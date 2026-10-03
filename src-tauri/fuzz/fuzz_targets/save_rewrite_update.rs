@@ -360,6 +360,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
                 image_objects: usize::from(region.image_objects),
                 paths: region.paths.into_iter().map(usize::from).collect(),
                 path_objects: usize::from(region.path_objects),
+                cuts: Vec::new(),
                 form_shows: region
                     .form_shows
                     .into_iter()
