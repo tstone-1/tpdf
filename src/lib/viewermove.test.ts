@@ -41,10 +41,13 @@ vi.mock("./tiles", () => tiles);
 let dom: FakeDom;
 /** Every move the viewer reported, in order. */
 let moved: { id: number; dx: number; dy: number }[];
+/** Every resize the viewer reported, in order. */
+let resized: { id: number; rect: number[] }[];
 
 beforeEach(() => {
   dom = installFakeDom();
   moved = [];
+  resized = [];
   core.invoke.mockResolvedValue(null);
 });
 
@@ -84,6 +87,7 @@ function build(turns = 0): Viewer {
     pageCount: 1,
     pages: [{ width_pt: 600, height_pt: 800 }],
     onMarkMoved: (id, dx, dy) => moved.push({ id, dx, dy }),
+    onMarkResized: (id, rect) => resized.push({ id, rect }),
   });
   if (turns !== 0) {
     const pages: PageView[] = [{ id: pageId(1), source: { baseline: 0 }, turns }];
@@ -182,6 +186,95 @@ describe("which marks a drag is offered on", () => {
       expect(moved, kind).toEqual([]);
       viewer.destroy();
     }
+  });
+});
+
+/** The mark's lower right corner on screen, which is what a resize is dragged by. */
+function onCorner(viewer: Viewer, id = 42): { x: number; y: number } {
+  const anchor = viewer.markAnchor(id);
+  if (!anchor) throw new Error("the mark is not laid out");
+  return { x: anchor.right, y: anchor.bottom };
+}
+
+describe("dragging a mark by its lower right corner", () => {
+  it("resizes a box, an ellipse, a text box and a form field, and moves none of them", async () => {
+    for (const kind of ["square", "ellipse", "textbox", "field"] as const) {
+      moved = [];
+      resized = [];
+      const viewer = build();
+      viewer.setMarks(mark(kind));
+      await settle();
+      const zoom = viewer.currentZoom;
+
+      // Pressed a little inside the corner, as a hand does. The corner goes
+      // as far as the hand went from there, not to where the hand is.
+      const corner = onCorner(viewer);
+      drag({ x: corner.x - 3, y: corner.y - 3 }, { x: 30, y: -20 });
+
+      expect(moved, kind).toEqual([]);
+      expect(resized, kind).toHaveLength(1);
+      const rect = resized[0]?.rect ?? [];
+      // The upper left stays; the lower right goes where the hand went, in
+      // points, so the client pixels are divided by the zoom.
+      expect(rect.slice(0, 2), kind).toEqual([200, 300]);
+      expect(rect[2], kind).toBeCloseTo(300 + 30 / zoom, 6);
+      expect(rect[3], kind).toBeCloseTo(400 - 20 / zoom, 6);
+      viewer.destroy();
+    }
+  });
+
+  it("still moves those kinds when they are pressed anywhere else", async () => {
+    // The control: a viewer that resized on every press would pass the test above.
+    const viewer = build();
+    viewer.setMarks(mark("square"));
+    await settle();
+    drag(onMark(viewer), { x: 30, y: 20 });
+    expect(resized).toEqual([]);
+    expect(moved).toHaveLength(1);
+    viewer.destroy();
+  });
+
+  it("moves a kind that has no corner to drag, pressed on that same corner", async () => {
+    // Ink is strokes and a comment is an icon of one size: neither is resized,
+    // and a press near the corner of either is a press on the mark.
+    for (const kind of ["note", "ink"] as const) {
+      moved = [];
+      resized = [];
+      const viewer = build();
+      viewer.setMarks(mark(kind));
+      await settle();
+      const corner = onCorner(viewer);
+      drag({ x: corner.x - 2, y: corner.y - 2 }, { x: 30, y: 20 });
+      expect(resized, kind).toEqual([]);
+      expect(moved, kind).toHaveLength(1);
+      viewer.destroy();
+    }
+  });
+
+  it("keeps a form field at least as large as a field of its kind may be", async () => {
+    for (const [kind, least] of [["text", 8], ["checkbox", 6]] as const) {
+      resized = [];
+      const viewer = build();
+      viewer.setMarks([{ ...mark("field")[0]!, field: { kind, border: false } }]);
+      await settle();
+      // Far past its own upper left corner.
+      drag(onCorner(viewer), { x: -5000, y: -5000 });
+      expect(resized[0]?.rect, kind).toEqual([200, 300, 200 + least, 300 + least]);
+      viewer.destroy();
+    }
+  });
+
+  it("keeps the corner on the page, and says nothing for a press that does not move", async () => {
+    const viewer = build();
+    viewer.setMarks(mark("square"));
+    await settle();
+    drag(onCorner(viewer), { x: 50000, y: 50000 });
+    expect(resized[0]?.rect).toEqual([200, 300, 600, 800]);
+    resized = [];
+    drag(onCorner(viewer), { x: 0, y: 0 });
+    expect(resized).toEqual([]);
+    expect(moved).toEqual([]);
+    viewer.destroy();
   });
 });
 

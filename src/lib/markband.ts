@@ -292,6 +292,55 @@ export function isMovable(kind: MarkKind): boolean {
 }
 
 /**
+ * Whether a mark's rectangle can be dragged larger or smaller by its corner.
+ *
+ * The four kinds whose whole shape is one rectangle the reader dragged: a box,
+ * an ellipse, a text box and a form field. `reshape` in `docmodel.rs` holds
+ * the same list and refuses the rest. Ink is strokes; a stamp and a signature
+ * keep their proportions and a signature has its own size control; a comment
+ * is an icon of one size; and a mark tied to words takes its shape from them.
+ */
+export function isResizable(kind: MarkKind): boolean {
+  return kind === "square" || kind === "ellipse" || kind === "textbox" || kind === "field";
+}
+
+/** How far from a mark's lower right corner a press still takes the corner, in CSS pixels. */
+export const RESIZE_REACH_PX = 9;
+
+/**
+ * Whether a point is on the corner a resize is dragged by: the lower right,
+ * within `reach` either way. Outside the rectangle counts as much as inside,
+ * since a corner is a place a hand lands near and not on.
+ */
+export function onResizeCorner(quad: Quad, point: { x: number; y: number }, reach: number): boolean {
+  return Math.abs(point.x - quad.right) <= reach && Math.abs(point.y - quad.bottom) <= reach;
+}
+
+/**
+ * The rectangle a corner drag makes: the lower right corner moved by the
+ * drag, the upper left where it was.
+ *
+ * Held to the page, as a move is, and to `least` a side: a rectangle dragged
+ * through its own upper left corner would otherwise turn inside out, and a
+ * form field has a least size below which nothing can be typed in it.
+ */
+export function grown(
+  quad: Quad,
+  dx: number,
+  dy: number,
+  page: { width: number; height: number },
+  least: number,
+): Quad {
+  const within = (wanted: number, low: number, high: number) =>
+    Math.min(Math.max(wanted, Math.min(low, high)), high);
+  return {
+    ...quad,
+    right: within(quad.right + dx, quad.left + least, page.width),
+    bottom: within(quad.bottom + dy, quad.top + least, page.height),
+  };
+}
+
+/**
  * How thick a freehand line is, in points, before any zoom.
  *
  * `INK_WIDTH` in `save.rs`. Heavier than {@link OUTLINE_WIDTH} for the reason

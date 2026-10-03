@@ -269,7 +269,20 @@ pub async fn annot_move(
     edits.displace(doc, mark, dx, dy)
 }
 
-/// Resizes a visual signature while preserving its proportions.
+/// Gives a box, an ellipse, a text box or a form field a new rectangle.
+///
+/// One journal entry, undone like a move. See [`edits::Edits::reshape`].
+#[tauri::command]
+pub async fn annot_resize(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    rect: [f32; 4],
+) -> Result<edits::EditState, String> {
+    edits.reshape(doc, mark, rect)
+}
+
+/// Sets a placed signature's width, keeping its proportions.
 #[tauri::command]
 pub async fn annot_resize_signature(
     edits: tauri::State<'_, edits::Edits>,

@@ -940,7 +940,7 @@ pub struct Mark {
     pub stamp: Option<StampName>,
     /// Which kind of form field this is, for [`MarkKind::Field`] and nothing
     /// else. Checked in [`Document::annotate`], as [`Mark::stamp`] is.
-    pub field: Option<crate::formfields::Kind>,
+    pub field: Option<crate::formfields::Placed>,
     /// Normalized signature pixels, shared by journal snapshots.
     pub image: Option<std::sync::Arc<signature::Image>>,
     /// The comment this one answers, when it is a reply. `None` for a mark that
@@ -3433,6 +3433,41 @@ impl Doc {
     }
 
     /// Resizes a signature about its upper-left corner, preserving its aspect ratio.
+    /// Gives a mark the reader placed by a drag a new rectangle.
+    ///
+    /// For the four kinds whose whole shape is one rectangle: a box, an
+    /// ellipse, a text box and a form field. Ink is strokes, a stamp and a
+    /// signature keep their proportions, and a mark tied to words takes its
+    /// shape from them.
+    ///
+    /// One command in the journal, as [`displace`](Self::displace) is, and the
+    /// same one: a new set of quads for the mark.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::ShapeMismatch`] for any other kind, [`Refusal::EmptyMark`]
+    /// for a rectangle that is not finite or covers nothing.
+    pub fn reshape(&mut self, mark: MarkId, quad: Quad) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        let kind = self.mark(mark).map(|m| m.kind);
+        let Some(MarkKind::Square | MarkKind::Ellipse | MarkKind::TextBox | MarkKind::Field) = kind
+        else {
+            return Err(Refusal::ShapeMismatch(kind.unwrap_or(MarkKind::Highlight)));
+        };
+        let sides = [quad.left, quad.top, quad.right, quad.bottom];
+        if !sides.iter().all(|v| v.is_finite())
+            || quad.right <= quad.left
+            || quad.bottom <= quad.top
+        {
+            return Err(Refusal::EmptyMark);
+        }
+        let ink = self.issue_ink(Ink {
+            strokes: Vec::new(),
+            quads: vec![quad],
+        });
+        self.apply(Command::Reink { mark, ink })
+    }
+
     pub fn resize_signature(&mut self, mark: MarkId, width: f32) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
         if self
@@ -5170,7 +5205,7 @@ mod tests {
         );
 
         let mut box_with = mark_on(page);
-        box_with.field = Some(Kind::Checkbox);
+        box_with.field = Some(Kind::Checkbox.into());
         assert_eq!(
             doc.annotate(box_with, String::new()),
             Err(Refusal::FieldMismatch(MarkKind::Highlight))
@@ -5178,7 +5213,7 @@ mod tests {
 
         let mut real = mark_on(page);
         real.kind = MarkKind::Field;
-        real.field = Some(Kind::Text);
+        real.field = Some(Kind::Text.into());
         assert!(doc.annotate(real, "Name".into()).is_ok());
         assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
     }

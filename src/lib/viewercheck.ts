@@ -3159,6 +3159,8 @@ async function appCommandChecks(
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     drawField: (kind) => fired.push(`drawField:${kind}`),
+    fieldBorder: () => true,
+    setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
@@ -4305,6 +4307,8 @@ async function appCommandChecks(
     "edit.fillForm": "Driven against the real application by tabs_check.py --phase forms.",
     "file.close": "tab ownership is exercised by the open check's tabs phase",
     "file.closeAll": "closes every tab, which would end the run; no automated check drives it yet",
+    "edit.fieldBorderOn": "a stored preference; fieldnames.test.ts and appcommands.test.ts cover the pair",
+    "edit.fieldBorderOff": "a stored preference; tabs_check.py --phase fields drives it",
     "file.reopenLastTabs": "needs a previous launch; the session check's tabs phase drives it",
     "file.reopenTabsAtLaunch": "a stored preference; the session check's tabs phase covers the launch",
     "file.reopenLastDocumentAtLaunch": "a stored preference; appcommands.test.ts covers the pair",
@@ -4653,6 +4657,7 @@ async function appCommandChecks(
     "app.installCommandLineTool",
     "app.uninstallCommandLineTool",
     "app.makeDefaultPdfApp",
+    "edit.fieldBorderOff",
   ];
 
   viewer.clearSelection();

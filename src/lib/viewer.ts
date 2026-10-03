@@ -51,6 +51,10 @@ import {
   iconQuad,
   overlayBlend,
   isMovable,
+  isResizable,
+  onResizeCorner,
+  grown,
+  RESIZE_REACH_PX,
   isPath,
   paintOf,
   LINE_FRACTION,
@@ -544,6 +548,12 @@ export interface ViewerOptions {
   onMarkMoved?: (id: number, dx: number, dy: number) => void;
   /** Resize a visual signature in original page display points. */
   onSignatureResize?: (id: number, width: number) => void;
+  /**
+   * A box, an ellipse, a text box or a form field dragged by its lower right
+   * corner to a new rectangle, `[left, top, right, bottom]` in the file's
+   * display space. Optional for {@link onDrawn}'s reason.
+   */
+  onMarkResized?: (id: number, rect: [number, number, number, number]) => void;
 
   /**
    * One sweep of the eraser: which drawing, and which of its strokes went.
@@ -1349,6 +1359,12 @@ export class Viewer {
     from: Point;
     dx: number;
     dy: number;
+    /**
+     * The mark's laid-out rectangle when the press took its lower right
+     * corner, and `null` for a move. A resize is the same gesture with one
+     * difference: `dx` and `dy` are added to the corner and not to the mark.
+     */
+    grow: Quad | null;
   } | null = null;
 
   private readonly moveDrag: PointerDrag;
@@ -1589,7 +1605,9 @@ export class Viewer {
         // owns it, which is a different command from moving it.
         const now = this.pointOn(live.slot, at);
         const want = { dx: now.x - live.from.x, dy: now.y - live.from.y };
-        const bound = this.clampMove(live.id, live.slot, want);
+        const bound = live.grow
+          ? this.clampGrow(live.id, live.slot, live.grow, want)
+          : this.clampMove(live.id, live.slot, want);
         if (bound.dx === live.dx && bound.dy === live.dy) return;
         live.dx = bound.dx;
         live.dy = bound.dy;
@@ -1605,6 +1623,14 @@ export class Viewer {
         // zero offset here would journal a command for a click, and undo would
         // then step through every note the reader had ever opened.
         if (live.dx === 0 && live.dy === 0) return;
+        if (live.grow) {
+          // The whole rectangle, and not a pair of offsets: on a turned view
+          // the corner under the hand is not the file's lower right, and
+          // mapping the rectangle is what `fileRectOn` already does correctly.
+          const rect = { ...live.grow, right: live.grow.right + live.dx, bottom: live.grow.bottom + live.dy };
+          this.opts.onMarkResized?.(live.id, this.fileRectOn(live.slot, rect));
+          return;
+        }
         // Into the model's space at the last possible moment. Everything above
         // is laid-out points, because that is the space the reader's hand and
         // the page's edge are both in; the model holds the file's.
@@ -3869,6 +3895,23 @@ export class Viewer {
     };
   }
 
+  /**
+   * {@link clampMove}'s twin for a corner drag: how far the lower right corner
+   * may go. The arithmetic is `grown` in `markband.ts`; this supplies the page
+   * and the least side, which for a form field is `formfields.rs`'s.
+   */
+  private clampGrow(
+    id: number,
+    slot: number,
+    base: Quad,
+    want: { dx: number; dy: number },
+  ): { dx: number; dy: number } {
+    const mark = this.markById(id);
+    const least = mark?.kind === "field" ? (mark.field?.kind === "checkbox" ? 6 : 8) : 4;
+    const next = grown(base, want.dx, want.dy, this.laidSize(slot), least);
+    return { dx: next.right - base.right, dy: next.bottom - base.bottom };
+  }
+
   /** One page's links in the view's space, memoised across pointer moves. */
   private linksOn(page: number): Link[] {
     const { turns, width_pt, height_pt } = this.turnsOn(page);
@@ -4143,7 +4186,8 @@ export class Viewer {
     // note box is open on the mark being dragged --- opening it is what the press
     // did --- so an anchor that ignored the offset would leave the box pointing
     // at the place the mark has left.
-    const shift = this.moving?.id === mark.id ? this.moving : null;
+    // A corner drag leaves the mark where it is, so the box stays put too.
+    const shift = this.moving?.id === mark.id && !this.moving.grow ? this.moving : null;
     const ox = shift ? shift.dx * this.zoom : 0;
     const oy = shift ? shift.dy * this.zoom : 0;
     return {
@@ -5271,12 +5315,19 @@ export class Viewer {
       if (isMovable(own.kind)) {
         const placed = this.viewQuadsOf(own);
         if (placed) {
+          const from = this.pointOn(placed.slot, event);
+          const whole = placed.quads[0];
+          // The lower right corner resizes, the rest of the mark moves it.
+          const corner =
+            isResizable(own.kind) && placed.quads.length === 1 && whole !== undefined
+              && onResizeCorner(whole, from, RESIZE_REACH_PX / this.zoom);
           this.moving = {
             id: own.id,
             slot: placed.slot,
-            from: this.pointOn(placed.slot, event),
+            from,
             dx: 0,
             dy: 0,
+            grow: corner && whole ? { ...whole } : null,
           };
           // Refused only if a drag is somehow already live, in which case the
           // press is not ours to take --- and `moving` must not be left set, or
@@ -6014,7 +6065,12 @@ export class Viewer {
       // Added in device pixels rather than to the quad in points, so that it
       // reaches the strokes below by the same two numbers. Offsetting the quad
       // instead would move the rectangle and leave a drawing's strokes behind.
-      const shift = this.moving?.id === mark.id ? this.moving : null;
+      const live = this.moving?.id === mark.id ? this.moving : null;
+      // A corner drag changes the size and leaves the place: the same two
+      // numbers, added to the rectangle's far sides and not to all of it.
+      const shift = live && !live.grow ? live : null;
+      const gx = live?.grow ? live.dx * this.zoom * dpr : 0;
+      const gy = live?.grow ? live.dy * this.zoom * dpr : 0;
       const ox = shift ? shift.dx * this.zoom * dpr : 0;
       const oy = shift ? shift.dy * this.zoom * dpr : 0;
       // **Ink is drawn from its strokes and never from its quad**, which is the
@@ -6070,8 +6126,18 @@ export class Viewer {
         const band = markBand(mark.kind, quad);
         const left = (origin.left + band.left * this.zoom) * dpr + ox;
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
-        const width = (band.right - band.left) * this.zoom * dpr;
-        const height = (band.bottom - band.top) * this.zoom * dpr;
+        const width = (band.right - band.left) * this.zoom * dpr + gx;
+        const height = (band.bottom - band.top) * this.zoom * dpr + gy;
+        if (isResizable(mark.kind) && this.markNote.openId === mark.id) {
+          // The corner a resize is dragged by, shown on the mark whose box is
+          // open: that is the one a reader has said they mean.
+          const side = 7 * dpr;
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = markInk(mark.color, false);
+          ctx.fillRect(left + width - side / 2, top + height - side / 2, side, side);
+          ctx.restore();
+        }
         if (style === "image" && mark.image) {
           let image = this.signatureImages.get(mark.id);
           if (!image) { image = signatureCanvas(mark.image); this.signatureImages.set(mark.id, image); }
@@ -6193,6 +6259,15 @@ export class Viewer {
           ctx.setLineDash([4 * dpr, 3 * dpr]);
           ctx.strokeRect(left, top, width, height);
           ctx.setLineDash([]);
+          if (mark.field?.border && mark.field.kind !== "checkbox") {
+            // The line the saved field will draw round itself, inside the
+            // dashed frame: solid, black and one point, as `formfields.rs`
+            // writes it.
+            const line = Math.max(1, this.zoom * dpr);
+            ctx.strokeStyle = "rgb(0, 0, 0)";
+            ctx.lineWidth = line;
+            ctx.strokeRect(left + line * 1.5, top + line * 1.5, width - line * 3, height - line * 3);
+          }
           const size = Math.min(FIELD_LABEL_PT * this.zoom * dpr, height * 0.8);
           if (size >= 6 * dpr) {
             ctx.beginPath();

@@ -266,6 +266,13 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     only = set(fields) == set(wanted)
     ok &= only
     print(f"{'[OK]  ' if only else '[FAIL]'} and no other field: {sorted(fields)}")
+    # One field was placed with a line round it and one with the line turned
+    # off; a checkbox declares none. The file is written without object
+    # streams, so the key a border is declared by can be counted in its bytes.
+    declared = saved.read_bytes().count(b"/BC")
+    good = declared == 1
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} one field declares a border, the one placed with it: {declared}")
     filled = saved.with_name("filled.pdf")
     answers = saved.with_name("answers.json")
     answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True}))

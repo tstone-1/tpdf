@@ -55,7 +55,40 @@ pub struct NewField {
     /// The most characters a text field takes.
     #[serde(default)]
     pub max_length: Option<u32>,
+    /// Whether a text field draws a thin black line round itself.
+    ///
+    /// An empty text field otherwise draws nothing, which is right on a page
+    /// that already shows a line or a box to write on and leaves a field on a
+    /// blank area invisible. A checkbox always draws its box and ignores this.
+    #[serde(default)]
+    pub border: bool,
 }
+
+/// What a field placed in the window is: its kind, and whether it is framed.
+///
+/// The payload of a `MarkKind::Field` mark. Its name is the mark's note and its
+/// rectangle the mark's quad, so these two are all that is left to say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Placed {
+    pub kind: Kind,
+    /// [`NewField::border`].
+    #[serde(default)]
+    pub border: bool,
+}
+
+impl From<Kind> for Placed {
+    /// A field of this kind with no border, which is what `tpdf form` adds
+    /// unless it is asked for one.
+    fn from(kind: Kind) -> Self {
+        Self {
+            kind,
+            border: false,
+        }
+    }
+}
+
+/// How thick a field's border is, in points.
+pub const BORDER_WIDTH: f64 = 1.0;
 
 /// Fields one call may add. A form of a thousand fields is a large one.
 pub const MAX_NEW: usize = 1000;
@@ -405,12 +438,26 @@ fn widget(
                 widget.set("MaxLen", i64::from(most));
             }
             // The empty appearance §12.7.4.3 describes: marked as the
-            // field's text and holding none.
+            // field's text and holding none. A border is drawn before it, and
+            // declared in `/MK` and `/BS` as well: a reader that redraws the
+            // field, `forms::write` among them, reads it from there.
+            let mut body = Vec::new();
+            if field.border {
+                widget.set("MK", dictionary! { "BC" => vec![Object::Integer(0)] });
+                widget.set(
+                    "BS",
+                    dictionary! { "W" => Object::Real(BORDER_WIDTH as f32), "S" => "S" },
+                );
+                body.extend_from_slice(
+                    forms::border_path(width, height, "0 G", BORDER_WIDTH).as_bytes(),
+                );
+            }
+            body.extend_from_slice(b"/Tx BMC EMC");
             let empty = forms::appearance(
                 doc,
                 width,
                 height,
-                b"/Tx BMC EMC".to_vec(),
+                body,
                 dictionary! { "Font" => dictionary! { "Helv" => font } },
             );
             widget.set("AP", dictionary! { "N" => empty });
@@ -475,8 +522,9 @@ pub fn place(
     page: ObjectId,
     rect: [f64; 4],
     name: &str,
-    kind: Kind,
+    placed: Placed,
 ) -> Result<ObjectId, String> {
+    let kind = placed.kind;
     forms::scan(doc)?;
     if let Some(why) = name_problem(name) {
         return Err(why);
@@ -502,6 +550,7 @@ pub fn place(
         tooltip: None,
         required: false,
         max_length: None,
+        border: placed.border,
     };
     let id = widget(doc, font, page, rect, &field);
     append(doc, form, b"Fields", id)?;

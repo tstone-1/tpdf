@@ -382,6 +382,9 @@ export interface AppActions {
    * reader renames it in the box that opens.
    */
   drawField(kind: import("./pages").FieldKind): void;
+  /** Whether a text field placed from now on gets a line round it. */
+  fieldBorder(): boolean;
+  setFieldBorder(border: boolean): void;
   /** Draw or import a visual signature, then place it on a page. */
   signature(): void;
   editText(): void;
@@ -1099,6 +1102,20 @@ export function registerAppCommands(
       title: "Add a form field: checkbox...",
       enabled: withDocument,
       run: () => actions.drawField("checkbox"),
+    },
+    // A preference about the fields placed next, in the shape the launch pair
+    // has: one command per choice, each offered while it is not the current.
+    {
+      id: "edit.fieldBorderOn",
+      title: "Form fields: draw a line round new text fields",
+      enabled: () => !actions.fieldBorder(),
+      run: () => actions.setFieldBorder(true),
+    },
+    {
+      id: "edit.fieldBorderOff",
+      title: "Form fields: no line round new text fields",
+      enabled: () => actions.fieldBorder(),
+      run: () => actions.setFieldBorder(false),
     },
     {
       // Beside the box, and everything the entry above says about arming a mode

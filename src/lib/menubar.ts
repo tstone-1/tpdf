@@ -205,6 +205,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.addTextField",
       "edit.addMultilineField",
       "edit.addCheckbox",
+      "edit.fieldBorderOn",
+      "edit.fieldBorderOff",
       "edit.editText",
       "edit.addSignature",
       // The four stamps, immediately after the text box because a stamp is the

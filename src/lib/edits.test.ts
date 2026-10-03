@@ -472,7 +472,7 @@ describe("Edits", () => {
     core.invoke.mockResolvedValueOnce(state(3));
     await edits.mark(
       "field", pageId(1), [10, 20, 110, 40], [], "Text 1", null, null, null, INK_WIDTH, undefined,
-      "multiline",
+      { kind: "multiline", border: true },
     );
     expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", {
       doc: 9,
@@ -482,7 +482,7 @@ describe("Edits", () => {
         quads: [10, 20, 110, 40],
         strokes: [],
         stamp: null,
-        field: "multiline",
+        field: { kind: "multiline", border: true },
         reply_to: null,
         color: [0.15, 0.35, 0.9],
         width: INK_WIDTH,
@@ -491,6 +491,18 @@ describe("Edits", () => {
       },
     });
     // The control is the test above: a highlight's payload has no `field` key.
+  });
+
+  it("sends a resize as the mark and its new rectangle", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockResolvedValueOnce(state(3, {}, [mark(4, 1)]));
+    const after = await edits.resize(4, [10, 20, 60, 50]);
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_resize", {
+      doc: 9, mark: 4, rect: [10, 20, 60, 50],
+    });
+    expect(after.marks).toHaveLength(1);
   });
 
   it("sends each kind with its own colour", async () => {

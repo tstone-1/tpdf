@@ -290,18 +290,22 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Draw on a page** — freehand ink, a box, an ellipse, a text box, or a comment placed
   where you press. Each is a real annotation of its own kind rather than ink pretending to
   be one, so another reader gets a comment they can open and a shape they can select. What
-  you have drawn can be dragged to somewhere else on its page afterwards.
+  you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
+  ellipse or a text box can be resized by its lower right corner.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
 - **Add form fields** — *Add a form field: text*, *text on several lines* or *checkbox*,
   then drag the rectangle where it goes. The field shows as a dashed frame with its name,
-  `Text 1` or `Checkbox 1` to begin with; press it to rename it, drag it to move it, and
-  remove or undo it like any other mark. Saving writes it into the document as a real form
-  field that tpdf, Acrobat and Preview can fill. A document with no form gets one. An
-  empty text field draws nothing once saved, as in most forms, so place it where the page
-  shows a line or a box. Not yet: resizing a placed field (remove it and drag again),
-  dropdowns, radio buttons and list boxes, and a field on a turned page, which the save
-  refuses and says so. `tpdf form` adds fields from a list on the command line.
-  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox -->
+  `Text 1` or `Checkbox 1` to begin with; press it to rename it, drag it to move it, drag
+  its lower right corner to resize it, and remove or undo it like any other mark. Saving
+  writes it into the document as a real form field that tpdf, Acrobat and Preview can
+  fill. A document with no form gets one. A text field is drawn with a thin black line
+  round it, so that an empty one can be found on the page; *Form fields: no line round
+  new text fields* turns that off for the fields placed next, which suits a page that
+  already prints its own lines, and tpdf remembers the choice. Filling a field keeps its
+  line. Not yet: dropdowns, radio buttons and list boxes, and a field on a turned page,
+  which the save refuses and says so. `tpdf form` adds fields from a list on the command
+  line.
+  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.fieldBorderOn edit.fieldBorderOff -->
 - **Choose a colour** for a mark — seven of them, the default among them. Chosen with a
   note open it recolours that mark; chosen with none open it sets what the next one will
   be, which is the commoner of the two and is why it is offered either way.
@@ -1286,8 +1290,8 @@ and answer it had. The list is a JSON array (`--fields -` reads it from standard
 
 `kind` is `text` (one line), `multiline` or `checkbox`. `page` counts from 1, and `rect`
 is `[left, top, width, height]` in points from the top-left corner of the page as it is
-displayed, the way `tpdf crop --rect` measures. `tooltip`, `required` and `max_length` are
-optional. A text field is at least 8 by 8 points and a checkbox 6 by 6. An empty text
+displayed, the way `tpdf crop --rect` measures. `tooltip`, `required`, `max_length` and
+`border` are optional; `"border": true` draws a thin black line round a text field. A text field is at least 8 by 8 points and a checkbox 6 by 6. An empty text
 field draws nothing on the page, as in most forms, so put it where the page already shows
 a line or a box; a checkbox draws its own box.
 

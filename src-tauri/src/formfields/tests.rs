@@ -86,6 +86,7 @@ fn field(name: &str, kind: Kind, page: u32, rect: [f64; 4]) -> NewField {
         tooltip: None,
         required: false,
         max_length: None,
+        border: false,
     }
 }
 
@@ -354,6 +355,133 @@ fn a_text_field_of_any_height_it_may_have_takes_one_line() {
         assert_eq!(answered, Ok(()), "a field {height} points high");
         height += 0.25;
     }
+}
+
+/// The content of a widget's normal appearance, as text.
+fn appearance_of(doc: &Document, widget: ObjectId) -> String {
+    let normal = doc
+        .get_dictionary(widget)
+        .unwrap()
+        .get(b"AP")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"N")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let stream = doc.get_object(normal).unwrap().as_stream().unwrap();
+    String::from_utf8_lossy(&stream.content).into_owned()
+}
+
+#[test]
+fn a_text_field_asked_for_a_border_draws_one_and_declares_it() {
+    let mut doc = document(Held::Absent, false);
+    add(
+        &mut doc,
+        &[
+            NewField {
+                border: true,
+                ..field("Framed", Kind::Text, 0, [20.0, 30.0, 200.0, 20.0])
+            },
+            field("Plain", Kind::Text, 0, [20.0, 60.0, 200.0, 20.0]),
+            NewField {
+                border: true,
+                ..field("Box", Kind::Checkbox, 0, [20.0, 90.0, 14.0, 14.0])
+            },
+        ],
+    )
+    .unwrap();
+    let doc = reloaded(&mut doc);
+    let form = scan(&doc).unwrap();
+    let id = |name: &str| form.widgets.iter().find(|w| w.name == name).unwrap().widget;
+    // Inset by half the line, so the appearance's own box does not clip it.
+    assert_eq!(
+        appearance_of(&doc, id("Framed")),
+        "0 G 1 w 0.5 0.5 199 19 re S /Tx BMC EMC"
+    );
+    let framed = doc.get_dictionary(id("Framed")).unwrap();
+    let colour = framed
+        .get(b"MK")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"BC")
+        .unwrap();
+    assert_eq!(colour.as_array().unwrap().len(), 1, "one number: grey");
+    assert_eq!(colour.as_array().unwrap()[0].as_float().unwrap(), 0.0);
+    let style = framed.get(b"BS").unwrap().as_dict().unwrap();
+    assert_eq!(style.get(b"W").unwrap().as_float().unwrap(), 1.0);
+    assert_eq!(style.get(b"S").unwrap().as_name().unwrap(), b"S");
+    // The control: a field not asked for one has neither.
+    assert_eq!(appearance_of(&doc, id("Plain")), "/Tx BMC EMC");
+    let plain = doc.get_dictionary(id("Plain")).unwrap();
+    assert!(!plain.has(b"MK") && !plain.has(b"BS"));
+    // A checkbox draws its own box whatever is asked.
+    let checkbox = doc.get_dictionary(id("Box")).unwrap();
+    assert!(!checkbox.has(b"MK") && !checkbox.has(b"BS"));
+}
+
+#[test]
+fn an_answer_keeps_the_border_the_field_declares() {
+    let answered = |change: &dyn Fn(&mut Dictionary)| {
+        let mut doc = document(Held::Absent, false);
+        add(
+            &mut doc,
+            &[NewField {
+                border: true,
+                ..field("Name", Kind::Text, 0, [20.0, 30.0, 200.0, 20.0])
+            }],
+        )
+        .unwrap();
+        let mut doc = reloaded(&mut doc);
+        let widget = scan(&doc).unwrap().widgets[0].widget;
+        change(doc.get_dictionary_mut(widget).unwrap());
+        write(
+            &mut doc,
+            &[Change {
+                object: widget,
+                value: Value::Text("Ada".into()),
+            }],
+        )
+        .unwrap();
+        appearance_of(&doc, widget)
+    };
+    let colour = |numbers: &[f32]| {
+        dictionary! { "BC" => numbers.iter().map(|n| Object::Real(*n)).collect::<Vec<_>>() }
+    };
+    // As written: black, one point, after the white fill and before the text.
+    let kept = answered(&|_| {});
+    assert!(
+        kept.starts_with(
+            "q 1 1 1 rg 0 0 200 20 re f 0 G 1 w 0.5 0.5 199 19 re S 0 0 200 20 re W n"
+        ),
+        "{kept}"
+    );
+    assert!(kept.contains("Tj"), "the answer is drawn too: {kept}");
+    // A colour another producer wrote, in each of the three spaces.
+    assert!(answered(&|w| w.set("MK", colour(&[1.0, 0.0, 0.5]))).contains("1 0 0.5 RG 1 w"));
+    assert!(answered(&|w| w.set("MK", colour(&[0.0, 0.2, 0.0, 1.0]))).contains("0 0.2 0 1 K 1 w"));
+    assert!(answered(&|w| w.set("MK", colour(&[0.5]))).contains("0.5 G 1 w"));
+    // A width another producer wrote, and the one point a missing width means.
+    assert!(
+        answered(&|w| w.set("BS", dictionary! { "W" => 2 })).contains("0 G 2 w 1 1 198 18 re S")
+    );
+    assert!(answered(&|w| {
+        w.remove(b"BS");
+    })
+    .contains("0 G 1 w 0.5 0.5 199 19 re S"));
+    // No colour, a colour that is none, or no width: no border is drawn.
+    let none = |change: &dyn Fn(&mut Dictionary)| !answered(change).contains(" re S");
+    assert!(none(&|w| {
+        w.remove(b"MK");
+    }));
+    assert!(none(&|w| w.set("MK", Dictionary::new())));
+    assert!(none(&|w| w.set("MK", colour(&[0.0, 0.0]))));
+    assert!(none(&|w| w.set("MK", colour(&[1.5]))));
+    assert!(none(&|w| w.set("MK", colour(&[-0.1, 0.0, 0.0]))));
+    assert!(none(&|w| w.set("BS", dictionary! { "W" => 0 })));
+    assert!(none(&|w| w.set("BS", dictionary! { "W" => 13 })));
 }
 
 #[test]

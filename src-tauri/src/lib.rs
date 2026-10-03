@@ -916,6 +916,7 @@ pub fn run() {
             annot_discard,
             annot_recolor,
             annot_move,
+            annot_resize,
             annot_resize_signature,
             signature_store,
             edit_undo,

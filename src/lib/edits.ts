@@ -486,7 +486,7 @@ export class Edits {
     replyTo: readonly [number, number] | null = null,
     width: number = INK_WIDTH,
     image?: import("./signature").SignatureImage,
-    field?: import("./pages").FieldKind,
+    field?: import("./pages").PlacedField,
   ): Promise<EditState> {
     // A page the model has never mentioned, or one that has gone since the
     // gesture started. Nothing is sent, which is what the slot lookup used to
@@ -550,6 +550,11 @@ export class Edits {
    */
   async resizeSignature(mark: number, width: number): Promise<EditState> {
     return this.adopt(await call("annot_resize_signature", { doc: this.doc, mark, width }));
+  }
+
+  /** Gives a box, an ellipse, a text box or a form field a new rectangle. */
+  async resize(mark: number, rect: [number, number, number, number]): Promise<EditState> {
+    return this.adopt(await call("annot_resize", { doc: this.doc, mark, rect }));
   }
 
   async reply(

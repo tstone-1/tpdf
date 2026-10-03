@@ -269,7 +269,7 @@ pub(super) fn write_marks(
         // A field is a widget and a member of the document's form, so it is
         // made there and only attached here, where every mark is attached.
         if mark.kind == MarkKind::Field {
-            let kind = mark
+            let placed = mark
                 .field
                 .ok_or("a form field in the save plan names no kind of field")?;
             // The appearance of a field is drawn upright in the page's own
@@ -281,7 +281,7 @@ pub(super) fn write_marks(
                     mark.at + 1
                 ));
             }
-            let widget = crate::formfields::place(doc, page, rect, &mark.note, kind)?;
+            let widget = crate::formfields::place(doc, page, rect, &mark.note, placed)?;
             attach(doc, page, annots, widget)?;
             continue;
         }

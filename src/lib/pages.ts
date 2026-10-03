@@ -124,6 +124,13 @@ export type MarkKind =
 /** Which kind of form field a placed field is. `formfields::Kind`'s wire names. */
 export type FieldKind = "text" | "multiline" | "checkbox";
 
+/** What a placed field is. `formfields::Placed` on the wire. */
+export interface PlacedField {
+  kind: FieldKind;
+  /** Whether a text field draws a thin line round itself. A checkbox always draws its box. */
+  border: boolean;
+}
+
 /**
  * Which standard stamp a `"stamp"` mark is.
  *
@@ -347,7 +354,7 @@ export interface MarkView {
    */
   stamp: StampName | null;
   /** Which kind of form field, for a `field` and absent on everything else. */
-  field?: FieldKind;
+  field?: PlacedField;
   image?: import("./signature").SignatureImage;
   color: [number, number, number];
   /**

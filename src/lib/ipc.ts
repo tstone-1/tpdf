@@ -312,6 +312,10 @@ export interface Commands {
     args: { doc: number; mark: number; dx: number; dy: number };
     reply: EditState;
   };
+  annot_resize: {
+    args: { doc: number; mark: number; rect: [number, number, number, number] };
+    reply: EditState;
+  };
   annot_resize_signature: { args: { doc: number; mark: number; width: number }; reply: EditState };
   signature_store: { args: { action: { kind: "load" } | { kind: "save"; image: import("./signature").SignatureImage } | { kind: "forget" } }; reply: import("./signature").SignatureImage | null };
   edit_undo: { args: { doc: number }; reply: EditState };

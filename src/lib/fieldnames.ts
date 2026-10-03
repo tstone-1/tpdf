@@ -42,6 +42,40 @@ export function takenNames(
   return taken;
 }
 
+type Store = Pick<Storage, "getItem" | "setItem">;
+
+const BORDER_KEY = "tpdf.fieldBorder";
+
+/**
+ * Whether a text field placed from now on is drawn with a line round it.
+ *
+ * On unless the reader turned it off. An empty text field otherwise draws
+ * nothing once saved, so a field placed on a blank part of a page would be
+ * something its maker cannot find again; a reader placing fields on a page
+ * that already prints its own lines turns this off. Storage that throws, or
+ * that holds anything tpdf did not write, reads as on.
+ */
+export function readFieldBorder(storage: () => Store = () => window.localStorage): boolean {
+  try {
+    return storage().getItem(BORDER_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+/** Keeps the choice; `false` when storage refused, which changes nothing now. */
+export function writeFieldBorder(
+  border: boolean,
+  storage: () => Store = () => window.localStorage,
+): boolean {
+  try {
+    storage().setItem(BORDER_KEY, String(border));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The first `Text n` or `Checkbox n`, counting from 1, that is not taken. */
 export function nextFieldName(kind: FieldKind, taken: ReadonlySet<string>): string {
   const word = WORDS[kind];

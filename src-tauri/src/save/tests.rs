@@ -10824,6 +10824,7 @@ fn a_plan_that_adds_a_field_is_a_rewrite_and_the_field_lands_on_the_page_it_name
         tooltip: None,
         required: false,
         max_length: None,
+        border: false,
     };
 
     let mut plain = plan_of(&[0, 0]);
@@ -10864,7 +10865,7 @@ fn a_plan_that_adds_a_field_is_a_rewrite_and_the_field_lands_on_the_page_it_name
 fn field_plan(name: &str, kind: crate::formfields::Kind, quad: crate::docmodel::Quad) -> Plan {
     let mut plan = plan_of(&[0, 0]);
     let mut mark = plan_of_kind(MarkKind::Field, vec![quad]).marks.remove(0);
-    mark.field = Some(kind);
+    mark.field = Some(kind.into());
     mark.note = name.to_string();
     plan.marks.push(mark);
     plan
@@ -10907,6 +10908,18 @@ fn a_field_placed_as_a_mark_is_written_as_a_field_of_the_form() {
         }],
     )
     .expect("filled");
+
+    // Asked for a border, it declares one; the field above did not and has none.
+    let mut framed = field_plan("Framed", Kind::Text, quad);
+    framed.marks[0].field = Some(crate::formfields::Placed {
+        kind: Kind::Text,
+        border: true,
+    });
+    let bordered = rewrite_update(&original, &framed, Job::Save, None).expect("rewritten");
+    let with = Document::load_mem(&bordered).expect("the copy parses");
+    let widget = crate::forms::scan(&with).expect("a form").widgets[0].widget;
+    assert!(with.get_dictionary(widget).unwrap().has(b"MK"));
+    assert!(!doc.get_dictionary(field.widget).unwrap().has(b"MK"));
 
     // A checkbox on the second page, through the same door.
     let mut second = field_plan(

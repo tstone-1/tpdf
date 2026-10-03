@@ -12,6 +12,9 @@ import {
   isEllipse,
   isIcon,
   isMovable,
+  isResizable,
+  onResizeCorner,
+  grown,
   isOutline,
   isText,
   isWave,
@@ -614,6 +617,41 @@ describe("how the overlay decides to draw a kind", () => {
     expect(isMovable("highlight")).toBe(false);
     // And it is none of the shapes the painter asks about by name.
     expect(isText("field") || isOutline("field") || isIcon("field")).toBe(false);
+  });
+
+  it("resizes the four kinds that are one dragged rectangle, and no other", () => {
+    const kinds: MarkKind[] = [
+      "highlight", "underline", "strikeout", "squiggly", "note", "square", "ellipse",
+      "textbox", "ink", "stamp", "signature", "field",
+    ];
+    expect(kinds.filter(isResizable)).toEqual(["square", "ellipse", "textbox", "field"]);
+  });
+
+  it("takes the corner within reach of the lower right, inside or out", () => {
+    const quad = { left: 10, top: 20, right: 110, bottom: 60 };
+    for (const [x, y] of [[110, 60], [106, 56], [114, 64], [106, 64], [114, 56]] as const) {
+      expect(onResizeCorner(quad, { x, y }, 4), `${x},${y}`).toBe(true);
+    }
+    // One step past reach on either axis, and the other three corners.
+    for (const [x, y] of [[105.9, 60], [110, 55.9], [114.1, 60], [110, 64.1], [10, 20], [110, 20], [10, 60]] as const) {
+      expect(onResizeCorner(quad, { x, y }, 4), `${x},${y}`).toBe(false);
+    }
+  });
+
+  it("moves the lower right corner and holds it to the page and to a least size", () => {
+    const quad = { left: 10, top: 20, right: 110, bottom: 60 };
+    const page = { width: 300, height: 200 };
+    expect(grown(quad, 15, -10, page, 8)).toEqual({ left: 10, top: 20, right: 125, bottom: 50 });
+    // Never past the page.
+    expect(grown(quad, 500, 500, page, 8)).toEqual({ left: 10, top: 20, right: 300, bottom: 200 });
+    // Never through its own upper left: the least side is kept.
+    expect(grown(quad, -500, -500, page, 8)).toEqual({ left: 10, top: 20, right: 18, bottom: 28 });
+    expect(grown(quad, -95, -35, page, 6)).toEqual({ left: 10, top: 20, right: 16, bottom: 26 });
+    // A rectangle that starts closer to the edge than the least stays on the page.
+    const tight = { left: 296, top: 196, right: 299, bottom: 199 };
+    expect(grown(tight, -10, -10, page, 8)).toEqual({ left: 296, top: 196, right: 300, bottom: 200 });
+    // Nothing dragged is nothing changed.
+    expect(grown(quad, 0, 0, page, 8)).toEqual(quad);
   });
 
   it("gives the two kinds that used to fall through a style of their own", () => {

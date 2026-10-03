@@ -42,7 +42,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number;
+    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -77,6 +77,7 @@ function harness(
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
   let restoring = update.restoreTabs ?? false;
+  let framing = update.fieldBorder ?? true;
   let diskMode: DiskChangeMode = update.disk ?? "ask";
   const actions: AppActions = {
     editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); },
@@ -167,6 +168,8 @@ function harness(
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     drawField: (kind) => fired.push(`drawField:${kind}`),
+    fieldBorder: () => framing,
+    setFieldBorder: (border) => { framing = border; fired.push(`setFieldBorder:${border}`); },
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     hasSelection: () => selected,
@@ -395,6 +398,23 @@ describe("the form field commands", () => {
   });
 });
 
+describe("the border of a new text field", () => {
+  it("offers only the choice that is not the current one, with or without a document", () => {
+    for (const open of [true, false]) {
+      for (const framing of [true, false]) {
+        const { registry, fired } = harness(open, { fieldBorder: framing });
+        const available = framing ? "edit.fieldBorderOff" : "edit.fieldBorderOn";
+        const unavailable = framing ? "edit.fieldBorderOn" : "edit.fieldBorderOff";
+        expect(registry.run(unavailable)).toBe(false);
+        expect(fired).toEqual([]);
+        expect(registry.run(available)).toBe(true);
+        expect(fired).toEqual([`setFieldBorder:${!framing}`]);
+        expect(registry.run(available)).toBe(false);
+      }
+    }
+  });
+});
+
 describe("the commands that bring tabs back", () => {
   it("offers only the launch choice that is not the current one", () => {
     for (const restoring of [true, false]) {
@@ -586,6 +606,9 @@ describe("the commands a document is needed for", () => {
       "app.installCommandLineTool",
       "app.uninstallCommandLineTool",
       "app.makeDefaultPdfApp",
+      // A preference about fields placed next, on by default, so turning it
+      // off is the one of its pair on offer.
+      "edit.fieldBorderOff",
     ]);
   });
 
@@ -653,7 +676,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number;
+      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean;
     }) => harness(
       true,
       update,
@@ -688,7 +711,9 @@ describe("every registered command", () => {
     // the update pair needs two: each `file.onDiskChange.*` command is withheld
     // while its mode is the current one, so no single state offers all three.
     // And the launch pair, which is the update pair's shape again.
-    const applied = built({ available: true, ready: true, disk: "reload", restoreTabs: true });
+    const applied = built({
+      available: true, ready: true, disk: "reload", restoreTabs: true, fieldBorder: false,
+    });
     const states = [found, applied];
     const shell = found.registry
       .all()
@@ -1549,6 +1574,8 @@ describe("the window shortcuts for editing", () => {
       stamp: (name: StampName) => fired.push(`stamp:${name}`),
       drawTextBox: () => fired.push("drawTextBox"),
       drawField: (kind) => fired.push(`drawField:${kind}`),
+      fieldBorder: () => true,
+      setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
       hasSelection: () => false,

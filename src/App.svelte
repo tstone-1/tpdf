@@ -140,7 +140,9 @@
     type Place,
     type Session,
   } from "./lib/session";
-  import { nextFieldName, takenNames } from "./lib/fieldnames";
+  import {
+    nextFieldName, readFieldBorder, takenNames, writeFieldBorder,
+  } from "./lib/fieldnames";
   import {
     TabRecorder, afterReopen, launchPlan, openBehind, tabsToReopen, type TabHost,
   } from "./lib/tabrestore";
@@ -187,6 +189,8 @@
   let formNames: string[] = [];
   /** Which kind of form field the armed tool places. */
   let armedField: FieldKind = "text";
+  /** Whether a text field placed from now on gets a line round it. */
+  let fieldBorder = readFieldBorder();
   let textEditor: TextEditor | null = null;
   let textEditorGeneration = 0;
 
@@ -765,6 +769,16 @@
     stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
     drawField: (kind) => { armedField = kind; viewer?.armDraw("field"); },
+    fieldBorder: () => fieldBorder,
+    setFieldBorder: (border) => {
+      fieldBorder = border;
+      const kept = writeFieldBorder(border);
+      notice = (border
+        ? "Text fields placed from now on are drawn with a line round them."
+        : "Text fields placed from now on draw nothing until they are filled.")
+        + (kept ? "" : " The choice could not be saved and lasts until tpdf closes.");
+      refreshMenu();
+    },
     signature: () => void addSignature(),
     editText: () => void editExistingText(),
     draw: () => viewer?.armDraw("ink"),
@@ -1008,9 +1022,9 @@
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
     // A field has to have a name the moment it exists. See `fieldnames.ts`.
-    const field = kind === "field" ? armedField : undefined;
+    const field = kind === "field" ? { kind: armedField, border: fieldBorder } : undefined;
     const name = field
-      ? nextFieldName(field, takenNames(formNames, edits?.state.marks ?? []))
+      ? nextFieldName(field.kind, takenNames(formNames, edits?.state.marks ?? []))
       : "";
     await applyEdit((e) =>
       e.mark(
@@ -4056,6 +4070,7 @@
         onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
         onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
         onSignatureResize: (id, width) => void applyEdit((e) => e.resizeSignature(id, width)),
+        onMarkResized: (id, rect) => void applyEdit((e) => e.resize(id, rect)),
         onErased: (mark, remove, sweep) =>
           void applyEdit((e) => e.erase(mark, remove, sweep)),
         // The same sweep's other half: a mark with no parts to lose goes whole.

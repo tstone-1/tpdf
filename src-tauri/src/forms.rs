@@ -816,7 +816,13 @@ fn write_text_appearance(
     let width = widget.rect[2] - widget.rect[0];
     let height = widget.rect[3] - widget.rect[1];
     let font = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding" });
-    let mut body = format!("q 1 1 1 rg 0 0 {width} {height} re f 0 0 {width} {height} re W n\n");
+    let mut body = format!("q 1 1 1 rg 0 0 {width} {height} re f ");
+    // The field's own border, redrawn over the fill that would otherwise paint
+    // it out: until 2026-10-03 an answered field lost its frame.
+    if let Some((color, line)) = border_of(doc, widget.widget) {
+        body.push_str(&border_path(width, height, &color, line));
+    }
+    body.push_str(&format!("0 0 {width} {height} re W n\n"));
     let list = matches!(widget.control, Control::Choice { combo: false, .. });
     let top = selected.first().copied().unwrap_or(0);
     for (i, line) in lines.iter().enumerate() {
@@ -847,6 +853,63 @@ fn write_text_appearance(
     w.set("AP", dictionary! { "N" => ap });
     w.remove(b"AS");
     Ok(())
+}
+
+/// A border's stroke, inset by half its width so the appearance's box does not
+/// clip the outer half. `color` is a stroking-colour operator with its numbers.
+pub(crate) fn border_path(width: f64, height: f64, color: &str, line: f64) -> String {
+    let half = line / 2.0;
+    format!(
+        "{color} {line} w {half} {half} {} {} re S ",
+        (width - line).max(0.0),
+        (height - line).max(0.0)
+    )
+}
+
+/// The border a widget declares: its colour as a stroking operator, and its
+/// width. `None` when it declares no colour, which §12.5.6.19 reads as no
+/// border, or a width of nothing.
+///
+/// `/MK /BC` holds one number for grey, three for RGB and four for CMYK; any
+/// other count, or a number outside 0 to 1, is no colour this can draw.
+fn border_of(doc: &Document, widget: ObjectId) -> Option<(String, f64)> {
+    let dict = doc.get_dictionary(widget).ok()?;
+    let resolved = |key: &[u8]| {
+        dict.get(key)
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_dict().ok())
+    };
+    // Kept as the `f32` the file holds, so that 0.2 is written back as 0.2.
+    let numbers: Vec<f32> = resolved(b"MK")?
+        .get(b"BC")
+        .ok()
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_array().ok())?
+        .iter()
+        .map(lopdf::Object::as_float)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    if !numbers.iter().all(|n| (0.0..=1.0).contains(n)) {
+        return None;
+    }
+    let operator = match numbers.len() {
+        1 => "G",
+        3 => "RG",
+        4 => "K",
+        _ => return None,
+    };
+    // One point when the widget says nothing, which is the specification's
+    // default for `/BS /W`.
+    let line = resolved(b"BS")
+        .and_then(|style| style.get(b"W").ok())
+        .and_then(|w| w.as_float().ok())
+        .map_or(1.0, f64::from);
+    if !line.is_finite() || line <= 0.0 || line > 12.0 {
+        return None;
+    }
+    let color: Vec<String> = numbers.iter().map(|n| format!("{n}")).collect();
+    Some((format!("{} {operator}", color.join(" ")), line))
 }
 
 /// A checkbox's two looks: an empty bordered box, and the same box crossed.

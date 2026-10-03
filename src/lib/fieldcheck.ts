@@ -69,21 +69,49 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
   check("the text field command arms the field tool", armed === "field", String(armed));
   check(
     "a drag places a text field with a name of its own",
-    fields().length === 1 && first?.field === "text" && first.note === "Text 1",
-    `${fields().length} fields: ${names()}; kind ${first?.field}`,
+    fields().length === 1 && first?.field?.kind === "text" && first.note === "Text 1",
+    `${fields().length} fields: ${names()}; kind ${first?.field?.kind}`,
   );
   check("the tool is spent by the drag", viewer.drawArmed === null, String(viewer.drawArmed));
+  check("a text field is placed with a line round it, by default", first?.field?.border === true, String(first?.field?.border));
+
+  // Dragged by its lower right corner, it grows, and stays where it was.
+  if (first) {
+    const anchor = viewer.markAnchor(first.id);
+    const was = [...first.quads];
+    if (anchor) {
+      const corner = { x: box.left + anchor.right, y: box.top + anchor.bottom };
+      drag(root, corner, { x: corner.x + 60, y: corner.y + 12 });
+      await settle(() => fields()[0]?.quads[2] !== was[2], SETTLE_MS);
+      await host.idle();
+    }
+    const now = fields()[0]?.quads ?? [];
+    check(
+      "dragging its corner makes it larger and leaves its upper left where it was",
+      now[0] === was[0] && now[1] === was[1] && (now[2] ?? 0) > (was[2] ?? 0) && (now[3] ?? 0) > (was[3] ?? 0),
+      `${was.map((v) => v.toFixed(1))} to ${now.map((v) => v.toFixed(1))}`,
+    );
+    host.run("edit.undo");
+    await host.idle();
+    check("undo gives it its size back", (fields()[0]?.quads ?? []).join() === was.join(), String(fields()[0]?.quads));
+    host.run("edit.redo");
+    await host.idle();
+  }
 
   await place("edit.addCheckbox", at(0.3, 0.3), at(0.33, 0.33));
-  const box1 = fields().find((mark) => mark.field === "checkbox");
+  const box1 = fields().find((mark) => mark.field?.kind === "checkbox");
   check(
     "the checkbox command places a checkbox, named apart from the text field",
     fields().length === 2 && box1?.note === "Checkbox 1",
     names(),
   );
 
+  // With the line turned off, the next text field has none.
+  host.run("edit.fieldBorderOff");
   await place("edit.addMultilineField", at(0.3, 0.4), at(0.6, 0.5));
-  const lines = fields().find((mark) => mark.field === "multiline");
+  host.run("edit.fieldBorderOn");
+  const lines = fields().find((mark) => mark.field?.kind === "multiline");
+  check("a field placed with the line turned off has none", lines?.field?.border === false, String(lines?.field?.border));
   check(
     "the several-lines command places one, and it takes the next free name",
     fields().length === 3 && lines?.note === "Text 2",

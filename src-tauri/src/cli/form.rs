@@ -114,6 +114,8 @@ struct Spec {
     required: bool,
     #[serde(default)]
     max_length: Option<u32>,
+    #[serde(default)]
+    border: bool,
 }
 
 /// The fields a list asks for, or why it is not a list of fields.
@@ -144,6 +146,7 @@ pub fn fields(text: &str) -> Result<Vec<NewField>, String> {
                 tooltip: spec.tooltip,
                 required: spec.required,
                 max_length: spec.max_length,
+                border: spec.border,
             })
         })
         .collect()
@@ -422,7 +425,7 @@ mod tests {
         let asked = fields(
             r#"[{"name":"Name","kind":"text","page":1,"rect":[72,100,200,20],"max_length":40},
                 {"name":"Agree","kind":"checkbox","page":3,"rect":[72,140,12,12],
-                 "tooltip":"Tick to agree","required":true}]"#,
+                 "tooltip":"Tick to agree","required":true,"border":true}]"#,
         )
         .unwrap();
         assert_eq!(asked.len(), 2);
@@ -430,6 +433,7 @@ mod tests {
         assert_eq!(asked[0].max_length, Some(40));
         assert_eq!(asked[1].tooltip.as_deref(), Some("Tick to agree"));
         assert!(asked[1].required && !asked[0].required);
+        assert!(asked[1].border && !asked[0].border);
 
         for (text, why) in [
             ("{}", "not a JSON array of fields"),
@@ -480,6 +484,7 @@ mod tests {
             tooltip: None,
             required: false,
             max_length: None,
+            border: false,
         }
     }
 

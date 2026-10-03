@@ -253,7 +253,7 @@ pub struct MarkView {
     pub stamp: Option<StampName>,
     /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field: Option<crate::formfields::Kind>,
+    pub field: Option<crate::formfields::Placed>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
@@ -432,7 +432,7 @@ pub struct NewMark {
     pub stamp: Option<StampName>,
     /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field: Option<crate::formfields::Kind>,
+    pub field: Option<crate::formfields::Placed>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
@@ -1783,6 +1783,42 @@ impl Edits {
     }
 
     /// Changes a signature's width in page points as one undoable edit.
+    /// Gives a box, an ellipse, a text box or a form field a new rectangle,
+    /// `[left, top, right, bottom]` in display space as a mark's quads are.
+    ///
+    /// # Errors
+    ///
+    /// The model's refusals, and a form field made smaller than a field of its
+    /// kind may be: `formfields::place` would refuse it at the save, and a
+    /// reader is better told while they are still holding the corner.
+    pub fn reshape(&self, doc: u32, mark: u64, rect: [f32; 4]) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
+        let id = MarkId::from_raw(mark);
+        if let Some(placed) = model.mark(id).and_then(|m| m.field) {
+            let least = crate::formfields::least_side(placed.kind) as f32;
+            if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
+                return Err(format!(
+                    "a field of this kind is at least {least} by {least} points"
+                ));
+            }
+        }
+        model
+            .reshape(
+                id,
+                Quad {
+                    left: rect[0],
+                    top: rect[1],
+                    right: rect[2],
+                    bottom: rect[3],
+                },
+            )
+            .map_err(describe)?;
+        Ok(reply(open))
+    }
+
     pub fn resize_signature(&self, doc: u32, mark: u64, width: f32) -> Result<EditState, String> {
         self.wake(doc);
         let mut docs = self.docs.lock().expect("edits lock");
@@ -2613,7 +2649,7 @@ pub struct PlannedMark {
     pub stamp: Option<StampName>,
     /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field: Option<crate::formfields::Kind>,
+    pub field: Option<crate::formfields::Placed>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
@@ -5026,7 +5062,7 @@ mod tests {
 
     fn a_field(page: u64, name: &str, kind: crate::formfields::Kind) -> NewMark {
         NewMark {
-            field: Some(kind),
+            field: Some(kind.into()),
             note: name.to_string(),
             ..of_kind(MarkKind::Field, page)
         }
@@ -5042,11 +5078,11 @@ mod tests {
             .expect("placed");
         assert_eq!(state.marks.len(), 1);
         assert_eq!(state.marks[0].kind, MarkKind::Field);
-        assert_eq!(state.marks[0].field, Some(Kind::Checkbox));
+        assert_eq!(state.marks[0].field, Some(Kind::Checkbox.into()));
         assert_eq!(state.marks[0].note, "Agree");
 
         let plan = edits.plan(7).expect("a plan");
-        assert_eq!(plan.marks[0].field, Some(Kind::Checkbox));
+        assert_eq!(plan.marks[0].field, Some(Kind::Checkbox.into()));
         assert_eq!(plan.marks[0].note, "Agree");
         // The control for the line below: a highlight alone is an append.
         let other = opened();
@@ -5061,7 +5097,109 @@ mod tests {
         let json = serde_json::to_value(&other.state(7).expect("open").marks[0]).expect("json");
         assert!(json.get("field").is_none(), "{json}");
         let json = serde_json::to_value(&state.marks[0]).expect("json");
-        assert_eq!(json["field"], "checkbox");
+        assert_eq!(
+            json["field"],
+            serde_json::json!({"kind": "checkbox", "border": false})
+        );
+    }
+
+    #[test]
+    fn a_placed_rectangle_takes_a_new_one_and_gives_it_back_on_undo() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let quads = |state: &EditState, id: u64| {
+            state
+                .marks
+                .iter()
+                .find(|m| m.id == id)
+                .expect("the mark")
+                .quads
+                .clone()
+        };
+        for kind in [MarkKind::Square, MarkKind::Ellipse, MarkKind::TextBox] {
+            let state = edits
+                .annotate(7, of_kind(kind, page), stamped())
+                .expect("placed");
+            let id = state.marks.last().expect("it").id;
+            let state = edits
+                .reshape(7, id, [10.0, 20.0, 60.0, 50.0])
+                .expect("resized");
+            assert_eq!(quads(&state, id), [10.0, 20.0, 60.0, 50.0], "{kind:?}");
+            let state = edits.undo(7).expect("undone");
+            assert_eq!(quads(&state, id), [72.0, 100.0, 300.0, 118.0], "{kind:?}");
+            let state = edits.redo(7).expect("redone");
+            assert_eq!(quads(&state, id), [10.0, 20.0, 60.0, 50.0], "{kind:?}");
+        }
+        // A field too, down to the least a field of its kind may be and no further.
+        let state = edits
+            .annotate(7, a_field(page, "Name", Kind::Text), stamped())
+            .expect("placed");
+        let field = state.marks.last().expect("it").id;
+        assert!(edits.reshape(7, field, [10.0, 20.0, 18.0, 28.0]).is_ok());
+        for small in [[10.0, 20.0, 17.9, 28.0], [10.0, 20.0, 18.0, 27.9]] {
+            assert!(edits
+                .reshape(7, field, small)
+                .expect_err("under the least")
+                .contains("at least 8 by 8"));
+        }
+        let state = edits
+            .annotate(7, a_field(page, "Agree", Kind::Checkbox), stamped())
+            .expect("placed");
+        let checkbox = state.marks.last().expect("it").id;
+        assert!(edits.reshape(7, checkbox, [10.0, 20.0, 16.0, 26.0]).is_ok());
+        assert!(edits
+            .reshape(7, checkbox, [10.0, 20.0, 15.9, 26.0])
+            .expect_err("under the least")
+            .contains("at least 6 by 6"));
+        // A box has no least beyond covering something.
+        let state = edits
+            .annotate(7, of_kind(MarkKind::Square, page), stamped())
+            .expect("placed");
+        let square = state.marks.last().expect("it").id;
+        assert!(edits.reshape(7, square, [10.0, 20.0, 11.0, 21.0]).is_ok());
+    }
+
+    #[test]
+    fn a_mark_that_is_not_one_rectangle_is_not_resized() {
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let highlight = state.marks[0].id;
+        assert!(edits
+            .reshape(7, highlight, [10.0, 20.0, 60.0, 50.0])
+            .expect_err("a highlight takes its shape from words")
+            .contains("Highlight"));
+        let state = edits
+            .annotate(7, of_kind(MarkKind::Square, page), stamped())
+            .expect("placed");
+        let square = state.marks.last().expect("it").id;
+        for nothing in [
+            [10.0, 20.0, 10.0, 50.0],
+            [10.0, 20.0, 60.0, 20.0],
+            [60.0, 20.0, 10.0, 50.0],
+            [10.0, f32::NAN, 60.0, 50.0],
+            [10.0, 20.0, f32::INFINITY, 50.0],
+        ] {
+            assert_eq!(
+                edits
+                    .reshape(7, square, nothing)
+                    .expect_err("covers nothing"),
+                "that mark covers nothing",
+                "{nothing:?}"
+            );
+        }
+        assert!(edits.reshape(7, 999, [10.0, 20.0, 60.0, 50.0]).is_err());
+        assert!(edits.reshape(99, square, [10.0, 20.0, 60.0, 50.0]).is_err());
+        // Nothing above was journalled: the box is where it was placed.
+        let state = edits.state(7).expect("open");
+        let quads = &state
+            .marks
+            .iter()
+            .find(|m| m.id == square)
+            .expect("it")
+            .quads;
+        assert_eq!(quads, &[72.0, 100.0, 300.0, 118.0]);
     }
 
     #[test]
