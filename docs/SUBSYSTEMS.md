@@ -307,10 +307,18 @@ where PDFium generates them: the note icon fills 637 of the 756 pixels in its ow
 the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
 reach before `annots.rs` was the *text*.
 
-## A text layer over a scanned page (`tpdf ocr`)
+## A text layer over a scanned page (`tpdf ocr`, *Recognise text and save as*)
 
 `textlayer.rs` writes recognised words into a page as invisible text; `ocr_layer.rs` decides
-which pages get a layer and what the engine is asked; `cli/ocr.rs` is the command. The plan
+which pages get a layer and what the engine is asked; `cli/ocr.rs` is the tool's command and
+`commands/ocr.rs` the window's. The two differ in who renders: the tool holds a worker
+session and asks for 1024 px tiles, the window asks the render service for the page as one
+tile. The window's copy goes through `save::write_checked_copy`, which shows the staged file
+to a check before the rename and refuses a source that changed; the check opens the staged
+file in the render service and compares each layer with `ocr_layer::reads_back`. Progress is
+the event `tpdf://ocr-progress`, and `ocr_cancel` sets a flag read between pages. On the
+frontend the sentences are `src/lib/recognise.ts`; `App.svelte` keeps the save panel, the
+Stop button and the open of the copy. The plan
 carries the words as `Plan::text_layers`, by baseline page, and `save::rewrite` writes them
 before any page is moved or dropped. A plan carrying a layer is never an append and never the
 identity.

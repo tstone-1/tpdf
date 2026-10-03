@@ -5440,6 +5440,86 @@ fn raster_copy_refuses_changed_bytes_with_the_same_page_count() {
 }
 
 #[test]
+fn a_checked_copy_is_shown_the_staged_file_before_it_has_its_name() {
+    let scratch = Scratch::new("checked-copy-order");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+    let out = scratch.join("copy.pdf");
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+    let seen = std::cell::RefCell::new(None);
+
+    write_checked_copy(&source, &plan, &out, None, &writer, &|staged| {
+        *seen.borrow_mut() = Some((
+            std::fs::read(staged).expect("the staged file is there to read"),
+            staged.to_path_buf(),
+            out.exists(),
+        ));
+        Ok(())
+    })
+    .expect("a copy that passes its check is written");
+
+    let (bytes, staged, named) = seen.into_inner().expect("the check ran");
+    assert_eq!(bytes, b"SYNTHETIC OUTPUT", "it is shown what was written");
+    assert_ne!(staged, out, "and not under the reader's name");
+    assert!(!named, "which does not exist until the check has passed");
+    assert_eq!(std::fs::read(&out).expect("published"), b"SYNTHETIC OUTPUT");
+    assert!(leftovers_beside(&out).is_empty());
+}
+
+#[test]
+fn a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing() {
+    let scratch = Scratch::new("checked-copy-refused");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+    let refuse = |_: &Path| Err(Refusal::from("did not read back"));
+
+    let fresh = scratch.join("fresh.pdf");
+    let why = write_checked_copy(&source, &plan, &fresh, None, &writer, &refuse)
+        .expect_err("the check's refusal is the answer");
+    assert_eq!(why.message, "did not read back");
+    assert!(!fresh.exists(), "nothing under the reader's name");
+    assert!(leftovers_beside(&fresh).is_empty(), "and no staged file");
+
+    let kept = scratch.join("kept.pdf");
+    std::fs::write(&kept, b"AN EARLIER FILE").expect("plant");
+    write_checked_copy(&source, &plan, &kept, None, &writer, &refuse).expect_err("refused");
+    assert_eq!(
+        std::fs::read(&kept).expect("still there"),
+        b"AN EARLIER FILE"
+    );
+    assert!(leftovers_beside(&kept).is_empty());
+}
+
+#[test]
+fn a_checked_copy_refuses_a_changed_source_where_a_plain_copy_proceeds() {
+    let scratch = Scratch::new("checked-copy-changed");
+    let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");
+    std::fs::write(
+        &source,
+        b"%PDF-1.7\nother bytes, of another length entirely\n",
+    )
+    .expect("change the source");
+    let writer = FakeWriter::writing(Ok(b"SYNTHETIC OUTPUT".to_vec()));
+
+    // The control: the same plan and the same changed source, through the
+    // function that proceeds. Without it the refusal below could be anything.
+    let plain = scratch.join("plain.pdf");
+    let copied = write_copy(&source, &plan, &plain, None, &writer).expect("a plain copy proceeds");
+    assert!(copied.changed);
+    writer.asked.borrow_mut().clear();
+
+    let out = scratch.join("copy.pdf");
+    let checked = std::cell::Cell::new(false);
+    let why = write_checked_copy(&source, &plan, &out, None, &writer, &|_| {
+        checked.set(true);
+        Ok(())
+    })
+    .expect_err("a layer read off other pages is not written into these");
+    assert!(why.changed, "{}", why.message);
+    assert!(writer.asked.borrow().is_empty(), "never reaches the writer");
+    assert!(!checked.get() && !out.exists());
+}
+
+#[test]
 fn raster_copy_never_overwrites_its_source() {
     let scratch = Scratch::new("raster-source-overwrite");
     let (source, plan) = staging_subject(&scratch, "source.pdf").expect("subject");

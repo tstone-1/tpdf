@@ -125,6 +125,8 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "file.save",
       "file.saveCopy",
+      // A copy too, and the one of them that destroys nothing.
+      "file.recogniseText",
       // Beside the copy, because it is one --- and after it rather than before,
       // because the reader reaching for this group most often wants the
       // ordinary one and a destructive item above it is a slip waiting to be

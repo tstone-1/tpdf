@@ -1,0 +1,18 @@
+{
+  "pages": [
+    {
+      "page": 1,
+      "words": 40
+    }
+  ],
+  "alreadyText": [
+    2
+  ],
+  "nothingRead": [
+    3
+  ],
+  "tooLarge": [
+    4
+  ],
+  "engine": "vision (26A428)"
+}

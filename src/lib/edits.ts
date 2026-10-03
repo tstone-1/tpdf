@@ -32,6 +32,7 @@ import {
 import { colorFor, type MarkColor } from "./markcolors";
 import { INK_WIDTH } from "./markband";
 import type { PreparedImport } from "./pendingimport";
+import type { Recognised } from "./recognise";
 
 // Re-exported because this is the module a reader of the edit state comes to
 // first, and the declaration lives in `pages.ts` so that the modules which only
@@ -807,6 +808,19 @@ export class Edits {
   async redactRasterCopy(source: string, path: string): Promise<Applied> {
     await this.beforeWrite();
     return await call("redact_raster_copy", { doc: this.doc, source, path });
+  }
+
+  /**
+   * Writes a copy in which the pages that are pictures of text can be searched.
+   *
+   * The source document and this model stay untouched, as with
+   * {@link redactRasterCopy}. The copy is a rewrite of the file, so it passes
+   * the same guard every other write does: a signed document is asked about
+   * before its signatures are invalidated.
+   */
+  async ocrCopy(source: string, path: string): Promise<Recognised> {
+    await this.beforeWrite();
+    return await call("ocr_copy", { doc: this.doc, source, path });
   }
 
   /**

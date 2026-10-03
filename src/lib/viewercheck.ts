@@ -3249,6 +3249,7 @@ async function appCommandChecks(
     saveCopy: () => fired.push("saveCopy"),
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
+    recogniseText: () => fired.push("recogniseText"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -4152,6 +4153,11 @@ async function appCommandChecks(
     {
       id: "file.redactRasterCopy",
       ...shell("redactRasterCopy"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.recogniseText",
+      ...shell("recogniseText"),
       read: () => fired.join(","),
     },
     {

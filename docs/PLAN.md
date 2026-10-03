@@ -16782,7 +16782,18 @@ or after an OS update pays Vision's model compile, 24 s here.
 
 **Not done:**
 
-- The window has no command for it. The path a reader takes is the command-line tool.
+- ~~The window has no command for it.~~ **Built 2026-10-03**: *Recognise text and save as*
+  (`commands/ocr.rs`). It writes a copy and opens it; the open document is not changed and
+  nothing is journalled. `tests/cli/ocr.rs` runs its path in-process on the scan the tool's
+  own check uses and gets the same words in the same places. **Not run by a person in the
+  window yet**: the save panel, the progress line, the Stop button and the open of the copy
+  are `App.svelte`, which no gate reaches.
+- The window refuses a document with unsaved changes. A layer is keyed by the file's page
+  and written before pages move, so a moved or deleted page would not need the refusal; a
+  turned or cropped one would, because the words are placed on the page as the file shows
+  it. Narrowing the refusal to those needs the turn applied to the render and a probe.
+- The window names no language. The engine's default read the German fixture word
+  correctly; a language picker, or the system's language list, is not built.
 - A page that has *any* text is left alone, so a scan with a typed header, a fax line or a
   stamp gets no layer. Deciding by coverage rather than by presence needs a measurement first.
 - A page is read at no more than a 16 MiB image allows, about 208 DPI for A4, because that is

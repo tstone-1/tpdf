@@ -13,9 +13,12 @@
 //! the comparison of places has an allowance. The text is compared by word
 //! overlap, with a tenth allowed for a misread.
 
-use super::{fixture, overlap, scratch, tool, words, Report};
+use super::{fixture, library_dir, overlap, scratch, tool, words, Report};
 use lopdf::{dictionary, Document, Object, Stream};
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use tpdf_lib::recognition::{ocr_copy_asked, Progress, Recognised, CANCELLED, UNSAVED};
+use tpdf_lib::render::{Backend, RenderService};
 
 /// The resolution the scan is rendered at.
 const DPI: u32 = 200;
@@ -117,8 +120,157 @@ fn found(file: &str, query: &str) -> Vec<[f64; 4]> {
         .unwrap_or_default()
 }
 
+fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
+    call: impl FnOnce(Box<dyn FnOnce(Result<T, E>) + Send>),
+) -> Result<T, E> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    call(Box::new(move |result| {
+        let _ = tx.send(result);
+    }));
+    rx.recv_timeout(std::time::Duration::from_secs(120))
+        .unwrap_or_else(|_| Err(E::from("the render service did not answer".to_string())))
+}
+
+/// What the window is asked to do differently from a plain recognition.
+#[derive(Clone, Copy, PartialEq)]
+enum Ask {
+    Plain,
+    /// The reader turned the first page and has not saved.
+    Unsaved,
+    /// The reader pressed Stop before the first page.
+    Stopped,
+    /// The reader pressed Stop while the last page was being read.
+    StoppedReading,
+}
+
+/// The window's *Recognise text*, in this process: the document opened in a
+/// render service with an edit model beside it, as the application holds it.
+/// Returns the answer and the pages progress was reported for.
+fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, Vec<Progress>) {
+    let service = RenderService::start_with(library_dir(), Backend::Worker);
+    let file = std::fs::File::open(path).unwrap();
+    let hashing = file.try_clone().unwrap();
+    let info = wait(|r| service.open_handed(path.to_path_buf(), Some(file), true, None, r))
+        .map_err(|refusal| refusal.reason)
+        .expect("the scan opens");
+    let count = u32::try_from(info.page_count).unwrap();
+    let edits = tpdf_lib::edits::Edits::default();
+    edits.open(
+        info.id,
+        count,
+        Some(tpdf_lib::fingerprint::Opened {
+            file: hashing,
+            what: path.to_path_buf(),
+        }),
+    );
+    if ask == Ask::Unsaved {
+        edits.rotate(info.id, 1, 1).expect("the page turns");
+    }
+    let seen = std::sync::Mutex::new(Vec::new());
+    let stop = AtomicBool::new(ask == Ask::Stopped);
+    let answer = ocr_copy_asked(
+        &service,
+        info.id,
+        edits.plan(info.id).expect("a plan"),
+        path,
+        out,
+        None,
+        library_dir(),
+        Vec::new(),
+        &stop,
+        &|at| {
+            seen.lock().unwrap().push(at);
+            if ask == Ask::StoppedReading {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        },
+    );
+    (answer, seen.into_inner().unwrap())
+}
+
 fn text_of(file: &str) -> String {
     tool(&["text", file], &[]).1
+}
+
+/// The window's command on the same scan: the same words in the same places,
+/// and its three refusals leave nothing behind.
+fn window_path(report: &mut Report, source: &str, scanned: &str, out: &str, refused: &str) {
+    let (answer, seen) = app_path(Path::new(scanned), Path::new(out), Ask::Plain);
+    report.check(
+        "the window's path gives the one page a layer and reports the page it read",
+        answer.as_ref().is_ok_and(|read| {
+            read.pages.len() == 1
+                && read.pages[0].page == 1
+                && read.pages[0].words > 0
+                && read.already_text.is_empty()
+                && !read.engine.is_empty()
+        }) && seen == [Progress { page: 1, of: 1 }],
+        &format!("{answer:?}; {seen:?}"),
+    );
+    if answer.is_err() {
+        return;
+    }
+    let (want, got) = (words(&text_of(source)), words(&text_of(out)));
+    let shared = overlap(&want, &got);
+    let (theirs, ours) = (found(source, "quartz"), found(out, "quartz"));
+    let near = theirs.len() == 1 && ours.len() == 1 && {
+        let ((ax, ay), (bx, by)) = (centre(theirs[0]), centre(ours[0]));
+        (ax - bx).abs() <= NEAR_PT && (ay - by).abs() <= NEAR_PT
+    };
+    report.check(
+        "the window's copy reads the source's words and finds one where the source has it",
+        shared >= 0.9 && near,
+        &format!("{shared:.2}; {ours:?} against {theirs:?}"),
+    );
+
+    let staging_left = || {
+        std::fs::read_dir(Path::new(refused).parent().unwrap())
+            .unwrap()
+            .filter(|entry| {
+                let name = entry.as_ref().unwrap().file_name();
+                let name = name.to_string_lossy().into_owned();
+                !name.ends_with(".pdf") && !name.ends_with(".png")
+            })
+            .count()
+    };
+    let before = staging_left();
+    // `started` is how many pages were begun: a stop asked for before the
+    // first page begins none, and one asked for during the only page begins it
+    // and still writes nothing.
+    for (what, from, ask, wording, started) in [
+        ("with unsaved changes", scanned, Ask::Unsaved, UNSAVED, 0),
+        (
+            "stopped before its first page",
+            scanned,
+            Ask::Stopped,
+            CANCELLED,
+            0,
+        ),
+        (
+            "stopped during its last page",
+            scanned,
+            Ask::StoppedReading,
+            CANCELLED,
+            1,
+        ),
+        (
+            "whose pages all have text",
+            out,
+            Ask::Plain,
+            "already has text",
+            1,
+        ),
+    ] {
+        let (answer, seen) = app_path(Path::new(from), Path::new(refused), ask);
+        report.check(
+            &format!("the window's path refuses a document {what} and writes nothing"),
+            answer.as_ref().is_err_and(|why| why.contains(wording))
+                && seen.len() == started
+                && !Path::new(refused).exists()
+                && staging_left() == before,
+            &format!("{answer:?}; {seen:?}"),
+        );
+    }
 }
 
 pub(super) fn makes_a_scan_searchable(report: &mut Report) {
@@ -192,6 +344,14 @@ pub(super) fn makes_a_scan_searchable(report: &mut Report) {
             &format!("{ours:?} against {theirs:?}"),
         );
     }
+
+    window_path(
+        report,
+        &source,
+        &scanned,
+        &at("window.pdf"),
+        &at("refused.pdf"),
+    );
 
     let (before, after) = (at("before.png"), at("after.png"));
     let rendered = [(&scanned, &before), (&out, &after)]

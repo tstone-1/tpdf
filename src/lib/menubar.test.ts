@@ -226,8 +226,9 @@ describe("buildMenu", () => {
       "command",
       "command",
       "separator",
-      // Save, Save a copy, Image-only redaction, Redact and save as,
-      // Redact and save, Extract, Split, Merge.
+      // Save, Save a copy, Recognise text, Image-only redaction, Redact and
+      // save as, Redact and save, Extract, Split, Merge.
+      "command",
       "command",
       "command",
       "command",

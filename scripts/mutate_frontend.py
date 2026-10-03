@@ -178,6 +178,12 @@ MUTATIONS = [
     Mutation("assurance: saveCopy write guard", "src/lib/edits.ts", "  async saveCopy(source: string, path: string): Promise<Copied> {\n    await this.beforeWrite();", "  async saveCopy(source: string, path: string): Promise<Copied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: redactCopy write guard", "src/lib/edits.ts", "  async redactCopy(source: string, path: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactCopy(source: string, path: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("assurance: redactRasterCopy write guard", "src/lib/edits.ts", "  async redactRasterCopy(source: string, path: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactRasterCopy(source: string, path: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
+    Mutation("assurance: ocrCopy write guard", "src/lib/edits.ts", "  async ocrCopy(source: string, path: string): Promise<Recognised> {\n    await this.beforeWrite();", "  async ocrCopy(source: string, path: string): Promise<Recognised> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
+    Mutation("recognise: count pages given a layer only", "src/lib/recognise.ts", "read.pages.length + read.alreadyText.length + read.nothingRead.length + read.tooLarge.length;", "read.pages.length;", "names the pages that got no layer, each kind in its own sentence"),
+    Mutation("recognise: report the last page's words", "src/lib/recognise.ts", "read.pages.reduce((sum, page) => sum + page.words, 0);", "read.pages.reduce((_sum, page) => page.words, 0);", "adds the words of every page given a layer"),
+    Mutation("recognise: list every page", "src/lib/recognise.ts", "const SHOWN = 8;", "const SHOWN = 8000;", "does not list three hundred pages"),
+    Mutation("recognise: keep the extension in the name", "src/lib/recognise.ts", '.replace(/\\.pdf$/i, "")', '.replace(/\\.pdf$/, "")', "keeps the name and says what the copy is"),
+    Mutation("recognise: listen for another event", "src/lib/recognise.ts", 'export const PROGRESS_EVENT = "tpdf://ocr-progress";', 'export const PROGRESS_EVENT = "tpdf://ocr";', "listens for the event the backend emits"),
     Mutation("assurance: redactDocument write guard", "src/lib/edits.ts", "  async redactDocument(source: string): Promise<Applied> {\n    await this.beforeWrite();", "  async redactDocument(source: string): Promise<Applied> {\n    // consent omitted", "awaits save consent before every writing command and sends nothing when declined"),
     Mutation("choices: compare selection arrays by identity", "src/lib/forms.ts", "a.length === b.length && a.every((v, i) => v === b[i])", "a === b", "keeps duplicate exports distinct and compares selections across IPC replies"),
     Mutation("choices: accept too many selected options", "src/lib/forms.ts", "&& value.length > 1) return", "&& value.length > 100) return", "validates option indices and selection cardinality"),
@@ -5850,6 +5856,8 @@ TEST_FILES = [
     # that made it stop being true. Fourteenth, and moved in that commit rather
     # than a step later.
     "src/lib/session.test.ts",
+    # Added 2026-10-03 with the window's text recognition, with its mutations.
+    "src/lib/recognise.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.

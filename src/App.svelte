@@ -53,6 +53,15 @@
   } from "./lib/markcolors";
   import { DEFAULT_NIB, nib, type Nib } from "./lib/marknibs";
   import {
+    afterRecognition,
+    PROGRESS_EVENT,
+    progressLine,
+    SAVE_FIRST,
+    STARTING,
+    suggestedName,
+    type Progress,
+  } from "./lib/recognise";
+  import {
     afterCopy,
     afterRedaction,
     afterRedactionCopy,
@@ -322,9 +331,12 @@
       document.getElementById(`document-tab-${target.id}`)?.focus();
     });
   }
-  let rasterCopyBusy = $state(false);
+  let copyTaskBusy = $state(false);
   let redactedCopyPath = $state<string | null>(null);
   let blockingTask = $state<string | null>(null);
+  // Whether the blocking task is a text recognition, which is the one of them
+  // that reports its pages and can be stopped.
+  let recognising = $state(false);
   /**
    * The open document's page edits, or null when there is none.
    *
@@ -662,8 +674,8 @@
     resizeTabLabels: (direction) => { tabLabelPx = tabLabelSize.step(direction); refreshMenu(); },
     nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.doc.id); },
     documentCount: () => tabRows.length,
-    busyOpening: () => opening || rasterCopyBusy || documentBusy,
-    busyDocument: () => rasterCopyBusy || opening || documentBusy,
+    busyOpening: () => opening || copyTaskBusy || documentBusy,
+    busyDocument: () => copyTaskBusy || opening || documentBusy,
     printDocument: () => void printDocument(),
     focusFind: () => focusFind(),
     toggleSearchOption: (which) => toggleSearchOption(which),
@@ -747,6 +759,7 @@
     saveCopy: () => void saveCopy(),
     redactCopy: () => void redactCopy(),
     redactRasterCopy: () => void redactRasterCopy(),
+    recogniseText: () => void recogniseText(),
     redactDocument: () => redactDocument(),
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
@@ -949,7 +962,7 @@
    */
   async function addSignature(): Promise<void> {
     const target = viewer, doc = openDoc;
-    if (!target || doc < 0 || !signatureDialog || documentBusy || opening || rasterCopyBusy) return;
+    if (!target || doc < 0 || !signatureDialog || documentBusy || opening || copyTaskBusy) return;
     const image = await signatureDialog.ask();
     if (image && viewer === target && openDoc === doc) target.armSignature(image);
   }
@@ -1371,7 +1384,7 @@
    * is to redraw what differs.
    */
   function applyEdit(run: (edits: Edits) => Promise<EditState>): Promise<void> {
-    if (rasterCopyBusy || (documentBusy && !committingPopup)) return Promise.resolve();
+    if (copyTaskBusy || (documentBusy && !committingPopup)) return Promise.resolve();
     // Queued rather than started, so a reply can never be adopted after a
     // later one. See {@link editing}.
     pendingEdit = editing.run(() => runEdit(run));
@@ -1844,11 +1857,11 @@
   async function redactRasterCopy(): Promise<void> {
     if (opening) return;
     return documentTasks.run(async () => {
-      if (!edits || !openPathName || !viewer || rasterCopyBusy) return;
+      if (!edits || !openPathName || !viewer || copyTaskBusy) return;
       // Closing the note journals its last text synchronously. Do this before the
       // busy guard starts refusing new edits, then wait for that queued edit below.
       commitPopups();
-      rasterCopyBusy = true;
+      copyTaskBusy = true;
       refreshMenu();
       try {
         await pendingEdit;
@@ -1889,10 +1902,70 @@
       say(`Image-only redaction failed. No verified copy was saved. ${String(e)}`);
     } finally {
       blockingTask = null;
-      rasterCopyBusy = false;
+      copyTaskBusy = false;
       refreshMenu();
     }
     });
+  }
+
+  /**
+   * Writes a copy in which the scanned pages can be searched, and opens it.
+   *
+   * `redactRasterCopy`'s shape: the task blocks document commands, because the
+   * backend reads the pages of the open document while it runs. Two things
+   * differ. The copy is opened when it is written, since searching it is what
+   * the reader asked for; and the open happens after the task has ended,
+   * because `openPath` waits for document tasks to be idle and this is one.
+   *
+   * A document with unsaved changes is told to save first, before a name is
+   * asked for. The backend refuses it too (`UNSAVED` in `commands/ocr.rs`); the
+   * check here only spares the reader a dialog whose answer would be thrown away.
+   */
+  async function recogniseText(): Promise<void> {
+    if (opening) return;
+    const done: { path?: string; said?: string } = {};
+    await documentTasks.run(async () => {
+      if (!edits || !openPathName || copyTaskBusy) return;
+      commitPopups();
+      copyTaskBusy = true;
+      refreshMenu();
+      try {
+        await pendingEdit;
+        await formLayer?.settle();
+        await textEditor?.settle();
+        if (!edits || !openPathName) return;
+        if (edits.dirty) {
+          say(SAVE_FIRST);
+          return;
+        }
+        const source = openPathName;
+        const chosen = await saveDialog({
+          title: "Recognise text and save as",
+          defaultPath: suggestedName(source),
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        });
+        if (!chosen) return;
+        blockingTask = STARTING;
+        recognising = true;
+        await tick();
+        done.said = afterRecognition(await edits.ocrCopy(source, chosen), basename(chosen));
+        done.path = chosen;
+      } catch (e) {
+        if (e instanceof SaveCancelled) return;
+        say(String(e));
+      } finally {
+        recognising = false;
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+    if (!done.path || !done.said) return;
+    // Said twice on purpose. The first is for a copy that then fails to open:
+    // it is on disk, and the reader has to be told so on the tab they are on.
+    say(done.said);
+    await openPath(done.path);
+    if (openPathName === done.path) say(done.said);
   }
 
   /**
@@ -3085,6 +3158,11 @@
 
       const openEvent = await call("launch_open_event");
       await listen<string>(openEvent, (event) => void openPath(event.payload));
+      // Guarded, because an event can land after the command has answered and
+      // would otherwise leave its line on screen with nothing running.
+      await listen<Progress>(PROGRESS_EVENT, (event) => {
+        if (recognising) blockingTask = progressLine(event.payload);
+      });
       // Together rather than one after the other. Neither answer feeds the
       // other --- one is what the launcher handed over, the other is what was on
       // disk from last time --- and both are round trips on the path between the
@@ -3966,7 +4044,7 @@
 
 <main>
   <header>
-    <button title="Open a PDF" aria-label="Open a PDF" onclick={pickAndOpen} disabled={opening || rasterCopyBusy || documentBusy}><span class="icon" use:icon={"open"}></span></button>
+    <button title="Open a PDF" aria-label="Open a PDF" onclick={pickAndOpen} disabled={opening || copyTaskBusy || documentBusy}><span class="icon" use:icon={"open"}></span></button>
     {#if title}
       <button class="sidebar-toggle" aria-pressed={sidebarShown} title="Toggle sidebar" aria-label="Toggle sidebar" onclick={toggleSidebar}><span class="icon" use:icon={"sidebar"}></span></button>
       <button title={toolState['file.save']?.title} aria-label="Save" disabled={!toolState['file.save']?.enabled}
@@ -3981,6 +4059,8 @@
       {#if dirty}<span class="edited">Edited</span>{/if}
       {#if degraded && status}<span class="degraded">{degraded}</span>{/if}
       {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
+        {#if recognising}<button data-testid="stop-recognition" title="Stop recognising text"
+          onclick={() => void call("ocr_cancel")}>Stop</button>{/if}
       {:else if notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
     </span>
     {#if status}
@@ -4086,7 +4166,7 @@
     <div class="problem" data-testid="problem">
       {#if redactedCopyPath}
         <p>Saved {basename(redactedCopyPath)}. You are still viewing the original with its pending redaction marks.</p>
-        <button data-testid="open-redacted-copy" disabled={rasterCopyBusy}
+        <button data-testid="open-redacted-copy" disabled={copyTaskBusy}
           onclick={async () => {
             const path = redactedCopyPath;
             const verdict = error;
@@ -4124,21 +4204,21 @@
         <div class="offers">
           {#each offers as offer (offer)}
             {#if offer === "saveCopy"}
-              <button data-testid="offer-saveCopy" disabled={rasterCopyBusy}
+              <button data-testid="offer-saveCopy" disabled={copyTaskBusy}
                 onclick={() => void saveCopy()}
                 >Save a copy…</button
               >
             {:else if offer === "reload"}
-              <button data-testid="offer-reload" disabled={rasterCopyBusy}
+              <button data-testid="offer-reload" disabled={copyTaskBusy}
                 onclick={() => reloadAnyway()}
                 >Reload from disk</button
               >
             {:else if offer === "rasterCopy"}
-              <button data-testid="offer-rasterCopy" disabled={rasterCopyBusy}
+              <button data-testid="offer-rasterCopy" disabled={copyTaskBusy}
                 onclick={() => void redactRasterCopy()}
                 >Create image-only copy...</button>
             {:else if offer === "redact"}
-              <button data-testid="offer-redact" disabled={rasterCopyBusy}
+              <button data-testid="offer-redact" disabled={copyTaskBusy}
                 onclick={() => void redactAnyway()}
                 >Redact this file</button
               >

@@ -491,6 +491,8 @@ export interface AppActions {
   redactCopy(): void;
   /** Ask for a name and write the redactions into a fresh image-only PDF. */
   redactRasterCopy(): void;
+  /** Ask for a name and write a copy whose scanned pages can be searched. */
+  recogniseText(): void;
   /**
    * Removes every marked region from the file the reader opened.
    *
@@ -1523,6 +1525,17 @@ export function registerAppCommands(
       title: "Sign document\u2026",
       enabled: withDocument,
       run: () => actions.signDocument(),
+    },
+    {
+      // "and save as", for `file.redactCopy`'s reason: the open document is not
+      // changed, and the title says where the result goes. Offered on any open
+      // document, a clean one with text included --- that one is told its pages
+      // already have text, which is an answer a reader looking for the command
+      // would otherwise have to guess.
+      id: "file.recogniseText",
+      title: "Recognise text and save as...",
+      enabled: withDocument,
+      run: () => actions.recogniseText(),
     },
     {
       // A separate fallback rather than a mode of `file.redactCopy`: the result

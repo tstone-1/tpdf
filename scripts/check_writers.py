@@ -62,6 +62,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # of these has written to a path; anything reaching none of them has not.
 TERMINAL = [
     "write_copy",
+    # Added 2026-10-03 with the window's text recognition: `write_copy` with the
+    # staged file read back before the rename. Named on its own because the
+    # scan below matches `save::<name>` and `save::write_copy` is not a prefix
+    # of `save::write_checked_copy`.
+    "write_checked_copy",
     "write_raster_copy",
     "fill_redactions",
     "write_split",

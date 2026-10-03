@@ -442,6 +442,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   already the redacted one — which is the reason for the warning rather than an argument
   against it. Reach for *Redact and save as* while you are still deciding.
   <!-- built: file.redactDocument -->
+- **Recognise text and save as** makes a scanned document searchable. Each page that
+  has no text is read by the operating system's own text recogniser, and the words go
+  into a copy as an invisible layer, so the pages look as they did and can be searched,
+  selected and copied from. The copy is read back before it gets its name, and then
+  opened. A line in the toolbar shows which page is being read and has a Stop button.
+  Pages that already have text are left as they are. A document with unsaved changes is
+  asked to be saved first. The engine and its limits are under *Text recognition* below.
+  <!-- built: file.recogniseText -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it. The
@@ -1103,6 +1111,10 @@ match the source, and every page given a layer must read back with the character
 were recognised. If no selected page needs a layer, nothing is written and the command
 exits 3. A signed document needs `--invalidate-signatures`, because adding the layer
 rewrites it. An existing output needs `--force`; the input is never replaced.
+
+The window's *Recognise text and save as* does the same for the open document, with the
+recogniser's own choice of language and every page considered. It skips a page too large
+to read where the command refuses it, and says which pages it skipped.
 
 The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the
 pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages

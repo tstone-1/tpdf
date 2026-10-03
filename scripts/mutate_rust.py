@@ -1698,8 +1698,8 @@ MUTATIONS = [
         # the same guard one function down.
         "save: refuse a copy from a source that changed, stranding the reader",
         "src/save.rs",
-        "    let ready = rewrite_ready(source, plan, OnChange::Proceed)?;",
-        "    let ready = rewrite_ready(source, plan, OnChange::Refuse)?;",
+        "    } else {\n        OnChange::Proceed\n    };\n    let ready = rewrite_ready(source, plan, on_change)?;",
+        "    } else {\n        OnChange::Refuse\n    };\n    let ready = rewrite_ready(source, plan, on_change)?;",
         "a_copy_is_written_when_the_source_changed_and_reports_it",
     ),
     Mutation(
@@ -13907,6 +13907,12 @@ MUTATIONS += [
     Mutation("ocr layer: any page reads back", "src/ocr_layer.rs", "    wanted == got\n", "    let _ = (wanted, got);\n    true\n", "a_missing_layer_and_a_wrong_character_do_not_read_back"),
     Mutation("ocr layer: ask for lines", "src/ocr_layer.rs", "        words: true,\n", "        words: false,\n", "the_engine_is_asked_for_words_with_its_corrector_on"),
     Mutation("ocr layer: turn the corrector off", "src/ocr_layer.rs", "        language_correction: true,\n", "        language_correction: false,\n", "the_engine_is_asked_for_words_with_its_corrector_on"),
+    Mutation("checked copy: never run the check", "src/save.rs", "    if let Some(check) = check {\n        // Removed on a refusal", "    if let Some(check) = check.filter(|_| false) {\n        // Removed on a refusal", "a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing"),
+    Mutation("checked copy: publish what failed its check", "src/save.rs", "            let _ = std::fs::remove_file(&staged);\n            return Err(why);\n", "            let _ = why;\n", "a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing"),
+    Mutation("checked copy: leave the staged file behind", "src/save.rs", "            let _ = std::fs::remove_file(&staged);\n            return Err(why);\n", "            return Err(why);\n", "a_checked_copy_that_fails_its_check_leaves_nothing_and_replaces_nothing"),
+    Mutation("checked copy: write a layer into a changed source", "src/save.rs", "    let on_change = if check.is_some() {\n        OnChange::Refuse", "    let on_change = if check.is_none() {\n        OnChange::Refuse", "a_checked_copy_refuses_a_changed_source_where_a_plain_copy_proceeds"),
+    Mutation("recognise: blame the engine for pages that had text", "src/commands/ocr.rs", "        (true, false, false) => \"Every page already has text", "        (false, true, true) => \"Every page already has text", "the_reason_nothing_was_added_names_the_one_cause_when_there_is_one"),
+    Mutation("recognise: send the report in Rust's spelling", "src/commands/ocr.rs", "#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]\n#[serde(rename_all = \"camelCase\")]\npub struct Recognised {", "#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]\npub struct Recognised {", "the_report_reaches_the_window_in_its_own_spelling"),
 ]
 
 if __name__ == "__main__":

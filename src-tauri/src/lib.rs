@@ -160,8 +160,8 @@ use tauri::Manager;
 // moved and what decides which file a new one goes in.
 use commands::document::start_eager_open;
 use commands::{
-    app::*, document::*, edit::*, menubar::*, print::*, read::*, redact::*, save::*, session::*,
-    sign::*, spike::*,
+    app::*, document::*, edit::*, menubar::*, ocr::*, print::*, read::*, redact::*, save::*,
+    session::*, sign::*, spike::*,
 };
 
 /// The window's *Redact and save as*, without the window.
@@ -172,6 +172,14 @@ use commands::{
 /// Nothing else outside the crate has a reason to call them.
 pub mod redaction {
     pub use crate::commands::redact::{ask_redactions, redact_copy_asked, Asked, Stopped};
+}
+
+/// The window's *Recognise text*, without the window.
+///
+/// Public for `tests/cli.rs`, which runs the application's path in-process on
+/// the scan the tool's own `ocr` check is run on.
+pub mod recognition {
+    pub use crate::commands::ocr::{ocr_copy_asked, Progress, Recognised, CANCELLED, UNSAVED};
 }
 
 /// Who creates the window, and what it points at (spike 0.7).
@@ -668,6 +676,7 @@ pub fn run() {
         // A signature made and not yet written, while the reader decides about
         // a timestamp that did not come (`commands::sign::Pending`).
         .manage(commands::sign::Pending::default())
+        .manage(commands::ocr::Cancel::default())
         // The addresses behind a document's web links, which the webview is
         // given a token for and never receives. Managed on the builder for the
         // same reason the edit models are: it needs nothing from the app, and a
@@ -894,6 +903,8 @@ pub fn run() {
             redact_copy,
             redact_raster_copy,
             redact_document,
+            ocr_copy,
+            ocr_cancel,
             annot_erase,
             annot_note,
             annot_rewrite,

@@ -29,8 +29,12 @@ have the binary.)
   exactly as it did. Pages that already have text are left as they are; `--pages` limits
   which pages are considered and `--language` names the language to expect. The copy is read
   back before it is published, and `--json` reports which pages were read, which were left
-  alone and which engine read them. The Python client gains `ocr()`. The command is in the
-  command-line tool only; the window has no command for it yet.
+  alone and which engine read them. The Python client gains `ocr()`.
+- **Recognise text and save as**, in the File menu and the command palette, does the same
+  from the window. It asks for a name, shows which page is being read with a Stop button
+  beside it, reads the copy back before giving it that name, and opens it, so a search works
+  as soon as it is done. A document with unsaved changes is asked to be saved first, and a
+  signed one is asked about before its signatures are invalidated.
 
 ## [26.10.2] - 2026-10-02
 

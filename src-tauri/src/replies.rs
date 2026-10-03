@@ -685,6 +685,17 @@ fn samples() -> BTreeMap<&'static str, String> {
     put("Copied", &save::Copied { changed: true });
 
     put(
+        "Recognised",
+        &crate::commands::ocr::Recognised {
+            pages: vec![crate::commands::ocr::LayerPage { page: 1, words: 40 }],
+            already_text: vec![2],
+            nothing_read: vec![3],
+            too_large: vec![4],
+            engine: "vision (26A428)".into(),
+        },
+    );
+
+    put(
         "Choices",
         &crate::sign_cms::Choices {
             usable: vec![crate::sign_cms::Choice {

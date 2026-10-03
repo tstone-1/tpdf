@@ -185,6 +185,7 @@ function harness(
     saveCopy: () => fired.push("saveCopy"),
     redactCopy: () => fired.push("redactCopy"),
     redactRasterCopy: () => fired.push("redactRasterCopy"),
+    recogniseText: () => fired.push("recogniseText"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>
@@ -903,12 +904,24 @@ describe("the page operations", () => {
     expect(fired).toEqual(["redactRasterCopy"]);
   });
 
+  it("recognises text through its own command, on any open document", () => {
+    const { registry, fired } = harness();
+    const command = registry.all().find((entry) => entry.id === "file.recogniseText");
+    expect(command?.title).toBe("Recognise text and save as...");
+    expect(registry.run("file.recogniseText")).toBe(true);
+    expect(fired).toEqual(["recogniseText"]);
+    const closed = harness(false);
+    expect(closed.registry.run("file.recogniseText")).toBe(false);
+    expect(closed.fired).toEqual([]);
+  });
+
   it("withholds document commands while an image-only copy is being made", () => {
     const { registry, fired } = harness(
       true, {}, { undo: true, redo: true }, true, false, true, {}, false,
       false, false, false, false, true,
     );
     expect(registry.run("file.redactRasterCopy")).toBe(false);
+    expect(registry.run("file.recogniseText")).toBe(false);
     expect(registry.run("edit.redactRegion")).toBe(false);
     expect(registry.run("file.save")).toBe(false);
     expect(registry.run("edit.undo")).toBe(false);
@@ -1446,6 +1459,7 @@ describe("the window shortcuts for editing", () => {
       saveCopy: () => fired.push("saveCopy"),
       redactCopy: () => fired.push("redactCopy"),
       redactRasterCopy: () => fired.push("redactRasterCopy"),
+      recogniseText: () => fired.push("recogniseText"),
     redactDocument: () => fired.push("redactDocument"),
     extractPages: (slots: number[]) => fired.push(`extractPages:${slots.join("+")}`),
     splitDocument: (groups: number[][]) =>

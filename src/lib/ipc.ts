@@ -45,6 +45,7 @@ import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import type { Comments } from "./comments";
 import type { CropGeometry } from "./crop";
 import type { Applied, Copied, EditState, Merged, Split } from "./edits";
+import type { Recognised } from "./recognise";
 import type { Links } from "./links";
 import type { MarkColor } from "./markcolors";
 import type { SectionSpec } from "./menubar";
@@ -277,6 +278,11 @@ export interface Commands {
     reply: Applied;
   };
   redact_document: { args: { doc: number; source: string }; reply: Applied };
+  ocr_copy: {
+    args: { doc: number; source: string; path: string };
+    reply: Recognised;
+  };
+  ocr_cancel: { args: NoArgs; reply: void };
   annot_erase: {
     args: { doc: number; mark: number; remove: number[]; sweep: number };
     reply: EditState;

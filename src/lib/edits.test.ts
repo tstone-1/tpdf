@@ -709,6 +709,7 @@ it("awaits save consent before every writing command and sends nothing when decl
   const writes = [
     (e: Edits)=>e.save("source"), (e: Edits)=>e.saveCopy("source","copy"),
     (e: Edits)=>e.redactCopy("source","copy"), (e: Edits)=>e.redactRasterCopy("source","copy"),
+    (e: Edits)=>e.ocrCopy("source","copy"),
     (e: Edits)=>e.redactDocument("source"), (e: Edits)=>e.extractPages("source","copy",[0]),
     (e: Edits)=>e.splitDocument("source","copy",[[0]]), (e: Edits)=>e.mergeDocuments("source","copy",["other"]),
   ];

@@ -70,6 +70,8 @@ import type { DocumentInfo } from "./ipc";
 import type { Links } from "./links";
 import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
+import type { Recognised } from "./recognise";
+import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
 import type { Outline } from "./outline";
 import type { ScrollBenchConfig } from "./scrollbench";
 import type { PageMapping, PageMatches } from "./search";
@@ -167,6 +169,13 @@ const SCHEMA = {
   Copied: {
     changed: ["boolean"],
   } satisfies Shape<Copied>,
+  Recognised: {
+    pages: ["array"],
+    alreadyText: ["array"],
+    nothingRead: ["array"],
+    tooLarge: ["array"],
+    engine: ["string"],
+  } satisfies Shape<Recognised>,
   CropGeometry: {
     width_pt: ["number"],
     height_pt: ["number"],
@@ -316,6 +325,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Applied: Applied_ satisfies Widen<Applied>,
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,
+  Recognised: Recognised_ satisfies Widen<Recognised>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,
   PageRuns: PageRuns_ satisfies Widen<TextRuns>,

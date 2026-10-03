@@ -28,6 +28,7 @@ pub mod app;
 pub mod document;
 pub mod edit;
 pub mod menubar;
+pub mod ocr;
 pub mod print;
 pub mod read;
 pub mod redact;

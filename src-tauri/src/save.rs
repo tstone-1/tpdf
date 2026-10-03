@@ -673,6 +673,48 @@ pub fn write_copy(
     password: Option<&str>,
     rewriter: &dyn Rewriter,
 ) -> Result<Copied, Refusal> {
+    copy_with(source, plan, out, password, rewriter, None)
+}
+
+/// [`write_copy`] for a copy that is only worth having if it reads back.
+///
+/// `check` is shown the staged file before it is given its name. A refusal from
+/// it removes that file and leaves `out` as it was, so a copy that did not read
+/// back is never the file the reader finds under the name they chose.
+///
+/// **A changed source is refused here**, where [`write_copy`] proceeds and says
+/// so. That function is the way out for a reader whose edits have nowhere else
+/// to go. This one's caller made something *from* the open document --- a text
+/// layer read off its pages --- and written into a file with other pages it
+/// would be the wrong words in the wrong places.
+///
+/// # Errors
+///
+/// Everything [`write_copy`] refuses; the source changed since it was opened;
+/// or `check` refuses.
+pub fn write_checked_copy(
+    source: &Path,
+    plan: &Plan,
+    out: &Path,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+    check: Check<'_>,
+) -> Result<(), Refusal> {
+    copy_with(source, plan, out, password, rewriter, Some(check)).map(|_| ())
+}
+
+/// What [`write_checked_copy`] shows the staged file to.
+pub type Check<'a> = &'a dyn Fn(&Path) -> Result<(), Refusal>;
+
+/// [`write_copy`] and [`write_checked_copy`]: stage, check if asked, rename.
+fn copy_with(
+    source: &Path,
+    plan: &Plan,
+    out: &Path,
+    password: Option<&str>,
+    rewriter: &dyn Rewriter,
+    check: Option<Check<'_>>,
+) -> Result<Copied, Refusal> {
     if same_file(source, out) {
         return Err(
             "tpdf cannot save over the document it is reading --- choose another name".into(),
@@ -683,7 +725,12 @@ pub fn write_copy(
     // points at, so refusing a changed source here would leave a reader whose
     // file moved under them with nowhere at all to put their work. What comes
     // back is the fact, and `Copied` carries it to them.
-    let ready = rewrite_ready(source, plan, OnChange::Proceed)?;
+    let on_change = if check.is_some() {
+        OnChange::Refuse
+    } else {
+        OnChange::Proceed
+    };
+    let ready = rewrite_ready(source, plan, on_change)?;
     // Named differently from `stage_in_place`'s, deliberately, and the reason is
     // the mutation harness rather than taste: two character-for-character
     // identical calls make one anchor ambiguous, an ambiguous anchor is refused,
@@ -702,6 +749,14 @@ pub fn write_copy(
         )
         .map(|_| ())
     })?;
+    if let Some(check) = check {
+        // Removed on a refusal, and `stage` created it, so removing it cannot
+        // take anything that was not ours.
+        if let Err(why) = check(&staged) {
+            let _ = std::fs::remove_file(&staged);
+            return Err(why);
+        }
+    }
     commit(&staged, out)?;
     Ok(Copied {
         changed: ready.changed,
