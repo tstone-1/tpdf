@@ -368,6 +368,7 @@ hop through the index.
 - Four of the six modules that left the cycle were nowhere near the edit
 - A survey counts editable pages, so a rule that refuses nearly every edit passed it
 - A comparison against the tags scores only the pairs the rule's own pairing hands it
+- A recogniser that read a word at 16 px in a probe did not read it in the gate's own image
 
 ## Writing a check that can fail
 - A fixture with one of a thing cannot falsify a comparison of which thing
@@ -25521,3 +25522,29 @@ three callers. A new password also needs a file identifier when the source had n
 with a reader that is not the one the writer was developed against, and prefer the strict one.
 On this machine that is `swift` with `PDFDocument`, reading the page's `string` after
 `unlock(withPassword:)`, with `CG_PDF_VERBOSE=1` for the reason.
+
+### A recogniser that read a word at 16 px in a probe did not read it in the gate's own image
+
+`ocr_gate::MIN_CONTROL_PX` was 16 px on both platforms. For Vision that was measured in the
+gate. For `Windows.Media.Ocr` it rested on `win_ocr_probe`, which draws a word with GDI at 44
+and at 16 px and reads it back, and both sizes came back verbatim.
+
+On 2026-10-03 Windows CI failed two redaction checks with *the control token was not read
+back from the probe image*, on a region that crossed a rule. The rule had nothing to do with
+it. On one page whose control is a 7.4 pt word, 16 regions redacted through the built tool on
+Windows 11 gave 6 verified and 10 not, and an empty region failed as often as one that held
+something; what separated them was the region's height in pixel rows, which moves the control
+line up or down the image by a row or two. The check that had passed in the same CI run
+passed by where its region happened to sit. With the control at 24 px, 21 of 24 regions
+verified; at 32 px, 24 of 24. The floor is now 32 on Windows and 16 elsewhere.
+
+Two things were wrong before the number was. A word drawn by GDI on a clean bitmap is not a
+word PDFium rendered from a page at a fractional scale, so the probe measured an easier image
+than the one the gate shows. And one image per size cannot show a result that flips with the
+image's geometry: it needs the same control in many images. The first theory here was also
+wrong, slivers of the cut rule at the region's edge, and it was dropped only after the three
+images were rebuilt and read on Windows, where all three read. What found the cause was
+redacting a dozen regions that had nothing in common and looking at which verified.
+
+When a floor like this is set for an engine, measure it through the gate, over many regions
+of one page, and count verdicts.

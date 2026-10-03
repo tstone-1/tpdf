@@ -117,6 +117,15 @@ have the binary.)
 
 ### Fixed
 
+- **On Windows a redaction was often reported "not verified" when nothing was wrong.**
+  The check renders a word left on the page beside the redacted area and requires the
+  recogniser to read it back; that word was rendered 16 pixels tall, which
+  `Windows.Media.Ocr` reads or not depending on where it falls in the image. On one test
+  page 10 of 16 redactions came back unverified for that reason, empty regions among
+  them. The word is now rendered 32 pixels tall on Windows, where 24 of 24 verified.
+  The smallest print the check can vouch for on Windows is 4 pt, where it is 2 pt on
+  macOS. Nothing was reported clean that was not; the fault was in the other direction.
+
 - **An encrypted document that tpdf had rewritten showed blank pages in Preview.** Since
   26.8.12, saving a password-protected document after deleting, moving or editing anything
   kept its password, and Preview on macOS then accepted that password and drew nothing.

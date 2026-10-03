@@ -52,6 +52,23 @@ use crate::text::PageText;
 /// pixels is the shortest line the vendored Vision build read reliably in the
 /// probe; below it the control starts failing on documents that are fine, and a
 /// gate that fails when things are fine gets switched off.
+///
+/// **Thirty-two on Windows, measured 2026-10-03.** `Windows.Media.Ocr` read a
+/// synthetic word at 16 px (`win_ocr_probe`), and that was taken to settle it.
+/// In the gate's own image it does not: on a page whose control is a 7.4 pt
+/// word, 16 regions gave 6 verdicts and 10 *control not read back*, and which
+/// was which followed the region's height in pixel rows, not anything on the
+/// page --- an empty region failed as often as a redacted one. The same 24
+/// regions with the control at 24 px: 21 read. At 32 px: 24 of 24. A larger
+/// control is not an easier test, because the region is rendered at the same
+/// scale as the control and the control is still no larger, in points, than
+/// what was removed. What it costs is reach: the smallest control the gate can
+/// serve is `MIN_CONTROL_PX / MAX_SCALE`, so 4 pt on Windows where it is 2 pt
+/// with Vision, and those were verdicts Windows was not reaching anyway.
+#[cfg(windows)]
+pub const MIN_CONTROL_PX: f32 = 32.0;
+/// See the Windows value above for why there are two.
+#[cfg(not(windows))]
 pub const MIN_CONTROL_PX: f32 = 16.0;
 
 /// The scale floor, in pixels per point.
@@ -1354,25 +1371,30 @@ mod tests {
             width_pt: 600.0,
             height_pt: 800.0,
         };
+        // The size that reaches the floor at 2x: 8 pt with Vision's 16 px, and
+        // 16 pt with the 32 px Windows needs.
+        let size = MIN_CONTROL_PX / 2.0;
         let choice = crate::ocr::ControlChoice {
-            crop: [0.0, 20.0, 40.0, 28.0],
+            crop: [0.0, 20.0, 40.0, 20.0 + size],
             token: "control".into(),
-            size_pt: 8.0,
+            size_pt: size,
             from_page: false,
         };
         let geometry = geometry_for(&page, &choice).expect("a geometry");
         assert_eq!(
             geometry.scale, 2.0,
-            "an 8 pt control is 16 px at the 2x floor"
+            "a control half the floor in points is at the floor at 2x"
         );
-        assert_eq!(geometry.control_px, 16.0);
+        assert_eq!(geometry.control_px, MIN_CONTROL_PX);
     }
 
     #[test]
     fn a_smaller_control_is_rendered_larger() {
-        // 16 px over an 8 pt word is 2x; over a 4 pt word it is 4x.
-        assert_eq!(scale_for(8.0, 600.0, 800.0, 64 << 20).unwrap(), 2.0);
-        assert_eq!(scale_for(4.0, 600.0, 800.0, 64 << 20).unwrap(), 4.0);
+        // With Vision's floor: 16 px over an 8 pt word is 2x; over a 4 pt word
+        // it is 4x. Written from the floor, which is twice that on Windows.
+        let at = |times: f32| scale_for(MIN_CONTROL_PX / times, 600.0, 800.0, 64 << 20).unwrap();
+        assert_eq!(at(2.0), 2.0);
+        assert_eq!(at(4.0), 4.0);
     }
 
     #[test]
@@ -1493,12 +1515,19 @@ mod tests {
         // Measured over 40 documents at two densities: every region whose
         // control was under 2 pt went unread, 24 of 24 and 40 of 40, so refusing
         // here costs no region that was ever judged.
-        let (page, choice) = tiny_control_page(1.5);
-        let (why, cause) = geometry_for(&page, &choice).expect_err("1.5 pt is unservable");
+        //
+        // Three quarters of the smallest servable size, which is that 1.5 pt
+        // with Vision's floor and 3 pt with the one Windows needs.
+        let size = MIN_CONTROL_PX / MAX_SCALE * 0.75;
+        let (page, choice) = tiny_control_page(size);
+        let (why, cause) = geometry_for(&page, &choice).expect_err("too small to serve");
         assert_eq!(cause, crate::ocr::NotVerifiedCause::ControlTooSmall);
         // The message has to carry both numbers a reader needs to believe it:
         // what the page removed, and what reading it would have taken.
-        assert!(why.contains("1.5 pt"), "no control size in: {why}");
+        assert!(
+            why.contains(&format!("{size:.1} pt")),
+            "no control size in: {why}"
+        );
         assert!(why.contains("10.7x"), "no required scale in: {why}");
     }
 
@@ -1509,8 +1538,8 @@ mod tests {
         // can work with rather than the largest one it turns away -- and the
         // first draft of an earlier test got this backwards and failed with
         // `16 px`, which is the boundary being right.
-        let (page, choice) = tiny_control_page(2.0);
-        let geometry = geometry_for(&page, &choice).expect("2.0 pt is servable");
+        let (page, choice) = tiny_control_page(MIN_CONTROL_PX / MAX_SCALE);
+        let geometry = geometry_for(&page, &choice).expect("the smallest size is servable");
         assert_eq!(geometry.scale, MAX_SCALE);
         assert_eq!(geometry.control_px, MIN_CONTROL_PX);
     }
