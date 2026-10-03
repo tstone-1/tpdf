@@ -51,6 +51,7 @@ hop through the index.
 - A fallback is in the coordinate system of whoever wrote it
 - Two handles to one cached page are aliases, and a reading taken after a change describes the change
 - PDFium answers the same error for no password and for the wrong one
+- PDFium paints a pixel-aligned rectangle one pixel wider, so cutting it changes an edge the cut did not touch
 
 ## PDFium: text, coordinates and outlines
 - A byte scan cannot verify a document with a Type0 font
@@ -25576,3 +25577,25 @@ both *drawn once* and *could not be asked*, and the second was the common case, 
 rare one the type's note assumed. And the control was one command away for months:
 apply the plan and look at the exit code. When a probe reports a rate of success, run
 the thing it predicts on the same inputs at least once.
+
+### PDFium paints a pixel-aligned rectangle one pixel wider, so cutting it changes an edge the cut did not touch
+
+A check that a redaction changes nothing outside its regions compared two renderings
+at two pixels a point and found one page of 114 that differed: a column of pixels
+along the right edge of a black rectangle, 20 points from the nearest region, black
+before the cut and white after. The cut was right. The rectangle ran from x = 94 to
+165 and the region removed 94 to 95.684; what was written back runs from 95.684 to
+165, and its right edge is the number it was.
+
+PDFium rasterises the two differently. Measured with four hand-written rectangles
+(`pypdfium2`, PDFium 7999): one whose edges all fall on device pixels is painted from
+pixel 188 to 330 inclusive, one pixel past its right and bottom edge; the same
+rectangle with one edge moved to a fraction is painted 191 to 329. Whether it is
+written `re`, `re` with a negative width or `m l l l h` makes no difference, and
+neither does drawing it on the page or in a form.
+
+So an untouched edge can lose a row or a column of pixels when another edge of the
+same rectangle is cut, in PDFium, at a resolution where the edges were aligned. It is
+half a point at 144 dpi and it is not ink the redaction removed. A pixel comparison
+around a cut needs a margin of one device pixel around the whole cut shape, not only
+around the region.

@@ -69,6 +69,7 @@ pub(crate) fn output_plan(original: &Plan) -> Result<Plan, Refusal> {
                 mapped.cuts.clear();
                 mapped.form_shows.clear();
                 mapped.form_text_objects.clear();
+                mapped.form_paths = crate::redact::FormPathsPlanned::default();
                 mapped.form_images.clear();
                 mapped.form_image_objects.clear();
                 result.redactions.push(mapped);
@@ -162,6 +163,11 @@ mod tests {
 
     fn region(source: u32, area: [f32; 4]) -> PlannedRedaction {
         PlannedRedaction {
+            form_paths: crate::redact::FormPathsPlanned {
+                whole: vec![(1, 0)],
+                cuts: vec![(1, 2, area)],
+                objects: vec![(1, 3)],
+            },
             source,
             shows: vec![4],
             text_objects: 7,
@@ -346,6 +352,8 @@ mod tests {
             // And the pictures inside a block: asked for again, they would be
             // looked for in a block the first pass already took them out of.
             assert!(r.form_images.is_empty() && r.form_image_objects.is_empty());
+            // And the drawings inside one.
+            assert_eq!(r.form_paths, crate::redact::FormPathsPlanned::default());
             assert_eq!((r.text_objects, r.image_objects), (0, 0));
         }
     }

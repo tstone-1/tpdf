@@ -155,6 +155,24 @@ pub struct Plan {
     /// pictures)`, as [`form_shows`](Self::form_shows) addresses a form's text.
     /// Taken whole, for the reason [`images`](Self::images) gives.
     pub form_images: Vec<(usize, usize)>,
+    /// Drawings inside a Form XObject that the removal deletes whole: `(form
+    /// position, ordinal among that form's painted paths)`.
+    ///
+    /// [`paths`](Self::paths) one level down. Filled by
+    /// [`settle_form_paths`], never by [`covered`], which cannot see whether a
+    /// path also sets the clip.
+    pub form_paths: Vec<(usize, usize)>,
+    /// Drawings inside a Form XObject cut at the region's edge, addressed as
+    /// [`form_paths`](Self::form_paths) are. [`cuts`](Self::cuts) one level
+    /// down.
+    pub form_cuts: Vec<(usize, usize)>,
+    /// Drawings inside a Form XObject the region touches, not yet looked at:
+    /// `(form position, ordinal, whether the region holds all of it)`.
+    ///
+    /// [`covered`] puts each here **and** in [`unhandled`](Self::unhandled),
+    /// so a plan nobody settles reports every one. [`settle_form_paths`]
+    /// empties this and takes out of `unhandled` the ones it could place.
+    pub form_crossing: Vec<(usize, usize, bool)>,
     /// Pictures the removal takes **off this page** and cannot take out of
     /// the file, because the document draws them elsewhere too.
     ///
@@ -293,6 +311,63 @@ pub const UNPLACED_PATH: &str = "unplaced-path";
 /// is at least what the reader selected and commonly the rest of the line. The
 /// frontend computes the covered words itself, from geometry it already holds;
 /// what it cannot compute is this.
+/// The drawings one region takes from inside the page's Form XObjects.
+///
+/// One field of [`RegionPlan`] rather than three, because the three travel
+/// together and a literal that names none of them should say so in one line.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FormPaths {
+    /// Deleted whole: `(form position, ordinal among that form's paths)`.
+    /// [`Plan::form_paths`], carried through.
+    #[serde(default)]
+    pub whole: Vec<(usize, usize)>,
+    /// Cut at this region's edge, addressed the same way.
+    /// [`Plan::form_cuts`], carried through.
+    #[serde(default)]
+    pub cuts: Vec<(usize, usize)>,
+    /// How many paths PDFium found in each form on the page: `(form position,
+    /// count)`, for every form. [`RegionPlan::form_image_objects`] for paths.
+    #[serde(default)]
+    pub objects: Vec<(usize, usize)>,
+}
+
+/// [`FormPaths`] merged over a page's regions, as the writer is handed it.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FormPathsPlanned {
+    /// Deleted whole, ascending, each once.
+    #[serde(default)]
+    pub whole: Vec<(usize, usize)>,
+    /// A path and one region that crosses it, in the page's own space. A path
+    /// two regions cross is listed twice, as `PlannedRedaction::cuts` lists
+    /// a page's.
+    #[serde(default)]
+    pub cuts: Vec<(usize, usize, [f32; 4])>,
+    /// [`FormPaths::objects`], from the page's last plan.
+    #[serde(default)]
+    pub objects: Vec<(usize, usize)>,
+}
+
+impl FormPathsPlanned {
+    /// How many distinct paths are cut.
+    #[must_use]
+    pub fn cut_count(&self) -> usize {
+        let mut paths: Vec<(usize, usize)> = self
+            .cuts
+            .iter()
+            .map(|(at, ordinal, _)| (*at, *ordinal))
+            .collect();
+        paths.sort_unstable();
+        paths.dedup();
+        paths.len()
+    }
+
+    /// Whether nothing is asked for.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.whole.is_empty() && self.cuts.is_empty()
+    }
+}
+
 // `PartialEq` without `Eq`, because `area` is floats. Nothing compares two of
 // these for equality outside a test, and an `Eq` on a type holding an `f32` is
 // the wrong promise rather than a missing convenience.
@@ -354,6 +429,9 @@ pub struct RegionPlan {
     /// present for every form for that field's reason.
     #[serde(default)]
     pub form_image_objects: Vec<(usize, usize)>,
+    /// The drawings inside the page's Form XObjects this region takes.
+    #[serde(default)]
+    pub form_paths: FormPaths,
     /// Pictures taken off this page that the document draws elsewhere too.
     /// [`Plan::shared`], carried through, for the panel and the report to say.
     #[serde(default)]
@@ -530,6 +608,19 @@ pub fn covered(objects: &[PageObject], forms: &[FormObject], region: Rect) -> Pl
             for (ordinal, bounds) in form.images.iter().enumerate() {
                 if overlaps(*bounds, region) {
                     plan.form_images.push((at, ordinal));
+                }
+            }
+            // Reported, and listed for `settle_form_paths` to look at. Both,
+            // so that a caller that never settles reports every one.
+            for (ordinal, bounds) in form.paths.iter().enumerate() {
+                if overlaps(*bounds, region) {
+                    plan.unhandled.push(Unhandled {
+                        at,
+                        kind: "path".to_string(),
+                        drawn: None,
+                    });
+                    plan.form_crossing
+                        .push((at, ordinal, contains(region, *bounds)));
                 }
             }
             // Whatever the descent could not read **and the region covers** is
@@ -937,6 +1028,32 @@ pub fn leave_shared(
     });
     plan.shared.extend(here);
 
+    // A form drawn more than once keeps its drawings too. They are already
+    // reported, one finding each, by `covered`; what must not happen is that
+    // `settle_form_paths` takes them, whichever of the two runs first.
+    let drawn_again = |at: usize| {
+        forms
+            .iter()
+            .position(|form| form.at == at)
+            .and_then(|which| shared.forms.get(which).copied().flatten())
+            .is_some()
+    };
+    plan.form_crossing.retain(|(at, _, _)| !drawn_again(*at));
+    for (at, _) in plan
+        .form_paths
+        .iter()
+        .chain(&plan.form_cuts)
+        .filter(|(at, _)| drawn_again(*at))
+    {
+        left.push(Unhandled {
+            at: *at,
+            kind: "path".to_string(),
+            drawn: None,
+        });
+    }
+    plan.form_paths.retain(|(at, _)| !drawn_again(*at));
+    plan.form_cuts.retain(|(at, _)| !drawn_again(*at));
+
     plan.unhandled.extend(left);
     // Ascending by position, which is the order `covered` produces on its own
     // and the order a reader checks a page in. Stable, so the findings a form
@@ -1089,6 +1206,143 @@ pub fn cut_crossing(
     plan.paths.extend(gone);
     plan.paths.sort_unstable();
     plan.paths.dedup();
+}
+
+/// What one path a Form XObject paints is, for a removal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormPath {
+    /// Whether it also sets the clip, as [`path_clips`] answers for a page's.
+    pub clips: bool,
+    /// What [`pathcut`] makes of it; `None` for one it cannot split exactly.
+    pub drawing: Option<pathcut::Drawing>,
+}
+
+/// What each Form XObject on a page paints, in the page's form order.
+///
+/// `counts` is how many path objects PDFium reported in each form. An entry is
+/// `None`, and [`settle_form_paths`] then leaves that form's drawings where
+/// they are, when the page's forms or the form's paths disagree in number
+/// with what `lopdf` finds, or when the form's content cannot be read:
+/// [`path_clips`]' guard one level down. A form with no paths is asked
+/// nothing and answers an empty list.
+#[must_use]
+pub fn form_paths(doc: &Document, page: ObjectId, counts: &[usize]) -> Vec<Option<Vec<FormPath>>> {
+    let unknown = || vec![None; counts.len()];
+    let Some(content) = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .ok()
+        .and_then(|data| Content::decode(&data).ok())
+    else {
+        return unknown();
+    };
+    let draws = xobject_draws(doc, page, &content, b"Form");
+    if draws.len() != counts.len() {
+        return unknown();
+    }
+    draws
+        .iter()
+        .zip(counts)
+        .map(|((drawn_at, name), expected)| {
+            if *expected == 0 {
+                return Some(Vec::new());
+            }
+            let form = form_id(doc, page, name).ok()?;
+            let inside = form_content(doc, form).ok()?;
+            let painted = painted_paths(&inside);
+            if painted.len() != *expected {
+                return None;
+            }
+            let paths: Vec<&[usize]> = painted
+                .iter()
+                .map(|path| path.operations.as_slice())
+                .collect();
+            let drawings =
+                pathcut::drawings_in_form(doc, page, &content, *drawn_at, form, &inside, &paths);
+            Some(
+                painted
+                    .iter()
+                    .zip(drawings)
+                    .map(|(path, drawing)| FormPath {
+                        clips: path.clips,
+                        drawing,
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// Settles the drawings inside Form XObjects that a region touches.
+///
+/// [`covered`] reports every one and lists it in [`Plan::form_crossing`].
+/// This looks at each, with what [`form_paths`] found, and takes out of the
+/// report the ones a removal can place:
+///
+/// - one the region holds all of moves to [`Plan::form_paths`];
+/// - a rule or a rectangle the region crosses moves to [`Plan::form_cuts`];
+/// - one whose ink is all inside the region moves to [`Plan::form_paths`];
+/// - one whose bounds overlap and whose ink does not is dropped;
+/// - one that also clips stays, under [`CLIP_PATH`]; one the region holds all
+///   of in a form whose paths cannot be addressed stays under
+///   [`UNPLACED_PATH`]; everything else stays as it was reported.
+///
+/// `facts` is in the order of `forms`. Run after [`leave_shared`], which takes
+/// a form the document draws more than once out of the list.
+pub fn settle_form_paths(
+    plan: &mut Plan,
+    forms: &[FormObject],
+    facts: &[Option<Vec<FormPath>>],
+    region: Rect,
+) {
+    let listed = std::mem::take(&mut plan.form_crossing);
+    for (at, ordinal, inside) in listed {
+        // One report per listed drawing, all alike, so any one of them is it.
+        let Some(reported) = plan
+            .unhandled
+            .iter()
+            .position(|left| left.at == at && left.kind == "path" && left.drawn.is_none())
+        else {
+            continue;
+        };
+        let known = forms
+            .iter()
+            .position(|form| form.at == at)
+            .and_then(|which| facts.get(which))
+            .and_then(Option::as_ref)
+            .and_then(|paths| paths.get(ordinal));
+        let Some(path) = known else {
+            if inside {
+                plan.unhandled[reported].kind = UNPLACED_PATH.to_string();
+            }
+            continue;
+        };
+        if path.clips {
+            plan.unhandled[reported].kind = CLIP_PATH.to_string();
+            continue;
+        }
+        if inside {
+            plan.form_paths.push((at, ordinal));
+            plan.unhandled.remove(reported);
+            continue;
+        }
+        let verdict = path
+            .drawing
+            .as_ref()
+            .map_or(pathcut::Verdict::Unsupported, |drawing| {
+                drawing.cut(&[region])
+            });
+        match verdict {
+            pathcut::Verdict::Cut(_) => plan.form_cuts.push((at, ordinal)),
+            pathcut::Verdict::Gone => plan.form_paths.push((at, ordinal)),
+            pathcut::Verdict::Outside => {}
+            pathcut::Verdict::Unsupported => continue,
+        }
+        plan.unhandled.remove(reported);
+    }
+    plan.form_paths.sort_unstable();
+    plan.form_paths.dedup();
+    plan.form_cuts.sort_unstable();
+    plan.form_cuts.dedup();
 }
 
 /// Which of a page's annotations a set of regions covers.
@@ -1964,8 +2218,8 @@ pub fn remove_form_shows(
 /// # Errors
 ///
 /// When the page's forms or the form's pictures do not agree in number with
-/// what PDFium reported, when the form or the picture is drawn more than once,
-/// or when the form's content cannot be read or written. Nothing is changed.
+/// what PDFium reported, when the form is drawn more than once, or when the
+/// form's content cannot be read or written. Nothing is changed.
 pub fn remove_form_images(
     doc: &mut Document,
     page: ObjectId,
@@ -2333,6 +2587,65 @@ pub fn take_paths(
         ));
     }
 
+    let paths: Vec<&[usize]> = painted
+        .iter()
+        .map(|path| path.operations.as_slice())
+        .collect();
+    let PathEdits {
+        positions,
+        rewritten,
+        removed: removed_whole,
+        cut,
+    } = path_edits(&painted, ordinals, cuts, || {
+        pathcut::drawings(doc, page, &content, &paths)
+    })?;
+
+    // Before the removal, for `remove_shows`' reason: a span is addressed by
+    // where its `BDC` sits, and deleting an operation renumbers the rest.
+    let cleared = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
+    apply_path_edits(&mut content.operations, &positions, rewritten);
+    let in_structure = clear_struct_shadow_text(doc, page, &cleared.mcids);
+
+    let encoded = content
+        .encode()
+        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
+    doc.change_page_content(page, encoded)
+        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+
+    Ok(PathsTaken {
+        cut,
+        removed: Removed {
+            shows_before: painted.len(),
+            removed: removed_whole,
+            carriers: cleared.keys,
+            struct_carriers: in_structure,
+        },
+    })
+}
+
+/// What [`take_paths`] and [`take_form_paths`] do to one content stream.
+struct PathEdits {
+    /// Every operation index that goes or is replaced, ascending, each once.
+    positions: Vec<usize>,
+    /// What is written in place of each cut path, by the range it stood in.
+    rewritten: Vec<(std::ops::RangeInclusive<usize>, Vec<Operation>)>,
+    /// How many paths go whole.
+    removed: usize,
+    /// How many are cut and still drawn in part.
+    cut: usize,
+}
+
+/// Works out which operations a removal of `ordinals` and a cutting of `cuts`
+/// touches, among the paths `painted` lists.
+///
+/// `drawings` is asked only when something is to be cut, and answers in
+/// `painted`'s order.
+fn path_edits(
+    painted: &[PaintedPath],
+    ordinals: &[usize],
+    cuts: &[(usize, Rect)],
+    drawings: impl FnOnce() -> Vec<Option<pathcut::Drawing>>,
+) -> Result<PathEdits, String> {
     let mut wanted: Vec<usize> = ordinals.to_vec();
     wanted.sort_unstable();
     wanted.dedup();
@@ -2365,11 +2678,7 @@ pub fn take_paths(
     // What is written in place of each cut path, by its first operation.
     let mut rewritten: Vec<(std::ops::RangeInclusive<usize>, Vec<Operation>)> = Vec::new();
     if !crossed.is_empty() {
-        let paths: Vec<&[usize]> = painted
-            .iter()
-            .map(|path| path.operations.as_slice())
-            .collect();
-        let drawings = pathcut::drawings(doc, page, &content, &paths);
+        let drawings = drawings();
         for (ordinal, regions) in &crossed {
             let path = painted.get(*ordinal).ok_or_else(|| {
                 format!(
@@ -2409,11 +2718,21 @@ pub fn take_paths(
     }
     positions.sort_unstable();
     positions.dedup();
-    let cut = rewritten.len();
 
-    // Before the removal, for `remove_shows`' reason: a span is addressed by
-    // where its `BDC` sits, and deleting an operation renumbers the rest.
-    let cleared = clear_shadow_text(doc, page, &mut content.operations, &positions)?;
+    Ok(PathEdits {
+        cut: rewritten.len(),
+        removed: wanted.len(),
+        positions,
+        rewritten,
+    })
+}
+
+/// Makes [`path_edits`]' changes to a stream's operations.
+fn apply_path_edits(
+    stream: &mut Vec<Operation>,
+    positions: &[usize],
+    mut rewritten: Vec<(std::ops::RangeInclusive<usize>, Vec<Operation>)>,
+) {
     // From the back, so an index is still good when it is reached. A cut
     // path's operators are replaced where they stood; the rest are deleted.
     let mut at = positions.len();
@@ -2427,28 +2746,110 @@ pub fn take_paths(
             Some(found) => {
                 let (range, operations) = rewritten.swap_remove(found);
                 at -= range.end() - range.start();
-                content.operations.splice(range, operations);
+                stream.splice(range, operations);
             }
             None => {
-                content.operations.remove(position);
+                stream.remove(position);
             }
         }
     }
-    let in_structure = clear_struct_shadow_text(doc, page, &cleared.mcids);
+}
 
-    let encoded = content
+/// [`take_paths`] for one Form XObject the page draws.
+///
+/// `forms` is every form on the page with how many path objects PDFium
+/// reported in it, `at` the form's position in the page's object list,
+/// `ordinals` which of its paths go whole and `cuts` which are cut, each with
+/// one region in the page's own space.
+///
+/// # Errors
+///
+/// When the page's forms or the form's paths do not agree in number with what
+/// PDFium reported, when the document draws the form more than once, when a
+/// path to be removed also clips or one to be cut cannot be split exactly, or
+/// when the form's content cannot be read or written. Nothing is changed.
+pub fn take_form_paths(
+    doc: &mut Document,
+    page: ObjectId,
+    forms: &[(usize, usize)],
+    at: usize,
+    ordinals: &[usize],
+    cuts: &[(usize, Rect)],
+) -> Result<PathsTaken, String> {
+    let which = forms
+        .iter()
+        .position(|(where_, _)| *where_ == at)
+        .ok_or_else(|| {
+            format!(
+                "object {at} is not one of the {} form(s) on this page",
+                forms.len()
+            )
+        })?;
+    let expected = forms[which].1;
+
+    let data = doc
+        .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
+        .map_err(|why| format!("the page's content stream could not be read: {why}"))?;
+    let content = Content::decode(&data)
+        .map_err(|why| format!("the content stream will not decode: {why}"))?;
+    let draws = xobject_draws(doc, page, &content, b"Form");
+    if draws.len() != forms.len() {
+        return Err(format!(
+            "the page draws {} form XObject(s) and PDFium reported {}. Removing from one by \
+             position needs those to agree, so nothing was removed.",
+            draws.len(),
+            forms.len()
+        ));
+    }
+    let (drawn_at, name) = &draws[which];
+    let id = form_id(doc, page, name)?;
+    let names: Vec<String> = draws.iter().map(|(_, name)| name.clone()).collect();
+    if let Some(times) = drawn_more_than_once(doc, page, id, &names, name) {
+        return Err(format!(
+            "the drawing you marked is inside a form that this document draws {times} time(s). \
+             Changing it would change every one of them, including places you did not mark, so \
+             nothing was removed."
+        ));
+    }
+
+    let mut inside = form_content(doc, id)?;
+    let painted = painted_paths(&inside);
+    if painted.len() != expected {
+        return Err(format!(
+            "this form paints {} path(s) and PDFium reported {expected}. Removing one by \
+             position needs those to agree, so nothing was removed.",
+            painted.len()
+        ));
+    }
+    let paths: Vec<&[usize]> = painted
+        .iter()
+        .map(|path| path.operations.as_slice())
+        .collect();
+    let edits = path_edits(&painted, ordinals, cuts, || {
+        pathcut::drawings_in_form(doc, page, &content, *drawn_at, id, &inside, &paths)
+    })?;
+    let (removed, cut) = (edits.removed, edits.cut);
+    apply_path_edits(&mut inside.operations, &edits.positions, edits.rewritten);
+
+    let encoded = inside
         .encode()
-        .map_err(|why| format!("the rewritten content stream will not encode: {why}"))?;
-    doc.change_page_content(page, encoded)
-        .map_err(|why| format!("the page's content could not be replaced: {why}"))?;
+        .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+    let stream = doc
+        .get_object_mut(id)
+        .and_then(|object| object.as_stream_mut())
+        .map_err(|why| format!("the form's content stream could not be replaced: {why}"))?;
+    stream.set_plain_content(encoded);
+    stream
+        .compress()
+        .map_err(|why| format!("the rewritten form stream will not compress: {why}"))?;
 
     Ok(PathsTaken {
         cut,
         removed: Removed {
             shows_before: painted.len(),
-            removed: wanted.len(),
-            carriers: cleared.keys,
-            struct_carriers: in_structure,
+            removed,
+            carriers: 0,
+            struct_carriers: 0,
         },
     })
 }
@@ -3662,8 +4063,9 @@ impl PageAggregate {
             form_text: self.planned.form_shows.len(),
             // A picture is a picture to a reader, whichever stream draws it.
             images: self.planned.images.len() + self.planned.form_images.len(),
-            paths: self.planned.paths.len(),
-            cuts: cut_paths(&self.planned.cuts),
+            // And a drawing is a drawing.
+            paths: self.planned.paths.len() + self.planned.form_paths.whole.len(),
+            cuts: cut_paths(&self.planned.cuts) + self.planned.form_paths.cut_count(),
             taking: self.planned.taking.clone(),
             left: self.concerns.clone(),
         }
@@ -3722,6 +4124,7 @@ pub fn aggregate(
     let mut form_text_objects: Vec<(usize, usize)> = Vec::new();
     let mut form_images: Vec<(usize, usize)> = Vec::new();
     let mut form_image_objects: Vec<(usize, usize)> = Vec::new();
+    let mut form_paths = FormPathsPlanned::default();
     // And the pictures. `image_objects` is a property of the page like
     // `text_objects` and is taken from the last plan for the same reason.
     let mut images: Vec<usize> = Vec::new();
@@ -3743,6 +4146,16 @@ pub fn aggregate(
         form_text_objects = plan.form_text_objects.clone();
         form_image_objects = plan.form_image_objects.clone();
         form_images.extend(plan.form_images.iter().copied());
+        form_paths.objects.clone_from(&plan.form_paths.objects);
+        form_paths
+            .whole
+            .extend(plan.form_paths.whole.iter().copied());
+        form_paths.cuts.extend(
+            plan.form_paths
+                .cuts
+                .iter()
+                .map(|(at, ordinal)| (*at, *ordinal, plan.area)),
+        );
         for object in &plan.unhandled {
             concerns.push(format!("page {}: {}", page + 1, object.sentence()));
         }
@@ -3789,6 +4202,14 @@ pub fn aggregate(
     // A path one region holds all of goes whole, whatever another cuts off it.
     cuts.retain(|(ordinal, _)| paths.binary_search(ordinal).is_err());
     total += cut_paths(&cuts);
+    // The same three rules for the drawings inside the page's forms.
+    form_paths.whole.sort_unstable();
+    form_paths.whole.dedup();
+    let whole = form_paths.whole.clone();
+    form_paths
+        .cuts
+        .retain(|(at, ordinal, _)| whole.binary_search(&(*at, *ordinal)).is_err());
+    total += form_paths.whole.len() + form_paths.cut_count();
 
     let (words, width_pt, height_pt) = match text {
         Some(text) => (ocr_gate::words_from(text), text.width_pt, text.height_pt),
@@ -3811,6 +4232,7 @@ pub fn aggregate(
         form_shows,
         form_images,
         form_image_objects,
+        form_paths,
         form_text_objects,
         images,
         image_objects,
@@ -3994,6 +4416,8 @@ pub fn marked_pages_note(report: &verify::Report, marked: &[u32]) -> Option<Stri
 #[cfg(test)]
 mod form_image_tests;
 #[cfg(test)]
+mod form_path_tests;
+#[cfg(test)]
 mod resource_tests;
 
 #[cfg(test)]
@@ -4073,6 +4497,7 @@ mod tests {
     /// `aggregate`'s fixtures: one plan, with everything empty but what a test sets.
     fn plan_of(shows: &[usize], taking: &str) -> super::RegionPlan {
         super::RegionPlan {
+            form_paths: Default::default(),
             shared: Vec::new(),
             shows: shows.to_vec(),
             text_objects: 9,
@@ -4319,6 +4744,7 @@ mod tests {
 
     fn form(at: usize, text: &[[f32; 4]]) -> FormObject {
         FormObject {
+            paths: Vec::new(),
             at,
             text: text
                 .iter()
@@ -4905,6 +5331,7 @@ mod tests {
         // make the quiet case the silent one.
         let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
         let forms = [FormObject {
+            paths: Vec::new(),
             at: 0,
             text: Vec::new(),
             images: Vec::new(),
@@ -4927,6 +5354,7 @@ mod tests {
         // list of objects on the sheet, not a property of the form.
         let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
         let forms = [FormObject {
+            paths: Vec::new(),
             at: 0,
             text: vec![FormText {
                 bounds: [0.0, 40.0, 100.0, 60.0],
@@ -4956,6 +5384,7 @@ mod tests {
         // exactly as a page object under it would be.
         let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
         let forms = [FormObject {
+            paths: Vec::new(),
             at: 0,
             text: Vec::new(),
             images: Vec::new(),
@@ -4980,6 +5409,7 @@ mod tests {
         // "could not measure it" into "it is not there".
         let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
         let forms = [FormObject {
+            paths: Vec::new(),
             at: 0,
             text: Vec::new(),
             images: Vec::new(),
@@ -4997,6 +5427,7 @@ mod tests {
     fn a_form_the_region_misses_is_neither_taken_nor_reported() {
         let objects = [form_object([0.0, 0.0, 100.0, 100.0])];
         let forms = [FormObject {
+            paths: Vec::new(),
             at: 0,
             text: vec![FormText {
                 bounds: [0.0, 0.0, 100.0, 20.0],

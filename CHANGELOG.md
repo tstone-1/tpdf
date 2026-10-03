@@ -26,6 +26,15 @@ have the binary.)
   reported and left. It is now taken out of the block, bytes included, like a picture
   on the page. A block the document draws more than once stays and is reported, as
   before.
+- **Redaction takes and cuts drawings inside a reusable block.** A table's borders, a
+  chart's axes or a form's boxes are often drawn inside a block, and a region touching
+  one was reported and nothing was taken. A drawing the region holds all of is now
+  removed, and a straight line or a rectangle that runs on past the region is cut at
+  its edge, by the rules that already apply to a drawing on the page. The cut is
+  worked out where the page draws the block: under the block's own matrix and the
+  line width in force when it is drawn. A block the document draws more than once
+  stays and is reported, as before. On 64 of the author's documents the share of
+  word-sized regions taken whole went from 82.4% to 91.1%.
 - **Redaction takes a picture the document draws in several places off the page you
   marked.** A logo or a background drawn on every page was left where it was and
   reported, so it could not be redacted on any page. Its draw on the marked page is

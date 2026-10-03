@@ -70,6 +70,7 @@ fn plan(turns: u8) -> Plan {
         compress: Default::default(),
         new_fields: Vec::new(),
         redactions: vec![PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: vec![0],
             text_objects: 2,

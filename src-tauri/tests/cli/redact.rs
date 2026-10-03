@@ -932,6 +932,226 @@ fn qdf(path: &Path, dir: &Path) -> Option<Vec<u8>> {
         .flatten()
 }
 
+/// One page drawing a reusable block `times` times. The block holds a rule,
+/// a small square and a curve, and the page places it doubled: a point
+/// `(x, y)` of the block lands at `(2x + 120, 2y + 340)`, and a stroke 1.5
+/// wide is 3 on the page.
+fn block_drawings_pdf(times: usize) -> Vec<u8> {
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let inside = "0 0 m 200 0 l S\n\
+                  20 20 10 10 re f\n\
+                  0 60 m 20 80 60 80 80 60 c S\n";
+    let block = doc.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "BBox" => vec![(-5).into(), (-5).into(), 205.into(), 100.into()],
+            "Matrix" => vec![1.into(), 0.into(), 0.into(), 1.into(), 10.into(), 20.into()],
+        },
+        inside.as_bytes().to_vec(),
+    ));
+    // A line of text the regions do not cover, so the copy has a word left to
+    // prove the page can still be read.
+    let font = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
+    });
+    let mut body = String::from(
+        "BT /F1 10 Tf 72 700 Td (CONTROL-KEEP alpha) Tj ET\n\
+         q 2 0 0 2 100 300 cm 1.5 w /Fm0 Do Q\n",
+    );
+    for _ in 1..times {
+        body.push_str("q 1 0 0 1 300 40 cm /Fm0 Do Q\n");
+    }
+    let content = doc.add_object(Stream::new(dictionary! {}, body.into_bytes()));
+    let resources = doc.add_object(dictionary! {
+        "Font" => dictionary! { "F1" => font },
+        "XObject" => dictionary! { "Fm0" => block },
+    });
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages, "Resources" => resources,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! {
+            "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page)],
+        }
+        .into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialises");
+    bytes
+}
+
+/// A drawing inside a reusable block goes whole when the region holds all of
+/// it and is cut at the region's edge when it is a rule that runs on; a curve
+/// that runs on stays and is reported, and so does everything in a block the
+/// page draws twice.
+pub(super) fn drawings_in_blocks_are_removed(report: &mut Report) {
+    let dir = scratch("redact-block-drawings");
+    let input = dir.join("blocks.pdf");
+    std::fs::write(&input, block_drawings_pdf(1)).expect("the input");
+    // `[x, y, width, height]` as displayed, y down from the top of a 792 pt page.
+    let redact = |from: &Path, name: &str, rect: &str| {
+        let output = dir.join(format!("{name}.pdf"));
+        let regions = dir.join(format!("{name}.json"));
+        std::fs::write(&regions, format!(r#"[{{"page":1,"rect":{rect}}}]"#)).expect("regions");
+        let (code, json, stderr) = run(
+            &strings(&[
+                "redact",
+                &s(from),
+                "-o",
+                &s(&output),
+                "--regions",
+                &s(&regions),
+                "--json",
+            ]),
+            &[],
+        );
+        (code, json, stderr, output)
+    };
+    // What the block's content says, on one line.
+    let block = |path: &Path| {
+        let doc = Document::load(path).expect("the written file loads");
+        let page = *doc.get_pages().values().next().expect("a page");
+        let resources = doc.get_page_resources(page).expect("resources");
+        let holder = doc
+            .get_dictionary(resources.1[0])
+            .expect("the resources object");
+        let list = holder
+            .get(b"XObject")
+            .and_then(Object::as_dict)
+            .expect("a list");
+        let id = list
+            .get(b"Fm0")
+            .and_then(Object::as_reference)
+            .expect("the block");
+        let stream = doc
+            .get_object(id)
+            .and_then(Object::as_stream)
+            .expect("a stream");
+        let body = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        String::from_utf8_lossy(&body)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // What the page draws at a point, at one pixel a point.
+    let drawn = |path: &Path, name: &str| {
+        let picture = dir.join(format!("{name}.png"));
+        let (code, _, stderr) = tool(
+            &["render", &s(path), "--dpi", "72", "-o", &s(&picture)],
+            &[],
+        );
+        assert_eq!(code, 0, "the copy renders: {stderr}");
+        let (width, _, data) = super::images::pixels(&s(&picture));
+        move |x: u32, from_top: u32| -> [u8; 3] {
+            let at = ((from_top * width + x) * 4) as usize;
+            [data[at], data[at + 1], data[at + 2]]
+        }
+    };
+    let dark = |pixel: [u8; 3]| pixel.iter().all(|channel| *channel < 128);
+    const PAPER: [u8; 3] = [255, 255, 255];
+
+    // The rule runs from (120, 340) to (520, 340) on the page, 3 thick: 452
+    // from the top, so it darkens pixel rows 451 and 452. The region takes
+    // 200..250 of it, which is 40..65 in the block's own numbers.
+    let (code, json, stderr, output) = redact(&input, "rule", "[200,442,50,20]");
+    let after = block(&output);
+    report.check(
+        "a rule inside a block is cut at both edges of the region, in the block's own numbers",
+        code == 0
+            && json["verified"] == true
+            && json["pages"][0]["path_cuts"] == 1
+            && json["pages"][0]["path_removals"] == 0
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            && after.contains("0 0 m 40 0 l 65 0 m 200 0 l S")
+            && after.contains("20 20 10 10 re f")
+            && after.contains(" c S"),
+        &format!("exit {code}: {stderr}; {json}; {after}"),
+    );
+    let pixel = drawn(&output, "rule");
+    let before = drawn(&input, "before");
+    report.check(
+        "the page still draws the rule up to both edges of the region, and the rest of the block",
+        (122..199).all(|x| dark(pixel(x, 451)) || dark(pixel(x, 452)))
+            && (252..518).all(|x| dark(pixel(x, 451)) || dark(pixel(x, 452)))
+            && pixel(198, 445) == PAPER
+            // The square, at (160..180, 380..400): 392..412 from the top.
+            && dark(pixel(170, 402))
+            // Every row above the region is drawn as it was.
+            && (300..440).all(|y| (100..540).all(|x| pixel(x, y) == before(x, y))),
+        &format!(
+            "{:?} {:?} {:?}",
+            pixel(198, 451),
+            pixel(252, 452),
+            pixel(170, 402)
+        ),
+    );
+    report.check(
+        "control: before the cut the page draws the rule across the region too",
+        (122..518).all(|x| dark(before(x, 451)) || dark(before(x, 452))),
+        &format!("{:?} {:?}", before(225, 451), before(225, 452)),
+    );
+
+    // Around the square.
+    let (code, json, stderr, output) = redact(&input, "square", "[155,387,30,30]");
+    let after = block(&output);
+    report.check(
+        "a square the region holds all of is taken out of the block",
+        code == 0
+            && json["pages"][0]["path_removals"] == 1
+            && json["pages"][0]["path_cuts"] == 0
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+            && !after.contains(" re")
+            && after.contains("0 0 m 200 0 l S")
+            && after.contains(" c S"),
+        &format!("exit {code}: {stderr}; {json}; {after}"),
+    );
+
+    // Across the curve, whose arch runs from (120, 460) to (280, 490) on the
+    // page: 302..332 from the top.
+    let (code, json, stderr, output) = redact(&input, "curve", "[190,300,20,34]");
+    let left = json["pages"][0]["left"].to_string();
+    report.check(
+        "a curve the region crosses is left in the block, and the report says so",
+        json["verified"] == false
+            && json["pages"][0]["path_removals"] == 0
+            && json["pages"][0]["path_cuts"] == 0
+            && left.contains("drawing that reaches beyond the region")
+            && (!output.exists() || block(&output).contains(" c S")),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
+    // The same block drawn a second time: changing it would change a place
+    // nobody marked.
+    let twice = dir.join("twice.pdf");
+    std::fs::write(&twice, block_drawings_pdf(2)).expect("the input");
+    let (code, json, stderr, output) = redact(&twice, "twice-rule", "[200,442,50,20]");
+    report.check(
+        "nothing is cut in a block the page draws twice, and the report says so",
+        json["verified"] == false
+            && json["pages"][0]["path_cuts"] == 0
+            && json["pages"][0]["path_removals"] == 0
+            && json["pages"][0]["left"]
+                .as_array()
+                .is_some_and(|left| !left.is_empty())
+            && (!output.exists() || block(&output).contains("0 0 m 200 0 l S")),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 fn contains(haystack: &[u8], needle: &str) -> bool {
     haystack
         .windows(needle.len())

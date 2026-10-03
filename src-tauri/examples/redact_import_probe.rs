@@ -199,6 +199,7 @@ fn run(
         pages,
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: planned.shows.clone(),
             text_objects: planned.text_objects,

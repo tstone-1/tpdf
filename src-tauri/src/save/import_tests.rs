@@ -677,6 +677,7 @@ fn a_rewrite_removes_from_the_reader_s_page_and_carries_the_inserted_ones_whole(
     // in the file and its slot in the output are different numbers.
     let mut plan = plan_with(2, vec![theirs(3, 0), theirs(4, 1), own(0), own(1)], &other);
     plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         // Baseline page 0 --- `OWN-A` --- which is slot 2 of the output.
         source: 0,
         shows: vec![0],
@@ -774,6 +775,7 @@ fn a_word_surviving_on_an_inserted_page_is_placed_there_and_not_on_the_marked_on
 
     let mut plan = plan_with(2, vec![theirs(3, 0), own(0), own(1)], &other);
     plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: vec![0],
         text_objects: 1,

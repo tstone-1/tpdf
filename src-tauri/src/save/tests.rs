@@ -7362,6 +7362,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
     plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: vec![0],
         text_objects: 4,
@@ -7403,6 +7404,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     let mut both = plan_with_mark(one_quad());
     assert!(both.is_appendable(), "the control: a mark alone appends");
     both.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: vec![0],
         text_objects: 4,
@@ -7436,6 +7438,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
 fn a_page_named_twice_by_the_redaction_plan_is_refused() {
     let twice = vec![
         crate::edits::PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: vec![0],
             text_objects: 1,
@@ -7452,6 +7455,7 @@ fn a_page_named_twice_by_the_redaction_plan_is_refused() {
             cuts: Vec::new(),
         },
         crate::edits::PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: vec![0],
             text_objects: 1,
@@ -7521,6 +7525,7 @@ fn an_annotation_over_a_redacted_region_is_removed_and_its_neighbour_is_not() {
         &mut doc,
         &[page],
         &[crate::edits::PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: vec![0],
             text_objects: 1,
@@ -7608,6 +7613,7 @@ fn a_redacted_annotation_loses_the_references_that_are_not_on_the_page() {
         &mut doc,
         &[page],
         &[crate::edits::PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: vec![0],
             text_objects: 1,
@@ -7977,6 +7983,7 @@ fn outlined_document() -> (Document, lopdf::ObjectId, Chain) {
 /// A plan reporting that it took the line `outlined_document` draws.
 fn naming_the_secret(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: vec![0],
         text_objects: 1,
@@ -8302,6 +8309,7 @@ fn a_rewrite_that_removed_a_picture_sweeps_it_out_of_the_file() {
 
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: Vec::new(),
         text_objects: 0,
@@ -8356,6 +8364,7 @@ fn a_rewrite_takes_a_planned_drawing_out_of_the_page() {
 
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: Vec::new(),
         text_objects: 0,
@@ -8413,6 +8422,7 @@ fn a_rewrite_cuts_a_planned_rule_at_the_region_s_edge() {
 
     let mut plan = plan_of(&[0]);
     plan.redactions = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: Vec::new(),
         text_objects: 0,
@@ -8834,6 +8844,7 @@ fn formed_document() -> (
 /// real document it could not.
 fn over_the_widget(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: vec![0],
         text_objects: 1,
@@ -8895,6 +8906,7 @@ fn described_document() -> (Document, lopdf::ObjectId, lopdf::ObjectId, lopdf::O
 /// The plan that redacts the one line `described_document` draws.
 fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
     vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 0,
         shows: vec![0],
         text_objects: 1,
@@ -8923,6 +8935,7 @@ fn redaction_of(_page: lopdf::ObjectId) -> Vec<crate::edits::PlannedRedaction> {
 #[test]
 fn a_redaction_naming_a_page_that_is_not_kept_is_refused() {
     let past = vec![crate::edits::PlannedRedaction {
+        form_paths: Default::default(),
         source: 4,
         shows: vec![0],
         text_objects: 1,
@@ -10892,6 +10905,7 @@ fn a_planned_removal_takes_a_picture_out_of_a_block_and_its_bytes_out_of_the_fil
     let removal = |form_images: Vec<(usize, usize)>| {
         let mut plan = plan_of(&[0]);
         plan.redactions = vec![crate::edits::PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: Vec::new(),
             text_objects: 0,
@@ -10931,6 +10945,143 @@ fn a_planned_removal_takes_a_picture_out_of_a_block_and_its_bytes_out_of_the_fil
         .expect_err("refused")
         .to_string()
         .contains("draws 2 picture(s) and PDFium reported 5"));
+}
+
+#[test]
+fn a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_other() {
+    use lopdf::{dictionary, Stream};
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let block = |doc: &mut Document| {
+        doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject", "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 300.into(), 100.into()],
+            },
+            b"0 10 m 200 10 l S\n20 20 10 10 re f\n".to_vec(),
+        ))
+    };
+    let blocks = [block(&mut doc), block(&mut doc), block(&mut doc)];
+    let content = doc.add_object(Stream::new(
+        dictionary! {},
+        b"q 1 0 0 1 0 100 cm /Fm0 Do Q\nq 1 0 0 1 0 300 cm /Fm1 Do Q\n\
+          q 1 0 0 1 0 500 cm /Fm2 Do Q\n"
+            .to_vec(),
+    ));
+    let resources = doc.add_object(dictionary! {
+        "XObject" => dictionary! { "Fm0" => blocks[0], "Fm1" => blocks[1], "Fm2" => blocks[2] },
+    });
+    let page = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages, "Resources" => resources,
+        "MediaBox" => vec![0.into(), 0.into(), 600.into(), 800.into()],
+        "Contents" => content,
+    });
+    doc.objects.insert(
+        pages,
+        dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }
+            .into(),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut original = Vec::new();
+    doc.save_to(&mut original).expect("serialises");
+
+    let removal = |form_paths: crate::redact::FormPathsPlanned| {
+        let mut plan = plan_of(&[0]);
+        plan.redactions = vec![crate::edits::PlannedRedaction {
+            form_paths,
+            source: 0,
+            shows: Vec::new(),
+            text_objects: 0,
+            areas: Vec::new(),
+            taking: Vec::new(),
+            form_shows: Vec::new(),
+            form_images: Vec::new(),
+            form_image_objects: Vec::new(),
+            form_text_objects: Vec::new(),
+            images: Vec::new(),
+            image_objects: 0,
+            paths: Vec::new(),
+            path_objects: 0,
+            cuts: Vec::new(),
+        }];
+        plan
+    };
+    // What each block's content says after a write, in the page's order.
+    let says = |bytes: &[u8]| -> Vec<String> {
+        let doc = Document::load_mem(bytes).expect("the written file loads");
+        let page = *doc.get_pages().values().next().expect("a page");
+        let resources = doc.get_page_resources(page).expect("resources");
+        let list = doc
+            .get_dictionary(resources.1[0])
+            .and_then(|holder| holder.get(b"XObject"))
+            .and_then(Object::as_dict)
+            .expect("a list");
+        ["Fm0", "Fm1", "Fm2"]
+            .iter()
+            .map(|name| {
+                let id = list
+                    .get(name.as_bytes())
+                    .and_then(Object::as_reference)
+                    .unwrap();
+                let stream = doc.get_object(id).and_then(Object::as_stream).unwrap();
+                let body = stream
+                    .decompressed_content()
+                    .unwrap_or_else(|_| stream.content.clone());
+                String::from_utf8_lossy(&body)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect()
+    };
+    const AS_IT_WAS: &str = "0 10 m 200 10 l S 20 20 10 10 re f";
+    let objects = vec![(0, 2), (1, 2), (2, 2)];
+
+    // The first block loses its square; the third has its rule cut where a
+    // region covers x 50..80 of it, at y 510 on the page.
+    let written = rewrite_update(
+        &original,
+        &removal(crate::redact::FormPathsPlanned {
+            whole: vec![(0, 1)],
+            cuts: vec![(2, 0, [50.0, 505.0, 80.0, 515.0])],
+            objects: objects.clone(),
+        }),
+        Job::Save,
+        None,
+    )
+    .expect("rewritten");
+    assert_eq!(
+        says(&written),
+        [
+            "0 10 m 200 10 l S",
+            AS_IT_WAS,
+            "0 10 m 50 10 l 80 10 m 200 10 l S 20 20 10 10 re f"
+        ]
+    );
+    // The control: a plan that names nothing leaves all three.
+    let untouched = rewrite_update(
+        &original,
+        &removal(crate::redact::FormPathsPlanned {
+            objects: objects.clone(),
+            ..Default::default()
+        }),
+        Job::Save,
+        None,
+    )
+    .expect("rewritten");
+    assert_eq!(says(&untouched), [AS_IT_WAS; 3]);
+    // And one that disagrees with a block about how many paths it paints
+    // writes nothing.
+    let wrong = removal(crate::redact::FormPathsPlanned {
+        whole: vec![(0, 1)],
+        cuts: Vec::new(),
+        objects: vec![(0, 7), (1, 2), (2, 2)],
+    });
+    assert!(rewrite_update(&original, &wrong, Job::Save, None)
+        .expect_err("refused")
+        .to_string()
+        .contains("paints 2 path(s) and PDFium reported 7"));
 }
 
 #[test]

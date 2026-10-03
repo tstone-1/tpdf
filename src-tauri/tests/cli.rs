@@ -136,7 +136,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 30] = [
+    let checks: [Check; 31] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -221,6 +221,10 @@ fn main() {
         (
             "redact removes a picture inside a reusable block",
             redact::pictures_in_blocks_are_removed,
+        ),
+        (
+            "redact removes or cuts a drawing inside a reusable block",
+            redact::drawings_in_blocks_are_removed,
         ),
         (
             "redact's verdict is the application's",

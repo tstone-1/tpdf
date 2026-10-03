@@ -3518,6 +3518,43 @@ not verified, and name the drawing left.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
 - The review panel was not driven by a person with a drawing under a region.
 
+#### Drawings inside a block are removed and cut — 2026-10-03
+
+The largest group left after the section below: 630 of 4,616 word-sized regions touched
+a drawing inside a Form XObject. The earlier count of what those regions touch said
+1,503 drawings crossing the region's edge against 66 wholly inside, so removal alone
+would have reached one in twenty-three and the work was the cut.
+
+**One cutter, two starting states.** `pathcut` already splits a rule or a rectangle
+exactly on a page. A form's content starts in the graphics state the page is in at the
+`Do`, with the form's `/Matrix` applied first, and looks `gs` names up in its own
+resources when it has any. `pathcut::drawings_in_form` builds that state and hands it
+to the same parser, so a `Drawing` from a form is in page space and `Drawing::cut`
+takes the same regions. `redact::path_edits` and `apply_path_edits` are `take_paths`'
+middle, shared with `take_form_paths`.
+
+**Reported until settled.** `covered` puts every drawing of a form the region touches
+in `unhandled` and lists it in `Plan::form_crossing`; `settle_form_paths` takes out of
+the report the ones it can place. A caller that never settles reports them all, which
+is the safe direction. A form drawn more than once is taken off the list by
+`leave_shared`, whichever of the two runs first.
+
+**Measured.** Regions taken whole: 4,206 of 4,616 (91.1%), from 3,804 (82.4%). Left: a
+drawing in a block 228 (curves, dashed and hairline rules, clips), a drawing on the
+page 141, a block drawn more than once 122, a shading 1.
+
+**Checked by rendering, against the previous build.** The same regions were redacted
+with the build before this change and with this one, on 46 documents and 114 pages,
+and the two copies rendered at two pixels a point. The new build took 55 more drawings
+in 9 documents. Outside the regions the two renderings are the same on every page but
+one, and that one is the renderer and not the geometry: see `docs/TRAPS.md`, *PDFium
+paints a pixel-aligned rectangle one pixel wider*. `tests/cli/redact.rs` checks the
+same on a fixture: the rule is drawn up to both edges of the region and every row above
+it is the pixel it was.
+
+**Not done.** A block inside a block (63 hits) is still reported. An `ActualText` span
+around a drawing inside a form is not cleared, as it is on a page.
+
 #### A picture drawn in several places goes from the marked page — 2026-10-03
 
 After the section below, the largest group of regions left was a picture the document

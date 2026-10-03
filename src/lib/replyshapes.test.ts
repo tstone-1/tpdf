@@ -278,6 +278,7 @@ const SCHEMA = {
     unhandled: ["array"],
     images: ["array"],
     form_images: ["array"],
+    form_paths: ["object"],
     shared: ["array"],
     paths: ["array"],
     cuts: ["array"],

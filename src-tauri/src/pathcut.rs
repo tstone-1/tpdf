@@ -129,8 +129,35 @@ fn dictionary<'a>(doc: &'a Document, object: &'a Object) -> Option<&'a Dictionar
     resolved(doc, object)?.as_dict().ok()
 }
 
-/// The `ExtGState` a page's resources name `name`, nearest resources first.
-fn ext_g_state<'a>(doc: &'a Document, page: ObjectId, name: &[u8]) -> Option<&'a Dictionary> {
+/// Whose resources a content stream's `gs` names are looked up in.
+#[derive(Clone, Copy)]
+enum Names {
+    /// The page's own content.
+    Page(ObjectId),
+    /// A Form XObject the page draws. A form with resources of its own reads
+    /// those and nothing else; one without reads the page's.
+    Form { form: ObjectId, page: ObjectId },
+}
+
+/// The `ExtGState` these resources name `name`.
+fn ext_g_state<'a>(doc: &'a Document, names: Names, name: &[u8]) -> Option<&'a Dictionary> {
+    let page = match names {
+        Names::Page(page) => page,
+        Names::Form { form, page } => {
+            let own = doc
+                .get_object(form)
+                .and_then(Object::as_stream)
+                .ok()
+                .and_then(|stream| stream.dict.get(b"Resources").ok());
+            match own {
+                Some(resources) => {
+                    let states = dictionary(doc, resources)?.get(b"ExtGState").ok()?;
+                    return dictionary(doc, dictionary(doc, states)?.get(name).ok()?);
+                }
+                None => page,
+            }
+        }
+    };
     let (inline, inherited) = doc.get_page_resources(page).ok()?;
     let own = inline.into_iter();
     let above = inherited
@@ -165,11 +192,18 @@ fn cap_of(value: f64) -> Option<bool> {
     }
 }
 
-/// The state in effect at each of `at`, which is ascending operation indices.
-fn states_at(doc: &Document, page: ObjectId, content: &Content, at: &[usize]) -> Vec<State> {
+/// The state in effect at each of `at`, which is ascending operation indices,
+/// in a content stream that begins in the state `start`.
+fn states_at(
+    doc: &Document,
+    names: Names,
+    content: &Content,
+    at: &[usize],
+    start: &State,
+) -> Vec<State> {
     let mut found = Vec::with_capacity(at.len());
     let mut wanted = at.iter().copied().peekable();
-    let mut state = State::default();
+    let mut state = start.clone();
     let mut stack: Vec<State> = Vec::new();
     for (index, operation) in content.operations.iter().enumerate() {
         if wanted.peek().is_none() {
@@ -201,7 +235,7 @@ fn states_at(doc: &Document, page: ObjectId, content: &Content, at: &[usize]) ->
                     .operands
                     .first()
                     .and_then(|name| name.as_name().ok())
-                    .and_then(|name| ext_g_state(doc, page, name));
+                    .and_then(|name| ext_g_state(doc, names, name));
                 match named {
                     Some(named) => {
                         if let Ok(width) = named.get(b"LW") {
@@ -233,7 +267,7 @@ fn states_at(doc: &Document, page: ObjectId, content: &Content, at: &[usize]) ->
         }
     }
     // An index past the end has no state; the caller's paths never name one.
-    found.resize(at.len(), State::default());
+    found.resize(at.len(), start.clone());
     found
 }
 
@@ -481,11 +515,84 @@ pub fn drawings(
     content: &Content,
     paths: &[&[usize]],
 ) -> Vec<Option<Drawing>> {
+    drawings_from(doc, Names::Page(page), content, paths, &State::default())
+}
+
+/// [`drawings`] for the paths a Form XObject paints.
+///
+/// A form's content starts in the graphics state the page is in at the `Do`
+/// that draws it, with the form's `/Matrix` applied first. `page_content` is
+/// the page's own content and `drawn_at` the index of that `Do` in it; `form`
+/// is the form's stream and `content` what it decodes to. The answer is in
+/// page space, as [`drawings`]' is, so [`Drawing::cut`] takes the same regions.
+///
+/// Every entry is `None` when the `Do` is not where `drawn_at` says, or the
+/// form's `/Matrix` will not read: a path placed by a matrix this cannot read
+/// is not one it can cut.
+#[must_use]
+pub fn drawings_in_form(
+    doc: &Document,
+    page: ObjectId,
+    page_content: &Content,
+    drawn_at: usize,
+    form: ObjectId,
+    content: &Content,
+    paths: &[&[usize]],
+) -> Vec<Option<Drawing>> {
+    let nothing = || vec![None; paths.len()];
+    if page_content
+        .operations
+        .get(drawn_at)
+        .is_none_or(|operation| operation.operator != "Do")
+    {
+        return nothing();
+    }
+    let Ok(stream) = doc.get_object(form).and_then(Object::as_stream) else {
+        return nothing();
+    };
+    let matrix = match stream.dict.get(b"Matrix") {
+        Err(_) => Some(IDENTITY),
+        Ok(value) => resolved(doc, value)
+            .and_then(|value| value.as_array().ok())
+            .filter(|array| array.len() == 6)
+            .and_then(|array| {
+                let mut out = [0.0; 6];
+                for (slot, entry) in out.iter_mut().zip(array) {
+                    *slot = resolved(doc, entry)
+                        .and_then(number)
+                        .filter(|value| value.is_finite())?;
+                }
+                Some(out)
+            }),
+    };
+    let mut start = states_at(
+        doc,
+        Names::Page(page),
+        page_content,
+        &[drawn_at],
+        &State::default(),
+    )
+    .pop()
+    .unwrap_or_default();
+    start.ctm = match (matrix, start.ctm) {
+        (Some(matrix), Some(ctm)) => Some(concat(matrix, ctm)),
+        _ => None,
+    };
+    drawings_from(doc, Names::Form { form, page }, content, paths, &start)
+}
+
+fn drawings_from(
+    doc: &Document,
+    names: Names,
+    content: &Content,
+    paths: &[&[usize]],
+    start: &State,
+) -> Vec<Option<Drawing>> {
     let paints: Vec<usize> = paths
         .iter()
         .map(|path| path.last().copied().unwrap_or(usize::MAX))
         .collect();
-    let states = states_at(doc, page, content, &paints);
+    let states = states_at(doc, names, content, &paints, start);
     paths
         .iter()
         .zip(&states)

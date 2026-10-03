@@ -356,7 +356,8 @@ export function takesFor(plan: RegionPlan | undefined): string {
   // A picture is one to a reader whether the page draws it or a reusable block
   // on the page does, so the two are one count.
   const pictures = (plan?.images?.length ?? 0) + (plan?.form_images?.length ?? 0);
-  const drawings = plan?.paths?.length ?? 0;
+  // And a drawing is one whichever of the two draws it.
+  const drawings = (plan?.paths?.length ?? 0) + (plan?.form_paths?.whole?.length ?? 0);
   // A drawing goes only when the region holds all of it, so it has no "whole"
   // to warn about: nothing of it was outside what the reader marked.
   const said: string[] = [];
@@ -366,7 +367,7 @@ export function takesFor(plan: RegionPlan | undefined): string {
   if (drawings > 0) {
     said.push(drawings === 1 ? "a drawing inside it" : `${drawings} drawings inside it`);
   }
-  const cuts = plan?.cuts?.length ?? 0;
+  const cuts = (plan?.cuts?.length ?? 0) + (plan?.form_paths?.cuts?.length ?? 0);
   // A line or a rectangle that runs on past the region keeps what is outside.
   const cut = cuts === 1 ? "a line at its edge" : `${cuts} lines at its edge`;
   if (said.length === 0) return cuts > 0 ? `Cuts ${cut}` : "";

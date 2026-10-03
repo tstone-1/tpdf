@@ -166,6 +166,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
             .collect(),
         marks: Vec::new(),
         redactions: vec![PlannedRedaction {
+            form_paths: Default::default(),
             source: 0,
             shows: plan_for_region.shows.clone(),
             text_objects: plan_for_region.text_objects,

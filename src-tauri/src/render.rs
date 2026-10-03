@@ -2213,6 +2213,10 @@ pub fn redaction_plans_of(
     // What each path is, for cutting at a region's edge. Decoded only when a
     // region reports a drawing that reaches beyond it, and then once.
     let drawings = std::cell::OnceCell::new();
+    // The same for the drawings inside the page's forms, decoded when a
+    // region first touches one.
+    let form_path_counts: Vec<usize> = objects.forms.iter().map(|form| form.paths.len()).collect();
+    let form_paths = std::cell::OnceCell::new();
     Ok(regions
         .iter()
         .map(|region| {
@@ -2228,6 +2232,13 @@ pub fn redaction_plans_of(
                     drawings.get_or_init(|| document.graph().path_drawings(index, path_objects));
                 redact::cut_crossing(&mut plan, drawings.as_deref(), want, &objects.all);
             }
+            // After `leave_shared`, which takes a form the document draws
+            // more than once out of the list this reads.
+            if !plan.form_crossing.is_empty() {
+                let facts = form_paths
+                    .get_or_init(|| document.graph().form_paths(index, &form_path_counts));
+                redact::settle_form_paths(&mut plan, &objects.forms, facts, want);
+            }
             redact::RegionPlan {
                 paths: plan.paths.clone(),
                 path_objects,
@@ -2241,6 +2252,15 @@ pub fn redaction_plans_of(
                 // present only when some region covered that form would be
                 // missing exactly when another region needed it.
                 shared: plan.shared.clone(),
+                form_paths: redact::FormPaths {
+                    whole: plan.form_paths.clone(),
+                    cuts: plan.form_cuts.clone(),
+                    objects: objects
+                        .forms
+                        .iter()
+                        .map(|form| (form.at, form.paths.len()))
+                        .collect(),
+                },
                 form_images: plan.form_images.clone(),
                 form_image_objects: objects
                     .forms

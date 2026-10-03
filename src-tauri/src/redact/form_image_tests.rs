@@ -343,6 +343,7 @@ fn objects_for(forms: usize) -> Vec<PageObject> {
 
 fn form_with(at: usize, images: &[[f32; 4]]) -> FormObject {
     FormObject {
+        paths: Vec::new(),
         at,
         text: Vec::new(),
         images: images.to_vec(),

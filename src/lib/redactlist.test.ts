@@ -203,6 +203,23 @@ describe("what a row says a removal will take", () => {
     );
   });
 
+  it("counts a drawing inside a reusable block with the page's own, removed or cut", () => {
+    expect(takesFor({ ...taking(0), form_paths: { whole: [[2, 0]] } })).toBe(
+      "Also removes a drawing inside it",
+    );
+    expect(takesFor({ ...taking(0), paths: [3], form_paths: { whole: [[2, 0], [2, 4]] } })).toBe(
+      "Also removes 3 drawings inside it",
+    );
+    expect(takesFor({ ...taking(0), form_paths: { cuts: [[2, 1]] } })).toBe(
+      "Cuts a line at its edge",
+    );
+    expect(takesFor({ ...taking(0), cuts: [5], form_paths: { cuts: [[2, 1]] } })).toBe(
+      "Cuts 2 lines at its edge",
+    );
+    // The control: a block's counts alone say nothing is taken.
+    expect(takesFor({ ...taking(0), form_paths: { objects: [[2, 6]] } })).toBe("");
+  });
+
   it("says when a picture it takes is drawn elsewhere too, and stays there", () => {
     const kept = (drawn: number) => ({ at: 0, kind: "image", drawn });
     expect(takesFor({ ...taking(1), shared: [kept(12)] })).toBe(

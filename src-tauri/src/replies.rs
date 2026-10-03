@@ -670,6 +670,11 @@ fn samples() -> BTreeMap<&'static str, String> {
     put(
         "RegionPlan",
         &redact::RegionPlan {
+            form_paths: redact::FormPaths {
+                whole: vec![(4, 0)],
+                cuts: vec![(4, 2)],
+                objects: vec![(4, 3)],
+            },
             shared: vec![redact::Unhandled {
                 at: 3,
                 kind: "image".to_string(),

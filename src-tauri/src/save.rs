@@ -4329,6 +4329,37 @@ fn apply_redactions(
         done.paths += took.removed.removed;
         done.cuts += took.cut;
 
+        // And the drawings inside a form the page draws, one form at a time:
+        // a form's paths are addressed by their place in the form's own
+        // content, which no other form's removal moves.
+        let form_paths = &redaction.form_paths;
+        let mut with_drawings: Vec<usize> = form_paths
+            .whole
+            .iter()
+            .map(|(at, _)| *at)
+            .chain(form_paths.cuts.iter().map(|(at, _, _)| *at))
+            .collect();
+        with_drawings.sort_unstable();
+        with_drawings.dedup();
+        for at in with_drawings {
+            let whole: Vec<usize> = form_paths
+                .whole
+                .iter()
+                .filter(|(form, _)| *form == at)
+                .map(|(_, ordinal)| *ordinal)
+                .collect();
+            let cut: Vec<(usize, [f32; 4])> = form_paths
+                .cuts
+                .iter()
+                .filter(|(form, _, _)| *form == at)
+                .map(|(_, ordinal, region)| (*ordinal, *region))
+                .collect();
+            let took = redact::take_form_paths(doc, page, &form_paths.objects, at, &whole, &cut)
+                .map_err(Refusal::from)?;
+            done.paths += took.removed.removed;
+            done.cuts += took.cut;
+        }
+
         // **The annotations, and every reference to them.** An annotation over
         // the region is `docs/PLAN.md` §6's *Annotations* row: its `/Contents`
         // is a comment about the words, routinely quoting them, and every reader

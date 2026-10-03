@@ -632,6 +632,7 @@ fn measure(
             });
         }
         planned.push(PlannedRedaction {
+            form_paths: Default::default(),
             source: page,
             shows,
             text_objects,

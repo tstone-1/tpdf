@@ -2600,6 +2600,10 @@ pub struct PlannedRedaction {
     /// disagrees with what `lopdf` finds.
     #[serde(default)]
     pub form_image_objects: Vec<(usize, usize)>,
+    /// The drawings inside the page's Form XObjects the removal deletes or
+    /// cuts. `redact::RegionPlan::form_paths`, merged.
+    #[serde(default)]
+    pub form_paths: crate::redact::FormPathsPlanned,
     /// Which of the page's paths the removal deletes, ascending.
     ///
     /// `redact::RegionPlan::paths`, merged across the page's regions the way

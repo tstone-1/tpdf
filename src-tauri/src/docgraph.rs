@@ -641,6 +641,25 @@ impl DocumentGraph {
         redact::path_drawings(document, page, paths)
     }
 
+    /// What each form one page draws paints, in the page's form order.
+    ///
+    /// `redact::form_paths` over the parsed graph, with
+    /// [`Self::path_clips`]'s rule for a graph that will not parse: every
+    /// form unknown, so its drawings stay where they are.
+    #[must_use]
+    pub fn form_paths(&self, index: u32, counts: &[usize]) -> Vec<Option<Vec<redact::FormPath>>> {
+        let page = self.parsed().ok().and_then(|document| {
+            pagetree::ordered_pages(document)
+                .get(index as usize)
+                .copied()
+                .map(|page| (document, page))
+        });
+        match page {
+            Some((document, page)) => redact::form_paths(document, page, counts),
+            None => vec![None; counts.len()],
+        }
+    }
+
     #[must_use]
     pub fn sheet(&self, index: u32, pages: usize) -> Option<[f32; 4]> {
         self.sheets

@@ -123,6 +123,14 @@ pub struct FormObject {
     /// [`unreachable`](Self::unreachable): on 64 real documents, 350 of 4,616
     /// word-sized regions touched one and could take nothing of it.
     pub images: Vec<Rect>,
+    /// Its drawings, in PDFium's order, each with its box in page space.
+    ///
+    /// The order is the order the form's own content paints them in, which is
+    /// what [`crate::redact::take_form_paths`] addresses them by. Until
+    /// 2026-10-03 a drawing inside a form was in
+    /// [`unreachable`](Self::unreachable): on 64 real documents, 630 of 4,616
+    /// word-sized regions touched one and could take nothing of it.
+    pub paths: Vec<Rect>,
 }
 
 /// One thing inside a Form XObject that a removal cannot address.
@@ -374,6 +382,7 @@ fn descend(
         text: Vec::new(),
         unreachable: Vec::new(),
         images: Vec::new(),
+        paths: Vec::new(),
     };
     for index in 0..count.max(0) {
         // `c_ulong` rather than a width: PDFium takes this index as `unsigned
@@ -395,6 +404,11 @@ fn descend(
             // A picture is addressed by its place among the form's pictures,
             // as the form's text is by its place among the text.
             out.images.push(through(matrix, bounds_of(page, child)));
+            continue;
+        }
+        if kind == "path" && !child.is_null() {
+            // And a drawing by its place among the form's drawings.
+            out.paths.push(through(matrix, bounds_of(page, child)));
             continue;
         }
         if kind != "text" {

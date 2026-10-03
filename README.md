@@ -415,8 +415,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   hairline rule, a line the region covers only part of the thickness of — is left where it is
   and reported, in the panel and in the report: taking it would strip it from parts of the
   page you did not mark, and a file with the words gone and a picture of the words still in
-  it must not be called clean. Text and pictures a page draws through a
-  reusable block — a letterhead, a table cell, a stamp — are removed like any other,
+  it must not be called clean. Text, pictures and drawings a page draws through a
+  reusable block — a letterhead, a table, a stamp — are removed or cut like any other,
   unless the document draws that block more than once, in which case it
   is left and reported as unverified. It also takes whole lines —
   removing part of one means removing the instruction that drew it, so a word beside the one
@@ -1604,8 +1604,8 @@ unbuilt while they shipped.
   hairline rule, a shape that is filled and outlined at once, or a line the region covers
   only part of the thickness of. A drawing that lies wholly inside the region is removed, and
   a straight line or a rectangle that crosses it is cut at its edge. Still reported and left: a drawing that also clips what is
-  drawn after it, a shading, a drawing sitting inside a reusable block, and a
-  block drawn inside another block. A picture is removed, bytes included, whether the page
+  drawn after it, a shading, and a block drawn inside another block. A drawing inside a
+  reusable block is removed or cut by the same rules as one on the page. A picture is removed, bytes included, whether the page
   draws it or a reusable block on the page does; one the document draws in other places too
   is taken off the marked page only, and the report says it is still in the file.
 - Adding long-term-validation data, or a further archive timestamp, to a document that is

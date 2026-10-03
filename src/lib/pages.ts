@@ -293,6 +293,16 @@ export interface RegionPlan {
    */
   form_images?: [number, number][];
   /**
+   * Drawings inside the page's reusable blocks: `whole` are removed, `cuts`
+   * are cut at this region's edge, each `[block position, ordinal]`.
+   * `redact::FormPaths`.
+   */
+  form_paths?: {
+    whole?: [number, number][];
+    cuts?: [number, number][];
+    objects?: [number, number][];
+  };
+  /**
    * Pictures the removal takes off this page that the document draws elsewhere
    * too, so the picture itself stays in the file. Each is also counted in
    * {@link images} or {@link form_images}; what this adds is `drawn`, how many
