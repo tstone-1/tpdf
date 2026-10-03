@@ -166,6 +166,7 @@ function harness(
     drawEllipse: () => fired.push("drawEllipse"),
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
+    drawField: (kind) => fired.push(`drawField:${kind}`),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     hasSelection: () => selected,
@@ -372,6 +373,28 @@ describe("the disk-change commands", () => {
  * at all. What matters is the pair of guards on the install command, because
  * they encode a distinction a single "is there an update" flag would lose.
  */
+describe("the form field commands", () => {
+  it("arm one drag with the kind each names", () => {
+    for (const [id, kind] of [
+      ["edit.addTextField", "text"],
+      ["edit.addMultilineField", "multiline"],
+      ["edit.addCheckbox", "checkbox"],
+    ] as const) {
+      const { registry, fired } = harness(true);
+      expect(registry.run(id), id).toBe(true);
+      expect(fired, id).toEqual([`drawField:${kind}`]);
+    }
+  });
+
+  it("need a document to place a field on", () => {
+    const { registry, fired } = harness(false);
+    for (const id of ["edit.addTextField", "edit.addMultilineField", "edit.addCheckbox"]) {
+      expect(registry.run(id), id).toBe(false);
+    }
+    expect(fired).toEqual([]);
+  });
+});
+
 describe("the commands that bring tabs back", () => {
   it("offers only the launch choice that is not the current one", () => {
     for (const restoring of [true, false]) {
@@ -1525,6 +1548,7 @@ describe("the window shortcuts for editing", () => {
       drawEllipse: () => fired.push("drawEllipse"),
       stamp: (name: StampName) => fired.push(`stamp:${name}`),
       drawTextBox: () => fired.push("drawTextBox"),
+      drawField: (kind) => fired.push(`drawField:${kind}`),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
       hasSelection: () => false,

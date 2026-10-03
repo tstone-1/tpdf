@@ -140,11 +140,7 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
     if !field.rect.iter().all(|v| v.is_finite()) {
         return Err(format!("`{name}`: its rectangle is not four numbers"));
     }
-    let least = if field.kind == Kind::Checkbox {
-        MIN_BOX
-    } else {
-        MIN_TEXT
-    };
+    let least = least_side(field.kind);
     if width < least || height < least {
         return Err(format!(
             "`{name}`: {width} by {height} points is too small --- a {} needs at least {least} \
@@ -370,6 +366,70 @@ fn append(doc: &mut Document, owner: ObjectId, key: &[u8], item: ObjectId) -> Re
     Ok(())
 }
 
+/// Writes one field's object: field and widget in one, with its appearance.
+///
+/// `rect` is in the page's own space. The object is not yet in the page's
+/// annotations or the form's field list; a field in one and not the other is
+/// one `forms::scan` refuses, so every caller does both.
+fn widget(
+    doc: &mut Document,
+    font: ObjectId,
+    page: ObjectId,
+    rect: [f64; 4],
+    field: &NewField,
+) -> ObjectId {
+    let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
+    let mut flags = 0_i64;
+    if field.required {
+        flags |= 1 << 1;
+    }
+    let mut widget = dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget",
+        "T" => forms::pdf_string(&field.name),
+        "Rect" => rect.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
+        "P" => page,
+        // Print, which is what makes a filled field appear on paper.
+        "F" => 4,
+        "DA" => text(DEFAULT_APPEARANCE),
+    };
+    if let Some(tip) = field.tooltip.as_deref().filter(|tip| !tip.is_empty()) {
+        widget.set("TU", forms::pdf_string(tip));
+    }
+    match field.kind {
+        Kind::Text | Kind::Multiline => {
+            if field.kind == Kind::Multiline {
+                flags |= 1 << 12;
+            }
+            widget.set("FT", "Tx");
+            if let Some(most) = field.max_length {
+                widget.set("MaxLen", i64::from(most));
+            }
+            // The empty appearance §12.7.4.3 describes: marked as the
+            // field's text and holding none.
+            let empty = forms::appearance(
+                doc,
+                width,
+                height,
+                b"/Tx BMC EMC".to_vec(),
+                dictionary! { "Font" => dictionary! { "Helv" => font } },
+            );
+            widget.set("AP", dictionary! { "N" => empty });
+        }
+        Kind::Checkbox => {
+            widget.set("FT", "Btn");
+            widget.set("V", "Off");
+            widget.set("AS", "Off");
+            let (off, on) = forms::checkbox_appearances(doc, width, height);
+            widget.set(
+                "AP",
+                dictionary! { "N" => dictionary! { "Off" => off, "Yes" => on } },
+            );
+        }
+    }
+    widget.set("Ff", flags);
+    doc.add_object(widget)
+}
+
 /// Adds `fields` to the document, all of them or none.
 pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
     if fields.is_empty() {
@@ -379,60 +439,73 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
     let form = ensure_form(doc)?;
     let font = ensure_font(doc, form)?;
     for (field, (page, rect)) in fields.iter().zip(placed) {
-        let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
-        let mut flags = 0_i64;
-        if field.required {
-            flags |= 1 << 1;
-        }
-        let mut widget = dictionary! {
-            "Type" => "Annot", "Subtype" => "Widget",
-            "T" => forms::pdf_string(&field.name),
-            "Rect" => rect.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
-            "P" => page,
-            // Print, which is what makes a filled field appear on paper.
-            "F" => 4,
-            "DA" => text(DEFAULT_APPEARANCE),
-        };
-        if let Some(tip) = field.tooltip.as_deref().filter(|tip| !tip.is_empty()) {
-            widget.set("TU", forms::pdf_string(tip));
-        }
-        match field.kind {
-            Kind::Text | Kind::Multiline => {
-                if field.kind == Kind::Multiline {
-                    flags |= 1 << 12;
-                }
-                widget.set("FT", "Tx");
-                if let Some(most) = field.max_length {
-                    widget.set("MaxLen", i64::from(most));
-                }
-                // The empty appearance §12.7.4.3 describes: marked as the
-                // field's text and holding none.
-                let empty = forms::appearance(
-                    doc,
-                    width,
-                    height,
-                    b"/Tx BMC EMC".to_vec(),
-                    dictionary! { "Font" => dictionary! { "Helv" => font } },
-                );
-                widget.set("AP", dictionary! { "N" => empty });
-            }
-            Kind::Checkbox => {
-                widget.set("FT", "Btn");
-                widget.set("V", "Off");
-                widget.set("AS", "Off");
-                let (off, on) = forms::checkbox_appearances(doc, width, height);
-                widget.set(
-                    "AP",
-                    dictionary! { "N" => dictionary! { "Off" => off, "Yes" => on } },
-                );
-            }
-        }
-        widget.set("Ff", flags);
-        let id = doc.add_object(widget);
+        let id = widget(doc, font, page, rect, field);
         append(doc, page, b"Annots", id)?;
         append(doc, form, b"Fields", id)?;
     }
     Ok(())
+}
+
+/// The least a side of a field of this kind may be, in points.
+#[must_use]
+pub fn least_side(kind: Kind) -> f64 {
+    if kind == Kind::Checkbox {
+        MIN_BOX
+    } else {
+        MIN_TEXT
+    }
+}
+
+/// Makes the field a reader placed in the window, and lists it in the form.
+///
+/// The other door into [`widget`]. `add` is handed pages of the file and
+/// rectangles as the page is displayed; a field placed in the window is a mark
+/// in the edit journal, and by the time it is written the save has already put
+/// the pages in their final order and mapped the rectangle into the page's own
+/// space. So this takes both as they are, checks what `check` checks of a name
+/// and a size, and leaves attaching the widget to its page to the caller,
+/// which attaches every other mark the same way.
+///
+/// # Errors
+///
+/// A name that cannot be a field's or that the form already has, a rectangle
+/// under the least size, or a form tpdf cannot read.
+pub fn place(
+    doc: &mut Document,
+    page: ObjectId,
+    rect: [f64; 4],
+    name: &str,
+    kind: Kind,
+) -> Result<ObjectId, String> {
+    forms::scan(doc)?;
+    if let Some(why) = name_problem(name) {
+        return Err(why);
+    }
+    if taken(doc).contains(name) {
+        return Err(format!(
+            "`{name}`: the form already has a field of this name"
+        ));
+    }
+    let least = least_side(kind);
+    if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
+        return Err(format!(
+            "`{name}`: a field of this kind needs at least {least} by {least} points"
+        ));
+    }
+    let form = ensure_form(doc)?;
+    let font = ensure_font(doc, form)?;
+    let field = NewField {
+        name: name.to_string(),
+        kind,
+        page: 0,
+        rect,
+        tooltip: None,
+        required: false,
+        max_length: None,
+    };
+    let id = widget(doc, font, page, rect, &field);
+    append(doc, form, b"Fields", id)?;
+    Ok(id)
 }
 
 #[cfg(test)]

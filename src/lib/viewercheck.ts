@@ -3158,6 +3158,7 @@ async function appCommandChecks(
     drawEllipse: () => fired.push("drawEllipse"),
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
+    drawField: (kind) => fired.push(`drawField:${kind}`),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     showTab: (tab) => fired.push(`showTab:${tab}`),
@@ -3992,6 +3993,11 @@ async function appCommandChecks(
       ...shell("drawTextBox"),
       read: () => fired.join(","),
     },
+    // The three form field commands arm one drag with three kinds, which is
+    // where a copy leaves two of them placing the same field.
+    { id: "edit.addTextField", ...shell("drawField:text"), read: () => fired.join(",") },
+    { id: "edit.addMultilineField", ...shell("drawField:multiline"), read: () => fired.join(",") },
+    { id: "edit.addCheckbox", ...shell("drawField:checkbox"), read: () => fired.join(",") },
     {
       // The freehand tool, aimed separately for the reason the three mark kinds
       // below are: two commands that arm the same primitive with a different

@@ -292,6 +292,16 @@ measured the Windows render constants come out 1.5–1.8x worse.
   be one, so another reader gets a comment they can open and a shape they can select. What
   you have drawn can be dragged to somewhere else on its page afterwards.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
+- **Add form fields** — *Add a form field: text*, *text on several lines* or *checkbox*,
+  then drag the rectangle where it goes. The field shows as a dashed frame with its name,
+  `Text 1` or `Checkbox 1` to begin with; press it to rename it, drag it to move it, and
+  remove or undo it like any other mark. Saving writes it into the document as a real form
+  field that tpdf, Acrobat and Preview can fill. A document with no form gets one. An
+  empty text field draws nothing once saved, as in most forms, so place it where the page
+  shows a line or a box. Not yet: resizing a placed field (remove it and drag again),
+  dropdowns, radio buttons and list boxes, and a field on a turned page, which the save
+  refuses and says so. `tpdf form` adds fields from a list on the command line.
+  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox -->
 - **Choose a colour** for a mark — seven of them, the default among them. Chosen with a
   note open it recolours that mark; chosen with none open it sets what the next one will
   be, which is the commoner of the two and is why it is offered either way.

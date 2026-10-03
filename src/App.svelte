@@ -125,6 +125,7 @@
     redactionRows,
     slotOfIdIn,
     type MarkKind,
+    type FieldKind,
     type StampName,
     type PageId,
     type RegionPlan,
@@ -139,6 +140,7 @@
     type Place,
     type Session,
   } from "./lib/session";
+  import { nextFieldName, takenNames } from "./lib/fieldnames";
   import {
     TabRecorder, afterReopen, launchPlan, openBehind, tabsToReopen, type TabHost,
   } from "./lib/tabrestore";
@@ -181,6 +183,10 @@
   const tabLabels = $derived(labelsFor(tabRows.map((tab) => tab.path)));
   let committingPopup = false;
   let formLayer: FormLayer | null = null;
+  /** The names in the open document's form, for naming a field placed in it. */
+  let formNames: string[] = [];
+  /** Which kind of form field the armed tool places. */
+  let armedField: FieldKind = "text";
   let textEditor: TextEditor | null = null;
   let textEditorGeneration = 0;
 
@@ -758,6 +764,7 @@
     drawEllipse: () => viewer?.armDraw("ellipse"),
     stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
+    drawField: (kind) => { armedField = kind; viewer?.armDraw("field"); },
     signature: () => void addSignature(),
     editText: () => void editExistingText(),
     draw: () => viewer?.armDraw("ink"),
@@ -1000,13 +1007,18 @@
     stamp: StampName | null,
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
+    // A field has to have a name the moment it exists. See `fieldnames.ts`.
+    const field = kind === "field" ? armedField : undefined;
+    const name = field
+      ? nextFieldName(field, takenNames(formNames, edits?.state.marks ?? []))
+      : "";
     await applyEdit((e) =>
       e.mark(
         kind,
         page,
         shape.quads,
         shape.strokes,
-        "",
+        name,
         markColor.rgb,
         stamp,
         // Never a reply: this is a mark a reader dragged out, and a reply is
@@ -1019,6 +1031,7 @@
         // would be a second copy of it.
         shape.width,
         shape.image,
+        field,
       ),
     );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
@@ -3801,6 +3814,8 @@
       properties = null;
       propertiesDialog?.close();
       rawOutline = null;
+      // The form's names are a fact about the document that is closing.
+      formNames = [];
       sidebar = new Sidebar(sidebarHost, {
         onNavigate: (target, top) => {
           viewer?.goToDestination(target, top);
@@ -4172,6 +4187,7 @@
         return call("document_form", { doc: wanted });
       }).then((form) => {
         if (!form || !surface || openDoc !== wanted || viewer !== mounted) return;
+        formNames = form.widgets.map((widget) => widget.name);
         formLayer = new FormLayer(surface, form, (widget) => mounted.formAnchor(widget),
           (object, value) => applyEdit((model) => model.fill(object, value)),
           (widget) => mounted.showForm(widget), say);

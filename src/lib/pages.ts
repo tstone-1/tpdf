@@ -112,7 +112,17 @@ export type MarkKind =
   | "textbox"
   | "ink"
   | "stamp"
-  | "signature";
+  | "signature"
+  /**
+   * A form field the reader placed, which a save writes as a field of the
+   * document's form. A mark for `MarkKind::Field`'s reason in `docmodel.rs`:
+   * it is dragged, moved, renamed, removed and undone as every mark is. Its
+   * name is the mark's note and its kind is {@link MarkView.field}.
+   */
+  | "field";
+
+/** Which kind of form field a placed field is. `formfields::Kind`'s wire names. */
+export type FieldKind = "text" | "multiline" | "checkbox";
 
 /**
  * Which standard stamp a `"stamp"` mark is.
@@ -336,6 +346,8 @@ export interface MarkView {
    * disagree with {@link MarkView.kind}.
    */
   stamp: StampName | null;
+  /** Which kind of form field, for a `field` and absent on everything else. */
+  field?: FieldKind;
   image?: import("./signature").SignatureImage;
   color: [number, number, number];
   /**

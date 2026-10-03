@@ -464,6 +464,35 @@ describe("Edits", () => {
     expect(edits.state.marks[0]?.id).toBe(1);
   });
 
+  it("sends a form field with its kind and its name, and a kind with nothing else", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+
+    core.invoke.mockResolvedValueOnce(state(3));
+    await edits.mark(
+      "field", pageId(1), [10, 20, 110, 40], [], "Text 1", null, null, null, INK_WIDTH, undefined,
+      "multiline",
+    );
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_mark", {
+      doc: 9,
+      mark: {
+        kind: "field",
+        page: 1,
+        quads: [10, 20, 110, 40],
+        strokes: [],
+        stamp: null,
+        field: "multiline",
+        reply_to: null,
+        color: [0.15, 0.35, 0.9],
+        width: INK_WIDTH,
+        author: "",
+        note: "Text 1",
+      },
+    });
+    // The control is the test above: a highlight's payload has no `field` key.
+  });
+
   it("sends each kind with its own colour", async () => {
     // The colour is the one thing this side of the boundary decides, and the
     // two lines are deliberately not the wash's yellow: a 1.3 pt yellow rule on

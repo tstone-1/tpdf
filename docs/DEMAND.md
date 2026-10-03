@@ -93,9 +93,10 @@ the one people already call fast.
 In the order they should be taken:
 
 1. **Creating form fields.** Asked for in the same breath as text editing and OCR by
-   people replacing Acrobat Pro. Begun on 2026-10-03: `tpdf form` adds text fields and
-   checkboxes from the command line. Still to do, in this order: placing a field in the
-   window, then dropdowns, radio buttons and list boxes, then pages the document turns.
+   people replacing Acrobat Pro. Begun on 2026-10-03: text fields and checkboxes can be
+   placed in the window by a drag and added from the command line with `tpdf form`.
+   Still to do, in this order: resizing a placed field, dropdowns, radio buttons and
+   list boxes, then turned pages.
 2. **Comparing two documents.** Moderate demand in the forum pass, none in the Reddit
    sample. The free tools that do it are websites, which collides with complaint 3, so
    an offline one is worth having. `tpdf compare a.pdf b.pdf` first, since it reuses the

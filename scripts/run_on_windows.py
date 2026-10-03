@@ -120,7 +120,7 @@ def powershell(clone: str, sha: str, suite: str) -> str:
     run = clone.rstrip("\\/") + "-check-run"
     tests = "\n".join(
         f'{command} 2>&1 | Tee-Object -Append "$run\\cargo.txt" | '
-        f'Select-String -Pattern \'{SHOWN}\' | ForEach-Object {{ $_.Line.Substring(0, [Math]::Min(600, $_.Line.Length)) }}\n'
+        f'Select-String -CaseSensitive -Pattern \'{SHOWN}\' | ForEach-Object {{ $_.Line.Substring(0, [Math]::Min(600, $_.Line.Length)) }}\n'
         f"if ($LASTEXITCODE -ne 0) {{ $failed = 1 }}"
         for command in SUITES[suite]
     )

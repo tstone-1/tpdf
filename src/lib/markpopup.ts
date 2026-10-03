@@ -144,6 +144,9 @@ const NAMES: Record<MarkKind, string> = {
   // mark the note is a remark about something drawn; here it is the thing on the
   // page, so the field a reader types in is the mark itself.
   textbox: "Text box",
+  // "Form field". Its note is its name, which is why the box a reader types in
+  // is labelled as a name for this kind: see {@link noteLabel}.
+  field: "Form field",
   // "Stamp", the third kind whose PDF subtype, serde name and reader's word
   // are one word --- after "Squiggly" and "Ellipse", and for their reason.
   stamp: "Stamp",
@@ -310,6 +313,11 @@ export class MarkPopup {
     // since it is chosen with the pointer somewhere else entirely and cannot.
     this.title.textContent = NAMES[mark.kind];
     this.remove.textContent = `Remove ${NAMES[mark.kind].toLowerCase()}`;
+    // A field's note is its name, so the box says so and is one line.
+    const label = mark.kind === "field" ? "Field name" : "Note";
+    this.input.setAttribute("aria-label", label);
+    this.input.placeholder = label;
+    this.input.rows = mark.kind === "field" ? 1 : 3;
     this.was = mark.note;
     this.input.value = mark.note;
     this.showColor(mark.color);

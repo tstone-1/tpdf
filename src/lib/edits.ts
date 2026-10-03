@@ -486,6 +486,7 @@ export class Edits {
     replyTo: readonly [number, number] | null = null,
     width: number = INK_WIDTH,
     image?: import("./signature").SignatureImage,
+    field?: import("./pages").FieldKind,
   ): Promise<EditState> {
     // A page the model has never mentioned, or one that has gone since the
     // gesture started. Nothing is sent, which is what the slot lookup used to
@@ -504,6 +505,9 @@ export class Edits {
           // that predates stamps keeps working, and the model refuses a name on
           // the wrong kind rather than drawing one.
           stamp,
+          // Which kind of form field, for a `field` and for nothing else: the
+          // model refuses the two ways it can disagree with `kind`.
+          ...(field ? { field } : {}),
           ...(image ? { image } : {}),
           // The comment this one answers, for a reply. Defaulted and sent as
           // `null` otherwise, for `stamp`'s reason above; the model refuses a

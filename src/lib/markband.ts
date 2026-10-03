@@ -276,6 +276,8 @@ export function isMovable(kind: MarkKind): boolean {
     case "strikeout":
     case "squiggly":
       return false;
+    // A form field is placed by a drag and anchored to nothing, like the box.
+    case "field":
     case "note":
     case "square":
     case "ellipse":
@@ -848,6 +850,9 @@ export function markBand(kind: MarkKind, quad: Quad): Quad {
       // rectangle they are placed from, which is what the anchor and the hit
       // test want.
       return quad;
+    case "field":
+      // The whole quad: it is the rectangle the field will occupy in the form.
+      return quad;
   }
 }
 
@@ -875,7 +880,13 @@ export type Paint =
   | "path"
   | "icon"
   | "stamp"
-  | "image";
+  | "image"
+  /**
+   * A placed form field: a dashed frame with the field's name inside it. The
+   * one paint with no counterpart in `save.rs` at all, because what a save
+   * writes for it is a field of the form and not an annotation's appearance.
+   */
+  | "field";
 
 /**
  * Which of those a kind is drawn as.
@@ -919,5 +930,7 @@ export function paintOf(kind: MarkKind): Paint {
       return "image";
     case "stamp":
       return "stamp";
+    case "field":
+      return "field";
   }
 }

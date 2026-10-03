@@ -330,6 +330,33 @@ fn a_field_just_added_can_be_answered() {
 }
 
 #[test]
+fn a_text_field_of_any_height_it_may_have_takes_one_line() {
+    // From the least a text field may be to well past where twelve points
+    // fits. Every one has to hold a short answer, and a height that cannot is a
+    // field tpdf lets a reader make and then refuses to fill.
+    let mut height = MIN_TEXT;
+    while height <= 30.0 {
+        let mut doc = document(Held::Absent, false);
+        add(
+            &mut doc,
+            &[field("Name", Kind::Text, 0, [20.0, 30.0, 200.0, height])],
+        )
+        .unwrap();
+        let mut doc = reloaded(&mut doc);
+        let object = scan(&doc).unwrap().widgets[0].object;
+        let answered = write(
+            &mut doc,
+            &[Change {
+                object,
+                value: Value::Text("Ada".into()),
+            }],
+        );
+        assert_eq!(answered, Ok(()), "a field {height} points high");
+        height += 0.25;
+    }
+}
+
+#[test]
 fn every_problem_is_named_and_nothing_is_written() {
     let mut doc = document(Held::Direct, true);
     let before = {

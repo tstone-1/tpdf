@@ -149,6 +149,7 @@ fn highlight(at: u32) -> PlannedMark {
     PlannedMark {
         kind: MarkKind::Highlight,
         stamp: None,
+        field: None,
         image: None,
         reply_to: None,
         at,

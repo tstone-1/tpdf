@@ -41,7 +41,7 @@ ENTRY_POINTS = {
 # `screenshotcheck.ts` is the phase `scripts/screenshots.py` drives.
 SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.ts", "saveanswer.ts",
           "screenshotcheck.ts", "recognisecheck.ts", "protectcheck.ts", "picturescheck.ts",
-          "compresscheck.ts"}
+          "compresscheck.ts", "fieldcheck.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 

@@ -830,6 +830,8 @@ function markInk(color: readonly [number, number, number], wash: boolean): strin
   const [r, g, b] = color.map((v) => Math.round(v * 255));
   return `rgba(${r}, ${g}, ${b}, ${wash ? WASH_ALPHA : LINE_ALPHA})`;
 }
+/** The size a placed form field's name is drawn at, in points before zoom. */
+const FIELD_LABEL_PT = 9;
 const SELECTION_FILL = "rgba(80, 140, 255, 0.35)";
 /**
  * The dashed rectangle a drag draws before it is committed.
@@ -6172,6 +6174,36 @@ export class Viewer {
           ctx.lineWidth = OUTLINE_WIDTH * this.zoom * dpr;
           traceEllipse(ctx, left, top, width, height);
           ctx.stroke();
+        } else if (style === "field") {
+          // A field that is placed and not yet saved: a faint wash, a dashed
+          // frame and its name. Dashed like a drag's preview and for a related
+          // reason: this is not what the page will look like, it is where a
+          // field will be. A saved text field draws nothing until it is filled.
+          //
+          // The name goes on with `fillText`, which puts pixels on a canvas and
+          // is no markup sink --- see the text box above.
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = markInk(mark.color, false);
+          ctx.globalAlpha = 0.12;
+          ctx.fillRect(left, top, width, height);
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = Math.max(1, this.zoom * dpr);
+          ctx.setLineDash([4 * dpr, 3 * dpr]);
+          ctx.strokeRect(left, top, width, height);
+          ctx.setLineDash([]);
+          const size = Math.min(FIELD_LABEL_PT * this.zoom * dpr, height * 0.8);
+          if (size >= 6 * dpr) {
+            ctx.beginPath();
+            ctx.rect(left, top, width, height);
+            ctx.clip();
+            ctx.fillStyle = markInk(mark.color, false);
+            ctx.font = `${size}px Helvetica, Arial, sans-serif`;
+            ctx.textBaseline = "middle";
+            ctx.fillText(mark.note, left + 3 * dpr, top + height / 2);
+          }
+          ctx.restore();
         } else {
           // `fill`, and the only kind that reaches it is a highlight --- the
           // blend was set per mark above. This was a bare `else` catching

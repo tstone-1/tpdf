@@ -266,6 +266,25 @@ pub(super) fn write_marks(
         }
 
         let rect = bounds(&quads);
+        // A field is a widget and a member of the document's form, so it is
+        // made there and only attached here, where every mark is attached.
+        if mark.kind == MarkKind::Field {
+            let kind = mark
+                .field
+                .ok_or("a form field in the save plan names no kind of field")?;
+            // The appearance of a field is drawn upright in the page's own
+            // space, and `forms::write` draws an answer the same way, so on a
+            // turned page both would lie on their side.
+            if shown.turns != 0 {
+                return Err(format!(
+                    "page {} is turned, and a form field cannot be added to a turned page yet",
+                    mark.at + 1
+                ));
+            }
+            let widget = crate::formfields::place(doc, page, rect, &mark.note, kind)?;
+            attach(doc, page, annots, widget)?;
+            continue;
+        }
         // **A comment gets no appearance stream from us, and that is not a gap.**
         // Every reader synthesises the icon for a `/Text` annotation --- the
         // specification describes `/Name` as choosing one and readers are
@@ -594,6 +613,10 @@ pub(super) fn subtype(kind: MarkKind) -> &'static [u8] {
         MarkKind::Ink => b"Ink",
         // `/Stamp`, and the one kind whose three spellings all agree.
         MarkKind::Stamp | MarkKind::Signature => b"Stamp",
+        // `/Widget`, the annotation a form field is shown by. Named here for
+        // completeness: `write_marks` hands a field to `formfields::place`,
+        // which writes the dictionary, and never asks this.
+        MarkKind::Field => b"Widget",
     }
 }
 
@@ -711,6 +734,8 @@ fn paint(kind: MarkKind) -> Paint {
         // situation rather than the comment's.
         MarkKind::Stamp => Paint::Stamp,
         MarkKind::Signature => Paint::Image,
+        // Its appearance is the form's business: `formfields::place` draws it.
+        MarkKind::Field => Paint::None,
     }
 }
 
@@ -930,6 +955,8 @@ pub(super) fn line_rect(kind: MarkKind, bottom: f64, top: f64) -> (f64, f64) {
         // whole quad a fifth time, which is the argument above getting stronger
         // rather than weaker -- five of six arms are now unreachable.
         MarkKind::Ellipse => (bottom, full),
+        // Not reached: a field has no appearance stream of this file's.
+        MarkKind::Field => (bottom, full),
     }
 }
 

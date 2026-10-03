@@ -134,6 +134,9 @@ fn color_for(kind: MarkKind) -> [f32; 3] {
         // The box's red, for the box's reason: an ellipse's ink is a stroke and
         // `--mode outline` classifies pixels by the colour it asked for.
         MarkKind::Ellipse => RULE_RED,
+        // Not probed here; see `roundtrip`. A colour all the same, because the
+        // match is exhaustive on purpose.
+        MarkKind::Field => RULE_RED,
         // The rules' red, and here it is the colour of the *words* rather than
         // of a stroke -- `/DA` carries it as a fill. Black would read better on
         // a page and would make every ink measurement in these modes unable to
@@ -650,6 +653,7 @@ fn mark_and_save(args: &Args, document: &OpenDocument) -> Result<(PathBuf, Vec<Q
                 // that builds a mark here rather than a default that would be
                 // wrong for eight kinds out of nine.
                 stamp: (args.kind == MarkKind::Stamp).then_some(args.stamp),
+                field: None,
                 image: None,
                 reply_to: None,
                 page: id,
@@ -810,6 +814,11 @@ fn roundtrip(args: &Args, document: &OpenDocument) -> Result<bool, String> {
         // whatever the subtype says. Every other program would call it a
         // rectangle.
         MarkKind::Ellipse => Kind::Circle,
+        // A form field is a widget, which the comment reader does not list:
+        // `formfields`' tests and `tpdf form`'s checks read it back instead.
+        MarkKind::Field => {
+            return Err("a form field is not an annotation this probe reads back".into())
+        }
         // Two names that differ, and the reason to spell it out is that the
         // reader's word is a third: `/FreeText` in the file, `textbox` on the
         // wire, "Text box" in the note header.
@@ -2417,6 +2426,9 @@ fn rule(
         // fills all three -- so thirds do not describe this kind at all, rather
         // than describing it too coarsely. `--mode text` measures it.
         MarkKind::TextBox => unreachable!("refused above"),
+        // `--kind` has no word for it: a form field is not an annotation this
+        // probe measures.
+        MarkKind::Field => unreachable!("the probe takes no field kind"),
     };
     ok &= check(
         &format!("most of the rule is in the {where_} third ({wanted} px)"),
@@ -3023,6 +3035,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,
@@ -3045,6 +3058,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,
@@ -3071,6 +3085,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,
@@ -3093,6 +3108,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,
@@ -3121,6 +3137,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,
@@ -3143,6 +3160,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,
@@ -3173,6 +3191,7 @@ fn refuse(_args: &Args, document: &OpenDocument) -> Result<bool, String> {
         NewMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page: id,

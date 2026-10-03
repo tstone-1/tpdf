@@ -251,6 +251,9 @@ pub struct MarkView {
     /// is and this says what it says. A stamp with no name would be an empty
     /// border, and an empty border is a box.
     pub stamp: Option<StampName>,
+    /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<crate::formfields::Kind>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
@@ -427,6 +430,9 @@ pub struct NewMark {
     /// The model refuses the two ways this can disagree with `kind`.
     #[serde(default)]
     pub stamp: Option<StampName>,
+    /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<crate::formfields::Kind>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
@@ -1376,6 +1382,11 @@ impl Edits {
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
+        if want.kind == MarkKind::Field {
+            if let Some(why) = field_name_problem(model, &want.note, None) {
+                return Err(why);
+            }
+        }
         model
             .annotate(
                 Mark {
@@ -1384,6 +1395,7 @@ impl Edits {
                     quads,
                     strokes,
                     stamp: want.stamp,
+                    field: want.field,
                     image: want.image.clone(),
                     reply_to: want
                         .reply_to
@@ -1599,6 +1611,12 @@ impl Edits {
                 "a text box is written in Helvetica, which cannot draw every character in that text"
                     .to_string(),
             );
+        }
+        // A field's note is its name, so a rename is held to what a name is.
+        if model.mark(id).is_some_and(|m| m.kind == MarkKind::Field) {
+            if let Some(why) = field_name_problem(model, &note, Some(id)) {
+                return Err(why);
+            }
         }
         model.renote(id, note).map_err(describe)?;
         Ok(reply(open))
@@ -2071,6 +2089,25 @@ impl Edits {
 /// reached. Doing it the other way --- walking every mark and asking whether its
 /// page is in the list --- would give the same answer today and would need its
 /// own filter the moment a subset can repeat a page.
+/// Why `name` cannot name a form field placed in this document, when it cannot.
+///
+/// What a name may be is `formfields::name_problem`'s. What this adds is the
+/// one thing the journal knows and the file does not: the names of the other
+/// fields placed and not yet saved. A name the *file's* form already has is
+/// refused at the save, by `formfields::place`, which is the first point the
+/// file's form and the placed fields are in one document.
+fn field_name_problem(model: &Doc, name: &str, except: Option<MarkId>) -> Option<String> {
+    if let Some(why) = crate::formfields::name_problem(name) {
+        return Some(why);
+    }
+    let taken = model.working().all_marks().into_iter().any(|(_, id)| {
+        Some(id) != except
+            && model.mark(id).is_some_and(|m| m.kind == MarkKind::Field)
+            && model.note_of(id) == name
+    });
+    taken.then(|| format!("`{name}`: another field placed here has this name"))
+}
+
 fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
     let working = model.working();
     pages
@@ -2096,6 +2133,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
                     stamp: body.stamp,
+                    field: body.field,
                     image: body.image.clone(),
                     reply_to: body
                         .reply_to
@@ -2573,6 +2611,9 @@ pub struct PlannedMark {
     /// gets drawn, and the model has already refused the two ways it can
     /// disagree with the kind.
     pub stamp: Option<StampName>,
+    /// Which kind of form field, for [`MarkKind::Field`] and nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<crate::formfields::Kind>,
     /// Normalized signature pixels, shared by journal snapshots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<std::sync::Arc<signature::Image>>,
@@ -2694,6 +2735,8 @@ impl Plan {
             // A new field changes the catalog's form and a page's annotations,
             // which the appender does not write.
             && self.new_fields.is_empty()
+            // And so does one the reader placed, which travels as a mark.
+            && !self.marks.iter().any(|mark| mark.kind == MarkKind::Field)
     }
 
     /// Whether the pages are the file's, in the file's order and shape.
@@ -2776,6 +2819,7 @@ impl From<Refusal> for failure::Failure {
             | Refusal::RedactionRemoved(_)
             | Refusal::ShapeMismatch(_)
             | Refusal::StampMismatch(_)
+            | Refusal::FieldMismatch(_)
             | Refusal::ReplyMismatch(_)
             // A selection id nobody issued, and a foreign comment paired with a
             // page that cannot hold it: both are the sender's.
@@ -2890,6 +2934,10 @@ pub(crate) fn describe(why: Refusal) -> String {
         Refusal::StampMismatch(kind) => {
             format!("a {kind:?} mark cannot carry the stamp name it was sent with")
         }
+        // The field half, and the same audience: no reader can cause it.
+        Refusal::FieldMismatch(kind) => {
+            format!("a {kind:?} mark cannot carry the form field kind it was sent with")
+        }
         // The reply half, and the third of the family. Same audience as the two
         // above --- no reader can cause it, because the only door into a reply
         // is a comment's own popup, which cannot offer a highlight.
@@ -2994,6 +3042,7 @@ fn snapshot(model: &Doc) -> EditState {
                 // geometry below: a stamp's name is fixed at the moment it is
                 // made, so there is no "what it is now" for the model to answer.
                 stamp: mark.stamp,
+                field: mark.field,
                 image: mark.image.clone(),
                 page: page.get(),
                 // **Through the model's accessors, not off the body**, because
@@ -3183,6 +3232,7 @@ mod tests {
                         quads: vec![0.0, 0.0, 1.0, 1.0],
                         strokes: Vec::new(),
                         stamp: None,
+                        field: None,
                         image: None,
                         reply_to: None,
                         color: [1.0, 1.0, 0.0],
@@ -4729,6 +4779,7 @@ mod tests {
         NewMark {
             kind,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page,
@@ -4973,6 +5024,111 @@ mod tests {
     /// The green in the swatch row, and not any mark's default.
     const GREEN: [f32; 3] = [0.35, 0.8, 0.35];
 
+    fn a_field(page: u64, name: &str, kind: crate::formfields::Kind) -> NewMark {
+        NewMark {
+            field: Some(kind),
+            note: name.to_string(),
+            ..of_kind(MarkKind::Field, page)
+        }
+    }
+
+    #[test]
+    fn a_placed_field_carries_its_name_and_kind_to_the_reply_and_the_plan() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, a_field(page, "Agree", Kind::Checkbox), stamped())
+            .expect("placed");
+        assert_eq!(state.marks.len(), 1);
+        assert_eq!(state.marks[0].kind, MarkKind::Field);
+        assert_eq!(state.marks[0].field, Some(Kind::Checkbox));
+        assert_eq!(state.marks[0].note, "Agree");
+
+        let plan = edits.plan(7).expect("a plan");
+        assert_eq!(plan.marks[0].field, Some(Kind::Checkbox));
+        assert_eq!(plan.marks[0].note, "Agree");
+        // The control for the line below: a highlight alone is an append.
+        let other = opened();
+        let first = other.state(7).expect("open").pages[0].id;
+        other.annotate(7, a_mark(first), stamped()).expect("marked");
+        assert!(other.plan(7).expect("a plan").is_appendable());
+        assert!(
+            !plan.is_appendable(),
+            "a field changes the form, which an append does not write"
+        );
+        // The kind travels in the reply only when there is one.
+        let json = serde_json::to_value(&other.state(7).expect("open").marks[0]).expect("json");
+        assert!(json.get("field").is_none(), "{json}");
+        let json = serde_json::to_value(&state.marks[0]).expect("json");
+        assert_eq!(json["field"], "checkbox");
+    }
+
+    #[test]
+    fn a_field_is_named_as_a_field_may_be_and_once() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        for (name, why) in [
+            ("", "a field needs a name"),
+            ("a.b", "contains a period"),
+            (" x", "begins or ends with a space"),
+        ] {
+            let refused = edits
+                .annotate(7, a_field(page, name, Kind::Text), stamped())
+                .expect_err("refused");
+            assert!(refused.contains(why), "{name:?}: {refused}");
+        }
+        let state = edits
+            .annotate(7, a_field(page, "Name", Kind::Text), stamped())
+            .expect("placed");
+        let first = state.marks[0].id;
+        assert!(edits
+            .annotate(7, a_field(page, "Name", Kind::Checkbox), stamped())
+            .expect_err("a second field of the same name")
+            .contains("another field placed here has this name"));
+        let state = edits
+            .annotate(7, a_field(page, "Other", Kind::Checkbox), stamped())
+            .expect("placed");
+        assert_eq!(state.marks.len(), 2, "the refused ones left nothing");
+        let second = state
+            .marks
+            .iter()
+            .find(|m| m.note == "Other")
+            .expect("it")
+            .id;
+
+        // Renaming is held to the same rule, and a field may keep its own name.
+        assert!(edits
+            .renote(7, second, "Name".into())
+            .expect_err("renamed onto the first")
+            .contains("another field placed here has this name"));
+        assert!(edits
+            .renote(7, second, "a.b".into())
+            .expect_err("renamed to what no field can be called")
+            .contains("contains a period"));
+        assert!(edits.renote(7, first, "Name".into()).is_ok());
+        let state = edits.renote(7, second, "Renamed".into()).expect("renamed");
+        assert!(state.marks.iter().any(|m| m.note == "Renamed"));
+        // A removed field gives its name back.
+        edits.unannotate(7, first, 0).expect("removed");
+        assert!(edits.renote(7, second, "Name".into()).is_ok());
+        // And a note on a mark that is no field is not held to any of it.
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let highlight = state
+            .marks
+            .iter()
+            .find(|m| m.kind == MarkKind::Highlight)
+            .expect("it")
+            .id;
+        assert!(edits.renote(7, highlight, "a.b".into()).is_ok());
+        // Nor does its note hold a name: only a field's does.
+        edits.renote(7, highlight, "Fresh".into()).expect("noted");
+        assert!(edits
+            .annotate(7, a_field(page, "Fresh", Kind::Text), stamped())
+            .is_ok());
+    }
+
     #[test]
     fn the_reply_carries_the_colour_the_mark_has_now() {
         // `snapshot`'s half, and it needs its own test for the reason the
@@ -5073,6 +5229,7 @@ mod tests {
         NewMark {
             kind: MarkKind::Ink,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page,

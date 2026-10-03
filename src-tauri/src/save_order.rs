@@ -384,6 +384,7 @@ mod tests {
             marks: vec![PlannedMark {
                 kind: MarkKind::Highlight,
                 stamp: None,
+                field: None,
                 image: None,
                 reply_to: None,
                 at: 0,

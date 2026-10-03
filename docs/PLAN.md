@@ -1824,8 +1824,48 @@ through PDFium and through macOS Quick Look, empty and filled, the fields draw t
 same. Not checked: Acrobat, which is where a form made here is most likely to be
 filled.
 
-Next: placing a field in the window; then dropdowns, radio buttons and list boxes;
-then turned pages.
+**Placing a field in the window** (the same day). A placed field is a mark:
+`MarkKind::Field`, with the field's kind in `Mark::field` and its name as the mark's
+note. That was the decision that made the rest small. A mark is already dragged onto a
+page of the document as the reader has arranged it, moved, renoted, removed and undone,
+and written at save after the pages are in their final order; a separate list of
+"fields to add" would have needed each of those again. What a field adds to a mark is
+two checks and one branch: the model refuses a field kind on any other mark and a field
+with none; `edits.rs` holds the note of a field to what a name may be and to the other
+placed fields' names, when it is placed and when it is renamed; and `write_marks` hands
+a field to `formfields::place` in place of building an annotation, then attaches the
+widget as it attaches everything. A name the *file's* form already has is refused
+there, which is the first point the file's form and the placed fields are in one
+document. A plan holding a field is never an append.
+
+A page the reader has turned is refused in `rewrite`, not in `write_marks`: the
+reader's turn is applied after the marks are written, so `write_marks` sees only the
+turn the file has. The test for the refusal found that; the first check sat in
+`write_marks` alone and let a turned page through.
+
+In the window: three commands arm one drag (`edit.addTextField`,
+`edit.addMultilineField`, `edit.addCheckbox`), the field is named `Text 1` or
+`Checkbox 1` by `fieldnames.ts` from the names the file's form and the placed fields
+hold, the overlay draws it as a dashed frame with its name, and the mark's box asks for
+a *Field name* on one line. There is no resize: only a signature has one, so a field of
+the wrong size is removed and dragged again.
+
+Verified in the application by `tabs_check.py --phase fields`, 15 checks: a drag with
+nothing armed places nothing; each command places its kind with a name of its own; a
+rename is taken and a clashing one refused with the reason on screen; undo and redo;
+a save leaves no mark and the reopened document's form holds the three fields, which
+the window offers for filling; and a field placed afterwards avoids the names now in
+the file. The driver then reads the saved file with `tpdf fields` and answers it with
+`tpdf fill`. That last step failed on the first run and found a defect that was not
+new: `forms::text_layout` sized type from the inset alone, so a text field between 14
+and 16.4 points high could not be answered at all. The placed field was 15 points
+high. Fixed, with a test over every height from 8 to 30 points.
+
+15 Rust and 16 frontend mutations for this part, each caught by the test named for it.
+Not looked at by a person yet: how the dashed frame and its label read on a page.
+
+Next: resizing a placed field; then dropdowns, radio buttons and list boxes; then
+turned pages.
 
 #### Every tab back at launch — 2026-10-03
 

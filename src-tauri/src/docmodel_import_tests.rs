@@ -219,6 +219,7 @@ fn an_imported_page_turns_crops_moves_takes_a_mark_and_deletes() {
             Mark {
                 kind: MarkKind::Highlight,
                 stamp: None,
+                field: None,
                 image: None,
                 reply_to: None,
                 page: placed,

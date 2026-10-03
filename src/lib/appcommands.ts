@@ -374,6 +374,14 @@ export interface AppActions {
    * started --- the box is empty until they type into its note.
    */
   drawTextBox(): void;
+  /**
+   * Place a form field of this kind by dragging its rectangle.
+   *
+   * The gesture is {@link drawBox}'s. What it leaves is a field the next save
+   * writes into the document's form, named `Text 1` or `Checkbox 1` until the
+   * reader renames it in the box that opens.
+   */
+  drawField(kind: import("./pages").FieldKind): void;
   /** Draw or import a visual signature, then place it on a page. */
   signature(): void;
   editText(): void;
@@ -1070,6 +1078,27 @@ export function registerAppCommands(
       title: "Add a text box...",
       enabled: withDocument,
       run: () => actions.drawTextBox(),
+    },
+    // Three commands for one gesture, as the shapes are: what a reader chooses
+    // is what appears, and a kind picked in a dialog after the drag would be a
+    // question about a rectangle they can no longer see being drawn.
+    {
+      id: "edit.addTextField",
+      title: "Add a form field: text...",
+      enabled: withDocument,
+      run: () => actions.drawField("text"),
+    },
+    {
+      id: "edit.addMultilineField",
+      title: "Add a form field: text on several lines...",
+      enabled: withDocument,
+      run: () => actions.drawField("multiline"),
+    },
+    {
+      id: "edit.addCheckbox",
+      title: "Add a form field: checkbox...",
+      enabled: withDocument,
+      run: () => actions.drawField("checkbox"),
     },
     {
       // Beside the box, and everything the entry above says about arming a mode

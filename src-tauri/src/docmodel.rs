@@ -820,6 +820,23 @@ pub enum MarkKind {
     Stamp,
     /// A handwritten signature raster, saved as a custom stamp appearance.
     Signature,
+    /// A form field the reader placed, which the save writes as a `/Widget`.
+    ///
+    /// **Not an annotation a reader looks at, and a mark all the same.** It is
+    /// placed by a drag, as [`MarkKind::Square`] is, on a page of the document
+    /// as the reader has arranged it, and it has to be moved, resized, renamed,
+    /// removed and undone the way every other mark is. All of that is
+    /// [`Mark`]'s, so the field is one, for the comment's reason: a parallel
+    /// type would have duplicated the journal to express two extra facts.
+    ///
+    /// The two facts are which kind of field it is, in [`Mark::field`], and its
+    /// name, which is the mark's note: a field's name is the text a reader
+    /// types for it and edits afterwards, which is what a note is.
+    ///
+    /// What the save does with it is `formfields::place` and not an annotation
+    /// dictionary of `save/marks.rs`'s own, because a field also belongs to the
+    /// document's form and needs the form's font.
+    Field,
 }
 
 /// Which standard stamp a [`MarkKind::Stamp`] is.
@@ -921,6 +938,9 @@ pub struct Mark {
     /// is, and it keeps this struct's "everything here is fixed at creation"
     /// property intact.
     pub stamp: Option<StampName>,
+    /// Which kind of form field this is, for [`MarkKind::Field`] and nothing
+    /// else. Checked in [`Document::annotate`], as [`Mark::stamp`] is.
+    pub field: Option<crate::formfields::Kind>,
     /// Normalized signature pixels, shared by journal snapshots.
     pub image: Option<std::sync::Arc<signature::Image>>,
     /// The comment this one answers, when it is a reply. `None` for a mark that
@@ -1604,6 +1624,8 @@ pub enum Refusal {
     /// guess which. That is the trap about one predicate answering two
     /// questions, refused here before it could be made.
     StampMismatch(MarkKind),
+    /// A [`MarkKind::Field`] with no field kind, or another kind with one.
+    FieldMismatch(MarkKind),
     /// A parent comment named on a mark that is not a comment.
     ///
     /// Its own variant for [`StampMismatch`](Refusal::StampMismatch)'s reason,
@@ -3097,6 +3119,10 @@ impl Doc {
         if mark.stamp.is_some() != (mark.kind == MarkKind::Stamp) {
             return Err(Refusal::StampMismatch(mark.kind));
         }
+        // And the third of the family, for [`Mark::field`].
+        if mark.field.is_some() != (mark.kind == MarkKind::Field) {
+            return Err(Refusal::FieldMismatch(mark.kind));
+        }
         // Signature pixels belong only to signatures. Bound the whole retained
         // pool, including undo history, as well as each individual raster.
         if mark.image.is_some() != (mark.kind == MarkKind::Signature)
@@ -4108,6 +4134,7 @@ mod tests {
         Mark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page,
@@ -4668,6 +4695,7 @@ mod tests {
         Mark {
             kind: MarkKind::Ink,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page,
@@ -4700,6 +4728,7 @@ mod tests {
         Mark {
             kind: MarkKind::Ink,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             page,
@@ -5122,6 +5151,35 @@ mod tests {
         // drawing. Without it, a model that refused every ink mark would pass
         // the first assertion and read as the rule working.
         assert!(doc.annotate(ink_on(page), String::new()).is_ok());
+        assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
+    }
+
+    #[test]
+    fn a_kind_and_a_field_kind_that_disagree_are_refused_both_ways_round() {
+        // [`Mark::field`]'s biconditional, on the stamp's pattern below and
+        // separate from it for the reason that test gives.
+        use crate::formfields::Kind;
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+
+        let mut field_without = mark_on(page);
+        field_without.kind = MarkKind::Field;
+        assert_eq!(
+            doc.annotate(field_without, "Name".into()),
+            Err(Refusal::FieldMismatch(MarkKind::Field))
+        );
+
+        let mut box_with = mark_on(page);
+        box_with.field = Some(Kind::Checkbox);
+        assert_eq!(
+            doc.annotate(box_with, String::new()),
+            Err(Refusal::FieldMismatch(MarkKind::Highlight))
+        );
+
+        let mut real = mark_on(page);
+        real.kind = MarkKind::Field;
+        real.field = Some(Kind::Text);
+        assert!(doc.annotate(real, "Name".into()).is_ok());
         assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
     }
 

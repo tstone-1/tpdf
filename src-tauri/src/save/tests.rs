@@ -3616,6 +3616,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
             // empty border, which is a box, so a test written for a stamp
             // would be measuring the wrong kind.
             stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+            field: None,
             image: None,
             reply_to: None,
             at: 0,
@@ -4111,6 +4112,7 @@ fn a_mark_on_a_page_tpdf_made_is_written_onto_that_page() {
     plan.marks = vec![PlannedMark {
         kind: MarkKind::Highlight,
         stamp: None,
+        field: None,
         image: None,
         reply_to: None,
         at: 2,
@@ -4274,6 +4276,7 @@ fn a_reply_is_written_as_one_and_reads_back_as_one() {
         }],
         strokes: Vec::new(),
         stamp: None,
+        field: None,
         image: None,
         reply_to: Some((annot.0, annot.1)),
         color: [1.0, 0.9, 0.2],
@@ -4357,6 +4360,7 @@ fn a_comment_that_answers_nothing_is_threaded_under_nobody() {
         }],
         strokes: Vec::new(),
         stamp: None,
+        field: None,
         image: None,
         reply_to: None,
         color: [1.0, 0.9, 0.2],
@@ -4408,6 +4412,7 @@ fn a_reply_naming_something_that_is_not_an_annotation_is_refused_on_both_paths()
         }],
         strokes: Vec::new(),
         stamp: None,
+        field: None,
         image: None,
         reply_to: Some((object.0, object.1)),
         color: [1.0, 0.9, 0.2],
@@ -4545,6 +4550,7 @@ fn appendable_with(
     plan.marks = vec![PlannedMark {
         kind: MarkKind::Highlight,
         stamp: None,
+        field: None,
         image: None,
         reply_to: None,
         at: 0,
@@ -7184,6 +7190,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             at: 0,
@@ -7245,6 +7252,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
+            field: None,
             image: None,
             reply_to: None,
             at: 2,
@@ -9733,6 +9741,7 @@ fn one_mark_over(pages: usize, kind: MarkKind, quad: crate::docmodel::Quad) -> P
     plan.marks.push(PlannedMark {
         kind,
         stamp: (kind == MarkKind::Stamp).then_some(crate::docmodel::StampName::Draft),
+        field: None,
         image: None,
         reply_to: None,
         at: 0,
@@ -10849,6 +10858,153 @@ fn a_plan_that_adds_a_field_is_a_rewrite_and_the_field_lands_on_the_page_it_name
         (form.widgets[0].name.as_str(), form.widgets[0].page),
         ("Name", 1)
     );
+}
+
+/// A plan with one placed field on the first of `two_blank_pages`' pages.
+fn field_plan(name: &str, kind: crate::formfields::Kind, quad: crate::docmodel::Quad) -> Plan {
+    let mut plan = plan_of(&[0, 0]);
+    let mut mark = plan_of_kind(MarkKind::Field, vec![quad]).marks.remove(0);
+    mark.field = Some(kind);
+    mark.note = name.to_string();
+    plan.marks.push(mark);
+    plan
+}
+
+#[test]
+fn a_field_placed_as_a_mark_is_written_as_a_field_of_the_form() {
+    use crate::formfields::Kind;
+    let original = two_blank_pages();
+    let quad = crate::docmodel::Quad {
+        left: 20.0,
+        top: 30.0,
+        right: 220.0,
+        bottom: 50.0,
+    };
+    let plan = field_plan("Name", Kind::Text, quad);
+    assert!(!plan.is_identity() && !plan.is_appendable());
+    let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+    let mut doc = Document::load_mem(&written).expect("the copy parses");
+    let form = crate::forms::scan(&doc).expect("a form");
+    assert_eq!(form.widgets.len(), 1);
+    let field = &form.widgets[0];
+    assert_eq!((field.name.as_str(), field.page), ("Name", 0));
+    assert!(matches!(field.control, crate::forms::Control::Text));
+    assert_eq!(field.reason, None);
+    // The page is 600 by 800: 30 from the top, 20 high.
+    assert_eq!(field.rect, [20.0, 750.0, 220.0, 770.0]);
+    assert_eq!(field.display_rect, [20.0, 30.0, 220.0, 50.0]);
+    // It is a widget of the form and nothing else: no markup annotation of
+    // this writer's own beside it.
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let annots = doc.get_dictionary(page).unwrap().get(b"Annots").unwrap();
+    assert_eq!(annots.as_array().unwrap().len(), 1);
+    // And it takes an answer.
+    crate::forms::write(
+        &mut doc,
+        &[crate::forms::Change {
+            object: field.object,
+            value: crate::forms::Value::Text("Ada".into()),
+        }],
+    )
+    .expect("filled");
+
+    // A checkbox on the second page, through the same door.
+    let mut second = field_plan(
+        "Agree",
+        Kind::Checkbox,
+        crate::docmodel::Quad {
+            right: 34.0,
+            bottom: 44.0,
+            ..quad
+        },
+    );
+    second.marks[0].at = 1;
+    let written = rewrite_update(&original, &second, Job::Save, None).expect("rewritten");
+    let doc = Document::load_mem(&written).expect("the copy parses");
+    let form = crate::forms::scan(&doc).expect("a form");
+    assert_eq!(
+        (form.widgets[0].name.as_str(), form.widgets[0].page),
+        ("Agree", 1)
+    );
+    assert!(matches!(
+        form.widgets[0].control,
+        crate::forms::Control::Checkbox
+    ));
+}
+
+#[test]
+fn a_placed_field_the_save_cannot_write_is_refused_and_says_why() {
+    use crate::formfields::Kind;
+    let original = two_blank_pages();
+    let quad = crate::docmodel::Quad {
+        left: 20.0,
+        top: 30.0,
+        right: 220.0,
+        bottom: 50.0,
+    };
+    let refused = |plan: &Plan, source: &[u8]| {
+        rewrite_update(source, plan, Job::Save, None)
+            .expect_err("refused")
+            .to_string()
+    };
+    // A mark of this kind with no kind of field.
+    let mut kindless = field_plan("Name", Kind::Text, quad);
+    kindless.marks[0].field = None;
+    assert!(refused(&kindless, &original).contains("names no kind of field"));
+    // A page the reader has turned.
+    let mut turned = field_plan("Name", Kind::Text, quad);
+    turned.pages[0].turns = 1;
+    assert!(refused(&turned, &original).contains("page 1 is turned"));
+    // A page the file itself turns, which is a different check in a different
+    // place: the first is the plan's, this one is the page's own `/Rotate`.
+    let mut turn = plan_of(&[0, 0]);
+    turn.pages[0].turns = 1;
+    let turned_file = rewrite_update(&original, &turn, Job::Save, None).expect("turned");
+    assert!(
+        refused(&field_plan("Name", Kind::Text, quad), &turned_file).contains("page 1 is turned")
+    );
+    // Too small to hold type.
+    let thin = field_plan(
+        "Name",
+        Kind::Text,
+        crate::docmodel::Quad {
+            bottom: 37.0,
+            ..quad
+        },
+    );
+    assert!(refused(&thin, &original).contains("needs at least 8 by 8"));
+    // A name the file's form already has: the one thing the journal could not
+    // have known when the field was placed.
+    let with_form = rewrite_update(
+        &original,
+        &field_plan("Name", Kind::Text, quad),
+        Job::Save,
+        None,
+    )
+    .expect("rewritten");
+    let again = field_plan(
+        "Name",
+        Kind::Checkbox,
+        crate::docmodel::Quad {
+            top: 100.0,
+            bottom: 120.0,
+            ..quad
+        },
+    );
+    assert!(refused(&again, &with_form).contains("the form already has a field of this name"));
+    // The control: another name on that same file is written.
+    let other = field_plan(
+        "Other",
+        Kind::Checkbox,
+        crate::docmodel::Quad {
+            top: 100.0,
+            bottom: 120.0,
+            ..quad
+        },
+    );
+    let written = rewrite_update(&with_form, &other, Job::Save, None).expect("rewritten");
+    let doc = Document::load_mem(&written).expect("the copy parses");
+    assert_eq!(crate::forms::scan(&doc).expect("a form").widgets.len(), 2);
 }
 
 #[test]

@@ -98,6 +98,11 @@ export const MARK_COLORS: Record<MarkKind, MarkColor> = {
   // type on white paper reads as an annotation rather than as part of the
   // document, which is the whole reason a reader puts a text box on a page.
   textbox: [0.85, 0.15, 0.15],
+  // Blue, and the one default here that is not a colour written to the file:
+  // a field has no ink of its own. It is what the placed field is outlined in
+  // until the document is saved, and it is not red so that a field is not
+  // taken for a box drawn round something.
+  field: [0.15, 0.35, 0.9],
   // The lines' red a fourth time, and it is the box's argument with one word
   // added: a stamp is a stroked border *and* red type, so both halves of it are
   // the reasons the box and the text box are red. A stamp is also the one kind

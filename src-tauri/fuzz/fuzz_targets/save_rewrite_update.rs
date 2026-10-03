@@ -341,6 +341,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
                     })
                     .collect(),
                 stamp: mark.stamp.map(stamp_of),
+                field: None,
                 reply_to: mark.reply_to,
                 color: mark.color,
                 width: mark.width,

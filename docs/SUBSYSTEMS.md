@@ -119,7 +119,12 @@ rewrite, which adds them before it writes answers. A new field is one object tha
 both field and widget, with its own appearance, appended to the page's annotations and
 the form's field list together; the form dictionary and its `Helv` font are made when
 the document has none. Text fields and checkboxes only, on pages the document does not
-turn. `tpdf form` is the one caller so far.
+turn. `tpdf form` is one caller. The other is the window: a field a reader drags is a
+mark of kind `Field` in the edit journal, with its name as the mark's note and its kind
+in `Mark::field`, so that it is moved, renamed, removed and undone as every mark is.
+`save/marks.rs` hands such a mark to `formfields::place`, after the pages are in their
+final order, and attaches the widget where it attaches every annotation. A plan holding
+one is a rewrite. `scripts/tabs_check.py --phase fields` drives it in the application.
 Text uses Helvetica with the same supported character set as `textbox.rs`.
 `FormLayer` commits and drains validation before a tab transition or save.
 `tabs_check.py --phase forms` drives the application on disposable synthetic forms;

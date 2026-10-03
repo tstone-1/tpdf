@@ -466,6 +466,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     quads: vec![10.0, 20.0, 110.0, 20.0, 10.0, 60.0, 110.0, 60.0],
                     strokes: Vec::new(),
                     stamp: None,
+                    field: None,
                     image: None,
                     color: [1.0, 0.9, 0.2],
                     width: 1.0,
@@ -479,6 +480,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     quads: vec![0.0, 0.0, 100.0, 40.0],
                     strokes: vec![vec![1.0, 2.0, 3.0, 4.0]],
                     stamp: Some(docmodel::StampName::Draft),
+                    field: None,
                     image: None,
                     color: [0.8, 0.1, 0.1],
                     width: 2.5,
@@ -492,6 +494,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                     quads: vec![10.0, 20.0, 110.0, 70.0],
                     strokes: Vec::new(),
                     stamp: None,
+                    field: None,
                     image: Some(std::sync::Arc::new(crate::signature::Image {
                         width: 2,
                         height: 1,

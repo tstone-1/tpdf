@@ -28,6 +28,7 @@ import { filePage } from "./pages";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
 import { compressCheck } from "./compresscheck";
+import { fieldCheck } from "./fieldcheck";
 import { picturesCheck } from "./picturescheck";
 import { protectCheck } from "./protectcheck";
 import { recogniseCheck } from "./recognisecheck";
@@ -1041,6 +1042,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "protect": await protectCheck(host, expected, report); break;
     case "pictures": await picturesCheck(host, expected, report); break;
     case "compress": await compressCheck(host, expected, report); break;
+    case "fields": await fieldCheck(host, expected, report); break;
     case "screenshots": await screenshotCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");

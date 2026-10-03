@@ -93,7 +93,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -232,9 +232,49 @@ def main() -> int:
             passed = picture_files(room / "copies", args.binary) and passed
         if args.phase == "compress":
             passed = smaller_files(room / "scan.pdf", room / "copies", args.binary) and passed
+        if args.phase == "fields":
+            passed = placed_fields(first, args.binary) and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
+
+
+def placed_fields(saved: Path, binary: Path) -> bool:
+    """The file the window saved, read by the command-line tool.
+
+    The window's own check asks the open document for its form. This asks the
+    file on disk, through `tpdf fields` and then `tpdf fill`, which is what a
+    reader does with a form somebody made.
+    """
+    tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+    print("--- the saved file, read by the command-line tool ---")
+    listed = subprocess.run([str(tool), "fields", str(saved), "--json"],
+                            capture_output=True, text=True, timeout=120, check=False)
+    try:
+        fields = {f["name"]: f for f in json.loads(listed.stdout)["fields"]}
+    except (ValueError, KeyError):
+        print(f"[FAIL] tpdf fields could not read the saved file: {listed.stderr.strip()}")
+        return False
+    wanted = {"Name": ("text", False), "Text 2": ("text", True), "Checkbox 1": ("checkbox", False)}
+    ok = True
+    for name, (kind, multiline) in wanted.items():
+        field = fields.get(name)
+        good = (field is not None and field["kind"] == kind and field["multiline"] == multiline
+                and field["editable"] is True)
+        ok &= good
+        print(f"{'[OK]  ' if good else '[FAIL]'} the file has {name!r} as a fillable {kind} field")
+    only = set(fields) == set(wanted)
+    ok &= only
+    print(f"{'[OK]  ' if only else '[FAIL]'} and no other field: {sorted(fields)}")
+    filled = saved.with_name("filled.pdf")
+    answers = saved.with_name("answers.json")
+    answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True}))
+    done = subprocess.run([str(tool), "fill", str(saved), "-o", str(filled), "--values", str(answers)],
+                          capture_output=True, text=True, timeout=120, check=False)
+    good = done.returncode == 0
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers all three: {(done.stderr or done.stdout).strip()[:200]}")
+    return bool(ok)
 
 
 def scan_pdf(png: bytes, dpi: int, pages: int) -> bytes:

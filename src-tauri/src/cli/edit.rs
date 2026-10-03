@@ -469,6 +469,7 @@ fn apply(
                             quads,
                             strokes,
                             stamp: *stamp,
+                            field: None,
                             image: None,
                             reply_to: None,
                             color: *color,

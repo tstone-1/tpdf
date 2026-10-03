@@ -203,6 +203,18 @@ describe("MarkPopup", () => {
     }
   });
 
+  it("asks for a name, on one line, when the mark is a form field", () => {
+    const note = popup();
+    note.show(mark({ id: 7, kind: "field", note: "Text 1" }), anchor(), false);
+    const input = box(note) as unknown as { placeholder: string; rows: number; value: string };
+    expect(labels(note)).toContain("Form field");
+    expect(labels(note)).toContain("Remove form field");
+    expect([input.placeholder, input.rows, input.value]).toEqual(["Field name", 1, "Text 1"]);
+    // And goes back to a note when another kind takes the box.
+    note.show(mark({ id: 8, kind: "highlight" }), anchor(), false);
+    expect([input.placeholder, input.rows]).toEqual(["Note", 3]);
+  });
+
   it("relabels itself when a mark of another kind takes the box", () => {
     // The control for the check above, and the one that fails if the labels are
     // written once when the box is built: showing a highlight first and an

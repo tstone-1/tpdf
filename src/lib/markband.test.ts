@@ -11,6 +11,7 @@ import {
   iconQuad,
   isEllipse,
   isIcon,
+  isMovable,
   isOutline,
   isText,
   isWave,
@@ -576,6 +577,7 @@ describe("how the overlay decides to draw a kind", () => {
       "textbox",
       "ink",
       "stamp",
+      "field",
     ];
     for (const kind of kinds) {
       expect(paintOf(kind), kind).toBeTruthy();
@@ -599,6 +601,19 @@ describe("how the overlay decides to draw a kind", () => {
     expect(paintOf("ink")).toBe("path");
     expect(paintOf("note")).toBe("icon");
     expect(paintOf("stamp")).toBe("stamp");
+  });
+
+  it("draws a placed form field as itself: a frame on its whole rectangle, which can be dragged", () => {
+    // The one paint with no arm in `save.rs`: a field is written into the
+    // document's form and not as an annotation's appearance.
+    expect(paintOf("field")).toBe("field");
+    const quad = { left: 10, top: 20, right: 110, bottom: 40 };
+    expect(markBand("field", quad)).toEqual(quad);
+    expect(isMovable("field")).toBe(true);
+    // The control for the line above: a mark tied to words stays with them.
+    expect(isMovable("highlight")).toBe(false);
+    // And it is none of the shapes the painter asks about by name.
+    expect(isText("field") || isOutline("field") || isIcon("field")).toBe(false);
   });
 
   it("gives the two kinds that used to fall through a style of their own", () => {

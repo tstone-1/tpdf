@@ -21,6 +21,13 @@ have the binary.)
 
 ### Added
 
+- **Form fields can be placed in the window.** *Add a form field: text*, *text on
+  several lines* and *checkbox*, in the Edit menu and the command palette, arm a drag;
+  the rectangle you drag becomes a field. Until the document is saved it shows as a
+  dashed frame with its name, `Text 1` or `Checkbox 1` to begin with. Press it to rename
+  it, drag it to move it, and remove or undo it like any other mark. Saving writes it
+  into the document's form, and the window then offers it for filling. Not yet:
+  resizing a placed field, and a field on a turned page, which the save refuses.
 - **`tpdf form` adds form fields to a document.** `tpdf form letter.pdf -o form.pdf
   --fields fields.json` writes a copy with the text fields (one line or several) and
   checkboxes a JSON list asks for, each with a name, a page and a rectangle, and
@@ -117,6 +124,10 @@ have the binary.)
 
 ### Fixed
 
+- **A text field between 14 and 16.4 points high could not be filled.** tpdf chose a
+  type size from the field's inset alone, and in that band one line of it then did not
+  fit, so the answer was refused with *does not fit visibly in this field*. The size is
+  now also held to what one line needs. Found by filling a field placed in the window.
 - **On Windows a redaction was often reported "not verified" when nothing was wrong.**
   The check renders a word left on the page beside the redacted area and requires the
   recogniser to read it back; that word was rendered 16 pixels tall, which

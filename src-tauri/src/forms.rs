@@ -755,7 +755,16 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
 fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String> {
     let width = widget.rect[2] - widget.rect[0];
     let height = widget.rect[3] - widget.rect[1];
-    let size = 12.0_f64.min((height - 4.0).max(1.0));
+    // Twelve points, or less where the field is too low for it: two points of
+    // inset either side, and a line needs 1.2 of its size inside the field's
+    // height less two. **Both bounds, because neither implies the other.**
+    // With the inset alone a field between 14 and 16.4 points high asked for a
+    // size whose one line then failed the check below, so it could not be
+    // answered at all: found on 2026-10-03, by filling a field placed in the
+    // window, which happened to be 15 points high.
+    let size = 12.0_f64
+        .min((height - 4.0).max(1.0))
+        .min(((height - 2.0) / 1.2).max(1.0));
     let lines = if widget.multiline {
         crate::textbox::wrap(text, size, (width - 4.0).max(1.0))
     } else {
@@ -766,7 +775,9 @@ fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String
     } else {
         size
     };
-    if size < 4.0 || lines.len() as f64 * size * 1.2 > height - 2.0 {
+    // A hair of slack: `size` may be exactly the bound, and the product of the
+    // two rounds a few bits either way.
+    if size < 4.0 || lines.len() as f64 * size * 1.2 > height - 2.0 + 1e-9 {
         return Err("The answer does not fit visibly in this field".into());
     }
     Ok((size, lines))

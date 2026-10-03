@@ -3974,6 +3974,25 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // resolved to the object that will hold it, made pages included, and it
     // exists a few lines up because `materialise` needs the same list.
     let sites = mark_sites(&doc, &order, &plan.marks)?;
+    // **A field on a page the reader has turned, refused here** and not in
+    // `write_marks`, which sees only the turn the file has: the reader's is
+    // applied after the marks are written, so at that point the page still
+    // looks upright. The appearance of a field is drawn upright in the page's
+    // own space and `forms::write` draws an answer the same way, so on a page
+    // turned either way both would lie on their side.
+    if let Some(mark) = plan.marks.iter().find(|mark| {
+        mark.kind == crate::docmodel::MarkKind::Field
+            && plan
+                .pages
+                .get(mark.at as usize)
+                .is_some_and(|page| page.turns % 4 != 0)
+    }) {
+        return Err(format!(
+            "page {} is turned, and a form field cannot be added to a turned page yet",
+            mark.at + 1
+        )
+        .into());
+    }
     let written = write_marks(&mut doc, &plan.marks, &sites, replies)?;
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
