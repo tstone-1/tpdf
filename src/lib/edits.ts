@@ -817,10 +817,13 @@ export class Edits {
    * {@link redactRasterCopy}. The copy is a rewrite of the file, so it passes
    * the same guard every other write does: a signed document is asked about
    * before its signatures are invalidated.
+   *
+   * `run` numbers this recognition, never 0; `ocr_cancel` with the same number
+   * stops it, also when that call arrives before this one is sent.
    */
-  async ocrCopy(source: string, path: string): Promise<Recognised> {
+  async ocrCopy(source: string, path: string, run: number): Promise<Recognised> {
     await this.beforeWrite();
-    return await call("ocr_copy", { doc: this.doc, source, path });
+    return await call("ocr_copy", { doc: this.doc, source, path, run });
   }
 
   /**

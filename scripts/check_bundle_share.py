@@ -40,7 +40,7 @@ ENTRY_POINTS = {
 # rather than assumes.
 # `screenshotcheck.ts` is the phase `scripts/screenshots.py` drives.
 SHARED = {"checkreport.ts", "signaturecheck.ts", "signingcheck.ts", "signphase.ts", "saveanswer.ts",
-          "screenshotcheck.ts"}
+          "screenshotcheck.ts", "recognisecheck.ts"}
 
 FAMILY = ENTRY_POINTS | SHARED
 
@@ -51,8 +51,12 @@ ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 # 200,000 on 2026-09-28 for the certificate-signing phase: the family stood at
 # 197,743 units and the phase adds 9,375 (`signingcheck.ts` 6,894,
 # `signphase.ts` 2,247, `saveanswer.ts` 234), none of it in a normal build.
+#
+# Raised from 215,000 on 2026-10-03 for the text-recognition phase: the family
+# stood at 212,577 units and `recognisecheck.ts` took it to 215,974, none of it
+# in a normal build.
 SHARE_CEILING = 40.0
-BYTES_CEILING = 215_000
+BYTES_CEILING = 225_000
 
 BASE64 = {c: i for i, c in enumerate(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

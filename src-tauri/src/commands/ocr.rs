@@ -14,7 +14,7 @@
 //! turns, moves or drops pages would put them somewhere else.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tauri::Emitter;
@@ -45,12 +45,19 @@ pub struct Progress {
     pub of: u32,
 }
 
-/// Whether the reader asked the running recognition to stop.
+/// Which recognition the reader asked to stop: the number of that run, or 0.
 ///
-/// One flag for the application, not one per document: recognition blocks every
+/// **A run's number and not a flag.** The window shows Stop before `ocr_copy`
+/// has been sent --- the signed-document warning is asked in between --- so a
+/// stop can arrive before the command it is for. A flag the command cleared as
+/// it started lost that stop, which the window phase found by pressing Stop as
+/// soon as it was offered. A number needs no clearing: a stop names its run,
+/// the run compares, and which of the two arrived first changes nothing.
+///
+/// One for the application, not one per document: recognition blocks every
 /// other document command while it runs, so there is one at a time.
 #[derive(Default)]
-pub struct Cancel(Arc<AtomicBool>);
+pub struct Cancel(Arc<AtomicU64>);
 
 /// One page that was given a text layer.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -114,7 +121,7 @@ fn read(
     doc: u32,
     pages: u32,
     languages: Vec<String>,
-    cancelled: &AtomicBool,
+    cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(Progress),
 ) -> Result<Read, String> {
     let options = ocr_layer::options(languages);
@@ -123,7 +130,7 @@ fn read(
     let mut layers = Vec::new();
     let mut report = Recognised::default();
     for page in 0..pages {
-        if cancelled.load(Ordering::Relaxed) {
+        if cancelled() {
             return Err(CANCELLED.into());
         }
         let n = page + 1;
@@ -196,7 +203,7 @@ fn read(
         }
     }
     // A stop asked for during the last page is still a stop.
-    if cancelled.load(Ordering::Relaxed) {
+    if cancelled() {
         return Err(CANCELLED.into());
     }
     Ok(Read { layers, report })
@@ -283,7 +290,7 @@ pub fn ocr_copy_asked(
     password: Option<String>,
     library: std::path::PathBuf,
     languages: Vec<String>,
-    cancelled: &AtomicBool,
+    cancelled: &dyn Fn() -> bool,
     progress: &dyn Fn(Progress),
 ) -> Result<Recognised, String> {
     if !plan.is_identity() {
@@ -317,8 +324,12 @@ pub fn ocr_copy_asked(
 
 /// Writes a copy of the open document in which scanned pages can be searched.
 ///
-/// Progress arrives as [`PROGRESS_EVENT`], and [`ocr_cancel`] stops it before
-/// the next page.
+/// Progress arrives as [`PROGRESS_EVENT`]. `run` is a number the window chose
+/// for this recognition, never 0, and [`ocr_cancel`] with the same number stops
+/// it before the next page, whichever of the two calls arrives first.
+// The lint attribute goes first: `check_writers.py` and `ipc.test.ts` find a
+// command by `#[tauri::command]` standing directly on its `fn`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ocr_copy(
     app: tauri::AppHandle,
@@ -328,14 +339,13 @@ pub async fn ocr_copy(
     doc: u32,
     source: String,
     path: String,
+    run: u64,
 ) -> Result<Recognised, String> {
     let plan = edits.plan(doc)?;
     let password = password_for(&service, doc, "ocr_copy").await;
     let library = pdfium_library_dir(&app);
     let service = service.inner().clone();
-    let cancelled = Arc::clone(&cancel.0);
-    // A stop asked for before this recognition began was for an earlier one.
-    cancelled.store(false, Ordering::Relaxed);
+    let stopped = Arc::clone(&cancel.0);
     tauri::async_runtime::spawn_blocking(move || {
         ocr_copy_asked(
             &service,
@@ -347,7 +357,7 @@ pub async fn ocr_copy(
             library,
             // No languages: the engine's own choice, which is `tpdf ocr`'s default.
             Vec::new(),
-            &cancelled,
+            &|| stopped.load(Ordering::Relaxed) == run,
             &|at| {
                 let _ = app.emit(PROGRESS_EVENT, at);
             },
@@ -357,10 +367,10 @@ pub async fn ocr_copy(
     .map_err(|e| format!("Text recognition did not run: {e}"))?
 }
 
-/// Asks the running recognition to stop before its next page.
+/// Asks recognition number `run` to stop before its next page.
 #[tauri::command]
-pub fn ocr_cancel(cancel: tauri::State<'_, Cancel>) {
-    cancel.0.store(true, Ordering::Relaxed);
+pub fn ocr_cancel(cancel: tauri::State<'_, Cancel>, run: u64) {
+    cancel.0.store(run, Ordering::Relaxed);
 }
 
 #[cfg(test)]

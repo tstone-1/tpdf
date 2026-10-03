@@ -442,6 +442,20 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase im
 python3 testdata/make_redact_pages_pdf.py
 uv run scripts/tabs_check.py <checks-binary> testdata/redact-pages.pdf --phase redact-pages
 
+# Recognise text and save as, through the window (`src/lib/recognisecheck.ts`).
+# The script makes the scan itself: the fixture's first page rendered by
+# tpdf-cli (taken from beside the checks binary) and put on a page as a picture,
+# once and six times over. The save panel is answered by `saveanswer.ts`.
+# 15 checks in the window and 3 on disk afterwards: the copy is written, the
+# stopped one is not, nothing is left staged. Needs the system's recogniser, so
+# macOS or Windows with an OCR language installed; about 10 s once the engine's
+# models are compiled, up to 30 s more on the first run after an OS update.
+#
+# The Stop step presses the button the moment it is offered, which is before
+# `ocr_copy` has been sent. That is deliberate: it found a stop that arrived
+# before its command being cleared by it (`docs/TRAPS.md`).
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase recognise
+
 # Signing with a certificate, through the window a reader signs in
 # (`src/lib/signingcheck.ts`). NEVER in scripts/gates.py or in CI, and never
 # started by an agent: it signs with a real key from the login keychain, so

@@ -337,6 +337,9 @@
   // Whether the blocking task is a text recognition, which is the one of them
   // that reports its pages and can be stopped.
   let recognising = $state(false);
+  // The number of the recognition Stop is for. Counted from 1, because 0 is
+  // the backend's "nothing was asked to stop".
+  let recognitionRun = 0;
   /**
    * The open document's page edits, or null when there is none.
    *
@@ -1939,16 +1942,28 @@
           return;
         }
         const source = openPathName;
-        const chosen = await saveDialog({
-          title: "Recognise text and save as",
-          defaultPath: suggestedName(source),
-          filters: [{ name: "PDF", extensions: ["pdf"] }],
-        });
+        const suggested = suggestedName(source);
+        const panel = () =>
+          saveDialog({
+            title: "Recognise text and save as",
+            defaultPath: suggested,
+            filters: [{ name: "PDF", extensions: ["pdf"] }],
+          });
+        // The checks build answers the panel, as it does for a signing: no
+        // phase can drive a native one. See `saveanswer.ts`.
+        const chosen = __TPDF_CHECKS__ && signSaves
+          ? await signSaves.ask(suggested, panel)
+          : await panel();
         if (!chosen) return;
+        // Numbered before Stop is shown, so a press at any moment names this run.
+        recognitionRun += 1;
         blockingTask = STARTING;
         recognising = true;
         await tick();
-        done.said = afterRecognition(await edits.ocrCopy(source, chosen), basename(chosen));
+        done.said = afterRecognition(
+          await edits.ocrCopy(source, chosen, recognitionRun),
+          basename(chosen),
+        );
         done.path = chosen;
       } catch (e) {
         if (e instanceof SaveCancelled) return;
@@ -4060,7 +4075,7 @@
       {#if degraded && status}<span class="degraded">{degraded}</span>{/if}
       {#if blockingTask}<span class="notice" data-testid="blocking-task">{blockingTask}</span>
         {#if recognising}<button data-testid="stop-recognition" title="Stop recognising text"
-          onclick={() => void call("ocr_cancel")}>Stop</button>{/if}
+          onclick={() => void call("ocr_cancel", { run: recognitionRun })}>Stop</button>{/if}
       {:else if notice}<span class="notice" data-testid="notice">{notice}</span>{/if}
     </span>
     {#if status}

@@ -302,6 +302,7 @@ hop through the index.
 - Tauri exports a command's wrapper macro only for a function that is visible
 - A relaunch is not a window close, so the question the close handler asks is never asked
 - A label that instructs, over a control that is disabled
+- A stop flag the command clears as it starts loses the stop that arrived first
 
 ## Rust and macOS
 - A locked macOS session cannot be unlocked from a script, so it must be prevented
@@ -25478,3 +25479,22 @@ The verdict of a run belongs to the binary that ran. After restoring a mutation,
 before the next measurement, and when a build fails, do not read results from whatever is
 still on disk. `scripts/mutate_rust.py` does not have this problem because it runs
 `cargo test`, which builds what it runs.
+
+### A stop flag the command clears as it starts loses the stop that arrived first
+
+The window shows Stop for a text recognition as soon as the task begins, and `ocr_copy` is
+sent only after the write guard has been asked, which for a signed document is a dialog a
+reader can leave open. `ocr_cancel` set a flag; `ocr_copy` cleared it on its way in, with the
+comment that a stop asked for before a recognition began was for an earlier one. So a Stop
+pressed early was cleared by the command it was meant for, the recognition ran to the end and
+the copy was written.
+
+Nothing below the window could see it. The integration test hands the flag in already set and
+never goes through the command that cleared it. `tabs_check.py --phase recognise` found it by
+pressing the button the moment it was offered: `stopped.pdf` was on disk afterwards.
+
+The fix is a number instead of a flag. The window numbers each recognition before Stop is
+shown, `ocr_cancel` stores the number it is for, and the run compares. Nothing is cleared, so
+the order of the two calls does not matter. The general form: a cancel that can be issued
+before its target exists must name the target, and state that one side resets is state the
+other side's message can be lost in.

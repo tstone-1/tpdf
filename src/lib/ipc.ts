@@ -279,10 +279,10 @@ export interface Commands {
   };
   redact_document: { args: { doc: number; source: string }; reply: Applied };
   ocr_copy: {
-    args: { doc: number; source: string; path: string };
+    args: { doc: number; source: string; path: string; run: number };
     reply: Recognised;
   };
-  ocr_cancel: { args: NoArgs; reply: void };
+  ocr_cancel: { args: { run: number }; reply: void };
   annot_erase: {
     args: { doc: number; mark: number; remove: number[]; sweep: number };
     reply: EditState;

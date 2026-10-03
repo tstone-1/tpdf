@@ -177,7 +177,7 @@ fn app_path(path: &Path, out: &Path, ask: Ask) -> (Result<Recognised, String>, V
         None,
         library_dir(),
         Vec::new(),
-        &stop,
+        &|| stop.load(std::sync::atomic::Ordering::Relaxed),
         &|at| {
             seen.lock().unwrap().push(at);
             if ask == Ask::StoppedReading {

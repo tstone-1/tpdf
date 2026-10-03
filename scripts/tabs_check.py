@@ -49,6 +49,12 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase recognise runs Recognise text and save as in the window: the palette, the
+save panel's suggestion, the toolbar's page line and Stop button, the sentence
+afterwards, the copy opened and searched, the refusal of unsaved changes, and a
+stopped run. The scan is made here from the fixture's first page, with tpdf-cli
+beside the binary; the fixture must show the word "quartz" once.
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase recognise
 --phase sign signs with a certificate through the window a reader signs in:
 Sign document... from the palette, the chooser, a DigiCert timestamp, the saved
 copy's properties, Sectigo with long-term data refused, Sign without long-term
@@ -77,7 +83,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -112,6 +118,22 @@ def main() -> int:
             for extra in ("third.pdf", "fourth.pdf"):
                 shutil.copyfile(args.pdf, room / extra)
                 copies.append(room / extra)
+        if args.phase == "recognise":
+            # A picture of the fixture's first page, the same picture six times
+            # over, and a directory for the copies. Nothing here is the input.
+            copied = room / "copies"
+            copied.mkdir()
+            scan, long = room / "scan.pdf", room / "long.pdf"
+            picture = room / "page.png"
+            tool = args.binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+            made = subprocess.run([str(tool), "render", str(first), "-o", str(picture), "--dpi", "200"],
+                                  capture_output=True, text=True, timeout=120, check=False)
+            if made.returncode != 0:
+                print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
+                return 1
+            scan.write_bytes(scan_pdf(picture.read_bytes(), 200, 1))
+            long.write_bytes(scan_pdf(picture.read_bytes(), 200, 6))
+            copies = [scan, long, copied]
         if args.phase == "sign":
             # The fixture, a directory of its own for the signed copies, and the
             # identity; the copy itself is signed and never written.
@@ -158,9 +180,96 @@ def main() -> int:
         passed = check_worker_exit(process, args.binary) and passed
         if args.phase == "sign":
             passed = signed_files(room / "signed") and passed
+        if args.phase == "recognise":
+            passed = recognised_files(room / "copies") and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
+
+
+def scan_pdf(png: bytes, dpi: int, pages: int) -> bytes:
+    """A PDF of `pages` pages, each showing the PNG and holding no text.
+
+    Written here because a scan is what the phase needs and `testdata/` has none
+    with words a recogniser reads. The PNG is the tool's own render: 8-bit RGBA,
+    not interlaced. Its rows are unfiltered and the alpha dropped, since a PDF
+    image has no use for either.
+    """
+    import struct
+    import zlib
+
+    assert png[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+    at, data, width, height = 8, b"", 0, 0
+    while at < len(png):
+        (length,) = struct.unpack(">I", png[at:at + 4])
+        kind, body = png[at + 4:at + 8], png[at + 8:at + 8 + length]
+        if kind == b"IHDR":
+            width, height, depth, colour, _, _, interlace = struct.unpack(">IIBBBBB", body)
+            assert (depth, colour, interlace) == (8, 6, 0), "expected 8-bit RGBA, not interlaced"
+        elif kind == b"IDAT":
+            data += body
+        at += 12 + length
+    raw, stride, rows, before = zlib.decompress(data), width * 4, [], bytes(width * 4)
+    for y in range(height):
+        kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for x in range(stride):
+            left = line[x - 4] if x >= 4 else 0
+            up, corner = before[x], before[x - 4] if x >= 4 else 0
+            if kind == 1:
+                line[x] = (line[x] + left) & 255
+            elif kind == 2:
+                line[x] = (line[x] + up) & 255
+            elif kind == 3:
+                line[x] = (line[x] + (left + up) // 2) & 255
+            elif kind == 4:
+                p = left + up - corner
+                nearest = min((abs(p - left), 0, left), (abs(p - up), 1, up), (abs(p - corner), 2, corner))[2]
+                line[x] = (line[x] + nearest) & 255
+        before = bytes(line)
+        rows.append(bytes(b for i, b in enumerate(line) if i % 4 != 3))
+    pixels = zlib.compress(b"".join(rows))
+    w_pt, h_pt = width * 72 / dpi, height * 72 / dpi
+    content = f"q {w_pt} 0 0 {h_pt} 0 0 cm /Im0 Do Q".encode()
+    kids = " ".join(f"{5 + n} 0 R" for n in range(pages))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        f"<< /Type /Pages /Kids [{kids}] /Count {pages} >>".encode(),
+        f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB"
+        f" /BitsPerComponent 8 /Filter /FlateDecode /Length {len(pixels)} >>\nstream\n".encode()
+        + pixels + b"\nendstream",
+        f"<< /Length {len(content)} >>\nstream\n".encode() + content + b"\nendstream",
+    ] + [
+        f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w_pt} {h_pt}] /Contents 4 0 R"
+        f" /Resources << /XObject << /Im0 3 0 R >> >> >>".encode()
+        for _ in range(pages)
+    ]
+    out, offsets = bytearray(b"%PDF-1.7\n"), []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    start = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{offset:010} 00000 n \n".encode() for offset in offsets)
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def recognised_files(directory: Path) -> bool:
+    """What the recognition phase left on disk, read from outside the app.
+
+    The copy that was read to the end is there; the one that was stopped is
+    not, and neither is anything staged beside either of them.
+    """
+    ok = True
+    for name, wanted in (("copy.pdf", True), ("stopped.pdf", False)):
+        path = directory / name
+        present = path.is_file() and path.read_bytes()[:5] == b"%PDF-"
+        good = present == wanted
+        ok = ok and good
+        print(f"[{'OK' if good else 'FAIL'}]   {name}: {'written' if present else 'not written'}")
+    extra = sorted(p.name for p in directory.iterdir() if p.name != "copy.pdf")
+    print(f"[{'OK' if not extra else 'FAIL'}]   nothing else is left in the directory: {extra}")
+    return ok and not extra
 
 
 def signed_files(directory: Path) -> bool:

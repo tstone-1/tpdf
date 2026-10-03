@@ -16830,9 +16830,12 @@ or after an OS update pays Vision's model compile, 24 s here.
 - ~~The window has no command for it.~~ **Built 2026-10-03**: *Recognise text and save as*
   (`commands/ocr.rs`). It writes a copy and opens it; the open document is not changed and
   nothing is journalled. `tests/cli/ocr.rs` runs its path in-process on the scan the tool's
-  own check uses and gets the same words in the same places. **Not run by a person in the
-  window yet**: the save panel, the progress line, the Stop button and the open of the copy
-  are `App.svelte`, which no gate reaches.
+  own check uses and gets the same words in the same places. **Run in the window the same
+  day** by `tabs_check.py --phase recognise` (15 checks, `BUILD.md`): the palette, the save
+  panel's suggestion, the page line, Stop, the sentence, the copy opened and searched, the
+  refusal of unsaved changes. It found one defect, a Stop pressed before the command had
+  started being lost, fixed by numbering the run. The native save panel itself is answered
+  by the checks build and has not been clicked by a person.
 - The window refuses a document with unsaved changes. A layer is keyed by the file's page
   and written before pages move, so a moved or deleted page would not need the refusal; a
   turned or cropped one would, because the words are placed on the page as the file shows
