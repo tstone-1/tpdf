@@ -175,6 +175,11 @@ FOSS answer that views, edits, fills forms, redacts, and runs locally.
 tpdf targets the gap: Sumatra's speed, Acrobat's capability, and a discovery model
 borrowed from code editors rather than from office suites.
 
+That is the author's own diagnosis. What users of those programs say themselves, read on
+2026-10-03 from vendor forums and 30 Reddit threads, is in [`DEMAND.md`](DEMAND.md),
+with what tpdf still lacks against it: creating form fields first, comparing two
+documents second.
+
 ---
 
 ## 2. Design principles
