@@ -163,6 +163,7 @@ fn plan_of(turns: &[u8]) -> Plan {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -190,6 +191,7 @@ fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: Vec::new(),
     }
 }
@@ -3482,6 +3484,7 @@ fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: vec![PlannedMark {
             kind,
             // The biconditional the model enforces, restated here because
@@ -3579,6 +3582,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
     };
     assert!(
         plan.is_appendable(),
@@ -6843,6 +6847,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6900,6 +6905,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: vec![PlannedMark {
             kind: MarkKind::Highlight,
             stamp: None,
@@ -6962,6 +6968,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plain.is_identity());
@@ -7000,6 +7007,7 @@ fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         marks: Vec::new(),
     };
     assert!(plan.is_identity(), "the control: nothing is edited");
@@ -10241,4 +10249,112 @@ fn a_hard_link_to_the_source_is_the_same_file_and_a_copy_is_not() {
         ),
         "two spellings of a name not yet written are one"
     );
+}
+
+/// Two pages, each with one content stream that draws nothing.
+fn two_blank_pages() -> Vec<u8> {
+    use lopdf::{dictionary, Dictionary, Document, Stream};
+    let mut doc = Document::with_version("1.7");
+    let pages = doc.new_object_id();
+    let kids: Vec<Object> = (0..2)
+        .map(|_| {
+            let content = doc.add_object(Stream::new(Dictionary::new(), b"q Q".to_vec()));
+            Object::Reference(doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages,
+                "MediaBox" => vec![0.into(), 0.into(), 600.into(), 800.into()],
+                "Contents" => content,
+            }))
+        })
+        .collect();
+    doc.objects.insert(
+        pages,
+        Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 2 }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialised");
+    bytes
+}
+
+/// How many `Tj` operators each page of a saved document shows, in page order.
+fn shows_per_page(written: &[u8]) -> Vec<usize> {
+    let saved = lopdf::Document::load_mem(written).expect("the saved file parses");
+    crate::pagetree::ordered_pages(&saved)
+        .into_iter()
+        .map(|page| {
+            let content = saved.get_page_content(page);
+            String::from_utf8_lossy(&content).matches(" Tj").count()
+        })
+        .collect()
+}
+
+fn one_word_on(page: u32) -> Vec<crate::textlayer::Layer> {
+    vec![crate::textlayer::Layer {
+        page,
+        words: vec![crate::textlayer::Word {
+            text: "word".into(),
+            rect: [100.0, 50.0, 130.0, 60.0],
+        }],
+    }]
+}
+
+#[test]
+fn a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names() {
+    let original = two_blank_pages();
+    assert_eq!(shows_per_page(&original), [0, 0], "the control");
+
+    let mut plan = plan_of(&[0, 0]);
+    assert!(plan.is_identity(), "the control: nothing to write yet");
+    plan.text_layers = one_word_on(1);
+    assert!(
+        !plan.is_identity(),
+        "a layer is a change the file does not have"
+    );
+    assert!(!plan.is_appendable());
+
+    let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+    assert_eq!(shows_per_page(&written), [0, 1]);
+}
+
+#[test]
+fn a_text_layer_names_a_page_of_the_file_not_a_place_in_the_output() {
+    let original = two_blank_pages();
+    // The file's second page comes out first, and the layer names the file's
+    // second page.
+    let mut plan = keeping(2, &[(1, 0), (0, 0)]);
+    plan.text_layers = one_word_on(1);
+    let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+    assert_eq!(shows_per_page(&written), [1, 0]);
+}
+
+#[test]
+fn a_text_layer_beside_a_mark_is_not_written_as_an_append() {
+    let mut marked = plan_of_kind(
+        MarkKind::Highlight,
+        vec![crate::docmodel::Quad {
+            left: 20.0,
+            top: 20.0,
+            right: 80.0,
+            bottom: 35.0,
+        }],
+    );
+    assert!(
+        marked.is_appendable(),
+        "the control: a mark alone is an append"
+    );
+    marked.text_layers = one_word_on(0);
+    assert!(
+        !marked.is_appendable(),
+        "an append writes marks only, so the layer would be dropped"
+    );
+}
+
+#[test]
+fn a_text_layer_for_a_page_the_file_lacks_is_refused() {
+    let original = two_blank_pages();
+    let mut plan = plan_of(&[0, 0]);
+    plan.text_layers = one_word_on(2);
+    assert!(rewrite_update(&original, &plan, Job::Save, None).is_err());
 }

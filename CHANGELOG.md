@@ -17,6 +17,21 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.3] - Unreleased
+
+### Added
+
+- **`tpdf ocr` makes a scanned document searchable.** `tpdf ocr scan.pdf -o searchable.pdf`
+  writes a copy in which the pages that had no text can be searched, selected and copied
+  from. Each such page is read by the operating system's own text recogniser, Vision on
+  macOS and Windows OCR on Windows, in a separate process with no network access, and the
+  words are written over the picture as an invisible layer, one box per word. The page looks
+  exactly as it did. Pages that already have text are left as they are; `--pages` limits
+  which pages are considered and `--language` names the language to expect. The copy is read
+  back before it is published, and `--json` reports which pages were read, which were left
+  alone and which engine read them. The Python client gains `ocr()`. The command is in the
+  command-line tool only; the window has no command for it yet.
+
 ## [26.10.2] - 2026-10-02
 
 ### Added

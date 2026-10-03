@@ -307,6 +307,27 @@ where PDFium generates them: the note icon fills 637 of the 756 pixels in its ow
 the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
 reach before `annots.rs` was the *text*.
 
+## A text layer over a scanned page (`tpdf ocr`)
+
+`textlayer.rs` writes recognised words into a page as invisible text; `ocr_layer.rs` decides
+which pages get a layer and what the engine is asked; `cli/ocr.rs` is the command. The plan
+carries the words as `Plan::text_layers`, by baseline page, and `save::rewrite` writes them
+before any page is moved or dropped. A plan carrying a layer is never an append and never the
+identity.
+
+Four choices in the writer are measurements rather than preferences, and each has an entry in
+`docs/TRAPS.md`: the font's one glyph is a **box**, because PDFium takes a character's place
+from its outline; the unit is a **word**, because a line's characters spread evenly land up to
+33 pt from the type; every word is followed by a **space** just past its box, because a
+recogniser's boxes touch; and the layer goes **first** in the page's content, inside its own
+`q`/`Q`, so it starts from the default graphics state whatever the page's own content leaves
+behind.
+
+The engine is asked for words with its language model on (`ocr_layer::options`), the opposite
+of what the redaction gate asks: this caller wants recall and is not a safety check.
+`docs/PLAN.md` §9 *Cross-cutting* has the measurements and what is not built, and
+`BUILD.md`'s `textlayer-probe` is the read-back through PDFium.
+
 ## A signature image from a file (`sign --image`)
 
 The signature chooser decodes an imported image with the webview's decoder and scales it on a

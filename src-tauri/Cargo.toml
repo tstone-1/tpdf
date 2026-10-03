@@ -256,7 +256,7 @@ security-framework = "3"
 core-foundation = "0.10"
 objc2 = "0.6"
 # `NSError`: what `setDefaultApplicationAtURL:...`'s completion block is handed (`defaultapp.rs`).
-objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL", "NSError"] }
+objc2-foundation = { version = "0.3", features = ["NSData", "NSString", "NSURL", "NSError", "NSRange"] }
 # The completion block itself. Already in the tree beneath `objc2-app-kit`; MIT.
 block2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
@@ -503,6 +503,10 @@ path = "examples/sanitize_rewrite.rs"
 [[example]]
 name = "worker-bench"
 path = "examples/worker_bench.rs"
+
+[[example]]
+name = "textlayer-probe"
+path = "examples/textlayer_probe.rs"
 
 [[example]]
 name = "ocr-probe"

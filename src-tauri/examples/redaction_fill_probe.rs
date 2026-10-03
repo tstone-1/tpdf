@@ -65,6 +65,7 @@ fn plan(turns: u8) -> Plan {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         redactions: vec![PlannedRedaction {
             source: 0,
             shows: vec![0],

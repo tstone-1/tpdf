@@ -268,6 +268,28 @@ class Tpdf:
             args.append('--force')
         return self.run('render', *args, '--', source, password=password).typed
 
+    def ocr(
+        self, source: str | os.PathLike[str], output: str | os.PathLike[str], *,
+        pages: str | None = None, languages: Sequence[str] = (), force: bool = False,
+        invalidate_signatures: bool = False, password: str | None = None,
+    ) -> reports.OcrReport:
+        """Write a copy whose scanned pages can be searched and selected.
+
+        Pages without text are read by the operating system's text recogniser;
+        pages that already have text are left as they are. `languages` are
+        BCP-47 tags such as "de-DE", most preferred first.
+        """
+        args = ['-o', os.fspath(output)]
+        if pages is not None:
+            args += ['--pages', pages]
+        for language in languages:
+            args += ['--language', language]
+        if force:
+            args.append('--force')
+        if invalidate_signatures:
+            args.append('--invalidate-signatures')
+        return self.run('ocr', *args, '--', source, password=password).typed
+
     def fill(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         values: Mapping[str, Any], *, force: bool = False, password: str | None = None,

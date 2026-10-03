@@ -3701,6 +3701,59 @@ which asks never maps the engine. `objc2-vision` links Vision, so every binary l
 make that claim about `libpdfium` because `pdfium-render` `dlopen`s it. The check states the
 measured fact instead, with an emptiness control beside it. See `docs/TRAPS.md`.
 
+### `textlayer-probe`: does a text layer read back as the words it was written from
+
+Every platform; it needs no OCR engine. The words come from a document that already has
+text: it reads each page's words and boxes through PDFium, empties every page's content with
+`lopdf`, writes the words back with `textlayer::write`, and reads the result through PDFium.
+
+```
+cargo run --release --manifest-path src-tauri/Cargo.toml --example textlayer-probe -- \
+    testdata/rotated.pdf
+```
+
+| fixture | result, 2026-10-03, macOS arm64 |
+|---|---|
+| `text-base14`, `text-cid`, `links-cropped` | 7/7 |
+| `inherited` (`/Rotate 90`, inherited box) | 14/14, 3 skipped |
+| `rotated` (0, 90, 180, 270) | 19/19, 3 skipped |
+| `rotated-90` | 18/18, 4 skipped |
+| `links-rotated` | 11/11, 1 skipped |
+| `columns` | 17/17 |
+| `text-heavy` | 3877/3877 |
+
+The skips are the order check on turned pages: those fixtures' type is upright in the
+page's own space, so their word order is not a reading order of the displayed page. Do not
+run it on `encodings`: that fixture's words hold control characters, which the writer drops
+on purpose.
+
+**Run a turned fixture as well as an upright one.** The turn is the part most likely to be
+wrong and an upright page cannot show it. And the crop: `links-cropped` is the one fixture
+whose displayed corner is not the sheet's.
+
+What each check is for, since three of them exist because the layer was wrong without them:
+
+| check | goes red when |
+|---|---|
+| the emptied page reads no words | the control: everything after it would pass on the text that was already there |
+| every word reads back at its box | the crop origin is dropped, the scaling or the baseline is wrong, the glyph has no height |
+| every character is upright as displayed | the type runs the page's way on a turned page. **Nothing else sees this**: the glyph is a box, and a box set sideways in a rectangle fills the same rectangle |
+| the page renders as the emptied page did | the layer paints |
+| three words whose boxes touch read back as three | no space is written after a word. The fixture's own words cannot show this: their boxes are PDFium's, with the page's real gaps between them |
+
+Seven mutations of `textlayer.rs` were run against it by hand that day, four for the second
+row and one for each row after it, and each went red. They are in `scripts/mutate_rust.py` under
+`text layer:`, aimed at the unit tests; the probe is the half those cannot be, because a unit
+test reads the operators the writer wrote and this reads what PDFium makes of them.
+
+**The allowance is relative**, `0.05 pt + longer side / 64`, because PDFium reports the
+layer's glyph 1/64 taller than its ascent and 1/64 wider than its advance. A flat half point
+was the first allowance and passed a layer whose every word ran 2.4% long.
+
+**Rebuild after restoring a mutation.** The probe is a binary; restoring the source does not
+restore it. One run here reported every fixture red against correct source, because the
+binary on disk was the last mutant's.
+
 ### `redact-reach-probe`: how much of a redaction can be proved, over a corpus
 
 Not a check — it passes nothing and fails nothing. It is the instrument behind

@@ -244,6 +244,20 @@ pub struct Options {
     /// Wall-clock budget. An engine with no deadline is an unbounded one, and
     /// this runs on a page the user is waiting for.
     pub deadline_ms: u32,
+    /// Whether to report one item per word rather than one per line.
+    ///
+    /// The two callers want different things. The redaction gate matches its
+    /// control against **one** span, so it wants the line Vision reports. A text
+    /// layer wants words, because a line's characters spread evenly across the
+    /// line's box land up to 33 pt from the type they stand for
+    /// (`textlayer.rs`).
+    ///
+    /// `Windows.Media.Ocr` reports words whatever this says.
+    ///
+    /// `#[serde(default)]` so a request written before this existed asks for
+    /// what it always got.
+    #[serde(default)]
+    pub words: bool,
 }
 
 impl Default for Options {
@@ -252,8 +266,40 @@ impl Default for Options {
             languages: Vec::new(),
             language_correction: false,
             deadline_ms: 10_000,
+            words: false,
         }
     }
+}
+
+/// The words of a recognised line, each with where it starts and how long it
+/// is in **UTF-16 code units**.
+///
+/// UTF-16 because the caller is Vision's `boundingBoxForRange:`, whose range
+/// indexes an `NSString`. A character outside the basic plane is two units
+/// there and four bytes in a `str`, so a range counted in either `char`s or
+/// bytes asks for the wrong characters on any line that has one.
+///
+/// Words are what white space separates; punctuation stays with its word, which
+/// is how [`crate::ocr_gate::words_from`] cuts the page's own text.
+#[must_use]
+pub fn word_ranges(line: &str) -> Vec<(usize, usize, &str)> {
+    let mut out = Vec::new();
+    let mut units = 0_usize;
+    let mut open: Option<(usize, usize)> = None;
+    for (byte, ch) in line.char_indices() {
+        if ch.is_whitespace() {
+            if let Some((start_unit, start_byte)) = open.take() {
+                out.push((start_unit, units - start_unit, &line[start_byte..byte]));
+            }
+        } else if open.is_none() {
+            open = Some((units, byte));
+        }
+        units += ch.len_utf16();
+    }
+    if let Some((start_unit, start_byte)) = open {
+        out.push((start_unit, units - start_unit, &line[start_byte..]));
+    }
+    out
 }
 
 /// An OCR engine.
@@ -1066,6 +1112,25 @@ impl<'a> RedactedPixels<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_is_cut_at_white_space_and_counted_in_utf16_units() {
+        assert_eq!(
+            word_ranges("  two  words, here "),
+            [(2, 3, "two"), (7, 6, "words,"), (14, 4, "here")]
+        );
+        assert!(word_ranges(" \t ").is_empty());
+        assert_eq!(word_ranges("one"), [(0, 3, "one")]);
+    }
+
+    #[test]
+    fn a_character_outside_the_basic_plane_moves_the_next_word_by_two() {
+        // U+1D49C is one `char`, four bytes and two UTF-16 units.
+        assert_eq!(
+            word_ranges("\u{1D49C} b"),
+            [(0, 2, "\u{1D49C}"), (3, 1, "b")]
+        );
+    }
 
     #[test]
     fn every_cause_has_its_own_label() {

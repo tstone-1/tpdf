@@ -3726,6 +3726,10 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     }
     textedit::write(&mut doc, &split.base)?;
     forms::write(&mut doc, &plan.forms)?;
+    // **While `doc` is still the file as it was loaded**, for the reason the
+    // text edits above give: a layer names a baseline page, and the order this
+    // document will have is not built until `materialise`.
+    crate::textlayer::write(&mut doc, &plan.text_layers)?;
     rewrite_note_edits(&mut doc, &plan.notes)?;
 
     // **Beside the note edits, and above `materialise` for their reason.** A

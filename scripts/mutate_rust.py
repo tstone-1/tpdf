@@ -746,7 +746,7 @@ MUTATIONS = [
     Mutation("textedit journal: omit extraction filtering", "src/edits.rs", "        .filter(|edit| pages.iter().any(|page| shows(page.source, edit)))", "", "textedit_plans_follow_page_identity_and_filter_deleted_or_extracted_pages"),
     Mutation("textedit journal: accept a changed original", "src/docmodel.rs", "previous.revision != change.revision || previous.original != change.original", "previous.revision != change.revision", "textedit_journal_refuses_stale_or_unbounded_input_atomically"),
     Mutation("textedit: let print use the original bytes", "src/edits.rs", "pub fn is_identity(&self) -> bool {", "pub fn is_identity(&self) -> bool {\n        if !self.text_edits.is_empty() { return true; }", "textedit_reaches_save_copy_print_and_forbids_append"),
-    Mutation("textedit: allow mixed edits to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() {", "textedit_reaches_save_copy_print_and_forbids_append"),
+    Mutation("textedit: allow mixed edits to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_layers.is_empty() {", "textedit_reaches_save_copy_print_and_forbids_append"),
     Mutation("text preview: omit the worker rewrite", "src/textview.rs", "crate::textedit::write(&mut document, changes)?;", "let _ = changes;", "textview_rewrites_without_changing_the_original_and_bounds_output"),
     Mutation("text preview: count retained bytes as free budget", "src/textview.rs", "MAX_PREVIEW_BYTES.saturating_sub(self.0.len())", "MAX_PREVIEW_BYTES.saturating_add(self.0.len())", "textview_rewrites_without_changing_the_original_and_bounds_output"),
     # Both passes reject partial input: strict decoding and the byte-preserving
@@ -13871,6 +13871,42 @@ MUTATIONS += [
         'format!("Removed {LINK}. The application is unchanged.")',
         "the_reader_is_told_what_is_there_afterwards_not_what_was_attempted",
     ),
+]
+
+
+# --- the text layer over a scanned page -------------------------------------
+# `textlayer.rs` writes it, `ocr_layer.rs` decides what goes in it, and the plan
+# carries it through `save::rewrite`. What these cannot see is whether PDFium
+# reads the layer back as the words at their boxes: that is `textlayer-probe`,
+# which was run against six of the `textlayer.rs` mutations below by hand on
+# 2026-10-03 and went red on each.
+MUTATIONS += [
+    Mutation("text layer: let a copy be the original bytes", "src/edits.rs", "        // and confusingly, without the highlights.\n        if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {", "        // and confusingly, without the highlights.\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names"),
+    Mutation("text layer: allow a layer beside a mark to append", "src/edits.rs", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {", "pub fn is_appendable(&self) -> bool {\n        if !self.forms.is_empty() || !self.text_edits.is_empty() {", "a_text_layer_beside_a_mark_is_not_written_as_an_append"),
+    Mutation("text layer: omit the writer call", "src/save.rs", "    crate::textlayer::write(&mut doc, &plan.text_layers)?;", "    // text layer omitted", "a_text_layer_forces_a_rewrite_and_lands_on_the_page_it_names"),
+    Mutation("text layer: set the type along the page's own axis", "src/textlayer.rs", "    let upright = Upright::of(\n        shown.turns,", "    let upright = Upright::of(\n        0,", "on_a_turned_page_the_type_runs_the_way_it_is_read"),
+    Mutation("text layer: measure from the sheet's corner", "src/textlayer.rs", "[quad[0] + ox, quad[1] + oy, quad[2] + ox, quad[3] + oy],", "[quad[0], quad[1], quad[2], quad[3]],", "a_cropped_page_s_corner_is_where_the_layer_measures_from"),
+    Mutation("text layer: leave the word at its natural width", "src/textlayer.rs", "let scaling = upright.width / natural * 100.0;", "let scaling = 100.0;", "a_word_is_set_at_its_box_and_scaled_to_its_width"),
+    Mutation("text layer: put the baseline on the box's bottom", "src/textlayer.rs", "let baseline = size * f64::from(ASCENT) / em;", "let baseline = size;", "a_word_is_set_at_its_box_and_scaled_to_its_width"),
+    Mutation("text layer: write no space after a word", "src/textlayer.rs", "        .chain(std::iter::once(&0x0020))\n", "", "a_word_is_set_at_its_box_and_scaled_to_its_width"),
+    Mutation("text layer: paint the words", "src/textlayer.rs", 'String::from("q\\nBT\\n3 Tr\\n")', 'String::from("q\\nBT\\n0 Tr\\n")', "a_word_is_set_at_its_box_and_scaled_to_its_width"),
+    Mutation("text layer: reuse a font name the page has", "src/textlayer.rs", "while fonts.has(name.as_bytes()) {", "while false {", "inherited_resources_are_copied_and_a_taken_name_is_not_reused"),
+    Mutation("text layer: drop the page's own content", "src/textlayer.rs", "            _ => contents.push(Object::Reference(id)),", "            _ => {}", "the_layer_goes_before_the_page_s_own_content_and_keeps_it"),
+    Mutation("text layer: drop a content array's parts", "src/textlayer.rs", "        Some(Object::Array(parts)) => contents.extend(parts),", "        Some(Object::Array(_)) => {}", "a_page_whose_content_is_an_array_keeps_every_part_after_the_layer"),
+    Mutation("text layer: accept one page named twice", "src/textlayer.rs", "if !seen.insert(layer.page) {", "if !seen.insert(layer.page) && false {", "a_page_the_document_lacks_a_page_named_twice_and_an_oversized_layer_are_refused"),
+    Mutation("text layer: accept any number of words", "src/textlayer.rs", "if layer.words.len() > MAX_WORDS {", "if false {", "a_page_the_document_lacks_a_page_named_twice_and_an_oversized_layer_are_refused"),
+    Mutation("text layer: accept a word of any length", "src/textlayer.rs", "if units.len() > MAX_UNITS {", "if false {", "a_page_the_document_lacks_a_page_named_twice_and_an_oversized_layer_are_refused"),
+    Mutation("text layer: write a word with no area", "src/textlayer.rs", "word.rect.iter().all(|v| v.is_finite()) && right > left && bottom > top;", "true;", "unusable_words_are_left_out_and_a_page_with_none_is_untouched"),
+    Mutation("text layer: keep control characters", "src/textlayer.rs", "        .filter(|c| !c.is_control())\n        .collect::<String>()", "        .collect::<String>()", "unusable_words_are_left_out_and_a_page_with_none_is_untouched"),
+    Mutation("text layer: a glyph with no height", "src/textlayer.rs", "be16(&mut glyf, &[descent, ascent - descent, 0, descent - ascent]); // y deltas", "be16(&mut glyf, &[0, 0, 0, 0]); // y deltas", "the_font_program_is_one_box_glyph_of_the_stated_size"),
+    Mutation("ocr: count a word's place in characters", "src/ocr.rs", "units += ch.len_utf16();", "units += 1;", "a_character_outside_the_basic_plane_moves_the_next_word_by_two"),
+    Mutation("ocr layer: every page has text", "src/ocr_layer.rs", ".any(|code| !char::from_u32(*code).is_some_and(char::is_whitespace))", ".any(|_| true)", "a_page_with_only_white_space_has_no_text"),
+    Mutation("ocr layer: read a page at any resolution", "src/ocr_layer.rs", "if scale < MIN_SCALE {", "if scale < 0.0 {", "a_page_too_large_to_read_at_100_dpi_is_refused"),
+    Mutation("ocr layer: ignore the longest side", "src/ocr_layer.rs", "WANTED_SCALE.min(by_area).min(by_edge);", "WANTED_SCALE.min(by_area);", "a_long_narrow_page_is_bounded_by_its_longer_side"),
+    Mutation("ocr layer: keep an empty recognition", "src/ocr_layer.rs", "        .filter(|item| !item.text.trim().is_empty())\n", "", "a_recognition_with_no_words_makes_no_layer"),
+    Mutation("ocr layer: any page reads back", "src/ocr_layer.rs", "    wanted == got\n", "    let _ = (wanted, got);\n    true\n", "a_missing_layer_and_a_wrong_character_do_not_read_back"),
+    Mutation("ocr layer: ask for lines", "src/ocr_layer.rs", "        words: true,\n", "        words: false,\n", "the_engine_is_asked_for_words_with_its_corrector_on"),
+    Mutation("ocr layer: turn the corrector off", "src/ocr_layer.rs", "        language_correction: true,\n", "        language_correction: false,\n", "the_engine_is_asked_for_words_with_its_corrector_on"),
 ]
 
 if __name__ == "__main__":

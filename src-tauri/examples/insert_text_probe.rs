@@ -143,6 +143,7 @@ fn main() {
         }
     };
     let plan = Plan {
+        text_layers: Vec::new(),
         text_edits: vec![textedit::Edit::imported(
             1,
             textedit::Change {

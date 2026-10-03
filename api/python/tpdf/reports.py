@@ -61,6 +61,8 @@ __all__ = [
     "MetadataField",
     "NotEditable",
     "NotUsableIdentity",
+    "OcrPage",
+    "OcrReport",
     "PageOutput",
     "PageSize",
     "PageText",
@@ -308,6 +310,35 @@ class RenderReport(TypedDict):
     dpi: int
     width_px: int
     height_px: int
+
+
+# --- ocr -------------------------------------------------------------------
+
+
+class OcrPage(TypedDict):
+    """One page given a text layer."""
+
+    # Counted from 1.
+    page: int
+    words: int
+
+
+class OcrReport(TypedDict):
+    """`ocr --json`: a copy with a text layer on the pages that had no text."""
+
+    schema: int
+    command: str
+    input: str
+    output: str
+    # The recogniser and the build it reported, such as "vision (26A428)".
+    engine: str
+    pages: list[OcrPage]
+    # Selected pages that already had text and were left as they are.
+    already_text: list[int]
+    # Selected pages without text on which nothing was recognised.
+    nothing_read: list[int]
+    signatures_invalidated: int
+    signatures_unknown: bool
 
 
 # --- edit ------------------------------------------------------------------
@@ -1136,6 +1167,7 @@ REPORTS: dict[str, type] = {
     "fill-refused": FillReport,
     "identities": IdentitiesReport,
     "info": InfoReport,
+    "ocr": OcrReport,
     "pages": PagesReport,
     "redact": RedactReport,
     "redact-dry-run": RedactReport,

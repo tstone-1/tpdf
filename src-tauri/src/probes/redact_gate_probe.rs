@@ -181,6 +181,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
     };
     save::write_copy(file, &plan, &out, None, &save::Here).map_err(|e| e.message)?;
 

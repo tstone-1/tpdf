@@ -36,6 +36,40 @@ pub struct Rendered {
     pub height_px: u32,
 }
 
+/// A copy with a text layer on the pages that had no text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ocr {
+    /// Schema version.
+    pub schema: u32,
+    /// `ocr`.
+    pub command: String,
+    /// Source path.
+    pub input: String,
+    /// The published copy.
+    pub output: String,
+    /// The recogniser and the build it reported, such as `vision (26A428)`.
+    pub engine: String,
+    /// Pages given a text layer, in document order.
+    pub pages: Vec<OcrPage>,
+    /// Selected pages that already had text and were left as they are.
+    pub already_text: Vec<u32>,
+    /// Selected pages without text on which nothing was recognised.
+    pub nothing_read: Vec<u32>,
+    /// Number of source signatures affected by this rewrite.
+    pub signatures_invalidated: usize,
+    /// Signature enumeration was incomplete.
+    pub signatures_unknown: bool,
+}
+
+/// One page given a text layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OcrPage {
+    /// The page, counted from 1.
+    pub page: u32,
+    /// How many words were written.
+    pub words: usize,
+}
+
 /// An edit plan, either validated without writing or successfully published.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edited {

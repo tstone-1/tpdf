@@ -88,6 +88,9 @@ hop through the index.
 - The gate reads a band of rows, so a region narrower than its line is judged with its neighbours
 - `FPDFPage_GetRotation` needs a loaded page, and the outline asked for one per bookmark
 - A separator PDFium synthesised travels with the column it followed
+- PDFium takes a character's box from its glyph outline, so invisible text in an empty glyph has no place
+- PDFium reports a glyph 1/64 larger than its outline, and a flat tolerance wide enough for that hid a 2.4% error
+- A recogniser's word boxes touch, and words written at them read back as one word
 
 ## Text matching, and scripts that are not English
 - `FPDFText_GetUnicode` is a UTF-16 API, so an astral character is two characters
@@ -561,6 +564,7 @@ hop through the index.
 - A mutation's named test stopped catching it when a refusal was relaxed, and the harness's fallback found the one that still did
 
 - A page-text comparison that folds whitespace passes an added space
+- A box fills its rectangle whichever way it is set, so type running the wrong way passed every geometric check
 ## Harnesses: running checks and reading what they print
 - A mutation harness needs the same control as the thing it is testing
 - A timeout that discards the transcript recreates the failure it was added to diagnose
@@ -700,6 +704,7 @@ hop through the index.
 - A verdict the probe printed and did not assert passed a DocMDP violation as green
 - `--only cli` also runs every `clip` mutation: a harness name filter is a substring
 - Several processes' dyld lines share one stderr and interleave mid-line
+- Restoring a mutated source does not restore the binary built from it
 
 ## Windows and portability
 - The gates had never run on the platform where they fail
@@ -25389,3 +25394,87 @@ filter fails, and skips a content reference that names no stream. So the pass us
 editor's complete decoder, and it collects every name token in the content instead of parsing
 operators: a `Do` operand is always among them. The test that found the first of these was the
 pass's own "damaged content keeps every name" control, which failed on its first run.
+
+### PDFium takes a character's box from its glyph outline, so invisible text in an empty glyph has no place
+
+2026-10-03, before `textlayer.rs` was written. A text layer over a scanned page is text in
+render mode 3, and the usual font for it is one whose glyphs draw nothing. A scratch layer
+in such a font, with one empty glyph every code maps to, read back through `tpdf text` with
+every word right, and `tpdf search` then returned each match with **no rectangle**: PDFium
+reports a character's box from the outline of its glyph, and an outline with no points has no
+box. The same layer in a font that is not embedded read back with rectangles; why was not
+looked into, and a result that depends on which substitute a reader picks was not wanted.
+
+So the words were findable and could not be shown, selected or redacted by region. The font
+`textlayer::font_program` builds has one glyph that is a rectangle from the descender to the
+ascender, the width of the advance. Render mode 3 paints none of it.
+
+The general shape: extracting text and placing text are two measurements, and a check that
+reads the words back says nothing about the second.
+
+### PDFium reports a glyph 1/64 larger than its outline, and a flat tolerance wide enough for that hid a 2.4% error
+
+2026-10-03, `textlayer-probe`. Words written at known boxes read back with the left and
+bottom edges exact, the top higher by 1/64 of the font's ascent and the right edge further by
+1/64 of the last character's advance: 0.15 pt on 12 pt type, 0.7 pt on a 57 pt sideways word.
+It grows with the type and with nothing else.
+
+The probe's first tolerance was a flat 0.5 pt, chosen to clear that. It also cleared a real
+defect introduced an hour later: the font's em was changed to 1024 and `/DW` was written as
+512, which a PDF reads as 512 thousandths, so every word ran 2.4% long. On 12 pt type that is
+under half a point and the probe stayed green. Tightening the tolerance to 0.05 pt made every
+word fail, and the size of each failure is what showed two effects: one proportional to the
+ascent on every fixture, and one proportional to the word's width that had not been there
+before the em changed.
+
+The allowance is now `0.05 pt + longer side / 64`, which is the measured effect and no more.
+A tolerance sized to make a check pass absorbs the next error of the same size; one derived
+from the effect it allows for does not.
+
+### A recogniser's word boxes touch, and words written at them read back as one word
+
+2026-10-03, the first run of `tpdf ocr` with Vision on a rendered page. Every character was
+right and four pairs of words were joined: "REDACT ME" read back as "REDACTME", "my vow" as
+"myvow". A reader decides where one word ends from the gap before the next. PDFium's own
+boxes are tight to the ink, with the page's real gaps between them; Vision's meet edge to
+edge or overlap.
+
+`textlayer-probe` had passed on twelve fixtures, 3,101 checks on one of them, and could not
+have seen this: its words and boxes come from PDFium reading a document that has text, so
+its input always has the gaps. The fix is a space written after every word, placed just past
+the word's box so the word still fills the box exactly. The probe now builds a page of its
+own with three words whose boxes touch and overlap, which is input no fixture supplies.
+
+A round trip through the same reader proves the writer on that reader's kind of input. The
+input that matters comes from somewhere else.
+
+### A box fills its rectangle whichever way it is set, so type running the wrong way passed every geometric check
+
+2026-10-03, mutating `textlayer.rs` against `textlayer-probe`. With the page's turn taken out
+of the writer, so that words on a `/Rotate 90` page were set along the page's own axis, the
+probe passed 14 of 14 on `rotated.pdf`: the same words, at the same boxes, rendering the same.
+
+The layer's glyph is a rectangle the size of its cell. Set upright in a word's box or set
+sideways and scaled to fit, the characters together cover the same rectangle, and a word's
+box is the union of its characters'. The one observable that differs is each character's own
+orientation, which PDFium reports and `text::PageText::char_turns` carries. The probe now
+requires every character to be upright as the page is displayed, and that check alone goes
+red for this mutation.
+
+It is the trap index's quarter-turn entry from the other side: there a band turned through a
+right angle covered the same fraction of a rectangle. A check on where something is cannot
+see which way it faces unless the thing has a shape that changes when it is turned.
+
+### Restoring a mutated source does not restore the binary built from it
+
+2026-10-03, mutating `textlayer.rs` by hand against `textlayer-probe`. The loop was: edit,
+build the probe, run it, copy the saved source back. The last mutation gave the glyph no
+height. The source was restored and compared byte for byte with the saved copy; the probe was
+not rebuilt. The next change to the probe then failed to compile, so `cargo build` left the
+old binary in place, and that binary reported every fixture red against a source that was
+correct: each word's box had collapsed to a line.
+
+The verdict of a run belongs to the binary that ran. After restoring a mutation, rebuild
+before the next measurement, and when a build fails, do not read results from whatever is
+still on disk. `scripts/mutate_rust.py` does not have this problem because it runs
+`cargo test`, which builds what it runs.

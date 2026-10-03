@@ -16744,6 +16744,53 @@ authorities; `scripts/check_windows.py` compiles it.
 OCR (feeding search, selection and redaction verification) has interfaces defined in
 Phase 1 even though implementation lands later. Localization as it becomes binding.
 
+#### A text layer over a scanned page --- built 2026-10-03, command-line tool only
+
+The half of OCR that feeds search and selection. `tpdf ocr` writes a copy in which every page
+that had no text carries the recognised words as invisible text over the picture. Three
+modules, and each is the only one that knows its part:
+
+| module | what it decides |
+|---|---|
+| `textlayer.rs` | how words and boxes become page content: the font, the placement, the turn, the crop origin. Runs in the parser worker as part of `save::rewrite`, from `Plan::text_layers`. Never sees pixels. |
+| `ocr_layer.rs` | which pages get a layer (those with no character that is not white space), the render size, the engine's options, and whether a written page reads back. |
+| `cli/ocr.rs` | the order: read each page's text, render the ones without, recognise, write a staged copy, read it back in a fresh worker, publish. |
+
+**Measured before any of it was written**, on `testdata/text-base14.pdf` rendered to a picture
+and given a layer by a scratch script, read back with `tpdf search`:
+
+- One box per **line**, as Vision reports them, drew a search hit up to 33 pt from its word,
+  because the layer spreads a line's characters evenly and the type is proportional. One box
+  per **word** was within 1.5 pt. So `ocr::Options` gained `words`, and Vision is asked for
+  each word's own box (`boundingBoxForRange:`); `Windows.Media.Ocr` already reports words.
+- A font with an **empty** glyph read the words back and gave every search hit no rectangle.
+  PDFium takes a character's box from its glyph outline. The font is therefore made in
+  `textlayer::font_program`: one glyph, a rectangle from descender to ascender, 276 bytes.
+
+**And three things the first working version got wrong**, each found by
+`examples/textlayer_probe.rs` or by running the command, and each now a `docs/TRAPS.md` entry:
+words whose boxes touch read back joined until each word was followed by a space; a turned
+page passed every geometric check with the type running the page's way, because the glyph is
+a box; and a flat half-point tolerance hid a layer whose every word ran 2.4% long.
+
+**End to end on macOS 27 with Vision**, the same page at 200 DPI: all 30 words read
+correctly and separately; over the 29 that occur once, a search hit's centre is within 4.2 pt
+of the source's horizontally and 2.8 pt vertically. Vision's boxes are up to 8.7 pt taller
+than 12 pt type, because it boxes the line's height, so a selection on a recognised page is
+taller than the ink. 0.19 s for the page once the engine is warm; the first run on a machine
+or after an OS update pays Vision's model compile, 24 s here.
+
+**Not done:**
+
+- The window has no command for it. The path a reader takes is the command-line tool.
+- A page that has *any* text is left alone, so a scan with a typed header, a fax line or a
+  stamp gets no layer. Deciding by coverage rather than by presence needs a measurement first.
+- A page is read at no more than a 16 MiB image allows, about 208 DPI for A4, because that is
+  the OCR worker's pixel buffer. Reading in overlapping bands would lift it.
+- The boxes are the engine's. Trimming each to the ink inside it would make a selection as
+  tall as the type.
+- The Windows path is compiled by `scripts/check_windows.py` and has not been run.
+
 ---
 
 ## 10. Open questions

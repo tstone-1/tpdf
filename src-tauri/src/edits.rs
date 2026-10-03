@@ -1899,6 +1899,7 @@ impl Edits {
         Ok(Plan {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
+            text_layers: Vec::new(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -2044,6 +2045,7 @@ impl Edits {
         Ok(Plan {
             text_edits: planned_text(model, &pages),
             forms: model.form_changes(),
+            text_layers: Vec::new(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -2241,6 +2243,15 @@ pub struct Plan {
     /// Answers to write with explicit appearances in the sandbox.
     #[serde(default)]
     pub forms: Vec<forms::Change>,
+    /// Recognised words to write over pages that are pictures of text, by
+    /// baseline page.
+    ///
+    /// **Always empty out of the model**, like [`Plan::redactions`] and for a
+    /// related reason: the words come from an OCR engine, and only the command
+    /// that ran one has them. An ordinary save, copy, extract or print carries
+    /// none.
+    #[serde(default)]
+    pub text_layers: Vec<crate::textlayer::Layer>,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -2577,7 +2588,7 @@ impl Plan {
         // leaving it out would let the print path hand over the original bytes
         // for a document the reader has highlighted --- which prints, correctly
         // and confusingly, without the highlights.
-        if !self.forms.is_empty() || !self.text_edits.is_empty() {
+        if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {
             return false;
         }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
@@ -2600,7 +2611,7 @@ impl Plan {
     /// is a thing that has already happened here once.
     #[must_use]
     pub fn is_appendable(&self) -> bool {
-        if !self.forms.is_empty() || !self.text_edits.is_empty() {
+        if !self.forms.is_empty() || !self.text_edits.is_empty() || !self.text_layers.is_empty() {
             return false;
         }
         // **Renamed from `only_adds_marks` when note edits landed, and the name

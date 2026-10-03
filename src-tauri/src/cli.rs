@@ -57,6 +57,7 @@ pub mod fields;
 pub mod fill;
 pub mod identities;
 pub mod info;
+mod ocr;
 mod pages;
 pub mod path;
 pub mod redact;
@@ -475,6 +476,7 @@ pub const COMMANDS: &[Registered] = &[
     edit::COMMENTS,
     edit::TEXT_RUNS,
     render::COMMAND,
+    ocr::COMMAND,
     path::COMMAND,
     completions::COMMAND,
 ];

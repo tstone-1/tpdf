@@ -547,7 +547,7 @@ both.
 
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
-`tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs` and `tpdf render`
+`tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render` and `tpdf ocr`
 expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
@@ -583,6 +583,7 @@ tpdf help --json
 tpdf help redact
 tpdf redact --help
 tpdf render report.pdf --page 2 --dpi 144 -o page.png --json
+tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json
 tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
@@ -974,7 +975,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -1081,7 +1082,34 @@ report. Identical input and settings are repeatable on the same renderer and
 platform. For portable visual tests compare decoded pixels with a tolerance:
 font fallback and rasterization can differ across OS or PDFium versions.
 
-**Passwords.** `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
+**Text recognition.** `tpdf ocr scan.pdf -o searchable.pdf` writes a copy of a scanned
+document that can be searched, selected and copied from. Each page that has no text is
+rendered by the sandboxed worker and read by the operating system's own text recogniser,
+Vision on macOS and Windows OCR on Windows, in a separate process with no network access.
+The words go into the copy as an invisible layer over the picture, one box per word, so
+the page looks exactly as it did. Nothing is uploaded and no recogniser is bundled.
+
+A page that already has any text is left as it is, so running the command on a mixed
+document reads only its scanned pages. `--pages 1-3,7` limits which pages are considered.
+`--language de-DE` names the language to expect, as a BCP-47 tag, and may be repeated with
+the most likely first; on Windows the recogniser uses the languages installed in Settings
+and the option does not change that. A page is read at up to 300 DPI and no finer than a
+16 MB image allows, which is about 210 DPI for A4; a page too large to read at 100 DPI is
+refused by number. The recogniser can misread, and tpdf does not check its words against
+anything: the layer is for finding and copying text, not a statement of what the page says.
+
+The copy is staged and read back before it is published: its pages and encryption must
+match the source, and every page given a layer must read back with the characters that
+were recognised. If no selected page needs a layer, nothing is written and the command
+exits 3. A signed document needs `--invalidate-signatures`, because adding the layer
+rewrites it. An existing output needs `--force`; the input is never replaced.
+
+The JSON report carries `schema`, `command`, `input`, `output`, the `engine` that read the
+pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages
+left alone because they had text), `nothing_read` (pages without text on which nothing was
+recognised), `signatures_invalidated` and `signatures_unknown`.
+
+**Passwords.** `ocr`, `render`, `info`, `text`, `search`, `text-runs`, `comments`, `edit`, `fields`, `fill`, `redact` and the five page operations read a password-protected document when given
 `--password-env VAR`, the *name* of an environment variable holding the password. The
 password itself is never an argument, because arguments are visible to every process on the
 computer and are kept in the shell's history. It reaches the worker the way the window's

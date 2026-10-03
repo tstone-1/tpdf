@@ -54,7 +54,7 @@ const INHERITABLE: [&[u8]; 4] = [b"Resources", b"MediaBox", b"CropBox", b"Rotate
 /// walk used to do for `/Rotate`: it stepped over a non-integer and inherited the
 /// grandparent's. The difference is only reachable on a document that states
 /// `/Rotate (ninety)`, and answering upright is the safer of the two.
-fn inherited(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Object> {
+pub(crate) fn inherited(doc: &Document, page: ObjectId, key: &[u8]) -> Option<Object> {
     let mut at = page;
     for _ in 0..MAX_PARENTS {
         let dictionary = doc.get_object(at).and_then(Object::as_dict).ok()?;

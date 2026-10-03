@@ -135,6 +135,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
         redactions: vec![],
         // Every request file names pages of the document the probe opened.
         text_edits: changes.into_iter().map(textedit::Edit::opened).collect(),
+        text_layers: Vec::new(),
     };
     let mut previews = Vec::new();
     for (page, size) in pages.iter().enumerate() {

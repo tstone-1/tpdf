@@ -37,7 +37,7 @@ use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{
     CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
 };
-use objc2_foundation::{NSArray, NSDictionary, NSString};
+use objc2_foundation::{NSArray, NSDictionary, NSRange, NSString};
 use objc2_vision::{
     VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
 };
@@ -254,6 +254,35 @@ impl Recogniser for Vision {
             if text.is_empty() {
                 continue;
             }
+            let confidence = Some(best.confidence());
+            if options.words {
+                // One item per word, each with the box Vision gives for that
+                // range of the line. If it gives none for any of them, the line
+                // goes out whole below: a coarser answer, and not a lost one.
+                let mut words = Vec::new();
+                for (start, length, word) in crate::ocr::word_ranges(&text) {
+                    let range = NSRange::new(start, length);
+                    let Ok(found) = (unsafe { best.boundingBoxForRange_error(range) }) else {
+                        words.clear();
+                        break;
+                    };
+                    let b = unsafe { found.boundingBox() };
+                    words.push(RecognisedItem {
+                        text: word.to_string(),
+                        rect: normalised_to_points(
+                            (b.origin.x, b.origin.y, b.size.width, b.size.height),
+                            pixels.width,
+                            pixels.height,
+                            pixels.scale,
+                        ),
+                        confidence,
+                    });
+                }
+                if !words.is_empty() {
+                    items.append(&mut words);
+                    continue;
+                }
+            }
             let b = unsafe { observation.boundingBox() };
             items.push(RecognisedItem {
                 text,
@@ -263,7 +292,7 @@ impl Recogniser for Vision {
                     pixels.height,
                     pixels.scale,
                 ),
-                confidence: Some(best.confidence()),
+                confidence,
             });
         }
         Ok(items)

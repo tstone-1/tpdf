@@ -897,6 +897,7 @@ mod tests {
                 languages: vec!["de-DE".into()],
                 language_correction: true,
                 deadline_ms: 5_000,
+                words: true,
             },
         };
         let line = serde_json::to_string(&ask).expect("encodes");

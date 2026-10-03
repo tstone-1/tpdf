@@ -565,6 +565,7 @@ fn every_registered_command_is_reached_by_its_name_and_listed_in_help() {
         ("comments", "comments a.pdf --json"),
         ("text-runs", "text-runs a.pdf --page 1 --json"),
         ("render", "render a.pdf -o page.png --json"),
+        ("ocr", "ocr a.pdf -o b.pdf --language de-DE --pages 1-2"),
         ("path", "path --add"),
         ("completions", "completions zsh"),
     ];
@@ -1899,6 +1900,27 @@ fn samples() -> Vec<(&'static str, String)> {
             }),
         ),
         (
+            "ocr",
+            pretty(&report::Ocr {
+                schema: report::SCHEMA,
+                command: "ocr".into(),
+                input: "scan.pdf".into(),
+                output: "searchable.pdf".into(),
+                engine: "vision (26A428)".into(),
+                pages: vec![
+                    report::OcrPage {
+                        page: 1,
+                        words: 412,
+                    },
+                    report::OcrPage { page: 4, words: 7 },
+                ],
+                already_text: vec![2],
+                nothing_read: vec![3],
+                signatures_invalidated: 1,
+                signatures_unknown: false,
+            }),
+        ),
+        (
             "command-error",
             pretty(&report::Failed {
                 schema: report::SCHEMA,
@@ -2086,7 +2108,7 @@ fn the_samples_directory_holds_one_file_per_sample_and_nothing_else() {
         .map(|(name, _)| format!("{name}.json"))
         .collect();
     want.sort();
-    assert_eq!(want.len(), 20, "the sample table itself");
+    assert_eq!(want.len(), 21, "the sample table itself");
     assert_eq!(found, want);
 }
 

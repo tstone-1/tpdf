@@ -986,6 +986,7 @@ mod tests {
             sources: Vec::new(),
             forms: Vec::new(),
             text_edits: Vec::new(),
+            text_layers: Vec::new(),
         };
         let snapshot = super::raster_snapshot(&mut source, 18, &plan).unwrap();
         source.seek(SeekFrom::Start(0)).unwrap();

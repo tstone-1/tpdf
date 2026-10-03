@@ -369,6 +369,7 @@ fn run() -> Result<(), String> {
         return Err("worker discovered incorrect text runs".into());
     }
     let mut plan = Plan {
+        text_layers: Vec::new(),
         baseline: page_count,
         opened_as: Some(tpdf_lib::fingerprint::Fingerprint::of(&source)?),
         pages: (0..page_count)

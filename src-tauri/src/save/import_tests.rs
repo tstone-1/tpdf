@@ -124,6 +124,7 @@ fn theirs(id: u64, page: u32) -> PageView {
 fn plan_with(baseline: u32, pages: Vec<PageView>, other: &Path) -> Plan {
     Plan {
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
         forms: Vec::new(),
         baseline,
         opened_as: None,

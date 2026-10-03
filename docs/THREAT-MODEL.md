@@ -2736,6 +2736,40 @@ A compromised webview could therefore raise the system's question, or open Setti
 the reader having asked. It cannot answer the question, and it cannot name another
 application.
 
+#### T6.28 — A text layer from recognised words, added 2026-10-03
+
+`tpdf ocr` writes a copy in which pages without text carry the words a recogniser read off
+them, as invisible text. It is in the command-line tool only (§T6.23); the webview has no
+command for it and no route to it.
+
+**No new process and no new authority.** The page is rendered by the parser worker under its
+own profile. The pixels go to the OCR worker of §5.1, under `OCR_SANDBOX_PROFILE`, which
+already existed for the redaction gate. What is new is how much that worker is shown: a whole
+page where the gate showed it strips. Its input is still an RGBA buffer the coordinator
+assembled, of a size the coordinator chose (`ocr_layer::render_size`, at most 16 MiB and
+8,192 px a side), with no format to parse. The words then go to a parser worker inside the
+plan and are written by `lopdf` in `save::rewrite`, the path every other rewrite takes.
+
+**The recognised text is attacker-influenced, and it is data all the way.** A document's
+author chooses what its picture shows, and so what the recogniser returns. Each word reaches
+the content stream as a hex string of UTF-16 code units (`textlayer::show`), so no character
+of it can end a string or begin an operator; control characters are dropped. A layer is at
+most 20,000 words a page and a word at most 512 code units, refused whole above that. The
+rectangle is four finite numbers or the word is left out.
+
+**What the layer claims, and what it does not.** The copy now answers a search with what a
+recogniser believed the page says. A picture can be made to be read as words it does not
+show to a person, and a recogniser misreads on its own. tpdf checks one thing: each page
+given a layer reads back with the characters that were recognised, so the layer written is
+the layer recognised. It does not check the recognition, and the documentation says so.
+This is the caller `ocr.rs` describes as wanting recall, and nothing downstream may treat a
+layer's words as verified. In particular the redaction gate does not: it reads pixels
+through its own control (§5.1), never this layer.
+
+**Residual.** A reader who searches a recognised copy for a word and finds nothing has
+learned that the recogniser did not report it, not that the page does not show it. And a
+redaction by search on such a copy marks only what was recognised.
+
 ### T7 — Distribution and update
 
 **The threat.** A tampered download, a tampered update, or a compromised dependency —

@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -359,6 +359,13 @@ class ClientTests(unittest.TestCase):
         client.rotate('-extracted.pdf', '-rotated.pdf', degrees=180)
         client.crop('-rotated.pdf', '-cropped.pdf', rect=[0, 0, 100, 100])
         self.assertTrue(client.split('-merged.pdf', '-part.pdf')['complete'])
+        # Every page has text, so there is nothing to recognise: the refusal
+        # shows the arguments arrived, and that nothing was written.
+        with self.assertRaises(CommandError) as caught:
+            client.ocr('--json', '-searchable.pdf', pages='1', languages=['en-US'])
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertIn('already has text', str(caught.exception))
+        self.assertFalse((self.root / '-searchable.pdf').exists())
         self.assertEqual(client.verify('--json')['files'][0]['path'], '--json')
         with self.assertRaises(CommandError) as caught:
             client.verify('--json', strict=True)

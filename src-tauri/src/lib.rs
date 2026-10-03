@@ -50,6 +50,8 @@ pub mod merge;
 pub mod objects;
 pub mod ocr;
 pub mod ocr_gate;
+/// Which pages get a text layer, and a recognition as one.
+pub mod ocr_layer;
 #[cfg(target_os = "macos")]
 pub mod ocr_vision;
 #[cfg(windows)]
@@ -111,6 +113,8 @@ pub mod sweep;
 mod sysfont;
 pub mod text;
 pub mod textcache;
+/// The invisible text written over a scanned page.
+pub mod textlayer;
 pub mod trust;
 // Asking a timestamp authority for a token when signing: the application's
 // second network authority, in the app process only (`docs/THREAT-MODEL.md`).
@@ -1345,6 +1349,7 @@ mod tests {
             sources: Vec::new(),
             forms: Vec::new(),
             text_edits: Vec::new(),
+            text_layers: Vec::new(),
         }
     }
 

@@ -121,6 +121,7 @@ fn dropping_last(pages: usize) -> Plan {
         sources: Vec::new(),
         forms: Vec::new(),
         text_edits: Vec::new(),
+        text_layers: Vec::new(),
     }
 }
 
