@@ -899,6 +899,9 @@ fn samples() -> BTreeMap<&'static str, String> {
                 page_count: 40,
             }],
             invert_pages: true,
+            tabs: vec!["/tmp/one.pdf".into(), "/tmp/two.pdf".into()],
+            active_tab: Some("/tmp/one.pdf".into()),
+            restore_tabs: true,
         },
     );
 

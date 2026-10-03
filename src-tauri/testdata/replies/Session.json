@@ -11,5 +11,11 @@
       "page_count": 40
     }
   ],
-  "invert_pages": true
+  "invert_pages": true,
+  "tabs": [
+    "/tmp/one.pdf",
+    "/tmp/two.pdf"
+  ],
+  "active_tab": "/tmp/one.pdf",
+  "restore_tabs": true
 }

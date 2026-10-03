@@ -148,7 +148,14 @@ project conventions.
   check off. Unsaved edits are never discarded without asking. The choice is remembered.
   <!-- built: file.onDiskChange.ask file.onDiskChange.reload file.onDiskChange.ignore -->
 - Session restore: the most recent document, page, zoom and rotation you left on.
-  The full tab list is not restored after restarting.
+  *At launch: reopen all tabs* brings back every tab instead, in the order they had,
+  with the one you were on in front; it is off until you choose it, and tpdf then
+  remembers it. The other tabs open behind the first one, after its first page is on
+  screen. *Reopen the tabs from last time* does the same once, whatever
+  the setting. A tab whose file is gone is left out, and one behind a password is not
+  asked for at launch; *Reopen the tabs from last time* asks. Unsaved edits are not
+  restored.
+  <!-- built: file.reopenLastTabs file.reopenTabsAtLaunch file.reopenLastDocumentAtLaunch -->
 - **A document behind a password opens**: tpdf asks for one and retries, and holds it for
   as long as the document is open, because every worker that renders it meets the same
   encryption.

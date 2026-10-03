@@ -218,7 +218,11 @@ describe("buildMenu", () => {
     // menu's shape is a decision, and a decision should not change silently.
     expect(file?.items.map((item) => item.kind)).toEqual([
       // Open, New document from pictures, Reload, the three disk-change
-      // choices, Close tab, Close all tabs.
+      // choices, Close tab, Close all tabs, Reopen the tabs from last time and
+      // the two launch choices.
+      "command",
+      "command",
+      "command",
       "command",
       "command",
       "command",

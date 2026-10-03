@@ -49,6 +49,12 @@ export interface Session {
    * such field, and an older file must not be discarded over a missing one.
    */
   invert_pages?: boolean;
+  /** The documents that were open as tabs, in tab order. See `tabrestore.ts`. */
+  tabs?: string[];
+  /** The tab that was showing, when it is one of {@link Session.tabs}. */
+  active_tab?: string | null;
+  /** Whether a launch reopens every tab rather than the last document alone. */
+  restore_tabs?: boolean;
 }
 
 /**

@@ -111,6 +111,28 @@ export class DocumentTabs<T extends { doc: { id: number }; path: string }> {
     this.active = tab.doc.id;
   }
 
+  /**
+   * Adds a tab without bringing it to the front, for a document opened behind
+   * the one the reader is looking at. A document already listed is left alone.
+   */
+  add(tab: T): void {
+    if (!this.find(tab.doc.id)) this.entries.push(tab);
+  }
+
+  /**
+   * Puts the tabs in the order of `paths`, which is the order they had when
+   * the application was last closed. A tab `paths` does not name keeps its
+   * place after the ones it does, in the order it already had.
+   */
+  arrange(paths: readonly string[]): void {
+    const rank = (tab: T) => {
+      const at = paths.indexOf(tab.path);
+      return at < 0 ? paths.length : at;
+    };
+    // `sort` is stable, which is what keeps the unnamed tabs in their order.
+    this.entries.sort((a, b) => rank(a) - rank(b));
+  }
+
   remove(id: number): T | undefined {
     const index = this.entries.findIndex((tab) => tab.doc.id === id);
     if (index < 0) return undefined;

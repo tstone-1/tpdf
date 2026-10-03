@@ -142,6 +142,10 @@ Only the active tab mounts a Viewer and Sidebar; switching commits open note fie
 drains pending edits, and keeps the reading position, search scope and sidebar choice.
 Save/reload replaces the handle in the same tab. File writes block tab transitions;
 tab closure releases its handle, and window closure checks all tabs for unsaved work.
+The strip's paths and the active tab are written to the session file on every change
+(`TabRecorder` in `src/lib/tabrestore.ts`); with *At launch: reopen all tabs* chosen,
+`launchPlan` shows the tab that was in front and `openBehind` opens the others without
+a viewer once the first page is drawn. `scripts/session_check.py --only tabs` drives it.
 `scripts/tabs_check.py <binary> <fixture.pdf>` exercises the application on disposable
 copies. On Windows, run an isolated build (`TAURI_CONFIG` with a distinct `identifier`)
 when the installed app is running, since single-instance forwarding otherwise absorbs it.

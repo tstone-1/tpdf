@@ -302,6 +302,9 @@ const SCHEMA = {
   Session: {
     places: ["array"],
     invert_pages: ["boolean"],
+    tabs: ["array"],
+    active_tab: ["string"],
+    restore_tabs: ["boolean"],
   } satisfies Shape<Session>,
   Split: {
     changed: ["boolean"],

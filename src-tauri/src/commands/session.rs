@@ -133,6 +133,36 @@ pub async fn session_set_invert_pages(app: tauri::AppHandle, invert: bool) -> Re
     .map_err(|e| format!("the session write did not run: {e}"))?
 }
 
+/// Records which documents are open as tabs, and which one is showing.
+///
+/// Called whenever a tab opens, closes or takes the front, and whether or not
+/// the reader has asked for tabs to be reopened: the list is what that
+/// preference, and the one-off command beside it, act on.
+#[tauri::command]
+pub async fn session_set_tabs(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    active: Option<String>,
+) -> Result<(), String> {
+    let path = session_file(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_session(&path, |session| session.set_tabs(paths, active))
+    })
+    .await
+    .map_err(|e| format!("the session write did not run: {e}"))?
+}
+
+/// Records whether a launch reopens every tab or the last document alone.
+#[tauri::command]
+pub async fn session_set_restore_tabs(app: tauri::AppHandle, restore: bool) -> Result<(), String> {
+    let path = session_file(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_session(&path, |session| session.restore_tabs = restore)
+    })
+    .await
+    .map_err(|e| format!("the session write did not run: {e}"))?
+}
+
 /// Remember signature pixels in the current user's protected OS storage.
 #[tauri::command]
 pub async fn signature_store(

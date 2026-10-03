@@ -20,6 +20,21 @@
  * | `verify`  | recorded | none | the app came up in that state, having been told only by the file |
  * | `empty`   | empty | none | no document opens when nothing is remembered |
  *
+ * Four more phases cover reopening every tab, which is a launch of its own
+ * kind: one tab is shown and the others are opened behind it.
+ *
+ * | phase | session file | argument | asserts |
+ * |---|---|---|---|
+ * | `tabs-record` | fresh | three documents | opens them, shows the second, turns the preference on |
+ * | `tabs-leave`  | fresh | three documents | the same, with the preference left off |
+ * | `tabs-verify` | from `tabs-record` | the tabs expected and the one in front | the strip came back, and a tab opened behind mounts |
+ * | `tabs-off`    | from `tabs-leave` | the same | only the last document opens; the command then brings the rest |
+ *
+ * `tabs-off` is the control: without it, a launch that reopened every tab
+ * whatever the preference said would pass `tabs-verify`. The script runs
+ * `tabs-verify` a second time with the front tab's file deleted, which is the
+ * case where nothing would be on screen unless a tab opened behind is shown.
+ *
  * `default` and `empty` are the controls, and neither is optional. Without
  * `default`, "restored to page 12 at 200%" is satisfied by an app that happens
  * to open there --- the failure mode this repository names as an assertion whose
@@ -119,6 +134,39 @@ export interface SessionCheckHost {
    * wired to the next by anything a compiler checks.
    */
   recentCommands: () => string[];
+  /** The open tabs' paths, in strip order. */
+  tabs: () => string[];
+  setRestoreTabs: (restore: boolean) => void;
+  reopenLastTabs: () => Promise<void>;
+  /** Resolves once the tab list on disk is the one on screen. */
+  tabsSettled: () => Promise<void>;
+}
+
+/** Splits a `tabs-*` argument: the paths, `|`-separated, the front one last. */
+function tabArgument(argument: string): { tabs: string[]; front: string } {
+  const parts = argument.split("|");
+  const front = parts.pop() ?? "";
+  return { tabs: parts, front };
+}
+
+const names = (paths: readonly string[]) => paths.map((path) => basename(path)).join(" ") || "(none)";
+
+/** Opens the documents as tabs and leaves `front` showing. */
+async function leaveTabs(host: SessionCheckHost, argument: string, restore: boolean): Promise<void> {
+  const { tabs, front } = tabArgument(argument);
+  for (const path of tabs) await host.open(path);
+  await host.open(front);
+  await settle(() => host.viewer()?.idle === true);
+  check(
+    "every document is open as a tab, in the order opened",
+    host.tabs().join("|") === tabs.join("|"),
+    names(host.tabs()),
+  );
+  check("the tab left in front is the one asked for", host.path() === front, basename(host.path()));
+  if (restore) host.setRestoreTabs(true);
+  host.flush();
+  await host.tabsSettled();
+  await pause(500);
 }
 
 /** Dispatches a keydown at the viewer's root, the way the window would. */
@@ -393,6 +441,72 @@ async function run(host: SessionCheckHost, phase: string, argument: string): Pro
         host.recentCommands().length === 0,
         `${host.recentCommands().length} recent commands: ` +
           `${host.recentCommands().join(", ") || "(none)"}`,
+      );
+      break;
+    }
+
+    case "tabs-record": {
+      await leaveTabs(host, argument, true);
+      break;
+    }
+
+    case "tabs-leave": {
+      await leaveTabs(host, argument, false);
+      break;
+    }
+
+    case "tabs-verify": {
+      const { tabs, front } = tabArgument(argument);
+      const back = await settle(() => host.tabs().length >= tabs.length);
+      check("every tab came back", back, names(host.tabs()));
+      check(
+        "the tabs are in the order they were left in",
+        host.tabs().join("|") === tabs.join("|"),
+        `${names(host.tabs())}, wanted ${names(tabs)}`,
+      );
+      await settle(() => host.viewer()?.idle === true);
+      check(
+        "the tab in front is the one expected, with a page on screen",
+        host.path() === front && host.viewer() !== null,
+        describe(host),
+      );
+      // A tab opened behind has a handle and no viewer until it is switched
+      // to, so switching to one is what shows that it can be read at all.
+      const behind = tabs.find((path) => path !== front);
+      if (!behind) {
+        check("there is a tab behind the front one to switch to", false, names(tabs));
+        return;
+      }
+      await host.open(behind);
+      const mounted = await settle(
+        () => host.path() === behind && host.viewer()?.idle === true && host.pageCount() > 0,
+      );
+      check("a tab opened behind shows its document when switched to", mounted, describe(host));
+      check(
+        "switching to it opened no further tab",
+        host.tabs().join("|") === tabs.join("|"),
+        names(host.tabs()),
+      );
+      break;
+    }
+
+    case "tabs-off": {
+      const { tabs, front } = tabArgument(argument);
+      await settle(() => host.viewer() !== null);
+      // Longer than the wait a launch that did reopen them would need: the
+      // tabs behind follow the first page, which is given a second at most.
+      await pause(2500);
+      check(
+        "only the last document reopens when every tab was not asked for",
+        host.tabs().join("|") === front,
+        names(host.tabs()),
+      );
+      await host.reopenLastTabs();
+      const rest = tabs.filter((path) => path !== front);
+      check(
+        "the command brings the others back, behind the one showing",
+        host.tabs().join("|") === [front, ...rest].join("|") && host.path() === front,
+        `${names(host.tabs())}, showing ${basename(host.path())}`,
       );
       break;
     }

@@ -40,7 +40,10 @@ import { updateLabel } from "./update";
  */
 function harness(
   hasDocument = true,
-  update: { available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode } = {},
+  update: {
+    available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
+    restoreTabs?: boolean; reopenable?: number;
+  } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
   markOpen = false,
@@ -73,6 +76,7 @@ function harness(
 ) {
   const fired: string[] = [];
   let automatic = update.automatic ?? true;
+  let restoring = update.restoreTabs ?? false;
   let diskMode: DiskChangeMode = update.disk ?? "ask";
   const actions: AppActions = {
     editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); },
@@ -97,6 +101,10 @@ function harness(
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    restoreTabs: () => restoring,
+    setRestoreTabs: (restore) => { restoring = restore; fired.push(`setRestoreTabs:${restore}`); },
+    tabsToReopen: () => update.reopenable ?? 0,
+    reopenLastTabs: () => fired.push("reopenLastTabs"),
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: false }),
     resizeTabLabels: (direction: -1 | 0 | 1) => fired.push(`resizeTabLabels:${direction}`),
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
@@ -364,6 +372,40 @@ describe("the disk-change commands", () => {
  * at all. What matters is the pair of guards on the install command, because
  * they encode a distinction a single "is there an update" flag would lose.
  */
+describe("the commands that bring tabs back", () => {
+  it("offers only the launch choice that is not the current one", () => {
+    for (const restoring of [true, false]) {
+      const { registry, fired } = harness(false, { restoreTabs: restoring });
+      const available = restoring ? "file.reopenLastDocumentAtLaunch" : "file.reopenTabsAtLaunch";
+      const unavailable = restoring ? "file.reopenTabsAtLaunch" : "file.reopenLastDocumentAtLaunch";
+      expect(registry.run(unavailable)).toBe(false);
+      expect(fired).toEqual([]);
+      expect(registry.run(available)).toBe(true);
+      expect(fired).toEqual([`setRestoreTabs:${!restoring}`]);
+      expect(registry.run(available)).toBe(false);
+      expect(registry.run(unavailable)).toBe(true);
+    }
+  });
+
+  it("reopens last time's tabs when some are not open, with or without a document", () => {
+    for (const open of [true, false]) {
+      const none = harness(open);
+      expect(none.registry.run("file.reopenLastTabs"), String(open)).toBe(false);
+      const some = harness(open, { reopenable: 2 });
+      expect(some.registry.run("file.reopenLastTabs"), String(open)).toBe(true);
+      expect(some.fired).toEqual(["reopenLastTabs"]);
+    }
+  });
+
+  it("withholds the reopening while a document is busy, but not the preference", () => {
+    const busy = harness(
+      true, { reopenable: 2 }, {}, false, false, false, {}, false, false, false, false, false, true,
+    );
+    expect(busy.registry.run("file.reopenLastTabs")).toBe(false);
+    expect(busy.registry.run("file.reopenTabsAtLaunch")).toBe(true);
+  });
+});
+
 describe("the update commands", () => {
   it("offers only the applicable preference change and keeps manual checking available", () => {
     for (const automatic of [true, false]) {
@@ -505,6 +547,9 @@ describe("the commands a document is needed for", () => {
     const { registry } = harness(false);
     const offered = registry.search("").map((ranked) => ranked.command.id);
     expect(offered).toEqual([
+      // A preference, and off by default, so this is the one of its pair on
+      // offer. First because the tab commands are registered first.
+      "file.reopenTabsAtLaunch",
       "file.open",
       // It begins with pictures, not with a document.
       "file.fromPictures",
@@ -583,7 +628,10 @@ describe("every registered command", () => {
     // list is exactly where a genuine no-op hides --- so each command has to
     // reach an action in *at least one* of the two, and the two guards
     // themselves are asserted above in both directions.
-    const built = (update: { available?: boolean; ready?: boolean; disk?: DiskChangeMode }) => harness(
+    const built = (update: {
+      available?: boolean; ready?: boolean; disk?: DiskChangeMode;
+      restoreTabs?: boolean; reopenable?: number;
+    }) => harness(
       true,
       update,
       { undo: true, redo: true },
@@ -611,11 +659,13 @@ describe("every registered command", () => {
       // And a file waiting to be inserted, so `edit.insertPages.range` is.
       { pending: 1, pages: 3, name: "other.pdf" },
     );
-    const found = built({ available: true });
+    // With tabs from last time to reopen, or that command is withheld in both.
+    const found = built({ available: true, reopenable: 1 });
     // The second state also holds the other disk-change mode, for the reason
     // the update pair needs two: each `file.onDiskChange.*` command is withheld
     // while its mode is the current one, so no single state offers all three.
-    const applied = built({ available: true, ready: true, disk: "reload" });
+    // And the launch pair, which is the update pair's shape again.
+    const applied = built({ available: true, ready: true, disk: "reload", restoreTabs: true });
     const states = [found, applied];
     const shell = found.registry
       .all()
@@ -1420,6 +1470,10 @@ describe("the window shortcuts for editing", () => {
       openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    restoreTabs: () => false,
+    setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
+    tabsToReopen: () => 0,
+    reopenLastTabs: () => fired.push("reopenLastTabs"),
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: false }),
     resizeTabLabels: (direction: -1 | 0 | 1) => fired.push(`resizeTabLabels:${direction}`),
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),

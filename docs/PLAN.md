@@ -1775,6 +1775,47 @@ shipped tool; orientations 5 and 6 match Quick Look's rendering of the same file
 Not done: CMYK JPEG, other formats, a paper size in the window, removing EXIF data, and
 adding pictures as pages to a document that is already open.
 
+#### Every tab back at launch — 2026-10-03
+
+A launch reopened the last document and nothing else; the README said so in as many
+words. Readers of other programs ask for the strip to come back, so it can now, and it
+is **off until chosen**: a tab is an open document with a worker behind it, and the
+tabs someone left open are not a request to open all of them every morning.
+
+`session.rs` keeps three more fields beside `places`: `tabs` (paths in strip order,
+bounded at 32, each listed once), `active_tab` (kept only when it is one of them) and
+`restore_tabs`. The list is written whichever way the preference stands, so turning it
+on, or asking once, has something to act on. `src/lib/tabrestore.ts` holds the rest:
+
+- `launchPlan` decides what a launch opens. With the preference on, the tab that was
+  showing is opened by the call a launch has always made, and the others go into
+  `behind`. A file the launcher handed over is still what is shown, with the tabs
+  behind it.
+- `openBehind` opens each of those without a viewer, after the first page is on screen,
+  and then puts the strip in the order it had. One that will not open is left out and
+  does not stop the rest. If nothing is on screen afterwards, the first tab is shown.
+- `TabRecorder` writes the list when it changes, one write at a time, and is held
+  while a launch is still opening tabs: written as they arrive, a reader who quit
+  halfway would find the unopened half gone next time.
+
+A tab opened behind has a handle and an edit model and no viewer, which is what every
+tab the reader has switched away from already is; `activateTab` mounts it the same way.
+
+Three commands: *At launch: reopen all tabs*, *At launch: reopen only the last
+document* (one is offered at a time, the shape the update pair has) and *Reopen the
+tabs from last time*, which works from the list read at launch and so still knows it
+after the tabs have changed.
+
+Not done: unsaved edits do not come back, a document behind a password is skipped at
+launch (the one-off command asks for it), and a tab whose file was missing at launch
+drops out of the recorded list once that launch has finished.
+
+Verified by `session_check.py --only tabs`, five launches of the real application:
+three tabs left open come back in order with the right one in front, a tab opened
+behind shows its document when switched to, the same list with the preference off
+reopens one document (the control), the command then brings the rest, and with the
+front tab's file deleted the first remaining tab is shown. 16 of 16 on macOS arm64.
+
 #### A smaller copy — 2026-10-03
 
 `tpdf compress` and *Save a smaller copy* write a copy that is smaller. `compress.rs` is

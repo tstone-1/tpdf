@@ -104,6 +104,13 @@ export interface AppActions {
   closeDocument(): void;
   /** Close every open document, asking once if any has unsaved work. */
   closeAllDocuments(): void;
+  /** Whether a launch reopens every tab rather than the last document alone. */
+  restoreTabs(): boolean;
+  setRestoreTabs(restore: boolean): void;
+  /** How many of last time's tabs are not open now. */
+  tabsToReopen(): number;
+  /** Open them, behind the document on screen. */
+  reopenLastTabs(): void;
   /** The document tabs' label size, read for the resize commands' guards. */
   tabLabels(): { canGrow: boolean; canShrink: boolean; isDefault: boolean };
   /** Make the tab labels a step larger (1), smaller (-1) or the default (0). */
@@ -573,6 +580,29 @@ export function registerAppCommands(
       title: "Close all tabs",
       enabled: withDocument,
       run: () => actions.closeAllDocuments(),
+    },
+    {
+      // Offered whatever the preference below says, which is the point of it:
+      // a reader who does not want every tab back every morning still wants
+      // them back on the morning after the application was closed by mistake.
+      id: "file.reopenLastTabs",
+      title: "Reopen the tabs from last time",
+      enabled: () => actions.tabsToReopen() > 0 && available(),
+      run: () => actions.reopenLastTabs(),
+    },
+    // A preference, in the shape the automatic-update pair has: one command
+    // per choice, each offered while it is not the current one.
+    {
+      id: "file.reopenTabsAtLaunch",
+      title: "At launch: reopen all tabs",
+      enabled: () => !actions.restoreTabs(),
+      run: () => actions.setRestoreTabs(true),
+    },
+    {
+      id: "file.reopenLastDocumentAtLaunch",
+      title: "At launch: reopen only the last document",
+      enabled: () => actions.restoreTabs(),
+      run: () => actions.setRestoreTabs(false),
     },
     {
       id: "view.tabLabelsLarger",

@@ -63,6 +63,11 @@ PHASE_RECORD = "record"
 PHASE_DEFAULT = "control: opening without a session"
 PHASE_VERIFY = "verify"
 PHASE_EMPTY = "control: launching with nothing remembered"
+PHASE_TABS_RECORD = "tabs: leaving three open"
+PHASE_TABS_VERIFY = "tabs: every tab comes back"
+PHASE_TABS_MISSING = "tabs: the front tab's file is gone"
+PHASE_TABS_LEAVE = "tabs: leaving three open, preference off"
+PHASE_TABS_OFF = "control: only the last document without the preference"
 
 # The precondition check inside `record`, by name, so its verdict can be read.
 #
@@ -139,6 +144,79 @@ def skip_recorded_file(why: str) -> None:
         print(f"[SKIP] recorded {name:<10} {why}")
 
 
+def tabs_argument(tabs: list[Path], front: Path) -> str:
+    """The `tabs-*` phases' argument: the tabs in order, then the one in front."""
+    return "|".join(str(path) for path in [*tabs, front])
+
+
+def check_tabs_file(session_file: Path, tabs: list[Path], front: Path, restore: bool) -> bool:
+    """Asserts the tab list the app wrote, independently of the app reading it."""
+    print("--- the tab list the app wrote ---")
+    try:
+        session = json.loads(session_file.read_text())
+    except (OSError, ValueError) as e:
+        print(f"[FAIL] session file is not readable: {e}")
+        return False
+    wanted = {
+        "tabs": [str(path) for path in tabs],
+        "active_tab": str(front),
+        "restore_tabs": restore,
+    }
+    ok = True
+    for name, want in wanted.items():
+        got = session.get(name)
+        good = got == want
+        ok &= good
+        shown = [Path(p).name for p in got] if isinstance(got, list) else (
+            Path(got).name if isinstance(got, str) else got)
+        print(f"{'[OK]  ' if good else '[FAIL]'} recorded {name:<12} {shown!r}")
+    return bool(ok)
+
+
+def check_tabs(binary: str, pdf: str, scratch: Path, timeout: float) -> bool:
+    """Leaves three tabs open and relaunches, with the preference on and off."""
+    import shutil
+
+    # Three files, because a tab is a path: one document opened three times is
+    # one tab. Named out of alphabetical order so that a strip sorted by name,
+    # or by most recent, cannot pass for the order they were left in.
+    docs = scratch / "tabs"
+    docs.mkdir()
+    tabs = [docs / name for name in ("middle.pdf", "zulu.pdf", "alpha.pdf")]
+    for path in tabs:
+        shutil.copyfile(pdf, path)
+    front = tabs[1]
+    recorded = scratch / "tabs-on.json"
+    left = scratch / "tabs-off.json"
+
+    ok = True
+    code, out = launch(binary, f"tabs-record:{tabs_argument(tabs, front)}", recorded, timeout)
+    ok &= report(out, code, PHASE_TABS_RECORD)
+    ok &= check_tabs_file(recorded, tabs, front, True)
+
+    # A copy for the second launch below: the first one rewrites the list when
+    # it switches tabs, and the missing-file case must start from what was left.
+    again = scratch / "tabs-missing.json"
+    shutil.copyfile(recorded, again)
+
+    code, out = launch(binary, f"tabs-verify:{tabs_argument(tabs, front)}", recorded, timeout)
+    ok &= report(out, code, PHASE_TABS_VERIFY)
+
+    code, out = launch(binary, f"tabs-leave:{tabs_argument(tabs, front)}", left, timeout)
+    ok &= report(out, code, PHASE_TABS_LEAVE)
+    ok &= check_tabs_file(left, tabs, front, False)
+
+    code, out = launch(binary, f"tabs-off:{tabs_argument(tabs, front)}", left, timeout)
+    ok &= report(out, code, PHASE_TABS_OFF)
+
+    # Last, because it deletes a file the phases above open.
+    front.unlink()
+    rest = [path for path in tabs if path != front]
+    code, out = launch(binary, f"tabs-verify:{tabs_argument(rest, rest[0])}", again, timeout)
+    ok &= report(out, code, PHASE_TABS_MISSING)
+    return bool(ok)
+
+
 def main() -> int:
     # Before anything prints: a redirected run is block-buffered otherwise,
     # and then a partial transcript is an empty file. See `live_output`.
@@ -147,6 +225,10 @@ def main() -> int:
     parser.add_argument("binary")
     parser.add_argument("pdf")
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument(
+        "--only", choices=("places", "tabs"),
+        help="run one half: the remembered place, or reopening every tab",
+    )
     args = parser.parse_args()
 
     if not require_visible_session():
@@ -173,6 +255,12 @@ def main() -> int:
         no_empty = Path(scratch) / "control-empty.json"
 
         ok = True
+        if args.only == "tabs":
+            ok = check_tabs(args.binary, pdf, Path(scratch), args.timeout)
+            print()
+            print("[OK] reopening tabs verified" if ok else "[FAIL] reopening tabs is not verified")
+            return 0 if ok else 1
+
         code, out = launch(args.binary, f"record:{pdf}", recorded, args.timeout)
         ok &= report(out, code, PHASE_RECORD)
 
@@ -215,6 +303,9 @@ def main() -> int:
 
         code, out = launch(args.binary, "empty", no_empty, args.timeout)
         ok &= report(out, code, PHASE_EMPTY)
+
+        if args.only != "places":
+            ok &= check_tabs(args.binary, pdf, Path(scratch), args.timeout)
 
     print()
     print("[OK] session restore verified" if ok else "[FAIL] session restore is not verified")

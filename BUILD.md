@@ -5497,6 +5497,14 @@ from the remembered one, and nothing opened when nothing was remembered. Expect
 `Failed to unregister class Chrome_WidgetWin_0. Error = 1412` on each shutdown: that is
 WebView2 teardown noise on a *passing* run, not a failure.
 
+**Reopening every tab is the second half of the same script** (2026-10-03). After the four
+phases above it copies the fixture to three files, leaves them open as tabs, and relaunches:
+with the preference on the strip must come back in order with the right tab in front, with it
+off only the last document may open (the control), and with the front tab's file deleted the
+first remaining tab must be on screen. `--only tabs` runs that half alone, five launches,
+and `--only places` the first half alone. Any fixture does for it; the eight-page minimum
+below is the first half's.
+
 **Open, and intermittent: the `default` control can hang instead of running** (Windows,
 2026-08-08). It passed twice that day and then timed out three runs in a row, always the same
 phase and never any other. What the hung launch looks like from outside is the useful part: the

@@ -56,6 +56,29 @@ describe("document tabs", () => {
     expect(tabs.remove(999)).toBeUndefined();
   });
 
+  it("adds a tab behind the one showing, and only once", () => {
+    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+    tabs.add(tab(1));
+    expect(tabs.active).toBe(-1);
+    tabs.keep(tab(2));
+    tabs.add(tab(3));
+    tabs.add(tab(3));
+    expect(tabs.all.map((entry) => entry.doc.id)).toEqual([1, 2, 3]);
+    expect(tabs.active).toBe(2);
+  });
+
+  it("puts the tabs back in the order they were closed in", () => {
+    const tabs = new DocumentTabs<ReturnType<typeof tab>>();
+    for (const id of [5, 3, 1, 4, 2]) tabs.keep(tab(id));
+    tabs.active = 3;
+    // 5 and 4 were not open last time: they follow, in the order they have.
+    tabs.arrange(["/fixture/1.pdf", "/fixture/2.pdf", "/fixture/gone.pdf", "/fixture/3.pdf"]);
+    expect(tabs.all.map((entry) => entry.doc.id)).toEqual([1, 2, 3, 5, 4]);
+    expect(tabs.active).toBe(3);
+    tabs.arrange([]);
+    expect(tabs.all.map((entry) => entry.doc.id)).toEqual([1, 2, 3, 5, 4]);
+  });
+
   it("wraps navigation and chooses the left tab when the last tab closes", () => {
     const tabs = new DocumentTabs<ReturnType<typeof tab>>();
     tabs.keep(tab(1)); tabs.keep(tab(2)); tabs.keep(tab(3));

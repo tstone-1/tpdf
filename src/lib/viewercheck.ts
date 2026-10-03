@@ -3135,6 +3135,10 @@ async function appCommandChecks(
     openDocument: () => fired.push("openDocument"),
     closeDocument: () => fired.push("closeDocument"),
     closeAllDocuments: () => fired.push("closeAllDocuments"),
+    restoreTabs: () => false,
+    setRestoreTabs: (restore) => fired.push(`setRestoreTabs:${restore}`),
+    tabsToReopen: () => 0,
+    reopenLastTabs: () => fired.push("reopenLastTabs"),
     tabLabels: () => ({ canGrow: true, canShrink: true, isDefault: false }),
     resizeTabLabels: (direction: -1 | 0 | 1) => fired.push(`resizeTabLabels:${direction}`),
     nextDocument: (delta) => fired.push(`nextDocument:${delta}`),
@@ -4295,6 +4299,9 @@ async function appCommandChecks(
     "edit.fillForm": "Driven against the real application by tabs_check.py --phase forms.",
     "file.close": "tab ownership is exercised by the open check's tabs phase",
     "file.closeAll": "closes every tab, which would end the run; no automated check drives it yet",
+    "file.reopenLastTabs": "needs a previous launch; the session check's tabs phase drives it",
+    "file.reopenTabsAtLaunch": "a stored preference; the session check's tabs phase covers the launch",
+    "file.reopenLastDocumentAtLaunch": "a stored preference; appcommands.test.ts covers the pair",
     "view.tabLabelsLarger": "a stored display preference; tablabels.test.ts covers stepping and storage",
     "view.tabLabelsSmaller": "a stored display preference; tablabels.test.ts covers stepping and storage",
     "view.tabLabelsDefault": "a stored display preference; tablabels.test.ts covers stepping and storage",
@@ -4627,6 +4634,8 @@ async function appCommandChecks(
   // tool. It joined the registry this cycle without joining this list, which the
   // 26.9.21 release run of this check found.
   const NEEDS_NO_DOCUMENT = [
+    // A preference, registered with the tab commands, which come first.
+    "file.reopenTabsAtLaunch",
     "file.open",
     // A preference rather than something done to a document; `ask` is the
     // fixture's mode and so is not among them.

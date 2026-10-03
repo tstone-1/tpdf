@@ -21,6 +21,16 @@ have the binary.)
 
 ### Added
 
+- **A launch can reopen every tab, not only the last document.** *At launch: reopen all
+  tabs*, in the File menu and the command palette, brings the strip back in the order it
+  had, with the tab you were on in front. It is off until you choose it. The other tabs
+  open behind the first one, after its first page is on screen. *Reopen the tabs from last
+  time* does the same once, whatever the setting, and is how a tab comes back whose file
+  was on a drive that was not connected at launch. A tab whose file is gone is left out; a
+  document behind a password is not asked for at launch, and is by the one-off command.
+  Unsaved edits are not restored. Verified by five launches of the real application
+  (`scripts/session_check.py --only tabs`), with the preference off as the control.
+
 - **`tpdf ocr` makes a scanned document searchable.** `tpdf ocr scan.pdf -o searchable.pdf`
   writes a copy in which the pages that had no text can be searched, selected and copied
   from. Each such page is read by the operating system's own text recogniser, Vision on

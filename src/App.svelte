@@ -139,6 +139,9 @@
     type Place,
     type Session,
   } from "./lib/session";
+  import {
+    TabRecorder, afterReopen, launchPlan, openBehind, tabsToReopen, type TabHost,
+  } from "./lib/tabrestore";
   import { runMarkCheckIfRequested } from "./lib/harness";
   import { runSessionCheckIfRequested } from "./lib/harness";
   import { runOpenCheckIfRequested } from "./lib/harness";
@@ -197,6 +200,7 @@
     tabRows = tabs.all.map((tab) => ({
       id: tab.doc.id, path: tab.path, dirty: tab.edits.state.dirty,
     }));
+    tabRecorder.note(tabs.all.map((tab) => tab.path), tabs.find(tabs.active)?.path ?? null);
     if (changed) void tick().then(() => {
       document.getElementById(`document-tab-${activeTab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
@@ -631,6 +635,8 @@
   let invertPages = false;
   /** Collapses a scroll's worth of positions into at most one write per second. */
   const places = new SessionWriter();
+  const tabRecorder = new TabRecorder();
+  let restoreTabs = false;
   /**
    * Serialises document opens. See {@link openPath}.
    *
@@ -682,6 +688,10 @@
     setDiskChangeMode: (mode) => setDiskChangeMode(mode),
     closeDocument: () => void closeTab(openDoc),
     closeAllDocuments: () => void closeAllTabs(),
+    restoreTabs: () => restoreTabs,
+    setRestoreTabs: (restore) => setRestoreTabs(restore),
+    tabsToReopen: () => tabsToReopen(session, isOpenTab).length,
+    reopenLastTabs: () => void reopenLastTabs(),
     tabLabels: () => tabLabelSize,
     resizeTabLabels: (direction) => { tabLabelPx = tabLabelSize.step(direction); refreshMenu(); },
     nextDocument: (delta) => { const next = tabs.neighbour(delta); if (next) void activateTab(next.doc.id); },
@@ -3377,11 +3387,19 @@
       // Read before any document opens, so the first tiles of the first page are
       // requested in the polarity the reader left the application in.
       invertPages = session.invert_pages ?? false;
-      if (handed.length) {
-        for (const path of handed) await openPath(path);
-      } else {
-        const resume = session.places[0];
-        if (resume) await openPath(resume.path, true);
+      restoreTabs = session.restore_tabs ?? false;
+      const plan = launchPlan(session, handed);
+      // Held until the last tab is back, so that quitting halfway through does
+      // not record the half that had opened as the whole list.
+      if (plan.behind.length) tabRecorder.hold();
+      for (const path of plan.show) await openPath(path, plan.resuming);
+      // After the first page, not before it: the tabs behind are not what the
+      // reader is waiting for, and each one is an open the first page would
+      // otherwise queue behind.
+      if (plan.behind.length) {
+        void firstPaint()
+          .then(() => openBehind(plan.behind, plan.order, tabHost(false)))
+          .finally(() => { tabRecorder.release(); refreshTabs(); refreshMenu(); });
       }
 
       // Both of these observe the boot rather than replacing it, for the same
@@ -3449,6 +3467,10 @@
         sidebarShown: () => sidebarShown,
         toggleSidebar,
         flush: () => places.flush(),
+        tabs: () => tabs.all.map((tab) => tab.path),
+        setRestoreTabs,
+        reopenLastTabs,
+        tabsSettled: () => tabRecorder.settled(),
         recentCommands: () =>
           commands
             .all()
@@ -3532,6 +3554,7 @@
         // restoring after an update has to land where an ordinary restart
         // lands, and this is the only step in the path that can wait.
         await places.settled();
+        await tabRecorder.settled();
         const { relaunch } = await import("@tauri-apps/plugin-process");
         await relaunch();
       },
@@ -3587,6 +3610,66 @@
       if (existing?.doc.id === openDoc) { viewer?.focus(); return; }
       await openDocument(path, resuming, resume, existing);
     }));
+  }
+
+  /** The edit model of a document, whether or not it is the one on screen. */
+  function editsFor(doc: DocumentInfo): Edits {
+    return new Edits(doc.id, doc.page_count, async (merging = false) => {
+      commitPopups();
+      await pendingEdit;
+      await formLayer?.settle();
+      await textEditor?.settle();
+      await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
+        askSignatureSave, merging);
+    });
+  }
+
+  const isOpenTab = (path: string) => tabs.forPath(path) !== undefined;
+
+  /**
+   * What `openBehind` in `tabrestore.ts` drives: a tab with a handle and a
+   * model and no viewer, which `activateTab` mounts like any tab switched to.
+   *
+   * `asking` is whether a document behind a password may prompt for it. A
+   * launch does not: a dialog about a tab the reader cannot see, before they
+   * have done anything, is not one they can place. The command does.
+   */
+  function tabHost(asking: boolean): TabHost {
+    return {
+      openBehind: (path) => opens.run(async () => {
+        if (isOpenTab(path)) return;
+        const doc = asking ? await openOrAsk(path) : await openWithPassword(
+          (password) => call("open_document", { path, password }), null);
+        if (!doc.pages[0]) {
+          await call("close_document", { doc: doc.id }).catch(console.warn);
+          throw new Error("document reports no pages");
+        }
+        tabs.add({ doc, path, edits: editsFor(doc), place: null, ...freshState() });
+        refreshTabs();
+      }),
+      arrange: (order) => { tabs.arrange(order); refreshTabs(); },
+      showing: () => openDoc >= 0,
+      showFirst: async () => {
+        const first = tabs.all[0];
+        if (first) await activateTab(first.doc.id);
+      },
+    };
+  }
+
+  async function reopenLastTabs(): Promise<void> {
+    await documentTasks.idle();
+    const refused = await openBehind(tabsToReopen(session, isOpenTab), [], tabHost(true));
+    refreshMenu();
+    const said = afterReopen(refused, basename);
+    if (said) say(said);
+  }
+
+  function setRestoreTabs(restore: boolean): void {
+    restoreTabs = restore;
+    refreshMenu();
+    void call("session_set_restore_tabs", { restore }).catch(() => {
+      notice = "Could not save that choice. It holds until tpdf is closed.";
+    });
   }
 
   /**
@@ -3838,14 +3921,7 @@
       // model to ask. `refresh` is not awaited: it reads a `HashMap` in the
       // backend, and holding the first page behind it would put an IPC round
       // trip on the startup path for an answer that is "nothing is edited".
-      const opening = retained?.edits ?? new Edits(doc.id, doc.page_count, async (merging = false) => {
-        commitPopups();
-        await pendingEdit;
-        await formLayer?.settle();
-        await textEditor?.settle();
-        await confirmSignatureSave(() => call("document_properties", { doc: doc.id }),
-          askSignatureSave, merging);
-      });
+      const opening = retained?.edits ?? editsFor(doc);
       edits = opening;
       dirty = opening.state.dirty;
       // Mark ids start again with the model, so an entry kept from the last

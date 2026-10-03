@@ -481,6 +481,8 @@ export interface Commands {
   session_load: { args: NoArgs; reply: Session };
   session_remember: { args: { place: Place }; reply: void };
   session_set_invert_pages: { args: { invert: boolean }; reply: void };
+  session_set_tabs: { args: { paths: string[]; active: string | null }; reply: void };
+  session_set_restore_tabs: { args: { restore: boolean }; reply: void };
   print_document: {
     args: {
       path: string;

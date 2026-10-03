@@ -138,6 +138,25 @@ pub struct Session {
     /// want to read that file.
     #[serde(default)]
     pub invert_pages: bool,
+    /// The documents that were open as tabs, in tab order.
+    ///
+    /// Beside `places` rather than derived from it: that list is every document
+    /// read lately, most recent first, and says nothing about which of them
+    /// were still open or in what order. Written whether or not
+    /// [`Session::restore_tabs`] is set, so that turning the preference on, or
+    /// asking once for last time's tabs, has a list to act on.
+    #[serde(default)]
+    pub tabs: Vec<String>,
+    /// The tab that was showing, when it is one of [`Session::tabs`].
+    #[serde(default)]
+    pub active_tab: Option<String>,
+    /// Whether a launch reopens every tab rather than the last document alone.
+    ///
+    /// Off unless the reader turns it on. Each tab is an open document with a
+    /// worker behind it, and a reader who left twenty open has not thereby
+    /// asked for twenty to be opened every morning.
+    #[serde(default)]
+    pub restore_tabs: bool,
 }
 
 impl Session {
@@ -165,7 +184,35 @@ impl Session {
             // is silently reset to its default on every load --- which for a
             // preference reads as "it does not remember", with nothing failing.
             invert_pages: session.invert_pages,
+            restore_tabs: session.restore_tabs,
+            ..Self::default()
         }
+        .with_tabs(session.tabs, session.active_tab)
+    }
+
+    /// Records which documents are open as tabs, and which of them is showing.
+    ///
+    /// A path is listed once, at its first position: two tabs on one file do
+    /// not exist, so a repeat is a damaged record and not a second tab. The
+    /// active tab is kept only when it is in the list, because a launch opens
+    /// it first and it must be one of the tabs that come back.
+    pub fn set_tabs(&mut self, paths: Vec<String>, active: Option<String>) {
+        let mut kept: Vec<String> = Vec::new();
+        for path in paths {
+            if kept.len() == CAPACITY {
+                break;
+            }
+            if !path.is_empty() && !kept.contains(&path) {
+                kept.push(path);
+            }
+        }
+        self.active_tab = active.filter(|path| kept.contains(path));
+        self.tabs = kept;
+    }
+
+    fn with_tabs(mut self, paths: Vec<String>, active: Option<String>) -> Self {
+        self.set_tabs(paths, active);
+        self
     }
 
     /// The document to reopen, if there is one.
@@ -280,9 +327,105 @@ mod tests {
         let session = Session {
             places: vec![place("/tmp/a.pdf")],
             invert_pages: true,
+            ..Session::default()
         };
         session.save(&dir.file()).expect("save");
         assert!(Session::load(&dir.file()).invert_pages);
+    }
+
+    fn paths(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    #[test]
+    fn the_open_tabs_and_the_choice_to_reopen_them_survive_a_round_trip() {
+        // `load` names every field it carries, so each of these three comes
+        // back as its default if it is left out there.
+        let dir = TempDir::new("tabs");
+        let mut session = Session {
+            restore_tabs: true,
+            ..Session::default()
+        };
+        session.set_tabs(
+            paths(&["/tmp/b.pdf", "/tmp/a.pdf", "/tmp/c.pdf"]),
+            Some("/tmp/a.pdf".to_string()),
+        );
+        session.save(&dir.file()).expect("save");
+
+        let loaded = Session::load(&dir.file());
+        assert_eq!(
+            loaded.tabs,
+            paths(&["/tmp/b.pdf", "/tmp/a.pdf", "/tmp/c.pdf"]),
+            "tab order is the reader's, not most-recent-first"
+        );
+        assert_eq!(loaded.active_tab.as_deref(), Some("/tmp/a.pdf"));
+        assert!(loaded.restore_tabs);
+    }
+
+    #[test]
+    fn reopening_every_tab_is_off_until_it_is_asked_for() {
+        let dir = TempDir::new("tabs-default");
+        std::fs::write(dir.file(), br#"{"places":[]}"#).expect("write");
+        let loaded = Session::load(&dir.file());
+        assert!(!loaded.restore_tabs);
+        assert!(loaded.tabs.is_empty());
+        assert_eq!(loaded.active_tab, None);
+    }
+
+    #[test]
+    fn a_tab_is_listed_once_and_the_active_one_is_among_them() {
+        let mut session = Session::default();
+        session.set_tabs(
+            paths(&["/tmp/a.pdf", "", "/tmp/b.pdf", "/tmp/a.pdf"]),
+            Some("/tmp/gone.pdf".to_string()),
+        );
+        assert_eq!(session.tabs, paths(&["/tmp/a.pdf", "/tmp/b.pdf"]));
+        assert_eq!(
+            session.active_tab, None,
+            "a tab that is not open cannot be showing"
+        );
+
+        session.set_tabs(paths(&["/tmp/b.pdf"]), Some("/tmp/b.pdf".to_string()));
+        assert_eq!(session.active_tab.as_deref(), Some("/tmp/b.pdf"));
+
+        // Closing every tab leaves nothing to reopen.
+        session.set_tabs(Vec::new(), None);
+        assert!(session.tabs.is_empty());
+    }
+
+    #[test]
+    fn the_tab_list_is_bounded_on_the_way_in_and_on_the_way_back() {
+        let many: Vec<String> = (0..CAPACITY + 5).map(|n| format!("/tmp/{n}.pdf")).collect();
+        let mut session = Session::default();
+        session.set_tabs(many.clone(), None);
+        assert_eq!(session.tabs.len(), CAPACITY);
+        assert_eq!(
+            session.tabs[0], "/tmp/0.pdf",
+            "the first tabs are the ones kept"
+        );
+
+        // A file written by hand, or by a build with a larger bound.
+        let dir = TempDir::new("tabs-bound");
+        let raw = serde_json::json!({ "places": [], "tabs": many, "active_tab": "/tmp/36.pdf" });
+        std::fs::write(dir.file(), raw.to_string()).expect("write");
+        let loaded = Session::load(&dir.file());
+        assert_eq!(loaded.tabs.len(), CAPACITY);
+        assert_eq!(
+            loaded.active_tab, None,
+            "the active tab fell outside the bound"
+        );
+    }
+
+    #[test]
+    fn remembering_a_place_leaves_the_tabs_alone() {
+        let mut session = Session::default();
+        session.set_tabs(
+            paths(&["/tmp/a.pdf", "/tmp/b.pdf"]),
+            Some("/tmp/a.pdf".to_string()),
+        );
+        session.remember(place("/tmp/b.pdf"));
+        assert_eq!(session.tabs, paths(&["/tmp/a.pdf", "/tmp/b.pdf"]));
+        assert_eq!(session.active_tab.as_deref(), Some("/tmp/a.pdf"));
     }
 
     #[test]
