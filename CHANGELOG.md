@@ -24,8 +24,16 @@ have the binary.)
 - **Redaction takes a picture inside a reusable block.** A page often draws a
   letterhead, a chart or a stamp as one block, and a picture in such a block was
   reported and left. It is now taken out of the block, bytes included, like a picture
-  on the page. A block or a picture the document draws more than once stays and is
-  reported, as before.
+  on the page. A block the document draws more than once stays and is reported, as
+  before.
+- **Redaction takes a picture the document draws in several places off the page you
+  marked.** A logo or a background drawn on every page was left where it was and
+  reported, so it could not be redacted on any page. Its draw on the marked page is
+  now removed. The picture stays in the file and on the other pages, which nobody
+  marked, and the review panel and the report's `notes` say so; this is a note beside
+  the verdict and not a reason against it. Marked on every page that draws it, the
+  picture's bytes leave the file. On 64 of the author's documents the share of
+  word-sized regions taken whole went from 70.8% to 82.4%.
 - **Form fields can be placed in the window.** *Add a form field: text*, *text on
   several lines* and *checkbox*, in the Edit menu and the command palette, arm a drag;
   the rectangle you drag becomes a field. Until the document is saved it shows as a
@@ -138,8 +146,8 @@ have the binary.)
   pictures removed went from 30 to 126. The two left are refused for another reason.
 - **A picture several pages draw from one shared list is now recognised as shared.** One
   entry in a list every page reads counted as one use, however many pages drew it. Such
-  a picture is left and reported, as a shared picture already was; removing it from the
-  list would have removed it from pages nobody marked. On the same documents, the other
+  a picture keeps its name in the list until no page draws it; removing the name with the
+  first draw would have removed the picture from pages nobody marked. On the same documents, the other
   pages of all 57 redacted files render exactly as before, 119 pages compared.
 - **A text field between 14 and 16.4 points high could not be filled.** tpdf chose a
   type size from the field's inset alone, and in that band one line of it then did not

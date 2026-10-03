@@ -32,6 +32,13 @@
       2
     ]
   ],
+  "shared": [
+    {
+      "at": 3,
+      "kind": "image",
+      "drawn": 4
+    }
+  ],
   "paths": [],
   "path_objects": 0,
   "cuts": [],

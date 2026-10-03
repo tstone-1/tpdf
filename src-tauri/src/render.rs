@@ -2240,6 +2240,7 @@ pub fn redaction_plans_of(
                 // See the field: a plan merges a page's regions, and a count
                 // present only when some region covered that form would be
                 // missing exactly when another region needed it.
+                shared: plan.shared.clone(),
                 form_images: plan.form_images.clone(),
                 form_image_objects: objects
                     .forms

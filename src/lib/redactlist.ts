@@ -371,7 +371,18 @@ export function takesFor(plan: RegionPlan | undefined): string {
   const cut = cuts === 1 ? "a line at its edge" : `${cuts} lines at its edge`;
   if (said.length === 0) return cuts > 0 ? `Cuts ${cut}` : "";
   const removes = `Also removes ${said.join(" and ")}`;
-  return cuts > 0 ? `${removes}, and cuts ${cut}` : removes;
+  const sentence = cuts > 0 ? `${removes}, and cuts ${cut}` : removes;
+  // A picture the document draws elsewhere too goes from this page and stays
+  // in the file, which a reader removing a logo needs to know before they
+  // call the document clean. Its own sentence, because it is about what is
+  // *not* removed.
+  const elsewhere = pictures > 0 ? (plan?.shared?.length ?? 0) : 0;
+  if (elsewhere === 0) return sentence;
+  const stays =
+    pictures === 1
+      ? "The picture is also drawn elsewhere in this document and stays there"
+      : `${elsewhere} of the pictures ${elsewhere === 1 ? "is" : "are"} also drawn elsewhere in this document and ${elsewhere === 1 ? "stays" : "stay"} there`;
+  return `${sentence}. ${stays}`;
 }
 
 /** The redactions panel: a row per pending region, in page order. */

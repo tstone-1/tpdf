@@ -155,6 +155,22 @@ pub struct Plan {
     /// pictures)`, as [`form_shows`](Self::form_shows) addresses a form's text.
     /// Taken whole, for the reason [`images`](Self::images) gives.
     pub form_images: Vec<(usize, usize)>,
+    /// Pictures the removal takes **off this page** and cannot take out of
+    /// the file, because the document draws them elsewhere too.
+    ///
+    /// Each is also in [`images`](Self::images) or
+    /// [`form_images`](Self::form_images): its draw here goes. What stays is
+    /// the picture's object, which the other draws still need, and the other
+    /// draws themselves, which nobody marked. `at` and `drawn` are
+    /// [`Unhandled`]'s, and the type is reused for what it already carries;
+    /// the difference is the list it is in. A region with one of these is
+    /// still complete: nothing it covers on this page is left on this page.
+    ///
+    /// Until 2026-10-03 such a picture was in [`unhandled`](Self::unhandled)
+    /// and stayed where it was, so a logo or a background a document draws on
+    /// every page could not be redacted on any of them: 538 of 4,616
+    /// word-sized regions on 64 real documents.
+    pub shared: Vec<Unhandled>,
 }
 
 /// One object a region covers that this cannot remove.
@@ -194,6 +210,18 @@ pub struct Unhandled {
 }
 
 impl Unhandled {
+    /// What a reader is told about a picture taken off this page that the
+    /// document also draws elsewhere. See [`Plan::shared`].
+    #[must_use]
+    pub fn taken_here(&self) -> String {
+        format!(
+            "object {} is a picture this document draws {} time(s). It was taken off this \
+             page; it is still in the file, and on every other place that draws it",
+            self.at,
+            self.drawn.unwrap_or(2)
+        )
+    }
+
     /// The sentence a refusal says.
     ///
     /// Here rather than at the call site so that every refusal about an object
@@ -326,6 +354,10 @@ pub struct RegionPlan {
     /// present for every form for that field's reason.
     #[serde(default)]
     pub form_image_objects: Vec<(usize, usize)>,
+    /// Pictures taken off this page that the document draws elsewhere too.
+    /// [`Plan::shared`], carried through, for the panel and the report to say.
+    #[serde(default)]
+    pub shared: Vec<Unhandled>,
     /// Which of the page's paths the removal would delete.
     ///
     /// [`Plan::paths`], carried through. The frontend reads how many there are
@@ -833,17 +865,18 @@ pub fn leave_shared(
         .collect();
 
     let mut left: Vec<Unhandled> = Vec::new();
-    plan.images.retain(|ordinal| {
-        let Some(times) = shared.images.get(*ordinal).copied().flatten() else {
-            return true;
-        };
-        left.push(Unhandled {
-            at: image_at.get(*ordinal).copied().unwrap_or(*ordinal),
-            kind: "image".to_string(),
-            drawn: Some(times),
-        });
-        false
-    });
+    // A picture drawn more than once keeps its place in `images`: its draw on
+    // this page goes. What is recorded is that the picture itself stays.
+    let mut here: Vec<Unhandled> = Vec::new();
+    for ordinal in &plan.images {
+        if let Some(times) = shared.images.get(*ordinal).copied().flatten() {
+            here.push(Unhandled {
+                at: image_at.get(*ordinal).copied().unwrap_or(*ordinal),
+                kind: "image".to_string(),
+                drawn: Some(times),
+            });
+        }
+    }
 
     // A form is named by its position in the page's object list, so the entries
     // to drop are every one carrying that `at` --- one finding for the form, not
@@ -891,16 +924,18 @@ pub fn leave_shared(
         let picture_times = which
             .and_then(|which| shared.form_images.get(which))
             .and_then(|pictures| pictures.get(*ordinal).copied().flatten());
-        let Some(times) = picture_times else {
-            return true;
-        };
-        left.push(Unhandled {
-            at: *at,
-            kind: "image".to_string(),
-            drawn: Some(times),
-        });
-        false
+        // The picture is drawn elsewhere too and the form is this page's
+        // alone: the draw inside the form goes, and that is said.
+        if let Some(times) = picture_times {
+            here.push(Unhandled {
+                at: *at,
+                kind: "image".to_string(),
+                drawn: Some(times),
+            });
+        }
+        true
     });
+    plan.shared.extend(here);
 
     plan.unhandled.extend(left);
     // Ascending by position, which is the order `covered` produces on its own
@@ -1992,13 +2027,7 @@ pub fn remove_form_images(
                 drawn.len()
             )
         })?;
-        if let Some(times) = picture_times(doc, id, &drawn, *object) {
-            return Err(format!(
-                "the picture you marked is drawn {times} time(s) in this document. Removing it \
-                 here would leave every other copy, and the picture itself, in the file \u{2014} \
-                 so nothing was removed."
-            ));
-        }
+        let _ = object;
         positions.push(*where_);
         forgotten.push(picture.clone());
     }
@@ -2012,6 +2041,19 @@ pub fn remove_form_images(
     let encoded = inside
         .encode()
         .map_err(|why| format!("the rewritten form stream will not encode: {why}"))?;
+    // For `remove_images`' reason: a name the form still draws through, or
+    // one in a list that is not this form's alone, stays.
+    forgotten.sort();
+    forgotten.dedup();
+    let shared_list = form_list_is_shared(doc, id);
+    forgotten.retain(|name| {
+        !shared_list
+            && !inside.operations.iter().any(|operation| {
+                operation.operator == "Do"
+                    && operation.operands.first().and_then(|o| o.as_name().ok())
+                        == Some(name.as_bytes())
+            })
+    });
     forget_form_xobjects(doc, id, &forgotten)?;
     let stream = doc
         .get_object_mut(id)
@@ -2149,15 +2191,6 @@ pub fn remove_images(
                 drawn.len()
             )
         })?;
-        let id = form_id(doc, page, name)?;
-        let here: Vec<String> = drawn.iter().map(|(_, other)| other.clone()).collect();
-        if let Some(times) = drawn_more_than_once(doc, page, id, &here, name) {
-            return Err(format!(
-                "the picture you marked is drawn {times} time(s) in this document. Removing it \
-                 here would leave every other copy, and the picture itself, in the file \u{2014} so \
-                 nothing was removed."
-            ));
-        }
         positions.push(*at);
         names.push(name.clone());
     }
@@ -2176,7 +2209,31 @@ pub fn remove_images(
 
     // **The half that redacts.** Without it the stream is still reachable from
     // the page and every byte of the picture stays in the file.
-    forget_xobjects(doc, page, &names)?;
+    //
+    // A name is forgotten when nothing draws through it any more. This page
+    // may draw the picture a second time, and a list several pages read may
+    // still be drawn through by another of them; in both cases the name is
+    // somebody's and stays, and the picture with it. When the last page that
+    // drew it is redacted the name goes then, and the bytes with it.
+    names.sort();
+    names.dedup();
+    let mut unused: Vec<String> = Vec::new();
+    for name in names {
+        let still_here = content.operations.iter().any(|operation| {
+            operation.operator == "Do"
+                && operation.operands.first().and_then(|o| o.as_name().ok())
+                    == Some(name.as_bytes())
+        });
+        if still_here {
+            continue;
+        }
+        let elsewhere = list_is_shared(doc, page)
+            && form_id(doc, page, &name).is_ok_and(|id| draws_across_pages(doc, id) > 0);
+        if !elsewhere {
+            unused.push(name);
+        }
+    }
+    forget_xobjects(doc, page, &unused)?;
 
     Ok(Removed {
         shows_before: drawn.len(),
@@ -3515,6 +3572,20 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
     Ok(doomed.len())
 }
 
+/// What a result says beside its verdict.
+///
+/// Two kinds of note, and they differ in when they are true. A *sizing* note
+/// says how small the print is that a clean verdict vouches for, so it
+/// qualifies a clean verdict and means nothing beside any other. A
+/// *taken here* note says a picture was removed from one page and is still in
+/// the file, which is a fact about the file whatever the verdict.
+#[must_use]
+pub fn notes_for(verified: bool, sizing: Vec<String>, taken_here: Vec<String>) -> Vec<String> {
+    let mut notes = if verified { sizing } else { Vec::new() };
+    notes.extend(taken_here);
+    notes
+}
+
 /// One page's worth of redaction bookkeeping, aggregated from its region plans.
 ///
 /// [`aggregate`]'s answer. Five things come out of one walk over the plans, and
@@ -3522,6 +3593,9 @@ pub fn drop_fields(doc: &mut Document, doomed: &[ObjectId]) -> Result<usize, Str
 /// more walks that could disagree with each other.
 #[derive(Debug)]
 pub struct PageAggregate {
+    /// What a reader should be told that is not a reason to doubt the result:
+    /// a picture taken off this page that the document draws elsewhere too.
+    pub notes: Vec<String>,
     /// What the writer is asked to remove from this page.
     pub planned: edits::PlannedRedaction,
     /// What the OCR gate is asked to look at afterwards.
@@ -3621,6 +3695,7 @@ pub fn aggregate(
     text: Option<&text::PageText>,
 ) -> PageAggregate {
     let mut concerns: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
     let mut needles: Vec<String> = Vec::new();
     let mut shows: Vec<usize> = Vec::new();
     // Every plan on a page reports the same count, because it is a fact about
@@ -3670,6 +3745,13 @@ pub fn aggregate(
         form_images.extend(plan.form_images.iter().copied());
         for object in &plan.unhandled {
             concerns.push(format!("page {}: {}", page + 1, object.sentence()));
+        }
+        for object in &plan.shared {
+            let note = format!("page {}: {}", page + 1, object.taken_here());
+            // One picture under two regions is one thing to say.
+            if !notes.contains(&note) {
+                notes.push(note);
+            }
         }
         shows.extend(plan.shows.iter().copied());
         form_shows.extend(plan.form_shows.iter().copied());
@@ -3737,6 +3819,7 @@ pub fn aggregate(
         cuts,
     };
     PageAggregate {
+        notes,
         planned,
         gate,
         concerns,
@@ -3990,6 +4073,7 @@ mod tests {
     /// `aggregate`'s fixtures: one plan, with everything empty but what a test sets.
     fn plan_of(shows: &[usize], taking: &str) -> super::RegionPlan {
         super::RegionPlan {
+            shared: Vec::new(),
             shows: shows.to_vec(),
             text_objects: 9,
             images: Vec::new(),
@@ -4495,10 +4579,12 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_picture_is_left_and_reported_rather_than_removed() {
-        // The defect this exists for: a logo repeated on every page used to
-        // make the *writer* refuse, which took the region's words with it and
-        // told the reader nothing had been removed.
+    fn a_picture_drawn_elsewhere_too_is_taken_off_this_page_and_said_to_stay() {
+        // A logo repeated on every page. First the *writer* refused it, which
+        // took the region's words with it; then it was left where it was and
+        // reported, which meant it could not be redacted on any page. Its draw
+        // on this page goes now, and what is said is that the picture itself
+        // is still in the file.
         let objects = [image_at([0.0, 0.0, 100.0, 100.0])];
         let mut plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
         let shared = SharedDraws {
@@ -4507,17 +4593,23 @@ mod tests {
             forms: Vec::new(),
         };
         leave_shared(&mut plan, &shared, &objects, &[]);
-        assert!(plan.images.is_empty(), "nothing is asked to be removed");
+        assert_eq!(plan.images, vec![0], "its draw here is removed");
         assert_eq!(
-            plan.unhandled,
+            plan.shared,
             vec![Unhandled {
                 at: 0,
                 kind: "image".to_string(),
                 drawn: Some(22),
             }],
-            "and the count that explains it reaches the reader"
+            "and the count that explains what stays reaches the reader"
         );
-        assert!(!plan.is_complete());
+        assert!(
+            plan.is_complete(),
+            "nothing the region covers is left on this page"
+        );
+        let said = plan.shared[0].taken_here();
+        assert!(said.contains("draws 22 time(s)") && said.contains("taken off this page"));
+        assert!(said.contains("still in the file"), "{said}");
     }
 
     #[test]
@@ -4528,14 +4620,15 @@ mod tests {
         let mut plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
         leave_shared(&mut plan, &SharedDraws::unknown(1, 0), &objects, &[]);
         assert_eq!(plan.images, vec![0]);
+        assert!(plan.shared.is_empty(), "and nothing is said to stay");
         assert!(plan.unhandled.is_empty());
     }
 
     #[test]
-    fn a_finding_names_the_page_object_rather_than_the_image_ordinal() {
+    fn a_note_names_the_page_object_rather_than_the_image_ordinal() {
         // The two are different numbers and the reader's is the first. A page
-        // whose only picture is its fourth object reports object 3, not image
-        // 0 -- which is the same translation `Unhandled::at` carries everywhere
+        // whose only picture is its fourth object says object 3, not image 0
+        // -- which is the same translation `Unhandled::at` carries everywhere
         // else.
         let objects = [
             text([0.0, 0.0, 10.0, 10.0]),
@@ -4550,7 +4643,7 @@ mod tests {
             forms: Vec::new(),
         };
         leave_shared(&mut plan, &shared, &objects, &[]);
-        assert_eq!(plan.unhandled[0].at, 3);
+        assert_eq!(plan.shared[0].at, 3);
     }
 
     #[test]
@@ -4612,22 +4705,24 @@ mod tests {
     fn findings_stay_in_page_order_when_a_shared_one_joins_them() {
         // A reader checks a page from the top, and the sort is what keeps a
         // finding appended here from landing after one `covered` reported for
-        // an object further down.
+        // an object further down. The shared thing is a form: a shared picture
+        // is no finding any more.
         let objects = [
-            image_at([0.0, 0.0, 100.0, 100.0]),
+            form_object([0.0, 0.0, 100.0, 100.0]),
             PageObject {
                 bounds: [0.0, 0.0, 100.0, 100.0],
                 kind: "shading".to_string(),
             },
         ];
-        let mut plan = covered(&objects, &[], [10.0, 10.0, 20.0, 20.0]);
+        let forms = [form(0, &[[0.0, 0.0, 50.0, 50.0]])];
+        let mut plan = covered(&objects, &forms, [10.0, 10.0, 20.0, 20.0]);
         assert_eq!(plan.unhandled[0].at, 1, "the shading, reported on its own");
         let shared = SharedDraws {
             form_images: Vec::new(),
-            images: vec![Some(2)],
-            forms: Vec::new(),
+            images: Vec::new(),
+            forms: vec![Some(2)],
         };
-        leave_shared(&mut plan, &shared, &objects, &[]);
+        leave_shared(&mut plan, &shared, &objects, &forms);
         assert_eq!(
             plan.unhandled.iter().map(|one| one.at).collect::<Vec<_>>(),
             vec![0, 1]
@@ -4688,10 +4783,10 @@ mod tests {
     }
 
     #[test]
-    fn an_image_drawn_twice_on_one_page_is_refused() {
-        // One reference in the object graph and two `Do` operations. Removing
-        // one would stop this page drawing it once and leave every byte of the
-        // picture in the file, reachable from the other draw.
+    fn an_image_drawn_twice_on_one_page_loses_the_one_draw_and_keeps_its_name() {
+        // One reference in the object graph and two `Do` operations. The draw
+        // that was marked goes; the other still needs the name, so the name
+        // and the picture stay.
         let (mut doc, page, _) = page_with_images(1);
         let content = doc
             .get_page_content_with_limit(page, MAX_CONTENT_BYTES)
@@ -4699,23 +4794,28 @@ mod tests {
         let mut twice = content.clone();
         twice.extend_from_slice(&content);
         doc.change_page_content(page, twice).unwrap();
-        let why = remove_images(&mut doc, page, &[0], 2).unwrap_err();
-        assert!(why.contains("drawn 2 time(s)"), "{why}");
+        let took = remove_images(&mut doc, page, &[0], 2).expect("removed");
+        assert_eq!(took.removed, 1);
         assert_eq!(resource_names(&doc, page), vec!["Im0".to_string()]);
+        // And the second draw takes the name with it.
+        remove_images(&mut doc, page, &[0], 1).expect("removed");
+        assert!(resource_names(&doc, page).is_empty());
     }
 
     #[test]
-    fn an_image_another_page_also_names_is_refused() {
+    fn an_image_another_page_also_names_goes_from_this_page_and_stays_named_by_the_other() {
         let (mut doc, page, ids) = page_with_images(1);
-        doc.add_object(dictionary! {
+        let other = doc.add_object(dictionary! {
             "Type" => "Page",
             "Resources" => dictionary! {
                 "XObject" => dictionary! { "Im0" => Object::Reference(ids[0]) }
             },
         });
-        let why = remove_images(&mut doc, page, &[0], 1).unwrap_err();
-        assert!(why.contains("drawn 2 time(s)"), "{why}");
-        assert_eq!(resource_names(&doc, page), vec!["Im0".to_string()]);
+        remove_images(&mut doc, page, &[0], 1).expect("removed");
+        // This page's list is its own, so the name goes from it; the other
+        // page's list still names the picture, which is why it is not swept.
+        assert!(resource_names(&doc, page).is_empty());
+        assert_eq!(resource_names(&doc, other), vec!["Im0".to_string()]);
     }
 
     #[test]

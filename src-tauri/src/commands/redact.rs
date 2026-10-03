@@ -149,6 +149,9 @@ pub struct Asked {
     /// What the removal could not take. Not a refusal --- see [`redact_copy`]
     /// --- but a reason the file cannot be called clean, carried to the verdict.
     pub concerns: Vec<String>,
+    /// What the result says beside its verdict that is true whatever the
+    /// verdict: a picture taken off a page that the document draws elsewhere.
+    pub notes: Vec<String>,
     /// How many regions were asked about.
     pub regions: usize,
     /// How many text-showing operations the removal names, after merging.
@@ -210,6 +213,7 @@ pub async fn ask_redactions(
     let mut planned: Vec<edits::PlannedRedaction> = Vec::new();
     let mut needles: Vec<String> = Vec::new();
     let mut concerns: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
     let mut regions = 0usize;
     let mut shows_total = 0usize;
     let mut gate: Vec<ocr_gate::GatePage> = Vec::new();
@@ -246,6 +250,7 @@ pub async fn ask_redactions(
         let one = redact::aggregate(page, displayed, plans, text.as_ref());
         pages.push(one.summary());
         concerns.extend(one.concerns);
+        notes.extend(one.notes);
         needles.extend(one.needles);
         shows_total += one.shows;
         gate.push(one.gate);
@@ -317,6 +322,7 @@ pub async fn ask_redactions(
         plan,
         needles,
         concerns,
+        notes,
         regions,
         shows: shows_total,
         pages,
@@ -637,6 +643,7 @@ pub async fn redact_copy_asked(
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
     let notes = ocr_gate::sizing_notes(&asked.gate);
+    let taken_here = asked.notes;
     why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
     finish_redaction_fill(library, backend, out_path, asked.plan, fingerprint, key)
         .await
@@ -649,7 +656,7 @@ pub async fn redact_copy_asked(
         shows: shows_total,
         changed: copied.changed,
         verified: why.is_empty(),
-        notes: if why.is_empty() { notes } else { Vec::new() },
+        notes: redact::notes_for(why.is_empty(), notes, taken_here),
         why,
     })
 }
@@ -805,6 +812,7 @@ pub async fn redact_document(
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
     let notes = ocr_gate::sizing_notes(&asked.gate);
+    let taken_here = asked.notes;
     why.extend(
         gate_written_file(
             service.inner().clone(),
@@ -833,7 +841,7 @@ pub async fn redact_document(
         // means it had not.
         changed: false,
         verified: why.is_empty(),
-        notes: if why.is_empty() { notes } else { Vec::new() },
+        notes: redact::notes_for(why.is_empty(), notes, taken_here),
         why,
     })
 }

@@ -203,24 +203,40 @@ fn a_picture_is_found_and_taken_wherever_the_page_keeps_its_names() {
 }
 
 #[test]
-fn a_picture_other_pages_draw_from_the_same_list_stays() {
+fn a_picture_other_pages_draw_from_the_same_list_goes_page_by_page() {
     // Two pages reading one list, both drawing the picture: one name, one
-    // reference, two draws. Taking the name out would take it from both.
+    // reference, two draws. Taking the name out with the first draw would take
+    // the picture from the other page too, so the name stays until nothing
+    // draws through it.
     for kept in [Kept::OneObject, Kept::Inherited, Kept::OneList] {
         let mut f = fixture(kept, &[1, 1]);
         assert_eq!(
             shared_draws(&f.doc, f.pages[0], 1, 0).images,
             vec![Some(2)],
+            "{kept:?}: the plan is told it is drawn twice"
+        );
+        remove_images(&mut f.doc, f.pages[0], &[0], 1)
+            .unwrap_or_else(|why| panic!("{kept:?}: {why}"));
+        assert_eq!(draws_on(&f.doc, f.pages[0]), 0, "{kept:?}");
+        assert_eq!(
+            draws_on(&f.doc, f.pages[1]),
+            1,
+            "{kept:?}: the other page was touched"
+        );
+        assert!(named(&f), "{kept:?}: the other page still needs the name");
+        // The second page redacted as well: nothing draws it now, the name
+        // goes, and with it the last reference to the picture.
+        assert_eq!(
+            shared_draws(&f.doc, f.pages[1], 1, 0).images,
+            vec![None],
             "{kept:?}"
         );
-        let why = remove_images(&mut f.doc, f.pages[0], &[0], 1).unwrap_err();
-        assert!(why.contains("is drawn 2 time(s)"), "{kept:?}: {why}");
-        assert_eq!(
-            draws_on(&f.doc, f.pages[0]),
-            1,
-            "{kept:?}: a refusal changed the page"
+        remove_images(&mut f.doc, f.pages[1], &[0], 1)
+            .unwrap_or_else(|why| panic!("{kept:?}: {why}"));
+        assert!(
+            !named(&f),
+            "{kept:?}: no page draws it and it is still named"
         );
-        assert!(named(&f), "{kept:?}");
     }
     // The control: the same two shapes when the second page does not draw it.
     // The list is shared and the picture is still drawn once, so it goes, and

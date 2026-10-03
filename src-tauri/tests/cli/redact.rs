@@ -782,12 +782,73 @@ pub(super) fn pictures_in_blocks_are_removed(report: &mut Report) {
 
     // The third picture, at (300..340, 500..540), is drawn by page 2 as well.
     let (code, json, stderr, output) = redact("shared", "[305,257,20,20]");
-    let left = json["pages"][0]["left"].to_string();
+    let notes = json["notes"].to_string();
     report.check(
-        "a picture another page draws too is left, and the report says how often it is drawn",
-        json["pages"][0]["image_removals"] == 0
-            && left.contains("drawn 2 time(s)")
+        "a picture another page draws too is taken off this page, and the report says it stays in the file",
+        json["written"] == true
+            && json["pages"][0]["image_removals"] == 1
+            && json["pages"][0]["left"].as_array().is_some_and(Vec::is_empty)
+            && notes.contains("draws 2 time(s)")
+            && notes.contains("taken off this page")
+            && notes.contains("still in the file"),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+    let block_draws = |path: &Path| {
+        let doc = Document::load(path).expect("the written file loads");
+        let page = *doc.get_pages().values().next().expect("a page");
+        let resources = doc.get_page_resources(page).expect("resources");
+        // The page's resources are an object of their own.
+        let holder = doc
+            .get_dictionary(resources.1[0])
+            .expect("the resources object");
+        let list = holder
+            .get(b"XObject")
+            .and_then(Object::as_dict)
+            .expect("a list");
+        let block = list
+            .get(b"Fm0")
+            .and_then(Object::as_reference)
+            .expect("the block");
+        let stream = doc
+            .get_object(block)
+            .and_then(Object::as_stream)
+            .expect("a stream");
+        let body = stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone());
+        String::from_utf8_lossy(&body).into_owned()
+    };
+    report.check(
+        "the block no longer draws it, and its bytes are still in the file for the other page",
+        !block_draws(&output).contains("/ImC")
+            && block_draws(&output).contains("/ImA")
             && holds(&output, "PICTURE-C-BYTES"),
+        &block_draws(&output),
+    );
+    // Marked on the other page as well, in the file just written: now nothing
+    // draws it, and its bytes go. It sits at (72..112, 600..640) there.
+    let everywhere = dir.join("everywhere.pdf");
+    let regions = dir.join("everywhere.json");
+    std::fs::write(&regions, r#"[{"page":2,"rect":[77,157,20,20]}]"#).expect("regions");
+    let (code, json, stderr) = run(
+        &strings(&[
+            "redact",
+            &s(&output),
+            "-o",
+            &s(&everywhere),
+            "--regions",
+            &s(&regions),
+            "--json",
+        ]),
+        &[],
+    );
+    report.check(
+        "marked on every page that draws it, the picture's bytes leave the file",
+        json["written"] == true
+            && json["pages"][0]["image_removals"] == 1
+            && json["notes"].as_array().is_some_and(Vec::is_empty)
+            && !holds(&everywhere, "PICTURE-C-BYTES")
+            && holds(&everywhere, "PICTURE-B-BYTES"),
         &format!("exit {code}: {stderr}; {json}"),
     );
 

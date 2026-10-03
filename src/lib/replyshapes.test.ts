@@ -278,6 +278,7 @@ const SCHEMA = {
     unhandled: ["array"],
     images: ["array"],
     form_images: ["array"],
+    shared: ["array"],
     paths: ["array"],
     cuts: ["array"],
   } satisfies Shape<RegionPlan>,

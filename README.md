@@ -403,9 +403,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   than read, and [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) says so in full. The document you have open is untouched, so if you
   do not like the result you still have your marks. A region covering a **picture** removes
   the picture, whole and bytes included — removing part of one would mean re-encoding it,
-  so the panel says how many a region takes before you commit, and a picture the document
-  draws more than once is left in place and reported as unverified. Other removable
-  content is still taken. A **drawing** that lies wholly inside a region — a signature, a
+  so the panel says how many a region takes before you commit. A picture the document
+  draws in other places too, such as a logo on every page, is taken off the page you
+  marked and stays in the file and on the other pages; the panel and the report say so.
+  Mark it on every page that draws it and its bytes leave the file. A **drawing** that lies wholly inside a region — a signature, a
   logo, a small chart, text set as outlines — is removed, its outline included, and the panel
   says so before you commit. A **straight line or a rectangle** that runs on past the region,
   such as a rule under a line, a table border or a shaded cell, is cut at the region's edge:
@@ -416,7 +417,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   page you did not mark, and a file with the words gone and a picture of the words still in
   it must not be called clean. Text and pictures a page draws through a
   reusable block — a letterhead, a table cell, a stamp — are removed like any other,
-  unless the document draws that block, or that picture, more than once, in which case it
+  unless the document draws that block more than once, in which case it
   is left and reported as unverified. It also takes whole lines —
   removing part of one means removing the instruction that drew it, so a word beside the one
   you marked goes with it. On a document tagged for accessibility it takes the second copy
@@ -1605,8 +1606,8 @@ unbuilt while they shipped.
   a straight line or a rectangle that crosses it is cut at its edge. Still reported and left: a drawing that also clips what is
   drawn after it, a shading, a drawing sitting inside a reusable block, and a
   block drawn inside another block. A picture is removed, bytes included, whether the page
-  draws it or a reusable block on the page does; one the document draws more than once, on
-  this page or on several, is left and reported.
+  draws it or a reusable block on the page does; one the document draws in other places too
+  is taken off the marked page only, and the report says it is still in the file.
 - Adding long-term-validation data, or a further archive timestamp, to a document that is
   already signed, and certification signatures. Signing adds long-term validation data and an
   archive timestamp when you ask for them with a timestamp; what is not built is adding them

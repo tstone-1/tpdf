@@ -992,7 +992,10 @@ fn run_redact(
     if command.dry_run {
         let mut reasons = unmarked;
         reasons.extend(asked.concerns.iter().cloned());
-        let report = draft.report(false, None, reasons, None);
+        let mut report = draft.report(false, None, reasons, None);
+        // What a write would say beside its verdict whatever the verdict: a
+        // picture it would take off a page and leave in the file.
+        report.notes.clone_from(&asked.notes);
         emit(command, out, &report);
         return Ok(Exit::Ok);
     }
@@ -1007,6 +1010,7 @@ fn run_redact(
         }
         search_back(&service, path, key, &pages, &queries)
     };
+    let asked_notes = asked.notes.clone();
     let written = tauri::async_runtime::block_on(redact_copy_asked(
         &service,
         env.library_dir.clone(),
@@ -1039,9 +1043,12 @@ fn run_redact(
         ));
     }
     let (verified, why, exit) = outcome(applied.why, unmarked);
-    // A note qualifies a clean verdict; with a reason from this side as well
-    // the verdict is not clean and the note has nothing to qualify.
-    let notes = if verified { applied.notes } else { Vec::new() };
+    // A note about how small the print is that was vouched for qualifies a
+    // clean verdict; with a reason from this side as well the verdict is not
+    // clean and that note has nothing to qualify. What stays is the other
+    // kind, which is true of the file whatever the verdict: a picture taken
+    // off a page and still drawn elsewhere.
+    let notes = if verified { applied.notes } else { asked_notes };
     let summary = words::after_redaction(
         applied.regions,
         applied.shows,

@@ -3518,6 +3518,36 @@ not verified, and name the drawing left.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
 - The review panel was not driven by a person with a drawing under a region.
 
+#### A picture drawn in several places goes from the marked page — 2026-10-03
+
+After the section below, the largest group of regions left was a picture the document
+draws more than once: 538 of 4,616 word-sized regions, 11.7%. Such a picture was left
+and reported, so a logo on every page could not be redacted on any of them, even with
+every page marked.
+
+**The decision.** The draw on the marked page is removed. The picture's object stays
+while anything else draws it, and the other draws stay because nobody marked them. This
+is reported as a note (`Plan::shared`, `PageAggregate::notes`, the report's `notes`) and
+not as a concern: nothing the region covers is left on the marked page, so the verdict
+for that page is not weakened. `redact::notes_for` keeps the two kinds of note apart: a
+sizing note needs a clean verdict, a note about what stays is true of the file whatever
+the verdict.
+
+**When the name goes.** A resource name is removed when nothing draws through it: not
+when this page still draws the picture a second time, and not when the list is one
+several pages read and another of them still draws it. So redacting the picture on the
+last page that draws it removes the name and the sweep takes the bytes. A block's
+picture follows the same rule inside the block's own list.
+
+**What is unchanged.** A block drawn more than once is still left and reported: its
+content stream is one object, and editing it changes every place that draws the block.
+
+**Measured.** Regions taken whole: 3,804 of 4,616 (82.4%), from 3,268 (70.8%). Whole
+first page redacted on 59 documents: 57 written as before, 162 pictures removed in 43
+documents, from 126 in 34. Other pages of the 57 written files: 119 compared, 0 changed.
+Left now: a drawing in a block 630, a drawing on the page 141, a block drawn more than
+once 122, a shading 1.
+
 #### Pictures inside a block, and where a page keeps its names — 2026-10-03
 
 `docs/DEMAND.md` did not ask for this; the reach measurement did. Of 4,616 word-sized

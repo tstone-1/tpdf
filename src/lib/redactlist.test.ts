@@ -203,6 +203,29 @@ describe("what a row says a removal will take", () => {
     );
   });
 
+  it("says when a picture it takes is drawn elsewhere too, and stays there", () => {
+    const kept = (drawn: number) => ({ at: 0, kind: "image", drawn });
+    expect(takesFor({ ...taking(1), shared: [kept(12)] })).toBe(
+      "Also removes a picture it covers, whole. " +
+        "The picture is also drawn elsewhere in this document and stays there",
+    );
+    expect(takesFor({ ...taking(3), shared: [kept(2)] })).toBe(
+      "Also removes 3 pictures it covers, whole. " +
+        "1 of the pictures is also drawn elsewhere in this document and stays there",
+    );
+    expect(takesFor({ ...taking(3), shared: [kept(2), kept(5)] })).toBe(
+      "Also removes 3 pictures it covers, whole. " +
+        "2 of the pictures are also drawn elsewhere in this document and stay there",
+    );
+    // After a cut, which ends the first sentence.
+    expect(takesFor({ ...taking(1), cuts: [4], shared: [kept(2)] })).toBe(
+      "Also removes a picture it covers, whole, and cuts a line at its edge. " +
+        "The picture is also drawn elsewhere in this document and stays there",
+    );
+    // The control: nothing shared, nothing said about it.
+    expect(takesFor({ ...taking(1), shared: [] })).toBe("Also removes a picture it covers, whole");
+  });
+
   it("counts them when there is more than one", () => {
     expect(takesFor(taking(3))).toBe(
       "Also removes 3 pictures it covers, whole",

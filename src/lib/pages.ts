@@ -293,6 +293,13 @@ export interface RegionPlan {
    */
   form_images?: [number, number][];
   /**
+   * Pictures the removal takes off this page that the document draws elsewhere
+   * too, so the picture itself stays in the file. Each is also counted in
+   * {@link images} or {@link form_images}; what this adds is `drawn`, how many
+   * times the document draws it. `redact::Plan::shared`.
+   */
+  shared?: { at: number; kind: string; drawn?: number | null }[];
+  /**
    * Which of the page's drawings the removal would delete.
    *
    * Ordinals like {@link images}, read for how many there are. A drawing is

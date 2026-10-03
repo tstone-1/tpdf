@@ -5,7 +5,8 @@ use lopdf::content::Content;
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 use super::{
-    aggregate, covered, leave_shared, remove_form_images, RegionPlan, SharedDraws, Unhandled,
+    aggregate, covered, leave_shared, notes_for, remove_form_images, RegionPlan, SharedDraws,
+    Unhandled,
 };
 use crate::objects::{FormObject, PageObject};
 
@@ -202,15 +203,13 @@ fn a_picture_is_taken_out_of_the_form_that_draws_it_and_nothing_else_is() {
 }
 
 #[test]
-fn a_picture_named_by_a_list_that_is_not_the_forms_alone_stays() {
+fn a_picture_named_by_a_list_that_is_not_the_forms_alone_keeps_its_name() {
     // A form with no resources of its own draws through the page's list, which
-    // the page and every other such form read too.
+    // the page and every other such form read too. The draw goes; the name is
+    // not this form's to take.
     let mut legacy = fixture(&[1, 1], Held::Page);
-    let before = operators(&legacy.doc, legacy.forms[0]);
-    let why =
-        remove_form_images(&mut legacy.doc, legacy.page, &[(0, 1), (1, 1)], 0, &[0]).unwrap_err();
-    assert!(why.contains("is drawn 2 time(s)"), "{why}");
-    assert_eq!(operators(&legacy.doc, legacy.forms[0]), before);
+    remove_form_images(&mut legacy.doc, legacy.page, &[(0, 1), (1, 1)], 0, &[0]).expect("removed");
+    assert!(!operators(&legacy.doc, legacy.forms[0]).contains(&"Do Im0x0".to_string()));
     assert!(names_held(&legacy.doc, legacy.page, legacy.forms[0]).contains(&"Im0x0".to_string()));
 
     // Two forms pointing at one resources object, or at one list: the picture
@@ -242,10 +241,18 @@ fn a_picture_named_by_a_list_that_is_not_the_forms_alone_stays() {
         };
         // Something else in the document refers to the same object.
         f.doc.add_object(dictionary! { "Too" => shared });
-        let why = remove_form_images(&mut f.doc, f.page, &[(0, 1)], 0, &[0]).unwrap_err();
-        assert!(why.contains("is drawn 2 time(s)"), "{held:?}: {why}");
+        remove_form_images(&mut f.doc, f.page, &[(0, 1)], 0, &[0]).expect("removed");
+        assert!(
+            !operators(&f.doc, form).contains(&"Do Im0x0".to_string()),
+            "{held:?}"
+        );
+        assert_eq!(
+            names_held(&f.doc, f.page, form),
+            ["Im0x0"],
+            "{held:?}: the name is kept"
+        );
     }
-    // The control is the test above: the same three shapes, unshared, are taken.
+    // The control is the first test: the same shapes, unshared, lose the name.
 }
 
 #[test]
@@ -292,8 +299,11 @@ fn a_removal_that_cannot_be_right_changes_nothing_and_says_why() {
         .set_plain_content(b"/Fm0 Do\n/Fm0 Do\n".to_vec());
     assert!(refused(&mut twice, &[(0, 1), (1, 1)], 0, &[0])
         .contains("inside a form that this document draws 2"));
+}
 
-    // The picture is drawn twice by the form.
+#[test]
+fn a_picture_drawn_elsewhere_too_loses_its_draw_in_the_form() {
+    // Drawn twice by the form: the marked draw goes, the other keeps the name.
     let mut repeated = fixture(&[1], Held::Inline);
     let form = repeated.forms[0];
     repeated
@@ -303,13 +313,23 @@ fn a_removal_that_cannot_be_right_changes_nothing_and_says_why() {
         .as_stream_mut()
         .unwrap()
         .set_plain_content(b"/Im0x0 Do\n/Im0x0 Do\n".to_vec());
-    assert!(refused(&mut repeated, &[(0, 2)], 0, &[0]).contains("is drawn 2 time(s)"));
+    let took =
+        remove_form_images(&mut repeated.doc, repeated.page, &[(0, 2)], 0, &[0]).expect("removed");
+    assert_eq!(took.removed, 1);
+    assert_eq!(operators(&repeated.doc, form), ["Do Im0x0"]);
+    assert_eq!(names_held(&repeated.doc, repeated.page, form), ["Im0x0"]);
+    // The second draw takes the name with it.
+    remove_form_images(&mut repeated.doc, repeated.page, &[(0, 1)], 0, &[0]).expect("removed");
+    assert!(names_held(&repeated.doc, repeated.page, form).is_empty());
 
-    // The picture is also named from somewhere else in the document.
+    // Named from somewhere else in the document as well: the form's own list
+    // loses the name, and the picture is still referred to from there.
     let mut elsewhere = fixture(&[1], Held::Inline);
     let shared = elsewhere.pictures[0][0];
-    elsewhere.doc.add_object(dictionary! { "Also" => shared });
-    assert!(refused(&mut elsewhere, &[(0, 1)], 0, &[0]).contains("is drawn 2 time(s)"));
+    let also = elsewhere.doc.add_object(dictionary! { "Also" => shared });
+    remove_form_images(&mut elsewhere.doc, elsewhere.page, &[(0, 1)], 0, &[0]).expect("removed");
+    assert!(names_held(&elsewhere.doc, elsewhere.page, elsewhere.forms[0]).is_empty());
+    assert!(elsewhere.doc.get_dictionary(also).unwrap().has(b"Also"));
 }
 
 fn objects_for(forms: usize) -> Vec<PageObject> {
@@ -353,7 +373,7 @@ fn a_region_takes_the_pictures_it_touches_and_only_those() {
 }
 
 #[test]
-fn a_picture_stays_when_its_form_or_the_picture_is_drawn_more_than_once() {
+fn a_picture_stays_with_a_form_drawn_more_than_once_and_goes_from_one_that_is_not() {
     let objects = objects_for(2);
     let forms = [
         form_with(0, &[[10.0, 10.0, 50.0, 50.0], [20.0, 20.0, 60.0, 60.0]]),
@@ -363,15 +383,14 @@ fn a_picture_stays_when_its_form_or_the_picture_is_drawn_more_than_once() {
     let planned = || covered(&objects, &forms, region);
     assert_eq!(planned().form_images, vec![(0, 0), (0, 1), (1, 0)]);
 
-    // Nobody asked about the forms' pictures: all three go, and the removal
-    // asks again with the document in hand.
+    // Nobody asked about the forms' pictures: all three go, and nothing is said.
     let mut plan = planned();
     leave_shared(&mut plan, &SharedDraws::unknown(0, 2), &objects, &forms);
     assert_eq!(plan.form_images.len(), 3);
-    assert!(plan.is_complete());
+    assert!(plan.is_complete() && plan.shared.is_empty());
 
-    // The first form is drawn three times: both its pictures stay, reported
-    // once, as the form.
+    // The first form is drawn three times: changing it changes places nobody
+    // marked, so both its pictures stay, reported once, as the form.
     let mut plan = planned();
     let shared = SharedDraws {
         forms: vec![Some(3), None],
@@ -387,24 +406,26 @@ fn a_picture_stays_when_its_form_or_the_picture_is_drawn_more_than_once() {
             drawn: Some(3)
         }]
     );
+    assert!(plan.shared.is_empty());
 
-    // One picture of the first form is drawn twice: it stays, the other two go.
+    // One picture of the first form is drawn twice and the form once: all
+    // three draws go, and the one whose picture stays in the file is said.
     let mut plan = planned();
     let shared = SharedDraws {
         form_images: vec![vec![None, Some(2)], vec![None]],
         ..SharedDraws::unknown(0, 2)
     };
     leave_shared(&mut plan, &shared, &objects, &forms);
-    assert_eq!(plan.form_images, vec![(0, 0), (1, 0)]);
+    assert_eq!(plan.form_images, vec![(0, 0), (0, 1), (1, 0)]);
+    assert!(plan.is_complete(), "{:?}", plan.unhandled);
     assert_eq!(
-        plan.unhandled,
+        plan.shared,
         vec![Unhandled {
             at: 0,
             kind: "image".to_string(),
             drawn: Some(2)
         }]
     );
-    assert!(plan.unhandled[0].sentence().contains("drawn 2 time(s)"));
 }
 
 #[test]
@@ -428,6 +449,33 @@ fn the_document_is_asked_how_often_each_picture_of_each_form_is_drawn() {
 }
 
 #[test]
+fn a_blocks_picture_is_said_to_stay_when_the_block_draws_it_twice_or_reads_a_list_not_its_own() {
+    // The block draws its one picture twice: taking one draw leaves the other.
+    let mut twice = fixture(&[1], Held::Inline);
+    let form = twice.forms[0];
+    twice
+        .doc
+        .get_object_mut(form)
+        .unwrap()
+        .as_stream_mut()
+        .unwrap()
+        .set_plain_content(b"/Im0x0 Do\n/Im0x0 Do\n".to_vec());
+    let asked = SharedDraws::unknown(0, 1).with_form_images(&twice.doc, twice.page, &[2]);
+    assert_eq!(asked.form_images, vec![vec![Some(2), Some(2)]]);
+
+    // A block with no resources of its own reads the page's list, which is
+    // not its alone: the name stays, so the picture is said to stay.
+    let legacy = fixture(&[1], Held::Page);
+    let asked = SharedDraws::unknown(0, 1).with_form_images(&legacy.doc, legacy.page, &[1]);
+    assert_eq!(asked.form_images, vec![vec![Some(2)]]);
+
+    // The control: its own list, one draw, nothing to say.
+    let own = fixture(&[1], Held::Inline);
+    let asked = SharedDraws::unknown(0, 1).with_form_images(&own.doc, own.page, &[1]);
+    assert_eq!(asked.form_images, vec![vec![None]]);
+}
+
+#[test]
 fn the_pages_plan_carries_the_pictures_of_every_region_once() {
     let region = |form_images: Vec<(usize, usize)>| RegionPlan {
         form_images,
@@ -447,4 +495,60 @@ fn the_pages_plan_carries_the_pictures_of_every_region_once() {
         "two removals, and a picture two regions touch is one"
     );
     assert_eq!(one.summary().images, 2);
+}
+
+#[test]
+fn a_picture_taken_off_a_page_and_still_in_the_file_is_a_note_and_not_a_concern() {
+    let stays = Unhandled {
+        at: 4,
+        kind: "image".to_string(),
+        drawn: Some(12),
+    };
+    let region = |shared: Vec<Unhandled>| RegionPlan {
+        shared,
+        ..RegionPlan::default()
+    };
+    // Two regions over the one picture, and a third over nothing shared.
+    let page = aggregate(
+        2,
+        vec![[0.0; 4]; 3],
+        vec![
+            region(vec![stays.clone()]),
+            region(vec![stays.clone()]),
+            region(Vec::new()),
+        ],
+        None,
+    );
+    assert_eq!(
+        page.notes,
+        vec![format!("page 3: {}", stays.taken_here())],
+        "one picture under two regions is said once, with the reader's page number"
+    );
+    assert!(
+        page.concerns.is_empty(),
+        "it is no reason to doubt the result"
+    );
+    // The control: a page with nothing shared says nothing.
+    assert!(aggregate(0, vec![[0.0; 4]], vec![region(Vec::new())], None)
+        .notes
+        .is_empty());
+}
+
+#[test]
+fn a_sizing_note_needs_a_clean_verdict_and_a_note_about_what_stays_does_not() {
+    let sizing = || vec!["nothing 7.4 pt or larger is readable".to_string()];
+    let stays = || vec!["a picture is still in the file".to_string()];
+    assert_eq!(
+        notes_for(true, sizing(), stays()),
+        [
+            "nothing 7.4 pt or larger is readable",
+            "a picture is still in the file"
+        ]
+    );
+    assert_eq!(
+        notes_for(false, sizing(), stays()),
+        ["a picture is still in the file"]
+    );
+    assert!(notes_for(false, sizing(), Vec::new()).is_empty());
+    assert_eq!(notes_for(true, sizing(), Vec::new()), sizing());
 }
