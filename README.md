@@ -465,6 +465,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   copying keeps those restrictions: tpdf does not remove them.
   <!-- built: file.protect -->
   <!-- built: file.unprotect -->
+- **New document from pictures** makes a PDF from PNG and JPEG files, one page for each,
+  in the order the panel returns them, and opens it. A page is the picture's own size at
+  the resolution its file states, or one point a pixel when it states none. A photograph
+  is turned the way its camera recorded it, and a JPEG goes in as the bytes it is, so
+  nothing is compressed a second time. It needs no document to be open. The pictures are
+  decoded in the same sandboxed worker a document is. The command-line tool can also put
+  each picture on A4 or Letter.
+  <!-- built: file.fromPictures -->
 - **Extract pages to a second file**, naming a range the way you would say it out loud.
   It reads the document and writes elsewhere, so there is nothing to undo and the open
   file is untouched. It refuses a reversed range rather than quietly correcting it. The
@@ -571,7 +579,7 @@ both.
 `tpdf sign`, `tpdf verify`, `tpdf identities`, `tpdf info`, `tpdf text`, `tpdf search`, `tpdf fields`,
 `tpdf fill`, `tpdf redact`, `tpdf merge`, `tpdf extract`, `tpdf split`, `tpdf rotate`,
 `tpdf crop`, `tpdf edit`, `tpdf comments`, `tpdf text-runs`, `tpdf render`, `tpdf ocr`,
-`tpdf protect` and `tpdf unprotect`
+`tpdf protect`, `tpdf unprotect` and `tpdf images`
 expose document workflows to scripts; `tpdf path` puts the tool on your `PATH` on Windows,
 and `tpdf completions` prints a completion script for your shell. The commands do what **Sign document…**, **Document
 properties**, the viewer's own text, its form filling, page operations and **Redact and save as…** do in the
@@ -610,6 +618,7 @@ tpdf render report.pdf --page 2 --dpi 144 -o page.png --json
 tpdf ocr scan.pdf -o searchable.pdf --language de-DE --json
 NEW=... tpdf protect report.pdf -o locked.pdf --new-password-env NEW --json
 KEY=... tpdf unprotect locked.pdf -o open.pdf --password-env KEY --json
+tpdf images front.jpg back.jpg plan.png -o album.pdf --paper a4 --json
 tpdf merge cover.pdf report.pdf appendix.pdf -o combined.pdf --json
 tpdf extract combined.pdf --pages 1-3,7 -o selected.pdf --json
 tpdf split combined.pdf --every 10 -o part.pdf --json
@@ -1001,7 +1010,7 @@ assert image["width_px"] > 0 and image["height_px"] > 0
 ```
 
 `help()`, `info()`, `text()`, `text_runs()`, `fields()`, `comments()`, `fill()`,
-`edit()`, `render()`, `ocr()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
+`edit()`, `render()`, `ocr()`, `images()`, `protect()`, `unprotect()`, `verify()`, `merge()`, `extract()`, `split()`, `rotate()` and
 `crop()`, `redact()`, `identities()` and `sign()` return parsed reports. Page helpers accept `force=`, `password=` and
 `invalidate_signatures=`; page ranges count from 1 and select pages once in document
 order. Cropping hides content and is not redaction.
@@ -1138,6 +1147,28 @@ The JSON report carries `schema`, `command`, `input`, `output`, the `engine` tha
 pages, `pages` (each with `page` and the number of `words` written), `already_text` (pages
 left alone because they had text), `nothing_read` (pages without text on which nothing was
 recognised), `signatures_invalidated` and `signatures_unknown`.
+
+**A document from pictures.** `tpdf images front.jpg plan.png -o album.pdf` writes a
+document with one page for each PNG or JPEG file, in the order given. A page is the
+picture's own size: the resolution the file states decides how large a pixel is, and a
+file that states none is taken at one point a pixel. `--dpi 300` uses one resolution for
+every picture in place of that. `--paper a4` or `--paper letter` puts each picture on that
+page instead, turned to suit the picture, scaled down to fit and centred, and never
+enlarged.
+
+A JPEG goes into the document as the bytes it is, so it is not compressed a second time
+and loses nothing; that also means whatever its file carries goes with it, a camera's
+position included. A photograph is turned the way its EXIF orientation says. A PNG is
+decoded and compressed again without loss, and its transparency is kept. A picture may
+have up to 40 megapixels and 30,000 pixels a side, and a document up to 500 pictures. A
+CMYK JPEG is refused; save it as RGB first. Any other file is refused by name and nothing
+is written.
+
+The document is opened again before it is published and must have one page for each
+picture. An existing output needs `--force`. The JSON report carries `schema`, `command`,
+`output` and `pages`, each with its `page` number, the `source` picture and the page's
+`width_pt` and `height_pt`. The window's *New document from pictures* does the same with
+each picture at its own size, and opens the result.
 
 **Setting and removing a password.** `tpdf protect report.pdf -o locked.pdf
 --new-password-env NEW` writes a copy that cannot be opened without the password held in

@@ -491,3 +491,30 @@ pub async fn merge_documents(
     .map_err(|e| format!("the merge did not run: {e}"))?
     .map_err(|why| why.message)
 }
+
+/// Writes a document with one page for each picture in `images`, to `path`.
+///
+/// About no open document: the pictures are files the reader chose in a panel,
+/// and `path` is the name they gave in another. The pictures are decoded in a
+/// worker wherever there can be one, chosen as [`merge_documents`] chooses it.
+#[tauri::command]
+pub async fn images_to_pdf(
+    app: tauri::AppHandle,
+    service: tauri::State<'_, RenderService>,
+    images: Vec<String>,
+    path: String,
+) -> Result<save::Made, String> {
+    let writing = outside_of(&app, service.backend());
+    tauri::async_runtime::spawn_blocking(move || {
+        let images: Vec<std::path::PathBuf> = images.into_iter().map(Into::into).collect();
+        save::write_images(
+            &images,
+            Path::new(&path),
+            crate::imagepages::Options::default(),
+            &*writing,
+        )
+    })
+    .await
+    .map_err(|e| format!("the document was not made: {e}"))?
+    .map_err(|why| why.message)
+}

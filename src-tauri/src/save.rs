@@ -1153,6 +1153,94 @@ pub fn write_merged(
 /// *total*, not each file: ten 200 MB scans cost what two 1 GB ones do.
 const MAX_MERGE_BYTES: u64 = 1 << 30;
 
+/// What [`write_images`] reports: how many pages the document it made has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Made {
+    /// One for each picture.
+    pub pages: u32,
+}
+
+/// Writes a document with one page for each of `images`, in order, to `out`.
+///
+/// The files are read here and decoded by `maker`, which is a worker wherever
+/// there can be one. Staged beside `out` and renamed, as every write is.
+///
+/// # Errors
+///
+/// No picture; `out` naming one of them; a file that cannot be read; the
+/// pictures together past the ceiling a merge has; everything
+/// [`images_update`] refuses; or the write failing.
+pub fn write_images(
+    images: &[PathBuf],
+    out: &Path,
+    options: crate::imagepages::Options,
+    maker: &dyn Rewriter,
+) -> Result<Made, Refusal> {
+    if images.is_empty() {
+        return Err("choose at least one picture".into());
+    }
+    if let Some(same) = images.iter().find(|image| same_file(image, out)) {
+        return Err(format!(
+            "tpdf cannot write the document over {}, which is one of the pictures going into it",
+            name_of(same)
+        )
+        .into());
+    }
+    // Said in words about pictures before `concatenated` says it about a merge.
+    let total: u64 = images
+        .iter()
+        .filter_map(|image| std::fs::metadata(image).ok())
+        .fold(0, |sum, found| sum.saturating_add(found.len()));
+    if total > MAX_MERGE_BYTES {
+        return Err(format!(
+            "the pictures come to {} MB, and tpdf takes at most {} MB at once --- make the \
+             document in two passes and merge them",
+            total / (1 << 20),
+            MAX_MERGE_BYTES / (1 << 20)
+        )
+        .into());
+    }
+    let (whole, incoming) = concatenated(images)?;
+    let mut pages = 0;
+    let staged = stage(out, |writing| {
+        let (wrote, made) = maker.images(
+            writing,
+            Inputs {
+                whole: &whole,
+                each: &incoming,
+            },
+            options,
+        )?;
+        landed_is(writing, wrote)?;
+        pages = made;
+        Ok(())
+    })?;
+    commit(&staged, out)?;
+    Ok(Made { pages })
+}
+
+/// The bytes of a document with one page for each picture in `inputs`.
+///
+/// Pure: nothing here opens a file or names a path.
+///
+/// # Errors
+///
+/// A span past the bytes handed over, everything
+/// [`crate::imagepages::document`] refuses, or a document that does not
+/// serialise.
+pub fn images_update(
+    inputs: Inputs<'_>,
+    options: crate::imagepages::Options,
+) -> Result<(Vec<u8>, u32), Refusal> {
+    let mut pictures = Vec::with_capacity(inputs.each.len());
+    for one in inputs.each {
+        pictures.push((inputs.bytes_of(one)?, one.label.as_str()));
+    }
+    let mut doc = crate::imagepages::document(&pictures, options)?;
+    let pages = doc.get_pages().len() as u32;
+    Ok((serialise(&mut doc, "the document")?, pages))
+}
+
 /// Reads every incoming document into one shared mapping, and says where each
 /// begins.
 ///
@@ -2748,6 +2836,23 @@ pub trait Rewriter: Send {
         inputs: Inputs<'_>,
         password: Option<&str>,
     ) -> Result<(usize, u32), Refusal>;
+
+    /// Writes a document made from the pictures in `inputs` into `out`: the
+    /// length, and the pages made.
+    ///
+    /// [`Rewriter::merge`] with no document to start from. The pictures are
+    /// files a reader chose and tpdf has never seen, and each is decoded, so
+    /// this belongs where every other parse does.
+    ///
+    /// # Errors
+    ///
+    /// Everything [`images_update`] refuses, and the write failing.
+    fn images(
+        &self,
+        out: &mut std::fs::File,
+        inputs: Inputs<'_>,
+        options: crate::imagepages::Options,
+    ) -> Result<(usize, u32), Refusal>;
 }
 
 /// Where a parse of the reader's own document happens.
@@ -2821,6 +2926,21 @@ impl Rewriter for Here {
         out.write_all(&bytes)
             .and_then(|()| out.flush())
             .map_err(|e| format!("the merged document could not be written: {e}"))?;
+        Ok((bytes.len(), pages))
+    }
+
+    fn images(
+        &self,
+        out: &mut std::fs::File,
+        inputs: Inputs<'_>,
+        options: crate::imagepages::Options,
+    ) -> Result<(usize, u32), Refusal> {
+        use std::io::Write as _;
+
+        let (bytes, pages) = images_update(inputs, options)?;
+        out.write_all(&bytes)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("the document could not be written: {e}"))?;
         Ok((bytes.len(), pages))
     }
 }

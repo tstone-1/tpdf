@@ -393,6 +393,21 @@ pub enum Request {
         /// rather than reading whatever is there.
         incoming: Vec<crate::save::Incoming>,
     },
+    /// Make a document from the pictures on [`crate::worker::IN_FD`], one page
+    /// each.
+    ///
+    /// **About no document at all.** The pictures arrive as [`Request::Merge`]'s
+    /// incoming files do, concatenated in one read-only mapping with `incoming`
+    /// naming each. A worker is started over a document, so this one is started
+    /// over the warm-up document tpdf ships, which the request never reads.
+    /// The answer is [`Reply::Merged`]: the bytes written and the pages made.
+    Images {
+        /// Where each picture begins in the mapping, how long it is, and what
+        /// to call it in a message. Checked against the mapping in the worker.
+        incoming: Vec<crate::save::Incoming>,
+        /// The page and the resolution.
+        options: crate::imagepages::Options,
+    },
     /// How many pages `lopdf` finds in the mapped document.
     ///
     /// **The other half of [`Request::Append`]'s move.** That one builds a
@@ -919,6 +934,11 @@ mod tests {
                 "asked by `save::InWorker` of a worker spawned with the incoming files \
                  as a second read-only mapping and the staging file's descriptor, neither \
                  of which a pooled worker has",
+            ),
+            (
+                "Images",
+                "asked by `save::InWorker` of a worker spawned as a merge's is, with the \
+                 pictures as the second read-only mapping and the staging file's descriptor",
             ),
             (
                 "AppendValidation",

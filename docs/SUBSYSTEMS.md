@@ -307,6 +307,29 @@ where PDFium generates them: the note icon fills 637 of the 756 pixels in its ow
 the highlight 6,690 of 9,436, and a `/Popup` correctly draws nothing. What no reader could
 reach before `annots.rs` was the *text*.
 
+## A document made from pictures (`tpdf images`, *New document from pictures*)
+
+`imagepages.rs` builds the document and is pure: `picture` reads one PNG or JPEG,
+`placement` decides the page and the matrix, `document` assembles the pages. It runs in a
+worker through `Request::Images`, which is `Request::Merge` with no base: the pictures
+arrive concatenated on the inputs mapping, and the worker is started over the warm-up
+document because a worker is started over one. `save::write_images` reads the files, stages
+and renames; `Rewriter::images` is the seam, with `Here` and `InWorker` behind it.
+`cli/images.rs` is the tool's command and `commands/save.rs`'s `images_to_pdf` the window's;
+on the frontend the name and the sentence are `src/lib/pictures.ts`.
+
+A JPEG is embedded unchanged under `DCTDecode` and decoded once so that one whose picture data
+runs out is refused; the decoder forgives a missing end marker and about twenty missing bytes. Its
+EXIF orientation becomes the content matrix, all eight values, and a page takes the shown
+shape. The matrices were checked against Quick Look for 5 and 6, and the unit test holds all
+eight against the EXIF table. A PNG is expanded to eight-bit gray or RGB and deflated, with an
+`/SMask` when any pixel is not opaque. A page is the picture at its stated resolution, 72 DPI
+when it states none, held between 3 and 14,400 points a side.
+
+Not done: CMYK JPEG, which needs `/Decode [1 0 ...]` for Adobe's inverted samples; TIFF, HEIC
+and WebP; a paper size from the window; and stripping EXIF, which passing a JPEG through
+unchanged rules out.
+
 ## Setting and removing a password (`tpdf protect`, `tpdf unprotect`, the two *Save a copy* commands)
 
 `protect.rs` is the whole of it on the writing side. `Plan::protection` says what the copy's

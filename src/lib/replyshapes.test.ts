@@ -70,6 +70,8 @@ import type { DocumentInfo } from "./ipc";
 import type { Links } from "./links";
 import type { RegionPlan } from "./pages";
 import type { Properties } from "./properties";
+import type { Made } from "./pictures";
+import Made_ from "../../src-tauri/testdata/replies/Made.json";
 import type { Recognised } from "./recognise";
 import Recognised_ from "../../src-tauri/testdata/replies/Recognised.json";
 import type { Outline } from "./outline";
@@ -209,6 +211,9 @@ const SCHEMA = {
     limits: ["object"],
     scan_ms: ["number"],
   } satisfies Shape<Links>,
+  Made: {
+    pages: ["number"],
+  } satisfies Shape<Made>,
   Merged: {
     changed: ["boolean"],
     pages: ["number"],
@@ -327,6 +332,7 @@ const SAMPLES: Record<keyof typeof SCHEMA, Record<string, unknown>> = {
   Applied: Applied_ satisfies Widen<Applied>,
   Comments: Comments_ satisfies Widen<Comments>,
   Copied: Copied_ satisfies Widen<Copied>,
+  Made: Made_ satisfies Widen<Made>,
   Recognised: Recognised_ satisfies Widen<Recognised>,
   CropGeometry: CropGeometry_ satisfies Widen<CropGeometry>,
   DocumentInfo: DocumentInfo_ satisfies Widen<DocumentInfo>,

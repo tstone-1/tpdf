@@ -197,6 +197,10 @@ MUTATIONS = [
     Mutation("new password: never warn about Preview", "src/lib/newpassworddialog.ts", 'beyondAscii(this.first.value) ? NOT_ASCII : "";', '"";', "warns about Preview while the password has a character it does not accept"),
     Mutation("new password: stack a second question", "src/lib/newpassworddialog.ts", "  ask(name: string): Promise<string | null> {\n    this.settle(null);\n", "  ask(name: string): Promise<string | null> {\n", "settles the first question when a second is asked"),
     Mutation("appcommands: unprotect asks for a new password", "src/lib/appcommands.ts", "run: () => actions.unprotectCopy(),", "run: () => actions.protectCopy(),", "sets and removes a password through two commands, on any open document"),
+    Mutation("pictures: strip a picture's ending anywhere in the name", "src/lib/pictures.ts", '.replace(/\\.(png|jpe?g)$/i, "")', '.replace(/\\.(png|jpe?g)/i, "")', "keeps a name whose ending is not a picture's"),
+    Mutation("pictures: keep the picture's ending in the name", "src/lib/pictures.ts", '.replace(/\\.(png|jpe?g)$/i, "")', '.replace(/\\.(png)$/i, "")', "takes the first picture's name and makes it a PDF"),
+    Mutation("pictures: say 1 pages", "src/lib/pictures.ts", 'made.pages === 1 ? "1 page"', 'made.pages === 0 ? "1 page"', "names the document and counts its pages"),
+    Mutation("appcommands: pictures need an open document", "src/lib/appcommands.ts", "      enabled: available,\n      run: () => actions.fromPictures(),", "      enabled: withDocument,\n      run: () => actions.fromPictures(),", "leaves only the commands that genuinely need no document"),
     Mutation("recognise: count pages given a layer only", "src/lib/recognise.ts", "read.pages.length + read.alreadyText.length + read.nothingRead.length + read.tooLarge.length;", "read.pages.length;", "names the pages that got no layer, each kind in its own sentence"),
     Mutation("recognise: report the last page's words", "src/lib/recognise.ts", "read.pages.reduce((sum, page) => sum + page.words, 0);", "read.pages.reduce((_sum, page) => page.words, 0);", "adds the words of every page given a layer"),
     Mutation("recognise: list every page", "src/lib/recognise.ts", "const SHOWN = 8;", "const SHOWN = 8000;", "does not list three hundred pages"),
@@ -5882,6 +5886,8 @@ TEST_FILES = [
     # Added 2026-10-03 with the two password commands, with their mutations.
     "src/lib/protect.test.ts",
     "src/lib/newpassworddialog.test.ts",
+    # Added 2026-10-03 with New document from pictures, with its mutations.
+    "src/lib/pictures.test.ts",
 ]
 
 #: The suites this harness deliberately does NOT run, and why for each.

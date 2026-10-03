@@ -61,6 +61,32 @@ pub struct Ocr {
     pub signatures_unknown: bool,
 }
 
+/// A document made from pictures.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImagesMade {
+    /// Schema version.
+    pub schema: u32,
+    /// `images`.
+    pub command: String,
+    /// The published document.
+    pub output: String,
+    /// One entry for each picture, in order.
+    pub pages: Vec<ImagePage>,
+}
+
+/// One page made from one picture.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImagePage {
+    /// The page, counted from 1.
+    pub page: u32,
+    /// The picture it shows, as it was named.
+    pub source: String,
+    /// The page's width in points.
+    pub width_pt: f32,
+    /// The page's height in points.
+    pub height_pt: f32,
+}
+
 /// A copy with a password set or removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Protected {

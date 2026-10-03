@@ -53,6 +53,8 @@ __all__ = [
     "Form",
     "HelpCommand",
     "HelpReport",
+    "ImagePage",
+    "ImagesReport",
     "IdentitiesReport",
     "InfoReport",
     "IntegrityReport",
@@ -340,6 +342,24 @@ class OcrReport(TypedDict):
     nothing_read: list[int]
     signatures_invalidated: int
     signatures_unknown: bool
+
+
+class ImagePage(TypedDict):
+    """One page made from one picture."""
+
+    page: int
+    source: str
+    width_pt: float
+    height_pt: float
+
+
+class ImagesReport(TypedDict):
+    """`images --json`: a document with one page for each picture."""
+
+    schema: int
+    command: str
+    output: str
+    pages: list[ImagePage]
 
 
 class ProtectReport(TypedDict):
@@ -1187,6 +1207,7 @@ REPORTS: dict[str, type] = {
     "fill": FillReport,
     "fill-refused": FillReport,
     "identities": IdentitiesReport,
+    "images": ImagesReport,
     "info": InfoReport,
     "ocr": OcrReport,
     "pages": PagesReport,

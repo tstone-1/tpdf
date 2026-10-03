@@ -338,6 +338,10 @@ export interface Commands {
     args: { doc: number; source: string; path: string; others: string[] };
     reply: Merged;
   };
+  images_to_pdf: {
+    args: { images: string[]; path: string };
+    reply: import("./pictures").Made;
+  };
   /** The reader's certificates with a key, sorted into offered and not. */
   sign_identities: { args: NoArgs; reply: Choices };
   /**

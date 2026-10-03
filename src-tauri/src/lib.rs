@@ -32,6 +32,7 @@ pub mod failure;
 pub mod fields;
 pub mod fingerprint;
 pub mod forms;
+pub mod imagepages;
 pub mod images;
 pub mod imports;
 pub mod integrity;
@@ -923,6 +924,7 @@ pub fn run() {
             extract_pages,
             split_document,
             merge_documents,
+            images_to_pdf,
             sign_identities,
             sign_preview,
             sign_document,

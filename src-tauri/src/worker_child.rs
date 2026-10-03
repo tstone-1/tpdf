@@ -110,7 +110,7 @@ pub fn main(args: &[String]) -> ! {
 /// further ~7.4 ms while PDFium goes looking for a system face --- which reads
 /// like a per-document cost and is not one. It is the machine's font list, so
 /// one process can pay it once, before it knows which file it will be given.
-const WARM_DOCUMENT: &[u8] = include_bytes!("warm.pdf");
+pub(crate) const WARM_DOCUMENT: &[u8] = include_bytes!("warm.pdf");
 
 /// Sets the process up and serves requests until stdin closes.
 fn serve(args: &[String]) -> Result<(), String> {
@@ -699,6 +699,7 @@ fn handle(
         } => rewrite(document, out, inputs, plan, *job, incoming),
         Request::PrintRange { job } => print_range(document, out, job),
         Request::Merge { plan, incoming } => merge(document, out, inputs, plan, incoming),
+        Request::Images { incoming, options } => images(out, inputs, incoming, *options),
         Request::Reread => match render::run_reread(document) {
             Ok(pages) => Response::reply(Reply::Reread(pages)),
             Err(e) => Response::err(e),
@@ -833,6 +834,43 @@ fn merge(
             pages,
         }),
         Err(e) => Response::err(format!("the merged document could not be written: {e}")),
+    }
+}
+
+/// Makes a document from the handed-over pictures, down the output channel.
+///
+/// [`merge`] without a base: the mapped document is not read. The two
+/// refusals are that function's, for its reason.
+fn images(
+    out: Option<&mut std::fs::File>,
+    inputs: Option<&Shm>,
+    incoming: &[crate::save::Incoming],
+    options: crate::imagepages::Options,
+) -> Response {
+    let Some(out) = out else {
+        return Response::err(
+            "this worker was not started with anywhere to write, so it cannot make a document",
+        );
+    };
+    let Some(inputs) = inputs else {
+        return Response::err(
+            "this worker was not started with the pictures, so it cannot make a document of them",
+        );
+    };
+    let handed = crate::save::Inputs {
+        whole: inputs,
+        each: incoming,
+    };
+    let (bytes, pages) = match crate::save::images_update(handed, options) {
+        Ok(answer) => answer,
+        Err(why) => return Response::refused(&why),
+    };
+    match out.write_all(&bytes).and_then(|()| out.flush()) {
+        Ok(()) => Response::reply(Reply::Merged {
+            bytes: bytes.len(),
+            pages,
+        }),
+        Err(e) => Response::err(format!("the document could not be written: {e}")),
     }
 }
 

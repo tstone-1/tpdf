@@ -89,6 +89,8 @@ use x509_cert::time::{Time, Validity};
 mod edit;
 #[path = "cli/forms.rs"]
 mod forms;
+#[path = "cli/images.rs"]
+mod images;
 #[path = "cli/ocr.rs"]
 mod ocr;
 #[path = "cli/os_key.rs"]
@@ -130,7 +132,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 26] = [
+    let checks: [Check; 27] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -172,6 +174,10 @@ fn main() {
         (
             "ocr makes a scanned page searchable",
             ocr::makes_a_scan_searchable,
+        ),
+        (
+            "images makes a document from pictures",
+            images::makes_a_document_from_pictures,
         ),
         (
             "protect and unprotect set and remove a password",

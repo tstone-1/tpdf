@@ -56,6 +56,7 @@ mod edit;
 pub mod fields;
 pub mod fill;
 pub mod identities;
+mod images;
 pub mod info;
 mod ocr;
 mod pages;
@@ -480,6 +481,7 @@ pub const COMMANDS: &[Registered] = &[
     ocr::COMMAND,
     protect::PROTECT,
     protect::UNPROTECT,
+    images::COMMAND,
     path::COMMAND,
     completions::COMMAND,
 ];

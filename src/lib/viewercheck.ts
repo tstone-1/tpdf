@@ -3257,6 +3257,7 @@ async function appCommandChecks(
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
+    fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
     showProperties: () => fired.push("showProperties"),
   };
@@ -4241,6 +4242,11 @@ async function appCommandChecks(
       // no value for the palette to carry and nothing for a probe to put in it.
       id: "file.mergeDocuments",
       ...shell("mergeDocuments"),
+      read: () => fired.join(","),
+    },
+    {
+      id: "file.fromPictures",
+      ...shell("fromPictures"),
       read: () => fired.join(","),
     },
     {

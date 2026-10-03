@@ -1755,6 +1755,26 @@ documents' encryption; and a print job, because the bytes go to `NSPrintOperatio
 different decision that has not been measured. A signature over the original bytes is broken
 either way, which is already true of every rewrite.
 
+#### A document made from pictures — 2026-10-03
+
+`tpdf images` and *New document from pictures*: one page for each PNG or JPEG.
+`docs/SUBSYSTEMS.md` has the structure and `docs/THREAT-MODEL.md` §T6.31 the boundary.
+
+Decided here. **A JPEG is passed through unchanged**, because decoding and re-encoding a
+photograph costs quality and passing it through costs nothing; the price is that its EXIF
+data goes into the document. **A page is the picture's own size by default**, with paper
+sizes as an option of the tool: a scan that states 300 DPI comes out as the paper it was
+scanned from, and a photograph that states nothing comes out at one point a pixel, which
+every viewer fits to its window. **EXIF orientation is honoured**, since a phone stores a
+portrait photograph lying on its side.
+
+Measured: the page rendered at 72 DPI equals the source PNG pixel for pixel through the
+shipped tool; orientations 5 and 6 match Quick Look's rendering of the same files; `qpdf
+--check` is clean.
+
+Not done: CMYK JPEG, other formats, a paper size in the window, removing EXIF data, and
+adding pictures as pages to a document that is already open.
+
 #### Setting and removing a password — 2026-10-03
 
 The stack table said on 2026-08-28 that `Document::encrypt` had made QPDF unnecessary for

@@ -193,6 +193,7 @@ function harness(
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
+    fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
     showProperties: () => fired.push("showProperties"),
   };
@@ -504,6 +505,8 @@ describe("the commands a document is needed for", () => {
     const offered = registry.search("").map((ranked) => ranked.command.id);
     expect(offered).toEqual([
       "file.open",
+      // It begins with pictures, not with a document.
+      "file.fromPictures",
       // A preference, not something done to a document, and the default
       // harness is in `ask` --- so the other two are what is on offer.
       "file.onDiskChange.reload",
@@ -1485,6 +1488,7 @@ describe("the window shortcuts for editing", () => {
     splitDocument: (groups: number[][]) =>
       fired.push(`splitDocument:${groups.map((g) => g.join("+")).join("|")}`),
     mergeDocuments: () => fired.push("mergeDocuments"),
+    fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
     showProperties: () => fired.push("showProperties"),
     };

@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
 
     def test_external_workflow_and_discovery(self):
         commands = {c['name'] for c in self.pdf.help()['commands']}
-        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect'} <= commands)
+        self.assertTrue({'edit', 'comments', 'text-runs', 'redact', 'fill', 'sign', 'search', 'ocr', 'protect', 'unprotect', 'images'} <= commands)
         self.assertEqual([c['name'] for c in self.pdf.help('search')['commands']], ['search'])
         output = self.root / 'changed.pdf'
         self.pdf.edit(self.source, output, [
@@ -699,6 +699,20 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(args[0][1], 'unprotect')
             self.assertNotIn('--new-password-env', args[0])
             self.assertNotIn('TPDF_API_NEW_PASSWORD', kwargs['env'])
+
+    def test_images_makes_one_page_for_each_picture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            picture = os.path.join(directory, 'page.png')
+            album = os.path.join(directory, 'album.pdf')
+            self.pdf.render(self.source, picture, page=1, dpi=72)
+            report = self.pdf.images([picture, picture], album, paper='a4')
+            self.assertEqual([page['page'] for page in report['pages']], [1, 2])
+            self.assertEqual(report['pages'][0]['source'], picture)
+            self.assertEqual(self.pdf.info(album)['files'][0]['document']['pages'], 2)
+            with self.assertRaises(TypeError):
+                self.pdf.images(picture, album)
+            with self.assertRaises(CommandError):
+                self.pdf.images([self.source], album, force=True)
 
     def test_protect_and_unprotect_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:

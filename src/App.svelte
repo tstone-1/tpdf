@@ -92,6 +92,7 @@
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
   import { NewPasswordDialog } from "./lib/newpassworddialog";
+  import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import {
     WebLinkDialog,
@@ -474,6 +475,8 @@
   // which cannot drive a native panel (`signingcheck.ts`). `null` in a normal
   // build, where the panel call below compiles to the panel alone.
   const signSaves = __TPDF_CHECKS__ ? new SaveAnswers() : null;
+  /** The pictures the next open panel answers with, in a checks build. */
+  let queuedPictures: string[] | null = null;
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
@@ -772,6 +775,7 @@
     extractPages: (slots) => void extractPages(slots),
     splitDocument: (groups) => void splitDocument(groups),
     mergeDocuments: () => void mergeDocuments(),
+    fromPictures: () => void fromPictures(),
     signDocument: () => void signDocument(),
     showProperties: () => void showProperties(),
   };
@@ -2238,6 +2242,63 @@
   }
 
   /**
+   * Makes a document from pictures the reader chooses, one page each, and
+   * opens it.
+   *
+   * Needs no open document. The pictures are chosen in the platform's panel
+   * and go in in the order it returns them; the name is asked for next; the
+   * document is opened after the task has ended, as a recognised copy is.
+   */
+  async function fromPictures(): Promise<void> {
+    if (opening) return;
+    const done: { path?: string; said?: string } = {};
+    await documentTasks.run(async () => {
+      if (copyTaskBusy) return;
+      copyTaskBusy = true;
+      refreshMenu();
+      try {
+        const queued = __TPDF_CHECKS__ ? queuedPictures : null;
+        queuedPictures = null;
+        const picked = queued ?? await openDialog({
+          multiple: true,
+          directory: false,
+          title: "Choose pictures, one for each page",
+          filters: [{ name: "Pictures", extensions: PICTURE_EXTENSIONS }],
+        });
+        const images = typeof picked === "string" ? [picked] : (picked ?? []);
+        const first = images[0];
+        if (first === undefined) return;
+        const suggested = pictureName(first);
+        const panel = () =>
+          saveDialog({
+            title: "Save the new document",
+            defaultPath: suggested,
+            filters: [{ name: "PDF", extensions: ["pdf"] }],
+          });
+        const chosen = __TPDF_CHECKS__ && signSaves
+          ? await signSaves.ask(suggested, panel)
+          : await panel();
+        if (!chosen) return;
+        blockingTask = "Making the document...";
+        await tick();
+        done.said = afterPictures(await call("images_to_pdf", { images, path: chosen }), chosen);
+        done.path = chosen;
+      } catch (e) {
+        if (e instanceof SaveCancelled) return;
+        say(String(e));
+      } finally {
+        blockingTask = null;
+        copyTaskBusy = false;
+        refreshMenu();
+      }
+    });
+    if (!done.path || !done.said) return;
+    say(done.said);
+    await openPath(done.path);
+    if (openPathName === done.path) say(done.said);
+  }
+
+  /**
    * Signs the document with a certificate the reader already has, into a new
    * file. The sequence, its refusals and every sentence are `signing.ts`'s; this
    * supplies the chooser, the save panel, the command and the message area.
@@ -3281,6 +3342,7 @@
           run: (id) => { commands.run(id); },
           importPages: (path) => importPagesFrom(path),
           answerSave: (path) => signSaves?.queue(path),
+          answerPictures: (paths) => { queuedPictures = paths; },
           saveSuggestions: () => signSaves?.asked ?? [],
           pendingImport: () => pendingImports.current(edits?.doc ?? null),
           idle: async () => { await pendingEdit; await formLayer?.settle(); await textEditor?.settle(); await documentTasks.idle(); await tick(); },

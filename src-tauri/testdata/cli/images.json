@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "command": "images",
+  "output": "album.pdf",
+  "pages": [
+    {
+      "page": 1,
+      "source": "front.jpg",
+      "width_pt": 595.0,
+      "height_pt": 842.0
+    },
+    {
+      "page": 2,
+      "source": "plan.png",
+      "width_pt": 842.0,
+      "height_pt": 595.0
+    }
+  ]
+}

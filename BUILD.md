@@ -464,6 +464,12 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase re
 # macOS: 15/15 and 6 disk checks.
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase protect
 
+# New document from pictures in the window (`src/lib/picturescheck.ts`), with
+# no document open: two pictures become two pages and the document is opened;
+# a file that is not a picture is refused by name. The script then reads the
+# document with the tool.
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase pictures
+
 # Signing with a certificate, through the window a reader signs in
 # (`src/lib/signingcheck.ts`). NEVER in scripts/gates.py or in CI, and never
 # started by an agent: it signs with a real key from the login keychain, so

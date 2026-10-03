@@ -5384,6 +5384,22 @@ impl Rewriter for FakeWriter {
         Ok(bytes.len() + self.overstate_by)
     }
 
+    fn images(
+        &self,
+        out: &mut std::fs::File,
+        inputs: Inputs<'_>,
+        _options: crate::imagepages::Options,
+    ) -> Result<(usize, u32), Refusal> {
+        use std::io::Write as _;
+
+        self.merges
+            .borrow_mut()
+            .push((inputs.whole.as_slice().to_vec(), inputs.each.to_vec()));
+        let bytes = self.answer.clone()?;
+        out.write_all(&bytes).map_err(|e| e.to_string())?;
+        Ok((bytes.len() + self.overstate_by, inputs.each.len() as u32))
+    }
+
     fn merge(
         &self,
         _source: &mut std::fs::File,
@@ -6247,6 +6263,113 @@ fn a_merge_of_nothing_is_refused_in_the_worker_too() {
         "and the refusal is about the request, not about the reader: {}",
         why.message
     );
+}
+
+const PICTURE: &[u8] = include_bytes!("../textedit/images/synthetic-rgb.jpg");
+
+#[test]
+fn pictures_become_a_document_with_a_page_each_in_the_order_given() {
+    let scratch = Scratch::new("images");
+    let (first, second) = (scratch.join("b.jpg"), scratch.join("a.jpg"));
+    std::fs::write(&first, PICTURE).expect("plant it");
+    std::fs::write(&second, PICTURE).expect("plant it");
+    let out = scratch.join("out.pdf");
+
+    let writer = FakeWriter::writing(Ok(b"%PDF-1.7 made".to_vec()));
+    write_images(
+        &[first.clone(), second.clone()],
+        &out,
+        crate::imagepages::Options::default(),
+        &writer,
+    )
+    .expect("written");
+    // What crossed to the writer: both files' bytes, named in the order given.
+    let merges = writer.merges.borrow();
+    let (whole, each) = &merges[0];
+    assert_eq!(whole.len(), PICTURE.len() * 2);
+    let labels: Vec<&str> = each.iter().map(|one| one.label.as_str()).collect();
+    assert_eq!(labels, ["b.jpg", "a.jpg"]);
+    assert_eq!(std::fs::read(&out).expect("published"), b"%PDF-1.7 made");
+
+    // And through the real builder, the file is a document of two pages.
+    let real = scratch.join("real.pdf");
+    let made = write_images(
+        &[first, second],
+        &real,
+        crate::imagepages::Options::default(),
+        &Here,
+    )
+    .expect("written");
+    assert_eq!(made.pages, 2);
+    assert_eq!(page_count(&real), 2);
+}
+
+#[test]
+fn a_document_from_pictures_is_not_written_over_one_of_them_or_from_none() {
+    let scratch = Scratch::new("images-refused");
+    let picture = scratch.join("a.jpg");
+    std::fs::write(&picture, PICTURE).expect("plant it");
+    let options = crate::imagepages::Options::default();
+
+    let why = write_images(std::slice::from_ref(&picture), &picture, options, &Here)
+        .expect_err("the output is a picture");
+    assert!(
+        why.message.contains("a.jpg, which is one of the pictures"),
+        "{}",
+        why.message
+    );
+    assert_eq!(std::fs::read(&picture).expect("still there"), PICTURE);
+
+    let out = scratch.join("out.pdf");
+    let why = write_images(&[], &out, options, &Here).expect_err("nothing to make it from");
+    assert!(
+        why.message.contains("at least one picture"),
+        "{}",
+        why.message
+    );
+
+    // A file that is not a picture stops the whole document, and nothing is
+    // left where it was going.
+    let notes = scratch.join("notes.txt");
+    std::fs::write(&notes, b"not a picture").expect("plant it");
+    let why = write_images(&[picture, notes], &out, options, &Here).expect_err("not a picture");
+    assert!(
+        why.message.starts_with("notes.txt cannot be used"),
+        "{}",
+        why.message
+    );
+    assert!(!out.exists());
+    let left: Vec<String> = std::fs::read_dir(&scratch.0)
+        .expect("the scratch directory")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name != "a.jpg" && name != "notes.txt")
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+}
+
+#[test]
+fn a_picture_writer_that_overstates_what_it_wrote_is_refused() {
+    let scratch = Scratch::new("images-overstated");
+    let picture = scratch.join("a.jpg");
+    std::fs::write(&picture, PICTURE).expect("plant it");
+    let out = scratch.join("out.pdf");
+    let mut writer = FakeWriter::writing(Ok(b"%PDF-1.7 short".to_vec()));
+    writer.overstate_by = 4_096;
+    let why = write_images(
+        &[picture],
+        &out,
+        crate::imagepages::Options::default(),
+        &writer,
+    )
+    .expect_err("must refuse");
+    assert!(why.message.contains("was not completed"), "{}", why.message);
+    assert!(!out.exists());
 }
 
 #[test]

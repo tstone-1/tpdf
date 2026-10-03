@@ -116,6 +116,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     title: "File",
     items: [
       "file.open",
+      "file.fromPictures",
       "file.reload",
       "file.onDiskChange.ask",
       "file.onDiskChange.reload",

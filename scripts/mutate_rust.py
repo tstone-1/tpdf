@@ -8632,6 +8632,174 @@ MUTATIONS += [
         'a_password_is_set_and_none_removes_it',
     ),
     Mutation(
+        # The page keeps the stored shape, so a portrait photograph gets a landscape page.
+        'images: show a turned photograph with its stored sides',
+        'src/imagepages.rs',
+        '    let turned = orientation >= 5;',
+        '    let turned = false;',
+        'every_orientation_puts_the_stored_corners_where_exif_says',
+    ),
+    Mutation(
+        # Orientation 6 drawn as 8: every phone photograph upside down from the other.
+        'images: turn a photograph the wrong way',
+        'src/imagepages.rs',
+        '        6 => [0.0, -h, w, 0.0, x, y + h],',
+        '        6 => [0.0, h, -w, 0.0, x + w, y],',
+        'every_orientation_puts_the_stored_corners_where_exif_says',
+    ),
+    Mutation(
+        # A mirrored orientation drawn as stored.
+        'images: do not mirror',
+        'src/imagepages.rs',
+        '        2 => [-w, 0.0, 0.0, h, x + w, y],',
+        '        2 => [w, 0.0, 0.0, h, x, y],',
+        'every_orientation_puts_the_stored_corners_where_exif_says',
+    ),
+    Mutation(
+        # The documented default is one point a pixel.
+        'images: take a silent picture at 96 DPI',
+        'src/imagepages.rs',
+        'pub const DEFAULT_DPI: f64 = 72.0;',
+        'pub const DEFAULT_DPI: f64 = 96.0;',
+        'a_page_is_the_pictures_size_at_the_resolution_its_file_states',
+    ),
+    Mutation(
+        # A 300 DPI scan of A4 becomes a page a metre tall.
+        'images: ignore the resolution a file states',
+        'src/imagepages.rs',
+        '        None => stated.unwrap_or((DEFAULT_DPI, DEFAULT_DPI)),',
+        '        None => (DEFAULT_DPI, DEFAULT_DPI),',
+        'a_page_is_the_pictures_size_at_the_resolution_its_file_states',
+    ),
+    Mutation(
+        # Down to fit, never up.
+        'images: enlarge a small picture to fill the paper',
+        'src/imagepages.rs',
+        '    let scale = (page.0 / w).min(page.1 / h).min(1.0);',
+        '    let scale = (page.0 / w).min(page.1 / h);',
+        'paper_is_turned_to_the_picture_and_the_picture_is_never_enlarged',
+    ),
+    Mutation(
+        # A landscape picture shrunk onto a portrait page.
+        'images: keep the paper upright for a landscape picture',
+        'src/imagepages.rs',
+        '        Some((short, long)) if w > h => (long, short),',
+        '        Some((short, long)) if false => (long, short),',
+        'paper_is_turned_to_the_picture_and_the_picture_is_never_enlarged',
+    ),
+    Mutation(
+        # 14,400 points is the format's limit; readers clip or refuse beyond it.
+        'images: make a page longer than the format allows',
+        'src/imagepages.rs',
+        '            let fit = (MAX_PAGE_PT / w.max(h)).min(1.0);',
+        '            let fit = 1.0_f64;',
+        'a_page_stays_within_what_a_page_may_be',
+    ),
+    Mutation(
+        # --dpi 0 divides by zero into an infinite page.
+        'images: accept any resolution',
+        'src/imagepages.rs',
+        '            Some(dpi) if !PLAUSIBLE_DPI.contains(&f64::from(dpi)) => Err(format!(',
+        '            Some(dpi) if false => Err(format!(',
+        'a_resolution_nobody_prints_at_is_refused',
+    ),
+    Mutation(
+        # Half of all cameras write Motorola order.
+        'images: read big-endian EXIF as little-endian',
+        'src/imagepages.rs',
+        "        [b'M', b'M', 0, 42] => false,",
+        "        [b'M', b'M', 0, 42] => true,",
+        'a_jpegs_orientation_is_read_in_either_byte_order',
+    ),
+    Mutation(
+        # A value outside the table would fall through to the matrix of 1 with the sides of 5 to 8.
+        'images: take any number as an orientation',
+        'src/imagepages.rs',
+        '            return u8::try_from(value).ok().filter(|v| (1..=8).contains(v));',
+        '            return u8::try_from(value).ok();',
+        'a_jpegs_orientation_is_read_in_either_byte_order',
+    ),
+    Mutation(
+        # A page 2.54 times too large.
+        'images: read dots per centimetre as dots per inch',
+        'src/imagepages.rs',
+        '                    2 => plausible(x * 2.54, y * 2.54),',
+        '                    2 => plausible(x, y),',
+        'a_jpegs_stated_resolution_is_used_when_it_is_plausible',
+    ),
+    Mutation(
+        # A file cut short becomes a page that shows half a picture.
+        'images: embed a JPEG without proving it decodes',
+        'src/imagepages.rs',
+        '    decoder.decode_into(&mut decoded).map_err(undecodable)?;\n',
+        '',
+        'a_jpeg_tpdf_cannot_place_is_refused_in_words_about_it',
+    ),
+    Mutation(
+        # An alpha channel that hides nothing costs a second image per page.
+        'images: give every transparent PNG a mask',
+        'src/imagepages.rs',
+        '        (samples, shows_through.then_some(opacity))',
+        '        (samples, Some(opacity))',
+        'a_pngs_transparency_becomes_a_mask_only_when_something_shows_through',
+    ),
+    Mutation(
+        # The refusal must come from the header, before any room is given.
+        'images: let the PNG decoder find out how large it is',
+        'src/imagepages.rs',
+        '    bounded(width, height)?;\n    let pixels = width as usize * height as usize;',
+        '    let pixels = width as usize * height as usize;',
+        'a_picture_too_large_is_refused_from_its_header',
+    ),
+    Mutation(
+        # 30,000 by 30,000 is 900 megapixels.
+        'images: bound the sides and not the area',
+        'src/imagepages.rs',
+        '    if width > MAX_SIDE || height > MAX_SIDE || u64::from(width) * u64::from(height) > MAX_PIXELS {',
+        '    if width > MAX_SIDE || height > MAX_SIDE {',
+        'a_picture_too_large_is_refused_from_its_header',
+    ),
+    Mutation(
+        # The count is the bound on how long one request runs.
+        'images: take any number of pictures',
+        'src/imagepages.rs',
+        '    if images.len() > MAX_IMAGES {',
+        '    if false {',
+        'a_picture_that_cannot_be_used_is_named_and_stops_the_document',
+    ),
+    Mutation(
+        # The picture is replaced by a document that contains it.
+        'images: write the document over one of its pictures',
+        'src/save.rs',
+        '    if let Some(same) = images.iter().find(|image| same_file(image, out)) {',
+        '    if let Some(same) = images.iter().find(|_| false) {',
+        'a_document_from_pictures_is_not_written_over_one_of_them_or_from_none',
+    ),
+    Mutation(
+        # landed_is on the fourth caller.
+        'images: trust the length the writer reports',
+        'src/save.rs',
+        '        landed_is(writing, wrote)?;\n        pages = made;',
+        '        pages = made;',
+        'a_picture_writer_that_overstates_what_it_wrote_is_refused',
+    ),
+    Mutation(
+        # A picture named --force.png cannot be given.
+        'cli images: read every word as an option',
+        'src/cli/images.rs',
+        '            "--" => positional = true,',
+        '            "--" => {}',
+        'a_name_that_looks_like_an_option_is_a_picture_after_two_dashes',
+    ),
+    Mutation(
+        # Refused later by the filesystem check, with exit 3 where a malformed line is 2.
+        'cli images: let the output name a picture',
+        'src/cli/images.rs',
+        '        .any(|input| lexically_same(input, &command.output))',
+        '        .any(|_| false)',
+        'the_parser_takes_pictures_in_order_and_an_output_that_is_none_of_them',
+    ),
+    Mutation(
         # Keep the columns outside the region instead of blanking them, which is
         # what the gate did until 2026-08-27: `strip` renders full-width rows, so
         # every word beside the region on those rows was read back as though the

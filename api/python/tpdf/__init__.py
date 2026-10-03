@@ -294,6 +294,26 @@ class Tpdf:
             args.append('--invalidate-signatures')
         return self.run('ocr', *args, '--', source, password=password).typed
 
+    def images(
+        self, pictures: Sequence[str | os.PathLike[str]], output: str | os.PathLike[str], *,
+        paper: str | None = None, dpi: int | None = None, force: bool = False,
+    ) -> reports.ImagesReport:
+        """Write a document with one page for each PNG or JPEG picture, in order.
+
+        A page is the picture's own size unless `paper` is "a4" or "letter";
+        `dpi` replaces the resolution each file states.
+        """
+        if isinstance(pictures, (str, bytes, os.PathLike)):
+            raise TypeError('pictures must be a sequence of paths, not one path')
+        args = ['-o', os.fspath(output)]
+        if paper is not None:
+            args += ['--paper', paper]
+        if dpi is not None:
+            args += ['--dpi', str(dpi)]
+        if force:
+            args.append('--force')
+        return self.run('images', *args, '--', *pictures).typed
+
     def protect(
         self, source: str | os.PathLike[str], output: str | os.PathLike[str],
         new_password: str, *, force: bool = False,

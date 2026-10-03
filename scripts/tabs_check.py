@@ -49,6 +49,10 @@ panel, which no phase can answer, and both report through the same sentence.
   uv run scripts/tabs_check.py <app> testdata/redact-pages.pdf --phase redact-pages
 --saved-copy keeps the first pass's redacted output, which is a real redacted
 file an independent reader can be pointed at.
+--phase pictures runs New document from pictures in the window, with no document open.
+
+  uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase pictures
+
 --phase protect runs the two password commands in the window: the new-password dialog,
   a refused repeat, the copy, opening it with the password and removing it again.
 
@@ -73,6 +77,7 @@ test identity, the command and what the person clicks.
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -88,7 +93,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -143,6 +148,21 @@ def main() -> int:
             copied = room / "copies"
             copied.mkdir()
             copies = [first, copied]
+        if args.phase == "pictures":
+            # Two renders of the fixture's first page at different sizes, and a
+            # directory for what the phase writes.
+            copied = room / "copies"
+            copied.mkdir()
+            tool = args.binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+            pictures = []
+            for name, dpi in (("large.png", "72"), ("small.png", "36")):
+                made = subprocess.run([str(tool), "render", str(first), "-o", str(room / name), "--dpi", dpi],
+                                      capture_output=True, text=True, timeout=120, check=False)
+                if made.returncode != 0:
+                    print(f"[FAIL] {tool} could not render the fixture: {made.stderr.strip()}")
+                    return 1
+                pictures.append(room / name)
+            copies = [*pictures, copied]
         if args.phase == "sign":
             # The fixture, a directory of its own for the signed copies, and the
             # identity; the copy itself is signed and never written.
@@ -193,6 +213,8 @@ def main() -> int:
             passed = recognised_files(room / "copies") and passed
         if args.phase == "protect":
             passed = protected_files(room / "copies", args.binary) and passed
+        if args.phase == "pictures":
+            passed = picture_files(room / "copies", args.binary) and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
@@ -281,6 +303,38 @@ def recognised_files(directory: Path) -> bool:
     extra = sorted(p.name for p in directory.iterdir() if p.name != "copy.pdf")
     print(f"[{'OK' if not extra else 'FAIL'}]   nothing else is left in the directory: {extra}")
     return ok and not extra
+
+
+def picture_files(directory: Path, binary: Path) -> bool:
+    """What the pictures phase left on disk, read by the tool from outside the app.
+
+    `album.pdf` has two pages of two sizes, the second half the first; the
+    refused document was never written.
+    """
+    tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+    album = directory / "album.pdf"
+    checks = []
+    if album.is_file():
+        done = subprocess.run([str(tool), "info", str(album), "--json"],
+                              capture_output=True, text=True, timeout=120, check=False)
+        try:
+            described = json.loads(done.stdout)["files"][0]["document"]
+        except (ValueError, KeyError, IndexError):
+            described = {}
+        sizes = described.get("page_sizes", [])
+        widths = sorted(size["width_pt"] for size in sizes)
+        checks = [
+            ("album.pdf has two pages", described.get("pages") == 2),
+            (f"of two sizes, one half the other: {widths}",
+             len(widths) == 2 and abs(widths[1] - 2 * widths[0]) <= 1),
+        ]
+    else:
+        checks = [("album.pdf was written", False)]
+    extra = sorted(p.name for p in directory.iterdir() if p.name != "album.pdf")
+    checks.append((f"nothing else is left in the directory: {extra}", not extra))
+    for what, good in checks:
+        print(f"[{'OK' if good else 'FAIL'}]   {what}")
+    return all(good for _, good in checks)
 
 
 def protected_files(directory: Path, binary: Path) -> bool:

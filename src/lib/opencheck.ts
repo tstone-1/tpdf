@@ -27,6 +27,7 @@ import { call } from "./ipc";
 import { filePage } from "./pages";
 import { DESTINATION_MARGIN_PT } from "./outline";
 import { signatureCheck } from "./signaturecheck";
+import { picturesCheck } from "./picturescheck";
 import { protectCheck } from "./protectcheck";
 import { recogniseCheck } from "./recognisecheck";
 import { signingCheck } from "./signingcheck";
@@ -106,6 +107,8 @@ export interface OpenCheckHost {
    * drive a native panel; everything around the panel stays the window's.
    */
   answerSave: (path: string) => void;
+  /** The pictures the next open panel for pictures answers with. */
+  answerPictures: (paths: string[]) => void;
   /** Every name a signing's save panel was asked to suggest, in order. */
   saveSuggestions: () => readonly string[];
   idle: () => Promise<void>;
@@ -1035,6 +1038,7 @@ async function run(host: OpenCheckHost, phase: string, expected: string): Promis
     case "sign": await signingCheck(host, expected, report); break;
     case "recognise": await recogniseCheck(host, expected, report); break;
     case "protect": await protectCheck(host, expected, report); break;
+    case "pictures": await picturesCheck(host, expected, report); break;
     case "screenshots": await screenshotCheck(host, expected, report); break;
     case "forms": {
       const check = (name: string, ok: boolean) => report.check(name, ok, "form workflow");

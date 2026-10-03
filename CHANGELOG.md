@@ -30,6 +30,14 @@ have the binary.)
   which pages are considered and `--language` names the language to expect. The copy is read
   back before it is published, and `--json` reports which pages were read, which were left
   alone and which engine read them. The Python client gains `ocr()`.
+- **`tpdf images` makes a document from pictures.** `tpdf images front.jpg plan.png -o
+  album.pdf` writes one page for each PNG or JPEG file, in order. A page is the picture's
+  own size at the resolution its file states; `--paper a4` or `letter` and `--dpi` change
+  that. A JPEG goes in as the bytes it is and is turned the way its EXIF orientation says;
+  a PNG keeps its transparency. The pictures are decoded in the sandboxed worker. The
+  Python client gains `images()`.
+- **New document from pictures**, in the File menu and the command palette, does the same
+  from the window, with no document open, and opens what it made.
 - **`tpdf protect` and `tpdf unprotect` set and remove a document's password.** `tpdf
   protect report.pdf -o locked.pdf --new-password-env NEW` writes a copy encrypted with
   AES-256 that needs the password to open; `tpdf unprotect` writes a copy that opens

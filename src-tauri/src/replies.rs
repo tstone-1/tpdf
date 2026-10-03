@@ -687,6 +687,8 @@ fn samples() -> BTreeMap<&'static str, String> {
 
     put("Copied", &save::Copied { changed: true });
 
+    put("Made", &save::Made { pages: 3 });
+
     put(
         "Recognised",
         &crate::commands::ocr::Recognised {

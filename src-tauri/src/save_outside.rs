@@ -799,6 +799,40 @@ impl Rewriter for InWorker {
         awaited(&rx, DEFAULT_DEADLINE, pid)?
     }
 
+    fn images(
+        &self,
+        out: &mut std::fs::File,
+        inputs: crate::save::Inputs<'_>,
+        options: crate::imagepages::Options,
+    ) -> Result<(usize, u32), Refusal> {
+        // A worker is started over a document. This request reads none, so it
+        // gets the one tpdf ships for warming a worker up.
+        let seed = crate::worker_child::WARM_DOCUMENT;
+        let mut mapped = Shm::create(seed.len())?;
+        mapped.as_mut_slice()[..seed.len()].copy_from_slice(seed);
+        let worker = Worker::spawn_merging(
+            std::sync::Arc::new(mapped),
+            inputs.whole,
+            out,
+            &self.library_dir,
+        )?;
+        let pid = worker.pid();
+        let incoming = inputs.each.to_vec();
+        let rx = asked_on_a_thread(worker, move |worker| {
+            let answered = worker.call(&Request::Images { incoming, options })?;
+            if !answered.ok {
+                return Err(Refusal::from(answered.error));
+            }
+            match answered.reply {
+                Some(Reply::Merged { bytes, pages }) => Ok((bytes, pages)),
+                other => Err(format!("the worker answered the pictures with {other:?}").into()),
+            }
+        });
+        // The pictures' segment is the caller's and outlives the wait, as a
+        // merge's does.
+        awaited(&rx, DEFAULT_DEADLINE, pid)?
+    }
+
     fn write_range(
         &self,
         source: &mut std::fs::File,

@@ -516,6 +516,8 @@ export interface AppActions {
   splitDocument(groups: number[][]): void;
   /** Ask for documents to combine with this one, and for a name to write to. */
   mergeDocuments(): void;
+  /** Ask for pictures and a name, and make a document with one page each. */
+  fromPictures(): void;
   /**
    * Choose a certificate, name a new file, and sign the document into it.
    *
@@ -608,6 +610,14 @@ export function registerAppCommands(
       keys: label("file.open"),
       enabled: available,
       run: () => actions.openDocument(),
+    },
+    {
+      // Beside Open, because it also begins with no document: the pictures
+      // are chosen in the platform's panel and the result is opened.
+      id: "file.fromPictures",
+      title: "New document from pictures...",
+      enabled: available,
+      run: () => actions.fromPictures(),
     },
     {
       // No keyboard binding, and not an oversight. ⌘R is already the rotate
