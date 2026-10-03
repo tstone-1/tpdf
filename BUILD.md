@@ -7106,6 +7106,32 @@ starts at 0 and increments within the month.
    turned both runner legs red. That leg reported *four* failures, since clippy, test and
    bins all stop at the same `error[E0308]`.
 
+   **And `scripts/run_on_windows.py` before a push that touches redaction, OCR, printing or
+   any `#[cfg(windows)]` behaviour** (2026-10-03). `check_windows.py` compiles and runs
+   nothing, so what only Windows does is otherwise first run by CI, after the push:
+
+   ```
+   scripts/run_on_windows.py --host HOST --clone 'C:\Users\me\tpdf'
+   ```
+
+   It sends the tree as it is here, uncommitted work included, to a Windows machine over
+   SSH and runs `cargo test --test cli` there (`--suite lib` or `all` for more), in a
+   worktree of its own beside the clone, so the clone's checkout is never moved. It
+   generates the fixtures CI generates and borrows the ones CI cannot from the clone's
+   `testdata`. Warm, a run takes about two minutes; the first is a cold build. `--rev`
+   runs a commit, and the control that the script can fail is `--rev` on a head known to
+   be red: on `224be2a` it reported the two redaction checks that had failed on the
+   runner and exited 1, and on the tree with the fix it exited 0 with 464 checks passed.
+   A host that does not answer, or a run that never prints its exit marker, exits 2.
+
+   The day it was written it found two things CI had not. `Windows.Media.Ocr` does not
+   read a 16 px control word reliably (`docs/TRAPS.md` has the entry), which CI showed
+   only as two failures blamed on the wrong feature. And the OCR checks of the CLI suite
+   had never run on Windows at all: they need `text-base14.pdf`, which a runner does not
+   generate, so they skip there, and on a machine that has the fixture the engine reads
+   24 of its 30 words. The pass mark on Windows is now that, with the measurement beside
+   it in `tests/cli/ocr.rs`.
+
    ⚠ **If it does not return in about a minute, it is wedged rather than slow — kill it and
    run it again.** On 2026-08-27 it sat for 15 min 45 s with its log frozen at the banner,
    and the same command on the same tree finished in **21.83 s** a minute later. The

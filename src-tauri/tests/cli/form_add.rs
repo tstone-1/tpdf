@@ -44,8 +44,11 @@ fn named<'a>(fields: &'a [serde_json::Value], name: &str) -> &'a serde_json::Val
 }
 
 pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
+    // `rotated.pdf` twice over: its first page is upright and the other three
+    // are turned, and it is a fixture every runner generates, which a document
+    // embedding a system font is not.
     let (Some(plain), Some(turned), Some(locked), Some(signed)) = (
-        fixture("text-base14.pdf"),
+        fixture("rotated.pdf"),
         fixture("rotated.pdf"),
         fixture("incr-encrypted-pw.pdf"),
         fixture("incr-signed.pdf"),
@@ -147,8 +150,8 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
                     && d.has(b"P")
                     && d.get(b"F").and_then(|o| o.as_i64()).ok() == Some(4)
             })
-            // 100 points from the top of an 842-point page, 20 high.
-            && rect == [72.0, 722.0, 322.0, 742.0]
+            // 100 points from the top of a 792-point page, 20 high.
+            && rect == [72.0, 672.0, 322.0, 692.0]
             && name.and_then(|d| d.get(b"Ff").ok()).and_then(|o| o.as_i64().ok()) == Some(2)
             && kids[1].get(b"Ff").and_then(|o| o.as_i64()).ok() == Some(1 << 12),
         &format!("{} fields; font {has_font}; rect {rect:?}", kids.len()),

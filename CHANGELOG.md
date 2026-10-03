@@ -125,6 +125,8 @@ have the binary.)
   them. The word is now rendered 32 pixels tall on Windows, where 24 of 24 verified.
   The smallest print the check can vouch for on Windows is 4 pt, where it is 2 pt on
   macOS. Nothing was reported clean that was not; the fault was in the other direction.
+  Found by a red Windows run after the push; `scripts/run_on_windows.py` now runs the
+  command-line suite on a Windows machine over SSH before one.
 
 - **An encrypted document that tpdf had rewritten showed blank pages in Preview.** Since
   26.8.12, saving a password-protected document after deleting, moving or editing anything
