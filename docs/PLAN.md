@@ -3260,10 +3260,15 @@ not verified, and name the drawing left.
 
 **Not done:**
 
-- A region that holds a drawing and **no text** is removed from and reported *not verified*.
-  The OCR gate sizes its control from the words a region held, and there are none. The gate
-  needs a control for a region of drawings; until then the image-only copy is the verified
-  route for a vector signature standing alone.
+- ~~A region that holds a drawing and **no text** is removed from and reported *not
+  verified*.~~ **Decided and built 2026-10-03.** When no marked region on a page covers a
+  word, `ocr::control_from_page` sizes the control from the smallest word left on the page
+  that is long enough to be one, and marks the choice `from_page`. The verdict can then be
+  clean, and it carries a note naming the size (`redact::Applied::notes`,
+  `ocr_gate::sizing_notes`): "nothing 8.7 pt or larger is readable there". The same rule now
+  applies to a region over a picture of words. A page with no word of four characters
+  outside the regions is still not verified. What the rule gives up is stated in
+  `docs/THREAT-MODEL.md` §T6.29: outlined text smaller than the page's smallest print.
 - Cutting a path at the region's edge. A straight rule or a rectangle could be split
   exactly; a curve needs path clipping. Both re-emit geometry, which is route A's risk.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.

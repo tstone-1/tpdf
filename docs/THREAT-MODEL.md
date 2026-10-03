@@ -2789,6 +2789,16 @@ reports its paths as `unplaced-path`, and `remove_paths` refuses. A document bui
 the counts agree while the *order* differs would have the wrong path removed; PDFium
 enumerates in content order, and no such document is known.
 
+**A region with no text in it is checked at the page's size, and says so (2026-10-03).** The
+OCR gate proves a region unreadable by reading back a control no larger than the smallest
+text the removal took. A region over a drawing or a picture took no text, and until this
+date that was a refusal: *not verified*, whatever was removed. The control is now sized from
+the smallest word left on the page that is long enough to be read back, and a clean verdict
+carries a note with that size. What this gives up: text set as outlines, or shown in a
+picture, that is smaller than every word left on the page could survive a failed removal
+unread, and the verdict would be clean. The note is the disclosure; a reader for whom that
+matters uses the image-only copy. Regions that did hold text are judged exactly as before.
+
 **What `verified` says about a drawing: nothing more than before.** The byte scan looks for
 the words a removal took, and the OCR gate reads the rendered region for legible text. A
 removed scribble is in neither. So `verified` on a region that held a drawing means the words

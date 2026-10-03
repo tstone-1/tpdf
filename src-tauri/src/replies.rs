@@ -660,6 +660,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             changed: true,
             verified: false,
             why: vec!["one object could not be read".into()],
+            notes: Vec::new(),
         },
     );
 

@@ -45,6 +45,12 @@ have the binary.)
   it" before anything is written, and the tool's report gains `path_removals`. A drawing
   that reaches beyond the region is still left and reported, so a rule or a table border is
   not stripped from parts of the page nobody marked. So is one that also clips what follows.
+- **A redaction over a drawing or a picture with no text can be verified.** The read-back
+  check used to need removed text to size itself and reported such a region as not verified.
+  It now sizes itself from the smallest print left on the page, and the result says so:
+  "Note: page 1: the marked areas held no text, so the check was sized from the smallest
+  print left on the page: nothing 8.7 pt or larger is readable there." `tpdf redact` reports
+  the same sentences under `notes`.
 
 ## [26.10.2] - 2026-10-02
 

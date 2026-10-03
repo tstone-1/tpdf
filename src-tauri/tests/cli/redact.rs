@@ -346,6 +346,7 @@ fn drawings_pdf() -> Vec<u8> {
                 72 600.25 m 539.5 600.25 l S\n\
                 q 2 w 200 500 m 217.31 533.77 240 470 260 500 c 280 520 l S Q\n\
                 210 480 6.125 6.125 re f\n\
+                100 300 7.375 7.375 re f\n\
                 q 400 480 20.375 20.375 re W f Q\n";
     let content = doc.add_object(Stream::new(dictionary! {}, body.as_bytes().to_vec()));
     let page = doc.add_object(dictionary! {
@@ -426,6 +427,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
             && json["verified"] == true
             && json["pages"][0]["text_removals"] == 1
             && json["pages"][0]["path_removals"] == 2
+            && json["notes"].as_array().is_some_and(Vec::is_empty)
             && json["pages"][0]["left"]
                 .as_array()
                 .is_some_and(Vec::is_empty),
@@ -442,6 +444,25 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
         &after,
     );
 
+    // Around a box that stands alone: no word is inside the region, so the
+    // read-back is sized from the smallest print left on the page and says so.
+    let (code, json, stderr, after) = redact("alone", "[95,480,20,20]");
+    let notes = json["notes"].to_string();
+    report.check(
+        "a region holding a drawing and no text is verified, at a size the report names",
+        code == 0
+            && json["verified"] == true
+            && json["pages"][0]["path_removals"] == 1
+            && notes.contains("held no text")
+            && notes.contains("pt or larger")
+            && json["summary"]
+                .as_str()
+                .is_some_and(|s| s.contains(" Note: page 1:"))
+            && !after.contains("7.375")
+            && after.contains(SCRIBBLE),
+        &format!("exit {code}: {stderr}; {json}"),
+    );
+
     // Over 50 pt of the rule, which runs 467 pt across the page.
     let (code, json, stderr, after) = redact("rule", "[100,182,50,20]");
     let left = json["pages"][0]["left"].to_string();
@@ -451,6 +472,7 @@ pub(super) fn drawings_are_removed(report: &mut Report) {
             && json["verified"] == false
             && json["pages"][0]["path_removals"] == 0
             && left.contains("reaches beyond the region")
+            && json["notes"].as_array().is_some_and(Vec::is_empty)
             && [SCRIBBLE, BOX, RULE, CLIP]
                 .iter()
                 .all(|mark| after.contains(mark)),

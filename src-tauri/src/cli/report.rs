@@ -883,6 +883,10 @@ pub struct Redacted {
     /// dry run, what the removal will not be able to take. Empty when
     /// `verified` is `true`.
     pub reasons: Vec<String>,
+    /// What a `verified` of `true` covers less of than usual, one sentence
+    /// each: today, a page whose marked areas held no text, with the size the
+    /// check was made at. Empty otherwise.
+    pub notes: Vec<String>,
     /// The sentence the application shows after a redaction, word for word;
     /// `null` unless written.
     pub summary: Option<String>,

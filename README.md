@@ -1269,7 +1269,9 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   (whether the copy was written and kept — `false` for a dry run and when nothing matched),
   `verified` (`true` only when every check proved the copy clean, `false` when it could not be,
   `null` when nothing was written), `reasons` (each reason it could not be, one sentence each;
-  for a dry run, what the removal will not be able to take), `summary` (the sentence the
+  for a dry run, what the removal will not be able to take), `notes` (what a `verified` of
+  `true` covers less of than usual: a page whose marked areas held no text is checked at the
+  size of the smallest print left on it, and the size is named), `summary` (the sentence the
   application shows after a redaction, word for word, or `null`), `regions` (rectangles
   marked), `removals` (runs of text and pictures they take), `signatures_invalidated`,
   `searches` — one per `--text` and `--pattern`, text first, each with `kind` (`text` or
@@ -1415,9 +1417,7 @@ unbuilt while they shipped.
   redaction, and cutting one at the region's edge is not built. A drawing that lies wholly
   inside the region is removed. Still reported and left: a drawing that also clips what is
   drawn after it, a shading, a picture or a drawing sitting inside a reusable block, and a
-  block drawn inside another block. A region that holds a drawing and no text is removed
-  from but not verified, because the read-back check sizes itself from the words a region
-  held. A picture on the page itself is removed, bytes included.
+  block drawn inside another block. A picture on the page itself is removed, bytes included.
 - Adding long-term-validation data, or a further archive timestamp, to a document that is
   already signed, and certification signatures. Signing adds long-term validation data and an
   archive timestamp when you ask for them with a timestamp; what is not built is adding them

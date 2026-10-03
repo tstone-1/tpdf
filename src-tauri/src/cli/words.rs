@@ -742,6 +742,7 @@ pub fn after_redaction(
     shows: usize,
     verified: bool,
     why: &[String],
+    notes: &[String],
     changed: bool,
 ) -> String {
     let count = |many: usize, noun: &str| {
@@ -753,9 +754,15 @@ pub fn after_redaction(
     };
     let removed = format!("{}, {}", count(regions, "region"), count(shows, "removal"));
     let verdict = if verified {
-        format!(
+        let clean = format!(
             "Redacted {removed}. tpdf read the file back and none of the removed words are in it."
-        )
+        );
+        // What the clean verdict covers less of than usual, when there is any.
+        if notes.is_empty() {
+            clean
+        } else {
+            format!("{clean} Note: {}.", notes.join("; "))
+        }
     } else {
         format!(
             "Redaction not verified. Redacted {removed}, but tpdf could not prove the file is \

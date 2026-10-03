@@ -1361,6 +1361,7 @@ fn wording() -> serde_json::Value {
                 .into(),
         ],
     ];
+    let none: Vec<String> = Vec::new();
     for (regions, shows) in [(1, 1), (3, 2), (0, 0)] {
         for why in &reasons {
             for changed in [false, true] {
@@ -1371,11 +1372,34 @@ fn wording() -> serde_json::Value {
                         "shows": shows,
                         "verified": verified,
                         "why": why,
+                        "notes": none,
                         "changed": changed,
                     },
-                    "sentence": words::after_redaction(regions, shows, verified, why, changed),
+                    "sentence": words::after_redaction(regions, shows, verified, why, &none, changed),
                 }));
             }
+        }
+    }
+    // A clean verdict that covers less than usual: one note, and two.
+    let sized = "page 1: the marked areas held no text, so the check was sized from the smallest \
+                 print left on the page: nothing 8.7 pt or larger is readable there"
+        .to_string();
+    for notes in [
+        vec![sized.clone()],
+        vec![sized.clone(), sized.replace("page 1", "page 3")],
+    ] {
+        for changed in [false, true] {
+            after_redaction.push(serde_json::json!({
+                "applied": {
+                    "regions": 1,
+                    "shows": 2,
+                    "verified": true,
+                    "why": none,
+                    "notes": notes,
+                    "changed": changed,
+                },
+                "sentence": words::after_redaction(1, 2, true, &none, &notes, changed),
+            }));
         }
     }
 

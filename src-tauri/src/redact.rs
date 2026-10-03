@@ -396,6 +396,13 @@ pub struct Applied {
     pub verified: bool,
     /// Why not, one reason each. Empty exactly when `verified`.
     pub why: Vec<String>,
+    /// What a `verified` covers less of than usual, one sentence each.
+    ///
+    /// Empty unless `verified`: a verdict that is not clean has its reasons in
+    /// `why` and nothing here would add to them. Today's one source is
+    /// [`ocr_gate::sizing_notes`].
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// Which of a page's objects a region covers.

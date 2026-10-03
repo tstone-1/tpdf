@@ -160,6 +160,7 @@ const SCHEMA = {
     changed: ["boolean"],
     verified: ["boolean"],
     why: ["array"],
+    notes: ["array"],
   } satisfies Shape<Applied>,
   Comments: {
     items: ["array"],

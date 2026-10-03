@@ -677,6 +677,7 @@ impl Draft {
             written,
             verified,
             reasons,
+            notes: Vec::new(),
             summary,
             regions: self.regions,
             removals: self.removals,
@@ -1034,8 +1035,19 @@ fn run_redact(
         ));
     }
     let (verified, why, exit) = outcome(applied.why, unmarked);
-    let summary = words::after_redaction(applied.regions, applied.shows, verified, &why, false);
-    let report = draft.report(true, Some(verified), why, Some(summary));
+    // A note qualifies a clean verdict; with a reason from this side as well
+    // the verdict is not clean and the note has nothing to qualify.
+    let notes = if verified { applied.notes } else { Vec::new() };
+    let summary = words::after_redaction(
+        applied.regions,
+        applied.shows,
+        verified,
+        &why,
+        &notes,
+        false,
+    );
+    let mut report = draft.report(true, Some(verified), why, Some(summary));
+    report.notes = notes;
     emit(command, out, &report);
     Ok(exit)
 }

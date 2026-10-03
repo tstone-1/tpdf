@@ -386,6 +386,7 @@ pub async fn redact_raster_copy(
         changed: false,
         verified: true,
         why: Vec::new(),
+        notes: Vec::new(),
     })
 }
 
@@ -635,6 +636,7 @@ pub async fn redact_copy_asked(
     // Then §6 step 4, which is the only one of the two that can see a picture of
     // the words. It runs on the file that was just written, never on the source
     // --- see `ocr::RedactedPixels`, where that is a type-level rule.
+    let notes = ocr_gate::sizing_notes(&asked.gate);
     why.extend(gate_written_file(service.clone(), out_path.clone(), asked.gate, key.clone()).await);
     finish_redaction_fill(library, backend, out_path, asked.plan, fingerprint, key)
         .await
@@ -647,6 +649,7 @@ pub async fn redact_copy_asked(
         shows: shows_total,
         changed: copied.changed,
         verified: why.is_empty(),
+        notes: if why.is_empty() { notes } else { Vec::new() },
         why,
     })
 }
@@ -801,6 +804,7 @@ pub async fn redact_document(
     ));
     // Then §6 step 4, against the reader's own file --- which is now the only
     // copy, so this is the sharper of the two places it runs.
+    let notes = ocr_gate::sizing_notes(&asked.gate);
     why.extend(
         gate_written_file(
             service.inner().clone(),
@@ -829,6 +833,7 @@ pub async fn redact_document(
         // means it had not.
         changed: false,
         verified: why.is_empty(),
+        notes: if why.is_empty() { notes } else { Vec::new() },
         why,
     })
 }

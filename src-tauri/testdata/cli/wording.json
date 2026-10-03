@@ -3,6 +3,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 1,
         "shows": 1,
         "verified": true,
@@ -13,6 +14,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 1,
         "shows": 1,
         "verified": true,
@@ -23,6 +25,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 1,
         "shows": 1,
         "verified": false,
@@ -35,6 +38,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 1,
         "shows": 1,
         "verified": false,
@@ -47,6 +51,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 1,
         "shows": 1,
         "verified": false,
@@ -60,6 +65,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 1,
         "shows": 1,
         "verified": false,
@@ -73,6 +79,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 3,
         "shows": 2,
         "verified": true,
@@ -83,6 +90,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 3,
         "shows": 2,
         "verified": true,
@@ -93,6 +101,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 3,
         "shows": 2,
         "verified": false,
@@ -105,6 +114,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 3,
         "shows": 2,
         "verified": false,
@@ -117,6 +127,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 3,
         "shows": 2,
         "verified": false,
@@ -130,6 +141,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 3,
         "shows": 2,
         "verified": false,
@@ -143,6 +155,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 0,
         "shows": 0,
         "verified": true,
@@ -153,6 +166,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 0,
         "shows": 0,
         "verified": true,
@@ -163,6 +177,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 0,
         "shows": 0,
         "verified": false,
@@ -175,6 +190,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 0,
         "shows": 0,
         "verified": false,
@@ -187,6 +203,7 @@
     {
       "applied": {
         "changed": false,
+        "notes": [],
         "regions": 0,
         "shows": 0,
         "verified": false,
@@ -200,6 +217,7 @@
     {
       "applied": {
         "changed": true,
+        "notes": [],
         "regions": 0,
         "shows": 0,
         "verified": false,
@@ -209,6 +227,60 @@
         ]
       },
       "sentence": "Redaction not verified. Redacted 0 regions, 0 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: 4711-0815 is still in the file, on page 2; page 2: the removed area could not be shown unreadable. the engine rejected the image. Treat it as unredacted until you have checked it. The original also changed on disk while you had it open, so this was built from the newer version."
+    },
+    {
+      "applied": {
+        "changed": false,
+        "notes": [
+          "page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there"
+        ],
+        "regions": 1,
+        "shows": 2,
+        "verified": true,
+        "why": []
+      },
+      "sentence": "Redacted 1 region, 2 removals. tpdf read the file back and none of the removed words are in it. Note: page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there."
+    },
+    {
+      "applied": {
+        "changed": true,
+        "notes": [
+          "page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there"
+        ],
+        "regions": 1,
+        "shows": 2,
+        "verified": true,
+        "why": []
+      },
+      "sentence": "Redacted 1 region, 2 removals. tpdf read the file back and none of the removed words are in it. Note: page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there. The original also changed on disk while you had it open, so this was built from the newer version."
+    },
+    {
+      "applied": {
+        "changed": false,
+        "notes": [
+          "page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there",
+          "page 3: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there"
+        ],
+        "regions": 1,
+        "shows": 2,
+        "verified": true,
+        "why": []
+      },
+      "sentence": "Redacted 1 region, 2 removals. tpdf read the file back and none of the removed words are in it. Note: page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there; page 3: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there."
+    },
+    {
+      "applied": {
+        "changed": true,
+        "notes": [
+          "page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there",
+          "page 3: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there"
+        ],
+        "regions": 1,
+        "shows": 2,
+        "verified": true,
+        "why": []
+      },
+      "sentence": "Redacted 1 region, 2 removals. tpdf read the file back and none of the removed words are in it. Note: page 1: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there; page 3: the marked areas held no text, so the check was sized from the smallest print left on the page: nothing 8.7 pt or larger is readable there. The original also changed on disk while you had it open, so this was built from the newer version."
     }
   ],
   "after_signing": [

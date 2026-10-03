@@ -72,8 +72,10 @@ describe("the command-line tool's wording", () => {
     expect(
       wording.after_signing.filter((c) => c.sentence.includes(" Timestamp: ")).length,
     ).toBeGreaterThan(0);
-    // 3 count pairs x 3 reason lists x changed or not.
-    expect(wording.after_redaction.length).toBe(3 * 3 * 2);
+    // 3 count pairs x 3 reason lists x changed or not, and a clean verdict
+    // with one note and with two, changed or not.
+    expect(wording.after_redaction.length).toBe(3 * 3 * 2 + 2 * 2);
+    expect(wording.after_redaction.filter((c) => c.sentence.includes(" Note: ")).length).toBe(4);
     expect(wording.after_redaction.some((c) => c.applied.verified)).toBe(true);
     expect(wording.after_redaction.some((c) => !c.applied.verified)).toBe(true);
   });

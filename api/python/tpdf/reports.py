@@ -1076,6 +1076,8 @@ class RedactReport(TypedDict):
     # Why the copy could not be proved clean, or for a dry run what the
     # removal will not be able to take. Empty when `verified` is True.
     reasons: list[str]
+    # What a clean verdict covers less of than usual, one sentence each.
+    notes: list[str]
     # The sentence shown after a redaction; None unless written.
     summary: str | None
     # How many regions were marked.

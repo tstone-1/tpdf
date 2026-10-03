@@ -85,6 +85,11 @@ export interface Applied {
   verified: boolean;
   /** Why not, one reason each. Empty exactly when {@link verified}. */
   why: string[];
+  /**
+   * What a clean verdict covers less of than usual, one sentence each. Empty
+   * unless {@link verified}; optional because an older reply carries none.
+   */
+  notes?: string[];
 }
 
 /**

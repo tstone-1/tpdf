@@ -259,11 +259,14 @@ export function afterRedaction(applied: {
   shows: number;
   verified: boolean;
   why: string[];
+  notes?: string[];
   changed?: boolean;
 }): string {
   const removed = `${count(applied.regions, "region")}, ${count(applied.shows, "removal")}`;
   const verdict = applied.verified
-    ? `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.`
+    ? `Redacted ${removed}. tpdf read the file back and none of the removed words are in it.` +
+      // What the clean verdict covers less of than usual: `redact::Applied::notes`.
+      (applied.notes?.length ? ` Note: ${applied.notes.join("; ")}.` : "")
     : // Named as a failure to *prove* rather than as a failure to remove,
       // because those are different and only one of them is known. A blind spot
       // is a scan that could not look, and telling a reader their words are

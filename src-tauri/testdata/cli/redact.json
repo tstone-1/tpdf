@@ -9,6 +9,7 @@
   "reasons": [
     "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
   ],
+  "notes": [],
   "summary": "Redaction not verified. Redacted 3 regions, 3 removals, but tpdf could not prove the file is clean. Checks before adding the black fill found: page 1: object 0 is of kind path and overlaps the region; only text is removed here. Treat it as unredacted until you have checked it.",
   "regions": 3,
   "removals": 3,

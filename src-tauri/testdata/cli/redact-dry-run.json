@@ -9,6 +9,7 @@
   "reasons": [
     "page 1: object 0 is of kind path and overlaps the region; only text is removed here"
   ],
+  "notes": [],
   "summary": null,
   "regions": 3,
   "removals": 3,

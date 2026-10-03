@@ -687,6 +687,35 @@ pub fn run(
     }
 }
 
+/// What a clean verdict has to add for each page whose control was sized from
+/// the page and not from removed text.
+///
+/// A region that held no words --- a drawing, a picture --- has no removed size
+/// to be no easier than, and [`crate::ocr::control_from_page`] then sizes the
+/// control from the smallest word left. A clean result says nothing about print
+/// smaller than that, so the reader is told the size. Asked of the same words
+/// and regions the gate uses, through the same function, so the two cannot
+/// disagree about which pages this applies to.
+#[must_use]
+pub fn sizing_notes(pages: &[GatePage]) -> Vec<String> {
+    pages
+        .iter()
+        .filter_map(|page| {
+            let survivors = surviving(&page.words, &page.regions, &page.taking);
+            let choice = crate::ocr::control_from_page(&survivors, &page.regions).ok()?;
+            choice.from_page.then(|| {
+                format!(
+                    "page {}: the marked areas held no text, so the check was sized from the \
+                     smallest print left on the page: nothing {:.1} pt or larger is readable \
+                     there",
+                    page.page + 1,
+                    choice.size_pt
+                )
+            })
+        })
+        .collect()
+}
+
 /// What the gate decided about one page.
 ///
 /// **Two shapes rather than one, because a page has two ways to end.** A page
@@ -1031,6 +1060,39 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_page_whose_regions_held_no_text_gets_a_note_naming_the_size() {
+        let word = |text: &str, rect: [f32; 4]| ControlWord {
+            text: text.into(),
+            rect,
+        };
+        let page = |regions: Vec<[f32; 4]>| GatePage {
+            page: 2,
+            regions,
+            words: vec![
+                word("heading", [10.0, 30.0, 90.0, 50.0]),
+                word("readable", [10.0, 80.0, 70.0, 86.5]),
+            ],
+            taking: String::new(),
+            width_pt: 600.0,
+            height_pt: 800.0,
+        };
+        let notes = sizing_notes(&[page(vec![[300.0, 300.0, 320.0, 320.0]])]);
+        assert_eq!(
+            notes,
+            [
+                "page 3: the marked areas held no text, so the check was sized from the smallest \
+              print left on the page: nothing 6.5 pt or larger is readable there"
+            ]
+        );
+        // The control: a region over a word is sized from that word, and a
+        // page that cannot be given a control at all has its reason elsewhere.
+        assert!(sizing_notes(&[page(vec![[5.0, 25.0, 95.0, 55.0]])]).is_empty());
+        let mut bare = page(vec![[300.0, 300.0, 320.0, 320.0]]);
+        bare.words.clear();
+        assert!(sizing_notes(&[bare]).is_empty());
+    }
     use crate::ocr::{EngineId, RecognisedItem};
 
     /// A strip of `rows` rows, `width` pixels wide, every channel `0x11` --- a
@@ -1234,6 +1296,7 @@ mod tests {
             crop: [0.0, 50.0, 40.0, 58.0],
             token: "control".into(),
             size_pt: 10.0,
+            from_page: false,
         };
         let geometry = geometry_for(&page, &choice).expect("a geometry");
         assert_eq!(
@@ -1266,6 +1329,7 @@ mod tests {
             crop: [0.0, 20.0, 40.0, 25.0],
             token: "control".into(),
             size_pt: 10.0,
+            from_page: false,
         };
         let geometry = geometry_for(&page, &choice).expect("a geometry");
         assert!(
@@ -1294,6 +1358,7 @@ mod tests {
             crop: [0.0, 20.0, 40.0, 28.0],
             token: "control".into(),
             size_pt: 8.0,
+            from_page: false,
         };
         let geometry = geometry_for(&page, &choice).expect("a geometry");
         assert_eq!(
@@ -1412,6 +1477,7 @@ mod tests {
                 crop: [0.0, 50.0, 40.0, 50.0 + control_pt],
                 token: "control".into(),
                 size_pt: 10.0,
+                from_page: false,
             },
         )
     }
@@ -1557,6 +1623,7 @@ mod tests {
             crop: [0.0, 0.0, 10.0, 10.0],
             token: "Fixture".into(),
             size_pt: 10.0,
+            from_page: false,
         }
         .placed([0.0, 10.0, 10.0, 20.0]);
         for e in [

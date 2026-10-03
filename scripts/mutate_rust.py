@@ -13932,6 +13932,11 @@ MUTATIONS += [
     Mutation("drawings: lose the page's path count in the merge", 'src/redact.rs', '        path_objects = plan.path_objects;\n', '', 'two_regions_holding_one_drawing_remove_it_once'),
     Mutation('drawings: the writer never asks for them', 'src/save.rs', '        let took = redact::remove_paths(doc, page, &redaction.paths, redaction.path_objects)', '        let took = redact::remove_paths(doc, page, &[], redaction.path_objects)', 'a_rewrite_takes_a_planned_drawing_out_of_the_page'),
     Mutation('drawings: say a rule is of kind path', 'src/redact.rs', '            ("path", None) => {', '            ("no such kind", None) => {', 'an_object_this_cannot_remove_makes_the_plan_incomplete'),
+    Mutation('gate: refuse every region that held no text', 'src/ocr.rs', '    let from_page = covered.is_empty();', '    let from_page = false;', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
+    Mutation('gate: size a wordless region from a word too short to read back', 'src/ocr.rs', '            .filter(|word| longest_run(&word.text).chars().count() >= MIN_CONTROL_CHARS)\n            .map(|word| word.rect)', '            .map(|word| word.rect)', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
+    Mutation("gate: forget that the size was the page's", 'src/ocr.rs', '        size_pt,\n        from_page,\n    })', '        size_pt,\n        from_page: false,\n    })', 'a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control'),
+    Mutation('gate: note every page, sized from the page or not', 'src/ocr_gate.rs', '            choice.from_page.then(|| {', '            true.then(|| {', 'a_page_whose_regions_held_no_text_gets_a_note_naming_the_size'),
+    Mutation('cli wording: drop the note from a clean verdict', 'src/cli/words.rs', '            format!("{clean} Note: {}.", notes.join("; "))', '            clean', 'every_json_shape_and_the_wording_match_their_committed_samples'),
 ]
 
 if __name__ == "__main__":

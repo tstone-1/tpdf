@@ -562,6 +562,15 @@ pub struct ControlChoice {
     pub token: String,
     /// The size it has to be no easier than --- see [`size_no_easier_than`].
     pub size_pt: f32,
+    /// Whether the size is the page's and not the removal's.
+    ///
+    /// True when no region covered a word, so there was no removed text to be
+    /// no easier than: a region over a drawing, or over a picture. The control
+    /// is then the smallest word left on the page that can serve as one, and a
+    /// clean verdict says less --- nothing *that* large is legible in the
+    /// region --- which the caller has to tell the reader. See
+    /// [`control_from_page`].
+    pub from_page: bool,
 }
 
 impl ControlChoice {
@@ -607,6 +616,12 @@ impl ControlChoice {
 /// leftmost, so the same page always yields the same control and a test can say
 /// which.
 ///
+/// **When no region covers a word, rule 2 has nothing to measure**, and the
+/// size is the page's: the smallest word left that rule 3 admits. The choice
+/// says so in [`ControlChoice::from_page`], and a caller reporting a clean
+/// result has to pass that on, because the result then says nothing about
+/// print smaller than the size it names.
+///
 /// # Errors
 ///
 /// If nothing qualifies, and the reason says which of the three rules ran out ---
@@ -625,7 +640,6 @@ pub fn control_from_page(
         })
         .map(|word| word.rect)
         .collect();
-    let size_pt = size_no_easier_than(&covered)?;
 
     let survivors: Vec<&ControlWord> = words
         .iter()
@@ -643,6 +657,27 @@ pub fn control_from_page(
             NotVerifiedCause::ControlNoSurvivor,
         ));
     }
+
+    // **No region covers a word**: a drawing, a picture, an empty margin. There
+    // is no removed text to be no easier than, and until 2026-10-03 that was a
+    // refusal. The size is now the page's: the smallest word left that is long
+    // enough to be a control. That proves the engine reads this page's smallest
+    // usable print, and so that nothing of that size is legible in the region.
+    // It proves nothing about anything smaller, which is why the choice is
+    // marked and the reader is told the size. Regions that covered words whose
+    // boxes have no height are still refused: something was removed and its
+    // size is unknown.
+    let from_page = covered.is_empty();
+    let size_pt = if from_page {
+        let eligible: Vec<[f32; 4]> = survivors
+            .iter()
+            .filter(|word| longest_run(&word.text).chars().count() >= MIN_CONTROL_CHARS)
+            .map(|word| word.rect)
+            .collect();
+        size_no_easier_than(&eligible)?
+    } else {
+        size_no_easier_than(&covered)?
+    };
 
     let small: Vec<&&ControlWord> = survivors
         .iter()
@@ -695,6 +730,7 @@ pub fn control_from_page(
         crop: chosen.rect,
         token: longest_run(&chosen.text).to_string(),
         size_pt,
+        from_page,
     })
 }
 
@@ -1584,8 +1620,48 @@ mod tests {
     /// that refusal is [`size_no_easier_than`]'s rather than a second copy of
     /// it here.
     #[test]
-    fn a_region_over_no_words_has_no_size_to_measure_against() {
-        let why = control_from_page(&page(), &[[500.0, 500.0, 520.0, 510.0]]).expect_err("refused");
+    fn a_region_over_no_words_is_sized_from_the_smallest_word_left_that_can_be_a_control() {
+        // `no` is 6 pt and too short to be a control, so it does not set the
+        // size either; `secret`, `readable` and `four` are 6 pt and long
+        // enough; `heading` is 20 pt.
+        let chosen = control_from_page(&page(), &[[500.0, 500.0, 520.0, 510.0]]).expect("sized");
+        assert!(
+            chosen.from_page,
+            "and the choice says where its size came from"
+        );
+        assert_eq!(chosen.size_pt, 6.0);
+        assert_eq!(chosen.token, "readable");
+
+        // A shorter word that is smaller still does not set the size: nothing
+        // could be read back at it, so claiming it would claim too much.
+        let mut words = page();
+        words.push(word("a.", [10.0, 120.0, 20.0, 122.0]));
+        let chosen = control_from_page(&words, &[[500.0, 500.0, 520.0, 510.0]]).expect("sized");
+        assert_eq!(chosen.size_pt, 6.0);
+
+        // The control: a region over a word is sized from that word, as before.
+        let chosen = control_from_page(&page(), &[OVER_SECRET]).expect("a control");
+        assert!(!chosen.from_page);
+    }
+
+    #[test]
+    fn a_page_with_no_word_long_enough_has_no_size_to_measure_against() {
+        let words = vec![
+            word("no", [10.0, 60.0, 30.0, 66.0]),
+            word("abc", [10.0, 80.0, 30.0, 86.0]),
+        ];
+        let why = control_from_page(&words, &[[500.0, 500.0, 520.0, 510.0]]).expect_err("refused");
+        assert!(
+            why.to_string().contains("nothing to size a control"),
+            "{why}"
+        );
+        // And words inside the region whose boxes have no height are still a
+        // refusal: something was removed and its size is not known.
+        let flat = vec![
+            word("secret", [12.0, 15.0, 88.0, 15.0]),
+            word("readable", [10.0, 80.0, 70.0, 86.0]),
+        ];
+        let why = control_from_page(&flat, &[OVER_SECRET]).expect_err("refused");
         assert!(
             why.to_string().contains("nothing to size a control"),
             "{why}"
