@@ -34,6 +34,7 @@ let arranged: { moves: Move[]; sweep: number }[];
 let counts: number[];
 let moved: number[];
 let resized: number[];
+let removed: [number, number][];
 
 beforeEach(() => {
   dom = installFakeDom();
@@ -41,6 +42,7 @@ beforeEach(() => {
   counts = [];
   moved = [];
   resized = [];
+  removed = [];
   core.invoke.mockResolvedValue(null);
 });
 
@@ -73,6 +75,7 @@ function build(turns = 0): Viewer {
     onPicked: (count) => counts.push(count),
     onMarkMoved: (id) => moved.push(id),
     onMarkResized: (id) => resized.push(id),
+    onMarkRemove: (id, sweep) => removed.push([id, sweep]),
   });
   if (turns !== 0) {
     const pages: PageView[] = [{ id: pageId(1), source: { baseline: 0 }, turns }];
@@ -82,11 +85,15 @@ function build(turns = 0): Viewer {
   return viewer;
 }
 
-function press(viewer: Viewer, id: number, shiftKey = false): void {
+/** When the next press happens, in milliseconds: each press a second after the last unless told otherwise. */
+let clock = 1000;
+
+function press(viewer: Viewer, id: number, shiftKey = false, after = 1000): void {
   const anchor = viewer.markAnchor(id);
   if (!anchor) throw new Error(`mark ${id} is not laid out`);
   const at = { clientX: (anchor.left + anchor.right) / 2, clientY: (anchor.top + anchor.bottom) / 2 };
-  dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, target: dom.root, shiftKey, ...at });
+  clock += after;
+  dom.root.dispatch("pointerdown", { button: 0, pointerId: 1, target: dom.root, shiftKey, timeStamp: clock, ...at });
   dom.root.dispatch("pointerup", { pointerId: 1, ...at });
 }
 
@@ -117,10 +124,40 @@ describe("picking marks to arrange", () => {
     await settle();
     press(viewer, 1, true);
     expect(viewer.markOpen).toBe(-1);
-    // The control: the same press without Shift opens the mark's note.
+    // The control: two presses without Shift, one soon after the other, open it.
     press(viewer, 1);
+    press(viewer, 1, false, 200);
     expect(viewer.markOpen).toBe(1);
     expect(moved).toEqual([]);
+  });
+
+  it("picks a rectangle on one press and opens its box on a second soon after", async () => {
+    const viewer = build();
+    await settle();
+    press(viewer, 1);
+    expect(viewer.pickedMarks()).toEqual([1]);
+    expect(viewer.markOpen).toBe(-1);
+    // A second press long after is another first press.
+    press(viewer, 1, false, 451);
+    expect(viewer.markOpen).toBe(-1);
+    // And one on another rectangle is the first on that one.
+    press(viewer, 2, false, 100);
+    expect(viewer.markOpen).toBe(-1);
+    press(viewer, 2, false, 450);
+    expect(viewer.markOpen).toBe(2);
+    // A press with Shift between the two is not the first of a pair.
+    const other = build();
+    await settle();
+    press(other, 1, true);
+    press(other, 1, true, 100);
+    expect(other.markOpen).toBe(-1);
+  });
+
+  it("opens a mark made of the words under it on one press, as before", async () => {
+    const viewer = build();
+    await settle();
+    press(viewer, 4);
+    expect(viewer.markOpen).toBe(4);
   });
 
   it("does not pick a mark that is made of the words under it", async () => {
@@ -386,5 +423,55 @@ describe("where copies of the picked marks go", () => {
       { mark: 1, rect: [105, 105, 205, 125] },
       { mark: 2, rect: [505, 765, 600, 800] },
     ]);
+  });
+});
+
+describe("removing what is picked", () => {
+  it("takes several off under one gesture, and one alone under none", async () => {
+    const viewer = build();
+    await settle();
+    expect(viewer.canRemoveMark).toBe(false);
+    viewer.pick([1, 2, 3]);
+    expect(viewer.canRemoveMark).toBe(true);
+    expect(viewer.removeMarks()).toBe(true);
+    expect(removed.map(([id]) => id)).toEqual([1, 2, 3]);
+    expect(removed[0]![1]).toBeGreaterThan(0);
+    expect(new Set(removed.map(([, sweep]) => sweep)).size).toBe(1);
+    expect(viewer.pickedMarks()).toEqual([]);
+    expect(counts.at(-1)).toBe(0);
+    removed.length = 0;
+    viewer.pick([2]);
+    viewer.removeMarks();
+    expect(removed).toEqual([[2, 0]]);
+  });
+
+  it("takes the mark whose box is open and leaves the picked ones", async () => {
+    const viewer = build();
+    await settle();
+    press(viewer, 4);
+    expect(viewer.canRemoveMark).toBe(true);
+    expect(viewer.removeMarks()).toBe(true);
+    expect(removed).toEqual([[4, 0]]);
+    expect(viewer.markOpen).toBe(-1);
+  });
+
+  it("does nothing with none picked and no box open", async () => {
+    const viewer = build();
+    await settle();
+    expect(viewer.removeMarks()).toBe(false);
+    expect(removed).toEqual([]);
+  });
+
+  it("is what Delete and Backspace do with rectangles picked, and not otherwise", async () => {
+    const viewer = build();
+    await settle();
+    expect(key("Delete")).not.toHaveBeenCalled();
+    expect(key("Backspace")).not.toHaveBeenCalled();
+    viewer.pick([1]);
+    expect(key("Delete")).toHaveBeenCalledTimes(1);
+    expect(removed).toEqual([[1, 0]]);
+    viewer.pick([2]);
+    key("Backspace");
+    expect(removed.map(([id]) => id)).toEqual([1, 2]);
   });
 });

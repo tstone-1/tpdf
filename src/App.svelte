@@ -870,7 +870,7 @@
     erase: () => viewer?.armErase(),
     hasSelection: () => (status?.selected ?? 0) > 0,
     removeMark: () => removeMark(),
-    hasOpenMark: () => (viewer?.markOpen ?? -1) >= 0,
+    hasOpenMark: () => viewer?.canRemoveMark ?? false,
     removeRedaction: () => removeRedaction(),
     hasPickedRedaction: () => (viewer?.redactionPicked ?? -1) >= 0,
     canEditComment: () => viewer?.commentEditable ?? false,
@@ -1155,7 +1155,7 @@
    * `onMarkRemove` below, and the removal itself is the model's.
    */
   function removeMark(): void {
-    viewer?.removeOpenMark();
+    viewer?.removeMarks();
   }
 
   /**
@@ -4145,10 +4145,11 @@
           if (!object || page === undefined) return;
           void applyEdit((e) => e.reply(page, object, comment.rect, body));
         },
-        onMarkRemove: (mark) =>
-          isSaved(mark)
-            ? changeField(scannedForm && edits ? fieldRemoved(scannedForm, edits.state, mark) : null)
-            : void applyEdit((e) => e.unmark(mark)),
+        onMarkRemove: (mark, sweep) => {
+          if (!isSaved(mark)) return void applyEdit((e) => e.unmark(mark, sweep));
+          const target = scannedForm && edits ? fieldRemoved(scannedForm, edits.state, mark) : null;
+          if (target) void applyEdit((e) => e.refield([target], sweep));
+        },
         // A colour picked in the swatch row, or by a `Colour:` command with a
         // note open. A command like the note above it, and undone the same way.
         onMarkRecolor: (mark, color) =>

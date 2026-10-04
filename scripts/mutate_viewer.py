@@ -492,8 +492,8 @@ MUTATIONS = [
         # typed since, and nothing else in the application shows a difference.
         "marks: reopen the note on the mark it is already open on",
         "src/lib/viewer.ts",
-        "      if (this.markNote.openId !== own.id) this.showMark(own.id);",
-        "      this.showMark(own.id);",
+        "      if ((twice || !isResizable(own.kind)) && this.markNote.openId !== own.id) this.showMark(own.id);",
+        "      if (twice || !isResizable(own.kind)) this.showMark(own.id);",
         "pressing the same mark again leaves what was typed alone",
         runner="viewer-tagged",
     ),

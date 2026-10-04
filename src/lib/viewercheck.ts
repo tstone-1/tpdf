@@ -4603,9 +4603,9 @@ async function appCommandChecks(
     // changed.
     "edit.formEditOn",
     "edit.formEditOff",
+    "edit.tabOrder",
     "edit.fieldProperties",
     "edit.duplicate",
-    "edit.tabOrder",
     // Nothing is picked.
     "edit.alignLeft",
     "edit.alignCenter",

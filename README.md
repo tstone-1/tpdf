@@ -301,8 +301,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   chosen. A button's value, `Choice 1` to begin with, is set in its properties. Running
   the command again with the same name adds buttons to that group, also to one the
   document already has. The field shows as a dashed frame with its name,
-  `Text 1` or `Checkbox 1` to begin with; press it to rename it, drag it to move it, drag
-  its lower right corner to resize it, and remove or undo it like any other mark. Saving
+  `Text 1` or `Checkbox 1` to begin with; press it to pick it, press it twice to rename
+  it, drag it to move it, drag its lower right corner to resize it, and remove it with
+  Delete or undo it like any other mark. Saving
   writes it into the document as a real form field that tpdf, Acrobat and Preview can
   fill. A document with no form gets one. A text field is drawn with a thin black line
   round it, so that an empty one can be found on the page; *Form fields: no line round
@@ -314,8 +315,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.addRadio edit.fieldBorderOn edit.fieldBorderOff -->
 - **Change the fields a document already has.** *Form fields: change the document's own
   fields* shows every field of the open form as a named rectangle. Drag one to move it,
-  drag its lower right corner to resize it, press it to rename it, or remove it from its
-  name box; pick several with Shift and the *Arrange* commands line them up. Each change
+  drag its lower right corner to resize it, press it twice to rename it, or pick it and
+  press Delete to remove it; pick several with Shift and the *Arrange* commands line them up. Each change
   is undone like any other and is written when you save. While this is on, the fields
   cannot be filled; *Form fields: finish changing the document's fields* turns it off. A
   text field that is resized is drawn again at its new size with the answer it holds. A
@@ -336,7 +337,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   <!-- built: edit.fieldProperties -->
 - **Arrange what you have placed.** Press a form field, a box, an ellipse or a text box
   to pick it, and press others with Shift held to pick several on the same page; each
-  picked one gets a line round it, solid on the first. The *Arrange* menu, and the same
+  picked one gets a line round it, solid on the first. A second press soon after the
+  first opens its name box, or for a text box its words. The *Arrange* menu, and the same
   commands in the palette, then align their left, right, top or bottom edges or their
   centres, space them evenly across or down, give them one width, height or size, or
   centre them on the page as a block. The first one picked is the one the others follow:
@@ -354,8 +356,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
 - **Move several at once, nudge and duplicate.** Drag one of several picked rectangles
   and the others come with it, each keeping its place against the rest; the one nearest
   the page's edge stops them all. With one or more picked, the arrow keys move them a
-  point at a time and ten points with Shift (press with Shift to pick without opening the
-  name box, which otherwise takes the keys). *Arrange: duplicate* makes a copy of each
+  point at a time and ten points with Shift, and Delete or Backspace removes them.
+  *Arrange: duplicate* makes a copy of each
   picked form field, box or ellipse a step down and to the right and picks the copies,
   so the next drag places them. A copied field has the size and properties of the
   original and the next free name of its kind; a copied radio button stays in its group

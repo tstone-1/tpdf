@@ -499,7 +499,7 @@ export interface ViewerOptions {
    */
   onCommentDelete?: (comment: Comment) => void;
   /** Called when the reader asked to take one of their own marks off the page. */
-  onMarkRemove?: (mark: number) => void;
+  onMarkRemove?: (mark: number, sweep: number) => void;
   /**
    * Called when the reader picked a colour for one of their own marks.
    *
@@ -662,6 +662,8 @@ const LINE_HEIGHT = 40;
 const ARROW_STEP = 60;
 /** Which way each arrow key moves picked rectangles, as `[across, down]`. */
 const NUDGES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as const;
+/** How soon a second press on a rectangle must follow the first to open its box, in milliseconds. */
+const DOUBLE_PRESS_MS = 450;
 /** How far an arrow key with Shift moves them, in points. */
 export const NUDGE_FAR = 10;
 /** How far down and to the right of a mark its copy is placed, in points. */
@@ -1392,6 +1394,9 @@ export class Viewer {
   } | null = null;
 
   private readonly moveDrag: PointerDrag;
+
+  /** The mark the last press landed on, and when: what makes the next press on it a second one. */
+  private lastPress: { id: number; at: number } | null = null;
 
   /**
    * The placed rectangles a reader has picked to arrange. A plain press on
@@ -3180,6 +3185,10 @@ export class Viewer {
       this.goToStart();
     } else if (matches("nav.lastPage", event)) {
       this.goToEnd();
+    } else if (this.arranging.count > 0 && (event.key === "Delete" || event.key === "Backspace")) {
+      // With rectangles picked and no note open to type in, the two keys
+      // that delete take them off the page.
+      this.removeMarks();
     } else if (this.arranging.count > 0 && !event.metaKey && !event.ctrlKey && !event.altKey && event.key in NUDGES) {
       // With rectangles picked the arrows move them: a point at a time, or
       // ten with Shift. Taken even at the page's edge, where nothing moves,
@@ -5198,8 +5207,32 @@ export class Viewer {
     const id = this.markNote.openId;
     if (id === null) return;
     this.markNote.hide(false);
-    this.opts.onMarkRemove?.(id);
+    this.opts.onMarkRemove?.(id, 0);
     this.root.focus();
+  }
+
+  /** Whether there is a mark to remove: one whose note is open, or one that is picked. */
+  get canRemoveMark(): boolean {
+    return this.markNote.openId !== null || this.arranging.count > 0;
+  }
+
+  /**
+   * Takes the mark whose note is open off the page, or with no note open the
+   * picked rectangles, all under one gesture so that one undo brings them
+   * back. `false` when there was nothing to remove.
+   */
+  removeMarks(): boolean {
+    if (this.markNote.openId !== null) {
+      this.removeOpenMark();
+      return true;
+    }
+    const picked = [...this.arranging.list()];
+    if (picked.length === 0) return false;
+    const sweep = picked.length > 1 ? ++this.sweeps : 0;
+    this.arranging.clear();
+    this.pickedChanged();
+    for (const id of picked) this.opts.onMarkRemove?.(id, sweep);
+    return true;
   }
 
   /**
@@ -5491,11 +5524,20 @@ export class Viewer {
     if (own) {
       event.preventDefault();
       if (this.popup.openId !== null) this.closeComment();
+      // **A placed rectangle is picked by one press and opened by two.** A
+      // field, a box, an ellipse or a text box is mostly moved, sized and
+      // lined up, and its box took the keyboard from the arrow keys and hid
+      // which one was picked. A mark made of the words under it, a note or a
+      // drawing still opens on one press: reading its note is what a press
+      // on one is for.
+      const now = event.timeStamp || Date.now();
+      const twice = this.lastPress?.id === own.id && now - this.lastPress.at <= DOUBLE_PRESS_MS;
+      this.lastPress = { id: own.id, at: now };
       // Already open on this mark: the box and what is in it are left alone.
       // Reopening would refill it from the model, which still holds the note as
       // it was --- the reader's typing has not been committed yet, and will not
       // be until the box closes.
-      if (this.markNote.openId !== own.id) this.showMark(own.id);
+      if ((twice || !isResizable(own.kind)) && this.markNote.openId !== own.id) this.showMark(own.id);
       // **And the press may also be the start of a move.** The note opens either
       // way, on the press rather than on the release: a reader who clicks a mark
       // wants its box now, and making them wait for the button to come up so
@@ -6331,9 +6373,9 @@ export class Viewer {
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
         const width = (band.right - band.left) * this.zoom * dpr + gx;
         const height = (band.bottom - band.top) * this.zoom * dpr + gy;
-        if (this.arranging.count > 1 && this.arranging.has(mark.id)) {
-          // Picked for arranging: a dashed line round it, heavier on the first
-          // picked, which is the one the others will follow.
+        if (this.arranging.has(mark.id)) {
+          // Picked: a line round it, solid and heavier on the first picked,
+          // which is the one the others will follow, and dashed on the rest.
           const first = this.arranging.list()[0] === mark.id;
           ctx.save();
           ctx.globalCompositeOperation = "source-over";
@@ -6344,9 +6386,12 @@ export class Viewer {
           ctx.strokeRect(left - out, top - out, width + 2 * out, height + 2 * out);
           ctx.restore();
         }
-        if (isResizable(mark.kind) && this.markNote.openId === mark.id) {
-          // The corner a resize is dragged by, shown on the mark whose box is
-          // open: that is the one a reader has said they mean.
+        if (
+          isResizable(mark.kind)
+          && (this.markNote.openId === mark.id || (this.arranging.count === 1 && this.arranging.has(mark.id)))
+        ) {
+          // The corner a resize is dragged by, shown on the one mark a reader
+          // has picked, or whose box is open: the one they have said they mean.
           const side = 7 * dpr;
           ctx.save();
           ctx.globalCompositeOperation = "source-over";

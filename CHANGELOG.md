@@ -50,8 +50,8 @@ have the binary.)
 - **The fields a document already has can be moved, resized, renamed and removed.** Until
   now a field could be changed only before its first save. *Form fields: change the
   document's own fields* shows every field of the open form as a named rectangle: drag
-  it to move it, drag its lower right corner to resize it, press it to rename or remove
-  it, and pick several with Shift to use the *Arrange* commands on them. Each change is
+  it to move it, drag its lower right corner to resize it, press it twice to rename it,
+  press Delete to remove it, and pick several with Shift to use the *Arrange* commands on them. Each change is
   one step of undo and is written by the next save. A resized text field is drawn again
   at its new size with the answer it holds; a checkbox or a button keeps the appearance
   its author gave it. A removed field leaves the file, its answer with it. A signature
@@ -78,6 +78,15 @@ have the binary.)
   on the page as a block. The first one picked is the one the others follow. An
   arrangement is one step of undo, however many it moved, and nothing is moved off the
   page. On a turned view, left and top are the reader's.
+
+### Changed
+
+- **One press on a form field, a box, an ellipse or a text box picks it, and a second
+  press opens its box.** One press used to do both, so the arrow keys went to the name
+  box, and a single picked rectangle showed no sign of being picked. It now gets a
+  line round it and the corner to resize it by, the arrows move it at once, and Delete
+  or Backspace removes what is picked, several as one step of undo. A highlight, a
+  note or a drawing opens on one press as before.
 
 ### Fixed
 

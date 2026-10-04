@@ -3602,6 +3602,24 @@ fit). A default value, which matters only to a form that resets, and tpdf has no
 Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
 
+#### One press picks a rectangle, two open it — 2026-10-04
+
+Decided by the owner after it had been raised three times: a press on a placed
+rectangle both picked it and opened its name box, so the arrow keys went to the box and
+one picked rectangle looked like none.
+
+For the four kinds a reader places and arranges (`isResizable`: field, box, ellipse,
+text box) a press picks and a second press on the same mark within 450 ms opens the
+box. The two presses are told apart in the press handler by the event's own time and
+not by `dblclick`, because the first press may already have started a drag. One picked
+mark gets the line round it and the resize corner that several did. `removeMarks`
+takes the open mark, or with no box open the picked ones under one gesture; Delete and
+Backspace call it, and so does *Remove mark*. A highlight, a note and a drawing open on
+one press as they did: reading the note is what a press on one of those is for.
+
+A field just placed still opens its name box, since naming it is the next thing a
+reader does.
+
 #### A made form against another reader — 2026-10-04
 
 Six pieces of form work in one day, each verified by tpdf reading its own output. The
