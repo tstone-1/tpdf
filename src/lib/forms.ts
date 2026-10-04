@@ -1,5 +1,6 @@
 import type { EditState } from "./edits";
 import type { Anchor } from "./popup";
+import type { FieldEdited, FieldProps } from "./savedfields";
 
 /** Option indices preserve choices whose export values happen to be equal. */
 export type FormValue = string | boolean | number[];
@@ -57,17 +58,83 @@ export function fieldValue(widget: FormWidget, changes: readonly FormChange[]): 
 export function shownValue(
   widget: FormWidget,
   changes: readonly FormChange[],
-  fields: readonly import("./savedfields").FieldEdited[],
+  fields: readonly FieldEdited[],
   widgets: readonly FormWidget[],
 ): FormValue {
   const value = fieldValue(widget, changes);
+  if (widget.control.kind === "choice") {
+    const choices = shownChoices(widget, fields, widgets);
+    return Array.isArray(value) && choices ? standingChoice(widget.control.options, choices, value) : value;
+  }
   if (value !== "" || widget.control.kind !== "text") return value;
+  return given(widget, fields, widgets, "default_value") ?? "";
+}
+
+/** One part of the properties a reader has given a field, held under any of its widgets. */
+function given<K extends keyof FieldProps>(
+  widget: FormWidget,
+  fields: readonly FieldEdited[],
+  widgets: readonly FormWidget[],
+  part: K,
+): FieldProps[K] | undefined {
   const own = widgets.filter((other) => fieldKey(other.object) === fieldKey(widget.object));
-  const given = fields
+  return fields
     .filter((edit) => own.some((other) => fieldKey(other.widget) === fieldKey(edit.object)))
-    .map((edit) => edit.props?.default_value)
+    .map((edit) => edit.props?.[part])
     .find((value) => value !== undefined);
-  return given ?? "";
+}
+
+/**
+ * One choice a list offers. `index` is its place among the file's choices,
+ * which is what an answer names until the save; `null` for a choice a reader
+ * has just added, which the file does not have yet and so cannot be chosen.
+ */
+export interface ShownChoice { label: string; index: number | null }
+
+/**
+ * The choices a reader has just given a list, or `null` when its choices are
+ * the file's. A choice whose label the file has takes the first place the
+ * file has that label at: the save carries what is chosen from the old
+ * choices to the new ones by label, and so does this.
+ */
+export function shownChoices(
+  widget: FormWidget,
+  fields: readonly FieldEdited[],
+  widgets: readonly FormWidget[],
+): ShownChoice[] | null {
+  if (widget.control.kind !== "choice") return null;
+  const to = given(widget, fields, widgets, "options");
+  if (to === undefined) return null;
+  const was = widget.control.options.map((option) => option.label);
+  return to.map((label) => {
+    const index = was.indexOf(label);
+    return { label, index: index < 0 ? null : index };
+  });
+}
+
+/**
+ * What stays chosen under new choices: each chosen choice whose label the new
+ * choices still have, at the place a control offers that label at. The rest
+ * the save takes off, and the control says so before it.
+ */
+export function standingChoice(
+  was: readonly { label: string }[],
+  choices: readonly ShownChoice[],
+  value: readonly number[],
+): number[] {
+  const kept = value
+    .map((at) => choices.find((choice) => choice.label === was[at]?.label)?.index)
+    .filter((at): at is number => typeof at === "number");
+  return [...new Set(kept)].sort((a, b) => a - b);
+}
+
+/** Where a field's text sits: as a reader has just set it, or as the file has it. */
+export function shownAlign(
+  widget: FormWidget,
+  fields: readonly FieldEdited[],
+  widgets: readonly FormWidget[],
+): FormAlign {
+  return given(widget, fields, widgets, "align") ?? widget.align ?? "left";
 }
 
 /** Reports unsupported input before a tab switch or save can close its editor. */
@@ -92,7 +159,15 @@ export function answerError(widget: FormWidget, value: FormValue): string | null
   return null;
 }
 
-interface Mounted { widget: FormWidget; input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement; accepted: FormValue; pending: number }
+interface Mounted {
+  widget: FormWidget;
+  input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+  accepted: FormValue;
+  pending: number;
+  /** A list's choices as the control offers them, and the element that holds them. */
+  choices: ShownChoice[];
+  list: HTMLElement | null;
+}
 
 /** Array identity changes at every IPC reply; equality is about the selected indices. */
 export function sameAnswer(a: FormValue, b: FormValue): boolean {
@@ -104,7 +179,7 @@ export class FormLayer {
   private readonly node = document.createElement("div");
   private readonly controls: Mounted[] = [];
   private changes: readonly FormChange[] = [];
-  private fields: readonly import("./savedfields").FieldEdited[] = [];
+  private fields: readonly FieldEdited[] = [];
   private disposed = false;
   private readonly pending = new Set<Promise<void>>();
 
@@ -125,21 +200,13 @@ export class FormLayer {
         input.type = kind.kind === "radio" ? "radio" : kind.kind === "checkbox" ? "checkbox" : "text";
         if (kind.kind === "radio") input.name = `form-${fieldKey(widget.object)}${kind.unison ? `-${kind.index}` : ""}`;
       }
+      let list: HTMLElement | null = null;
       if (kind.kind === "choice") {
         if (input instanceof HTMLSelectElement) {
           input.multiple = kind.multiple && !kind.combo;
-          if (!kind.combo) input.size = Math.max(2, Math.min(8, kind.options.length));
-          if (kind.combo) {
-            const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Choose an option"; input.append(empty);
-          }
-          for (const [i, option] of kind.options.entries()) {
-            const item = document.createElement("option"); item.value = String(i); item.textContent = option.label; input.append(item);
-          }
+          list = input;
         } else {
-          const list = document.createElement("datalist"); list.id = `form-options-${fieldKey(widget.widget)}`;
-          for (const option of kind.options) {
-            const item = document.createElement("option"); item.value = option.label; list.append(item);
-          }
+          list = document.createElement("datalist"); list.id = `form-options-${fieldKey(widget.widget)}`;
           input.setAttribute("list", list.id); this.node.append(list);
         }
       }
@@ -152,7 +219,8 @@ export class FormLayer {
       if (widget.required) input.required = true;
       input.style.cssText = "position:absolute;box-sizing:border-box;margin:0;pointer-events:auto;border:1px solid #4674be88;border-radius:1px;background:#f4f7ff;color:#171717;padding:2px;font:12px Helvetica,Arial,sans-serif;resize:none;min-width:0;min-height:0";
       if (widget.align && widget.align !== "left") input.style.textAlign = widget.align;
-      const control = { widget, input, accepted: widget.value, pending: 0 };
+      const control: Mounted = { widget, input, accepted: widget.value, pending: 0, choices: [], list };
+      if (kind.kind === "choice") this.offer(control, kind.options.map((option, index) => ({ label: option.label, index })));
       this.controls.push(control);
       this.put(control, widget.value);
       input.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -185,6 +253,32 @@ export class FormLayer {
     this.layout();
   }
 
+  /**
+   * Fills a list with the choices it offers. One a reader has just added is
+   * shown and cannot be chosen: an answer names a choice the file has.
+   */
+  private offer(control: Mounted, choices: ShownChoice[]): void {
+    const kind = control.widget.control;
+    if (kind.kind !== "choice" || !control.list) return;
+    control.choices = choices;
+    control.list.replaceChildren();
+    if (control.input instanceof HTMLSelectElement) {
+      if (!kind.combo) control.input.size = Math.max(2, Math.min(8, choices.length));
+      if (kind.combo) {
+        const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Choose an option"; control.list.append(empty);
+      }
+    }
+    for (const choice of choices) {
+      const item = document.createElement("option");
+      if (control.input instanceof HTMLSelectElement) {
+        item.textContent = choice.label;
+        item.value = choice.index === null ? "new" : String(choice.index);
+        if (choice.index === null) { item.disabled = true; item.title = "Save the document to choose this."; }
+      } else item.value = choice.label;
+      control.list.append(item);
+    }
+  }
+
   private read(control: Mounted): FormValue {
     const kind = control.widget.control;
     if (kind.kind === "radio") {
@@ -197,8 +291,8 @@ export class FormLayer {
       if (control.input.value === "") return [];
       if (typeof control.accepted === "string" && control.input.value === control.accepted) return control.accepted;
       if (Array.isArray(control.accepted) && control.accepted.length === 1 && control.input.value === kind.options[control.accepted[0]!]!.label) return control.accepted;
-      const index = kind.options.findIndex((o) => o.label === control.input.value);
-      return index < 0 ? control.input.value : [index];
+      const index = control.choices.find((choice) => choice.label === control.input.value)?.index ?? null;
+      return index === null ? control.input.value : [index];
     }
     return kind.kind === "checkbox" ? (control.input as HTMLInputElement).checked : control.input.value;
   }
@@ -265,8 +359,16 @@ export class FormLayer {
     this.fields = state.fields ?? [];
     const widgets = this.controls.map((control) => control.widget);
     for (const control of this.controls) {
-      if (!control.pending && sameAnswer(this.read(control), control.accepted) && !control.input.validationMessage)
-        this.put(control, shownValue(control.widget, this.changes, this.fields, widgets));
+      const clean = !control.pending && sameAnswer(this.read(control), control.accepted) && !control.input.validationMessage;
+      const kind = control.widget.control;
+      if (kind.kind === "choice") {
+        const choices = shownChoices(control.widget, this.fields, widgets)
+          ?? kind.options.map((option, index) => ({ label: option.label, index }));
+        if (JSON.stringify(choices) !== JSON.stringify(control.choices)) this.offer(control, choices);
+      }
+      const align = shownAlign(control.widget, this.fields, widgets);
+      control.input.style.textAlign = align === "left" ? "" : align;
+      if (clean) this.put(control, shownValue(control.widget, this.changes, this.fields, widgets));
     }
     this.layout();
   }

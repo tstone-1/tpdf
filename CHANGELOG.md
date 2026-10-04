@@ -45,6 +45,12 @@ have the binary.)
   showed where it would go. A change the save would refuse is still drawn where the
   file has the field.
 
+- **New choices and a new alignment are offered at once.** After you change a saved
+  dropdown's choices or a field's alignment in the properties panel, the box you fill
+  it in shows them. Before, it kept the file's until the save. What was chosen stays
+  chosen where the new choices still have it. A choice the file does not have yet is
+  listed and can be chosen after the save.
+
 ### Fixed
 
 - **An answer in a field that says it is turned was written on its side.** A form made

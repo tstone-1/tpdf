@@ -556,6 +556,67 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       Math.abs(saved[0] - to[0]) < 0.01 && Math.abs(saved[1] - to[1]) < 0.01,
       `${saved.map((v) => v.toFixed(1))} against ${to.map((v) => v.toFixed(1))}`,
     );
+
+    // New choices and a new alignment, offered for filling before the save:
+    // the control is built from the file's and has to follow the journal.
+    {
+      const select = () => document.querySelector<HTMLSelectElement>('.form-fields select[aria-label="Dropdown 1"]');
+      const offered = () => [...(select()?.options ?? [])].map((option) => `${option.textContent}${option.disabled ? " (not yet)" : ""}`).join("|");
+      const chosen = () => select()?.selectedOptions[0]?.textContent ?? "";
+      const name = () => document.querySelector<HTMLInputElement>('.form-fields input[aria-label="Name"]');
+      // The save reopened the document, and its controls come after its first paint.
+      await settle(() => select() !== null, SETTLE_MS);
+      const pick = select();
+      if (pick) { pick.value = "1"; pick.dispatchEvent(new Event("change", { bubbles: true })); }
+      await settle(() => (host.edits()?.state.forms ?? []).length === 1, SETTLE_MS);
+      await host.idle();
+      check("the saved dropdown is answered with its second choice", chosen() === "No, by post", `${chosen()}; ${offered()}`);
+      const viewer = host.viewer()!;
+      const sheet = () => document.querySelector<HTMLElement>(`.${PROPERTIES_CLASS}`);
+      /** Opens the panel on one saved field, types into it and applies. */
+      const set = async (field: string, typed: (control: <T extends HTMLElement>(label: string) => T | null) => void) => {
+        const at = after.widgets.findIndex((widget) => widget.name === field);
+        const before = JSON.stringify(host.edits()?.state.fields);
+        host.run("edit.formEditOn");
+        await pause(200);
+        viewer.pick([SAVED_BASE + at]);
+        host.run("edit.fieldProperties");
+        await settle(() => sheet()?.style.display === "flex", SETTLE_MS);
+        typed((label) => sheet()?.querySelector(`[aria-label="${label}"]`) ?? null);
+        [...(sheet()?.querySelectorAll("button") ?? [])].at(-1)?.click();
+        await settle(() => JSON.stringify(host.edits()?.state.fields) !== before, SETTLE_MS);
+        await host.idle();
+        host.run("edit.formEditOff");
+        await pause(200);
+      };
+      await set("Dropdown 1", (control) => {
+        const choices = control<HTMLInputElement>("Choices");
+        if (choices) choices.value = "No, by post; Maybe";
+      });
+      check(
+        "new choices are offered before the save, the one the file lacks shown and not yet to be chosen",
+        offered() === "Choose an option|No, by post|Maybe (not yet)",
+        offered(),
+      );
+      check("and what was chosen stays chosen, since the new choices have it", chosen() === "No, by post", chosen());
+      await set("Name", (control) => {
+        const align = control<HTMLSelectElement>("Alignment");
+        if (align) align.value = "center";
+      });
+      check("a new alignment is the control's before the save", name()?.style.textAlign === "center", String(name()?.style.textAlign));
+      host.run("edit.undo");
+      await host.idle();
+      host.run("edit.undo");
+      await host.idle();
+      check(
+        "undo gives the control the file's choices and alignment back",
+        offered() === "Choose an option|Yes|No, by post" && chosen() === "No, by post" && name()?.style.textAlign === "right",
+        `${offered()}; ${chosen()}; ${name()?.style.textAlign}`,
+      );
+      host.run("edit.undo");
+      await host.idle();
+      check("and a third undo leaves nothing unsaved", host.edits()?.state.dirty === false && chosen() === "Choose an option", `${host.edits()?.state.dirty}; ${chosen()}`);
+    }
   }
 }
 

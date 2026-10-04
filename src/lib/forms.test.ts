@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerError, fieldValue, sameAnswer, shownValue, type FormWidget } from "./forms";
+import { answerError, fieldValue, sameAnswer, shownAlign, shownChoices, shownValue, standingChoice, type FormWidget } from "./forms";
 
 const text: FormWidget = {
   object: [12, 0], widget: [13, 0], page: 0,
@@ -42,6 +42,57 @@ describe("what a field's control shows", () => {
     expect(shownValue(box, [], [given([13, 0], "n/a")], [box])).toBe(false);
     const list: FormWidget = { ...empty, value: "", control: { kind: "choice", combo: true, editable: true, multiple: false, options: [] } };
     expect(shownValue(list, [], [given([13, 0], "n/a")], [list])).toBe("");
+    // A kind that is neither text nor a list, holding an empty string.
+    const odd: FormWidget = { ...empty, control: { kind: "unsupported" } };
+    expect(shownValue(odd, [], [given([13, 0], "n/a")], [odd])).toBe("");
+  });
+});
+
+describe("the choices and the alignment a control shows before the save", () => {
+  const list: FormWidget = {
+    ...text, value: [1], align: "right",
+    control: { kind: "choice", combo: true, editable: false, multiple: false,
+      options: [{ export: "y", label: "Yes" }, { export: "n", label: "No" }, { export: "n2", label: "No" }, { export: "l", label: "Later" }] },
+  };
+  const twin: FormWidget = { ...list, widget: [14, 0] };
+  const changed = (object: [number, number], props: object, removed = false) => ({ object, page: 5, removed, props });
+
+  it("are the file's while a reader has changed neither", () => {
+    expect(shownChoices(list, [], [list])).toBeNull();
+    expect(shownChoices(list, [changed([13, 0], { tooltip: "x" })], [list])).toBeNull();
+    expect(shownChoices(text, [changed([13, 0], { options: ["a"] })], [text])).toBeNull();
+    expect(shownAlign(list, [], [list])).toBe("right");
+    expect(shownAlign(text, [], [text])).toBe("left");
+    // With the file's choices an answer is the file's own, two equal labels apart.
+    expect(shownValue({ ...list, value: [2] }, [], [], [list])).toEqual([2]);
+  });
+
+  it("are the ones a reader has just given, each at the first place the file has its label", () => {
+    const to = [changed([13, 0], { options: ["Later", "No", "Maybe"], align: "center" })];
+    expect(shownChoices(list, to, [list])).toEqual([
+      { label: "Later", index: 3 }, { label: "No", index: 1 }, { label: "Maybe", index: null },
+    ]);
+    expect(shownAlign(list, to, [list])).toBe("center");
+    // Held under the field's other widget, also when that one was removed.
+    expect(shownChoices(list, [changed([14, 0], { options: ["Maybe"] }, true)], [list, twin])).toEqual([{ label: "Maybe", index: null }]);
+    expect(shownAlign(list, [changed([14, 0], { align: "left" })], [list, twin])).toBe("left");
+    // Another field's are not this one's.
+    expect(shownChoices(list, [changed([99, 0], { options: ["Maybe"] })], [list, twin])).toBeNull();
+    expect(shownAlign(list, [changed([99, 0], { align: "center" })], [list, twin])).toBe("right");
+  });
+
+  it("keep chosen what the new choices still have by label, as the save does", () => {
+    const to = [changed([13, 0], { options: ["Later", "No", "Maybe"] })];
+    expect(shownValue(list, [], to, [list])).toEqual([1]);
+    // The second "No" of the file is shown where the control offers "No".
+    expect(shownValue({ ...list, value: [2] }, [], to, [list])).toEqual([1]);
+    // "Yes" is gone, so nothing is chosen; a pending answer is treated as the file's is.
+    expect(shownValue({ ...list, value: [0] }, [], to, [list])).toEqual([]);
+    expect(shownValue(list, [{ object: [12, 0], value: [0, 3] }], to, [list])).toEqual([3]);
+    expect(standingChoice([{ label: "a" }, { label: "b" }, { label: "a" }], [{ label: "b", index: 1 }, { label: "a", index: 0 }], [2, 1, 0])).toEqual([0, 1]);
+    expect(standingChoice([{ label: "a" }], [{ label: "a", index: null }], [0, 7])).toEqual([]);
+    // Text typed into a list that takes it is not a choice and stays.
+    expect(shownValue({ ...list, value: "own words" }, [], to, [list])).toBe("own words");
   });
 });
 

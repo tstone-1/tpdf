@@ -3633,8 +3633,21 @@ either a saved id or a mark's, and changes the field that was picked when the pa
 opened.
 
 **Not built.** (Text size and a default value were in this list until *Text size and
-default value* below.) Export values that differ from labels for new choices. Until the save, the fill box
-still offers the old choices and the old alignment.
+default value* below.) Export values that differ from labels for new choices. Choosing,
+before the save, a choice the file does not have yet.
+
+**The fill box follows.** Added 2026-10-04. Until then the control offered the file's
+choices and alignment until the save. `forms.shownChoices` and `shownAlign` read the
+pending set, held under any widget of the field as a default is, and `FormLayer.update`
+rebuilds a list whose choices changed. An answer is still an index among the file's
+choices, because the save writes answers before field changes and `set_options` carries
+what is chosen by label. So each offered choice keeps the first index the file has its
+label at, `standingChoice` shows what the save will keep chosen, and a choice with a new
+label is listed and disabled. Letting it be chosen would need answers to index the pending
+choices and the journal to carry them across a change and its undo, which one save does
+not justify. In the window: the fields phase answers the saved dropdown, gives it new
+choices and the name field a new alignment, and reads the controls; three broken builds
+(no rebuild, no alignment, a new choice left enabled) each fail one check.
 
 #### Fields on a turned page — 2026-10-04
 
