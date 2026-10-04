@@ -14,7 +14,7 @@
  */
 
 import type { EditState } from "./edits";
-import type { Form, FormWidget } from "./forms";
+import type { Form, FormAlign, FormWidget } from "./forms";
 import { INK_WIDTH } from "./markband";
 import type { MarkView, PageId, PageView } from "./pages";
 
@@ -29,6 +29,18 @@ export function isSaved(id: number): boolean {
   return id >= SAVED_BASE;
 }
 
+/** The parts of a field's properties a reader has changed. A part left out is as the file has it. */
+export interface FieldProps {
+  /** Empty takes the tooltip off. */
+  tooltip?: string;
+  required?: boolean;
+  read_only?: boolean;
+  /** Nought takes the limit off. */
+  max_length?: number;
+  align?: FormAlign;
+  options?: string[];
+}
+
 /** What a reader has changed about one widget, as the model reports it. */
 export interface FieldEdited {
   object: [number, number];
@@ -36,13 +48,14 @@ export interface FieldEdited {
   rect?: [number, number, number, number];
   name?: string;
   removed: boolean;
+  props?: FieldProps;
 }
 
 /** One widget to change, as `form_field_edit` takes it. */
 export interface FieldTarget {
   object: [number, number];
   page: number;
-  patch: { rect?: [number, number, number, number]; name?: string; removed?: boolean };
+  patch: { rect?: [number, number, number, number]; name?: string; removed?: boolean; props?: FieldProps };
 }
 
 type Rect = [number, number, number, number];
@@ -170,6 +183,86 @@ export function renamed(
   );
   if (taken) return `\`${name}\`: another field has this name`;
   return target(found, { name });
+}
+
+/**
+ * A field's properties as they now stand: the file's, with what a reader has
+ * changed laid over them. A part the field's kind does not have is `null`.
+ */
+export interface FieldProperties {
+  /** The field's name, for the panel's heading. */
+  name: string;
+  tooltip: string;
+  required: boolean;
+  readOnly: boolean;
+  /** The most characters a text field takes; nought for no limit. */
+  maxLength: number | null;
+  /** Where a text or choice field's text sits. */
+  align: FormAlign | null;
+  /** What a choice field offers. */
+  options: string[] | null;
+}
+
+/** The properties of the saved field an id names, or `null` when it names none. */
+export function properties(
+  form: Form,
+  state: Pick<EditState, "fields" | "pages">,
+  id: number,
+): FieldProperties | null {
+  const found = named(form, state, id);
+  if (!found) return null;
+  const { widget } = found;
+  // A field has one set, held under whichever of its widgets was changed.
+  const edits = (state.fields ?? []).filter((edit) =>
+    form.widgets.some((other) => same(other.widget, edit.object) && same(other.object, widget.object)));
+  const changed = <K extends keyof FieldProps>(part: K): FieldProps[K] | undefined =>
+    edits.map((edit) => edit.props?.[part]).find((value) => value !== undefined);
+  const kind = widget.control.kind;
+  return {
+    name: editOf(widget, state)?.name ?? leafName(widget.name),
+    tooltip: changed("tooltip") ?? widget.tooltip ?? "",
+    required: changed("required") ?? widget.required ?? false,
+    readOnly: changed("read_only") ?? widget.read_only ?? false,
+    maxLength: kind === "text" ? changed("max_length") ?? widget.max_length ?? 0 : null,
+    align: kind === "text" || kind === "choice" ? changed("align") ?? widget.align ?? "left" : null,
+    options: widget.control.kind === "choice"
+      ? changed("options") ?? widget.control.options.map((option) => option.label)
+      : null,
+  };
+}
+
+/**
+ * A saved field given new properties: a change naming only the parts that
+ * differ from what the field now has, or `null` when none does.
+ */
+export function propertied(
+  form: Form,
+  state: Pick<EditState, "fields" | "pages">,
+  id: number,
+  to: FieldProperties,
+): FieldTarget | null {
+  const found = named(form, state, id);
+  const now = properties(form, state, id);
+  if (!found || !now) return null;
+  const props: FieldProps = {};
+  if (to.tooltip !== now.tooltip) props.tooltip = to.tooltip;
+  if (to.required !== now.required) props.required = to.required;
+  if (to.readOnly !== now.readOnly) props.read_only = to.readOnly;
+  if (now.maxLength !== null && to.maxLength !== null && to.maxLength !== now.maxLength) props.max_length = to.maxLength;
+  if (now.align !== null && to.align !== null && to.align !== now.align) props.align = to.align;
+  if (now.options !== null && to.options !== null
+    && (to.options.length !== now.options.length || to.options.some((option, at) => option !== now.options![at]))) {
+    props.options = [...to.options];
+  }
+  if (Object.keys(props).length === 0) return null;
+  // A field shown in several places has one set of properties, and the save
+  // refuses two. So the change is always made under the same widget: the
+  // field's first that is still there.
+  const first = form.widgets
+    .filter((other) => same(other.object, found.widget.object) && !editOf(other, state)?.removed)
+    .map((other) => ({ widget: other, page: pageOf(other, state.pages) }))
+    .find((other): other is { widget: FormWidget; page: PageId } => other.page !== undefined);
+  return target(first ?? found, { props });
 }
 
 /**

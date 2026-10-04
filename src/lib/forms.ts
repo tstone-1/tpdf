@@ -20,7 +20,14 @@ export interface FormWidget {
   multiline: boolean;
   max_length: number | null;
   reason: string | null;
+  /** The field's `/TU`; empty for none. */
+  tooltip?: string;
+  required?: boolean;
+  read_only?: boolean;
+  align?: FormAlign;
 }
+/** Where a field's text sits between its left and right edges. */
+export type FormAlign = "left" | "center" | "right";
 export interface Form { widgets: FormWidget[] }
 export interface FormChange { object: [number, number]; value: FormValue }
 
@@ -108,8 +115,10 @@ export class FormLayer {
       input.autocomplete = "off";
       input.spellcheck = false;
       input.disabled = widget.reason !== null;
-      input.title = widget.reason ?? widget.name;
+      input.title = widget.reason ?? (widget.tooltip || widget.name);
+      if (widget.required) input.required = true;
       input.style.cssText = "position:absolute;box-sizing:border-box;margin:0;pointer-events:auto;border:1px solid #4674be88;border-radius:1px;background:#f4f7ff;color:#171717;padding:2px;font:12px Helvetica,Arial,sans-serif;resize:none;min-width:0;min-height:0";
+      if (widget.align && widget.align !== "left") input.style.textAlign = widget.align;
       const control = { widget, input, accepted: widget.value, pending: 0 };
       this.controls.push(control);
       this.put(control, widget.value);

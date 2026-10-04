@@ -556,6 +556,8 @@ pub struct FieldChange {
     pub name: Option<String>,
     /// The widget is taken out of the document.
     pub removed: bool,
+    /// The field's properties, each part that is changed.
+    pub props: crate::formedit::Props,
 }
 
 /// A foreign comment the reader has rewritten: which page, and which version.

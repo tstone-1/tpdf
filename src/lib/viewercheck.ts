@@ -3162,6 +3162,8 @@ async function appCommandChecks(
     fieldBorder: () => true,
     setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
     pickedMarks: () => viewer.pickedCount,
+    fieldPicked: () => false,
+    fieldProperties: () => fired.push("fieldProperties"),
     arrange: (how) => fired.push(`arrange:${how}`),
     savedFields: () => 0,
     formEditing: () => false,
@@ -4317,6 +4319,7 @@ async function appCommandChecks(
     "edit.fieldBorderOff": "a stored preference; tabs_check.py --phase fields drives it",
     "edit.formEditOn": "needs a document with a form; appcommands.test.ts and savedfields.test.ts",
     "edit.formEditOff": "needs the mode on; appcommands.test.ts",
+    "edit.fieldProperties": "needs a field of the file picked; appcommands.test.ts, fieldprops.test.ts, and the fields phase",
     "edit.alignLeft": "needs marks picked; viewerarrange.test.ts, and the fields phase",
     "edit.alignCenter": "needs marks picked; viewerarrange.test.ts, and the fields phase",
     "edit.alignRight": "needs marks picked; viewerarrange.test.ts, and the fields phase",
@@ -4593,6 +4596,7 @@ async function appCommandChecks(
     // changed.
     "edit.formEditOn",
     "edit.formEditOff",
+    "edit.fieldProperties",
     // Nothing is picked.
     "edit.alignLeft",
     "edit.alignCenter",

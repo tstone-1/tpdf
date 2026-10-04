@@ -373,7 +373,8 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 
 # Making a form in the window: placing a text field, a checkbox and a dropdown,
 # picking three with Shift and aligning them, one undo for the arrangement, a
-# save, then a saved field dragged and saved again. The driver reads the saved
+# save, then a saved field dragged, given a tooltip, required and right-aligned
+# in the properties panel, and saved again. The driver reads the saved
 # file with the command-line tool and fills it. Any document with a page will do.
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase fields
 # macOS independent reader; the optional directory receives page PNGs.

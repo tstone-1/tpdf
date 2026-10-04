@@ -43,7 +43,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; formEditing?: boolean; savedFields?: number;
+    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -173,6 +173,8 @@ function harness(
     fieldBorder: () => framing,
     setFieldBorder: (border) => { framing = border; fired.push(`setFieldBorder:${border}`); },
     pickedMarks: () => update.picked ?? 0,
+    fieldPicked: () => update.fieldPicked ?? false,
+    fieldProperties: () => fired.push("fieldProperties"),
     arrange: (how) => fired.push(`arrange:${how}`),
     savedFields: () => update.savedFields ?? 0,
     formEditing: () => formEditing,
@@ -659,6 +661,18 @@ describe("the commands a document is needed for", () => {
     expect(fired.at(-1)).toBe("setFormEditing:false");
   });
 
+  it("offers a field's properties for one field of the file picked while the fields are being changed", () => {
+    const offered = (open: boolean, update: { formEditing?: boolean; fieldPicked?: boolean }) =>
+      harness(open, { savedFields: 3, ...update }).registry.all().find((c) => c.id === "edit.fieldProperties")?.enabled?.();
+    expect(offered(true, { formEditing: true, fieldPicked: true })).toBe(true);
+    expect(offered(true, { formEditing: true })).toBe(false);
+    expect(offered(true, { fieldPicked: true })).toBe(false);
+    expect(offered(false, { formEditing: true, fieldPicked: true })).toBe(false);
+    const { registry, fired } = harness(true, { savedFields: 3, formEditing: true, fieldPicked: true });
+    registry.run("edit.fieldProperties");
+    expect(fired.at(-1)).toBe("fieldProperties");
+  });
+
   it("offers each arrangement once enough marks are picked for it, and runs that one", () => {
     const ARRANGE_COMMANDS = [
       ["left", "edit.alignLeft"],
@@ -766,7 +780,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; formEditing?: boolean; savedFields?: number;
+      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number;
     }) => harness(
       true,
       update,
@@ -805,7 +819,7 @@ describe("every registered command", () => {
     // And the launch pair, which is the update pair's shape again.
     const applied = built({
       available: true, ready: true, disk: "reload", restoreTabs: true, fieldBorder: false,
-      formEditing: true,
+      formEditing: true, fieldPicked: true, savedFields: 2,
     });
     const states = [found, applied];
     const shell = found.registry
@@ -1670,6 +1684,8 @@ describe("the window shortcuts for editing", () => {
       fieldBorder: () => true,
       setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
       pickedMarks: () => 0,
+      fieldPicked: () => false,
+      fieldProperties: () => fired.push("fieldProperties"),
       arrange: (how) => fired.push(`arrange:${how}`),
       savedFields: () => 0,
       formEditing: () => false,

@@ -14,6 +14,14 @@
 //! removal takes the widget off its page and out of the field tree; the
 //! objects go when the rewrite sweeps what nothing refers to.
 //!
+//! **A field's properties.** Its tooltip (`/TU`), whether it is required and
+//! whether it is read-only (`/Ff` bits 2 and 1), the most characters a text
+//! field takes (`/MaxLen`), how its text is aligned (`/Q`) and what a choice
+//! field offers (`/Opt`) are each written on the field itself. Alignment and
+//! choices change what the field looks like, so the field is drawn again,
+//! with the answer it holds; an answer that is no longer among the choices
+//! is taken off the field rather than left naming something it cannot show.
+//!
 //! Nothing here adds a script, an action or a calculation, and none is
 //! touched: a field that has one keeps it under its new name or place.
 
@@ -22,10 +30,88 @@ use std::collections::{BTreeMap, BTreeSet};
 use lopdf::{Document, Object, ObjectId};
 use serde::{Deserialize, Serialize};
 
-use crate::forms::{self, Change, Control, Widget};
+use crate::forms::{self, Align, Change, Control, Value, Widget};
 
 /// The most fields one call changes. A bound on what a caller can ask.
 pub const MAX_EDITS: usize = 1000;
+
+/// What is changed about a field apart from its place and its name. Each
+/// part that is `None` is left as the document has it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Props {
+    /// What a reader shows when the pointer rests on the field. Empty takes
+    /// the tooltip off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tooltip: Option<String>,
+    /// Whether a form that submits itself insists on an answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    /// Whether the field refuses an answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    /// The most characters a text field takes. Nought takes the limit off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    /// Where a text or choice field's text sits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<Align>,
+    /// What a choice field offers, in order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<String>>,
+}
+
+/// The most characters a text field can be limited to, which is the most an
+/// answer holds.
+pub const MAX_LENGTH: u32 = 16384;
+/// The most characters a tooltip has.
+pub const MAX_TOOLTIP: usize = 1024;
+
+impl Props {
+    /// Whether nothing is changed.
+    pub fn is_empty(&self) -> bool {
+        *self == Props::default()
+    }
+
+    /// Lays a later change over this one: each part the later one names
+    /// replaces the part here.
+    pub fn merge(&mut self, later: &Props) {
+        if later.tooltip.is_some() {
+            self.tooltip.clone_from(&later.tooltip);
+        }
+        self.required = later.required.or(self.required);
+        self.read_only = later.read_only.or(self.read_only);
+        self.max_length = later.max_length.or(self.max_length);
+        self.align = later.align.or(self.align);
+        if later.options.is_some() {
+            self.options.clone_from(&later.options);
+        }
+    }
+
+    /// What is wrong with these that can be said without the document, for a
+    /// field called `name`.
+    pub fn problem(&self, name: &str) -> Option<String> {
+        if let Some(tip) = &self.tooltip {
+            if tip.chars().count() > MAX_TOOLTIP {
+                return Some(format!(
+                    "`{name}`: a tooltip is at most {MAX_TOOLTIP} characters"
+                ));
+            }
+            if tip.chars().any(|ch| ch.is_control() && ch != '\n') {
+                return Some(format!(
+                    "`{name}`: a tooltip cannot contain a control character"
+                ));
+            }
+        }
+        if self.max_length.is_some_and(|most| most > MAX_LENGTH) {
+            return Some(format!(
+                "`{name}`: the most characters is a number up to {MAX_LENGTH}"
+            ));
+        }
+        self.options.as_ref().and_then(|options| {
+            crate::formfields::options_problem(name, crate::formfields::Kind::Dropdown, options)
+        })
+    }
+}
 
 /// One field's widget, and what becomes of it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -43,6 +129,10 @@ pub struct FieldEdit {
     /// Take the widget out of the document.
     #[serde(default)]
     pub remove: bool,
+    /// The field's properties. A field with several widgets has one set, so
+    /// this changes all of them.
+    #[serde(default)]
+    pub props: Props,
 }
 
 /// The least side a widget of this kind may be given.
@@ -250,6 +340,130 @@ fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
     Ok(())
 }
 
+/// What a field's properties are to become, as [`apply`] has checked them.
+struct Propertied<'a> {
+    widget: &'a Widget,
+    props: &'a Props,
+    /// Whether the field is drawn again.
+    redrawn: bool,
+}
+
+/// Checks one field's new properties against the field.
+fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>, String> {
+    let name = &widget.name;
+    if let Some(why) = props.problem(name) {
+        return Err(why);
+    }
+    if let Some(most) = props.max_length {
+        if !matches!(widget.control, Control::Text) {
+            return Err(format!("`{name}`: only a text field has a most characters"));
+        }
+        let holds = match &widget.value {
+            Value::Text(text) => text.chars().count(),
+            _ => 0,
+        };
+        if most > 0 && holds > most as usize {
+            return Err(format!(
+                "`{name}` holds {holds} characters, which is more than the {most} it would take"
+            ));
+        }
+    }
+    let drawn_by_tpdf = matches!(widget.control, Control::Text | Control::Choice { .. });
+    if props.align.is_some() && !drawn_by_tpdf {
+        return Err(format!(
+            "`{name}`: only a text field or a field of choices has text to align"
+        ));
+    }
+    if props.options.is_some() && !matches!(widget.control, Control::Choice { .. }) {
+        return Err(format!("`{name}`: only a field of choices has choices"));
+    }
+    let redrawn = props.options.is_some() || props.align.is_some_and(|to| to != widget.align);
+    if redrawn {
+        // Read-only is no obstacle: the flag is lifted while the field is
+        // drawn and put back after. Any other reason is one tpdf cannot draw.
+        if let Some(reason) = widget.reason.as_deref().filter(|r| *r != forms::READ_ONLY) {
+            return Err(format!(
+                "`{name}` keeps its alignment and choices: {reason}, so tpdf cannot redraw it"
+            ));
+        }
+    }
+    Ok(Propertied {
+        widget,
+        props,
+        redrawn,
+    })
+}
+
+/// Writes a choice field's new choices, and says what it then holds.
+///
+/// A choice the field already offered keeps the value it exports, which a
+/// form's recipient may be reading. What was chosen stays chosen where the
+/// new choices still have it; otherwise the field holds nothing.
+fn set_options(doc: &mut Document, widget: &Widget, to: &[String]) -> Result<Value, String> {
+    let Control::Choice { options: was, .. } = &widget.control else {
+        return Ok(widget.value.clone());
+    };
+    let exported = |label: &String| -> String {
+        was.iter()
+            .find(|old| &old.label == label)
+            .map_or_else(|| label.clone(), |old| old.export.clone())
+    };
+    let entries: Vec<Object> = to
+        .iter()
+        .map(|label| {
+            let export = exported(label);
+            if &export == label {
+                forms::pdf_string(label)
+            } else {
+                Object::Array(vec![forms::pdf_string(&export), forms::pdf_string(label)])
+            }
+        })
+        .collect();
+    let value = match &widget.value {
+        Value::Selection(chosen) => {
+            let labels: Vec<&String> = chosen
+                .iter()
+                .filter_map(|at| was.get(*at).map(|old| &old.label))
+                .collect();
+            Value::Selection(
+                (0..to.len())
+                    .filter(|at| labels.contains(&&to[*at]))
+                    .collect(),
+            )
+        }
+        other => other.clone(),
+    };
+    let field = doc
+        .get_dictionary_mut(widget.object)
+        .map_err(|e| e.to_string())?;
+    field.set("Opt", entries);
+    // The scan reads `/V` against `/Opt` and refuses a form whose answer is
+    // not among its choices, so the answer is written here as it will stand;
+    // the redraw that follows writes it again with its appearance.
+    field.remove(b"I");
+    match &value {
+        Value::Selection(chosen) if chosen.is_empty() => {
+            field.remove(b"V");
+        }
+        Value::Selection(chosen) => {
+            let values: Vec<Object> = chosen
+                .iter()
+                .map(|at| forms::pdf_string(&exported(&to[*at])))
+                .collect();
+            field.set(
+                "V",
+                if values.len() == 1 {
+                    values[0].clone()
+                } else {
+                    Object::Array(values)
+                },
+            );
+        }
+        _ => {}
+    }
+    Ok(value)
+}
+
 /// Makes every change, or none: each is checked against the document before
 /// the first is made.
 ///
@@ -259,7 +473,9 @@ fn remove(doc: &mut Document, widget: &Widget) -> Result<(), String> {
 /// field, which is not edited; a name a field may not have or that a field
 /// beside it has; a rectangle that is too small, off its page or on a turned
 /// page; a resize of a text field whose appearance tpdf cannot redraw, or
-/// whose answer no longer fits; and a form [`forms::scan`] refuses.
+/// whose answer no longer fits; a property the field's kind does not have, a
+/// limit shorter than the answer the field holds, or two sets of properties
+/// for one field; and a form [`forms::scan`] refuses.
 pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
     if edits.is_empty() {
         return Ok(());
@@ -276,6 +492,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
     let mut redraw: BTreeMap<ObjectId, forms::Value> = BTreeMap::new();
     let mut names: BTreeMap<ObjectId, String> = BTreeMap::new();
     let mut removals: Vec<&Widget> = Vec::new();
+    let mut properties: BTreeMap<ObjectId, Propertied> = BTreeMap::new();
     for edit in edits {
         if !seen.insert(edit.widget) {
             return Err("a form field is changed twice".into());
@@ -290,6 +507,18 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
                 "`{}` is a signature field, which tpdf does not move, rename or remove",
                 widget.name
             ));
+        }
+        // Before a removal is set aside: a field shown in several places
+        // keeps its properties when the widget they were set under goes.
+        if !edit.props.is_empty() {
+            let to = propertied(widget, &edit.props)?;
+            if properties
+                .get(&widget.object)
+                .is_some_and(|other| other.props != to.props)
+            {
+                return Err(format!("`{}` is given two sets of properties", widget.name));
+            }
+            properties.insert(widget.object, to);
         }
         if edit.remove {
             removals.push(widget);
@@ -362,6 +591,56 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             .map_err(|e| e.to_string())?
             .set("T", crate::formfields::text(name));
     }
+    // A field that is drawn again is drawn as one that takes an answer, and
+    // is made read-only afterwards if that is what it is to be.
+    let mut read_only_after: Vec<(ObjectId, i64)> = Vec::new();
+    for (field, to) in &properties {
+        let Propertied {
+            widget,
+            props,
+            redrawn,
+        } = to;
+        let was = forms::integer(doc, *field, b"Ff");
+        let mut flags = was;
+        for (bit, on) in [(1_i64, props.read_only), (1 << 1, props.required)] {
+            match on {
+                Some(true) => flags |= bit,
+                Some(false) => flags &= !bit,
+                None => {}
+            }
+        }
+        if *redrawn {
+            let value = match &props.options {
+                Some(options) => set_options(doc, widget, options)?,
+                None => widget.value.clone(),
+            };
+            redraw.insert(*field, value);
+        }
+        let dict = doc.get_dictionary_mut(*field).map_err(|e| e.to_string())?;
+        if let Some(tip) = &props.tooltip {
+            if tip.is_empty() {
+                dict.remove(b"TU");
+            } else {
+                dict.set("TU", forms::pdf_string(tip));
+            }
+        }
+        match props.max_length {
+            Some(0) => {
+                dict.remove(b"MaxLen");
+            }
+            Some(most) => dict.set("MaxLen", i64::from(most)),
+            None => {}
+        }
+        if let Some(align) = props.align {
+            dict.set("Q", align.quadding());
+        }
+        if *redrawn && flags & 1 != 0 {
+            dict.set("Ff", flags & !1);
+            read_only_after.push((*field, flags));
+        } else if flags != was {
+            dict.set("Ff", flags);
+        }
+    }
     for widget in removals {
         remove(doc, widget)?;
     }
@@ -372,7 +651,13 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         .filter(|(field, _)| !removed_fields.contains(field))
         .map(|(object, value)| Change { object, value })
         .collect();
-    forms::write(doc, &changes)
+    forms::write(doc, &changes)?;
+    for (field, flags) in read_only_after {
+        doc.get_dictionary_mut(field)
+            .map_err(|e| e.to_string())?
+            .set("Ff", flags);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

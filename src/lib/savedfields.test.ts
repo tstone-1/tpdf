@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { Form, FormWidget } from "./forms";
 import { pageId, type MarkView, type PageView } from "./pages";
 import {
-  SAVED_BASE, arrangeBoth, asMarks, isSaved, leafName, moved, placed, removed, renamed, shownAt, split,
-  standing,
+  SAVED_BASE, arrangeBoth, asMarks, isSaved, leafName, moved, placed, properties, propertied, removed, renamed,
+  shownAt, split, standing,
   type FieldEdited,
 } from "./savedfields";
 
@@ -193,5 +193,106 @@ describe("an arrangement of placed marks, saved fields or both", () => {
     const { calls, edits } = recorder();
     await arrangeBoth(null, state(), edits, [{ mark: 4, rect }], 9);
     expect(calls).toEqual(["arrange 4 under 9"]);
+  });
+});
+
+describe("a saved field's properties", () => {
+  const CHOICES = { kind: "choice", combo: true, editable: false, multiple: false,
+    options: [{ export: "r", label: "Red" }, { export: "Green", label: "Green" }] } as const;
+  const form: Form = {
+    widgets: [
+      widget(11, "Name", 0, [20, 20, 120, 40], { tooltip: "Your name", required: true, max_length: 30, align: "center" }),
+      widget(12, "Agree", 0, [20, 60, 32, 72], { control: { kind: "checkbox" }, read_only: true }),
+      widget(13, "Colour", 0, [20, 90, 120, 110], { control: { ...CHOICES, options: [...CHOICES.options] }, value: [] }),
+      // One field shown twice: two widgets, one object.
+      { ...widget(21, "Twice", 0, [20, 130, 120, 150]), object: [20, 0] },
+      { ...widget(22, "Twice", 0, [20, 160, 120, 180]), object: [20, 0] },
+      // As a worker that does not send the new parts would.
+      widget(14, "Plain", 0, [20, 190, 120, 210]),
+    ],
+  };
+  const id = (at: number) => SAVED_BASE + at;
+
+  it("reads what the file has, and only the parts the field's kind has", () => {
+    expect(properties(form, state(), id(0))).toEqual({
+      name: "Name", tooltip: "Your name", required: true, readOnly: false, maxLength: 30, align: "center", options: null,
+    });
+    expect(properties(form, state(), id(1))).toEqual({
+      name: "Agree", tooltip: "", required: false, readOnly: true, maxLength: null, align: null, options: null,
+    });
+    expect(properties(form, state(), id(2))).toEqual({
+      name: "Colour", tooltip: "", required: false, readOnly: false, maxLength: null, align: "left", options: ["Red", "Green"],
+    });
+    expect(properties(form, state(), id(5))).toEqual({
+      name: "Plain", tooltip: "", required: false, readOnly: false, maxLength: 0, align: "left", options: null,
+    });
+    expect(properties(form, state(), id(9))).toBeNull();
+    expect(properties(form, state(), 3)).toBeNull();
+  });
+
+  it("lays what a reader has changed over the file, and the new name too", () => {
+    const edits: FieldEdited[] = [
+      { object: [11, 0], page: 5, name: "Full name", removed: false,
+        props: { tooltip: "", required: false, read_only: true, max_length: 0, align: "right" } },
+      { object: [13, 0], page: 5, removed: false, props: { options: ["Blue"] } },
+    ];
+    expect(properties(form, state(edits), id(0))).toEqual({
+      name: "Full name", tooltip: "", required: false, readOnly: true, maxLength: 0, align: "right", options: null,
+    });
+    expect(properties(form, state(edits), id(2))?.options).toEqual(["Blue"]);
+  });
+
+  it("reads a field shown twice the same from either widget", () => {
+    const edits: FieldEdited[] = [{ object: [21, 0], page: 5, removed: false, props: { tooltip: "Both" } }];
+    expect(properties(form, state(edits), id(3))?.tooltip).toBe("Both");
+    expect(properties(form, state(edits), id(4))?.tooltip).toBe("Both");
+    // And not a field that only shares a page with it.
+    expect(properties(form, state(edits), id(5))?.tooltip).toBe("");
+  });
+
+  it("names only the parts that differ, and nothing when none does", () => {
+    const now = properties(form, state(), id(0))!;
+    expect(propertied(form, state(), id(0), now)).toBeNull();
+    expect(propertied(form, state(), id(0), { ...now, tooltip: "Other" })).toEqual({
+      object: [11, 0], page: 5, patch: { props: { tooltip: "Other" } },
+    });
+    expect(propertied(form, state(), id(0), { ...now, required: false })?.patch.props).toEqual({ required: false });
+    expect(propertied(form, state(), id(0), { ...now, readOnly: true })?.patch.props).toEqual({ read_only: true });
+    expect(propertied(form, state(), id(0), { ...now, maxLength: 0 })?.patch.props).toEqual({ max_length: 0 });
+    expect(propertied(form, state(), id(0), { ...now, align: "left" })?.patch.props).toEqual({ align: "left" });
+    // A part the kind does not have is not sent, whatever is asked.
+    expect(propertied(form, state(), id(0), { ...now, options: ["A"] })).toBeNull();
+    const box = properties(form, state(), id(1))!;
+    expect(propertied(form, state(), id(1), { ...box, maxLength: 5, align: "right" })).toBeNull();
+    expect(propertied(form, state(), id(9), now)).toBeNull();
+  });
+
+  it("changes a field shown twice under its first widget that is still there, whichever was picked", () => {
+    const now = properties(form, state(), id(4))!;
+    const to = { ...now, tooltip: "Both" };
+    expect(propertied(form, state(), id(4), to)?.object).toEqual([21, 0]);
+    expect(propertied(form, state(), id(3), to)?.object).toEqual([21, 0]);
+    const gone: FieldEdited[] = [{ object: [21, 0], page: 5, removed: true }];
+    expect(propertied(form, state(gone), id(4), to)).toEqual({
+      object: [22, 0], page: 5, patch: { props: { tooltip: "Both" } },
+    });
+    // On a page that has been deleted there is no widget to change it under.
+    const elsewhere: Form = { widgets: [{ ...form.widgets[3]!, page: 7 }, form.widgets[4]!] };
+    expect(propertied(elsewhere, state(), id(1), to)?.object).toEqual([22, 0]);
+  });
+
+  it("sends new choices when one differs, is added or is taken away", () => {
+    const now = properties(form, state(), id(2))!;
+    const sent = (options: string[]) => propertied(form, state(), id(2), { ...now, options })?.patch.props?.options;
+    expect(sent(["Red", "Green"])).toBeUndefined();
+    expect(sent(["Green", "Red"])).toEqual(["Green", "Red"]);
+    expect(sent(["Red"])).toEqual(["Red"]);
+    expect(sent(["Red", "Green", "Blue"])).toEqual(["Red", "Green", "Blue"]);
+    // Compared with what a reader has already changed, not with the file.
+    const edits: FieldEdited[] = [{ object: [13, 0], page: 5, removed: false, props: { options: ["Blue"] } }];
+    const later = properties(form, state(edits), id(2))!;
+    expect(propertied(form, state(edits), id(2), later)).toBeNull();
+    expect(propertied(form, state(edits), id(2), { ...later, options: ["Red", "Green"] })?.patch.props?.options)
+      .toEqual(["Red", "Green"]);
   });
 });

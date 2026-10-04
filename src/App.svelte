@@ -92,6 +92,7 @@
   import { PropertiesDialog } from "./lib/propertiesdialog";
   import { PasswordDialog } from "./lib/passworddialog";
   import { NewPasswordDialog } from "./lib/newpassworddialog";
+  import { FieldPropertiesDialog, changeProperties, pickedField, type PropertiesDeps } from "./lib/fieldprops";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
@@ -203,6 +204,15 @@
   /** A change to one saved field, or nothing when the viewer named none. */
   const changeField = (target: ReturnType<typeof fieldMoved>) => {
     if (target) void applyEdit((e) => e.refield([target]));
+  };
+  /** What the field properties panel is given; the join is `fieldprops.ts`. */
+  const propertiesDeps: PropertiesDeps = {
+    picked: () => viewer?.pickedMarks() ?? [],
+    form: () => (formEditing ? scannedForm : null),
+    state: () => edits?.state ?? null,
+    ask: (now) => fieldPropertiesDialog?.ask(now) ?? Promise.resolve(null),
+    refield: (target) => changeField(target),
+    say: (message) => say(message),
   };
   /** Which kind of form field the armed tool places. */
   let armedField: FieldKind = "text";
@@ -515,6 +525,7 @@
   let propertiesDialog: PropertiesDialog | null = null;
   let passwordDialog: PasswordDialog | null = null;
   let newPasswordDialog: NewPasswordDialog | null = null;
+  let fieldPropertiesDialog: FieldPropertiesDialog | null = null;
   let compressDialog: CompressDialog | null = null;
   let webLinkDialog: WebLinkDialog | null = null;
 
@@ -803,6 +814,8 @@
         : "";
       refreshMenu();
     },
+    fieldPicked: () => pickedField(propertiesDeps) !== null,
+    fieldProperties: () => void changeProperties(propertiesDeps),
     pickedMarks: () => viewer?.pickedCount ?? 0,
     arrange: (how) => {
       // `false` is too few picked or nothing to move; the command is only
@@ -3269,6 +3282,7 @@
       // `passworddialog.ts`.
       passwordDialog = new PasswordDialog(document.body);
       newPasswordDialog = new NewPasswordDialog(document.body);
+      fieldPropertiesDialog = new FieldPropertiesDialog(document.body);
       compressDialog = new CompressDialog(document.body);
 
       // And beside that. A web link is asked about rather than followed, and

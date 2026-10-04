@@ -11150,12 +11150,14 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
             rect: Some([50.0, 30.0, 250.0, 60.0]),
             name: Some("Moved".into()),
             remove: false,
+            props: Default::default(),
         },
         FieldEdit {
             widget: widget("REMOVE-ME-FIELD"),
             rect: None,
             name: None,
             remove: true,
+            props: Default::default(),
         },
     ];
     assert!(!plan.is_appendable());
@@ -11186,6 +11188,70 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
             .len(),
         3
     );
+    // Properties, with an answer typed in the same save: the answer is
+    // written first, so the limit is judged against it and the field is
+    // drawn with it at the side it is now aligned to.
+    let other = before.iter().find(|w| w.name == "Other").expect("it");
+    let mut set = plan_of(&[0, 1]);
+    set.forms = vec![crate::forms::Change {
+        object: other.object,
+        value: crate::forms::Value::Text("Ada".into()),
+    }];
+    set.field_edits = vec![FieldEdit {
+        widget: other.widget,
+        rect: None,
+        name: None,
+        remove: false,
+        props: crate::formedit::Props {
+            tooltip: Some("Who".into()),
+            required: Some(true),
+            max_length: Some(3),
+            align: Some(crate::forms::Align::Right),
+            ..Default::default()
+        },
+    }];
+    assert!(!set.is_appendable());
+    let written = rewrite_update(&original, &set, Job::Save, None).expect("rewritten");
+    let read = Document::load_mem(&written).expect("loads");
+    let after = crate::forms::scan(&read).expect("a form").widgets;
+    let now = after.iter().find(|w| w.name == "Other").expect("it");
+    assert_eq!(now.value, crate::forms::Value::Text("Ada".into()));
+    assert_eq!(
+        (
+            now.tooltip.as_str(),
+            now.required,
+            now.max_length,
+            now.align
+        ),
+        ("Who", true, Some(3), crate::forms::Align::Right)
+    );
+    let x = 100.0 - 2.0 - crate::textbox::advance("Ada", 12.0);
+    let stream = read
+        .get_dictionary(now.widget)
+        .unwrap()
+        .get(b"AP")
+        .and_then(Object::as_dict)
+        .unwrap()
+        .get(b"N")
+        .and_then(Object::as_reference)
+        .unwrap();
+    let mut drawn = read
+        .get_object(stream)
+        .unwrap()
+        .as_stream()
+        .unwrap()
+        .clone();
+    let _ = drawn.decompress();
+    let body = String::from_utf8_lossy(&drawn.content).into_owned();
+    assert!(body.contains(&format!("1 0 0 1 {x} ")), "{body}");
+    assert_eq!(crate::verify::structure(&written), Vec::<String>::new());
+    // The same with a limit the answer is longer than writes nothing.
+    set.field_edits[0].props.max_length = Some(2);
+    assert!(rewrite_update(&original, &set, Job::Save, None)
+        .expect_err("refused")
+        .to_string()
+        .contains("holds 3 characters"));
+
     // And one that cannot be made writes nothing.
     let mut wrong = plan_of(&[0, 1]);
     wrong.field_edits = vec![FieldEdit {
@@ -11193,6 +11259,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
         rect: None,
         name: Some("KEEP-AND-MOVE".into()),
         remove: false,
+        props: Default::default(),
     }];
     assert!(rewrite_update(&original, &wrong, Job::Save, None)
         .expect_err("refused")

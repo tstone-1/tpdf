@@ -29,7 +29,11 @@
       },
       "multiline": false,
       "max_length": 20,
-      "reason": "Read-only"
+      "reason": "Read-only",
+      "tooltip": "Your answer",
+      "required": false,
+      "read_only": true,
+      "align": "left"
     },
     {
       "object": [
@@ -77,7 +81,11 @@
       },
       "multiline": false,
       "max_length": 20,
-      "reason": "Read-only"
+      "reason": "Read-only",
+      "tooltip": "Your answer",
+      "required": false,
+      "read_only": true,
+      "align": "left"
     },
     {
       "object": [
@@ -119,7 +127,11 @@
       },
       "multiline": false,
       "max_length": 20,
-      "reason": "Read-only"
+      "reason": "Read-only",
+      "tooltip": "Your answer",
+      "required": false,
+      "read_only": true,
+      "align": "left"
     }
   ]
 }

@@ -1,8 +1,8 @@
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId};
 
-use super::{apply, FieldEdit};
+use super::{apply, FieldEdit, Props};
 use crate::formfields::{add, Kind, NewField};
-use crate::forms::{scan, write, Change, Value, Widget};
+use crate::forms::{scan, write, Align, Change, Value, Widget};
 
 struct Fixture {
     doc: Document,
@@ -191,6 +191,7 @@ fn to(widget: &Widget, rect: [f32; 4]) -> FieldEdit {
         rect: Some(rect),
         name: None,
         remove: false,
+        props: Default::default(),
     }
 }
 
@@ -200,6 +201,7 @@ fn named(widget: &Widget, name: &str) -> FieldEdit {
         rect: None,
         name: Some(name.into()),
         remove: false,
+        props: Default::default(),
     }
 }
 
@@ -209,6 +211,7 @@ fn gone(widget: &Widget) -> FieldEdit {
         rect: None,
         name: None,
         remove: true,
+        props: Default::default(),
     }
 }
 
@@ -429,6 +432,7 @@ fn a_change_that_cannot_be_made_changes_nothing() {
         rect: None,
         name: None,
         remove: true,
+        props: Default::default(),
     };
     assert!(with(unknown).contains("no longer in this document"));
     assert!(refused(&[good.clone(), good.clone()]).contains("changed twice"));
@@ -470,10 +474,500 @@ fn a_change_that_cannot_be_made_changes_nothing() {
             rect: None,
             name: None,
             remove: true,
+            props: Default::default(),
         })
         .collect();
     assert!(refused(&many).contains("more than the 1000"));
     let mut doc = f.doc.clone();
     apply(&mut doc, &[]).expect("nothing to do");
     assert_eq!(bytes(&doc), before);
+}
+
+fn with(widget: &Widget, props: Props) -> FieldEdit {
+    FieldEdit {
+        widget: widget.widget,
+        rect: None,
+        name: None,
+        remove: false,
+        props,
+    }
+}
+
+/// The body of the stream a widget is drawn with.
+fn drawn(doc: &Document, widget: ObjectId) -> String {
+    let (stream, _) = appearance(doc, widget);
+    String::from_utf8_lossy(&doc.get_object(stream).unwrap().as_stream().unwrap().content)
+        .into_owned()
+}
+
+/// A dropdown `Colour` offering Red, Green and Blue, holding Green.
+fn with_colours(f: &mut Fixture) -> Widget {
+    add(
+        &mut f.doc,
+        &[NewField {
+            options: vec!["Red".into(), "Green".into(), "Blue".into()],
+            name: "Colour".into(),
+            kind: Kind::Dropdown,
+            page: 0,
+            rect: [20.0, 120.0, 100.0, 20.0],
+            tooltip: None,
+            required: false,
+            max_length: None,
+            border: false,
+        }],
+    )
+    .expect("a dropdown");
+    let colour = one(&f.doc, "Colour");
+    write(
+        &mut f.doc,
+        &[Change {
+            object: colour.object,
+            value: Value::Selection(vec![1]),
+        }],
+    )
+    .expect("chosen");
+    one(&f.doc, "Colour")
+}
+
+fn labels(widget: &Widget) -> Vec<String> {
+    match &widget.control {
+        crate::forms::Control::Choice { options, .. } => {
+            options.iter().map(|o| o.label.clone()).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn a_tooltip_and_the_two_flags_are_written_on_the_field_and_draw_nothing() {
+    let mut f = fixture();
+    let name = one(&f.doc, "Name");
+    assert!(name.tooltip.is_empty() && !name.required && !name.read_only);
+    let was = appearance(&f.doc, name.widget);
+    apply(
+        &mut f.doc,
+        &[with(
+            &name,
+            Props {
+                tooltip: Some("Your full name".into()),
+                required: Some(true),
+                read_only: Some(true),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("set");
+    let now = one(&f.doc, "Name");
+    assert_eq!(now.tooltip, "Your full name");
+    assert!(now.required && now.read_only);
+    assert_eq!(now.reason.as_deref(), Some(crate::forms::READ_ONLY));
+    assert_eq!(now.value, Value::Text("Ada".into()));
+    assert_eq!(appearance(&f.doc, now.widget), was, "nothing is redrawn");
+    // Each is taken off again, one at a time: the other flag stays.
+    apply(
+        &mut f.doc,
+        &[with(
+            &now,
+            Props {
+                tooltip: Some(String::new()),
+                read_only: Some(false),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("lifted");
+    let now = one(&f.doc, "Name");
+    assert!(now.tooltip.is_empty() && now.required && !now.read_only);
+    assert!(!f.doc.get_dictionary(now.object).unwrap().has(b"TU"));
+    apply(
+        &mut f.doc,
+        &[with(
+            &now,
+            Props {
+                required: Some(false),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("not required");
+    assert!(!one(&f.doc, "Name").required);
+}
+
+#[test]
+fn a_limit_is_set_and_lifted_and_refused_when_the_answer_is_longer() {
+    let mut f = fixture();
+    let name = one(&f.doc, "Name");
+    let most = |n: u32| Props {
+        max_length: Some(n),
+        ..Props::default()
+    };
+    let before = bytes(&f.doc);
+    let why = apply(&mut f.doc, &[with(&name, most(2))]).expect_err("Ada is three");
+    assert!(
+        why.contains("holds 3 characters") && why.contains("the 2 it"),
+        "{why}"
+    );
+    assert_eq!(bytes(&f.doc), before);
+    apply(&mut f.doc, &[with(&name, most(3))]).expect("exactly as long");
+    assert_eq!(one(&f.doc, "Name").max_length, Some(3));
+    apply(&mut f.doc, &[with(&name, most(0))]).expect("lifted");
+    assert_eq!(one(&f.doc, "Name").max_length, None);
+    assert!(!f.doc.get_dictionary(name.object).unwrap().has(b"MaxLen"));
+}
+
+#[test]
+fn an_alignment_draws_the_field_again_with_its_answer_at_that_side() {
+    let mut f = fixture();
+    let name = one(&f.doc, "Name");
+    assert_eq!(name.align, Align::Left);
+    let (was, _) = appearance(&f.doc, name.widget);
+    let aligned = |to: Align| Props {
+        align: Some(to),
+        ..Props::default()
+    };
+    // The alignment it has already: written, and nothing drawn.
+    apply(&mut f.doc, &[with(&name, aligned(Align::Left))]).expect("left");
+    assert_eq!(appearance(&f.doc, name.widget).0, was);
+    // A field 100 wide, its answer at twelve points.
+    let advance = crate::textbox::advance("Ada", 12.0);
+    for (to, x) in [
+        (Align::Right, 100.0 - 2.0 - advance),
+        (Align::Center, (100.0 - advance) / 2.0),
+        (Align::Left, 2.0),
+    ] {
+        let held = one(&f.doc, "Name");
+        apply(&mut f.doc, &[with(&held, aligned(to))]).expect("aligned");
+        let now = one(&f.doc, "Name");
+        assert_eq!(now.align, to);
+        assert_eq!(now.value, Value::Text("Ada".into()));
+        let body = drawn(&f.doc, now.widget);
+        assert!(
+            body.contains(&format!("1 0 0 1 {x} ")) && body.contains("<416461> Tj"),
+            "{to:?} at {x}: {body}"
+        );
+        assert!(body.contains(" re S"), "its line is kept: {body}");
+    }
+}
+
+#[test]
+fn a_read_only_field_is_aligned_and_is_read_only_afterwards() {
+    let mut f = fixture();
+    let fixed = one(&f.doc, "Fixed");
+    assert!(fixed.read_only);
+    apply(
+        &mut f.doc,
+        &[with(
+            &fixed,
+            Props {
+                align: Some(Align::Center),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("aligned");
+    let now = one(&f.doc, "Fixed");
+    assert_eq!(now.align, Align::Center);
+    assert!(now.read_only, "the flag is put back");
+    // And one made read-only in the same change is drawn first.
+    let name = one(&f.doc, "Name");
+    apply(
+        &mut f.doc,
+        &[with(
+            &name,
+            Props {
+                align: Some(Align::Right),
+                read_only: Some(true),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("both");
+    let now = one(&f.doc, "Name");
+    assert!(now.read_only && now.align == Align::Right);
+    assert!(drawn(&f.doc, now.widget).contains("<416461> Tj"));
+}
+
+#[test]
+fn new_choices_keep_what_was_chosen_where_they_still_have_it() {
+    let mut f = fixture();
+    let colour = with_colours(&mut f);
+    assert_eq!(colour.value, Value::Selection(vec![1]));
+    let offering = |options: &[&str]| Props {
+        options: Some(options.iter().map(|o| (*o).to_string()).collect()),
+        ..Props::default()
+    };
+    apply(
+        &mut f.doc,
+        &[with(&colour, offering(&["Blue", "Teal", "Green"]))],
+    )
+    .expect("new choices");
+    let now = one(&f.doc, "Colour");
+    assert_eq!(labels(&now), ["Blue", "Teal", "Green"]);
+    assert_eq!(
+        now.value,
+        Value::Selection(vec![2]),
+        "Green, where it now is"
+    );
+    // "Green" in the hexadecimal of the font's encoding.
+    assert!(drawn(&f.doc, now.widget).contains("<477265656e> Tj"));
+    // Choices without it: the field holds nothing and shows nothing.
+    apply(&mut f.doc, &[with(&now, offering(&["Black", "White"]))]).expect("others");
+    let now = one(&f.doc, "Colour");
+    assert_eq!(labels(&now), ["Black", "White"]);
+    assert_eq!(now.value, Value::Selection(Vec::new()));
+    let field = f.doc.get_dictionary(now.object).unwrap();
+    assert!(
+        !field.has(b"V"),
+        "no answer is left naming a choice that is gone"
+    );
+    assert!(!drawn(&f.doc, now.widget).contains("477265656e"));
+}
+
+#[test]
+fn a_choice_the_field_already_offered_keeps_the_value_it_exports() {
+    let mut f = fixture();
+    let colour = with_colours(&mut f);
+    let pair = |export: &str, label: &str| {
+        Object::Array(vec![
+            crate::forms::pdf_string(export),
+            crate::forms::pdf_string(label),
+        ])
+    };
+    {
+        let field = f.doc.get_dictionary_mut(colour.object).unwrap();
+        field.set(
+            "Opt",
+            vec![pair("r", "Red"), pair("g", "Green"), pair("b", "Blue")],
+        );
+        field.set("V", crate::forms::pdf_string("g"));
+        field.remove(b"I");
+    }
+    let colour = one(&f.doc, "Colour");
+    assert_eq!(colour.value, Value::Selection(vec![1]));
+    apply(
+        &mut f.doc,
+        &[with(
+            &colour,
+            Props {
+                options: Some(vec!["Teal".into(), "Green".into()]),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("new choices");
+    let now = one(&f.doc, "Colour");
+    let crate::forms::Control::Choice { options, .. } = &now.control else {
+        panic!("a choice");
+    };
+    let read: Vec<(&str, &str)> = options
+        .iter()
+        .map(|o| (o.export.as_str(), o.label.as_str()))
+        .collect();
+    assert_eq!(read, [("Teal", "Teal"), ("g", "Green")]);
+    assert_eq!(now.value, Value::Selection(vec![1]));
+    let held = f.doc.get_dictionary(now.object).unwrap().get(b"V").unwrap();
+    assert_eq!(
+        crate::annots::decode_text_string(held.as_str().unwrap()),
+        "g"
+    );
+}
+
+#[test]
+fn a_property_the_field_cannot_have_is_refused_and_nothing_is_written() {
+    let mut f = fixture();
+    with_colours(&mut f);
+    let before = bytes(&f.doc);
+    let mut refused = |name: &str, at: usize, props: Props| {
+        let widget = widgets(&f.doc, name).remove(at);
+        let why = apply(&mut f.doc, &[with(&widget, props)]).expect_err("refused");
+        assert_eq!(bytes(&f.doc), before, "{why}");
+        why
+    };
+    let most = Props {
+        max_length: Some(5),
+        ..Props::default()
+    };
+    let centred = Props {
+        align: Some(Align::Center),
+        ..Props::default()
+    };
+    let offering = |options: &[&str]| Props {
+        options: Some(options.iter().map(|o| (*o).to_string()).collect()),
+        ..Props::default()
+    };
+    assert!(refused("Agree", 0, most.clone()).contains("only a text field has a most"));
+    assert!(refused("Colour", 0, most).contains("only a text field has a most"));
+    assert!(refused("Agree", 0, centred).contains("has text to align"));
+    assert!(refused("Name", 0, offering(&["A"])).contains("only a field of choices"));
+    assert!(refused("Colour", 0, offering(&[])).contains("at least one choice"));
+    assert!(refused("Colour", 0, offering(&["A", "A"])).contains("there twice"));
+    assert!(refused(
+        "Name",
+        0,
+        Props {
+            tooltip: Some("x".repeat(super::MAX_TOOLTIP + 1)),
+            ..Props::default()
+        }
+    )
+    .contains("at most 1024"));
+    assert!(refused(
+        "Name",
+        0,
+        Props {
+            max_length: Some(super::MAX_LENGTH + 1),
+            ..Props::default()
+        }
+    )
+    .contains("up to 16384"));
+    assert!(refused(
+        "Signed",
+        0,
+        Props {
+            required: Some(true),
+            ..Props::default()
+        }
+    )
+    .contains("signature field"));
+}
+
+#[test]
+fn a_field_with_two_widgets_has_one_set_of_properties() {
+    let mut f = fixture();
+    let pair = widgets(&f.doc, "Pair");
+    let tip = |text: &str| Props {
+        tooltip: Some(text.into()),
+        ..Props::default()
+    };
+    let before = bytes(&f.doc);
+    let why = apply(
+        &mut f.doc,
+        &[with(&pair[0], tip("one")), with(&pair[1], tip("two"))],
+    )
+    .expect_err("two tooltips");
+    assert!(why.contains("two sets of properties"), "{why}");
+    assert_eq!(bytes(&f.doc), before);
+    // The same for both is one change, and both widgets read it.
+    apply(
+        &mut f.doc,
+        &[with(&pair[0], tip("one")), with(&pair[1], tip("one"))],
+    )
+    .expect("the same");
+    assert!(widgets(&f.doc, "Pair").iter().all(|w| w.tooltip == "one"));
+    // Set under a widget that is removed in the same change: the field stays,
+    // with its other widget, and has the property.
+    let pair = widgets(&f.doc, "Pair");
+    let mut going = with(&pair[0], tip("kept"));
+    going.remove = true;
+    apply(&mut f.doc, &[going]).expect("removed, and set");
+    assert_eq!(one(&f.doc, "Pair").tooltip, "kept");
+    // And when the whole field goes, its properties go with it.
+    let name = one(&f.doc, "Name");
+    let mut going = with(&name, tip("lost"));
+    going.remove = true;
+    apply(&mut f.doc, &[going]).expect("removed");
+    assert!(widgets(&f.doc, "Name").is_empty());
+}
+
+#[test]
+fn properties_lay_over_each_other_part_by_part() {
+    let mut held = Props {
+        tooltip: Some("first".into()),
+        required: Some(true),
+        ..Props::default()
+    };
+    assert!(Props::default().is_empty() && !held.is_empty());
+    held.merge(&Props {
+        tooltip: Some(String::new()),
+        max_length: Some(4),
+        align: Some(Align::Right),
+        options: Some(vec!["A".into()]),
+        read_only: Some(false),
+        ..Props::default()
+    });
+    assert_eq!(
+        held,
+        Props {
+            tooltip: Some(String::new()),
+            required: Some(true),
+            read_only: Some(false),
+            max_length: Some(4),
+            align: Some(Align::Right),
+            options: Some(vec!["A".into()]),
+        }
+    );
+    // A later change that names nothing leaves all of it.
+    let whole = held.clone();
+    held.merge(&Props::default());
+    assert_eq!(held, whole);
+    assert!(Props {
+        tooltip: Some("a\tb".into()),
+        ..Props::default()
+    }
+    .problem("f")
+    .is_some_and(|why| why.contains("control character")));
+    assert!(Props {
+        tooltip: Some("two\nlines".into()),
+        ..Props::default()
+    }
+    .problem("f")
+    .is_none());
+}
+
+#[test]
+fn a_field_tpdf_cannot_draw_keeps_its_alignment_and_takes_the_rest() {
+    let mut f = fixture();
+    let notes = one(&f.doc, "Notes");
+    // A comb field: one tpdf does not fill, so one it cannot draw.
+    f.doc
+        .get_dictionary_mut(notes.object)
+        .unwrap()
+        .set("Ff", 1_i64 << 24);
+    let notes = one(&f.doc, "Notes");
+    assert_eq!(notes.reason.as_deref(), Some(crate::forms::COMB));
+    let before = bytes(&f.doc);
+    let why = apply(
+        &mut f.doc,
+        &[with(
+            &notes,
+            Props {
+                align: Some(Align::Right),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect_err("not drawn");
+    assert!(why.contains("keeps its alignment and choices"), "{why}");
+    assert_eq!(bytes(&f.doc), before);
+    apply(
+        &mut f.doc,
+        &[with(
+            &notes,
+            Props {
+                tooltip: Some("In boxes".into()),
+                ..Props::default()
+            },
+        )],
+    )
+    .expect("a tooltip draws nothing");
+    assert_eq!(one(&f.doc, "Notes").tooltip, "In boxes");
+}
+
+#[test]
+fn a_field_with_no_alignment_of_its_own_has_the_forms() {
+    let mut f = fixture();
+    assert_eq!(one(&f.doc, "Name").align, Align::Left);
+    let catalog = f.doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let form = f
+        .doc
+        .get_dictionary(catalog)
+        .unwrap()
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .unwrap();
+    f.doc.get_dictionary_mut(form).unwrap().set("Q", 2);
+    assert_eq!(one(&f.doc, "Name").align, Align::Right);
+    let name = one(&f.doc, "Name").object;
+    f.doc.get_dictionary_mut(name).unwrap().set("Q", 1);
+    assert_eq!(one(&f.doc, "Name").align, Align::Center);
+    assert_eq!(one(&f.doc, "Notes").align, Align::Right);
 }

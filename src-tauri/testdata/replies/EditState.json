@@ -234,7 +234,18 @@
         40.0
       ],
       "name": "Name",
-      "removed": false
+      "removed": false,
+      "props": {
+        "tooltip": "Your answer",
+        "required": true,
+        "read_only": false,
+        "max_length": 20,
+        "align": "center",
+        "options": [
+          "Red",
+          "Green"
+        ]
+      }
     }
   ],
   "dirty": true,

@@ -3033,6 +3033,17 @@ answer included; `save/tests.rs` looks for the removed field in the written file
 is added to a field: no script, action or calculation is written, and one the field
 already carries is neither read nor changed.
 
+**A field's properties (2026-10-04).** The same call writes a field's tooltip (`/TU`),
+its required and read-only flags (`/Ff` bits 2 and 1), a text field's `/MaxLen`, its
+`/Q` and a choice field's `/Opt`. Each is a string, a number or a list of strings on the
+field's own dictionary. The strings are a reader's: a tooltip is held to 1024 characters
+with no control character but a line break, a choice to the rules a placed dropdown has,
+and both are written as PDF text strings, never into a content stream. A choice's label
+does reach the appearance stream when the field is redrawn, through the same hex-string
+path an answer takes, which admits only characters of the font's encoding. The scan now
+also reads `/TU` (held to 16 KB before decoding) and `/Q`, and the window shows the
+tooltip through an element's `title`, which is text.
+
 #### T6.34 — Reopening every tab at launch, added 2026-10-03
 
 Off unless the reader turns it on. When on, the session record holds the paths of the

@@ -393,6 +393,10 @@ export interface AppActions {
   /** Whether the document's own fields are shown for moving, renaming and removing. */
   formEditing(): boolean;
   setFormEditing(on: boolean): void;
+  /** Whether exactly one rectangle is picked and it is a field of the file. */
+  fieldPicked(): boolean;
+  /** Opens the picked field's properties. */
+  fieldProperties(): void;
   /** How many placed rectangles are picked for arranging. */
   pickedMarks(): number;
   /** Arranges the picked rectangles: aligns, spaces or sizes them. */
@@ -1174,6 +1178,15 @@ export function registerAppCommands(
       title: "Form fields: finish changing the document's fields",
       enabled: () => withDocument() && actions.formEditing(),
       run: () => actions.setFormEditing(false),
+    },
+    // Offered for one field of the file, picked while the fields are being
+    // changed: a panel about several fields would have to say what it shows
+    // where they differ.
+    {
+      id: "edit.fieldProperties",
+      title: "Form fields: properties of the picked field...",
+      enabled: () => withDocument() && actions.formEditing() && actions.fieldPicked(),
+      run: () => actions.fieldProperties(),
     },
     // Arranging the placed rectangles a reader has picked: form fields, boxes,
     // ellipses and text boxes. One command per arrangement, each offered when

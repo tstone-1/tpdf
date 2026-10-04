@@ -402,6 +402,9 @@ pub struct FieldEditView {
     pub name: Option<String>,
     /// The widget is to be taken out of the document.
     pub removed: bool,
+    /// The field's properties, each part that is changed.
+    #[serde(skip_serializing_if = "crate::formedit::Props::is_empty")]
+    pub props: crate::formedit::Props,
 }
 
 /// What a reader asks to change about one field of the file. Each part that
@@ -417,6 +420,9 @@ pub struct FieldPatch {
     /// Take the widget out, or with `false` put it back.
     #[serde(default)]
     pub removed: Option<bool>,
+    /// The field's properties, each part to change.
+    #[serde(default)]
+    pub props: crate::formedit::Props,
 }
 
 /// One widget and what to change about it, for a change to several at once.
@@ -2087,7 +2093,11 @@ impl Edits {
                 return Err("a form field is changed twice".into());
             }
             let patch = &target.patch;
-            if patch.rect.is_none() && patch.name.is_none() && patch.removed.is_none() {
+            if patch.rect.is_none()
+                && patch.name.is_none()
+                && patch.removed.is_none()
+                && patch.props.is_empty()
+            {
                 return Err("that changes nothing about the field".into());
             }
             let mut change = model.field_change_of(object).cloned().unwrap_or_default();
@@ -2106,6 +2116,10 @@ impl Edits {
             if let Some(removed) = patch.removed {
                 change.removed = removed;
             }
+            if let Some(why) = patch.props.problem("this field") {
+                return Err(why);
+            }
+            change.props.merge(&patch.props);
             let page = PageId::from_raw(target.page);
             // The page, asked before anything is recorded: the model checks
             // it again on the way in, and by then an earlier target is made.
@@ -2525,7 +2539,12 @@ fn planned_field_edits(model: &Doc, pages: &[PageView]) -> Vec<crate::formedit::
         .field_changes()
         .into_iter()
         .filter(|(page, ..)| kept.contains(page))
-        .filter(|(_, _, change)| change.removed || change.rect.is_some() || change.name.is_some())
+        .filter(|(_, _, change)| {
+            change.removed
+                || change.rect.is_some()
+                || change.name.is_some()
+                || !change.props.is_empty()
+        })
         .map(|(_, object, change)| crate::formedit::FieldEdit {
             widget: (object.number(), object.generation()),
             rect: change
@@ -2533,6 +2552,7 @@ fn planned_field_edits(model: &Doc, pages: &[PageView]) -> Vec<crate::formedit::
                 .map(|quad| [quad.left, quad.top, quad.right, quad.bottom]),
             name: change.name,
             remove: change.removed,
+            props: change.props,
         })
         .collect()
 }
@@ -3472,6 +3492,7 @@ fn snapshot(model: &Doc) -> EditState {
                     .map(|quad| [quad.left, quad.top, quad.right, quad.bottom]),
                 name: change.name,
                 removed: change.removed,
+                props: change.props,
             })
             .collect(),
         can_undo: model.can_undo(),
@@ -5539,6 +5560,7 @@ mod tests {
                 rect: Some([10.0, 20.0, 110.0, 40.0]),
                 name: None,
                 removed: false,
+                props: Default::default(),
             }]
         );
         // A rename keeps the move, and a removal keeps both.
@@ -5560,6 +5582,7 @@ mod tests {
                 rect: Some([10.0, 20.0, 110.0, 40.0]),
                 name: Some("Full name".into()),
                 remove: true,
+                props: Default::default(),
             }]
         );
         assert!(!plan.is_appendable());
@@ -5582,6 +5605,83 @@ mod tests {
             .refield(7, vec![target((12, 0), removed(false))], 0)
             .expect("restored");
         assert!(edits.plan(7).expect("a plan").field_edits.is_empty());
+    }
+
+    #[test]
+    fn a_fields_properties_are_journalled_part_by_part_and_planned() {
+        use crate::formedit::Props;
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[0].id;
+        let with = |props: Props| FieldTarget {
+            object: (12, 0),
+            page,
+            patch: FieldPatch {
+                props,
+                ..FieldPatch::default()
+            },
+        };
+        let state = edits
+            .refield(
+                7,
+                vec![with(Props {
+                    tooltip: Some("Your name".into()),
+                    required: Some(true),
+                    ..Props::default()
+                })],
+                0,
+            )
+            .expect("set");
+        assert!(state.dirty);
+        // A later change names one part, and the earlier parts stay.
+        let state = edits
+            .refield(
+                7,
+                vec![with(Props {
+                    required: Some(false),
+                    align: Some(crate::forms::Align::Right),
+                    ..Props::default()
+                })],
+                0,
+            )
+            .expect("changed");
+        let whole = Props {
+            tooltip: Some("Your name".into()),
+            required: Some(false),
+            align: Some(crate::forms::Align::Right),
+            ..Props::default()
+        };
+        assert_eq!(state.fields[0].props, whole);
+        let plan = edits.plan(7).expect("a plan");
+        assert_eq!(
+            plan.field_edits,
+            vec![crate::formedit::FieldEdit {
+                widget: (12, 0),
+                rect: None,
+                name: None,
+                remove: false,
+                props: whole,
+            }]
+        );
+        assert!(!plan.is_appendable());
+        // What can be refused without the file is, and nothing is recorded.
+        let why = edits
+            .refield(
+                7,
+                vec![with(Props {
+                    options: Some(vec!["A".into(), "A".into()]),
+                    ..Props::default()
+                })],
+                0,
+            )
+            .expect_err("a choice twice");
+        assert!(why.contains("there twice"), "{why}");
+        assert_eq!(edits.state(7).expect("state").fields[0].props.options, None);
+        // One undo is one change.
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(state.fields[0].props.required, Some(true));
+        assert_eq!(state.fields[0].props.align, None);
+        let state = edits.undo(7).expect("undone");
+        assert!(state.fields.is_empty() && !state.dirty);
     }
 
     #[test]

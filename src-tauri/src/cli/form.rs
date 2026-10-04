@@ -479,6 +479,10 @@ mod tests {
             multiline: false,
             max_length: None,
             reason: None,
+            tooltip: String::new(),
+            required: false,
+            read_only: false,
+            align: crate::forms::Align::Left,
         }
     }
 

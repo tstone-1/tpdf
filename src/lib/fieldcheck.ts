@@ -14,6 +14,7 @@
 
 import { call } from "./ipc";
 import { SAVED_BASE } from "./savedfields";
+import { DIALOG_CLASS as PROPERTIES_CLASS } from "./fieldprops";
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
 
@@ -305,6 +306,35 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     check("undo puts it back", changed().length === 0, String(changed().length));
     host.run("edit.redo");
     await host.idle();
+    // The moved field's properties, set in the panel the command opens: the
+    // join of the pick, the command, the panel and the change it makes.
+    viewer.pick([]);
+    host.run("edit.fieldProperties");
+    await pause(100);
+    const panel = () => document.querySelector<HTMLElement>(`.${PROPERTIES_CLASS}`);
+    check("with no field picked the properties command opens nothing", panel()?.style.display !== "flex", String(panel()?.style.display));
+    viewer.pick([id]);
+    host.run("edit.fieldProperties");
+    const opened = await settle(() => panel()?.style.display === "flex", SETTLE_MS);
+    const heading = panel()?.querySelector("h2")?.textContent ?? "";
+    check("with the field picked it opens the panel, under the field's name", opened && heading === "Properties of Name", heading);
+    const control = <T extends HTMLElement>(label: string) => panel()?.querySelector<T>(`[aria-label="${label}"]`) ?? null;
+    const tooltip = control<HTMLInputElement>("Tooltip");
+    const align = control<HTMLSelectElement>("Alignment");
+    const required = panel()?.querySelector<HTMLInputElement>('input[type="checkbox"]') ?? null;
+    if (tooltip) tooltip.value = "Your full name";
+    if (align) align.value = "right";
+    if (required) required.checked = true;
+    [...(panel()?.querySelectorAll("button") ?? [])].at(-1)?.click();
+    await settle(() => changed()[0]?.props?.tooltip !== undefined, SETTLE_MS);
+    await host.idle();
+    const set = changed()[0]?.props;
+    check(
+      "applying it journals the parts that were changed, with the move",
+      panel()?.style.display === "none" && changed().length === 1 && changed()[0]?.rect !== undefined
+        && JSON.stringify(set) === JSON.stringify({ tooltip: "Your full name", required: true, align: "right" }),
+      JSON.stringify(set),
+    );
     host.run("edit.formEditOff");
     await pause(200);
     check("finishing brings the controls back", filling() > 0, `${filling()} shown`);
@@ -319,6 +349,12 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       "the save writes the dropdown as a list of its choices",
       listed?.kind === "choice" && listed.combo && listed.options.map((o) => o.label).join("|") === "Yes|No, by post",
       JSON.stringify(listed),
+    );
+    const named = after.widgets.find((widget) => widget.name === "Name");
+    check(
+      "the save writes the field's properties",
+      named?.tooltip === "Your full name" && named.required === true && named.align === "right" && named.read_only === false,
+      `${named?.tooltip}; ${named?.required}; ${named?.align}; ${named?.read_only}`,
     );
     check(
       "and the save writes the field where it was dropped",

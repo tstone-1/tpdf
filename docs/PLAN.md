@@ -3544,9 +3544,55 @@ objects only for certain kinds of change. The test that removes a field and then
 for it in the written file found the field still there; `field_edits` joined that
 condition the same day.
 
-**Not built.** Changing a field's kind, tooltip, required flag or maximum length; tab
-order; a field on a turned page; a signature field. Until the save, the page still draws
+**Not built.** Changing a field's kind; tab order; a field on a turned page; a signature
+field. (Tooltip, required flag and maximum length were in this list until the properties
+panel below.) Until the save, the page still draws
 each field where the file has it, under the rectangle that shows where it will be.
+
+#### A field's properties — 2026-10-04
+
+The next gap after moving and renaming: a saved field's tooltip, required flag,
+read-only flag, maximum length, alignment and choices could be set only by `tpdf form`
+when the field was made, and the last two not at all.
+
+**Where it sits.** `formedit::Props` is one struct of six optional parts, used by the
+writer (`FieldEdit.props`), the journal (`FieldChange.props`) and the IPC patch; a later
+patch is laid over an earlier one part by part (`Props::merge`), so the journal still
+holds one whole version per widget. `savedfields.ts` reads a field's properties as they
+stand (`properties`) and turns a new set into a patch naming only what differs
+(`propertied`). `fieldprops.ts` holds the panel, the reading of what was typed (`read`)
+and the join the command runs (`changeProperties`); `App.svelte` supplies six closures.
+
+**One set per field.** A field shown in several places has one tooltip and one list of
+choices, and the journal is keyed by widget. `propertied` therefore always targets the
+field's first widget that is still there, and `formedit::apply` refuses two different
+sets for one field and applies a set held under a widget that is itself removed.
+
+**What is redrawn.** Alignment and choices change the appearance, so the field goes
+through `forms::write` with its answer. A read-only field has its flag lifted for the
+redraw and put back after, since `forms::write` refuses a field it may not answer; a
+field with any other reason (comb, password, rich text, hidden) keeps its alignment and
+choices and takes the other properties. New choices keep the export value of a choice
+whose label stays, and what was chosen stays chosen where the new list has that label;
+otherwise `/V` and `/I` are removed, because the scan refuses a form whose answer is
+not among its choices.
+
+**Alignment was never drawn.** `write_text_appearance` put every line two points from
+the left whatever `/Q` said, so a centred field in someone else's form lost its
+alignment the first time tpdf answered it. The scan now reads `/Q` (the field's, then
+the form's) and the writer and the fill box both honour it. That is a change for every
+document with aligned fields, not only for ones changed in the panel.
+
+**Order in a save.** Answers are written before field changes, as before. So a limit is
+judged against the answer typed in the same session, and a pending answer by index is
+written against the old choices and then carried to the new ones by label.
+
+**Not built.** Properties for a field placed in this session and not yet saved: the
+panel is offered for fields of the file, and a placed field carries only its kind,
+border and choices. Text size (the writer picks at most twelve points and shrinks to
+fit). A default value, which matters only to a form that resets, and tpdf has no reset.
+Export values that differ from labels for new choices. Until the save, the fill box
+still offers the old choices and the old alignment.
 
 #### Arranging placed rectangles — 2026-10-04
 

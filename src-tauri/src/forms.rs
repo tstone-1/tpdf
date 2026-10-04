@@ -45,6 +45,27 @@ pub enum Control {
     Unsupported,
 }
 
+/// Where a field's text sits between its left and right edges: `/Q`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Align {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl Align {
+    /// The number `/Q` holds for it.
+    pub fn quadding(self) -> i64 {
+        match self {
+            Align::Left => 0,
+            Align::Center => 1,
+            Align::Right => 2,
+        }
+    }
+}
+
 /// A pending answer, keyed by the terminal field rather than a widget.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Change {
@@ -66,6 +87,20 @@ pub struct Widget {
     pub multiline: bool,
     pub max_length: Option<usize>,
     pub reason: Option<String>,
+    /// What a reader shows when the pointer rests on the field: the field's
+    /// own `/TU`. Empty when it has none.
+    #[serde(default)]
+    pub tooltip: String,
+    /// `/Ff` bit 2: a form that submits itself insists on an answer.
+    #[serde(default)]
+    pub required: bool,
+    /// `/Ff` bit 1. A field that has it also has [`READ_ONLY`] or an earlier
+    /// reason; this says so whichever reason was reached first.
+    #[serde(default)]
+    pub read_only: bool,
+    /// `/Q`, the field's or the form's.
+    #[serde(default)]
+    pub align: Align,
 }
 
 /// Why [`scan`] refuses a form carrying `/XFA`.
@@ -120,7 +155,7 @@ fn inherited<'a>(doc: &'a Document, start: ObjectId, key: &[u8]) -> Option<&'a O
     None
 }
 
-fn integer(doc: &Document, id: ObjectId, key: &[u8]) -> i64 {
+pub(crate) fn integer(doc: &Document, id: ObjectId, key: &[u8]) -> i64 {
     inherited(doc, id, key)
         .and_then(|o| o.as_i64().ok())
         .unwrap_or(0)
@@ -472,6 +507,25 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 None
             };
             let max = integer(doc, object, b"MaxLen");
+            let tooltip = doc
+                .get_dictionary(object)
+                .ok()
+                .and_then(|field| field.get(b"TU").ok())
+                .and_then(|tip| doc.dereference(tip).ok())
+                .and_then(|(_, tip)| tip.as_str().ok())
+                .filter(|raw| raw.len() <= 16384)
+                .map(crate::annots::decode_text_string)
+                .unwrap_or_default();
+            // The field's own alignment, or the one the form gives every
+            // field that has none (§12.7.3, `/Q` of the form dictionary).
+            let quadding = inherited(doc, object, b"Q")
+                .or_else(|| form.get(b"Q").ok())
+                .and_then(|q| q.as_i64().ok());
+            let align = match quadding {
+                Some(1) => Align::Center,
+                Some(2) => Align::Right,
+                _ => Align::Left,
+            };
             let geometry = crate::pagetree::displayed_page(doc, id);
             let display_rect = crate::text::to_device(
                 geometry.turns,
@@ -496,6 +550,10 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 multiline: text && flags & (1 << 12) != 0,
                 max_length: (text && max > 0).then_some(max as usize),
                 reason,
+                tooltip,
+                required: flags & (1 << 1) != 0,
+                read_only: flags & 1 != 0,
+                align,
             });
             if result.widgets.len() > 4096 {
                 return Err("This form exceeds the widget limit".into());
@@ -835,8 +893,16 @@ fn write_text_appearance(
             ));
         }
         let hex: String = line.chars().map(|ch| format!("{:02x}", ch as u8)).collect();
+        // Two points in from the edge the text is aligned to, as `text_layout`
+        // allowed for; a centred line has the same room either side.
+        let advance = crate::textbox::advance(line, size);
+        let x = match widget.align {
+            Align::Left => 2.0,
+            Align::Center => ((width - advance) / 2.0).max(2.0),
+            Align::Right => (width - 2.0 - advance).max(2.0),
+        };
         body.push_str(&format!(
-            "0 0 0 rg BT /F0 {size} Tf 1 0 0 1 2 {y} Tm <{hex}> Tj ET\n"
+            "0 0 0 rg BT /F0 {size} Tf 1 0 0 1 {x} {y} Tm <{hex}> Tj ET\n"
         ));
     }
     body.push('Q');

@@ -382,6 +382,10 @@ fn samples() -> BTreeMap<&'static str, String> {
             multiline: false,
             max_length: Some(20),
             reason: Some("Read-only".into()),
+            tooltip: "Your answer".into(),
+            required: false,
+            read_only: true,
+            align: crate::forms::Align::Left,
         };
         let mut radio = text.clone();
         radio.value = crate::forms::Value::Selection(vec![1]);
@@ -528,6 +532,14 @@ fn samples() -> BTreeMap<&'static str, String> {
                 rect: Some([10.0, 20.0, 110.0, 40.0]),
                 name: Some("Name".into()),
                 removed: false,
+                props: crate::formedit::Props {
+                    tooltip: Some("Your answer".into()),
+                    required: Some(true),
+                    read_only: Some(false),
+                    max_length: Some(20),
+                    align: Some(crate::forms::Align::Center),
+                    options: Some(vec!["Red".into(), "Green".into()]),
+                },
             }],
             dirty: true,
             sources: vec![edits::SourceView { source: 1, doc: 12 }],

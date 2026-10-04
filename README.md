@@ -319,6 +319,17 @@ measured the Windows render constants come out 1.5–1.8x worse.
   and removed and not moved. Until the save, the page still shows each field where the
   file has it, under the rectangle.
   <!-- built: edit.formEditOn edit.formEditOff -->
+- **Set a field's properties.** While the document's own fields are being changed, press
+  one and choose *Form fields: properties of the picked field...* from the Edit menu or
+  the palette. The panel sets its tooltip, whether it is required and whether it is
+  read-only; for a text field also the most characters it takes and whether its text is
+  at the left, the centre or the right; for a dropdown or a list its alignment and its
+  choices. A text or choice field whose alignment or choices change is drawn again with
+  the answer it holds. A choice that stays keeps the value it exports, and an answer
+  whose choice is taken away is cleared. A limit shorter than the answer a field holds
+  is refused by the save, which says so. New choices can be picked once the document is
+  saved. A field placed in this session gets its properties after its first save.
+  <!-- built: edit.fieldProperties -->
 - **Arrange what you have placed.** Press a form field, a box, an ellipse or a text box
   to pick it, and press others with Shift held to pick several on the same page; each
   picked one gets a line round it, solid on the first. The *Arrange* menu, and the same
