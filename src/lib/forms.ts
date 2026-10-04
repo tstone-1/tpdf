@@ -29,6 +29,8 @@ export interface FormWidget {
   text_size?: number | null;
   /** What a text field holds after a reset; empty for none. */
   default_value?: string;
+  /** Quarter turns the field declares its drawing is turned by, as its page is. */
+  turns?: number;
 }
 /** Where a field's text sits between its left and right edges. */
 export type FormAlign = "left" | "center" | "right";

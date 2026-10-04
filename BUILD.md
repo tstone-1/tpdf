@@ -381,6 +381,11 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 # saved again. The driver reads the saved
 # file with the command-line tool and fills it. Any document with a page will do.
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase fields
+# A field on a turned page: placed on a page the file turns, saved, the page turned a
+# quarter more by the reader, a second field placed and saved. The driver reads the turn
+# each field declares and fills both. Needs a document whose first page the file turns a
+# quarter and whose pages have no field; `testdata/make_rotated_pdf.py testdata` writes it.
+uv run scripts/tabs_check.py <checks-binary> testdata/rotated-90.pdf --phase fields-turned
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 

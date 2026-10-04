@@ -93,7 +93,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("pdf", type=Path)
-    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields"), default="tabs")
+    parser.add_argument("--phase", choices=("tabs", "tabs-position", "tabs-rotation", "forms", "signatures", "textedit", "textedit-dash", "textedit-cff-unicode", "textedit-cff-ligatures", "textedit-passport", "textedit-agenda", "textedit-agenda-page2", "textedit-factsheet", "textedit-factsheet-body", "textedit-w3c", "textedit-latin1", "textedit-cid-latin1", "textedit-overhang", "textedit-multipage", "textedit-wrapped", "textedit-wide-spacing", "textedit-list-child", "textedit-grow", "textedit-push", "textedit-w9", "textedit-centred", "import", "redact-pages", "sign", "recognise", "protect", "pictures", "compress", "fields", "fields-turned"), default="tabs")
     parser.add_argument("--other", type=Path, help="The file --phase import inserts pages from")
     parser.add_argument("--identity", help="--phase sign only: the SHA-256 of the signing certificate")
     # 90 s by default; the signing phase waits on a person answering the
@@ -234,6 +234,8 @@ def main() -> int:
             passed = smaller_files(room / "scan.pdf", room / "copies", args.binary) and passed
         if args.phase == "fields":
             passed = placed_fields(first, args.binary) and passed
+        if args.phase == "fields-turned":
+            passed = turned_fields(first, args.binary) and passed
         if passed and args.saved_copy:
             shutil.copyfile(first, args.saved_copy)
         return 0 if passed else 1
@@ -291,6 +293,43 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     good = done.returncode == 0
     ok &= good
     print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers all five: {(done.stderr or done.stdout).strip()[:200]}")
+    return bool(ok)
+
+
+def turned_fields(saved: Path, binary: Path) -> bool:
+    """The two fields the window placed on a turned page, in the file on disk.
+
+    One was placed on the page as the document turns it and one after the
+    reader turned it a quarter more, so the file declares a quarter turn on one
+    and a half turn on the other. `tpdf fill` then answers both.
+    """
+    import re
+    tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
+    print("--- the saved file, read by the command-line tool ---")
+    listed = subprocess.run([str(tool), "fields", str(saved), "--json"],
+                            capture_output=True, text=True, timeout=120, check=False)
+    try:
+        fields = json.loads(listed.stdout)["fields"]
+    except (ValueError, KeyError):
+        print(f"[FAIL] tpdf fields could not read the saved file: {listed.stderr.strip()}")
+        return False
+    names = sorted(f["name"] for f in fields)
+    ok = len(fields) == 2 and all(f["kind"] == "text" and f["editable"] is True and f["pages"] == [1] for f in fields)
+    print(f"{'[OK]  ' if ok else '[FAIL]'} the file has two fillable text fields on page 1: {names}")
+    data = saved.read_bytes()
+    # Without object streams, so the turn a field declares is in the bytes.
+    turns = {degrees: len(re.findall(rb"/R\s+%d\b" % degrees, data)) for degrees in (90, 180)}
+    good = turns == {90: 1, 180: 1}
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} one declares a quarter turn and one a half turn: {turns}")
+    filled = saved.with_name("filled.pdf")
+    answers = saved.with_name("answers.json")
+    answers.write_text(json.dumps({name: "Ada" for name in names}))
+    done = subprocess.run([str(tool), "fill", str(saved), "-o", str(filled), "--values", str(answers)],
+                          capture_output=True, text=True, timeout=120, check=False)
+    good = done.returncode == 0
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers both: {(done.stderr or done.stdout).strip()[:200]}")
     return bool(ok)
 
 

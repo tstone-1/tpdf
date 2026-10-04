@@ -18,6 +18,7 @@ import { DIALOG_CLASS as PROPERTIES_CLASS } from "./fieldprops";
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
 import type { Viewer } from "./viewer";
+import type { Anchor } from "./popup";
 
 const SETTLE_MS = 20_000;
 
@@ -556,4 +557,139 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       `${saved.map((v) => v.toFixed(1))} against ${to.map((v) => v.toFixed(1))}`,
     );
   }
+}
+
+/**
+ * A field on a page that is turned, by the document and then once more by the
+ * reader. The save has to give the field the page's turn, or its answer is
+ * drawn lying on its side; `formfields.rs` and the save are tested for that
+ * where they live, and this is the drag in the window reaching them.
+ *
+ * The document's first page is turned a quarter by the file.
+ */
+export async function turnedFieldCheck(host: OpenCheckHost, expected: string, report: Report): Promise<void> {
+  const [path] = expected.split("|");
+  if (!path) throw new Error("a disposable document with a turned first page is required");
+  const check = (name: string, ok: boolean, detail = "") => report.check(name, ok, detail);
+  await host.open(path);
+  if (!(await settle(() => host.viewer()?.idle === true, SETTLE_MS))) {
+    throw new Error("the document did not open");
+  }
+  const fields = () => (host.edits()?.state.marks ?? []).filter((mark) => mark.kind === "field");
+  const shown = () => document.querySelector('[data-testid="problem"]')?.textContent ?? "";
+  /** The window as it is now: a save reopens the document and a turn lays the page out again. */
+  const stage = () => {
+    const viewer = host.viewer()!;
+    const root = document.querySelector<HTMLElement>(".surface")!;
+    return { viewer, root, box: root.getBoundingClientRect() };
+  };
+  /** A text field dragged out wider than tall, and where the window drew it. */
+  const place = async () => {
+    const { viewer, root, box } = stage();
+    const before = fields().length;
+    host.run("edit.addTextField");
+    drag(
+      root,
+      { x: box.left + box.width * 0.3, y: box.top + box.height * 0.2 },
+      { x: box.left + box.width * 0.55, y: box.top + box.height * 0.25 },
+    );
+    await settle(() => fields().length > before, SETTLE_MS);
+    await host.idle();
+    const mark = fields().at(-1);
+    return { mark, anchor: mark ? viewer.markAnchor(mark.id) : null };
+  };
+  const save = async () => {
+    host.run("file.save");
+    await host.idle();
+    const done = await settle(() => host.edits()?.state.dirty === false && fields().length === 0, SETTLE_MS);
+    const edits = host.edits();
+    if (!done || !edits) throw new Error(`the save did not finish: ${shown()}`);
+    await settle(() => host.viewer()?.idle === true, SETTLE_MS);
+    return (await call("document_form", { doc: edits.doc })).widgets;
+  };
+  /** Where the window draws a saved field, which it does while fields are being changed. */
+  const savedAnchor = async (at: number) => {
+    host.run("edit.formEditOn");
+    await pause(300);
+    const { viewer } = stage();
+    await settle(() => viewer.idle, SETTLE_MS);
+    await pause(300);
+    return { viewer, anchor: viewer.markAnchor(SAVED_BASE + at) };
+  };
+  const size = (rect: readonly number[]) => `${((rect[2] ?? 0) - (rect[0] ?? 0)).toFixed(1)} by ${Math.abs((rect[3] ?? 0) - (rect[1] ?? 0)).toFixed(1)}`;
+  const near = (a: Anchor | null, b: Anchor | null) =>
+    a !== null && b !== null && Math.abs(a.left - b.left) < 2 && Math.abs(a.top - b.top) < 2
+      && Math.abs(a.right - b.right) < 2 && Math.abs(a.bottom - b.bottom) < 2;
+  const told = (a: Anchor | null) => (a ? [a.left, a.top, a.right, a.bottom].map((v) => v.toFixed(0)).join() : "none");
+
+  // The quarter turn the file gives the page is not in the journal, which
+  // counts the reader's turns; the first save below says it, in the field.
+  const byReader = () => host.edits()?.state.pages[0]?.turns ?? 0;
+  check("the reader has not turned the page", byReader() % 4 === 0, String(byReader()));
+
+  // On the page the file turns.
+  const first = await place();
+  check(
+    "a drag on a page the document turns places a text field, and no problem is shown",
+    first.mark?.field?.kind === "text" && first.anchor !== null && shown() === "",
+    `${first.mark?.field?.kind}; shown: ${shown()}`,
+  );
+  let widgets = await save();
+  const one = widgets.findIndex((widget) => widget.name === first.mark?.note);
+  check(
+    "the save writes it with the page's quarter turn, lying along the page's long side",
+    widgets[one]?.turns === 1 && widgets[one]?.reason === null
+      && widgets[one].rect[3] - widgets[one].rect[1] > widgets[one].rect[2] - widgets[one].rect[0],
+    `turns ${widgets[one]?.turns}; ${size(widgets[one]?.rect ?? [])} in the page; ${widgets[one]?.reason}`,
+  );
+  {
+    const { viewer, anchor } = await savedAnchor(one);
+    check("and where it was dragged", near(anchor, first.anchor), `${told(first.anchor)} placed, ${told(anchor)} saved`);
+    // The line round it, on the page picture and not the overlay: a strip
+    // over its left edge against the same strip beside the field.
+    const strip = (dx: number) => anchor && {
+      left: anchor.left - 3 + dx, right: anchor.left + 3 + dx, top: anchor.top + 3, bottom: anchor.bottom - 3,
+    };
+    const on = strip(0);
+    const off = strip(-40);
+    const line = on ? dark(viewer, on) : null;
+    const beside = off ? dark(viewer, off) : null;
+    check(
+      "the page picture has the field's line there",
+      line !== null && beside !== null && line > beside + 0.05,
+      `${line?.toFixed(3)} on its left edge, ${beside?.toFixed(3)} beside it`,
+    );
+    host.run("edit.formEditOff");
+    await pause(200);
+  }
+
+  // Turned once more by the reader, with the turn not yet saved.
+  host.run("edit.rotatePageClockwise");
+  await settle(() => byReader() % 4 === 1, SETTLE_MS);
+  await host.idle();
+  await settle(() => host.viewer()?.idle === true, SETTLE_MS);
+  await pause(300);
+  check("the reader turns the page a quarter more", byReader() % 4 === 1, String(byReader()));
+  const second = await place();
+  check(
+    "a drag on the page turned in this session places a second field",
+    second.mark?.field?.kind === "text" && second.anchor !== null && second.mark.note !== first.mark?.note && shown() === "",
+    `${second.mark?.note}; shown: ${shown()}`,
+  );
+  widgets = await save();
+  const two = widgets.findIndex((widget) => widget.name === second.mark?.note);
+  const drawn = widgets[two]?.display_rect ?? [0, 0, 0, 0];
+  check(
+    "the save writes it with both turns, wider than tall as a reader sees the page",
+    widgets[two]?.turns === 2 && widgets[two]?.reason === null && drawn[2] - drawn[0] > Math.abs(drawn[3] - drawn[1]),
+    `turns ${widgets[two]?.turns}; ${size(drawn)} as displayed; ${widgets[two]?.reason}`,
+  );
+  {
+    const { anchor } = await savedAnchor(two);
+    check("and where it was dragged on the turned page", near(anchor, second.anchor), `${told(second.anchor)} placed, ${told(anchor)} saved`);
+    host.run("edit.formEditOff");
+    await pause(200);
+  }
+  const controls = document.querySelectorAll(".form-fields input, .form-fields textarea").length;
+  check("the window offers both for filling", controls >= 2, `${controls} controls`);
 }

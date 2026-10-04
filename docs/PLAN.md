@@ -3679,8 +3679,16 @@ rectangle, and takes no account of `/MK /R`. The answer is still read correctly 
 
 **Not built.** A field of the file that declares no turn on a turned page stays as its
 author made it, on its side, when it is answered. A field already in the file does not
-turn when a reader turns its page. The window check has no step on a turned page; the
-save path has a test with a page turned by the file and one turned in the session.
+turn when a reader turns its page.
+
+**In the window.** `tabs_check.py --phase fields-turned` places a field on a page the file
+turns, saves, turns the page a quarter more, places a second and saves again: 10/10, and the
+driver reads one quarter turn and one half turn in the file and fills both. Proved on three
+broken builds: the save ignoring the file's turn fails two checks, ignoring the reader's turn
+fails one, and a field written 20 points from where it was dragged fails both placement
+checks. A fourth break, in `pagetree::from_displayed`, left it green, correctly: the window
+save maps a mark through `user_quads`, and `from_displayed` serves `tpdf form` and a saved
+field that is moved.
 
 #### Text size and default value — 2026-10-04
 
