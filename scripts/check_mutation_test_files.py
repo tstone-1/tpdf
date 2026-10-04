@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Refuses a front-end mutation that cannot go red, before anything is mutated.
 
+SINCE 2026-10-04 `TEST_FILES` is every suite on disk that `UNMUTATED` does not
+name, so the omission this was written for can no longer be made by forgetting
+an edit. What is left for it: a mutation naming a test in an excluded suite, a
+suite vitest collects nothing from, and the tables being empty. The account
+below is of the list as it was.
+
 WHY THIS EXISTS. `mutate_frontend.py` runs `vitest` over `TEST_FILES`, a
 hand-kept list, and every mutation names a test that must go red. A suite absent
 from that list still resolves as a name on disk -- it simply never runs -- so a

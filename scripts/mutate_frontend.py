@@ -6018,285 +6018,23 @@ MUTATIONS += [
     ),
 ]
 
-TEST_FILES = [
-    # Added 2026-09-27 with the command-line tool, in the same edit as its
-    # mutations: the tool's wording against the application's.
-    "src/lib/cliwording.test.ts",
-    # Added 2026-09-27 with `tpdf text`: `reading.rs` against `reading.ts`.
-    "src/lib/clireading.test.ts",
-    # Added 2026-09-27 with `tpdf redact`: `regions.rs` against `matchHalves`,
-    # `runsFor` and `areasFrom`.
-    "src/lib/cliregions.test.ts",
-    # Added 2026-09-26 with Phase 6 step 2's sequence and sentences.
-    "src/lib/signing.test.ts",
-    "src/lib/pendingimport.test.ts",
-    "src/lib/palette.test.ts",
-    "src/lib/textedit.test.ts",
-    "src/lib/signature.test.ts",
-    "src/lib/forms.test.ts",
-    "src/lib/documenttabs.test.ts",
-    "src/lib/signaturedialog.test.ts",
-    # Added 2026-09-27 with the signature appearance panel, in the same edit as
-    # its mutations.
-    "src/lib/signappearance.test.ts",
-    # Added 2026-09-28 with the timestamp chooser, in the same edit as its
-    # mutations.
-    "src/lib/signtimestamp.test.ts",
-    # Added 2026-10-01 with the watch on the open file, in the same edit as its
-    # mutations.
-    "src/lib/diskwatch.test.ts",
-    # Added 2026-09-28 with the window's signing phase, in the same edit as
-    # their mutations.
-    "src/lib/signphase.test.ts",
-    "src/lib/saveanswer.test.ts",
-    "src/lib/tablabels.test.ts",
-    "src/lib/toolbar.test.ts",
-    "src/lib/icons.test.ts",
-    "src/lib/i18n.test.ts",
-    "src/lib/marknibs.test.ts",
-    "src/lib/text.test.ts",
-    "src/lib/clicks.test.ts",
-    "src/lib/commands.test.ts",
-    "src/lib/keys.test.ts",
-    "src/lib/search.test.ts",
-    "src/lib/textcache.test.ts",
-    "src/lib/results.test.ts",
-    "src/lib/recents.test.ts",
-    # Added 2026-08-19 with the recovery rules, in the same edit as the
-    # mutations rather than after them. A test file absent from this list makes
-    # every mutation aimed at it report SURVIVED, and the guard that refuses an
-    # unknown test name cannot help: the name resolves, it just never runs.
-    "src/lib/recovery.test.ts",
-    "src/lib/zoom.test.ts",
-    "src/lib/reading.test.ts",
-    "src/lib/a11y.test.ts",
-    "src/lib/searchmapping.test.ts",
-    "src/lib/comments.test.ts",
-    "src/lib/commentlist.test.ts",
-    "src/lib/commentpopup.test.ts",
-    "src/lib/links.test.ts",
-    # Added 2026-08-31 with the pan, in the same edit as its mutations and for
-    # the reason the note above `recovery.test.ts` gives --- the `mutations`
-    # gate caught its absence here before the harness ever ran, which is what
-    # that gate is for.
-    "src/lib/viewerpan.test.ts",
-    # The window reads `ViewerStatus` and the other viewer tests read the
-    # accessors, so this is the only file where a mutation to `report`'s own
-    # summary can go red. It was listed a second time lower down on 2026-08-22,
-    # beside `viewermove.test.ts`, by somebody who needed it for exactly that and
-    # did not notice it was already here --- harmless to vitest, invisible in a
-    # diff of 400 mutations, and the reason the gate below refuses a repeat.
-    "src/lib/viewer.test.ts",
-    "src/lib/edits.test.ts",
-    "src/lib/scroller.test.ts",
-    "src/lib/appcommands.test.ts",
-    # Added 2026-08-19 with the version display. `update.ts` had been covered by
-    # no mutation since it was written, so its suite had never been here --- and
-    # the sixth time this list has been forgotten is the sixth time the refusal
-    # is what said so rather than the mutation reporting SURVIVED. Worth reading
-    # as a pattern rather than as six accidents: a new module's suite reaches
-    # this list only when somebody writes a mutation for it, which is a step
-    # later than writing the tests, so the gap is the normal case and not the
-    # careless one.
-    "src/lib/update.test.ts",
-    # Added 2026-08-17 with the page strip's reset. `thumbnails.ts` had been
-    # covered by no mutation, so its suite had never been in this list --- and
-    # the mutation written for the move increment named a test the harness
-    # could not see. It said so and refused to start, which is the third time
-    # that guard has caught a list this file forgot to grow.
-    "src/lib/thumbnails.test.ts",
-    # Added 2026-08-17 with `pages.ts`. This list is what the harness runs and
-    # what its name cross-check reads, so a suite missing from it makes every
-    # mutation naming one of its tests unprovable --- the check said so for
-    # seven of them rather than reporting them survived, which is that guard
-    # doing its job.
-    "src/lib/pages.test.ts",
-    # Added 2026-08-20 with the duplicate-name guard. Seventh time, and the
-    # pattern the note above names holds again: `checkreport.ts` had been
-    # covered by no mutation, so its suite had never been here, and the first
-    # mutation written for it named a test the harness could not see. It
-    # refused rather than reporting SURVIVED, which is the whole value of the
-    # guard -- a mutation that cannot go red and a mutation nothing catches are
-    # indistinguishable from the verdict alone.
-    "src/lib/checkreport.test.ts",
-    # Added 2026-08-27 with `edit.redactSelection`, in the same edit as the
-    # mutations below rather than after them. `selection.ts` had been covered by
-    # no mutation until this increment gave it a decision worth one, which is
-    # the pattern the notes above name for the ninth time: the tests come first,
-    # the mutations a step later, and this list is remembered a step later
-    # still.
-    "src/lib/selection.test.ts",
-    # Added 2026-08-21 with the properties dialog. Eighth time, and it happened
-    # exactly as the note above predicts: the tests were written first, the
-    # mutations second, and this list is edited only by whoever writes the
-    # second. All ten mutations named tests the harness could not see, and it
-    # refused all ten rather than reporting them survived.
-    "src/lib/properties.test.ts",
-    # Added 2026-09-26 with the signature integrity row, in the same edit as
-    # its mutations, which is the order the notes above keep asking for.
-    "src/lib/integrity.test.ts",
-    # Added 2026-08-17 with extract. The guard fired a fourth time, for five
-    # mutations at once: every one named a `pageranges.test.ts` test and the
-    # harness could not see the file, so it refused to start rather than
-    # reporting all five SURVIVED. Four out of four times this list has been
-    # forgotten, the refusal is what said so -- which is the argument for
-    # keeping it loud rather than making it infer the files from the mutations.
-    "src/lib/pageranges.test.ts",
-    # Added 2026-08-17 with the menu bar. Added *before* the mutations rather
-    # than after the guard fired for a fifth time, which is the whole of what
-    # four previous entries here are about.
-    "src/lib/menubar.test.ts",
-    # Added 2026-08-18 with the page turn's placement, before writing a single
-    # mutation below --- which is what the six entries above are collectively
-    # about, and the second time in two increments it was done in that order.
-    "src/lib/viewerturns.test.ts",
-    # Added 2026-08-18 with the note on a mark. Sixth time: the five mutations
-    # below `markpopup.ts` all named tests in a file this list did not have, and
-    # the guard refused to start rather than calling them survivors. Adding the
-    # file first would have been the lesson of the four entries above; adding it
-    # second is at least the guard proving itself again.
-    "src/lib/markpopup.test.ts",
-    # Added 2026-08-18 with the keyboard walk through marks, before writing the
-    # mutations rather than after the guard fired for a seventh time.
-    "src/lib/viewermarks.test.ts",
-    # Added 2026-08-18 with the crop, before writing the mutations.
-    "src/lib/crop.test.ts",
-    "src/lib/viewercrop.test.ts",
-    # Moved out of UNMUTATED 2026-09-07 with the region right-click: the
-    # menu that a right-click on a pending redaction gets is now decided in
-    # `contextmenu.ts`, so there is a mutation aimed at that module and the
-    # suite has to run for it to be killed.
-    "src/lib/contextmenu.test.ts",
-    # Added 2026-08-19 with the mark bands, before writing the mutations. The
-    # rule it covers shipped wrong --- every kind drawn as a highlight while the
-    # document was open --- so the point of the entries below is that the exact
-    # shipped shape is one of them.
-    "src/lib/markband.test.ts",
-    # Added 2026-08-19 with the drag primitive and the box, before the
-    # mutations. Ninth entry, ninth time in that order.
-    "src/lib/drag.test.ts",
-    "src/lib/viewerdraw.test.ts",
-    # Added 2026-08-20 with the marks panel, before writing the mutations. Tenth
-    # time in that order, and it holds the tests for `markRows` too --- which
-    # lives in `pages.ts`, already listed, so this entry is not what makes those
-    # runnable. It is what makes them *visible*: a mutation naming a test in an
-    # unlisted file is refused rather than run, and the refusal names the test,
-    # not the file it could not find.
-    "src/lib/marklist.test.ts",
-    # Added 2026-08-22 with dragging a mark to move it --- and *after* writing the
-    # mutations, which is the wrong order and is why it is worth a line: the run
-    # refused all seven with "no test here is named ...", correctly, because a
-    # file the harness was not told about is a file whose tests cannot go red.
-    # Eleventh time this list has grown, and the guard has caught the omission
-    # every time.
-    "src/lib/viewermove.test.ts",
-    # Added 2026-10-04 with signing into a signature field, after the run
-    # refused its three mutations.
-    "src/lib/signfield.test.ts",
-    # Added 2026-08-23 while cutting 26.8.8, and *after* the mutations: the run
-    # refused all seven of them --- three under `unlock.ts` and four under
-    # `passworddialog.ts` --- with "no test here is named ...", for tests both
-    # files plainly define. Twelfth time, and the note ten entries above predicts
-    # it exactly: the tests are written first and this list is edited only by
-    # whoever writes the mutations, so the gap is the normal case. Twelve
-    # omissions, twelve refusals, no SURVIVED --- which is the guard earning its
-    # keep and also the argument for deriving this list from a glob instead. Not
-    # done here, because widening the name set on the day a release is cut can
-    # surface a duplicate test name and refuse the run for an unrelated reason.
-    "src/lib/unlock.test.ts",
-    "src/lib/passworddialog.test.ts",
-    # Added 2026-08-24 with the six README mutations above, in the same edit
-    # rather than after them --- which is the thirteenth time this list has been
-    # the thing that was forgotten, and the first time it was not.
-    "src/lib/readme.test.ts",
-    # Added 2026-08-25 with the three prose-dash mutations above, in the same
-    # edit for the same reason as the entry above it.
-    "src/lib/readertext.test.ts",
-    # Added 2026-08-25 with the two orphans mutations above, in the same edit.
-    "src/lib/orphans.test.ts",
-    # Added 2026-08-26 with the four PLAN.md mutations above, in the same edit.
-    "src/lib/plan.test.ts",
-    # Added 2026-08-26 with the redaction review panel, in the same edit as its
-    # mutations. `sidebar.test.ts` moved here out of `UNMUTATED` below on the
-    # same day: two mutations now aim at `sidebar.ts`, which is what that
-    # table's entry said had never been true.
-    "src/lib/redactlist.test.ts",
-    # Added 2026-09-06 with the outline's destination order, in the same edit as
-    # its mutation. `outline.ts` had been in the exclusion table below since
-    # nothing was aimed at it; a search over the destinations is the first
-    # decision in that module that can be wrong in a way the walk beside it
-    # cannot, so it earned one. The tenth time this list has needed growing, and
-    # the gate said so before the run rather than after it.
-    "src/lib/outline.test.ts",
-    "src/lib/sidebar.test.ts",
-    # Added 2026-09-07 with web links, and *after* the mutations: the run
-    # refused all three under `weblinkdialog.ts` with "no test here is named
-    # ...", for tests the file plainly defines. That is the pattern the notes
-    # above predict --- the tests are written first, this list is edited by
-    # whoever writes the mutations --- and the guard caught it again with no
-    # SURVIVED. The argument for a glob is one entry stronger.
-    "src/lib/weblinkdialog.test.ts",
-    # Added 2026-08-30 with the slot-versus-page mutations, in the same edit.
-    # Eleventh time, and for once the list was grown by the person who wrote the
-    # tests rather than a step later --- because this suite is new and the guard
-    # above was fresh in mind. The pattern in the notes above is about the
-    # ordering of two jobs, not about carelessness, so the way to stop meeting
-    # it is to write the mutation and the list entry in the commit that adds
-    # the suite.
-    "src/lib/viewertext.test.ts",
-    # Thirteenth. Written in the same commit as the mutations below, which is
-    # what the note above says stops the pattern, rather than after a run has
-    # already refused.
-    "src/lib/pagesizes.test.ts",
-    "src/lib/importedlinks.test.ts",
-    # Moved up out of `UNMUTATED` on 2026-09-21, which is the entry that table
-    # exists to make cheap: `session.ts` grew `settled()` for the relaunch --- the
-    # one caller that can wait for a place to land before the process ends --- and
-    # a mutation now aims at it, so the reason for excluding the suite ("no
-    # mutation aims at src/lib/session.ts") stopped being true in the same commit
-    # that made it stop being true. Fourteenth, and moved in that commit rather
-    # than a step later.
-    "src/lib/session.test.ts",
-    # Added 2026-10-03 with the window's text recognition, with its mutations.
-    "src/lib/recognise.test.ts",
-    # Added 2026-10-03 with the two password commands, with their mutations.
-    "src/lib/protect.test.ts",
-    "src/lib/newpassworddialog.test.ts",
-    "src/lib/compress.test.ts",
-    # Added 2026-10-03 with reopening every tab at launch.
-    "src/lib/tabrestore.test.ts",
-    # Added 2026-10-03 with form fields placed in the window.
-    "src/lib/fieldnames.test.ts",
-    "src/lib/arrange.test.ts",
-    "src/lib/savedfields.test.ts",
-    "src/lib/fieldprops.test.ts",
-    "src/lib/duplicate.test.ts",
-    "src/lib/viewerarrange.test.ts",
-    "src/lib/compressdialog.test.ts",
-    # Added 2026-10-03 with New document from pictures, with its mutations.
-    "src/lib/pictures.test.ts",
-]
-
 #: The suites this harness deliberately does NOT run, and why for each.
 #:
-#: `TEST_FILES` above is short on purpose --- every entry is paid for on every
-#: one of the ~400 mutations below, so listing the whole tree would slow each
-#: run to prove nothing about modules no mutation touches. The cost of keeping
-#: it short is that it drifts, and the entries above record twelve times it did:
-#: the tests are written first and this list is edited only by whoever writes
-#: the mutations, so a new module's suite arrives here a step late.
+#: Every other suite under `src/` is run: `TEST_FILES`, below this table, is
+#: what is on disk less what is named here. Until 2026-10-04 that list was
+#: written by hand, kept short because each entry is paid for on every
+#: mutation, and it drifted thirteen times by its own notes: the tests are
+#: written first and the list was edited only by whoever wrote the mutations.
+#: `scripts/check_mutation_test_files.py` made each omission a gate failure
+#: and not a refused run; deriving the list removes the step that was
+#: forgotten. The whole frontend suite runs in about two seconds, so the cost
+#: the short list saved is the ten suites below, each excluded *with a reason*.
 #:
-#: Twelve times the harness's own guard caught it, correctly, and each catch
-#: cost a run that had already started. `scripts/check_mutation_test_files.py`
-#: is what makes that a gate instead: it asks the same question against the
-#: same source of names, in seconds, before anything is mutated. This table is
-#: the other half --- a suite is either run or excluded *with a reason*, so a
-#: file that is neither is a finding rather than an omission nobody can see.
-#:
-#: The last entry above argued for deriving `TEST_FILES` from a glob instead,
-#: and deferred it because widening the name set can surface a duplicate test
-#: name and refuse a run for an unrelated reason. That objection still holds and
-#: this does not touch it: the gate changes what is *checked*, never what runs.
+#: A new suite is therefore run from the day it exists. One that should not be
+#: is added here, with why. The objection recorded against a glob, that a
+#: wider name set can surface a duplicate test name and refuse a run, applies
+#: to a suite added to the tree and not to this change, which runs the same
+#: files the hand-written list named.
 UNMUTATED = {
     # Its own assertions are never mutated. The three mutations aimed at
     # `rowline.ts` expect tests in `marklist.test.ts`, which is listed, so they
@@ -6346,6 +6084,15 @@ UNMUTATED = {
     # on the missing name and on the new one.
     "src/lib/replyshapes.test.ts": "reads JSON written by the Rust side, which no source mutation of a module changes",
 }
+
+#: The suites every mutation run executes: each one under `src/` that
+#: `UNMUTATED` does not name. Found on disk, so a suite that is not committed
+#: yet is run as well.
+TEST_FILES = sorted(
+    path.relative_to(ROOT).as_posix()
+    for path in (ROOT / "src").rglob("*.test.ts")
+    if path.relative_to(ROOT).as_posix() not in UNMUTATED
+)
 
 FAILED_TEST = re.compile(r"^\s*(?:x|×)\s+(.*?)(?:\s+\d+ms)?$", re.M)
 TEST_NAME = re.compile(r"^\s*[✓x×]\s+(\S+\.test\.ts)\s*>\s*(.*?)(?:\s+\d+ms)?$", re.M)
