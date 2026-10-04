@@ -6510,6 +6510,20 @@ corrected in this step: it still said a drawing inside a Form XObject is left, a
 cover form fields or the reopening of tabs. The release notes in `release.yml` were rewritten
 before the release commit. No release mechanics changed.
 
+**26.10.3 publication, 2026-10-04:** `save_check.py` ran before the tag, against the normal
+bundle with the development engine hidden: it saved over the document twice from the menu,
+`qpdf` read both saves back, and a print after a second writer was refused. `Audit` and CI
+were green on the release commit `c47b6bd`, both legs, and the tag sits on it. The `Release`
+run for `v26.10.3` skipped its gates on that account and both platform jobs passed at the
+first attempt. The draft held 8 assets, counted with GraphQL, and
+`scripts/publish_release.py v26.10.3 --publish` published it. Without authentication the
+`.dmg`, the `.msi` and the `-setup.exe` answer 200 and `latest.json` offers 26.10.3 for
+`darwin-aarch64` and `windows-x86_64`. The downloaded `.dmg` staples, `codesign --deep
+--strict` accepts the application, Gatekeeper reads it as Notarized Developer ID, and the
+bundled `tpdf-cli` reports 26.10.3. The Homebrew cask was set to 26.10.3; `brew audit --cask
+--online` passed and `brew livecheck` reads 26.10.3. winget was not updated: pull request
+445804 for 26.10.2 was still open. Step 12 is the owner's and is not recorded here yet.
+
 **26.10.3, `redact-reach-probe` on Windows 11, 2026-10-03, with the gate:** 160 documents,
 none refused, 13,524 regions, 60.5 s. Taken whole: 12,389 (91.6%); holding something that
 cannot be taken: 1,135 (8.4%) in 47 documents, of which a drawing on the page 712, a block

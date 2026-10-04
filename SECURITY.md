@@ -43,7 +43,10 @@ you do not need to have diagnosed it.
   than hidden, and is measured by `examples/print_probe.rs`.
 - Recovering content from a document tpdf reported as successfully redacted.
 - A redaction reported as **clean** that is not. A result of *not verified* is a correct
-  answer, by design, and is not a vulnerability.
+  answer, by design, and is not a vulnerability. One case is disclosed rather than a
+  finding: a picture the document draws in several places is taken off the page you marked
+  and stays in the file for the other places, and the report's notes and the review panel
+  say so. Marked on every page that draws it, it leaves the file.
 - Document JavaScript or launch actions executing. Both are disabled by default.
 - Memory-safety defects in our Rust code, or in the PDFium build we ship, reachable
   from document content. PDFium is built from its own source without modifications of
