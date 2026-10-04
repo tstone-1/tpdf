@@ -6532,9 +6532,14 @@ Shown unreadable 4,037 (33.27%); could not be shown unreadable 8,041 (66.27%); s
 text 55 (0.45%), every span inside the region's own columns. The 2026-09-02 run read 0.00%,
 37.89% and 62.11% on 109 documents; the corpus is not the same one, and the control is 32 px
 on Windows since this cycle. All three outcomes other than *shown unreadable* are reported as
-*not verified*. Of the 1,000 controls not read back, 589 were rendered at 12 to 16 px, under
-the 32 px floor, and the probe attributes them to neither the scale ceiling nor a halved
-image. That is not explained yet.
+*not verified*. The run printed 589 of the 1,000 controls not read back as rendered at
+*12 to 16 px*, under the floor for no reason the scale rule gives. **That was the probe and
+not the gate, corrected 2026-10-04.** The row's upper bound is the floor, 32 px on Windows,
+and its label still said 16; and a control sized to exactly 32 px comes out as 31.999998 for
+about one size in eight in single precision, which a strict comparison called short. With
+`ocr_gate::reaches_floor` and labels that follow the platform's floor, the same run reports
+all 1,000 at 32 px and over and none short. What the engine returned for them is unchanged:
+it read nothing for 261 and read spans that did not hold the control for 737.
 
 **26.10.2 verification, macOS arm64, 2026-10-02:** all 29 gates passed on the final tree
 (2,451 Rust tests with ten documented ignored, 2,026 frontend tests), and `check_windows.py`

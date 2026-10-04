@@ -421,6 +421,20 @@ pub fn scale_wanted(size_pt: f32) -> f32 {
     MIN_CONTROL_PX / size_pt
 }
 
+/// Whether a control rendered `px` high is at [`MIN_CONTROL_PX`].
+///
+/// A comparison with a tolerance, because `px` is `size_pt * (MIN_CONTROL_PX /
+/// size_pt)` in single precision and that product is one unit in the last
+/// place under the floor for about one size in eight: 31.999998 for 32. A
+/// strict `<` then calls a control the scale rule sized exactly as intended
+/// short. Measured 2026-10-04 on Windows: 589 of 1,000 unread controls were
+/// reported under the floor for no reason [`scale_for`] could give, and every
+/// one of them was this rounding.
+#[must_use]
+pub fn reaches_floor(px: f32) -> bool {
+    px >= MIN_CONTROL_PX * (1.0 - 1e-5)
+}
+
 /// How many bytes a probe image of this shape costs at this scale.
 ///
 /// Public so a measurement can ask whether an image *would* fit at a scale the
@@ -1077,6 +1091,33 @@ fn wait<T: Send + 'static, E: Send + 'static + From<String>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_control_the_scale_rule_sized_is_at_the_floor_whatever_the_rounding() {
+        // Every size the ceiling can serve, in steps too fine to be round
+        // numbers. The product is under `MIN_CONTROL_PX` for some of them, by
+        // one unit in the last place, and that is still the floor.
+        let smallest = MIN_CONTROL_PX / MAX_SCALE;
+        let mut rounded_under = 0usize;
+        for step in 0..20_000u32 {
+            let size = smallest + step as f32 * 0.000_37;
+            if scale_wanted(size) < MIN_SCALE {
+                break;
+            }
+            let scale = scale_for(size, 600.0, 40.0, usize::MAX).unwrap();
+            let px = size * scale;
+            rounded_under += usize::from(px < MIN_CONTROL_PX);
+            assert!(reaches_floor(px), "{size} pt at {scale}x is {px} px");
+        }
+        assert!(
+            rounded_under > 0,
+            "no size rounded under the floor, so this checked nothing"
+        );
+        // The control: a control really short of it is short.
+        assert!(!reaches_floor(MIN_CONTROL_PX * 0.99));
+        assert!(!reaches_floor(MIN_CONTROL_PX - 0.01));
+        assert!(reaches_floor(MIN_CONTROL_PX));
+    }
 
     #[test]
     fn a_page_whose_regions_held_no_text_gets_a_note_naming_the_size() {

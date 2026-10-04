@@ -676,6 +676,14 @@ fn measure(
 /// fell into prints a zero. An omitted row and a zero row read identically to
 /// somebody scanning the output, and only one of them is honest --- the same
 /// reason [`NotVerifiedCause::ALL`] exists.
+///
+/// The last boundary is [`ocr_gate::MIN_CONTROL_PX`], which is 32 on Windows
+/// and 16 elsewhere, so the labels are written per platform. Until 2026-10-04
+/// they said 16 on both, and a Windows run reported controls of 12 to 32 px
+/// as *12 to 16 px*.
+#[cfg(windows)]
+const PX_BUCKETS: [&str; 4] = ["under 8 px", "8 to 12 px", "12 to 32 px", "32 px and over"];
+#[cfg(not(windows))]
 const PX_BUCKETS: [&str; 4] = ["under 8 px", "8 to 12 px", "12 to 16 px", "16 px and over"];
 
 /// Which bucket a control of `px` pixels falls in.
@@ -684,7 +692,7 @@ fn px_bucket(px: f32) -> &'static str {
         PX_BUCKETS[0]
     } else if px < 12.0 {
         PX_BUCKETS[1]
-    } else if px < ocr_gate::MIN_CONTROL_PX {
+    } else if !ocr_gate::reaches_floor(px) {
         PX_BUCKETS[2]
     } else {
         PX_BUCKETS[3]
@@ -772,6 +780,14 @@ struct Shape {
 /// rather than as `2.0`, so raising either constant moves the bucket with it ---
 /// a bound written against its own constant is a trap this repository has an
 /// entry for, and the fix there was to keep one expression rather than two.
+#[cfg(windows)]
+const PT_BUCKETS: [&str; 4] = [
+    "under 4 pt (unreachable)",
+    "4 to 6 pt",
+    "6 to 12 pt",
+    "12 pt and over",
+];
+#[cfg(not(windows))]
 const PT_BUCKETS: [&str; 4] = [
     "under 2 pt (unreachable)",
     "2 to 6 pt",
@@ -820,7 +836,7 @@ fn clamp_of(pt: f32, px: f32, scale: f32) -> &'static str {
         // the two clamps do not account for the sub-floor controls and the
         // reasoning above is incomplete -- which is worth seeing loudly.
         (false, false) => {
-            if px < ocr_gate::MIN_CONTROL_PX {
+            if !ocr_gate::reaches_floor(px) {
                 CLAMPS[4]
             } else {
                 CLAMPS[3]
