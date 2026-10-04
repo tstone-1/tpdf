@@ -1243,6 +1243,7 @@ export function registerAppCommands(
       // in place of the originals so that the next drag moves the copies.
       id: "edit.duplicate",
       title: "Arrange: duplicate",
+      keys: label("edit.duplicate"),
       enabled: () => withDocument() && actions.pickedMarks() >= 1,
       run: () => actions.duplicatePicked(),
     },
@@ -2320,6 +2321,10 @@ export function handleWindowKey(
   } else if (matches("edit.rotatePageCounterClockwise", event) && title) {
     event.preventDefault();
     actions.rotatePage(-1);
+  } else if (matches("edit.duplicate", event) && title && actions.pickedMarks() >= 1) {
+    // Only with something picked: with nothing to copy the chord is left alone.
+    event.preventDefault();
+    actions.duplicatePicked();
   } else if (matches("file.save", event) && title) {
     // Guarded on there being something to save, exactly as ⌘Z is guarded on
     // there being something to undo. ⌘S is the chord readers press by reflex on

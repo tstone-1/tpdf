@@ -207,6 +207,8 @@ export const BINDINGS = {
   "file.save": { keys: ["s"], accel: true },
   "file.saveCopy": { keys: ["s", "S"], accel: true, shift: true },
   "edit.selectAll": { keys: ["a"], accel: true },
+  // ⌘D, the chord a drawing or presentation program duplicates on.
+  "edit.duplicate": { keys: ["d"], accel: true },
   "edit.copy": { keys: ["c"], accel: true },
   "edit.clearSelection": { keys: ["Escape"], shown: "Esc" },
 } as const satisfies Record<string, Binding>;

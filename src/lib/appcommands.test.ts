@@ -1609,12 +1609,13 @@ describe("opening the palette", () => {
 describe("the window shortcuts for editing", () => {
   function press(
     key: string,
-    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean } = {},
+    modifiers: { shift?: boolean; alt?: boolean; handled?: boolean; picked?: number } = {},
     target: { tagName?: string; isContentEditable?: boolean; ownerDocument?: { getSelection(): { type: string } | null } } | null = null,
     journal: { undo?: boolean; redo?: boolean } = { undo: true, redo: true },
     dirty = true,
   ) {
     const { fired, actions } = keyHarness(journal, dirty);
+    actions.pickedMarks = () => modifiers.picked ?? 0;
     let prevented = 0;
     const event = {
       key,
@@ -1829,6 +1830,12 @@ describe("the window shortcuts for editing", () => {
   it("turns the page on Shift-Cmd-R and the other way on Shift-Cmd-L", () => {
     expect(press("R", { shift: true }).fired).toEqual(["rotatePage:1"]);
     expect(press("L", { shift: true }).fired).toEqual(["rotatePage:-1"]);
+  });
+
+  it("duplicates what is picked on Cmd-D, and leaves the chord alone with nothing picked", () => {
+    expect(press("d", { picked: 2 })).toMatchObject({ fired: ["duplicatePicked"], prevented: 1 });
+    expect(press("d", { picked: 0 })).toMatchObject({ fired: [], prevented: 0 });
+    expect(press("d", { picked: 1, shift: true }).fired).toEqual([]);
   });
 
   it("leaves the unshifted chords to the view, which owns them", () => {

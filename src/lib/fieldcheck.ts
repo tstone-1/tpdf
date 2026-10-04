@@ -274,13 +274,14 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     // A copy of it, beside it, picked in its place; then moved by a key.
     const before = new Set(fields().map((mark) => mark.id));
     viewer.pick(placed ? [placed.id] : []);
-    host.run("edit.duplicate");
+    // By its key, as a reader would, and not by the command's name.
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", metaKey: true, bubbles: true, cancelable: true }));
     await settle(() => fields().length === 4, SETTLE_MS);
     await host.idle();
     const copy = () => fields().find((mark) => !before.has(mark.id));
     const from = fields().find((mark) => mark.id === placed?.id)?.quads ?? [];
     check(
-      "duplicate makes a copy of the picked field with its properties, under a name of its own, a step away",
+      "Cmd-D makes a copy of the picked field with its properties, under a name of its own, a step away",
       copy()?.field?.kind === "multiline" && copy()?.field?.max_length === 40 && copy()?.field?.tooltip === "Notes"
         && copy()?.note !== placed?.note && !names().split(", ").slice(0, 3).includes(copy()?.note ?? "")
         && Math.abs((copy()?.quads[0] ?? 0) - (from[0] ?? 0) - 12) < 0.01

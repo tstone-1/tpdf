@@ -364,7 +364,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   and the others come with it, each keeping its place against the rest; the one nearest
   the page's edge stops them all. With one or more picked, the arrow keys move them a
   point at a time and ten points with Shift, and Delete or Backspace removes them.
-  *Arrange: duplicate* makes a copy of each
+  *Arrange: duplicate* (⌘D, Ctrl+D on Windows) makes a copy of each
   picked form field, box or ellipse a step down and to the right and picks the copies,
   so the next drag places them. A copied field has the size and properties of the
   original and the next free name of its kind; a copied radio button stays in its group

@@ -28,6 +28,9 @@ have the binary.)
   holds after a reader resets the form, and a field that holds nothing is answered with
   it at once. `tpdf form` takes both as `text_size` and `default_value`.
 
+- **A key for duplicate.** ⌘D, or Ctrl+D on Windows, copies what is picked, as *Arrange:
+  duplicate* does.
+
 - **The value of a saved radio button.** The properties panel shows the value a radio
   button already in the file gives its group, and takes a new one. Before, the value
   could be set only until the first save. A value another button of the group has is

@@ -3850,7 +3850,9 @@ copies one undo. Names come from `placing`, asked again before each copy so two 
 of one field get two names. A field of the file is copied as a placed field built from
 the scanned widget and the properties a reader has changed.
 
-**Not built.** A key for duplicate; copying a text box, a list box or a dropdown that
+**A key.** ⌘D since 2026-10-04, taken only while something is picked (`handleWindowKey`).
+
+**Not built.** Copying a text box, a list box or a dropdown that
 takes typed text; pasting onto another page; snapping to other fields while dragging.
 
 #### Radio button groups — 2026-10-04
