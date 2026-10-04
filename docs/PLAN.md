@@ -3668,6 +3668,25 @@ Read by two programs that share no code with this: poppler's `pdfsig` says "The
 signature form field is not signed", and pyHanko lists it among the empty signature
 fields. In the window: *Add a form field: signature*, named `Signature 1`.
 
+**Stage 2, signing into it.** `sign_prepare::Notes::field` names an empty signature field,
+and `build` then writes the signature into that field: `/V` on the field, Print and
+Locked on its widget, both `/SigFlags` bits, and nothing added to a page or to the
+form's list. A visible signature is drawn in the field's rectangle on the field's page,
+by the code that draws a dragged one: over pages turned 0, 90, 180 and 270 degrees the
+form is the same, operation for operation, as for a rectangle dragged in that place on a
+document with no field. The field is found through `forms::scan`, so a form that
+refuses is refused here. Refused: a name the document does not have, a field that is
+not a signature field, one that holds a signature, one that is read-only, one shown in
+several places, and with an appearance a field under 24 points a side, which is signed
+without one. `tpdf sign --field NAME` is the command; with `--visible` it takes no
+`--rect`, `--page` or `--anchor`, and it looks the field up itself for the report of
+what is drawn, before any certificate is listed. Measured on the command-line suite's
+files: a field signed visibly, then a second one in the signed file. tpdf reads both
+intact; poppler's `pdfsig` says "Signature is Valid" of both; pyHanko reads both as
+intact and valid and the second signing as form filling, which a signature permits.
+Not measured: a certified document (a visible signature is still refused there, as it
+was), and Acrobat.
+
 #### Fields on a turned page — 2026-10-04
 
 A page the document turns with `/Rotate` took no new field, and a field on one could be

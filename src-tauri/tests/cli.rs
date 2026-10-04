@@ -107,6 +107,8 @@ mod protect;
 mod render;
 #[path = "cli/sign_anchor.rs"]
 mod sign_anchor;
+#[path = "cli/sign_field.rs"]
+mod sign_field;
 #[path = "cli/sign_image.rs"]
 mod sign_image;
 #[path = "cli/sign_text.rs"]
@@ -136,7 +138,7 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 31] = [
+    let checks: [Check; 32] = [
         ("verify agrees with the in-process reader", verify_agrees),
         (
             "a signature made through the tool reads back intact",
@@ -153,6 +155,10 @@ fn main() {
         (
             "sign --anchor puts the signature beside text on the page",
             sign_anchor::places_beside_text,
+        ),
+        (
+            "sign --field signs an empty signature field the document has",
+            sign_field::signs_the_field,
         ),
         (
             "a timestamp minted by the test authority reads back through the tool",

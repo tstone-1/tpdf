@@ -30,7 +30,9 @@ have the binary.)
 
 - **Signature fields.** *Add a form field: signature* places an empty signature field: a
   place somebody signs with a certificate. It is at least 24 points a side. `tpdf form`
-  makes one with `"kind": "signature"`.
+  makes one with `"kind": "signature"`. `tpdf sign --field NAME` signs such a field, in
+  a form tpdf made or any other: the signature goes into that field, and with
+  `--visible` it is drawn in the field's rectangle.
 
 - **A key for duplicate.** ⌘D, or Ctrl+D on Windows, copies what is picked, as *Arrange:
   duplicate* does.

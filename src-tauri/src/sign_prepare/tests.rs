@@ -1450,6 +1450,7 @@ fn an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact() {
     let original = two_pages(0);
     let latin = |text: &str| text.chars().map(|ch| ch as u8).collect::<Vec<u8>>();
     let notes = Notes {
+        field: String::new(),
         reason: " Approved ".into(),
         location: "東京".into(),
         contact: "jane@example.com".into(),
@@ -1508,6 +1509,7 @@ fn an_invisible_signature_carries_its_notes_and_a_visible_one_its_contact() {
         ("", "", &*"a".repeat(MAX_NOTE_CHARS + 1), "the contact"),
     ] {
         let notes = Notes {
+            field: String::new(),
             reason: reason.into(),
             location: location.into(),
             contact: contact.into(),
@@ -1550,6 +1552,7 @@ fn a_reason_and_location_are_text_strings_inside_the_range() {
         ("þÿ ok", "ï»¿ ok", utf16("þÿ ok"), utf16("ï»¿ ok")),
     ] {
         let details = Details {
+            field: None,
             reason: Some(reason.into()),
             location: Some(location.into()),
             contact: None,
@@ -1865,4 +1868,212 @@ fn a_visible_signature_after_a_certification_is_refused_and_an_invisible_one_is_
         examined += 1;
     }
     println!("examined {examined} fixtures");
+}
+
+// ------------------------------------------------- a field the document has
+
+/// [`two_pages`] with a form: empty signature fields `Approved` on the first
+/// page and `Witness` on the second, and a text field `Name`. Each signature
+/// field is 150 by 60 points at display `[20, 30]`.
+fn with_fields(rotate: i64) -> Vec<u8> {
+    use crate::formfields::{add, Kind, NewField};
+    let mut doc = Document::load_mem(&two_pages(rotate)).expect("loads");
+    let field = |name: &str, kind: Kind, page: u32, rect: [f64; 4]| NewField {
+        name: name.into(),
+        kind,
+        page,
+        rect,
+        tooltip: None,
+        required: false,
+        max_length: None,
+        border: kind == Kind::Signature,
+        options: Vec::new(),
+        text_size: None,
+        default_value: None,
+    };
+    add(
+        &mut doc,
+        &[
+            field("Approved", Kind::Signature, 0, [20.0, 30.0, 150.0, 60.0]),
+            field("Witness", Kind::Signature, 1, [20.0, 30.0, 150.0, 60.0]),
+            field("Name", Kind::Text, 0, [20.0, 120.0, 150.0, 20.0]),
+        ],
+    )
+    .expect("fields");
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("saved");
+    bytes
+}
+
+fn into(field: &str) -> Notes {
+    Notes {
+        field: field.into(),
+        ..Notes::default()
+    }
+}
+
+/// The form's widget called `name`, as `forms::scan` reads it.
+fn scanned(after: &Document, name: &str) -> crate::forms::Widget {
+    crate::forms::scan(after)
+        .expect("a form")
+        .widgets
+        .into_iter()
+        .find(|w| w.name == name)
+        .expect("the field")
+}
+
+#[test]
+fn a_named_empty_field_takes_the_signature_and_nothing_is_added() {
+    let original = with_fields(0);
+    let before = Document::load_mem(&original).expect("loads");
+    let was = scanned(&before, "Approved");
+    let unsigned =
+        prepare_noted(original.clone(), NOW, None, None, &into("Approved")).expect("prepared");
+    assert_eq!(unsigned.field, "Approved");
+    let after = reread(&original, &unsigned);
+    // The same fields and the same annotations: the signature went into one
+    // the document had.
+    assert_eq!(fields_of(&after), fields_of(&before));
+    assert_eq!(annots_of(&after), annots_of(&before));
+    let now = scanned(&after, "Approved");
+    assert!(matches!(
+        now.control,
+        crate::forms::Control::Signature { signed: true }
+    ));
+    assert!(matches!(
+        scanned(&after, "Witness").control,
+        crate::forms::Control::Signature { signed: false }
+    ));
+    let id = (was.widget.0, was.widget.1);
+    let widget = after.get_dictionary(id).expect("the field");
+    let signature = signature_of(&after, widget);
+    assert_eq!(
+        signature
+            .get(b"SubFilter")
+            .and_then(Object::as_name)
+            .expect("subfilter"),
+        b"ETSI.CAdES.detached"
+    );
+    // Print and Locked over what it had, where it was, drawn as it was.
+    assert_eq!(widget.get(b"F").and_then(Object::as_i64).expect("/F"), 132);
+    assert_eq!(now.rect, was.rect);
+    let before_widget = before.get_dictionary(id).expect("the field");
+    assert_eq!(widget.get(b"AP").ok(), before_widget.get(b"AP").ok());
+    assert_eq!(sig_flags(&after), 3);
+    // The update holds the signature, the field and the form, and no page.
+    let touched = written(&original, &unsigned);
+    assert!(touched.contains(&id));
+    assert!(ordered_pages(&after)
+        .iter()
+        .all(|page| !touched.contains(page)));
+}
+
+#[test]
+fn a_visible_signature_in_a_field_is_drawn_in_the_fields_rectangle() {
+    for rotate in [0, 90, 180, 270] {
+        let original = with_fields(rotate);
+        let before = Document::load_mem(&original).expect("loads");
+        let was = scanned(&before, "Witness");
+        // A page and a rectangle that are not the field's: neither is read.
+        let elsewhere = visible(0, [0.0, 0.0, 30.0, 30.0], Some(raster()));
+        let unsigned = prepare_noted(
+            original.clone(),
+            NOW,
+            None,
+            Some(&elsewhere),
+            &into("Witness"),
+        )
+        .unwrap_or_else(|why| panic!("{rotate}: {why}"));
+        let after = reread(&original, &unsigned);
+        let id = (was.widget.0, was.widget.1);
+        let widget = after.get_dictionary(id).expect("the field").clone();
+        assert_eq!(scanned(&after, "Witness").rect, was.rect, "{rotate}");
+        assert_eq!(annots_on(&after, 1), annots_on(&before, 1));
+        assert!(annots_on(&after, 0) == annots_on(&before, 0));
+
+        // What signing draws when a reader drags that same rectangle on that
+        // page of a document with no field: the same form, to the byte.
+        let plain = two_pages(rotate);
+        let dragged = visible(1, was.display_rect, Some(raster()));
+        let apart = prepare_visible(plain.clone(), NOW, None, &dragged).expect("prepared");
+        let apart_doc = reread(&plain, &apart);
+        let (_, apart_widget) = new_widget(&apart_doc, &apart);
+        let (form, operations) = appearance_of(&after, &widget);
+        let (apart_form, apart_operations) = appearance_of(&apart_doc, &apart_widget);
+        assert_eq!(
+            format!("{operations:?}"),
+            format!("{apart_operations:?}"),
+            "{rotate}"
+        );
+        for key in [b"BBox".as_slice(), b"Matrix"] {
+            assert_eq!(
+                form.get(key).ok().map(numbers_of),
+                apart_form.get(key).ok().map(numbers_of),
+                "{rotate}"
+            );
+        }
+        assert!(close(
+            &numbers_of(widget.get(b"Rect").expect("/Rect")),
+            &numbers_of(apart_widget.get(b"Rect").expect("/Rect"))
+        ));
+    }
+}
+
+#[test]
+fn a_field_that_cannot_be_signed_is_refused_and_says_why() {
+    let original = with_fields(0);
+    let refused = |bytes: &[u8], visible: Option<&Visible>, field: &str| {
+        prepare_noted(bytes.to_vec(), NOW, None, visible, &into(field)).expect_err("refused")
+    };
+    assert!(refused(&original, None, "Missing").contains("has no field called `Missing`"));
+    assert!(refused(&original, None, "Name").contains("`Name` is not a signature field"));
+
+    // Signed once, it is not signed again; the other field still is.
+    let first = prepare_noted(original.clone(), NOW, None, None, &into("Approved")).expect("once");
+    let signed = [original.as_slice(), first.update.as_slice()].concat();
+    assert!(refused(&signed, None, "Approved").contains("`Approved` already holds a signature"));
+    prepare_noted(signed.clone(), NOW, None, None, &into("Witness")).expect("the other one");
+
+    // Too small to draw in: refused with an appearance, signed without one.
+    let small = {
+        let mut doc = Document::load_mem(&original).expect("loads");
+        let id = scanned(&doc, "Approved").widget;
+        doc.get_dictionary_mut((id.0, id.1))
+            .expect("field")
+            .set("Rect", vec![20.into(), 110.into(), 170.into(), 130.into()]);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("saved");
+        bytes
+    };
+    let shown = visible(0, [0.0, 0.0, 100.0, 100.0], None);
+    assert!(refused(&small, Some(&shown), "Approved").contains("sign it without an appearance"));
+    prepare_noted(small, NOW, None, None, &into("Approved")).expect("without one");
+
+    // A field that refuses an answer refuses a signature.
+    let locked = {
+        let mut doc = Document::load_mem(&original).expect("loads");
+        let id = scanned(&doc, "Approved").widget;
+        doc.get_dictionary_mut((id.0, id.1))
+            .expect("field")
+            .set("Ff", 1);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("saved");
+        bytes
+    };
+    assert!(refused(&locked, None, "Approved").contains("read-only"));
+}
+
+#[test]
+fn with_no_field_named_the_signature_still_makes_its_own() {
+    let original = with_fields(0);
+    let before = Document::load_mem(&original).expect("loads");
+    let unsigned =
+        prepare_noted(original.clone(), NOW, None, None, &Notes::default()).expect("prepared");
+    let after = reread(&original, &unsigned);
+    assert_eq!(fields_of(&after).len(), fields_of(&before).len() + 1);
+    assert_eq!(unsigned.field, "Signature1");
+    assert!(matches!(
+        scanned(&after, "Approved").control,
+        crate::forms::Control::Signature { signed: false }
+    ));
 }

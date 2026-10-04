@@ -161,6 +161,7 @@ pub fn prepare_visible(
         location: visible.options.location().map(str::to_string),
         contact: None,
         document_timestamp: false,
+        field: None,
     };
     build(original, signed_at, password, Some(visible), &details)
 }
@@ -182,6 +183,14 @@ pub struct Notes {
     pub location: String,
     /// `/ContactInfo`: how to reach the signer. Never drawn.
     pub contact: String,
+    /// The full name of an empty signature field the document already has,
+    /// to sign that one. Empty for a field of the signature's own, which is
+    /// what a document with no place for it gets.
+    ///
+    /// With a field named, a visible signature is drawn in the field's
+    /// rectangle on the field's page, and [`Visible::page`] and
+    /// [`Visible::rect`] are not read.
+    pub field: String,
 }
 
 /// [`prepare`] or [`prepare_visible`], with what `notes` adds to the
@@ -215,6 +224,7 @@ pub fn prepare_noted(
         Ok(Some(text.to_string()).filter(|text| !text.is_empty()))
     };
     let contact = note("contact", &notes.contact)?;
+    let field = Some(notes.field.clone()).filter(|name| !name.is_empty());
     let details = match visible {
         Some(visible) => {
             appearance::check(visible)?;
@@ -223,6 +233,7 @@ pub fn prepare_noted(
                 location: visible.options.location().map(str::to_string),
                 contact,
                 document_timestamp: false,
+                field,
             }
         }
         None => Details {
@@ -230,6 +241,7 @@ pub fn prepare_noted(
             location: note("location", &notes.location)?,
             contact,
             document_timestamp: false,
+            field,
         },
     };
     build(original, signed_at, password, visible, &details)
@@ -273,6 +285,59 @@ struct Details {
     /// /ETSI.RFC3161`, no `/M`) rather than a signature: its `/Contents` is a
     /// timestamp token over the range, and nobody's key signs it.
     document_timestamp: bool,
+    /// [`Notes::field`], when it names one.
+    field: Option<String>,
+}
+
+/// An empty signature field of the document, as [`build`] signs it.
+struct Target {
+    /// The field, which takes `/V`.
+    field: ObjectId,
+    /// Its one widget, which takes the appearance. The same object as the
+    /// field when they are written as one.
+    widget: ObjectId,
+    page: ObjectId,
+    /// The widget's rectangle, in the page's own space.
+    rect: [f64; 4],
+}
+
+/// The empty signature field called `name`.
+///
+/// Read through `forms::scan`, which is what lists a document's fields
+/// everywhere else, so a form it refuses is one this refuses.
+fn empty_field(document: &Document, pages: &[ObjectId], name: &str) -> Result<Target, String> {
+    let form = crate::forms::scan(document)
+        .map_err(|why| format!("this document's form could not be read: {why}"))?;
+    let found: Vec<_> = form.widgets.iter().filter(|w| w.name == name).collect();
+    let [widget] = found.as_slice() else {
+        return Err(if found.is_empty() {
+            format!("this document has no field called `{name}`")
+        } else {
+            format!(
+                "`{name}` is shown in {} places, and a signature goes in one",
+                found.len()
+            )
+        });
+    };
+    match widget.control {
+        crate::forms::Control::Signature { signed: false } => {}
+        crate::forms::Control::Signature { signed: true } => {
+            return Err(format!("`{name}` already holds a signature"))
+        }
+        _ => return Err(format!("`{name}` is not a signature field")),
+    }
+    if crate::forms::integer(document, widget.object, b"Ff") & 1 != 0 {
+        return Err(format!("`{name}` is read-only, so it cannot be signed"));
+    }
+    let page = *pages
+        .get(widget.page as usize)
+        .ok_or("the page the signature field is on is not in this document")?;
+    Ok(Target {
+        field: (widget.object.0, widget.object.1),
+        widget: (widget.widget.0, widget.widget.1),
+        page,
+        rect: widget.rect,
+    })
 }
 
 /// A visible signature's appearance, drawn before anything is signed.
@@ -417,10 +482,29 @@ fn build(
     let first = *pages
         .first()
         .ok_or("this document has no page to put a signature on")?;
-    // The page, its rectangle in page space and its turns, for a visible one.
-    let placed = match visible {
+    let target = match &details.field {
+        Some(name) => Some(empty_field(&prev, &pages, name)?),
         None => None,
-        Some(visible) => {
+    };
+    // The page, its rectangle in page space and its turns, for a visible one.
+    let placed = match (visible, &target) {
+        (None, _) => None,
+        // In the field: where the field is, at the size it has.
+        (Some(visible), Some(target)) => {
+            let [left, bottom, right, top] = target.rect;
+            let least = appearance::MIN_SIDE;
+            if right - left < least || top - bottom < least {
+                return Err(format!(
+                    "the field is {} by {} points, smaller than the {least} a side a visible \
+                     signature is drawn in --- sign it without an appearance",
+                    right - left,
+                    top - bottom
+                ));
+            }
+            let shown = crate::pagetree::displayed_page(&prev, target.page);
+            Some((target.page, target.rect, shown.turns, visible))
+        }
+        (Some(visible), None) => {
             let page = *pages
                 .get(visible.page as usize)
                 .ok_or("the page chosen for the signature is not in this document")?;
@@ -433,13 +517,19 @@ fn build(
             ))
         }
     };
-    let page = placed.map_or(first, |(page, ..)| page);
+    let page = match (&target, placed) {
+        (Some(target), _) => target.page,
+        (None, placed) => placed.map_or(first, |(page, ..)| page),
+    };
     let root = prev
         .trailer
         .get(b"Root")
         .and_then(Object::as_reference)
         .map_err(|_| "this document's catalog is not an object of its own".to_string())?;
-    let field = field_name(&prev, root);
+    let field = details
+        .field
+        .clone()
+        .unwrap_or_else(|| field_name(&prev, root));
     let annots = annots_site(&prev, page)?;
     let form = form_site(&prev, root)?;
 
@@ -449,8 +539,7 @@ fn build(
     let signature = incremental
         .new_document
         .add_object(signature_dictionary(&date, details));
-    let mut widget = widget(&field, signature, page);
-    if let Some((_, rect, turns, visible)) = placed {
+    let drawn = placed.map(|(_, rect, turns, visible)| {
         let lines = appearance::words(&visible.name, &date, &visible.options);
         let form = appearance::stream(
             &mut incremental.new_document,
@@ -459,12 +548,44 @@ fn build(
             &lines,
             visible.image.as_ref(),
         );
-        widget.set("Rect", appearance::rect_object(rect));
-        widget.set("AP", dictionary! { "N" => form });
+        (rect, form)
+    });
+    if let Some(target) = &target {
+        // The field the document has: it takes the signature, and its widget
+        // the appearance. Nothing is added to a page or to the form's list,
+        // which already hold it.
+        for id in [target.field, target.widget] {
+            incremental
+                .opt_clone_object_to_new_document(id)
+                .map_err(|e| format!("could not bring the signature field across: {e}"))?;
+        }
+        incremental
+            .new_document
+            .get_dictionary_mut(target.field)
+            .map_err(|e| e.to_string())?
+            .set("V", Object::Reference(signature));
+        let widget = incremental
+            .new_document
+            .get_dictionary_mut(target.widget)
+            .map_err(|e| e.to_string())?;
+        // Print and Locked, as a field of the signature's own has, over
+        // whatever else the widget says.
+        let flags = widget.get(b"F").and_then(Object::as_i64).unwrap_or(0);
+        widget.set("F", Object::Integer(flags | 132));
+        if let Some((_, form)) = drawn {
+            widget.set("AP", dictionary! { "N" => form });
+        }
+        add_to_form(&mut incremental, root, form, None)?;
+    } else {
+        let mut widget = widget(&field, signature, page);
+        if let Some((rect, form)) = drawn {
+            widget.set("Rect", appearance::rect_object(rect));
+            widget.set("AP", dictionary! { "N" => form });
+        }
+        let widget = incremental.new_document.add_object(widget);
+        add_to_page(&mut incremental, page, annots, widget)?;
+        add_to_form(&mut incremental, root, form, Some(widget))?;
     }
-    let widget = incremental.new_document.add_object(widget);
-    add_to_page(&mut incremental, page, annots, widget)?;
-    add_to_form(&mut incremental, root, form, widget)?;
 
     let mut sink = crate::save::Tail {
         skip: was,
@@ -759,12 +880,13 @@ fn add_to_page(
 }
 
 /// Adds the widget to the form's `/Fields`, creating the form if there is none,
-/// and sets the two `/SigFlags` bits.
+/// and sets the two `/SigFlags` bits. With no widget, for a field the form
+/// already lists, it sets the bits and adds nothing.
 fn add_to_form(
     incremental: &mut IncrementalDocument,
     root: ObjectId,
     form: Form,
-    widget: ObjectId,
+    widget: Option<ObjectId>,
 ) -> Result<(), String> {
     // The existing flags, read from the previous revision, where an indirect
     // value still resolves.
@@ -786,7 +908,7 @@ fn add_to_form(
 
     // The array first, when it is an object of its own: the form still changes
     // for its flags, but the list of fields is written once, where it lives.
-    if let Site::Object(array) = form.fields {
+    if let (Site::Object(array), Some(widget)) = (form.fields, widget) {
         incremental
             .opt_clone_object_to_new_document(array)
             .map_err(|e| format!("could not bring the field list across: {e}"))?;
@@ -823,7 +945,7 @@ fn add_to_form(
                 .map_err(|e| e.to_string())?
         }
     };
-    if !matches!(form.fields, Site::Object(_)) {
+    if let (false, Some(widget)) = (matches!(form.fields, Site::Object(_)), widget) {
         push_under(dict, form.fields, b"Fields", widget)?;
     }
     dict.set("SigFlags", Object::Integer(flags | SIG_FLAGS));

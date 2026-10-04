@@ -18,8 +18,8 @@ use crate::sign_prepare::{Options, Visible};
 /// `sign`, registered.
 pub const COMMAND: Registered = Registered {
     name: "sign",
-    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256 | sha1>\n        [--visible (--rect x,y,w,h | --anchor TEXT --size w,h [--offset dx,dy]\n         [--anchor-match N]) [--page N] [--image FILE | --no-image]\n         [--lines label,name,date | --text LINE ...] [--date-format FORMAT]\n         [--hide reason,location]]\n        [--reason TEXT] [--location TEXT] [--contact TEXT]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
-    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason, --location and --contact are\n            written to the signature, with or without --visible; a visible\n            signature draws the reason and location as lines of it. --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --anchor puts it beside text on the page instead: its top-left\n            corner is the text's, moved by --offset, and --size is its width\n            and height; text found more than once needs --anchor-match.\n            --text draws your own lines instead of the standard ones: {name},\n            {date}, {reason} and {location} are filled in, \\n starts a new\n            line, and --text may be given more than once. --date-format writes\n            the date with YYYY, MM, DD, HH, mm and ss; the time is UTC.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
+    usage: "sign <in.pdf> -o <out.pdf> --identity <subject | sha256 | sha1>\n        [--visible (--rect x,y,w,h | --anchor TEXT --size w,h [--offset dx,dy]\n         [--anchor-match N]) [--page N] [--image FILE | --no-image]\n         [--lines label,name,date | --text LINE ...] [--date-format FORMAT]\n         [--hide reason,location]]\n        [--reason TEXT] [--location TEXT] [--contact TEXT] [--field NAME]\n        [--timestamp digicert|sectigo|globalsign|<url> [--long-term]]\n        [--force] [--json]",
+    summary: "Signs with a certificate from your keychain (macOS) or your\n            certificate store (Windows). The key never leaves the operating\n            system, which may ask you to allow its use. The original is never\n            changed; the signed copy is written to -o, which must not exist\n            unless --force is given. --visible draws it on a page: --rect is\n            x,y,w,h in points from the top-left corner of the page as\n            displayed, --page counts from 1, and the saved signature image is\n            drawn unless --no-image is given or --image names a PNG or JPEG\n            file to draw instead, for this signature only; the saved image is\n            then neither read nor changed. --reason, --location and --contact are\n            written to the signature, with or without --visible; a visible\n            signature draws the reason and location as lines of it. --hide writes the ones\n            it names without drawing them, and nothing is hidden without it.\n            --anchor puts it beside text on the page instead: its top-left\n            corner is the text's, moved by --offset, and --size is its width\n            and height; text found more than once needs --anchor-match.\n            --text draws your own lines instead of the standard ones: {name},\n            {date}, {reason} and {location} are filled in, \\n starts a new\n            line, and --text may be given more than once. --date-format writes\n            the date with YYYY, MM, DD, HH, mm and ss; the time is UTC.\n            --field signs an empty signature field the document has, by its\n            name: the signature is written into that field, and with --visible\n            it is drawn in the field's rectangle, so --rect, --page and --anchor\n            are left out.\n            --timestamp asks that\n            timestamp authority for an RFC 3161 timestamp over the new\n            signature; nothing is sent anywhere without it, and if the\n            authority does not answer with one that checks out, nothing\n            is written.",
     parse: boxed,
 };
 
@@ -45,6 +45,9 @@ pub struct Sign {
     pub location: String,
     /// `--contact`: `/ContactInfo`, written and never drawn; empty for none.
     pub contact: String,
+    /// `--field`: the empty signature field to sign, by its full name; empty
+    /// for a field of the signature's own.
+    pub field: String,
     /// `--hide`: which of the two are written and not drawn.
     pub hide: Hidden,
     /// `--text`: the lines drawn instead of the standard ones, one template a
@@ -94,6 +97,8 @@ pub enum Where {
     Rect([f32; 4]),
     /// `--anchor`: beside text the page carries.
     Anchor(Anchor),
+    /// `--field` with `--visible`: in the field's own rectangle, on its page.
+    Field,
 }
 
 /// `--anchor TEXT --size w,h [--offset dx,dy] [--anchor-match N]`: a
@@ -171,6 +176,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
     let mut reason: Option<String> = None;
     let mut location: Option<String> = None;
     let mut contact: Option<String> = None;
+    let mut field: Option<String> = None;
     let mut hide: Option<Hidden> = None;
     let mut text: Vec<String> = Vec::new();
     let mut date_format: Option<String> = None;
@@ -201,6 +207,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
             (false, "--reason") => reason = Some(value(arg, &mut rest)?.clone()),
             (false, "--location") => location = Some(value(arg, &mut rest)?.clone()),
             (false, "--contact") => contact = Some(value(arg, &mut rest)?.clone()),
+            (false, "--field") => field = Some(value(arg, &mut rest)?.clone()),
             (false, "--hide") => hide = Some(hidden_list(value(arg, &mut rest)?)?),
             (false, "--text") => text.extend(text_lines(value(arg, &mut rest)?)),
             (false, "--date-format") => date_format = Some(value(arg, &mut rest)?.clone()),
@@ -318,7 +325,35 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
                 .into(),
         );
     }
-    let placement = if visible {
+    // A field is a place: it says the page and the rectangle, and a second
+    // answer beside it is a line with a mistake in it.
+    if let Some(name) = &field {
+        if name.is_empty() {
+            return Err("`--field` needs the name of the signature field to sign".into());
+        }
+        let placed = [
+            (page.is_some(), "--page"),
+            (rect.is_some(), "--rect"),
+            (anchor.is_some(), "--anchor"),
+            (anchor_match.is_some(), "--anchor-match"),
+            (offset.is_some(), "--offset"),
+            (size.is_some(), "--size"),
+        ];
+        for (given, flag) in placed {
+            if given {
+                return Err(format!(
+                    "`--field` signs a field the document has, which says where the signature \
+                     goes --- leave `{flag}` out"
+                ));
+            }
+        }
+    }
+    let placement = if visible && field.is_some() {
+        Some(Placement {
+            page: 1,
+            at: Where::Field,
+        })
+    } else if visible {
         Some(Placement {
             page: page.unwrap_or(1),
             at: placed(rect, anchor, anchor_match, offset, size)?,
@@ -341,6 +376,7 @@ pub fn parse(args: &[String]) -> Result<Sign, String> {
         reason: reason.unwrap_or_default(),
         location: location.unwrap_or_default(),
         contact: contact.unwrap_or_default(),
+        field: field.unwrap_or_default(),
         hide,
         text,
         date_format: date_format.unwrap_or_default(),
@@ -553,6 +589,50 @@ const ANCHOR_SEARCH: crate::search::Options = crate::search::Options {
 /// Refused, with nothing written: the page does not exist, the text is not on
 /// it, it is there more than once and no `--anchor-match` says which, or the
 /// rectangle measured from it is not one a page can hold.
+/// Where `--field` puts a visible signature: the field's page, counted from
+/// nought, and its rectangle as the page is displayed.
+///
+/// Asked of the worker's form reader, for the report of what is drawn. The
+/// worker that builds the signature finds the field again by its name and
+/// takes its rectangle from the document, so nothing here decides where the
+/// signature is written.
+///
+/// # Errors
+///
+/// Exit 3 for a document whose form cannot be read, a name it does not have,
+/// a field that is not an empty signature field, or one in several places.
+fn field_place(env: &Env<'_>, sign: &Sign) -> Result<(u32, [f32; 4]), Failure> {
+    let refused = |why: String| Failure::new(Exit::Refused, why);
+    let shown = sign.input.display().to_string();
+    let name = &sign.field;
+    let (file, len) = opened(&sign.input).map_err(refused)?;
+    let mut session = env.worker().session(&file, len, None).map_err(|why| {
+        refused(format!(
+            "{shown} could not be opened to find `{name}`: {why:?}"
+        ))
+    })?;
+    let form = super::fields::ask_form(&mut session, &shown, false)?;
+    let found: Vec<_> = form.widgets.iter().filter(|w| &w.name == name).collect();
+    let [widget] = found.as_slice() else {
+        return Err(refused(if found.is_empty() {
+            format!("{shown} has no field called `{name}` --- `tpdf fields` lists the ones it has")
+        } else {
+            format!(
+                "`{name}` is shown in {} places, and a signature goes in one",
+                found.len()
+            )
+        }));
+    };
+    match widget.control {
+        crate::forms::Control::Signature { signed: false } => {}
+        crate::forms::Control::Signature { signed: true } => {
+            return Err(refused(format!("`{name}` already holds a signature")))
+        }
+        _ => return Err(refused(format!("`{name}` is not a signature field"))),
+    }
+    Ok((widget.page, widget.display_rect))
+}
+
 fn anchored(env: &Env<'_>, sign: &Sign, page: u32, anchor: &Anchor) -> Result<[f32; 4], Failure> {
     use super::redact::{search_pages, wait};
     use super::report::SearchKind;
@@ -876,7 +956,22 @@ fn run_sign(
             page,
             at: Where::Anchor(anchor),
         }) => Some(anchored(env, sign, *page, anchor)?),
+        Some(Placement {
+            at: Where::Field, ..
+        }) => None,
     };
+    // The field, before the store as well: a name the document does not have
+    // ends the run with no certificate listed and no key touched.
+    let in_field = match &sign.visible {
+        Some(Placement {
+            at: Where::Field, ..
+        }) => Some(field_place(env, sign)?),
+        _ => None,
+    };
+    let page = in_field
+        .map(|(page, _)| page)
+        .or(sign.visible.as_ref().map(|placement| placement.page - 1));
+    let rect = in_field.map(|(_, rect)| rect).or(rect);
 
     // The certificate, from the store --- which asks the OS for certificates
     // only. The key is not touched until the digest is signed.
@@ -904,9 +999,9 @@ fn run_sign(
     let opened_as = crate::fingerprint::Fingerprint::of_open(&file, &sign.input)
         .map_err(|why| Failure::new(Exit::Refused, why))?;
 
-    let visible = match sign.visible.as_ref().zip(rect) {
+    let visible = match page.zip(rect) {
         None => None,
-        Some((placement, rect)) => {
+        Some((page, rect)) => {
             let image = match &sign.image {
                 Picture::Saved => env.store.saved_image().map_err(|why| {
                     Failure::new(
@@ -921,7 +1016,7 @@ fn run_sign(
                 Picture::File(_) => picture.take(),
             };
             Some(Visible {
-                page: placement.page - 1,
+                page,
                 rect,
                 name: offer.subject.clone(),
                 image,
@@ -946,6 +1041,7 @@ fn run_sign(
         reason: sign.reason.clone(),
         location: sign.location.clone(),
         contact: sign.contact.clone(),
+        field: sign.field.clone(),
     };
     let unsigned = worker.prepare_signature(&file, len, env.now, visible, notes)?;
     drop(file);

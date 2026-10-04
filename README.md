@@ -862,7 +862,11 @@ the page as it is displayed:
   beside the words unless `--no-image` is given, `--lines label,name,date` chooses which of
   the three lines appear, and `--reason` and `--location` are drawn and written into the
   signature. Without `--visible` they are written and nothing is drawn. `--contact` writes
-  how to reach the signer into the signature (`/ContactInfo`) and is never drawn. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
+  how to reach the signer into the signature (`/ContactInfo`) and is never drawn. `--field NAME`
+  signs an empty signature field the document already has, one `tpdf form` or another
+  program made: the signature is written into that field and no field is added, and with
+  `--visible` it is drawn in the field's rectangle, so `--rect`, `--page` and `--anchor`
+  are left out. `tpdf fields` lists the names. `--text` draws your own lines instead of the standard ones: `{name}`, `{date}`,
   `{reason}` and `{location}` are replaced by the certificate's name, the signing time, and
   the reason and location you gave, `{{` and `}}` are a brace each, the two characters `\n`
   start a new line, and `--text` may be given more than once, each adding lines. With
