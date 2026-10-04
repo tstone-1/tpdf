@@ -39,6 +39,10 @@ export interface FieldProps {
   max_length?: number;
   align?: FormAlign;
   options?: string[];
+  /** In points. Nought is a size that follows the field's height. */
+  text_size?: number;
+  /** Empty takes the default off. */
+  default_value?: string;
 }
 
 /** What a reader has changed about one widget, as the model reports it. */
@@ -211,6 +215,17 @@ export interface FieldProperties {
   options: string[] | null;
   /** Whether `options` is one value and not a list: a placed radio button. */
   single?: boolean;
+  /**
+   * The size a text or choice field's text is drawn at where it fits, in
+   * points; nought for a size that follows the field's height. Absent or
+   * `null` for a field that has none to set.
+   */
+  textSize?: number | null;
+  /**
+   * What a text field holds after a reset, and now if it holds nothing; empty
+   * for none. Absent or `null` for a field that has none to set.
+   */
+  defaultValue?: string | null;
 }
 
 /** The properties of the saved field an id names, or `null` when it names none. */
@@ -238,6 +253,8 @@ export function properties(
     options: widget.control.kind === "choice"
       ? changed("options") ?? widget.control.options.map((option) => option.label)
       : null,
+    textSize: kind === "text" || kind === "choice" ? changed("text_size") ?? widget.text_size ?? 0 : null,
+    defaultValue: kind === "text" ? changed("default_value") ?? widget.default_value ?? "" : null,
   };
 }
 
@@ -255,6 +272,10 @@ export function differing(now: FieldProperties, to: FieldProperties): FieldProps
   if (now.options !== null && to.options !== null
     && (to.options.length !== now.options.length || to.options.some((option, at) => option !== now.options![at]))) {
     props.options = [...to.options];
+  }
+  if (now.textSize != null && to.textSize != null && to.textSize !== now.textSize) props.text_size = to.textSize;
+  if (now.defaultValue != null && to.defaultValue != null && to.defaultValue !== now.defaultValue) {
+    props.default_value = to.defaultValue;
   }
   return props;
 }

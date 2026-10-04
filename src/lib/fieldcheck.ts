@@ -479,6 +479,10 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     if (tooltip) tooltip.value = "Your full name";
     if (align) align.value = "right";
     if (required) required.checked = true;
+    const textSize = control<HTMLInputElement>("Text size");
+    const defaultValue = control<HTMLInputElement>("Default value");
+    if (textSize) textSize.value = "9";
+    if (defaultValue) defaultValue.value = "n/a";
     [...(panel()?.querySelectorAll("button") ?? [])].at(-1)?.click();
     await settle(() => changed()[0]?.props?.tooltip !== undefined, SETTLE_MS);
     await host.idle();
@@ -486,12 +490,16 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     check(
       "applying it journals the parts that were changed, with the move",
       panel()?.style.display === "none" && changed().length === 1 && changed()[0]?.rect !== undefined
-        && JSON.stringify(set) === JSON.stringify({ tooltip: "Your full name", required: true, align: "right" }),
+        && JSON.stringify(set) === JSON.stringify({
+          tooltip: "Your full name", required: true, align: "right", text_size: 9, default_value: "n/a",
+        }),
       JSON.stringify(set),
     );
     host.run("edit.formEditOff");
     await pause(200);
     check("finishing brings the controls back", filling() > 0, `${filling()} shown`);
+    const held = document.querySelector<HTMLInputElement>('.form-fields input[aria-label="Name"]')?.value;
+    check("and the field that held nothing shows the default it was given", held === "n/a", String(held));
     // The tab order, asked for once and then not on offer until it is saved.
     host.run("edit.tabOrder");
     await settle(() => host.edits()?.state.tab_order === true, SETTLE_MS);
@@ -530,6 +538,11 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       "the save writes the field's properties",
       named?.tooltip === "Your full name" && named.required === true && named.align === "right" && named.read_only === false,
       `${named?.tooltip}; ${named?.required}; ${named?.align}; ${named?.read_only}`,
+    );
+    check(
+      "with its text size, and its default value as the answer it had none of",
+      named?.text_size === 9 && named.default_value === "n/a" && named.value === "n/a",
+      `${named?.text_size}; ${named?.default_value}; ${JSON.stringify(named?.value)}`,
     );
     check(
       "and the save writes the field where it was dropped",

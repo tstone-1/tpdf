@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerError, fieldValue, sameAnswer, type FormWidget } from "./forms";
+import { answerError, fieldValue, sameAnswer, shownValue, type FormWidget } from "./forms";
 
 const text: FormWidget = {
   object: [12, 0], widget: [13, 0], page: 0,
@@ -7,6 +7,43 @@ const text: FormWidget = {
   name: "ACME.answer", value: "original", control: { kind: "text" }, multiline: false,
   max_length: 20, reason: null,
 };
+
+describe("what a field's control shows", () => {
+  const empty: FormWidget = { ...text, value: "" };
+  // The same field shown a second time: another widget, one object.
+  const twin: FormWidget = { ...empty, widget: [14, 0] };
+  const other: FormWidget = { ...empty, object: [20, 0], widget: [21, 0] };
+  const all = [empty, twin, other];
+  const given = (object: [number, number], value: string, removed = false) =>
+    ({ object, page: 5, removed, props: { default_value: value } });
+
+  it("is the answer, pending or the file's, when the field holds one", () => {
+    expect(shownValue(text, [], [given([13, 0], "n/a")], [text])).toBe("original");
+    expect(shownValue(empty, [{ object: [12, 0], value: "typed" }], [given([13, 0], "n/a")], all)).toBe("typed");
+    expect(shownValue(empty, [], [], all)).toBe("");
+  });
+
+  it("is the default a reader has given a field that holds nothing, as the save will answer it", () => {
+    expect(shownValue(empty, [], [given([13, 0], "n/a")], all)).toBe("n/a");
+    // Cleared by the reader: the save answers it with the default all the same.
+    expect(shownValue(empty, [{ object: [12, 0], value: "" }], [given([13, 0], "n/a")], all)).toBe("n/a");
+    // Held under the field's other widget, also when that one was removed.
+    expect(shownValue(empty, [], [given([14, 0], "n/a")], all)).toBe("n/a");
+    expect(shownValue(empty, [], [given([14, 0], "n/a", true)], all)).toBe("n/a");
+    // Another field's default is not this one's, and a change with no default gives none.
+    expect(shownValue(empty, [], [given([21, 0], "n/a")], all)).toBe("");
+    expect(shownValue(empty, [], [{ object: [13, 0], page: 5, removed: false, props: { tooltip: "x" } }], all)).toBe("");
+    // A default taken off again.
+    expect(shownValue(empty, [], [given([13, 0], "")], all)).toBe("");
+  });
+
+  it("is never a default for a field that is not a text field", () => {
+    const box: FormWidget = { ...empty, value: false, control: { kind: "checkbox" } };
+    expect(shownValue(box, [], [given([13, 0], "n/a")], [box])).toBe(false);
+    const list: FormWidget = { ...empty, value: "", control: { kind: "choice", combo: true, editable: true, multiple: false, options: [] } };
+    expect(shownValue(list, [], [given([13, 0], "n/a")], [list])).toBe("");
+  });
+});
 
 describe("form answers", () => {
   const choice: FormWidget = { ...text, value: [0], control: { kind: "choice", combo: true, editable: false, multiple: false,

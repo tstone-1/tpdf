@@ -58,6 +58,15 @@ pub struct Props {
     /// What a choice field offers, in order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
+    /// The size a text or choice field's text is drawn at, in points, where
+    /// it fits; a longer answer is drawn smaller. Nought is a size that
+    /// follows the field's height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<f32>,
+    /// What a text field holds once a reader resets the form, and what it
+    /// holds now if it holds nothing. Empty takes the default off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
 }
 
 /// The most characters a text field can be limited to, which is the most an
@@ -85,6 +94,10 @@ impl Props {
         if later.options.is_some() {
             self.options.clone_from(&later.options);
         }
+        self.text_size = later.text_size.or(self.text_size);
+        if later.default_value.is_some() {
+            self.default_value.clone_from(&later.default_value);
+        }
     }
 
     /// What is wrong with these that can be said without the document, for a
@@ -106,6 +119,26 @@ impl Props {
             return Some(format!(
                 "`{name}`: the most characters is a number up to {MAX_LENGTH}"
             ));
+        }
+        if let Some(size) = self.text_size {
+            let (least, most) = (forms::MIN_TEXT_SIZE, forms::MAX_TEXT_SIZE);
+            if size != 0.0 && !(least..=most).contains(&size) {
+                return Some(format!(
+                    "`{name}`: a text size is {least} to {most} points, or nought for one that follows the field"
+                ));
+            }
+        }
+        if let Some(default) = &self.default_value {
+            if default.chars().count() > MAX_LENGTH as usize {
+                return Some(format!(
+                    "`{name}`: a default value is at most {MAX_LENGTH} characters"
+                ));
+            }
+            if default.chars().any(|ch| ch.is_control() && ch != '\n') {
+                return Some(format!(
+                    "`{name}`: a default value cannot contain a control character"
+                ));
+            }
         }
         self.options.as_ref().and_then(|options| {
             crate::formfields::options_problem(name, crate::formfields::Kind::Dropdown, options)
@@ -346,6 +379,9 @@ struct Propertied<'a> {
     props: &'a Props,
     /// Whether the field is drawn again.
     redrawn: bool,
+    /// The default value the field is given as its answer, because it holds
+    /// none.
+    answered: Option<&'a str>,
 }
 
 /// Checks one field's new properties against the field.
@@ -377,20 +413,79 @@ fn propertied<'a>(widget: &'a Widget, props: &'a Props) -> Result<Propertied<'a>
     if props.options.is_some() && !matches!(widget.control, Control::Choice { .. }) {
         return Err(format!("`{name}`: only a field of choices has choices"));
     }
-    let redrawn = props.options.is_some() || props.align.is_some_and(|to| to != widget.align);
+    if props.text_size.is_some() && !drawn_by_tpdf {
+        return Err(format!(
+            "`{name}`: only a text field or a field of choices has a text size"
+        ));
+    }
+    let mut answered = None;
+    if let Some(default) = &props.default_value {
+        if !matches!(widget.control, Control::Text) {
+            return Err(format!("`{name}`: only a text field has a default value"));
+        }
+        if !widget.multiline && default.contains('\n') {
+            return Err(format!(
+                "`{name}` takes one line, and its default value has several"
+            ));
+        }
+        let most = match props.max_length {
+            Some(0) => None,
+            Some(most) => Some(most as usize),
+            None => widget.max_length,
+        };
+        let holds = default.chars().count();
+        if most.is_some_and(|most| holds > most) {
+            return Err(format!(
+                "`{name}`: the default value has {holds} characters, which is more than the field takes"
+            ));
+        }
+        let empty = matches!(&widget.value, Value::Text(text) if text.is_empty());
+        if empty && !default.is_empty() {
+            answered = Some(default.as_str());
+        }
+    }
+    // Nought and none are the same size: the one that follows the field.
+    let resized = props
+        .text_size
+        .is_some_and(|to| Some(to).filter(|size| *size != 0.0) != widget.text_size);
+    let redrawn = props.options.is_some()
+        || props.align.is_some_and(|to| to != widget.align)
+        || resized
+        || answered.is_some();
     if redrawn {
         // Read-only is no obstacle: the flag is lifted while the field is
         // drawn and put back after. Any other reason is one tpdf cannot draw.
         if let Some(reason) = widget.reason.as_deref().filter(|r| *r != forms::READ_ONLY) {
             return Err(format!(
-                "`{name}` keeps its alignment and choices: {reason}, so tpdf cannot redraw it"
+                "`{name}` keeps its alignment, text size, default value and choices: {reason}, so tpdf cannot redraw it"
             ));
         }
+    }
+    // What a new size or a default value draws is checked here, before
+    // anything is written: the drawing itself comes last and would refuse it
+    // with the rest of the change already made.
+    if (resized || answered.is_some()) && props.options.is_none() {
+        let mut as_changed = widget.clone();
+        as_changed.reason = None;
+        if let Some(size) = props.text_size {
+            as_changed.text_size = Some(size).filter(|size| *size != 0.0);
+        }
+        match props.max_length {
+            Some(0) => as_changed.max_length = None,
+            Some(most) => as_changed.max_length = Some(most as usize),
+            None => {}
+        }
+        let value = answered.map_or_else(
+            || widget.value.clone(),
+            |default| Value::Text(default.to_string()),
+        );
+        forms::validate(&as_changed, &value).map_err(|why| format!("`{name}`: {why}"))?;
     }
     Ok(Propertied {
         widget,
         props,
         redrawn,
+        answered,
     })
 }
 
@@ -599,7 +694,12 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             widget,
             props,
             redrawn,
+            answered,
         } = to;
+        // Before the answer is drawn again, which reads the size back.
+        let appearance = props.text_size.map(|size| {
+            forms::sized_appearance(forms::default_appearance(doc, *field).as_deref(), size)
+        });
         let was = forms::integer(doc, *field, b"Ff");
         let mut flags = was;
         for (bit, on) in [(1_i64, props.read_only), (1 << 1, props.required)] {
@@ -610,9 +710,10 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             }
         }
         if *redrawn {
-            let value = match &props.options {
-                Some(options) => set_options(doc, widget, options)?,
-                None => widget.value.clone(),
+            let value = match (&props.options, answered) {
+                (Some(options), _) => set_options(doc, widget, options)?,
+                (None, Some(default)) => Value::Text((*default).to_string()),
+                (None, None) => widget.value.clone(),
             };
             redraw.insert(*field, value);
         }
@@ -633,6 +734,19 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         }
         if let Some(align) = props.align {
             dict.set("Q", align.quadding());
+        }
+        if let Some(appearance) = appearance {
+            dict.set(
+                "DA",
+                Object::String(appearance, lopdf::StringFormat::Literal),
+            );
+        }
+        match props.default_value.as_deref() {
+            Some("") => {
+                dict.remove(b"DV");
+            }
+            Some(default) => dict.set("DV", forms::pdf_string(default)),
+            None => {}
         }
         if *redrawn && flags & 1 != 0 {
             dict.set("Ff", flags & !1);

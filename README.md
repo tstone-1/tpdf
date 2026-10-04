@@ -323,16 +323,20 @@ measured the Windows render constants come out 1.5–1.8x worse.
   cannot be filled; *Form fields: finish changing the document's fields* turns it off. A
   text field that is resized is drawn again at its new size with the answer it holds. A
   signature field is left alone, and a field on a page the document turns can be renamed
-  and removed and not moved. Until the save, the page still shows each field where the
-  file has it, under the rectangle.
+  and removed and not moved. The page shows each change at once, as the save will write
+  it.
   <!-- built: edit.formEditOn edit.formEditOff -->
 - **Set a field's properties.** Press a field you have placed, or one of the document's
   own while those are being changed, and choose *Form fields: properties of the picked
   field...* from the Edit menu or the palette. The panel sets its tooltip, whether it is required and whether it is
   read-only; for a text field also the most characters it takes and whether its text is
   at the left, the centre or the right; for a dropdown or a list its alignment and its
-  choices. A text or choice field whose alignment or choices change is drawn again with
-  the answer it holds. A choice that stays keeps the value it exports, and an answer
+  choices. For a field the document already has it also sets the text size, in points or
+  left to follow the field's height, and for a text field a default value: what the
+  field holds after a reader resets the form, and what it holds now if it holds nothing.
+  An answer too long for its field at the size set is drawn smaller. A text or choice
+  field whose alignment, text size or choices change is drawn again with the answer it
+  holds. A choice that stays keeps the value it exports, and an answer
   whose choice is taken away is cleared. A limit shorter than the answer a field holds
   is refused by the save, which says so. New choices can be picked once the document is
   saved.

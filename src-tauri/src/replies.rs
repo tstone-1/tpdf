@@ -386,6 +386,8 @@ fn samples() -> BTreeMap<&'static str, String> {
             required: false,
             read_only: true,
             align: crate::forms::Align::Left,
+            text_size: Some(10.0),
+            default_value: String::new(),
         };
         let mut radio = text.clone();
         radio.value = crate::forms::Value::Selection(vec![1]);
@@ -539,6 +541,8 @@ fn samples() -> BTreeMap<&'static str, String> {
                     max_length: Some(20),
                     align: Some(crate::forms::Align::Center),
                     options: Some(vec!["Red".into(), "Green".into()]),
+                    text_size: Some(10.0),
+                    default_value: Some("Ada".into()),
                 },
             }],
             dirty: true,

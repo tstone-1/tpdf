@@ -2672,6 +2672,8 @@ fn a_form_is_counted_by_field_and_an_xfa_refusal_is_named() {
         required: false,
         read_only: false,
         align: crate::forms::Align::Left,
+        text_size: None,
+        default_value: String::new(),
     };
     let two = form_report(Ok(crate::forms::Form {
         // One field with two widgets --- a radio group, or a name shown twice.

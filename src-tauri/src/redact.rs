@@ -4446,6 +4446,8 @@ mod tests {
             required: false,
             read_only: false,
             align: crate::forms::Align::Left,
+            text_size: None,
+            default_value: String::new(),
         }
     }
 

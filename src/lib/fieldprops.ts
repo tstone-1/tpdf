@@ -38,7 +38,14 @@ export interface Typed {
   align: string;
   /** With semicolons between them, as `Form field: dropdown` takes them. */
   options: string;
+  /** In points; empty for a size that follows the field's height. */
+  textSize: string;
+  defaultValue: string;
 }
+
+/** The least and the most text size a field is given, in points. */
+export const MIN_TEXT_SIZE = 4;
+export const MAX_TEXT_SIZE = 144;
 
 /** What the controls show for a field's properties. */
 export function shown(now: FieldProperties): Typed {
@@ -49,6 +56,8 @@ export function shown(now: FieldProperties): Typed {
     maxLength: now.maxLength ? String(now.maxLength) : "",
     align: now.align ?? "left",
     options: (now.options ?? []).join("; "),
+    textSize: now.textSize ? String(now.textSize) : "",
+    defaultValue: now.defaultValue ?? "",
   };
 }
 
@@ -88,9 +97,26 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
     if (now.single && parsed.options[0] === "Off") return { problem: "Off is what a group holds when nothing is chosen" };
     options = parsed.options;
   }
+  const sized: Pick<FieldProperties, "textSize" | "defaultValue"> = {};
+  if (now.textSize != null) {
+    const text = typed.textSize.trim().replace(",", ".");
+    const size = text === "" ? 0 : Number(text);
+    if (text !== "" && (!/^[0-9]{1,3}(\.[0-9]{1,2})?$/.test(text) || size < MIN_TEXT_SIZE || size > MAX_TEXT_SIZE)) {
+      return { problem: `The text size is ${MIN_TEXT_SIZE} to ${MAX_TEXT_SIZE} points, or empty for one that follows the field's height` };
+    }
+    sized.textSize = size;
+  }
+  if (now.defaultValue != null) {
+    const value = typed.defaultValue;
+    if (/\p{Cc}/u.test(value)) return { problem: "A default value cannot contain a control character" };
+    const most = maxLength || MAX_LENGTH;
+    if ([...value].length > most) return { problem: `The default value has more than the ${most} characters the field takes` };
+    sized.defaultValue = value;
+  }
   return {
     name: now.name, tooltip, required: typed.required, readOnly: typed.readOnly, maxLength, align, options,
     ...(now.single ? { single: true } : {}),
+    ...sized,
   };
 }
 
@@ -185,8 +211,12 @@ export class FieldPropertiesDialog {
   private readonly maxLength: HTMLInputElement;
   private readonly align: HTMLSelectElement;
   private readonly options: HTMLInputElement;
+  private readonly textSize: HTMLInputElement;
+  private readonly defaultValue: HTMLInputElement;
   /** The rows a field's kind may not have, hidden for it. */
-  private readonly rows: { maxLength: HTMLElement; align: HTMLElement; options: HTMLElement };
+  private readonly rows: {
+    maxLength: HTMLElement; align: HTMLElement; options: HTMLElement; textSize: HTMLElement; defaultValue: HTMLElement;
+  };
   /** The caption over the choices, which a radio button reads as its value. */
   private readonly optionsCaption: HTMLElement;
   private returnFocus: HTMLElement | null = null;
@@ -231,11 +261,17 @@ export class FieldPropertiesDialog {
     }
     this.options = this.input("Choices");
     this.options.placeholder = "Yes; No; Maybe";
+    this.textSize = this.input("Text size");
+    this.textSize.inputMode = "decimal";
+    this.textSize.placeholder = "Follows the field's height";
+    this.defaultValue = this.input("Default value");
 
     this.rows = {
       maxLength: this.row("Most characters", this.maxLength),
       align: this.row("Alignment", this.align),
       options: this.row("Choices, with a semicolon between them", this.options),
+      textSize: this.row("Text size, in points", this.textSize),
+      defaultValue: this.row("Default value", this.defaultValue),
     };
     this.optionsCaption = this.rows.options.children[0] as HTMLElement;
 
@@ -257,6 +293,8 @@ export class FieldPropertiesDialog {
       this.ticked("Read-only", this.readOnly),
       this.rows.maxLength,
       this.rows.align,
+      this.rows.textSize,
+      this.rows.defaultValue,
       this.rows.options,
       this.problem,
       buttons,
@@ -299,6 +337,8 @@ export class FieldPropertiesDialog {
     this.rows.maxLength.style.display = now.maxLength === null ? "none" : "block";
     this.rows.align.style.display = now.align === null ? "none" : "block";
     this.rows.options.style.display = now.options === null ? "none" : "block";
+    this.rows.textSize.style.display = now.textSize == null ? "none" : "block";
+    this.rows.defaultValue.style.display = now.defaultValue == null ? "none" : "block";
     this.optionsCaption.textContent = now.single
       ? "Value this button gives its group"
       : "Choices, with a semicolon between them";
@@ -326,6 +366,8 @@ export class FieldPropertiesDialog {
     this.maxLength.value = typed.maxLength;
     this.align.value = typed.align;
     this.options.value = typed.options;
+    this.textSize.value = typed.textSize;
+    this.defaultValue.value = typed.defaultValue;
   }
 
   /** Applies what the controls hold, or says why not and stays open. */
@@ -338,6 +380,8 @@ export class FieldPropertiesDialog {
       maxLength: this.maxLength.value,
       align: this.align.value,
       options: this.options.value,
+      textSize: this.textSize.value,
+      defaultValue: this.defaultValue.value,
     });
     if ("problem" in to) {
       this.problem.textContent = to.problem;

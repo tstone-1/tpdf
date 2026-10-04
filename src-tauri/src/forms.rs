@@ -101,6 +101,76 @@ pub struct Widget {
     /// `/Q`, the field's or the form's.
     #[serde(default)]
     pub align: Align,
+    /// The text size the field's `/DA` declares, its own or the form's.
+    /// `None` when it declares none or nought, which is a size that follows
+    /// the field's height, and for a field that has no text.
+    #[serde(default)]
+    pub text_size: Option<f32>,
+    /// `/DV` of a text field: what it holds once a reader resets the form.
+    /// Empty when it has none.
+    #[serde(default)]
+    pub default_value: String,
+}
+
+/// The smallest text size a field is given, which is the smallest an answer
+/// is drawn at.
+pub const MIN_TEXT_SIZE: f32 = 4.0;
+/// The largest text size a field is given.
+pub const MAX_TEXT_SIZE: f32 = 144.0;
+/// The size an answer is drawn at in a field that declares none, where the
+/// field is high enough for it.
+const AUTO_TEXT_SIZE: f64 = 12.0;
+
+/// The text size a default appearance sets: the number before its `Tf`.
+///
+/// `None` for nought, which the specification reads as a size that follows
+/// the field, for a string with no `Tf`, and for a size outside
+/// [`MIN_TEXT_SIZE`] to [`MAX_TEXT_SIZE`]: a field that declares half a point
+/// is still answered, at the size tpdf would choose.
+pub(crate) fn declared_size(appearance: &[u8]) -> Option<f32> {
+    let tokens: Vec<&[u8]> = appearance
+        .split(|byte| byte.is_ascii_whitespace() || *byte == 0)
+        .filter(|token| !token.is_empty())
+        .collect();
+    let at = tokens.iter().rposition(|token| *token == b"Tf")?;
+    let size: f32 = std::str::from_utf8(tokens.get(at.checked_sub(1)?)?)
+        .ok()?
+        .parse()
+        .ok()?;
+    (MIN_TEXT_SIZE..=MAX_TEXT_SIZE)
+        .contains(&size)
+        .then_some(size)
+}
+
+/// A default appearance with its text size set to `size`, nought for a size
+/// that follows the field. The font and the colour it names are kept; one
+/// that sets no font becomes tpdf's own.
+pub(crate) fn sized_appearance(appearance: Option<&[u8]>, size: f32) -> Vec<u8> {
+    let fresh = || format!("/Helv {size} Tf 0 g").into_bytes();
+    let Some(was) = appearance else {
+        return fresh();
+    };
+    let mut tokens: Vec<Vec<u8>> = was
+        .split(|byte| byte.is_ascii_whitespace() || *byte == 0)
+        .filter(|token| !token.is_empty())
+        .map(<[u8]>::to_vec)
+        .collect();
+    match tokens.iter().rposition(|token| token == b"Tf") {
+        Some(at) if at >= 2 => {
+            tokens[at - 1] = format!("{size}").into_bytes();
+            tokens.join(&b' ')
+        }
+        _ => fresh(),
+    }
+}
+
+/// The default appearance a field draws its text with: its own, one it
+/// inherits, or the form's.
+pub(crate) fn default_appearance(doc: &Document, field: ObjectId) -> Option<Vec<u8>> {
+    inherited(doc, field, b"DA")
+        .or_else(|| acroform(doc)?.get(b"DA").ok())
+        .and_then(|da| da.as_str().ok())
+        .map(<[u8]>::to_vec)
 }
 
 /// Why [`scan`] refuses a form carrying `/XFA`.
@@ -558,6 +628,17 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 Some(2) => Align::Right,
                 _ => Align::Left,
             };
+            let text_size = (text || choice)
+                .then(|| default_appearance(doc, object))
+                .flatten()
+                .and_then(|da| declared_size(&da));
+            let default_value = text
+                .then(|| inherited(doc, object, b"DV"))
+                .flatten()
+                .and_then(|dv| dv.as_str().ok())
+                .filter(|raw| raw.len() <= 65536)
+                .map(crate::annots::decode_text_string)
+                .unwrap_or_default();
             let geometry = crate::pagetree::displayed_page(doc, id);
             let display_rect = crate::text::to_device(
                 geometry.turns,
@@ -586,6 +667,8 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 required: flags & (1 << 1) != 0,
                 read_only: flags & 1 != 0,
                 align,
+                text_size,
+                default_value,
             });
             if result.widgets.len() > 4096 {
                 return Err("This form exceeds the widget limit".into());
@@ -854,7 +937,10 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
     // first visible row so another editor starts at the same place.
     let top = indices.first().copied().unwrap_or(0);
     let height = widget.rect[3] - widget.rect[1];
-    let size = 12.0_f64.min((height - 4.0) / 1.2);
+    let size = widget
+        .text_size
+        .map_or(AUTO_TEXT_SIZE, f64::from)
+        .min((height - 4.0) / 1.2);
     if size < 4.0 {
         return Err("The options do not fit visibly in this field".into());
     }
@@ -875,14 +961,17 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
 fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String> {
     let width = widget.rect[2] - widget.rect[0];
     let height = widget.rect[3] - widget.rect[1];
-    // Twelve points, or less where the field is too low for it: two points of
+    // The size the field declares, or twelve points for one that declares
+    // none, or less where the field is too low for it: two points of
     // inset either side, and a line needs 1.2 of its size inside the field's
     // height less two. **Both bounds, because neither implies the other.**
     // With the inset alone a field between 14 and 16.4 points high asked for a
     // size whose one line then failed the check below, so it could not be
     // answered at all: found on 2026-10-03, by filling a field placed in the
     // window, which happened to be 15 points high.
-    let size = 12.0_f64
+    let size = widget
+        .text_size
+        .map_or(AUTO_TEXT_SIZE, f64::from)
         .min((height - 4.0).max(1.0))
         .min(((height - 2.0) / 1.2).max(1.0));
     let lines = if widget.multiline {
@@ -1339,6 +1428,85 @@ pub(crate) mod tests {
             doc.save(path).unwrap();
         }
         (doc, radio, combo, list)
+    }
+
+    #[test]
+    fn a_default_appearance_says_its_text_size_before_tf() {
+        assert_eq!(declared_size(b"/Helv 9 Tf 0 g"), Some(9.0));
+        assert_eq!(declared_size(b"0 0 1 rg /TiRo 10.5 Tf"), Some(10.5));
+        assert_eq!(declared_size(b"/Helv\t11\r\nTf"), Some(11.0));
+        // The last one, as a reader that runs the operators would end on.
+        assert_eq!(declared_size(b"/A 8 Tf /B 14 Tf"), Some(14.0));
+        // Nought follows the field, and so does a string that sets no size.
+        assert_eq!(declared_size(b"/Helv 0 Tf 0 g"), None);
+        assert_eq!(declared_size(b"0 g"), None);
+        assert_eq!(declared_size(b"Tf"), None);
+        assert_eq!(declared_size(b"/Helv x Tf"), None);
+        assert_eq!(declared_size(b""), None);
+        // The bounds are sizes; past them is no size tpdf draws at.
+        assert_eq!(declared_size(b"/Helv 4 Tf"), Some(4.0));
+        assert_eq!(declared_size(b"/Helv 144 Tf"), Some(144.0));
+        assert_eq!(declared_size(b"/Helv 3.9 Tf"), None);
+        assert_eq!(declared_size(b"/Helv 144.5 Tf"), None);
+        assert_eq!(declared_size(b"/Helv -9 Tf"), None);
+        assert_eq!(declared_size(b"/Helv NaN Tf"), None);
+    }
+
+    #[test]
+    fn a_list_is_laid_out_at_the_size_it_declares_or_at_twelve_points() {
+        let option = |label: &str| Choice {
+            export: label.into(),
+            label: label.into(),
+        };
+        let list = |text_size: Option<f32>| Widget {
+            object: (5, 0),
+            widget: (5, 0),
+            page: 0,
+            rect: [0.0, 0.0, 100.0, 62.0],
+            display_rect: [0.0, 0.0, 100.0, 62.0],
+            name: "List".into(),
+            value: Value::Selection(vec![0]),
+            control: Control::Choice {
+                options: vec![option("One"), option("Two"), option("Three")],
+                combo: false,
+                editable: false,
+                multiple: false,
+            },
+            multiline: false,
+            max_length: None,
+            reason: None,
+            tooltip: String::new(),
+            required: false,
+            read_only: false,
+            align: Align::Left,
+            text_size,
+            default_value: String::new(),
+        };
+        assert_eq!(choice_layout(&list(None), &[0]).unwrap().0, 12.0);
+        assert_eq!(choice_layout(&list(Some(8.0)), &[0]).unwrap().0, 8.0);
+        // More than the list is high enough for: what fits.
+        let (size, _) = choice_layout(&list(Some(72.0)), &[0]).unwrap();
+        assert!((size - 58.0 / 1.2).abs() < 1e-9, "{size}");
+    }
+
+    #[test]
+    fn a_text_size_is_set_in_the_appearance_a_field_has() {
+        let sized =
+            |was: Option<&[u8]>, size: f32| String::from_utf8(sized_appearance(was, size)).unwrap();
+        assert_eq!(sized(None, 9.0), "/Helv 9 Tf 0 g");
+        assert_eq!(
+            sized(Some(b"/TiRo 11 Tf 0 0 1 rg"), 8.5),
+            "/TiRo 8.5 Tf 0 0 1 rg"
+        );
+        assert_eq!(
+            sized(Some(b"0 0 1 rg /TiRo 11 Tf"), 0.0),
+            "0 0 1 rg /TiRo 0 Tf"
+        );
+        // The one a reader ends on.
+        assert_eq!(sized(Some(b"/A 8 Tf /B 14 Tf"), 6.0), "/A 8 Tf /B 6 Tf");
+        // No font to keep: tpdf's own.
+        assert_eq!(sized(Some(b"0 g"), 9.0), "/Helv 9 Tf 0 g");
+        assert_eq!(sized(Some(b"9 Tf"), 7.0), "/Helv 7 Tf 0 g");
     }
 
     #[test]

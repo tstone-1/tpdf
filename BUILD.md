@@ -375,8 +375,9 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 # two radio buttons of one group,
 # picking three with Shift and aligning them, one undo for the arrangement, a
 # save, then a saved field dragged, the page picture read at its old and its
-# new place before the save, the field given a tooltip, required and
-# right-aligned in the properties panel, and saved again. The driver reads the saved
+# new place before the save, the field given a tooltip, required,
+# right-aligned, a text size and a default value in the properties panel, and
+# saved again. The driver reads the saved
 # file with the command-line tool and fills it. Any document with a page will do.
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase fields
 # macOS independent reader; the optional directory receives page PNGs.
@@ -6526,6 +6527,19 @@ earlier the same day, before the properties panel. `scripts/made_form_check.py` 
 both directions against PDFKit. On the normal 26.10.4 bundle with the development engine
 hidden: `tpdf-cli --version`, `verify` and `fields`, `menu_check.py` (9 menus) and
 `save_check.py`. Not done: Acrobat, which needs a person, and step 12.
+
+**26.10.4 publication, 2026-10-04:** `Audit` and CI were green on the release commit
+`2b3cbcd8`, both legs, and the tag sits on it. The release mechanics were as in 26.10.3, so
+no rehearsal tag was cut. The `Release` run for `v26.10.4` skipped its gates on that account
+and both platform jobs passed at the first attempt. The draft held 8 assets, counted with
+GraphQL, and `scripts/publish_release.py v26.10.4 --publish` published it. Without
+authentication the `.dmg`, the `.msi`, the `-setup.exe` and the updater archive answer 200
+and `latest.json` offers 26.10.4 for `darwin-aarch64` and `windows-x86_64`. The downloaded
+`.dmg` staples, Gatekeeper reads it and the application in it as Notarized Developer ID, and
+the bundled `tpdf-cli` reports 26.10.4. The Homebrew cask was set to 26.10.4; `brew audit
+--cask --online` passed and `brew livecheck` reads 26.10.4. winget was not updated: pull
+request 445804 for 26.10.2 was still open. Step 12 is the owner's and is not recorded here
+yet.
 
 **Window checks after the form work, macOS arm64, 2026-10-04, unreleased tree:** on the
 checks build, `tabs_check.py --phase fields` 36/36 with the driver's read of the saved file,

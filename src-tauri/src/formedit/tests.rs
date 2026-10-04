@@ -649,6 +649,138 @@ fn an_alignment_draws_the_field_again_with_its_answer_at_that_side() {
     }
 }
 
+/// The default appearance a field declares for itself.
+fn declared(doc: &Document, field: ObjectId) -> String {
+    let dict = doc.get_dictionary(field).unwrap();
+    String::from_utf8_lossy(dict.get(b"DA").unwrap().as_str().unwrap()).into_owned()
+}
+
+#[test]
+fn a_text_size_is_declared_on_the_field_and_its_answer_is_drawn_at_it() {
+    let mut f = fixture();
+    let name = one(&f.doc, "Name");
+    assert_eq!(name.text_size, None);
+    assert!(drawn(&f.doc, name.widget).contains("/F0 12 Tf"));
+    let (was, _) = appearance(&f.doc, name.widget);
+    let sized = |size: f32| Props {
+        text_size: Some(size),
+        ..Props::default()
+    };
+    // The size it has already, said as nought: written, and nothing drawn.
+    apply(&mut f.doc, &[with(&name, sized(0.0))]).expect("as it was");
+    assert_eq!(appearance(&f.doc, name.widget).0, was);
+    // Nine points: declared, read back, and the answer drawn at it.
+    apply(&mut f.doc, &[with(&name, sized(9.0))]).expect("nine");
+    let now = one(&f.doc, "Name");
+    assert_eq!(now.text_size, Some(9.0));
+    assert_eq!(declared(&f.doc, now.object), "/Helv 9 Tf 0 g");
+    assert_eq!(now.value, Value::Text("Ada".into()));
+    let body = drawn(&f.doc, now.widget);
+    assert!(
+        body.contains("/F0 9 Tf") && body.contains("<416461> Tj"),
+        "{body}"
+    );
+    assert!(body.contains(" re S"), "its line is kept: {body}");
+    // The same size again draws nothing.
+    let (nine, _) = appearance(&f.doc, now.widget);
+    apply(&mut f.doc, &[with(&now, sized(9.0))]).expect("nine again");
+    assert_eq!(appearance(&f.doc, now.widget).0, nine);
+    // A size the field is too low for is declared, and drawn at what fits:
+    // a field twenty high holds a line of fifteen points.
+    apply(&mut f.doc, &[with(&now, sized(40.0))]).expect("forty");
+    assert_eq!(one(&f.doc, "Name").text_size, Some(40.0));
+    assert!(drawn(&f.doc, now.widget).contains("/F0 15 Tf"));
+    // Nought is the size that follows the field again.
+    apply(&mut f.doc, &[with(&now, sized(0.0))]).expect("nought");
+    assert_eq!(one(&f.doc, "Name").text_size, None);
+    assert_eq!(declared(&f.doc, now.object), "/Helv 0 Tf 0 g");
+    assert!(drawn(&f.doc, now.widget).contains("/F0 12 Tf"));
+    // The font and the colour another program declared are kept.
+    f.doc
+        .get_dictionary_mut(now.object)
+        .unwrap()
+        .set("DA", crate::formfields::text("/TiRo 11 Tf 0 0 1 rg"));
+    assert_eq!(one(&f.doc, "Name").text_size, Some(11.0));
+    apply(&mut f.doc, &[with(&now, sized(8.5))]).expect("eight and a half");
+    assert_eq!(declared(&f.doc, now.object), "/TiRo 8.5 Tf 0 0 1 rg");
+    // A dropdown has a text size too.
+    let colour = with_colours(&mut f);
+    apply(&mut f.doc, &[with(&colour, sized(7.0))]).expect("a dropdown");
+    assert_eq!(one(&f.doc, "Colour").text_size, Some(7.0));
+    assert!(drawn(&f.doc, colour.widget).contains("/F0 7 Tf"));
+}
+
+#[test]
+fn a_field_with_no_text_size_of_its_own_has_the_forms() {
+    let mut f = fixture();
+    let catalog = f.doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let form = f
+        .doc
+        .get_dictionary(catalog)
+        .unwrap()
+        .get(b"AcroForm")
+        .and_then(Object::as_reference)
+        .unwrap();
+    let name = one(&f.doc, "Name");
+    f.doc
+        .get_dictionary_mut(form)
+        .unwrap()
+        .set("DA", crate::formfields::text("/Helv 10 Tf 0 g"));
+    // Its own says nought, which is its own answer.
+    assert_eq!(one(&f.doc, "Name").text_size, None);
+    f.doc.get_dictionary_mut(name.object).unwrap().remove(b"DA");
+    assert_eq!(one(&f.doc, "Name").text_size, Some(10.0));
+    // Set from there, the field gets one of its own and the form keeps its.
+    let sized = Props {
+        text_size: Some(6.0),
+        ..Props::default()
+    };
+    apply(&mut f.doc, &[with(&name, sized)]).expect("six");
+    assert_eq!(declared(&f.doc, name.object), "/Helv 6 Tf 0 g");
+    assert_eq!(declared(&f.doc, form), "/Helv 10 Tf 0 g");
+    // A checkbox has no text and so no size.
+    assert_eq!(one(&f.doc, "Agree").text_size, None);
+}
+
+#[test]
+fn a_default_value_is_kept_for_a_reset_and_answers_a_field_that_holds_nothing() {
+    let mut f = fixture();
+    let starting = |default: &str| Props {
+        default_value: Some(default.into()),
+        ..Props::default()
+    };
+    // A field that holds nothing is answered with it.
+    let notes = one(&f.doc, "Notes");
+    assert_eq!(notes.value, Value::Text(String::new()));
+    assert_eq!(notes.default_value, "");
+    apply(&mut f.doc, &[with(&notes, starting("n/a"))]).expect("a default");
+    let now = one(&f.doc, "Notes");
+    assert_eq!(now.default_value, "n/a");
+    assert_eq!(now.value, Value::Text("n/a".into()));
+    assert!(drawn(&f.doc, now.widget).contains("<6e2f61> Tj"));
+    // A field that holds an answer keeps it, and is not drawn again.
+    let name = one(&f.doc, "Name");
+    let (was, _) = appearance(&f.doc, name.widget);
+    apply(&mut f.doc, &[with(&name, starting("Bob"))]).expect("a default");
+    let now = one(&f.doc, "Name");
+    assert_eq!(now.default_value, "Bob");
+    assert_eq!(now.value, Value::Text("Ada".into()));
+    assert_eq!(appearance(&f.doc, name.widget).0, was);
+    // Empty takes the default off and leaves the answer.
+    apply(&mut f.doc, &[with(&now, starting(""))]).expect("off");
+    let now = one(&f.doc, "Name");
+    assert_eq!(now.default_value, "");
+    assert_eq!(now.value, Value::Text("Ada".into()));
+    assert!(!f.doc.get_dictionary(now.object).unwrap().has(b"DV"));
+    // Within the limit the same change sets.
+    let limited = Props {
+        max_length: Some(4),
+        ..starting("four")
+    };
+    apply(&mut f.doc, &[with(&now, limited)]).expect("within the limit");
+    assert_eq!(one(&f.doc, "Name").default_value, "four");
+}
+
 #[test]
 fn a_read_only_field_is_aligned_and_is_read_only_afterwards() {
     let mut f = fixture();
@@ -795,6 +927,34 @@ fn a_property_the_field_cannot_have_is_refused_and_nothing_is_written() {
         options: Some(options.iter().map(|o| (*o).to_string()).collect()),
         ..Props::default()
     };
+    let sized = |size: f32| Props {
+        text_size: Some(size),
+        ..Props::default()
+    };
+    let starting = |default: &str| Props {
+        default_value: Some(default.into()),
+        ..Props::default()
+    };
+    assert!(refused("Agree", 0, sized(9.0)).contains("has a text size"));
+    for size in [3.9, 144.5, -9.0, f32::NAN, f32::INFINITY] {
+        assert!(
+            refused("Name", 0, sized(size)).contains("a text size is 4 to 144 points"),
+            "{size}"
+        );
+    }
+    assert!(refused("Agree", 0, starting("x")).contains("only a text field has a default"));
+    assert!(refused("Colour", 0, starting("Red")).contains("only a text field has a default"));
+    assert!(refused("Name", 0, starting("one\ntwo")).contains("takes one line"));
+    assert!(refused("Name", 0, starting("bell\u{7}")).contains("control character"));
+    // Longer than the limit the same change sets, and than no limit never.
+    let limited = Props {
+        max_length: Some(3),
+        ..starting("four")
+    };
+    assert!(refused("Name", 0, limited).contains("more than the field takes"));
+    // An answer that would not be drawn visibly is refused as an answer is.
+    let long = "a long default value that a field of a hundred points cannot show";
+    assert!(refused("Notes", 0, starting(long)).contains("does not fit visibly"));
     assert!(refused("Agree", 0, most.clone()).contains("only a text field has a most"));
     assert!(refused("Colour", 0, most).contains("only a text field has a most"));
     assert!(refused("Agree", 0, centred).contains("has text to align"));
@@ -882,6 +1042,8 @@ fn properties_lay_over_each_other_part_by_part() {
         align: Some(Align::Right),
         options: Some(vec!["A".into()]),
         read_only: Some(false),
+        text_size: Some(9.0),
+        default_value: Some("n/a".into()),
         ..Props::default()
     });
     assert_eq!(
@@ -893,6 +1055,8 @@ fn properties_lay_over_each_other_part_by_part() {
             max_length: Some(4),
             align: Some(Align::Right),
             options: Some(vec!["A".into()]),
+            text_size: Some(9.0),
+            default_value: Some("n/a".into()),
         }
     );
     // A later change that names nothing leaves all of it.
@@ -936,7 +1100,7 @@ fn a_field_tpdf_cannot_draw_keeps_its_alignment_and_takes_the_rest() {
         )],
     )
     .expect_err("not drawn");
-    assert!(why.contains("keeps its alignment and choices"), "{why}");
+    assert!(why.contains("keeps its alignment, text size"), "{why}");
     assert_eq!(bytes(&f.doc), before);
     apply(
         &mut f.doc,

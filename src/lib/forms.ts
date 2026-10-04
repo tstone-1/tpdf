@@ -25,6 +25,10 @@ export interface FormWidget {
   required?: boolean;
   read_only?: boolean;
   align?: FormAlign;
+  /** The text size the field declares, in points; `null` for one that follows its height. */
+  text_size?: number | null;
+  /** What a text field holds after a reset; empty for none. */
+  default_value?: string;
 }
 /** Where a field's text sits between its left and right edges. */
 export type FormAlign = "left" | "center" | "right";
@@ -36,6 +40,32 @@ export function fieldKey(object: readonly [number, number]): string { return obj
 /** Distinguishes clearing a value from leaving it unchanged, including undo. */
 export function fieldValue(widget: FormWidget, changes: readonly FormChange[]): FormValue {
   return changes.find((change) => fieldKey(change.object) === fieldKey(widget.object))?.value ?? widget.value;
+}
+
+/**
+ * What a field's control shows: its pending answer or the file's, and for a
+ * text field that would hold nothing, the default value a reader has just
+ * given it. The save answers such a field with the default, so the control
+ * says so before it.
+ *
+ * `widgets` are the form's, because a field's properties are held under one
+ * of its widgets and that need not be this one. It may be one a reader has
+ * removed: the field keeps what was set under it.
+ */
+export function shownValue(
+  widget: FormWidget,
+  changes: readonly FormChange[],
+  fields: readonly import("./savedfields").FieldEdited[],
+  widgets: readonly FormWidget[],
+): FormValue {
+  const value = fieldValue(widget, changes);
+  if (value !== "" || widget.control.kind !== "text") return value;
+  const own = widgets.filter((other) => fieldKey(other.object) === fieldKey(widget.object));
+  const given = fields
+    .filter((edit) => own.some((other) => fieldKey(other.widget) === fieldKey(edit.object)))
+    .map((edit) => edit.props?.default_value)
+    .find((value) => value !== undefined);
+  return given ?? "";
 }
 
 /** Reports unsupported input before a tab switch or save can close its editor. */
@@ -72,6 +102,7 @@ export class FormLayer {
   private readonly node = document.createElement("div");
   private readonly controls: Mounted[] = [];
   private changes: readonly FormChange[] = [];
+  private fields: readonly import("./savedfields").FieldEdited[] = [];
   private disposed = false;
   private readonly pending = new Set<Promise<void>>();
 
@@ -203,7 +234,7 @@ export class FormLayer {
         control.accepted = previous;
         control.input.setCustomValidity("This answer was refused. Correct it before saving or switching documents.");
       }
-      this.update({ forms: [...this.changes] } as EditState);
+      this.update({ forms: [...this.changes], fields: [...this.fields] } as EditState);
     }).finally(() => { this.pending.delete(task); });
     this.pending.add(task);
   }
@@ -229,9 +260,11 @@ export class FormLayer {
   /** Backend state is authoritative after undo, redo and each completed edit. */
   update(state: EditState): void {
     this.changes = state.forms ?? [];
+    this.fields = state.fields ?? [];
+    const widgets = this.controls.map((control) => control.widget);
     for (const control of this.controls) {
       if (!control.pending && sameAnswer(this.read(control), control.accepted) && !control.input.validationMessage)
-        this.put(control, fieldValue(control.widget, this.changes));
+        this.put(control, shownValue(control.widget, this.changes, this.fields, widgets));
     }
     this.layout();
   }

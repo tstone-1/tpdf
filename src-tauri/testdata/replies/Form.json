@@ -33,7 +33,9 @@
       "tooltip": "Your answer",
       "required": false,
       "read_only": true,
-      "align": "left"
+      "align": "left",
+      "text_size": 10.0,
+      "default_value": ""
     },
     {
       "object": [
@@ -85,7 +87,9 @@
       "tooltip": "Your answer",
       "required": false,
       "read_only": true,
-      "align": "left"
+      "align": "left",
+      "text_size": 10.0,
+      "default_value": ""
     },
     {
       "object": [
@@ -131,7 +135,9 @@
       "tooltip": "Your answer",
       "required": false,
       "read_only": true,
-      "align": "left"
+      "align": "left",
+      "text_size": 10.0,
+      "default_value": ""
     }
   ]
 }

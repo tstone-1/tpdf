@@ -3632,10 +3632,47 @@ again in `formfields::place`. The panel's join (`subject` in `fieldprops.ts`) ta
 either a saved id or a mark's, and changes the field that was picked when the panel
 opened.
 
-**Not built.** Text size (the writer picks at most twelve points and shrinks to
-fit). A default value, which matters only to a form that resets, and tpdf has no reset.
-Export values that differ from labels for new choices. Until the save, the fill box
+**Not built.** (Text size and a default value were in this list until *Text size and
+default value* below.) Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
+
+#### Text size and default value — 2026-10-04
+
+The two properties a form's author sets most that the panel lacked, for a field the
+document already has.
+
+**Text size.** A field declares its text size in its default appearance, `/DA`, its own
+or the form's: the number before `Tf`, with nought for a size that follows the field.
+tpdf read none of it and drew every answer at twelve points or less. `forms::scan` now
+reads it into `Widget.text_size` (`declared_size`), and `text_layout` and the list
+layout use it in place of the twelve. It is the largest size and not a fixed one: an
+answer longer than the field is still drawn smaller, down to four points, and refused
+below that, as before. A fixed size would refuse answers tpdf takes today. The property
+writes `/DA` on the field with the size replaced and the font and colour it named kept
+(`sized_appearance`), from 4 to 144 points or nought.
+
+**What this changes for other producers' forms.** A field that declares ten points is
+now answered at ten and was answered at twelve. A size outside 4 to 144 is read as
+none, so a field declaring half a point is still answered.
+
+**Default value.** `/DV` on a text field. The plan had left it out, on the ground that a
+default matters only to a form that resets and tpdf has no reset. It has a second use,
+and that is the one built: a field that holds nothing is answered with the default in
+the same change, so an author can say what a field starts with. A field that holds an
+answer keeps it. The save applies answers before field changes, so a field a reader
+cleared in the same session is answered with the default too, and the fill control
+shows that before the save (`forms.shownValue`).
+
+**Checked before anything is written.** The drawing comes last in `formedit::apply` and
+is what refuses an answer that does not fit. A default that does not fit, or a held
+answer that no longer fits at a new size, would be refused there with the flags, the
+tooltip and `/DA` already written. `propertied` asks `forms::validate` first, with the
+size and the limit the same change sets.
+
+**Not built.** Both for a field placed in this session, whose panel does not show the
+two rows, and for `tpdf form`. A default for a dropdown or a checkbox. The font and the
+colour, which are kept as the field has them. The fill control is twelve pixels
+whatever the size.
 
 #### One press picks a rectangle, two open it — 2026-10-04
 

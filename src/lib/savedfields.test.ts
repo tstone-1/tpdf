@@ -226,7 +226,9 @@ describe("a saved field's properties", () => {
     options: [{ export: "r", label: "Red" }, { export: "Green", label: "Green" }] } as const;
   const form: Form = {
     widgets: [
-      widget(11, "Name", 0, [20, 20, 120, 40], { tooltip: "Your name", required: true, max_length: 30, align: "center" }),
+      widget(11, "Name", 0, [20, 20, 120, 40], {
+        tooltip: "Your name", required: true, max_length: 30, align: "center", text_size: 9, default_value: "Ada",
+      }),
       widget(12, "Agree", 0, [20, 60, 32, 72], { control: { kind: "checkbox" }, read_only: true }),
       widget(13, "Colour", 0, [20, 90, 120, 110], { control: { ...CHOICES, options: [...CHOICES.options] }, value: [] }),
       // One field shown twice: two widgets, one object.
@@ -241,16 +243,25 @@ describe("a saved field's properties", () => {
   it("reads what the file has, and only the parts the field's kind has", () => {
     expect(properties(form, state(), id(0))).toEqual({
       name: "Name", tooltip: "Your name", required: true, readOnly: false, maxLength: 30, align: "center", options: null,
+      textSize: 9, defaultValue: "Ada",
     });
+    // A checkbox has no text: no size and no default.
     expect(properties(form, state(), id(1))).toEqual({
       name: "Agree", tooltip: "", required: false, readOnly: true, maxLength: null, align: null, options: null,
+      textSize: null, defaultValue: null,
     });
+    // A field of choices has a size and no default.
     expect(properties(form, state(), id(2))).toEqual({
       name: "Colour", tooltip: "", required: false, readOnly: false, maxLength: null, align: "left", options: ["Red", "Green"],
+      textSize: 0, defaultValue: null,
     });
     expect(properties(form, state(), id(5))).toEqual({
       name: "Plain", tooltip: "", required: false, readOnly: false, maxLength: 0, align: "left", options: null,
+      textSize: 0, defaultValue: "",
     });
+    // A size the file leaves to the field is nought.
+    const auto = { widgets: [{ ...form.widgets[0]!, text_size: null }] };
+    expect(properties(auto, state(), id(0))?.textSize).toBe(0);
     expect(properties(form, state(), id(9))).toBeNull();
     expect(properties(form, state(), 3)).toBeNull();
   });
@@ -258,11 +269,12 @@ describe("a saved field's properties", () => {
   it("lays what a reader has changed over the file, and the new name too", () => {
     const edits: FieldEdited[] = [
       { object: [11, 0], page: 5, name: "Full name", removed: false,
-        props: { tooltip: "", required: false, read_only: true, max_length: 0, align: "right" } },
+        props: { tooltip: "", required: false, read_only: true, max_length: 0, align: "right", text_size: 0, default_value: "" } },
       { object: [13, 0], page: 5, removed: false, props: { options: ["Blue"] } },
     ];
     expect(properties(form, state(edits), id(0))).toEqual({
       name: "Full name", tooltip: "", required: false, readOnly: true, maxLength: 0, align: "right", options: null,
+      textSize: 0, defaultValue: "",
     });
     expect(properties(form, state(edits), id(2))?.options).toEqual(["Blue"]);
   });
@@ -285,10 +297,19 @@ describe("a saved field's properties", () => {
     expect(propertied(form, state(), id(0), { ...now, readOnly: true })?.patch.props).toEqual({ read_only: true });
     expect(propertied(form, state(), id(0), { ...now, maxLength: 0 })?.patch.props).toEqual({ max_length: 0 });
     expect(propertied(form, state(), id(0), { ...now, align: "left" })?.patch.props).toEqual({ align: "left" });
+    expect(propertied(form, state(), id(0), { ...now, textSize: 0 })?.patch.props).toEqual({ text_size: 0 });
+    expect(propertied(form, state(), id(0), { ...now, textSize: 9.5 })?.patch.props).toEqual({ text_size: 9.5 });
+    expect(propertied(form, state(), id(0), { ...now, defaultValue: "" })?.patch.props).toEqual({ default_value: "" });
+    expect(propertied(form, state(), id(0), { ...now, defaultValue: "Bob" })?.patch.props).toEqual({ default_value: "Bob" });
+    // A panel that says nothing about them changes neither.
+    const { textSize: _size, defaultValue: _default, ...older } = now;
+    expect(propertied(form, state(), id(0), older)).toBeNull();
     // A part the kind does not have is not sent, whatever is asked.
     expect(propertied(form, state(), id(0), { ...now, options: ["A"] })).toBeNull();
     const box = properties(form, state(), id(1))!;
-    expect(propertied(form, state(), id(1), { ...box, maxLength: 5, align: "right" })).toBeNull();
+    expect(propertied(form, state(), id(1), { ...box, maxLength: 5, align: "right", textSize: 9, defaultValue: "x" })).toBeNull();
+    const colour = properties(form, state(), id(2))!;
+    expect(propertied(form, state(), id(2), { ...colour, textSize: 8, defaultValue: "Red" })?.patch.props).toEqual({ text_size: 8 });
     expect(propertied(form, state(), id(9), now)).toBeNull();
   });
 

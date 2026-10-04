@@ -11,6 +11,7 @@ import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 
 const TEXT: FieldProperties = {
   name: "Name", tooltip: "Your name", required: true, readOnly: false, maxLength: 30, align: "center", options: null,
+  textSize: 9, defaultValue: "Ada",
 };
 const BOX: FieldProperties = {
   name: "Agree", tooltip: "", required: false, readOnly: true, maxLength: null, align: null, options: null,
@@ -23,9 +24,13 @@ describe("what the panel shows and reads", () => {
   it("shows a field's properties as text and ticks", () => {
     expect(shown(TEXT)).toEqual({
       tooltip: "Your name", required: true, readOnly: false, maxLength: "30", align: "center", options: "",
+      textSize: "9", defaultValue: "Ada",
     });
+    expect(shown({ ...TEXT, textSize: 0 }).textSize).toBe("");
     expect(shown({ ...TEXT, maxLength: 0 }).maxLength).toBe("");
-    expect(shown(BOX)).toEqual({ tooltip: "", required: false, readOnly: true, maxLength: "", align: "left", options: "" });
+    expect(shown(BOX)).toEqual({
+      tooltip: "", required: false, readOnly: true, maxLength: "", align: "left", options: "", textSize: "", defaultValue: "",
+    });
     expect(shown(CHOICE).options).toBe("Red; Green");
   });
 
@@ -34,9 +39,10 @@ describe("what the panel shows and reads", () => {
   });
 
   it("reads what a reader typed, for the parts the field's kind has", () => {
-    const typed: Typed = { tooltip: "  Tip  ", required: false, readOnly: true, maxLength: " 12 ", align: "right", options: "A; B;" };
+    const typed: Typed = { tooltip: "  Tip  ", required: false, readOnly: true, maxLength: " 12 ", align: "right", options: "A; B;", textSize: "", defaultValue: "" };
     expect(read(TEXT, typed)).toEqual({
       name: "Name", tooltip: "Tip", required: false, readOnly: true, maxLength: 12, align: "right", options: null,
+      textSize: 0, defaultValue: "",
     });
     expect(read(BOX, typed)).toEqual({
       name: "Agree", tooltip: "Tip", required: false, readOnly: true, maxLength: null, align: null, options: null,
@@ -59,12 +65,27 @@ describe("what the panel shows and reads", () => {
       expect(problem(TEXT, { maxLength: bad }), bad).toContain("from 1 to 16384");
     }
     expect(read(TEXT, typed({ maxLength: String(MAX_LENGTH) }))).toMatchObject({ maxLength: MAX_LENGTH });
-    expect(read(TEXT, typed({ maxLength: "1" }))).toMatchObject({ maxLength: 1 });
+    expect(read(TEXT, typed({ maxLength: "1", defaultValue: "" }))).toMatchObject({ maxLength: 1 });
     expect(problem(TEXT, { align: "justify" })).toContain("left, centre or right");
     expect(problem(CHOICE, { options: "" })).toContain("semicolon");
     expect(problem(CHOICE, { options: "A; A" })).toContain("twice");
+    for (const bad of ["3.9", "144.5", "-9", "abc", "1e2", "9.555", "1234"]) {
+      expect(problem(TEXT, { textSize: bad }), bad).toContain("4 to 144 points");
+    }
+    expect(read(TEXT, typed({ textSize: " 4 " }))).toMatchObject({ textSize: 4 });
+    expect(read(TEXT, typed({ textSize: "144" }))).toMatchObject({ textSize: 144 });
+    expect(read(TEXT, typed({ textSize: "10,5" }))).toMatchObject({ textSize: 10.5 });
+    expect(read(TEXT, typed({ textSize: "" }))).toMatchObject({ textSize: 0 });
+    // A default is kept as typed, spaces and all, and held to the limit beside it.
+    expect(read(TEXT, typed({ defaultValue: " n/a " }))).toMatchObject({ defaultValue: " n/a " });
+    expect(problem(TEXT, { defaultValue: "a\tb" })).toContain("control character");
+    expect(problem(TEXT, { maxLength: "3", defaultValue: "four" })).toContain("more than the 3 characters");
+    expect(problem(TEXT, { maxLength: "4", defaultValue: "four" })).toBeNull();
+    expect(problem(TEXT, { maxLength: "", defaultValue: "x".repeat(MAX_LENGTH) })).toBeNull();
+    expect(problem(TEXT, { maxLength: "", defaultValue: "x".repeat(MAX_LENGTH + 1) })).toContain("more than the 16384");
     // A part the kind does not have is not judged.
-    expect(problem(BOX, { maxLength: "abc", align: "justify", options: "A; A" })).toBeNull();
+    expect(problem(BOX, { maxLength: "abc", align: "justify", options: "A; A", textSize: "abc", defaultValue: "a\tb" })).toBeNull();
+    expect(read(BOX, { ...shown(BOX), textSize: "9", defaultValue: "x" })).toEqual(BOX);
   });
 });
 
@@ -155,7 +176,10 @@ describe("changing the picked field's properties", () => {
     const run = deps({ answer: (now) => ({ ...now, tooltip: "Full name", required: true }) });
     await expect(changeProperties(run.deps)).resolves.toBe(true);
     expect(run.asked).toEqual([
-      { name: "Name", tooltip: "Your name", required: false, readOnly: false, maxLength: 0, align: "left", options: null },
+      {
+        name: "Name", tooltip: "Your name", required: false, readOnly: false, maxLength: 0, align: "left", options: null,
+        textSize: 0, defaultValue: "",
+      },
     ]);
     expect(run.made).toEqual([
       { object: [11, 0], page: 5, patch: { props: { tooltip: "Full name", required: true } } },
@@ -311,9 +335,11 @@ describe("FieldPropertiesDialog", () => {
     const answer = dialog.ask(TEXT);
     expect(panel.children[0]!.textContent).toBe("Properties of Name");
     expect(dialog.isOpen).toBe(true);
-    dialog.put({ ...shown(TEXT), tooltip: "Full name", maxLength: "" });
+    dialog.put({ ...shown(TEXT), tooltip: "Full name", maxLength: "", textSize: "10.5", defaultValue: "Bob" });
     apply.dispatch("click", {});
-    await expect(answer).resolves.toEqual({ ...TEXT, tooltip: "Full name", maxLength: 0 });
+    await expect(answer).resolves.toEqual({
+      ...TEXT, tooltip: "Full name", maxLength: 0, textSize: 10.5, defaultValue: "Bob",
+    });
     expect(dialog.isOpen).toBe(false);
   });
 
@@ -327,11 +353,21 @@ describe("FieldPropertiesDialog", () => {
   it("shows only the rows the field's kind has", () => {
     const { dialog, rows } = open();
     void dialog.ask(BOX);
-    expect(rows()).toMatchObject({ "Most characters": "none", Alignment: "none", Choices: "none" });
+    expect(rows()).toMatchObject({
+      "Most characters": "none", Alignment: "none", Choices: "none", "Text size": "none", "Default value": "none",
+    });
     void dialog.ask(TEXT);
-    expect(rows()).toMatchObject({ "Most characters": "block", Alignment: "block", Choices: "none" });
+    expect(rows()).toMatchObject({
+      "Most characters": "block", Alignment: "block", Choices: "none", "Text size": "block", "Default value": "block",
+    });
+    // A field of choices in the file has a size and no default.
+    void dialog.ask({ ...CHOICE, textSize: 0, defaultValue: null });
+    expect(rows()).toMatchObject({
+      "Most characters": "none", Alignment: "block", Choices: "block", "Text size": "block", "Default value": "none",
+    });
+    // One that says nothing about either, as a field placed in this session.
     void dialog.ask(CHOICE);
-    expect(rows()).toMatchObject({ "Most characters": "none", Alignment: "block", Choices: "block" });
+    expect(rows()).toMatchObject({ Choices: "block", "Text size": "none", "Default value": "none" });
   });
 
   it("captions the choices as a value for a radio button, and as choices again after", () => {

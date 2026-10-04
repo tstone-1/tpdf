@@ -19,7 +19,19 @@ have the binary.)
 
 ## [26.10.5] - Unreleased
 
+### Added
+
+- **Text size and default value of a field.** The properties panel sets both for a field
+  the document already has. The text size is in points, or empty for one that follows
+  the field's height; an answer too long for the field at that size is drawn smaller.
+  The default value of a text field is what it holds after a reader resets the form, and
+  a field that holds nothing is answered with it at once.
+
 ### Changed
+
+- **A field's own text size is used.** A form made elsewhere that declares a text size
+  for a field is answered at that size where the answer fits. Before, every answer was
+  drawn at twelve points or less whatever the field declared.
 
 - **A changed field is drawn where it will be.** A saved field that is moved, resized,
   removed or given other properties is drawn that way on the page at once. Before, the
