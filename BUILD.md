@@ -372,7 +372,8 @@ TPDF_FORM_FIXTURE=/tmp/tpdf-form-fixture.pdf TPDF_FORM_PROBE=/tmp/tpdf-filled-fo
 uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase forms
 
 # Making a form in the window: placing a text field, a checkbox, a dropdown and
-# two radio buttons of one group,
+# two radio buttons of one group, a placed field given a limit, a tooltip, a
+# text size and a default value in the properties panel,
 # picking three with Shift and aligning them, one undo for the arrangement, a
 # save, then a saved field dragged, the page picture read at its old and its
 # new place before the save, the field given a tooltip, required,

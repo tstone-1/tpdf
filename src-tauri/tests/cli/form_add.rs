@@ -400,4 +400,54 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
         listed(&plain, None).is_empty(),
         "",
     );
+
+    // A text size and a default value: the field is made holding its default.
+    let sized = at("sized.pdf");
+    let (code, json, stderr) = tool_with_stdin(
+        &["form", &plain, "-o", &sized, "--fields", "-", "--json"],
+        &[],
+        r#"[{"name": "Ref", "kind": "text", "page": 1, "rect": [72, 100, 250, 20],
+             "text_size": 9, "default_value": "n/a"}]"#,
+    );
+    let doc = lopdf::Document::load(&sized).ok();
+    let written = doc.as_ref().and_then(|doc| {
+        doc.objects.values().find_map(|object| {
+            let dict = object.as_dict().ok()?;
+            let named = dict.get(b"T").ok()?.as_str().ok()?;
+            (named.ends_with(b"\0R\0e\0f")).then(|| {
+                (
+                    dict.get(b"DA")
+                        .and_then(lopdf::Object::as_str)
+                        .map(<[u8]>::to_vec)
+                        .ok(),
+                    dict.has(b"DV"),
+                )
+            })
+        })
+    });
+    report.check(
+        "form makes a field with its text size, holding its default value",
+        code == 0
+            && named(&listed(&sized, None), "Ref")["value"] == "n/a"
+            && named(&listed(&sized, None), "Ref")["editable"] == true
+            && written == Some((Some(b"/Helv 9 Tf 0 g".to_vec()), true)),
+        &format!("exit {code}; {stderr}; {json}; {written:?}"),
+    );
+    let refused = at("refused.pdf");
+    let (code, _, stderr) = tool_with_stdin(
+        &["form", &plain, "-o", &refused, "--fields", "-"],
+        &[],
+        r#"[{"name": "Ref", "kind": "text", "page": 1, "rect": [72, 100, 40, 12],
+             "default_value": "a default value far too long for forty points"},
+            {"name": "Box", "kind": "checkbox", "page": 1, "rect": [72, 140, 14, 14],
+             "text_size": 9}]"#,
+    );
+    report.check(
+        "a default that does not fit and a text size on a checkbox are both named, and nothing is written",
+        code != 0
+            && stderr.contains("its default value")
+            && stderr.contains("no text to size")
+            && !std::path::Path::new(&refused).exists(),
+        &format!("exit {code}; {stderr}"),
+    );
 }

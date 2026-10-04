@@ -27,7 +27,7 @@ use crate::save;
 pub const COMMAND: Registered = Registered {
     name: "form",
     usage: "form <in.pdf> -o <out.pdf> --fields <fields.json | ->\n        [--password-env VAR] [--invalidate-signatures] [--force] [--json]",
-    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline, checkbox, dropdown or radio),\n            a page counted from 1 and a rect [left, top, width, height] in points\n            from the page's top-left corner; a dropdown also has options, the\n            list of its choices, and a radio button one option, its value, and\n            the name of its group; tooltip, required and max_length are optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
+    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline, checkbox, dropdown or radio),\n            a page counted from 1 and a rect [left, top, width, height] in points\n            from the page's top-left corner; a dropdown also has options, the\n            list of its choices, and a radio button one option, its value, and\n            the name of its group; tooltip, required, max_length, text_size (in points) and default_value (what\n            a text field starts with) are optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
     parse: |args| parse(args).map(|c| Box::new(c) as Box<dyn Subcommand>),
 };
 
@@ -118,6 +118,10 @@ struct Spec {
     border: bool,
     #[serde(default)]
     options: Vec<String>,
+    #[serde(default)]
+    text_size: Option<f32>,
+    #[serde(default)]
+    default_value: Option<String>,
 }
 
 /// The fields a list asks for, or why it is not a list of fields.
@@ -150,6 +154,8 @@ pub fn fields(text: &str) -> Result<Vec<NewField>, String> {
                 max_length: spec.max_length,
                 border: spec.border,
                 options: spec.options,
+                text_size: spec.text_size,
+                default_value: spec.default_value,
             })
         })
         .collect()
@@ -225,7 +231,8 @@ pub fn read_back(
                 .map_or(serde_json::Value::Null, |was| {
                     value_json(&was.control, &was.value)
                 }),
-            _ => serde_json::Value::String(String::new()),
+            // The default value it was given, or nothing.
+            _ => serde_json::Value::String(field.default_value.clone().unwrap_or_default()),
         };
         let held = value_json(&widget.control, &widget.value);
         if got != wanted || widget.multiline != (field.kind == Kind::Multiline) {
@@ -242,6 +249,10 @@ pub fn read_back(
             ));
         } else if widget.max_length != field.max_length.map(|most| most as usize) {
             problems.push(format!("`{name}` reads back with another most characters"));
+        } else if widget.text_size != field.text_size {
+            problems.push(format!("`{name}` reads back with another text size"));
+        } else if widget.default_value != field.default_value.clone().unwrap_or_default() {
+            problems.push(format!("`{name}` reads back with another default value"));
         } else {
             added.push(AddedField {
                 name: name.clone(),
@@ -456,12 +467,19 @@ mod tests {
     #[test]
     fn a_list_counts_pages_from_one() {
         let asked = fields(
-            r#"[{"name":"Name","kind":"text","page":1,"rect":[72,100,200,20],"max_length":40},
+            r#"[{"name":"Name","kind":"text","page":1,"rect":[72,100,200,20],"max_length":40,
+                 "text_size":9.5,"default_value":"n/a"},
                 {"name":"Agree","kind":"checkbox","page":3,"rect":[72,140,12,12],
                  "tooltip":"Tick to agree","required":true,"border":true}]"#,
         )
         .unwrap();
         assert_eq!(asked.len(), 2);
+        assert_eq!(asked[0].text_size, Some(9.5));
+        assert_eq!(asked[0].default_value.as_deref(), Some("n/a"));
+        assert_eq!(
+            (asked[1].text_size, asked[1].default_value.clone()),
+            (None, None)
+        );
         assert_eq!((asked[0].page, asked[1].page), (0, 2));
         assert_eq!(asked[0].max_length, Some(40));
         assert_eq!(asked[1].tooltip.as_deref(), Some("Tick to agree"));
@@ -516,6 +534,8 @@ mod tests {
 
     fn new(name: &str, kind: Kind, page: u32, rect: [f64; 4]) -> NewField {
         NewField {
+            text_size: None,
+            default_value: None,
             options: Vec::new(),
             name: name.into(),
             kind,

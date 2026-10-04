@@ -109,7 +109,7 @@ function mark(id: number, note: string, field?: PlacedField): MarkView {
 }
 
 const MARKS: MarkView[] = [
-  mark(3, "Placed", { kind: "text", border: true, tooltip: "Tip", max_length: 9 }),
+  mark(3, "Placed", { kind: "text", border: true, tooltip: "Tip", max_length: 9, text_size: 9, default_value: "n/a" }),
   mark(4, "A box"),
   mark(5, "Pick", { kind: "dropdown", border: false, options: ["A", "B"], align: "center" }),
   mark(6, "Tick", { kind: "checkbox", border: false, required: true, read_only: true }),
@@ -227,16 +227,20 @@ describe("changing a placed field's properties", () => {
     };
     await expect(asked(3)).resolves.toEqual({
       name: "Placed", tooltip: "Tip", required: false, readOnly: false, maxLength: 9, align: "left", options: null,
+      textSize: 9, defaultValue: "n/a",
     });
+    // A dropdown has a size and no default; a checkbox has neither.
     await expect(asked(5)).resolves.toEqual({
       name: "Pick", tooltip: "", required: false, readOnly: false, maxLength: null, align: "center", options: ["A", "B"],
+      textSize: 0, defaultValue: null,
     });
     await expect(asked(6)).resolves.toEqual({
       name: "Tick", tooltip: "", required: true, readOnly: true, maxLength: null, align: null, options: null,
+      textSize: null, defaultValue: null,
     });
     const lines = deps({ picked: [8], marks: [mark(8, "Lines", { kind: "multiline", border: false })] });
     await changeProperties(lines.deps);
-    expect(lines.asked[0]).toMatchObject({ maxLength: 0, align: "left", options: null });
+    expect(lines.asked[0]).toMatchObject({ maxLength: 0, align: "left", options: null, textSize: 0, defaultValue: "" });
   });
 
   it("changes the mark, with the parts that differ, and not a field of the file", async () => {
@@ -244,6 +248,9 @@ describe("changing a placed field's properties", () => {
     await expect(changeProperties(run.deps)).resolves.toBe(true);
     expect(run.fitted).toEqual([[3, { tooltip: "", max_length: 0, align: "right" }]]);
     expect(run.made).toEqual([]);
+    const sized = deps({ picked: [3], answer: (now) => ({ ...now, textSize: 0, defaultValue: "" }) });
+    await changeProperties(sized.deps);
+    expect(sized.fitted).toEqual([[3, { text_size: 0, default_value: "" }]]);
     const choices = deps({ picked: [5], answer: (now) => ({ ...now, options: ["A", "B", "C"] }) });
     await changeProperties(choices.deps);
     expect(choices.fitted).toEqual([[5, { options: ["A", "B", "C"] }]]);
@@ -279,6 +286,7 @@ describe("a placed radio button's properties", () => {
   const BUTTON = mark(9, "Pay", { kind: "radio", border: false, options: ["Card"], required: true });
   const NOW: FieldProperties = {
     name: "Pay", tooltip: "", required: true, readOnly: false, maxLength: null, align: null, options: ["Card"], single: true,
+    textSize: null, defaultValue: null,
   };
 
   it("are the group's name, its flags, and the one value the button gives", async () => {

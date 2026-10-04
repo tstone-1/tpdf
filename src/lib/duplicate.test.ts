@@ -27,7 +27,9 @@ const PAGES: PageView[] = [{ id: pageId(5), source: { baseline: 0 }, turns: 0 }]
 const RECT: Rect = [32, 32, 132, 52];
 
 const MARKS: MarkView[] = [
-  mark(1, "field", "Text 1", { kind: "text", border: true, tooltip: "Tip", required: true, max_length: 9, align: "right" }),
+  mark(1, "field", "Text 1", {
+    kind: "text", border: true, tooltip: "Tip", required: true, max_length: 9, align: "right", text_size: 9, default_value: "n/a",
+  }),
   mark(2, "field", "Pay", { kind: "radio", border: false, options: ["Choice 1"], read_only: true }),
   mark(3, "field", "Dropdown 1", { kind: "dropdown", border: false, options: ["A", "B"] }),
   mark(4, "square", "a box"),
@@ -38,7 +40,9 @@ const MARKS: MarkView[] = [
 
 const FORM: Form = {
   widgets: [
-    widget(11, "Name", { tooltip: "Your name", max_length: 30, align: "center", required: true }),
+    widget(11, "Name", {
+      tooltip: "Your name", max_length: 30, align: "center", required: true, text_size: 10.5, default_value: "Ada",
+    }),
     widget(12, "Notes", { multiline: true }),
     widget(13, "Agree", { control: { kind: "checkbox" }, read_only: true }),
     widget(14, "Colour", {
@@ -66,7 +70,9 @@ describe("the copy of a placed mark", () => {
   it("is a field of the same kind and properties under the next free name, where it was told to go", () => {
     expect(copy(1)).toEqual({
       kind: "field", page: 5, quads: [32, 32, 132, 52], note: "Text 2", color: [0.2, 0.4, 0.6], width: 3,
-      field: { kind: "text", border: true, tooltip: "Tip", required: true, max_length: 9, align: "right" },
+      field: {
+        kind: "text", border: true, tooltip: "Tip", required: true, max_length: 9, align: "right", text_size: 9, default_value: "n/a",
+      },
     });
     expect(copy(7)).toMatchObject({ note: "Checkbox 2", field: { kind: "checkbox", border: false } });
   });
@@ -100,8 +106,14 @@ describe("the copy of a field of the file", () => {
   it("is a placed field of its kind, with its properties and a name the form does not have", () => {
     expect(saved(0, true)).toEqual({
       kind: "field", page: 5, quads: [32, 32, 132, 52], note: "Text 2", color: [0.1, 0.35, 0.75], width: 1,
-      field: { kind: "text", border: true, tooltip: "Your name", required: true, max_length: 30, align: "center" },
+      field: {
+        kind: "text", border: true, tooltip: "Your name", required: true, max_length: 30, align: "center",
+        text_size: 10.5, default_value: "Ada",
+      },
     });
+    // A size that follows the field and no default are not carried as nought and nothing.
+    const lines = saved(1);
+    expect(typeof lines === "object" && lines.field).toEqual({ kind: "multiline", border: false });
     expect(saved(1)).toMatchObject({ field: { kind: "multiline", border: false } });
     expect(saved(2)).toMatchObject({ note: "Checkbox 2", field: { kind: "checkbox", read_only: true } });
     expect(saved(3)).toMatchObject({ note: "Dropdown 2", field: { kind: "dropdown", options: ["Red", "Green"] } });

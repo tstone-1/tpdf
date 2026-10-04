@@ -284,6 +284,7 @@ pub(super) fn write_marks(
             }
             let widget = crate::formfields::place(doc, page, rect, &mark.note, placed)?;
             attach(doc, page, annots, widget)?;
+            crate::formfields::answer_placed(doc, widget, placed)?;
             continue;
         }
         // **A comment gets no appearance stream from us, and that is not a gap.**

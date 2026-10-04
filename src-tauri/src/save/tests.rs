@@ -11106,6 +11106,8 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
     use crate::formfields::{add, Kind, NewField};
     let mut doc = Document::load_mem(&two_blank_pages()).expect("loads");
     let field = |name: &str, top: f64| NewField {
+        text_size: None,
+        default_value: None,
         options: Vec::new(),
         name: name.into(),
         kind: Kind::Text,
@@ -11280,6 +11282,8 @@ fn a_plan_that_adds_a_field_is_a_rewrite_and_the_field_lands_on_the_page_it_name
     use crate::formfields::{Kind, NewField};
     let original = two_blank_pages();
     let field = NewField {
+        text_size: None,
+        default_value: None,
         options: Vec::new(),
         name: "Name".into(),
         kind: Kind::Text,
@@ -11671,6 +11675,39 @@ fn radio_buttons_placed_as_marks_are_written_as_one_group() {
         .expect_err("refused")
         .to_string()
         .contains("already has a button with the value `Card`"));
+}
+
+#[test]
+fn a_placed_field_is_saved_with_its_text_size_and_holding_its_default() {
+    use crate::formfields::{Kind, Placed};
+    let quad = crate::docmodel::Quad {
+        left: 20.0,
+        top: 30.0,
+        right: 220.0,
+        bottom: 50.0,
+    };
+    let mut plan = field_plan("Ref", Kind::Text, quad);
+    plan.marks[0].field = Some(Placed {
+        text_size: Some(9.0),
+        default_value: "n/a".into(),
+        read_only: true,
+        ..Kind::Text.into()
+    });
+    let written = rewrite_update(&two_blank_pages(), &plan, Job::Save, None).expect("rewritten");
+    let doc = Document::load_mem(&written).expect("the copy parses");
+    let form = crate::forms::scan(&doc).expect("a form");
+    let field = &form.widgets[0];
+    assert_eq!(field.value, crate::forms::Value::Text("n/a".into()));
+    assert_eq!(field.default_value, "n/a");
+    assert_eq!(field.text_size, Some(9.0));
+    assert!(field.read_only);
+    // One that does not fit is refused by the save, in words.
+    plan.marks[0].field = Some(Placed {
+        default_value: "a default value far too long for two hundred points ".repeat(6),
+        ..Kind::Text.into()
+    });
+    let why = rewrite_update(&two_blank_pages(), &plan, Job::Save, None).expect_err("refused");
+    assert!(format!("{why:?}").contains("its default value"), "{why:?}");
 }
 
 #[test]

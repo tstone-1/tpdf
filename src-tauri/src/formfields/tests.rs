@@ -79,6 +79,8 @@ fn reloaded(doc: &mut Document) -> Document {
 
 fn field(name: &str, kind: Kind, page: u32, rect: [f64; 4]) -> NewField {
     NewField {
+        text_size: None,
+        default_value: None,
         options: Vec::new(),
         name: name.into(),
         kind,
@@ -607,6 +609,228 @@ fn every_problem_is_named_and_nothing_is_written() {
         },
     ];
     assert_eq!(check(&doc, &edge).map(|placed| placed.len()), Ok(3));
+}
+
+/// A field's widget, as the form reads it back.
+fn read_back(doc: &Document, name: &str) -> forms::Widget {
+    forms::scan(doc)
+        .expect("a form")
+        .widgets
+        .into_iter()
+        .find(|widget| widget.name == name)
+        .expect("the field")
+}
+
+#[test]
+fn a_field_is_made_with_its_text_size_and_holding_its_default_value() {
+    let mut doc = document(Held::Absent, false);
+    add(
+        &mut doc,
+        &[
+            NewField {
+                text_size: Some(9.0),
+                default_value: Some("n/a".into()),
+                border: true,
+                ..field("Name", Kind::Text, 0, [20.0, 20.0, 100.0, 20.0])
+            },
+            // A size and no default: declared, and nothing drawn yet.
+            NewField {
+                text_size: Some(7.5),
+                ..field("Sized", Kind::Text, 0, [20.0, 50.0, 100.0, 20.0])
+            },
+            NewField {
+                text_size: Some(8.0),
+                ..dropdown("Colour", &["Red", "Green"])
+            },
+            // An empty default is none.
+            NewField {
+                default_value: Some(String::new()),
+                ..field("Plain", Kind::Text, 0, [20.0, 110.0, 100.0, 20.0])
+            },
+        ],
+    )
+    .expect("added");
+    let name = read_back(&doc, "Name");
+    assert_eq!(name.text_size, Some(9.0));
+    assert_eq!(name.default_value, "n/a");
+    assert_eq!(name.value, forms::Value::Text("n/a".into()));
+    assert_eq!(name.reason, None);
+    let body = appearance_of(&doc, name.widget);
+    assert!(
+        body.contains("/F0 9 Tf") && body.contains("<6e2f61> Tj"),
+        "{body}"
+    );
+    assert!(body.contains(" re S"), "its line is kept: {body}");
+    let sized = read_back(&doc, "Sized");
+    assert_eq!(sized.text_size, Some(7.5));
+    assert_eq!(sized.value, forms::Value::Text(String::new()));
+    assert!(!doc.get_dictionary(sized.object).unwrap().has(b"DV"));
+    assert_eq!(read_back(&doc, "Colour").text_size, Some(8.0));
+    let plain = read_back(&doc, "Plain");
+    assert_eq!((plain.text_size, plain.default_value.as_str()), (None, ""));
+    assert!(!doc.get_dictionary(plain.object).unwrap().has(b"DV"));
+}
+
+#[test]
+fn a_text_size_or_a_default_a_field_cannot_have_is_a_problem_and_nothing_is_written() {
+    let doc = document(Held::Absent, false);
+    let at = [20.0, 20.0, 100.0, 20.0];
+    let problem = |field: NewField| {
+        let mut copy = doc.clone();
+        let why = add(&mut copy, &[field]).expect_err("refused");
+        assert_eq!(copy.objects.len(), doc.objects.len(), "{why}");
+        why
+    };
+    let sized = |kind: Kind, size: f32| NewField {
+        text_size: Some(size),
+        options: if kind == Kind::Radio {
+            vec!["A".into()]
+        } else {
+            Vec::new()
+        },
+        ..field("f", kind, 0, at)
+    };
+    let starting = |kind: Kind, default: &str| NewField {
+        default_value: Some(default.into()),
+        options: match kind {
+            Kind::Radio => vec!["A".into()],
+            Kind::Dropdown => vec!["A".into(), "B".into()],
+            _ => Vec::new(),
+        },
+        ..field("f", kind, 0, at)
+    };
+    assert!(problem(sized(Kind::Checkbox, 9.0)).contains("no text to size"));
+    assert!(problem(sized(Kind::Radio, 9.0)).contains("no text to size"));
+    for size in [0.0, 3.9, 144.5, f32::NAN] {
+        assert!(
+            problem(sized(Kind::Text, size)).contains("a text size is 4 to 144 points"),
+            "{size}"
+        );
+    }
+    assert!(problem(starting(Kind::Checkbox, "x")).contains("only a text field has a default"));
+    assert!(problem(starting(Kind::Dropdown, "A")).contains("only a text field has a default"));
+    assert!(problem(starting(Kind::Radio, "A")).contains("only a text field has a default"));
+    assert!(problem(starting(Kind::Text, "one\ntwo")).contains("takes one line"));
+    assert!(problem(starting(Kind::Text, "bell\u{7}")).contains("control character"));
+    let limited = NewField {
+        max_length: Some(3),
+        ..starting(Kind::Text, "four")
+    };
+    assert!(problem(limited).contains("more than the field takes"));
+    let long = "a long default value that a field of a hundred points cannot show";
+    assert!(
+        problem(starting(Kind::Text, long)).contains("its default value: The answer does not fit")
+    );
+    // Several lines are a multiline field's, and the limit is a most.
+    let mut copy = doc.clone();
+    add(
+        &mut copy,
+        &[
+            NewField {
+                max_length: Some(4),
+                ..starting(Kind::Text, "four")
+            },
+            NewField {
+                name: "Notes".into(),
+                rect: [20.0, 60.0, 200.0, 60.0],
+                ..starting(Kind::Multiline, "one\ntwo")
+            },
+        ],
+    )
+    .expect("added");
+    assert_eq!(
+        read_back(&copy, "Notes").value,
+        forms::Value::Text("one\ntwo".into())
+    );
+}
+
+#[test]
+fn a_placed_field_is_answered_with_its_default_once_it_is_on_its_page() {
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let placed = Placed {
+        text_size: Some(9.0),
+        default_value: "n/a".into(),
+        read_only: true,
+        align: forms::Align::Right,
+        ..Kind::Text.into()
+    };
+    assert_eq!(placed.problem("Name"), None);
+    let rect = [20.0, 20.0, 120.0, 40.0];
+    let id = place(&mut doc, page, rect, "Name", &placed).expect("placed");
+    // The save attaches it; until then the form cannot be read, or answered.
+    append(&mut doc, page, b"Annots", id).expect("attached");
+    assert_eq!(
+        read_back(&doc, "Name").value,
+        forms::Value::Text(String::new())
+    );
+    answer_placed(&mut doc, id, &placed).expect("answered");
+    let name = read_back(&doc, "Name");
+    assert_eq!(name.value, forms::Value::Text("n/a".into()));
+    assert_eq!(name.default_value, "n/a");
+    assert_eq!(name.text_size, Some(9.0));
+    assert!(name.read_only, "it is read-only afterwards");
+    let body = appearance_of(&doc, name.widget);
+    let x = 100.0 - 2.0 - crate::textbox::advance("n/a", 9.0);
+    assert!(
+        body.contains("/F0 9 Tf") && body.contains(&format!("1 0 0 1 {x} ")),
+        "{body}"
+    );
+    // No default, or a kind that has none: nothing is answered.
+    let plain: Placed = Kind::Text.into();
+    let other = place(&mut doc, page, [20.0, 60.0, 120.0, 80.0], "Other", &plain).expect("placed");
+    append(&mut doc, page, b"Annots", other).expect("attached");
+    let before = appearance_of(&doc, other);
+    answer_placed(&mut doc, other, &plain).expect("nothing to answer");
+    assert_eq!(appearance_of(&doc, other), before);
+    // What a placed field cannot have is said before it is made.
+    let refused = |placed: Placed| placed.problem("f").expect("a problem");
+    assert!(refused(Placed {
+        text_size: Some(9.0),
+        ..Kind::Checkbox.into()
+    })
+    .contains("no text to size"));
+    assert!(refused(Placed {
+        text_size: Some(2.0),
+        ..Kind::Text.into()
+    })
+    .contains("4 to 144"));
+    assert!(refused(Placed {
+        default_value: "x".into(),
+        ..Kind::Checkbox.into()
+    })
+    .contains("only a text field has a default"));
+    assert!(refused(Placed {
+        default_value: "a\nb".into(),
+        ..Kind::Text.into()
+    })
+    .contains("takes one line"));
+    assert!(refused(Placed {
+        default_value: "four".into(),
+        max_length: Some(3),
+        ..Kind::Text.into()
+    })
+    .contains("more than the field takes"));
+    assert_eq!(
+        Placed {
+            default_value: "a\nb".into(),
+            ..Kind::Multiline.into()
+        }
+        .problem("f"),
+        None
+    );
+    // And one that does not fit its rectangle, when it is made.
+    let long = Placed {
+        default_value: "a long default value that a field of a hundred points cannot show".into(),
+        ..Kind::Text.into()
+    };
+    let objects = doc.objects.len();
+    assert!(
+        place(&mut doc, page, [20.0, 100.0, 120.0, 120.0], "Long", &long)
+            .expect_err("refused")
+            .contains("its default value")
+    );
+    assert_eq!(doc.objects.len(), objects);
 }
 
 #[test]

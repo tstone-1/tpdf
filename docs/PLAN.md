@@ -3669,10 +3669,27 @@ answer that no longer fits at a new size, would be refused there with the flags,
 tooltip and `/DA` already written. `propertied` asks `forms::validate` first, with the
 size and the limit the same change sets.
 
-**Not built.** Both for a field placed in this session, whose panel does not show the
-two rows, and for `tpdf form`. A default for a dropdown or a checkbox. The font and the
-colour, which are kept as the field has them. The fill control is twelve pixels
-whatever the size.
+**Placed fields and `tpdf form`, the same day.** The first commit set both on a field
+of the file only, and the panel showed two rows fewer for a field not saved yet.
+`NewField` and `Placed` now carry `text_size` and `default_value`; `tpdf form` takes
+them as keys of those names. The size is written into the `/DA` the field is made with.
+A default is written as `/DV` and the field is then answered with it through
+`forms::write`, so it is drawn by the code that draws every answer. A field placed in
+the window is attached to its page by the save and not by `formfields::place`, and an
+answer can only be drawn into a field a page lists, so the save calls
+`formfields::answer_placed` after attaching. A read-only field is answered too: the
+flag is lifted for the write and put back.
+
+What a field cannot have is one check for both doors (`text_problem`): a size on a
+checkbox or a radio button, a default on anything that is not a text field, several
+lines in a field of one, more characters than the limit. Whether the default can be
+drawn is asked with the field's rectangle, before anything is written: in
+`formfields::check` for `tpdf form`, and in `Edits::refit` for the panel, with the
+rectangle the mark then has. The save asks again, since the mark can be made smaller
+afterwards.
+
+**Not built.** A default for a dropdown or a checkbox. The font and the colour, which
+are kept as the field has them. The fill control is twelve pixels whatever the size.
 
 #### One press picks a rectangle, two open it — 2026-10-04
 

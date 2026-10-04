@@ -198,6 +198,8 @@ mod tests {
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
         doc.trailer.set("Root", catalog);
         let field = |name: &str, kind, rect| crate::formfields::NewField {
+            text_size: None,
+            default_value: None,
             options: Vec::new(),
             name: name.into(),
             kind,

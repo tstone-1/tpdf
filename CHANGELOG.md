@@ -21,11 +21,12 @@ have the binary.)
 
 ### Added
 
-- **Text size and default value of a field.** The properties panel sets both for a field
-  the document already has. The text size is in points, or empty for one that follows
-  the field's height; an answer too long for the field at that size is drawn smaller.
-  The default value of a text field is what it holds after a reader resets the form, and
-  a field that holds nothing is answered with it at once.
+- **Text size and default value of a field.** The properties panel sets both, for a
+  field placed in this session and for one the document already has. The text size is
+  in points, or empty for one that follows the field's height; an answer too long for
+  the field at that size is drawn smaller. The default value of a text field is what it
+  holds after a reader resets the form, and a field that holds nothing is answered with
+  it at once. `tpdf form` takes both as `text_size` and `default_value`.
 
 ### Changed
 

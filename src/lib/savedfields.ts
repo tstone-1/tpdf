@@ -297,6 +297,8 @@ export function placedProperties(mark: MarkView | undefined): FieldProperties | 
     align: field.kind === "checkbox" || field.kind === "radio" ? null : field.align ?? "left",
     options: field.kind === "dropdown" || field.kind === "radio" ? [...(field.options ?? [])] : null,
     ...(field.kind === "radio" ? { single: true } : {}),
+    textSize: text || field.kind === "dropdown" ? field.text_size ?? 0 : null,
+    defaultValue: text ? field.default_value ?? "" : null,
   };
 }
 

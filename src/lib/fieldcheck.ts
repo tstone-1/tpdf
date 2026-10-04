@@ -250,13 +250,18 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     );
     if (most) most.value = "40";
     if (tip) tip.value = "Notes";
+    const size = sheet()?.querySelector<HTMLInputElement>('[aria-label="Text size"]') ?? null;
+    const start = sheet()?.querySelector<HTMLInputElement>('[aria-label="Default value"]') ?? null;
+    if (size) size.value = "10";
+    if (start) start.value = "first";
     [...(sheet()?.querySelectorAll("button") ?? [])].at(-1)?.click();
     const now = () => fields().find((mark) => mark.id === placed?.id)?.field;
     await settle(() => now()?.max_length === 40, SETTLE_MS);
     await host.idle();
     check(
       "applying it changes the placed field",
-      now()?.max_length === 40 && now()?.tooltip === "Notes" && now()?.kind === "multiline",
+      now()?.max_length === 40 && now()?.tooltip === "Notes" && now()?.kind === "multiline"
+        && now()?.text_size === 10 && now()?.default_value === "first",
       JSON.stringify(now()),
     );
     host.run("edit.undo");
@@ -320,8 +325,9 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
   const lined = form.widgets.find((widget) => widget.name === "Text 2");
   check(
     "and the field placed with properties is saved with them",
-    lined?.max_length === 40 && lined.tooltip === "Notes",
-    `${lined?.max_length}; ${lined?.tooltip}`,
+    lined?.max_length === 40 && lined.tooltip === "Notes"
+      && lined.text_size === 10 && lined.default_value === "first" && lined.value === "first",
+    `${lined?.max_length}; ${lined?.tooltip}; ${lined?.text_size}; ${lined?.default_value}; ${JSON.stringify(lined?.value)}`,
   );
   const controls = await settle(
     () => document.querySelectorAll(".form-fields input, .form-fields textarea").length >= 3,

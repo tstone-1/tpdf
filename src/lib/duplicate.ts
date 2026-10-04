@@ -64,6 +64,8 @@ function carried(now: ReturnType<typeof properties>): Partial<PlacedField> {
     ...(now.readOnly ? { read_only: true } : {}),
     ...(now.maxLength ? { max_length: now.maxLength } : {}),
     ...(now.align && now.align !== "left" ? { align: now.align } : {}),
+    ...(now.textSize ? { text_size: now.textSize } : {}),
+    ...(now.defaultValue ? { default_value: now.defaultValue } : {}),
   };
 }
 

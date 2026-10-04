@@ -97,7 +97,11 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
     if (now.single && parsed.options[0] === "Off") return { problem: "Off is what a group holds when nothing is chosen" };
     options = parsed.options;
   }
-  const sized: Pick<FieldProperties, "textSize" | "defaultValue"> = {};
+  // A part the field's kind does not have stays as it was said: `null`, or left out.
+  const sized: Pick<FieldProperties, "textSize" | "defaultValue"> = {
+    ...(now.textSize === null ? { textSize: null } : {}),
+    ...(now.defaultValue === null ? { defaultValue: null } : {}),
+  };
   if (now.textSize != null) {
     const text = typed.textSize.trim().replace(",", ".");
     const size = text === "" ? 0 : Number(text);

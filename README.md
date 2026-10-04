@@ -331,9 +331,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   field...* from the Edit menu or the palette. The panel sets its tooltip, whether it is required and whether it is
   read-only; for a text field also the most characters it takes and whether its text is
   at the left, the centre or the right; for a dropdown or a list its alignment and its
-  choices. For a field the document already has it also sets the text size, in points or
-  left to follow the field's height, and for a text field a default value: what the
-  field holds after a reader resets the form, and what it holds now if it holds nothing.
+  choices. It also sets the text size of a text field or a dropdown, in points or left
+  to follow the field's height, and for a text field a default value: what the field
+  holds after a reader resets the form, and what it holds now if it holds nothing. A
+  default value that the field cannot show is refused in the panel.
   An answer too long for its field at the size set is drawn smaller. A text or choice
   field whose alignment, text size or choices change is drawn again with the answer it
   holds. A choice that stays keeps the value it exports, and an answer
@@ -1358,8 +1359,12 @@ has `options`, the list of its choices. A radio button has one option, the value
 its group, and its `name` is the group's: the buttons of one name are one field, and a
 button whose name is a group the document already has joins it. `page` counts from 1, and `rect`
 is `[left, top, width, height]` in points from the top-left corner of the page as it is
-displayed, the way `tpdf crop --rect` measures. `tooltip`, `required`, `max_length` and
-`border` are optional; `"border": true` draws a thin black line round a text field. A text field is at least 8 by 8 points and a checkbox or a radio button 6 by 6. An empty text
+displayed, the way `tpdf crop --rect` measures. `tooltip`, `required`, `max_length`,
+`border`, `text_size` and `default_value` are optional; `"border": true` draws a thin black
+line round a text field. `text_size` is the size in points a text field's or a dropdown's
+text is drawn at where it fits, from 4 to 144, and without it the size follows the field's
+height. `default_value` is what a text field holds when it is made and after a reader
+resets the form; it has to fit the field. A text field is at least 8 by 8 points and a checkbox or a radio button 6 by 6. An empty text
 field draws nothing on the page, as in most forms, so put it where the page already shows
 a line or a box; a checkbox draws its own box.
 
@@ -1369,7 +1374,8 @@ page, a page the document does not have, a value a group's buttons already have.
 them are named at once. Not supported yet: list boxes; a field on a page the document turns
 (`/Rotate`); calculations and formatting, which are scripts in the document and tpdf runs
 none; and an XFA form. The copy is staged and opened again before it is published: each
-field must read back once, of the kind, on the page and at the place asked for, empty and
+field must read back once, of the kind, on the page and at the place asked for, empty or
+holding the default value it was given, and
 fillable (a radio button as a button of its group with its value), and every field the
 source had must still hold what it held. A signed document
 needs `--invalidate-signatures`, an existing output needs `--force`, and the input is

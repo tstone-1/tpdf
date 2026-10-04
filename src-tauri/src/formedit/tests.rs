@@ -40,6 +40,8 @@ fn fixture() -> Fixture {
     let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
     doc.trailer.set("Root", catalog);
     let field = |name: &str, kind: Kind, rect: [f64; 4], border: bool| NewField {
+        text_size: None,
+        default_value: None,
         options: Vec::new(),
         name: name.into(),
         kind,
@@ -505,6 +507,8 @@ fn with_colours(f: &mut Fixture) -> Widget {
     add(
         &mut f.doc,
         &[NewField {
+            text_size: None,
+            default_value: None,
             options: vec!["Red".into(), "Green".into(), "Blue".into()],
             name: "Colour".into(),
             kind: Kind::Dropdown,

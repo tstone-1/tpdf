@@ -74,13 +74,134 @@ pub struct NewField {
     /// What a dropdown offers, in order. Empty for every other kind.
     #[serde(default)]
     pub options: Vec<String>,
+    /// The size a text field's or a dropdown's text is drawn at where it
+    /// fits, in points. `None` is a size that follows the field's height.
+    #[serde(default)]
+    pub text_size: Option<f32>,
+    /// What a text field holds after a reader resets the form, and what it
+    /// is made holding.
+    #[serde(default)]
+    pub default_value: Option<String>,
+}
+
+/// What is wrong with a text size or a default value for a field of this
+/// kind, of what can be said without the document.
+fn text_problem(
+    name: &str,
+    kind: Kind,
+    text_size: Option<f32>,
+    default_value: Option<&str>,
+    max_length: Option<u32>,
+) -> Option<String> {
+    let props = crate::formedit::Props {
+        text_size,
+        default_value: default_value.map(str::to_string),
+        ..Default::default()
+    };
+    if let Some(why) = props.problem(name) {
+        return Some(why);
+    }
+    if text_size == Some(0.0) {
+        return Some(format!(
+            "`{name}`: a text size is {} to {} points, and is left out for one that follows the field",
+            forms::MIN_TEXT_SIZE,
+            forms::MAX_TEXT_SIZE
+        ));
+    }
+    let text = matches!(kind, Kind::Text | Kind::Multiline);
+    if text_size.is_some() && !text && kind != Kind::Dropdown {
+        return Some(format!("`{name}`: a box or a button has no text to size"));
+    }
+    let default = default_value.filter(|default| !default.is_empty())?;
+    if !text {
+        return Some(format!("`{name}`: only a text field has a default value"));
+    }
+    if kind == Kind::Text && default.contains('\n') {
+        return Some(format!(
+            "`{name}` takes one line, and its default value has several"
+        ));
+    }
+    let holds = default.chars().count();
+    if max_length.is_some_and(|most| holds > most as usize) {
+        return Some(format!(
+            "`{name}`: the default value has {holds} characters, which is more than the field takes"
+        ));
+    }
+    None
+}
+
+/// Why a field's default value would not be drawn in a field of this
+/// rectangle, as the answer it is.
+fn default_problem(field: &NewField, rect: [f64; 4]) -> Option<String> {
+    let default = field.default_value.as_deref().filter(|d| !d.is_empty())?;
+    let would_be = forms::Widget {
+        object: (0, 0),
+        widget: (0, 0),
+        page: 0,
+        rect,
+        display_rect: [0.0; 4],
+        name: field.name.clone(),
+        value: forms::Value::Text(String::new()),
+        control: forms::Control::Text,
+        multiline: field.kind == Kind::Multiline,
+        max_length: field.max_length.map(|most| most as usize),
+        reason: None,
+        tooltip: String::new(),
+        required: false,
+        read_only: false,
+        align: forms::Align::Left,
+        text_size: field.text_size,
+        default_value: String::new(),
+    };
+    forms::validate(&would_be, &forms::Value::Text(default.to_string()))
+        .err()
+        .map(|why| format!("`{}`: its default value: {why}", field.name))
+}
+
+impl Placed {
+    /// Why this field's default value would not be drawn in a rectangle of
+    /// this size, or `None` when it would or there is none.
+    ///
+    /// Asked when the default is set, with the rectangle the mark then has,
+    /// so that a reader is told in the panel. The save asks again, of the
+    /// rectangle it writes.
+    pub fn default_problem(&self, name: &str, width: f64, height: f64) -> Option<String> {
+        let field = NewField {
+            name: name.to_string(),
+            kind: self.kind,
+            page: 0,
+            rect: [0.0; 4],
+            tooltip: None,
+            required: false,
+            max_length: self.max_length,
+            border: self.border,
+            options: Vec::new(),
+            text_size: self.text_size,
+            default_value: Some(self.default_value.clone()),
+        };
+        default_problem(&field, [0.0, 0.0, width, height])
+    }
+}
+
+/// Answers a field just made with its default value, which draws it.
+fn answer_default(doc: &mut Document, id: ObjectId, field: &NewField) -> Result<(), String> {
+    let Some(default) = field.default_value.as_deref().filter(|d| !d.is_empty()) else {
+        return Ok(());
+    };
+    forms::write(
+        doc,
+        &[forms::Change {
+            object: id,
+            value: forms::Value::Text(default.to_string()),
+        }],
+    )
 }
 
 /// What a field placed in the window is: its kind, and whether it is framed.
 ///
 /// The payload of a `MarkKind::Field` mark. Its name is the mark's note and its
 /// rectangle the mark's quad, so these two are all that is left to say.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Placed {
     pub kind: Kind,
     /// [`NewField::border`].
@@ -104,6 +225,12 @@ pub struct Placed {
     /// Where a text field's or a dropdown's text sits.
     #[serde(default)]
     pub align: forms::Align,
+    /// [`NewField::text_size`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<f32>,
+    /// [`NewField::default_value`]. Empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub default_value: String,
 }
 
 impl Placed {
@@ -135,7 +262,13 @@ impl Placed {
         if matches!(self.kind, Kind::Checkbox | Kind::Radio) && self.align != forms::Align::Left {
             return Some(format!("`{name}`: a box or a button has no text to align"));
         }
-        None
+        text_problem(
+            name,
+            self.kind,
+            self.text_size,
+            Some(self.default_value.as_str()),
+            self.max_length,
+        )
     }
 }
 
@@ -152,6 +285,8 @@ impl From<Kind> for Placed {
             read_only: false,
             max_length: None,
             align: forms::Align::Left,
+            text_size: None,
+            default_value: String::new(),
         }
     }
 }
@@ -436,6 +571,15 @@ pub fn check(
                 field.name
             ));
         }
+        if let Some(why) = text_problem(
+            &field.name,
+            field.kind,
+            field.text_size,
+            field.default_value.as_deref(),
+            field.max_length,
+        ) {
+            problems.push(why);
+        }
         let Some(page) = pages.get(field.page as usize) else {
             problems.push(format!(
                 "`{}`: there is no page {}; the document has {}",
@@ -448,7 +592,12 @@ pub fn check(
         match placed(doc, *page, field) {
             // Kept whether or not this field has another problem: the list is
             // only handed back when no field has any.
-            Ok(rect) => placed_at.push((*page, rect)),
+            Ok(rect) => {
+                if let Some(why) = default_problem(field, rect) {
+                    problems.push(why);
+                }
+                placed_at.push((*page, rect));
+            }
             Err(why) => problems.push(why),
         }
     }
@@ -586,8 +735,17 @@ fn widget(
         "P" => page,
         // Print, which is what makes a filled field appear on paper.
         "F" => 4,
-        "DA" => text(DEFAULT_APPEARANCE),
+        "DA" => match field.text_size {
+            Some(size) => Object::String(
+                forms::sized_appearance(None, size),
+                lopdf::StringFormat::Literal,
+            ),
+            None => text(DEFAULT_APPEARANCE),
+        },
     };
+    if let Some(default) = field.default_value.as_deref().filter(|d| !d.is_empty()) {
+        widget.set("DV", forms::pdf_string(default));
+    }
     if let Some(tip) = field.tooltip.as_deref().filter(|tip| !tip.is_empty()) {
         widget.set("TU", forms::pdf_string(tip));
     }
@@ -846,6 +1004,7 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
         let id = widget(doc, font, page, rect, field);
         append(doc, page, b"Annots", id)?;
         append(doc, form, b"Fields", id)?;
+        answer_default(doc, id, field)?;
     }
     Ok(())
 }
@@ -924,7 +1083,12 @@ pub fn place(
         max_length: placed.max_length,
         border: placed.border,
         options: placed.options.clone(),
+        text_size: placed.text_size,
+        default_value: (!placed.default_value.is_empty()).then(|| placed.default_value.clone()),
     };
+    if let Some(why) = default_problem(&field, rect) {
+        return Err(why);
+    }
     let id = widget(doc, font, page, rect, &field);
     // The two a field made by `tpdf form` does not have. The empty appearance
     // holds no text, so an alignment changes nothing that is drawn yet.
@@ -938,6 +1102,38 @@ pub fn place(
     }
     append(doc, form, b"Fields", id)?;
     Ok(id)
+}
+
+/// Answers a field [`place`] made with its default value, once the caller
+/// has attached it to its page: an answer is drawn into a field the form and
+/// a page both list, and `place` leaves the second to its caller.
+///
+/// A read-only field is answered too. It refuses a reader's answer, and this
+/// is its author's.
+///
+/// # Errors
+///
+/// What `forms::write` refuses the answer for.
+pub fn answer_placed(doc: &mut Document, id: ObjectId, placed: &Placed) -> Result<(), String> {
+    if placed.default_value.is_empty() || !matches!(placed.kind, Kind::Text | Kind::Multiline) {
+        return Ok(());
+    }
+    let flags = forms::integer(doc, id, b"Ff");
+    let set = |doc: &mut Document, flags: i64| -> Result<(), String> {
+        doc.get_dictionary_mut(id)
+            .map_err(|e| e.to_string())?
+            .set("Ff", flags);
+        Ok(())
+    };
+    set(doc, flags & !1)?;
+    forms::write(
+        doc,
+        &[forms::Change {
+            object: id,
+            value: forms::Value::Text(placed.default_value.clone()),
+        }],
+    )?;
+    set(doc, flags)
 }
 
 #[cfg(test)]

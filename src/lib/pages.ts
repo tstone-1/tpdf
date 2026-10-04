@@ -141,6 +141,10 @@ export interface PlacedField {
   /** The most characters a text field takes. Absent for no limit. */
   max_length?: number;
   align?: import("./forms").FormAlign;
+  /** The size its text is drawn at where it fits, in points. Absent for one that follows the field. */
+  text_size?: number;
+  /** What a text field is made holding. Absent for nothing. */
+  default_value?: string;
 }
 
 /**

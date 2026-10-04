@@ -1935,11 +1935,27 @@ impl Edits {
         if let Some(options) = props.options {
             placed.options = options;
         }
+        if let Some(size) = props.text_size {
+            placed.text_size = (size != 0.0).then_some(size);
+        }
+        if let Some(default) = props.default_value {
+            placed.default_value = default;
+        }
         if placed == was {
             return Err("that changes nothing about the field".into());
         }
         if let Some(why) = placed.problem("this field") {
             return Err(why);
+        }
+        // A default value has to be drawn in the rectangle the field has.
+        if let Some(quad) = model.quads_of(id).first() {
+            let (width, height) = (
+                f64::from(quad.right - quad.left),
+                f64::from(quad.bottom - quad.top),
+            );
+            if let Some(why) = placed.default_problem("this field", width, height) {
+                return Err(why);
+            }
         }
         // A radio button given a new value must not take a sibling's.
         let name = model.note_of(id).to_string();
@@ -5827,6 +5843,35 @@ mod tests {
             ("Your name", true, true, None, Align::Right)
         );
         assert_eq!(placed.kind, Kind::Text);
+        // A text size and a default value, and nought for the size that
+        // follows the field again.
+        let sized = |size: f32, default: &str| Props {
+            text_size: Some(size),
+            default_value: Some(default.into()),
+            ..Props::default()
+        };
+        let state = edits.refit(7, id, sized(9.0, "n/a")).expect("sized");
+        let held = state.marks[0].field.clone().expect("a field");
+        assert_eq!(
+            (held.text_size, held.default_value.as_str()),
+            (Some(9.0), "n/a")
+        );
+        assert!(edits
+            .refit(7, id, sized(9.0, "n/a"))
+            .expect_err("the same")
+            .contains("changes nothing"));
+        assert!(edits
+            .refit(7, id, sized(2.0, "n/a"))
+            .expect_err("too small")
+            .contains("4 to 144"));
+        let long =
+            "a default value far too long for the rectangle the field was placed with ".repeat(6);
+        assert!(edits
+            .refit(7, id, sized(9.0, &long))
+            .expect_err("does not fit")
+            .contains("its default value"));
+        let state = edits.refit(7, id, sized(0.0, "")).expect("off again");
+        assert_eq!(state.marks[0].field, Some(placed.clone()));
         // What is written is what the field now is, not what it was placed as.
         assert_eq!(edits.plan(7).expect("a plan").marks[0].field, Some(placed));
         // The floor of its kind is still asked of the field as it now is.
@@ -5891,9 +5936,11 @@ mod tests {
             }
         )
         .contains("not a form field"));
-        // Back over the two marks, then one undo per change to the field.
-        edits.undo(7).expect("undone");
-        edits.undo(7).expect("undone");
+        // Back over the two marks and the two changes of size and default,
+        // then one undo per change to the field.
+        for _ in 0..4 {
+            edits.undo(7).expect("undone");
+        }
         let state = edits.undo(7).expect("undone");
         let placed = state.marks[0].field.clone().expect("a field");
         assert_eq!(
