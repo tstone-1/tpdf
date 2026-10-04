@@ -252,7 +252,7 @@ export interface Commands {
     reply: EditState;
   };
   page_import_cancel: { args: { doc: number; pending: number }; reply: boolean };
-  annot_mark: { args: { doc: number; mark: NewMark }; reply: EditState };
+  annot_mark: { args: { doc: number; mark: NewMark; sweep?: number }; reply: EditState };
   annot_remove: {
     args: { doc: number; mark: number; sweep: number };
     reply: EditState;

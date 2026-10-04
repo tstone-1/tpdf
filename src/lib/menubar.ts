@@ -276,6 +276,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
     // reader looks for by name, and at the foot of Edit they would double it.
     title: "Arrange",
     items: [
+      "edit.duplicate",
       "edit.alignLeft",
       "edit.alignCenter",
       "edit.alignRight",

@@ -240,6 +240,38 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     check("undo takes the properties back", now()?.max_length === undefined && now()?.tooltip === undefined, JSON.stringify(now()));
     host.run("edit.redo");
     await host.idle();
+
+    // A copy of it, beside it, picked in its place; then moved by a key.
+    const before = new Set(fields().map((mark) => mark.id));
+    viewer.pick(placed ? [placed.id] : []);
+    host.run("edit.duplicate");
+    await settle(() => fields().length === 4, SETTLE_MS);
+    await host.idle();
+    const copy = () => fields().find((mark) => !before.has(mark.id));
+    const from = fields().find((mark) => mark.id === placed?.id)?.quads ?? [];
+    check(
+      "duplicate makes a copy of the picked field with its properties, under a name of its own, a step away",
+      copy()?.field?.kind === "multiline" && copy()?.field?.max_length === 40 && copy()?.field?.tooltip === "Notes"
+        && copy()?.note !== placed?.note && !names().split(", ").slice(0, 3).includes(copy()?.note ?? "")
+        && Math.abs((copy()?.quads[0] ?? 0) - (from[0] ?? 0) - 12) < 0.01
+        && Math.abs((copy()?.quads[1] ?? 0) - (from[1] ?? 0) - 12) < 0.01,
+      `${JSON.stringify(copy()?.field)}; ${copy()?.note}; ${copy()?.quads.map((v) => v.toFixed(1))} from ${from.map((v) => v.toFixed(1))}`,
+    );
+    check("and picks the copy", viewer.pickedMarks().join() === String(copy()?.id), viewer.pickedMarks().join());
+    const left = copy()?.quads[0] ?? 0;
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true }));
+    await settle(() => Math.abs((copy()?.quads[0] ?? 0) - left - 10) < 0.01, SETTLE_MS);
+    await host.idle();
+    check(
+      "the right arrow with Shift moves the picked field ten points",
+      Math.abs((copy()?.quads[0] ?? 0) - left - 10) < 0.01,
+      `${left.toFixed(1)} to ${(copy()?.quads[0] ?? 0).toFixed(1)}`,
+    );
+    host.run("edit.undo");
+    await host.idle();
+    host.run("edit.undo");
+    await host.idle();
+    check("two undos take back the nudge and the copy", fields().length === 3 && copy() === undefined, names());
     viewer.pick([]);
   }
 

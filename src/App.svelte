@@ -93,6 +93,7 @@
   import { PasswordDialog } from "./lib/passworddialog";
   import { NewPasswordDialog } from "./lib/newpassworddialog";
   import { FieldPropertiesDialog, changeProperties, pickedField, type PropertiesDeps } from "./lib/fieldprops";
+  import { duplicate, type DuplicateDeps } from "./lib/duplicate";
   import { EXTENSIONS as PICTURE_EXTENSIONS, afterPictures, suggestedName as pictureName } from "./lib/pictures";
   import { afterProtect, suggestedName as protectedName } from "./lib/protect";
   import { afterCompress, suggestedName as smallerName } from "./lib/compress";
@@ -213,6 +214,20 @@
     ask: (now) => fieldPropertiesDialog?.ask(now) ?? Promise.resolve(null),
     refield: (target) => changeField(target),
     refit: (mark, props) => void applyEdit((e) => e.refit(mark, props)),
+    say: (message) => say(message),
+  };
+  /** What duplicating the picked rectangles is given; the join is `duplicate.ts`. */
+  const duplicateDeps: DuplicateDeps = {
+    copies: () => viewer?.copiesOfPicked() ?? null,
+    state: () => edits?.state ?? null,
+    form: () => scannedForm,
+    formNames: () => formNames,
+    border: () => fieldBorder,
+    make: (copy, sweep) =>
+      applyEdit((e) =>
+        e.mark(copy.kind, copy.page, copy.quads, [], copy.note, copy.color, null, null, copy.width, undefined, copy.field, sweep),
+      ),
+    pick: (ids) => viewer?.pick(ids),
     say: (message) => say(message),
   };
   /** Which kind of form field the armed tool places. */
@@ -826,6 +841,7 @@
     fieldPicked: () => pickedField(propertiesDeps) !== null,
     fieldProperties: () => void changeProperties(propertiesDeps),
     pickedMarks: () => viewer?.pickedCount ?? 0,
+    duplicatePicked: () => void duplicate(duplicateDeps),
     arrange: (how) => {
       // `false` is too few picked or nothing to move; the command is only
       // offered with enough picked, so what is left to say is the second.

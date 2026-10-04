@@ -1398,6 +1398,23 @@ impl Edits {
     /// note is longer than [`crate::textbox::MAX_NOTE_CHARS`]; the mark covers
     /// no area; or the page does not exist or was deleted.
     pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {
+        self.annotate_in(doc, want, made, 0)
+    }
+
+    /// [`annotate`](Edits::annotate) as part of a gesture: the marks made
+    /// under one `sweep` that is not nought are one step of undo, which is
+    /// what makes several copies of a duplication one edit.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`annotate`](Edits::annotate) refuses.
+    pub fn annotate_in(
+        &self,
+        doc: u32,
+        want: NewMark,
+        made: String,
+        sweep: u64,
+    ) -> Result<EditState, String> {
         // The reader is here: start the fingerprint if nothing has. See `wake`.
         self.wake(doc);
         if want.quads.len() % 4 != 0 {
@@ -1489,7 +1506,7 @@ impl Edits {
             }
         }
         model
-            .annotate(
+            .annotate_in(
                 Mark {
                     kind: want.kind,
                     page: PageId::from_raw(want.page),
@@ -1507,6 +1524,7 @@ impl Edits {
                     made,
                 },
                 want.note,
+                gesture(sweep),
             )
             .map_err(describe)?;
         Ok(reply(open))
@@ -6202,6 +6220,32 @@ mod tests {
         assert!(edits
             .annotate(7, a_field(page, "Fresh", Kind::Text), stamped())
             .is_ok());
+    }
+
+    #[test]
+    fn marks_made_under_one_gesture_are_one_step_of_undo() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        edits
+            .annotate(7, a_field(page, "First", Kind::Text), stamped())
+            .expect("placed alone");
+        for name in ["Copy 1", "Copy 2"] {
+            edits
+                .annotate_in(7, a_field(page, name, Kind::Text), stamped(), 41)
+                .expect("placed under the gesture");
+        }
+        assert_eq!(edits.state(7).expect("state").marks.len(), 3);
+        let state = edits.undo(7).expect("undone");
+        let left: Vec<&str> = state.marks.iter().map(|m| m.note.as_str()).collect();
+        assert_eq!(left, ["First"], "both copies go with one undo");
+        let state = edits.redo(7).expect("redone");
+        assert_eq!(state.marks.len(), 3);
+        // With no gesture each is its own step.
+        edits
+            .annotate_in(7, a_field(page, "Alone", Kind::Text), stamped(), 0)
+            .expect("placed");
+        assert_eq!(edits.undo(7).expect("undone").marks.len(), 3);
     }
 
     #[test]

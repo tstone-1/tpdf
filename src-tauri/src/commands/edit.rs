@@ -87,8 +87,14 @@ pub async fn annot_mark(
     edits: tauri::State<'_, edits::Edits>,
     doc: u32,
     mark: edits::NewMark,
+    sweep: Option<u64>,
 ) -> Result<edits::EditState, String> {
-    edits.annotate(doc, mark, save::pdf_date(std::time::SystemTime::now()))
+    edits.annotate_in(
+        doc,
+        mark,
+        save::pdf_date(std::time::SystemTime::now()),
+        sweep.unwrap_or(0),
+    )
 }
 
 /// Takes one mark off the page it is on.

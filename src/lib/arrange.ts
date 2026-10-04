@@ -149,6 +149,27 @@ export function arrange(quads: readonly Quad[], how: Arrangement, page: Size): Q
   }
 }
 
+/**
+ * The offset nearest the one asked for that keeps every rectangle on the
+ * page: what several marks dragged or nudged together move by. They keep
+ * their places against each other, so the one nearest an edge stops them all.
+ */
+export function together(
+  quads: readonly Quad[],
+  want: { dx: number; dy: number },
+  page: Size,
+): { dx: number; dy: number } {
+  if (quads.length === 0 || !Number.isFinite(want.dx) || !Number.isFinite(want.dy)) return { dx: 0, dy: 0 };
+  const left = Math.min(...quads.map((quad) => quad.left));
+  const top = Math.min(...quads.map((quad) => quad.top));
+  const right = Math.max(...quads.map((quad) => quad.right));
+  const bottom = Math.max(...quads.map((quad) => quad.bottom));
+  return {
+    dx: Math.min(Math.max(want.dx, -left), page.width - right),
+    dy: Math.min(Math.max(want.dy, -top), page.height - bottom),
+  };
+}
+
 /** Whether an arrangement moved this rectangle by more than rounding. */
 export function differs(a: Quad, b: Quad): boolean {
   const far = (x: number, y: number): boolean => Math.abs(x - y) > 0.01;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARRANGEMENTS, Picked, arrange, differs, needs } from "./arrange";
+import { ARRANGEMENTS, Picked, arrange, differs, needs, together } from "./arrange";
 import type { Quad } from "./markband";
 
 const q = (left: number, top: number, right: number, bottom: number): Quad => ({ left, top, right, bottom });
@@ -137,5 +137,35 @@ describe("Picked", () => {
     expect(picked.list()).toEqual([8, 6]);
     picked.clear();
     expect(picked.count).toBe(0);
+  });
+});
+
+describe("moving several together", () => {
+  const page = { width: 600, height: 800 };
+  const two: Quad[] = [
+    { left: 100, top: 100, right: 200, bottom: 120 },
+    { left: 40, top: 500, right: 70, bottom: 510 },
+  ];
+
+  it("moves by what was asked while every one stays on the page", () => {
+    expect(together(two, { dx: 10, dy: -20 }, page)).toEqual({ dx: 10, dy: -20 });
+    expect(together(two, { dx: 0, dy: 0 }, page)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("stops all of them where the one nearest an edge stops, on each of the four sides", () => {
+    // The second is 40 from the left; the first is 100 from the top, 400 from
+    // the right; the second 290 from the bottom.
+    expect(together(two, { dx: -90, dy: 0 }, page)).toEqual({ dx: -40, dy: 0 });
+    expect(together(two, { dx: 0, dy: -150 }, page)).toEqual({ dx: 0, dy: -100 });
+    expect(together(two, { dx: 900, dy: 0 }, page)).toEqual({ dx: 400, dy: 0 });
+    expect(together(two, { dx: 0, dy: 900 }, page)).toEqual({ dx: 0, dy: 290 });
+    // Exactly to the edge is allowed.
+    expect(together(two, { dx: -40, dy: 290 }, page)).toEqual({ dx: -40, dy: 290 });
+  });
+
+  it("moves nothing for no rectangles or an offset that is not a number", () => {
+    expect(together([], { dx: 5, dy: 5 }, page)).toEqual({ dx: 0, dy: 0 });
+    expect(together(two, { dx: Number.NaN, dy: 5 }, page)).toEqual({ dx: 0, dy: 0 });
+    expect(together(two, { dx: 5, dy: Number.POSITIVE_INFINITY }, page)).toEqual({ dx: 0, dy: 0 });
   });
 });

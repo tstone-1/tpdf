@@ -401,6 +401,8 @@ export interface AppActions {
   fieldProperties(): void;
   /** How many placed rectangles are picked for arranging. */
   pickedMarks(): number;
+  /** Makes a copy of each picked rectangle, beside it. */
+  duplicatePicked(): void;
   /** Arranges the picked rectangles: aligns, spaces or sizes them. */
   arrange(how: Arrangement): void;
   /** Draw or import a visual signature, then place it on a page. */
@@ -1220,6 +1222,14 @@ export function registerAppCommands(
     // "Centre" and "middle" are a presentation program's words for the two
     // directions, used because a reader who has aligned boxes anywhere has met
     // them there: centre is left to right, middle is top to bottom.
+    {
+      // A copy of each picked rectangle, a step down and to the right, picked
+      // in place of the originals so that the next drag moves the copies.
+      id: "edit.duplicate",
+      title: "Arrange: duplicate",
+      enabled: () => withDocument() && actions.pickedMarks() >= 1,
+      run: () => actions.duplicatePicked(),
+    },
     { id: "edit.alignLeft", title: "Arrange: align left", ...arranges("left") },
     { id: "edit.alignCenter", title: "Arrange: align centre", ...arranges("center") },
     { id: "edit.alignRight", title: "Arrange: align right", ...arranges("right") },

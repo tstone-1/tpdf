@@ -64,8 +64,12 @@ ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 # Raised from 235,000 on 2026-10-04 for the arrangement steps of the fields
 # phase: the family stood at 234,237 units and `fieldcheck.ts` with the
 # thirteen classifications took it to 237,001, none of it in a normal build.
+#
+# Raised from 245,000 the same day for the rest of the form work: the steps
+# of the fields phase that set properties, place radio buttons, duplicate and
+# nudge took the family from 237,001 to 245,777, none of it in a normal build.
 SHARE_CEILING = 40.0
-BYTES_CEILING = 245_000
+BYTES_CEILING = 255_000
 
 BASE64 = {c: i for i, c in enumerate(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

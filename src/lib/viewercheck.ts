@@ -3163,6 +3163,7 @@ async function appCommandChecks(
     fieldBorder: () => true,
     setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
     pickedMarks: () => viewer.pickedCount,
+    duplicatePicked: () => fired.push("duplicatePicked"),
     fieldPicked: () => false,
     fieldProperties: () => fired.push("fieldProperties"),
     arrange: (how) => fired.push(`arrange:${how}`),
@@ -4322,6 +4323,7 @@ async function appCommandChecks(
     "edit.formEditOn": "needs a document with a form; appcommands.test.ts and savedfields.test.ts",
     "edit.formEditOff": "needs the mode on; appcommands.test.ts",
     "edit.fieldProperties": "needs a field of the file picked; appcommands.test.ts, fieldprops.test.ts, and the fields phase",
+    "edit.duplicate": "needs marks picked; duplicate.test.ts, and the fields phase",
     "edit.alignLeft": "needs marks picked; viewerarrange.test.ts, and the fields phase",
     "edit.alignCenter": "needs marks picked; viewerarrange.test.ts, and the fields phase",
     "edit.alignRight": "needs marks picked; viewerarrange.test.ts, and the fields phase",
@@ -4599,6 +4601,7 @@ async function appCommandChecks(
     "edit.formEditOn",
     "edit.formEditOff",
     "edit.fieldProperties",
+    "edit.duplicate",
     // Nothing is picked.
     "edit.alignLeft",
     "edit.alignCenter",

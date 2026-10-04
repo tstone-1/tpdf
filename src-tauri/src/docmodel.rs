@@ -3268,6 +3268,22 @@ impl Doc {
     /// deleted. **The id is issued after those checks**, so a refused mark spends
     /// nothing; a document where every attempt failed has issued no ids at all.
     pub fn annotate(&mut self, mark: Mark, note: String) -> Result<MarkId, Refusal> {
+        self.annotate_in(mark, note, None)
+    }
+
+    /// [`annotate`](Self::annotate) as part of a gesture: several marks made
+    /// under one `sweep` are one step of undo, as several copies of a
+    /// duplication are.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`annotate`](Self::annotate) refuses.
+    pub fn annotate_in(
+        &mut self,
+        mark: Mark,
+        note: String,
+        sweep: Option<SweepId>,
+    ) -> Result<MarkId, Refusal> {
         // The biconditional [`Mark::strokes`] states, and the reason it is
         // checked rather than typed is written there. Before the emptiness
         // check below, because a mark whose shape and kind disagree has no
@@ -3344,11 +3360,14 @@ impl Doc {
         // routed through `apply` rather than mutating `now` directly, so that
         // the journal, the cursor, the snapshot rule and the redo-tail discard
         // are all the ones every other command gets.
-        self.apply(Command::Annotate {
-            mark: id,
-            page,
-            note,
-        })?;
+        self.apply_in(
+            Command::Annotate {
+                mark: id,
+                page,
+                note,
+            },
+            sweep,
+        )?;
         Ok(id)
     }
 

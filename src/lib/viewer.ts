@@ -73,7 +73,7 @@ import {
   scrimBands,
   strokeSwept,
 } from "./markband";
-import { Picked, arrange, differs, type Arrangement } from "./arrange";
+import { Picked, arrange, differs, together, type Arrangement } from "./arrange";
 import { PointerDrag, type DragPoint } from "./drag";
 
 /**
@@ -660,6 +660,12 @@ const LINE_HEIGHT = 40;
 
 /** CSS pixels an arrow key scrolls. */
 const ARROW_STEP = 60;
+/** Which way each arrow key moves picked rectangles, as `[across, down]`. */
+const NUDGES = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as const;
+/** How far an arrow key with Shift moves them, in points. */
+export const NUDGE_FAR = 10;
+/** How far down and to the right of a mark its copy is placed, in points. */
+const COPY_STEP = 12;
 
 /** Fraction of a screen that Page Up/Down moves, leaving context behind. */
 const PAGE_OVERLAP = 0.9;
@@ -1378,6 +1384,11 @@ export class Viewer {
      * difference: `dx` and `dy` are added to the corner and not to the mark.
      */
     grow: Quad | null;
+    /**
+     * The other picked marks, which a drag of one of several moves with it.
+     * Empty for a mark dragged alone and for a resize.
+     */
+    others: readonly number[];
   } | null = null;
 
   private readonly moveDrag: PointerDrag;
@@ -1624,9 +1635,14 @@ export class Viewer {
         // owns it, which is a different command from moving it.
         const now = this.pointOn(live.slot, at);
         const want = { dx: now.x - live.from.x, dy: now.y - live.from.y };
+        // Several dragged together stop together: each one's clamp is asked
+        // of what the ones before it left, and a clamp only ever shortens.
         const bound = live.grow
           ? this.clampGrow(live.id, live.slot, live.grow, want)
-          : this.clampMove(live.id, live.slot, want);
+          : live.others.reduce(
+            (so, other) => this.clampMove(other, live.slot, so),
+            this.clampMove(live.id, live.slot, want),
+          );
         if (bound.dx === live.dx && bound.dy === live.dy) return;
         live.dx = bound.dx;
         live.dy = bound.dy;
@@ -1648,6 +1664,12 @@ export class Viewer {
           // mapping the rectangle is what `fileRectOn` already does correctly.
           const rect = { ...live.grow, right: live.grow.right + live.dx, bottom: live.grow.bottom + live.dy };
           this.opts.onMarkResized?.(live.id, this.fileRectOn(live.slot, rect));
+          return;
+        }
+        // Several at once are one gesture, reported as an arrangement is:
+        // each mark's new rectangle, under one name, so one undo puts all back.
+        if (live.others.length > 0) {
+          this.movePicked([live.id, ...live.others], live.slot, live.dx, live.dy);
           return;
         }
         // Into the model's space at the last possible moment. Everything above
@@ -3158,6 +3180,13 @@ export class Viewer {
       this.goToStart();
     } else if (matches("nav.lastPage", event)) {
       this.goToEnd();
+    } else if (this.arranging.count > 0 && !event.metaKey && !event.ctrlKey && !event.altKey && event.key in NUDGES) {
+      // With rectangles picked the arrows move them: a point at a time, or
+      // ten with Shift. Taken even at the page's edge, where nothing moves,
+      // so the page does not scroll out from under a reader lining things up.
+      const [x, y] = NUDGES[event.key as keyof typeof NUDGES];
+      const step = event.shiftKey ? NUDGE_FAR : 1;
+      this.nudgePicked(x * step, y * step);
     } else if (event.key === "ArrowDown") {
       this.scrollBy(ARROW_STEP);
     } else if (event.key === "ArrowUp") {
@@ -3904,6 +3933,71 @@ export class Viewer {
     this.pickedChanged();
   }
 
+  /** The picked marks that are single rectangles on one page, as they are laid out. */
+  private pickedPlaced(ids: readonly number[] = this.arranging.list()): { slot: number; placed: { id: number; quad: Quad }[] } | null {
+    const placed: { id: number; slot: number; quad: Quad }[] = [];
+    for (const id of ids) {
+      const mark = this.markById(id);
+      const view = mark ? this.viewQuadsOf(mark) : null;
+      const quad = view?.quads[0];
+      if (view && quad && view.quads.length === 1) placed.push({ id, slot: view.slot, quad });
+    }
+    const slot = placed[0]?.slot;
+    if (slot === undefined || placed.some((one) => one.slot !== slot)) return null;
+    return { slot, placed };
+  }
+
+  /**
+   * Moves these marks by one offset, as far as the page lets all of them go,
+   * and reports the move as one gesture. `false` when nothing moved.
+   */
+  private movePicked(ids: readonly number[], slot: number, dx: number, dy: number): boolean {
+    const found = this.pickedPlaced(ids);
+    if (!found || found.slot !== slot) return false;
+    const by = together(found.placed.map((one) => one.quad), { dx, dy }, this.laidSize(slot));
+    if (by.dx === 0 && by.dy === 0) return false;
+    const moves = found.placed.map((one) => ({
+      mark: one.id,
+      rect: this.fileRectOn(slot, {
+        left: one.quad.left + by.dx, top: one.quad.top + by.dy,
+        right: one.quad.right + by.dx, bottom: one.quad.bottom + by.dy,
+      }),
+    }));
+    this.opts.onMarksArranged?.(moves, ++this.sweeps);
+    return true;
+  }
+
+  /**
+   * Moves the picked marks by an offset in points, as the arrow keys do.
+   * `false` with none picked or when the page's edge leaves no room.
+   */
+  nudgePicked(dx: number, dy: number): boolean {
+    const found = this.pickedPlaced();
+    return found ? this.movePicked(found.placed.map((one) => one.id), found.slot, dx, dy) : false;
+  }
+
+  /**
+   * Where a copy of each picked mark goes: a step down and to the right of
+   * the mark it copies, all by the same step, as far as the page lets them.
+   * With the name of the gesture the copies are made under, so that one undo
+   * takes all of them back. `null` with none picked.
+   */
+  copiesOfPicked(): { rects: { mark: number; rect: [number, number, number, number] }[]; sweep: number } | null {
+    const found = this.pickedPlaced();
+    if (!found) return null;
+    const by = together(found.placed.map((one) => one.quad), { dx: COPY_STEP, dy: COPY_STEP }, this.laidSize(found.slot));
+    return {
+      sweep: ++this.sweeps,
+      rects: found.placed.map((one) => ({
+        mark: one.id,
+        rect: this.fileRectOn(found.slot, {
+          left: one.quad.left + by.dx, top: one.quad.top + by.dy,
+          right: one.quad.right + by.dx, bottom: one.quad.bottom + by.dy,
+        }),
+      })),
+    };
+  }
+
   /**
    * Arranges the picked marks and reports where each one that moved now is.
    *
@@ -3914,15 +4008,9 @@ export class Viewer {
    * already in place.
    */
   arrangePicked(how: Arrangement): boolean {
-    const placed: { id: number; slot: number; quad: Quad }[] = [];
-    for (const id of this.arranging.list()) {
-      const mark = this.markById(id);
-      const view = mark ? this.viewQuadsOf(mark) : null;
-      const quad = view?.quads[0];
-      if (view && quad && view.quads.length === 1) placed.push({ id, slot: view.slot, quad });
-    }
-    const slot = placed[0]?.slot;
-    if (slot === undefined || placed.some((one) => one.slot !== slot)) return false;
+    const found = this.pickedPlaced();
+    if (!found) return false;
+    const { slot, placed } = found;
     const now = arrange(placed.map((one) => one.quad), how, this.laidSize(slot));
     const moves = placed.flatMap((one, at) => {
       const to = now[at];
@@ -5427,6 +5515,9 @@ export class Viewer {
           const corner =
             isResizable(own.kind) && placed.quads.length === 1 && whole !== undefined
               && onResizeCorner(whole, from, RESIZE_REACH_PX / this.zoom);
+          // One of several picked marks, pressed away from its corner, takes
+          // the others with it.
+          const several = !corner && this.arranging.count > 1 && this.arranging.has(own.id);
           this.moving = {
             id: own.id,
             slot: placed.slot,
@@ -5434,6 +5525,7 @@ export class Viewer {
             dx: 0,
             dy: 0,
             grow: corner && whole ? { ...whole } : null,
+            others: several ? this.arranging.list().filter((id) => id !== own.id) : [],
           };
           // Refused only if a drag is somehow already live, in which case the
           // press is not ours to take --- and `moving` must not be left set, or
@@ -6178,7 +6270,8 @@ export class Viewer {
       const live = this.moving?.id === mark.id ? this.moving : null;
       // A corner drag changes the size and leaves the place: the same two
       // numbers, added to the rectangle's far sides and not to all of it.
-      const shift = live && !live.grow ? live : null;
+      // A mark dragged along with the one under the hand is shifted as it is.
+      const shift = live && !live.grow ? live : this.moving?.others.includes(mark.id) ? this.moving : null;
       const gx = live?.grow ? live.dx * this.zoom * dpr : 0;
       const gy = live?.grow ? live.dy * this.zoom * dpr : 0;
       const ox = shift ? shift.dx * this.zoom * dpr : 0;

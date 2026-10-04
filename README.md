@@ -344,6 +344,17 @@ measured the Windows render constants come out 1.5–1.8x worse.
   width* gives every one the first one's width. Spacing needs three; the two outer ones
   stay and the rest are placed with equal gaps. One undo puts the whole arrangement back.
   <!-- built: edit.alignLeft edit.alignCenter edit.alignRight edit.alignTop edit.alignMiddle edit.alignBottom edit.distributeAcross edit.distributeDown edit.sameWidth edit.sameHeight edit.sameSize edit.centerOnPage edit.middleOnPage -->
+- **Move several at once, nudge and duplicate.** Drag one of several picked rectangles
+  and the others come with it, each keeping its place against the rest; the one nearest
+  the page's edge stops them all. With one or more picked, the arrow keys move them a
+  point at a time and ten points with Shift (press with Shift to pick without opening the
+  name box, which otherwise takes the keys). *Arrange: duplicate* makes a copy of each
+  picked form field, box or ellipse a step down and to the right and picks the copies,
+  so the next drag places them. A copied field has the size and properties of the
+  original and the next free name of its kind; a copied radio button stays in its group
+  with the next free value. A field already in the document is copied as a new field.
+  Each of the three is one step of undo.
+  <!-- built: edit.duplicate -->
 - **Choose a colour** for a mark — seven of them, the default among them. Chosen with a
   note open it recolours that mark; chosen with none open it sets what the next one will
   be, which is the commoner of the two and is why it is offered either way.

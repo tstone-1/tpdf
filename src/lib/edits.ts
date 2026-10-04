@@ -489,6 +489,8 @@ export class Edits {
     width: number = INK_WIDTH,
     image?: import("./signature").SignatureImage,
     field?: import("./pages").PlacedField,
+    /** The gesture this mark is part of: marks made under one are one undo. Nought for one of its own. */
+    sweep = 0,
   ): Promise<EditState> {
     // A page the model has never mentioned, or one that has gone since the
     // gesture started. Nothing is sent, which is what the slot lookup used to
@@ -497,6 +499,7 @@ export class Edits {
     return this.adopt(
       await call("annot_mark", {
         doc: this.doc,
+        ...(sweep ? { sweep } : {}),
         mark: {
           kind,
           page,

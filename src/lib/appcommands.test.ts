@@ -174,6 +174,7 @@ function harness(
     fieldBorder: () => framing,
     setFieldBorder: (border) => { framing = border; fired.push(`setFieldBorder:${border}`); },
     pickedMarks: () => update.picked ?? 0,
+    duplicatePicked: () => fired.push("duplicatePicked"),
     fieldPicked: () => update.fieldPicked ?? false,
     fieldProperties: () => fired.push("fieldProperties"),
     arrange: (how) => fired.push(`arrange:${how}`),
@@ -676,6 +677,18 @@ describe("the commands a document is needed for", () => {
     expect(fired.at(-1)).toBe("setFormEditing:true");
     registry.run("edit.formEditOff");
     expect(fired.at(-1)).toBe("setFormEditing:false");
+  });
+
+  it("offers duplicating while a rectangle is picked", () => {
+    const offered = (open: boolean, picked: number) =>
+      harness(open, { picked }).registry.all().find((c) => c.id === "edit.duplicate")?.enabled?.();
+    expect(offered(true, 1)).toBe(true);
+    expect(offered(true, 3)).toBe(true);
+    expect(offered(true, 0)).toBe(false);
+    expect(offered(false, 1)).toBe(false);
+    const { registry, fired } = harness(true, { picked: 1 });
+    registry.run("edit.duplicate");
+    expect(fired.at(-1)).toBe("duplicatePicked");
   });
 
   it("offers a field's properties while one field is picked", () => {
@@ -1704,6 +1717,7 @@ describe("the window shortcuts for editing", () => {
       fieldBorder: () => true,
       setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
       pickedMarks: () => 0,
+      duplicatePicked: () => fired.push("duplicatePicked"),
       fieldPicked: () => false,
       fieldProperties: () => fired.push("fieldProperties"),
       arrange: (how) => fired.push(`arrange:${how}`),

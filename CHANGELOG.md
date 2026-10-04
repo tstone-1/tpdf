@@ -57,6 +57,13 @@ have the binary.)
   its author gave it. A removed field leaves the file, its answer with it. A signature
   field is not changed, and a field on a page the document turns can be renamed and
   removed and not moved.
+- **Several picked rectangles move together, the arrow keys nudge, and fields can be
+  duplicated.** Dragging one of several picked fields or boxes moves all of them, and
+  the arrow keys move what is picked by a point, or by ten with Shift. *Arrange:
+  duplicate* copies each picked form field, box or ellipse beside itself and picks the
+  copies; a copied field keeps its size and properties and takes the next free name,
+  and a copied radio button stays in its group. Each is one step of undo and nothing
+  leaves the page.
 - **Placed fields and boxes can be aligned, spaced and sized against each other.** Press
   a form field, a box, an ellipse or a text box to pick it, and press others with Shift
   held to pick several on the same page. A new *Arrange* menu, and the same commands in

@@ -883,6 +883,8 @@ MUTATIONS = [
     Mutation("field change: plan a change that came back to nothing", "src/edits.rs", "        .filter(|(_, _, change)| {\n            change.removed\n                || change.rect.is_some()\n                || change.name.is_some()\n                || !change.props.is_empty()\n        })\n", "", "a_change_to_a_field_of_the_file_builds_on_the_one_before_and_undo_takes_it_back"),
     Mutation("field change: append a plan that changes a field", "src/edits.rs", "            && self.field_edits.is_empty()\n", "", "a_change_to_a_field_of_the_file_builds_on_the_one_before_and_undo_takes_it_back"),
     Mutation("field change: plan it and not make it", "src/save.rs", "    crate::formedit::apply(&mut doc, &plan.field_edits)?;\n", "", "a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leaves_the_file"),
+    # Marks made under one gesture, added 2026-10-04 for duplicating.
+    Mutation("mark gesture: make each mark a step of its own", "src/edits.rs", "                gesture(sweep),\n            )\n            .map_err(describe)?;\n        Ok(reply(open))", "                None,\n            )\n            .map_err(describe)?;\n        Ok(reply(open))", "marks_made_under_one_gesture_are_one_step_of_undo"),
     # Radio button groups, added 2026-10-04.
     Mutation("radio: take a button with no value or two", "src/formfields.rs", "        if options.len() != 1 {", "        if false {", "radio_buttons_are_held_to_one_value_each_and_a_name_only_a_group_shares"),
     Mutation("radio: take Off as a button's value", "src/formfields.rs", "        if options[0] == \"Off\" {", "        if false {", "radio_buttons_are_held_to_one_value_each_and_a_name_only_a_group_shares"),
@@ -4337,8 +4339,8 @@ MUTATIONS = [
         # half a test written against a delegating method cannot see.
         "hash: do not start the fingerprint on an annotation",
         "src/edits.rs",
-        "    pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {\n        // The reader is here: start the fingerprint if nothing has. See `wake`.\n        self.wake(doc);",
-        "    pub fn annotate(&self, doc: u32, want: NewMark, made: String) -> Result<EditState, String> {",
+        "        sweep: u64,\n    ) -> Result<EditState, String> {\n        // The reader is here: start the fingerprint if nothing has. See `wake`.\n        self.wake(doc);\n        if want.quads.len() % 4 != 0 {",
+        "        sweep: u64,\n    ) -> Result<EditState, String> {\n        if want.quads.len() % 4 != 0 {",
         "every_edit_starts_the_hash",
     ),
     Mutation(

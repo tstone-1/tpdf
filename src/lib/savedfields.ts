@@ -121,6 +121,14 @@ export function asMarks(form: Form, state: Pick<EditState, "fields" | "pages">):
 }
 
 /** The widget an id names, with the page it is on, or `null` for none. */
+export function savedField(
+  form: Form,
+  state: Pick<EditState, "fields" | "pages">,
+  id: number,
+): { widget: FormWidget; page: PageId } | null {
+  return named(form, state, id);
+}
+
 function named(
   form: Form,
   state: Pick<EditState, "fields" | "pages">,

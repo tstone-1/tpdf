@@ -3602,6 +3602,35 @@ fit). A default value, which matters only to a form that resets, and tpdf has no
 Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
 
+#### Moving several, nudging and duplicating — 2026-10-04
+
+What making a form of twenty fields needed after it could be made at all.
+
+**One piece of arithmetic.** `together` in `arrange.ts` is the offset nearest the one
+asked for that keeps every rectangle on the page. A drag of several, a nudge and the
+step a copy is placed at all use it, so several marks always keep their places against
+each other and stop together.
+
+**Dragging several.** A press on one of several picked marks already kept the pick. The
+drag now carries the others (`moving.others`), paints them shifted, and on release
+reports every mark's new rectangle through `onMarksArranged`, the path an arrangement
+takes: one gesture, one undo, placed marks and fields of the file alike. One mark
+dragged alone is still a move, as before.
+
+**Nudging.** The arrow keys, in the viewer's key handler, while something is picked:
+one point, ten with Shift. They are taken at the page's edge too, so the page does not
+scroll away from a reader lining things up. A plain press opens the name box, which has
+the keyboard, so nudging follows a press with Shift or a closed box.
+
+**Duplicating.** `duplicate.ts` decides what each copy is and the model makes it.
+`annot_mark` takes an optional gesture (`Doc::annotate_in`), which is what makes several
+copies one undo. Names come from `placing`, asked again before each copy so two copies
+of one field get two names. A field of the file is copied as a placed field built from
+the scanned widget and the properties a reader has changed.
+
+**Not built.** A key for duplicate; copying a text box, a list box or a dropdown that
+takes typed text; pasting onto another page; snapping to other fields while dragging.
+
 #### Radio button groups — 2026-10-04
 
 The one common kind tpdf could fill and not make.
