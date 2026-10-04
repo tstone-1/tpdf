@@ -124,6 +124,10 @@ describe("picking marks to arrange", () => {
     await settle();
     press(viewer, 1, true);
     expect(viewer.markOpen).toBe(-1);
+    // Nor do two of them one soon after the other: a press with Shift is
+    // never the first or the second of the pair that opens a box.
+    press(viewer, 1, true, 100);
+    expect(viewer.markOpen).toBe(-1);
     // The control: two presses without Shift, one soon after the other, open it.
     press(viewer, 1);
     press(viewer, 1, false, 200);

@@ -6508,6 +6508,24 @@ privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
 
+**26.10.4 verification, macOS arm64, 2026-10-04:** all 29 gates passed on the release tree
+(2,706 Rust tests with ten documented ignored, 2,270 frontend tests), and `check_windows.py`
+type-checked the Windows tree. Every Rust and frontend mutation selected `--since v26.10.3`
+ran and was caught: 981 Rust and 495 frontend. One frontend mutation had been blunted by the
+change that made one press pick a rectangle and a second open it (a press with Shift no
+longer opens a note either way, so the test named for it could not see the `return` go);
+the test was sharpened and the mutation is caught again. The window mutations that
+selection names were not run. Before the push the unit and command-line suites passed on
+Windows 11 through `scripts/run_on_windows.py` at `db5ed995` (2,730 unit tests, 483
+command-line checks, one skipped by design), and CI passed there on both platforms. On the
+checks build, at the commits the features landed in: `tabs_check.py --phase fields` 54/54
+with the driver's read and fill of the saved file, `viewer_check.py` 328/328 on
+`text-heavy.pdf` and 233/233 on `vector-heavy.pdf`; the forms and tabs phases were last run
+earlier the same day, before the properties panel. `scripts/made_form_check.py` passed in
+both directions against PDFKit. On the normal 26.10.4 bundle with the development engine
+hidden: `tpdf-cli --version`, `verify` and `fields`, `menu_check.py` (9 menus) and
+`save_check.py`. Not done: Acrobat, which needs a person, and step 12.
+
 **Window checks after the form work, macOS arm64, 2026-10-04, unreleased tree:** on the
 checks build, `tabs_check.py --phase fields` 36/36 with the driver's read of the saved file,
 `--phase forms` 18/18, `--phase tabs` 21/21, `viewer_check.py` 327/327 on `text-heavy.pdf`

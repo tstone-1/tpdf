@@ -479,28 +479,25 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.10.3.** A scanned document can be made searchable:
-          *Recognise text and save as* and `tpdf ocr` write a copy with the
-          recognised words behind the page. *Save a smaller copy* and
-          `tpdf compress` write a smaller file and say first what it would
-          come to. *New document from pictures* and `tpdf images` make a PDF
-          from image files. A copy can be saved with a password or without
-          its password, also with `tpdf protect` and `tpdf unprotect`.
+          **New in 26.10.4.** Forms can be made in full. Besides text
+          fields and checkboxes there are dropdowns and groups of radio
+          buttons. A field's tooltip, required, read-only, most characters,
+          alignment and choices are set in a properties panel, before or
+          after its first save. The fields a document already has can be
+          moved, resized, renamed and removed.
 
-          Form fields can be added: a text field, a text field on several
-          lines or a checkbox, dragged out in the window or listed for
-          `tpdf form`. A placed rectangle can be resized by its corner. A
-          launch can reopen every tab of the last session when you turn
-          that on.
+          Placed fields and boxes can be picked, several with Shift, and
+          then aligned, spaced evenly, given one size, dragged together,
+          moved with the arrow keys and duplicated. One press picks a
+          field and a second opens its name. Saving a form lists its
+          fields in reading order, so the Tab key moves through them the
+          way they are read.
 
-          Redaction takes more. A drawing inside a region is removed, and a
-          straight line or a rectangle that runs past the region is cut at
-          its edge. Pictures and drawings inside a reusable block are taken
-          like those on the page. A picture the document draws on several
-          pages is taken off the page you marked. Redaction is no longer
-          refused on documents that keep a page's resources in a separate
-          object, and on Windows the read-back no longer reports "not
-          verified" when nothing was wrong.
+          Fixed: a form filled in Preview read as partly unanswered, with a
+          ticked checkbox shown empty and a group of radio buttons
+          unreadable. A field's text is now drawn where the form aligns
+          it. Redaction and every other rewrite were refused on documents
+          that keep a font's character map uncompressed.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX

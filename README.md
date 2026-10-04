@@ -89,6 +89,8 @@ back and reported either way. What is *not* built is the list further down, and
 general text editing is the one that matters. The editor supports a bounded set of
 text layouts and fonts, with adjustable text boxes, wrapping, and new characters set in an
 installed copy of the document's font or in bundled Noto.
+Make a form: place text fields, checkboxes, dropdowns and radio buttons, set their
+properties, arrange them, and change the fields a document already has.
 Fill text fields, checkboxes, radio groups,
 dropdowns and lists, or draw and import a visual signature to place on a page. Sign a
 document with a certificate from your macOS keychain or Windows certificate store, see
