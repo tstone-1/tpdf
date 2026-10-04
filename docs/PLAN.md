@@ -3602,6 +3602,32 @@ fit). A default value, which matters only to a form that resets, and tpdf has no
 Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
 
+#### Tab order — 2026-10-04
+
+The one remaining defect of a form made here that its recipient sees: Tab went through
+the fields in the order they were placed.
+
+**What decides the order.** A reader with no instruction follows the page's `/Annots`;
+`/Tabs /R` on the page asks for rows instead (§12.5.1). tpdf's own fill layer follows
+the scan, which follows `/Annots`. So `taborder::sort` does both: it reorders the
+widgets inside the list, each taking a slot a widget had so that comments and links
+keep theirs, and sets `/Tabs /R`. Rows are worked out as the page is displayed; a
+widget is in a row when its middle is above the bottom of the row's first.
+
+**When.** The save looks at each page before any field is added: how many widgets it
+lists and whether they are in reading order. After the marks are written, a page that
+gained a widget and was in order is sorted, so a form made here stays right as it
+grows. A page in some other order is taken to be so on purpose and is left, with the
+new field last. `Command::TabOrder` (a flag in the journal, `Plan::tab_order`) asks for
+every page, for a form from elsewhere or one whose fields were moved.
+
+**Found on the way.** `Plan::is_identity` did not count a change to a field of the
+file, so printing after moving a saved field would have printed the file as it was.
+It counts `field_edits` and `tab_order` now.
+
+**Not built.** An order other than rows (columns, or one chosen by hand); reordering
+after a field of the file is only moved, with no field added and no command.
+
 #### Moving several, nudging and duplicating — 2026-10-04
 
 What making a form of twenty fields needed after it could be made at all.

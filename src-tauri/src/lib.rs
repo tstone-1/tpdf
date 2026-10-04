@@ -61,6 +61,7 @@ pub mod ocr_vision;
 #[cfg(windows)]
 pub mod ocr_windows;
 pub mod ocr_worker;
+pub mod taborder;
 pub mod textedit;
 pub mod textview;
 // The OS opener, and the one place a `/URI` string is judged. Separate modules
@@ -921,6 +922,7 @@ pub fn run() {
             annot_arrange,
             form_field_edit,
             annot_field_props,
+            form_tab_order,
             annot_resize_signature,
             signature_store,
             edit_undo,
@@ -1360,6 +1362,7 @@ mod tests {
     fn plan_opened_as(source: &std::path::Path) -> crate::edits::Plan {
         crate::edits::Plan {
             field_edits: Vec::new(),
+            tab_order: false,
             baseline: 1,
             opened_as: Some(
                 crate::fingerprint::Fingerprint::of(source).expect("fingerprint the scratch file"),

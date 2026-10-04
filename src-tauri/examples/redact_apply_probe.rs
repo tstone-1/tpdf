@@ -945,6 +945,7 @@ fn form_plan(
 ) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         // Taken from the document rather than written down. It was a literal 2
         // until `form-xobject.pdf` gained a third page, and the save then
@@ -1022,6 +1023,7 @@ fn show_operators(doc: &mut lopdf::Document, page: lopdf::ObjectId) -> usize {
 fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         baseline: pages,
         opened_as: None,
         pages: (0..pages)

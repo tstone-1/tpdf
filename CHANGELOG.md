@@ -57,6 +57,12 @@ have the binary.)
   its author gave it. A removed field leaves the file, its answer with it. A signature
   field is not changed, and a field on a page the document turns can be renamed and
   removed and not moved.
+- **Tab moves through a form in reading order.** A form made in tpdf was tabbed through
+  in the order its fields were placed, so a field added later was last wherever it
+  sat. A save that adds a field now lists that page's fields in rows from the top, each
+  from the left, and tells other readers the same (`/Tabs /R`). A page whose fields
+  somebody else ordered differently is left as it is, unless *Form fields: tab through
+  them in reading order* asks for every page.
 - **Several picked rectangles move together, the arrow keys nudge, and fields can be
   duplicated.** Dragging one of several picked fields or boxes moves all of them, and
   the arrow keys move what is picked by a point, or by ten with Shift. *Arrange:

@@ -143,7 +143,7 @@
     type Session,
   } from "./lib/session";
   import {
-    placing, readFieldBorder, writeFieldBorder,
+    canOrderTabs, placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
   import { pickedNotice } from "./lib/arrange";
   import {
@@ -840,6 +840,13 @@
     },
     fieldPicked: () => pickedField(propertiesDeps) !== null,
     fieldProperties: () => void changeProperties(propertiesDeps),
+    canOrderTabs: () => canOrderTabs(edits?.state ?? null, scannedForm),
+    orderTabs: () => {
+      void applyEdit((e) => e.orderTabs()).then(() => {
+        notice = "Saving will put the form's fields in reading order for the Tab key.";
+        refreshMenu();
+      });
+    },
     pickedMarks: () => viewer?.pickedCount ?? 0,
     duplicatePicked: () => void duplicate(duplicateDeps),
     arrange: (how) => {

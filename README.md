@@ -344,6 +344,13 @@ measured the Windows render constants come out 1.5–1.8x worse.
   width* gives every one the first one's width. Spacing needs three; the two outer ones
   stay and the rest are placed with equal gaps. One undo puts the whole arrangement back.
   <!-- built: edit.alignLeft edit.alignCenter edit.alignRight edit.alignTop edit.alignMiddle edit.alignBottom edit.distributeAcross edit.distributeDown edit.sameWidth edit.sameHeight edit.sameSize edit.centerOnPage edit.middleOnPage -->
+- **Tab order.** Saving a form you made lists each page's fields in reading order, rows
+  from the top and each row from the left, so the Tab key moves through them the way
+  they are read, in tpdf and in other readers. A form from elsewhere keeps the order
+  its author gave it, also when you add a field to it. *Form fields: tab through them
+  in reading order* puts every page of the open document in that order at the next
+  save, which is what a form needs after its fields were moved about.
+  <!-- built: edit.tabOrder -->
 - **Move several at once, nudge and duplicate.** Drag one of several picked rectangles
   and the others come with it, each keeping its place against the rest; the one nearest
   the page's edge stops them all. With one or more picked, the arrow keys move them a

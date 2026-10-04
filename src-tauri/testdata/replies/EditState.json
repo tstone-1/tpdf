@@ -249,6 +249,7 @@
     }
   ],
   "dirty": true,
+  "tab_order": true,
   "sources": [
     {
       "source": 1,

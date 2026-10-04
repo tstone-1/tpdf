@@ -110,6 +110,18 @@ export function writeFieldBorder(
 }
 
 /**
+ * Whether the tab order can be asked for: there is a field to order, the
+ * file's or one placed since, and the order is not asked for already.
+ */
+export function canOrderTabs(
+  state: { tab_order?: boolean; marks: readonly Pick<MarkView, "kind">[] } | null,
+  form: Form | null,
+): boolean {
+  if (!state || state.tab_order) return false;
+  return (form?.widgets.length ?? 0) > 0 || state.marks.some((mark) => mark.kind === "field");
+}
+
+/**
  * The name a reader typed for a group of radio buttons, or why it cannot be
  * one. The rules are `formfields.rs`'s for any field's name.
  */

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Form, FormWidget } from "./forms";
 import {
-  nextFieldName, parseChoices, parseGroup, placing, readFieldBorder, takenNames, writeFieldBorder,
+  canOrderTabs, nextFieldName, parseChoices, parseGroup, placing, readFieldBorder, takenNames, writeFieldBorder,
 } from "./fieldnames";
 import { pageId, type MarkView, type PlacedField } from "./pages";
 
@@ -180,5 +180,24 @@ describe("the field a drag places", () => {
       .toEqual(["Choice 4"]);
     const text: Form = { widgets: [{ ...saved("Pay", []), control: { kind: "text" } }] };
     expect(placing(armed("radio", { group: "Pay" }), true, [], [], text).field.options).toEqual(["Choice 1"]);
+  });
+});
+
+describe("whether the tab order can be asked for", () => {
+  const widget = { name: "Name" } as FormWidget;
+  const field = { kind: "field" } as const;
+  const box = { kind: "square" } as const;
+
+  it("needs a field: one of the file's, or one placed since", () => {
+    expect(canOrderTabs({ marks: [] }, { widgets: [widget] })).toBe(true);
+    expect(canOrderTabs({ marks: [box, field] }, null)).toBe(true);
+    expect(canOrderTabs({ marks: [box] }, { widgets: [] })).toBe(false);
+    expect(canOrderTabs({ marks: [] }, null)).toBe(false);
+  });
+
+  it("is not offered again once asked for, nor with no document", () => {
+    expect(canOrderTabs({ tab_order: true, marks: [field] }, { widgets: [widget] })).toBe(false);
+    expect(canOrderTabs({ tab_order: false, marks: [field] }, null)).toBe(true);
+    expect(canOrderTabs(null, { widgets: [widget] })).toBe(false);
   });
 });

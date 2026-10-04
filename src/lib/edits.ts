@@ -169,6 +169,8 @@ export interface EditState {
   can_redo: boolean;
   /** Whether anything differs from the file on disk. */
   dirty: boolean;
+  /** Whether the next save puts the form's fields in reading order for the Tab key. */
+  tab_order?: boolean;
   /**
    * The render handle each other file's pages are drawn from.
    *
@@ -568,6 +570,11 @@ export class Edits {
    */
   async refield(targets: import("./savedfields").FieldTarget[], sweep = 0): Promise<EditState> {
     return this.adopt(await call("form_field_edit", { doc: this.doc, targets, sweep }));
+  }
+
+  /** Asks for the form's fields to be tabbed through in reading order, written by the next save. */
+  async orderTabs(): Promise<EditState> {
+    return this.adopt(await call("form_tab_order", { doc: this.doc }));
   }
 
   /** Changes the properties of a form field placed in this session. */

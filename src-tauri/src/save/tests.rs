@@ -147,6 +147,7 @@ fn plan_opened_as(turns: &[u8], source: &Path) -> Plan {
 fn plan_of(turns: &[u8]) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: turns.len() as u32,
         pages: turns
@@ -180,6 +181,7 @@ fn plan_of(turns: &[u8]) -> Plan {
 fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline,
         pages: kept
@@ -3594,6 +3596,7 @@ fn plan_with_mark(quads: Vec<crate::docmodel::Quad>) -> Plan {
 fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -3692,6 +3695,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
 
     let plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -7166,6 +7170,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
 
     let plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: 2,
         pages: vec![
@@ -7235,6 +7240,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
 
     let plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: 3,
         pages: (0..3)
@@ -7305,6 +7311,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
     // nothing failing, because the file it printed is a perfectly good file.
     let plain = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -7348,6 +7355,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
 fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     let mut plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -11325,6 +11333,162 @@ fn field_plan(name: &str, kind: crate::formfields::Kind, quad: crate::docmodel::
     mark.note = name.to_string();
     plan.marks.push(mark);
     plan
+}
+
+#[test]
+fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwise() {
+    use crate::formfields::Kind;
+    let at = |left: f32, top: f32| crate::docmodel::Quad {
+        left,
+        top,
+        right: left + 100.0,
+        bottom: top + 20.0,
+    };
+    let field = |name: &str, quad| field_plan(name, Kind::Text, quad).marks.remove(0);
+    // The names of the first page's widgets in the order it lists them, and
+    // what it says of tabbing.
+    let listed = |bytes: &[u8]| {
+        let doc = Document::load_mem(bytes).expect("parses");
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let dict = doc.get_dictionary(page).unwrap();
+        let annots = doc
+            .dereference(dict.get(b"Annots").unwrap())
+            .unwrap()
+            .1
+            .as_array()
+            .unwrap()
+            .clone();
+        let names: Vec<String> = annots
+            .iter()
+            .map(|entry| {
+                let raw = doc
+                    .get_dictionary(entry.as_reference().unwrap())
+                    .unwrap()
+                    .get(b"T")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_vec();
+                crate::annots::decode_text_string(&raw)
+            })
+            .collect();
+        let tabs = dict
+            .get(b"Tabs")
+            .ok()
+            .map(|t| t.as_name().unwrap().to_vec());
+        (names, tabs)
+    };
+    // Placed bottom first, right before left: written top first, left first.
+    let mut plan = plan_of(&[0, 0]);
+    plan.marks = vec![
+        field("Third", at(20.0, 90.0)),
+        field("Second", at(150.0, 30.0)),
+        field("First", at(20.0, 30.0)),
+    ];
+    let made = rewrite_update(&two_blank_pages(), &plan, Job::Save, None).expect("rewritten");
+    assert_eq!(
+        listed(&made),
+        (
+            vec!["First".to_string(), "Second".into(), "Third".into()],
+            Some(b"R".to_vec())
+        )
+    );
+    // One more, added above the others, takes its place among them.
+    let mut more = plan_of(&[0, 0]);
+    more.marks = vec![field("Zeroth", at(20.0, 5.0))];
+    let grown = rewrite_update(&made, &more, Job::Save, None).expect("rewritten");
+    assert_eq!(listed(&grown).0, ["Zeroth", "First", "Second", "Third"]);
+
+    // A file whose fields are listed in another order on purpose: built by
+    // putting the list back to front and taking the instruction off.
+    let mut doc = Document::load_mem(&made).expect("parses");
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let held = doc
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .clone();
+    match held {
+        Object::Reference(id) => doc
+            .get_object_mut(id)
+            .unwrap()
+            .as_array_mut()
+            .unwrap()
+            .reverse(),
+        Object::Array(mut items) => {
+            items.reverse();
+            doc.get_dictionary_mut(page).unwrap().set("Annots", items);
+        }
+        _ => panic!("a list"),
+    }
+    doc.get_dictionary_mut(page).unwrap().remove(b"Tabs");
+    let mut foreign = Vec::new();
+    doc.save_to(&mut foreign).expect("serialises");
+    assert_eq!(listed(&foreign).0, ["Third", "Second", "First"]);
+    // A field added to it goes last, and the order it had is left.
+    let added = rewrite_update(&foreign, &more, Job::Save, None).expect("rewritten");
+    assert_eq!(
+        listed(&added),
+        (
+            vec![
+                "Third".to_string(),
+                "Second".into(),
+                "First".into(),
+                "Zeroth".into()
+            ],
+            None
+        )
+    );
+    // A save that adds nothing leaves it too.
+    let mut answered = plan_of(&[0, 0]);
+    answered.field_edits = vec![crate::formedit::FieldEdit {
+        widget: crate::forms::scan(&Document::load_mem(&foreign).unwrap())
+            .unwrap()
+            .widgets[0]
+            .widget,
+        rect: None,
+        name: Some("Renamed".into()),
+        remove: false,
+        props: Default::default(),
+    }];
+    let kept = rewrite_update(&foreign, &answered, Job::Save, None).expect("rewritten");
+    assert_eq!(listed(&kept).1, None);
+    // And so does a file whose fields are in order and that gains none: a
+    // save that adds no field says nothing about tabbing.
+    let mut plain = Document::load_mem(&made).expect("parses");
+    let first = crate::pagetree::ordered_pages(&plain)[0];
+    plain.get_dictionary_mut(first).unwrap().remove(b"Tabs");
+    let mut untold = Vec::new();
+    plain.save_to(&mut untold).expect("serialises");
+    let mut renamed = plan_of(&[0, 0]);
+    renamed.field_edits = vec![crate::formedit::FieldEdit {
+        widget: crate::forms::scan(&plain).unwrap().widgets[0].widget,
+        rect: None,
+        name: Some("Renamed".into()),
+        remove: false,
+        props: Default::default(),
+    }];
+    let same = rewrite_update(&untold, &renamed, Job::Save, None).expect("rewritten");
+    assert_eq!(listed(&same).1, None);
+    // Asked for, it is put in reading order, new field and all.
+    let mut asked = plan_of(&[0, 0]);
+    asked.marks = more.marks.clone();
+    asked.tab_order = true;
+    let ordered = rewrite_update(&foreign, &asked, Job::Save, None).expect("rewritten");
+    assert_eq!(
+        listed(&ordered),
+        (
+            vec![
+                "Zeroth".to_string(),
+                "First".into(),
+                "Second".into(),
+                "Third".into()
+            ],
+            Some(b"R".to_vec())
+        )
+    );
+    assert_eq!(crate::verify::structure(&ordered), Vec::<String>::new());
 }
 
 #[test]

@@ -399,6 +399,13 @@ export interface AppActions {
   fieldPicked(): boolean;
   /** Opens the picked field's properties. */
   fieldProperties(): void;
+  /**
+   * Whether the tab order can be asked for: the document has a form field,
+   * its own or one placed, and the order is not asked for already.
+   */
+  canOrderTabs(): boolean;
+  /** Asks for the fields to be tabbed through in reading order. */
+  orderTabs(): void;
   /** How many placed rectangles are picked for arranging. */
   pickedMarks(): number;
   /** Makes a copy of each picked rectangle, beside it. */
@@ -1182,6 +1189,15 @@ export function registerAppCommands(
       title: "Form fields: finish changing the document's fields",
       enabled: () => withDocument() && actions.formEditing(),
       run: () => actions.setFormEditing(false),
+    },
+    {
+      // Rows from the top, each from the left, on every page. A form made
+      // here is in that order already; this is for one from elsewhere, and
+      // for one whose fields were moved about after they were made.
+      id: "edit.tabOrder",
+      title: "Form fields: tab through them in reading order",
+      enabled: () => withDocument() && actions.canOrderTabs(),
+      run: () => actions.orderTabs(),
     },
     {
       // The group is asked for before the drag: it is what makes several

@@ -220,6 +220,7 @@ fn plans(pages: u32) -> Vec<(&'static str, Plan)> {
 fn keeping(baseline: u32, kept: Vec<u32>) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline,
         pages: kept

@@ -230,6 +230,7 @@ mod tests {
         fn plan() -> Plan {
             Plan {
                 field_edits: Vec::new(),
+                tab_order: false,
                 baseline: 2,
                 opened_as: None,
                 text_layers: Vec::new(),
@@ -298,6 +299,7 @@ mod tests {
     fn maps_reordered_pages_without_reapplying_turns_crops_or_removals() {
         let original = Plan {
             field_edits: Vec::new(),
+            tab_order: false,
             baseline: 3,
             opened_as: None,
             pages: vec![

@@ -207,6 +207,7 @@ const SCHEMA = {
     discards: ["array"],
     fields: ["array"],
     dirty: ["boolean"],
+    tab_order: ["boolean"],
     sources: ["array"],
   } satisfies Shape<EditState>,
   Links: {

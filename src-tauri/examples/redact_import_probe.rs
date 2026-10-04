@@ -195,6 +195,7 @@ fn run(
 
     let plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         baseline,
         opened_as: Some(Fingerprint::of(base)?),
         pages,

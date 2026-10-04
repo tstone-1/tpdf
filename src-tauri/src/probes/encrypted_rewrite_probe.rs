@@ -105,6 +105,7 @@ fn pages_with_password(path: &Path, password: &str) -> usize {
 fn dropping_last(pages: usize) -> Plan {
     Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: pages as u32,
         pages: (0..pages - 1)

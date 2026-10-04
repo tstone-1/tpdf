@@ -67,6 +67,7 @@ mod tests {
     fn plan() -> edits::Plan {
         edits::Plan {
             field_edits: Vec::new(),
+            tab_order: false,
             opened_as: None,
             baseline: 1,
             pages: Vec::new(),

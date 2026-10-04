@@ -357,6 +357,7 @@ mod tests {
             discards: Vec::new(),
             forms: Vec::new(),
             dirty,
+            tab_order: false,
             sources: Vec::new(),
         }
     }
@@ -365,6 +366,7 @@ mod tests {
     fn marks_only() -> Plan {
         Plan {
             field_edits: Vec::new(),
+            tab_order: false,
             opened_as: None,
             baseline: 1,
             pages: vec![PageView {

@@ -3905,6 +3905,21 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         textedit::write(into, &changes)?;
     }
     textedit::write(&mut doc, &split.base)?;
+    // How each page's fields are listed before any is added, for the tab
+    // order below: how many there are, and whether they are in reading order.
+    let tabbed: std::collections::HashMap<lopdf::ObjectId, (usize, bool)> =
+        crate::pagetree::ordered_pages(&doc)
+            .into_iter()
+            .map(|page| {
+                (
+                    page,
+                    (
+                        crate::taborder::count(&doc, page),
+                        crate::taborder::in_order(&doc, page),
+                    ),
+                )
+            })
+            .collect();
     // Before the answers, so that a field can be added and answered in one
     // write. Addressed to the file's own pages, like everything above.
     crate::formfields::add(&mut doc, &plan.new_fields)?;
@@ -3997,6 +4012,18 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         .into());
     }
     let written = write_marks(&mut doc, &plan.marks, &sites, replies)?;
+
+    // The order Tab takes a page's fields in. Every page when the plan asks,
+    // and otherwise a page this write added a field to, if its fields were in
+    // reading order before: a form made here stays in order as it grows, and
+    // an order somebody else chose on purpose is not undone by one new field.
+    for page in crate::pagetree::ordered_pages(&doc) {
+        let (had, ordered) = tabbed.get(&page).copied().unwrap_or((0, true));
+        let grew = crate::taborder::count(&doc, page) > had;
+        if plan.tab_order || (grew && ordered) {
+            crate::taborder::sort(&mut doc, page)?;
+        }
+    }
 
     // After the deletion, and it has to be: `drop_pages` removes objects, and a
     // rotation written onto a page that is about to go is work thrown away. The

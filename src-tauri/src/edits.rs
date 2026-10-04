@@ -695,6 +695,9 @@ pub struct EditState {
     /// more to the point a comparison would report "clean" for a journal that a
     /// save has not written.
     pub dirty: bool,
+    /// Whether the reader has asked for the form's fields to be tabbed
+    /// through in reading order, which the next save writes.
+    pub tab_order: bool,
     /// Where each other file's pages are drawn from: the render handle the file
     /// is open under, by the id [`PageSource::Imported`] names it with.
     ///
@@ -1862,6 +1865,23 @@ impl Edits {
         Ok(reply(open))
     }
 
+    /// Asks for every page's form fields to be listed in reading order by the
+    /// next save, as one undoable edit.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document, or the order is already asked for.
+    pub fn order_tabs(&self, doc: u32) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        if open.model.tab_order() {
+            return Err("the fields are already to be tabbed through in reading order".into());
+        }
+        open.model.apply(Command::TabOrder).map_err(describe)?;
+        Ok(reply(open))
+    }
+
     /// Changes the properties of a form field placed in this session, as one
     /// undoable edit. Each part of `props` that is absent is left as it is;
     /// an empty tooltip takes the tooltip off and a limit of nought takes the
@@ -2265,6 +2285,7 @@ impl Edits {
             compress: Default::default(),
             new_fields: Vec::new(),
             field_edits: planned_field_edits(model, &pages),
+            tab_order: model.tab_order(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -2415,6 +2436,7 @@ impl Edits {
             compress: Default::default(),
             new_fields: Vec::new(),
             field_edits: planned_field_edits(model, &pages),
+            tab_order: model.tab_order(),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -2718,6 +2740,10 @@ pub struct Plan {
     /// the answer this plan gives it.
     #[serde(default)]
     pub field_edits: Vec<crate::formedit::FieldEdit>,
+    /// Whether every page's form fields are to be listed in reading order,
+    /// which is the order a reader's Tab key takes them in. See `taborder.rs`.
+    #[serde(default)]
+    pub tab_order: bool,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -3101,7 +3127,7 @@ impl Plan {
         if self.compress != crate::compress::Compress::No {
             return false;
         }
-        if !self.new_fields.is_empty() {
+        if !self.new_fields.is_empty() || !self.field_edits.is_empty() || self.tab_order {
             return false;
         }
         self.marks.is_empty() && self.redactions.is_empty() && self.pages_are_the_file()
@@ -3153,6 +3179,7 @@ impl Plan {
             // which the appender does not write.
             && self.new_fields.is_empty()
             && self.field_edits.is_empty()
+            && !self.tab_order
             // And so does one the reader placed, which travels as a mark.
             && !self.marks.iter().any(|mark| mark.kind == MarkKind::Field)
     }
@@ -3589,6 +3616,7 @@ fn snapshot(model: &Doc) -> EditState {
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,
+        tab_order: model.tab_order(),
         // The model holds no handle. See `reply`, which is what fills this.
         sources: Vec::new(),
     }
@@ -6220,6 +6248,58 @@ mod tests {
         assert!(edits
             .annotate(7, a_field(page, "Fresh", Kind::Text), stamped())
             .is_ok());
+    }
+
+    #[test]
+    fn the_tab_order_is_asked_for_once_planned_and_undone() {
+        let edits = opened();
+        assert!(!edits.state(7).expect("state").tab_order);
+        assert!(edits.plan(7).expect("a plan").is_identity());
+        let state = edits.order_tabs(7).expect("asked");
+        assert!(state.tab_order && state.dirty);
+        let plan = edits.plan(7).expect("a plan");
+        assert!(plan.tab_order);
+        assert!(!plan.is_identity(), "it is a change to the file");
+        // Beside a mark, which alone could be appended: what stops the
+        // append is the order and nothing else.
+        edits.undo(7).expect("undone");
+        let page = edits.state(7).expect("state").pages[0].id;
+        edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        assert!(edits.plan(7).expect("a plan").is_appendable());
+        edits.order_tabs(7).expect("asked");
+        assert!(
+            !edits.plan(7).expect("a plan").is_appendable(),
+            "it rewrites a page's list"
+        );
+        edits.undo(7).expect("undone");
+        edits.undo(7).expect("undone");
+        edits.order_tabs(7).expect("asked");
+        assert!(edits
+            .order_tabs(7)
+            .expect_err("asked twice")
+            .contains("already"));
+        let state = edits.undo(7).expect("undone");
+        assert!(!state.tab_order && !state.dirty);
+        assert!(!edits.plan(7).expect("a plan").tab_order);
+        assert!(edits.redo(7).expect("redone").tab_order);
+        // A change to a field of the file alone is a change to the file too.
+        edits.undo(7).expect("undone");
+        let page = edits.state(7).expect("state").pages[0].id;
+        edits
+            .refield(
+                7,
+                vec![FieldTarget {
+                    object: (12, 0),
+                    page,
+                    patch: FieldPatch {
+                        removed: Some(true),
+                        ..FieldPatch::default()
+                    },
+                }],
+                0,
+            )
+            .expect("removed");
+        assert!(!edits.plan(7).expect("a plan").is_identity());
     }
 
     #[test]

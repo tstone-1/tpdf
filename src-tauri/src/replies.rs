@@ -542,6 +542,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 },
             }],
             dirty: true,
+            tab_order: true,
             sources: vec![edits::SourceView { source: 1, doc: 12 }],
         },
     );

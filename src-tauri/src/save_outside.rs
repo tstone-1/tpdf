@@ -1011,6 +1011,7 @@ mod tests {
         .unwrap();
         let mut plan = crate::edits::Plan {
             field_edits: Vec::new(),
+            tab_order: false,
             baseline: 0,
             opened_as: Some(fingerprint),
             pages: vec![],

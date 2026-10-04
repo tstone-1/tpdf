@@ -267,6 +267,7 @@ fn plan_of(raw: RawPlan) -> (Plan, Job) {
         compress: Default::default(),
         new_fields: Vec::new(),
         field_edits: Vec::new(),
+        tab_order: false,
         text_edits: raw
             .text_edits
             .into_iter()

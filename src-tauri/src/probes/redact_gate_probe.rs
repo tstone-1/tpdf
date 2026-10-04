@@ -155,6 +155,7 @@ fn run(file: &Path, library: &Path) -> Result<(), String> {
     let out = std::env::temp_dir().join(format!("tpdf-gate-probe-{}.pdf", std::process::id()));
     let plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         opened_as: None,
         baseline: opened.page_count as u32,
         pages: (0..opened.page_count)

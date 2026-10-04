@@ -432,6 +432,19 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     host.run("edit.formEditOff");
     await pause(200);
     check("finishing brings the controls back", filling() > 0, `${filling()} shown`);
+    // The tab order, asked for once and then not on offer until it is saved.
+    host.run("edit.tabOrder");
+    await settle(() => host.edits()?.state.tab_order === true, SETTLE_MS);
+    await host.idle();
+    const asked = host.edits()?.state.tab_order === true;
+    const journal = JSON.stringify(host.edits()?.state.fields);
+    host.run("edit.tabOrder");
+    await host.idle();
+    check(
+      "the tab order command asks for reading order, and asking again changes nothing",
+      asked && host.edits()?.state.tab_order === true && JSON.stringify(host.edits()?.state.fields) === journal,
+      String(host.edits()?.state.tab_order),
+    );
     host.run("file.save");
     await host.idle();
     await settle(() => host.edits()?.state.dirty === false, SETTLE_MS);
@@ -444,6 +457,7 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       listed?.kind === "choice" && listed.combo && listed.options.map((o) => o.label).join("|") === "Yes|No, by post",
       JSON.stringify(listed),
     );
+    check("after the save the order is no longer something asked for", now?.state.tab_order === false, String(now?.state.tab_order));
     const buttons = after.widgets.filter((widget) => widget.name === "Pay");
     check(
       "the save writes the two buttons as one group of radio buttons",

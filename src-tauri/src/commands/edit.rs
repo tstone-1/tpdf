@@ -302,6 +302,17 @@ pub async fn form_field_edit(
     edits.refield(doc, targets, sweep)
 }
 
+/// Asks for the form's fields to be tabbed through in reading order.
+///
+/// See [`edits::Edits::order_tabs`].
+#[tauri::command]
+pub async fn form_tab_order(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+) -> Result<edits::EditState, String> {
+    edits.order_tabs(doc)
+}
+
 /// Changes the properties of a form field placed in this session.
 ///
 /// See [`edits::Edits::refit`].

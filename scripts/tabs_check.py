@@ -275,6 +275,13 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     good = declared == 2
     ok &= good
     print(f"{'[OK]  ' if good else '[FAIL]'} two fields declare a border, the ones placed with it: {declared}")
+    # The page says its fields are tabbed through in rows, which a save that
+    # adds a field writes.
+    import re
+    rows = len(re.findall(rb"/Tabs\s*/R", saved.read_bytes()))
+    good = rows >= 1
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} the page tells a reader to tab through its fields in rows: {rows}")
     filled = saved.with_name("filled.pdf")
     answers = saved.with_name("answers.json")
     answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True,

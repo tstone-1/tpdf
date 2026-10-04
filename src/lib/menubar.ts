@@ -212,6 +212,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.formEditOn",
       "edit.formEditOff",
       "edit.fieldProperties",
+      "edit.tabOrder",
       "edit.editText",
       "edit.addSignature",
       // The four stamps, immediately after the text box because a stamp is the

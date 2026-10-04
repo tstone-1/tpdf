@@ -28,6 +28,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
     }
     let mut plan = Plan {
         field_edits: Vec::new(),
+        tab_order: false,
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),

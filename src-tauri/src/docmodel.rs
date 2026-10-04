@@ -1216,6 +1216,10 @@ pub enum Command {
     },
     /// Replace a shared form field answer, by immutable version.
     Fill { object: ObjectId, version: u32 },
+    /// List every page's form fields in reading order at the next save. It
+    /// names nothing: the order is worked out from where the fields are when
+    /// the file is written.
+    TabOrder,
     /// Change a form field the document already has: where its widget is,
     /// what the field is called, or whether the widget is there. `object` is
     /// the widget annotation and `version` names a whole [`FieldChange`].
@@ -1438,6 +1442,7 @@ impl Command {
             | Command::Recolor { .. }
             | Command::Refit { .. }
             | Command::Unredact { .. }
+            | Command::TabOrder
             | Command::Fill { .. } => None,
         }
     }
@@ -1724,6 +1729,8 @@ pub enum Refusal {
 pub struct Working {
     text_edits: BTreeMap<(PageId, u32), u32>,
     forms: BTreeMap<ObjectId, u32>,
+    /// Set by [`Command::TabOrder`].
+    tab_order: bool,
     order: Vec<PageId>,
     pages: HashMap<PageId, Page>,
     /// Ids that were live and are not. Carries no state: undo rebuilds a deleted
@@ -1847,6 +1854,7 @@ impl Working {
         Working {
             text_edits: BTreeMap::new(),
             forms: BTreeMap::new(),
+            tab_order: false,
             order: ids,
             pages: table,
             graves: HashSet::new(),
@@ -2195,6 +2203,9 @@ impl Working {
             }
             Command::Fill { object, version } => {
                 self.forms.insert(object, version);
+            }
+            Command::TabOrder => {
+                self.tab_order = true;
             }
             Command::Refield {
                 object,
@@ -2883,6 +2894,11 @@ impl Doc {
     /// observable, for [`note_bodies`](Doc::note_bodies)' reason.
     pub fn field_change_bodies(&self) -> usize {
         self.field_changes.len()
+    }
+
+    /// Whether the fields are to be listed in reading order at the next save.
+    pub fn tab_order(&self) -> bool {
+        self.now.tab_order
     }
 
     /// Current shared-field answers, rebuilt by undo and redo.
@@ -3984,6 +4000,7 @@ impl Doc {
                 // discarded `Insert` leaves nothing behind to remove. See the
                 // variant.
                 | Command::Insert { .. }
+                | Command::TabOrder
                 | Command::Unannotate { .. }
                 // With the removals rather than with the six above, and the
                 // object number is why it looks like it belongs there: it names

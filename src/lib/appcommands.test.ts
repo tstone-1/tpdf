@@ -43,7 +43,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number;
+    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -175,6 +175,8 @@ function harness(
     setFieldBorder: (border) => { framing = border; fired.push(`setFieldBorder:${border}`); },
     pickedMarks: () => update.picked ?? 0,
     duplicatePicked: () => fired.push("duplicatePicked"),
+    canOrderTabs: () => update.canOrderTabs ?? false,
+    orderTabs: () => fired.push("orderTabs"),
     fieldPicked: () => update.fieldPicked ?? false,
     fieldProperties: () => fired.push("fieldProperties"),
     arrange: (how) => fired.push(`arrange:${how}`),
@@ -679,6 +681,17 @@ describe("the commands a document is needed for", () => {
     expect(fired.at(-1)).toBe("setFormEditing:false");
   });
 
+  it("offers the tab order while there is a field to order and it is not asked for", () => {
+    const offered = (open: boolean, canOrderTabs: boolean) =>
+      harness(open, { canOrderTabs }).registry.all().find((c) => c.id === "edit.tabOrder")?.enabled?.();
+    expect(offered(true, true)).toBe(true);
+    expect(offered(true, false)).toBe(false);
+    expect(offered(false, true)).toBe(false);
+    const { registry, fired } = harness(true, { canOrderTabs: true });
+    registry.run("edit.tabOrder");
+    expect(fired.at(-1)).toBe("orderTabs");
+  });
+
   it("offers duplicating while a rectangle is picked", () => {
     const offered = (open: boolean, picked: number) =>
       harness(open, { picked }).registry.all().find((c) => c.id === "edit.duplicate")?.enabled?.();
@@ -812,7 +825,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number;
+      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean;
     }) => harness(
       true,
       update,
@@ -851,7 +864,7 @@ describe("every registered command", () => {
     // And the launch pair, which is the update pair's shape again.
     const applied = built({
       available: true, ready: true, disk: "reload", restoreTabs: true, fieldBorder: false,
-      formEditing: true, fieldPicked: true, savedFields: 2,
+      formEditing: true, fieldPicked: true, savedFields: 2, canOrderTabs: true,
     });
     const states = [found, applied];
     const shell = found.registry
@@ -1718,6 +1731,8 @@ describe("the window shortcuts for editing", () => {
       setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
       pickedMarks: () => 0,
       duplicatePicked: () => fired.push("duplicatePicked"),
+      canOrderTabs: () => false,
+      orderTabs: () => fired.push("orderTabs"),
       fieldPicked: () => false,
       fieldProperties: () => fired.push("fieldProperties"),
       arrange: (how) => fired.push(`arrange:${how}`),
