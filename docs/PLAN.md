@@ -3518,6 +3518,41 @@ not verified, and name the drawing left.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
 - The review panel was not driven by a person with a drawing under a region.
 
+#### A changed field is drawn where it will be — 2026-10-04
+
+A saved field that was moved, resized, removed or given other properties was drawn where
+the file has it until the save: the rectangle a reader dragged moved, and the field's
+line, background and answer stayed behind on the page. With several fields dragged
+together, nudged and aligned, that was most of what a reader saw.
+
+**How.** The page picture is PDFium's, drawn in the worker from the file's bytes, so the
+change has to reach those bytes. Replaced text already does: a read of a page goes out as
+`Request::TextView`, the worker writes the pending replacements into a copy of the
+document and draws from the copy (`textview.rs`). That view now carries the journal's
+field changes too (`Edits::render_fields`), and the copy is written with
+`formedit::apply`, the function the save uses. So what is drawn before the save is what
+the save writes. The window repaints the pages of the widgets whose pending change
+differs from the one their picture was drawn with (`savedfields.redrawn`,
+`Viewer.setFieldEdits`), by the page of the file, so a copied page is repainted too.
+
+**When the change cannot be written.** The journal admits changes the writer refuses,
+such as a resized text field whose appearance tpdf cannot redraw. A view of field
+changes alone that cannot be written is drawn from the source, as before this work, and
+the worker keeps that answer so the copy is not tried again for every tile. Beside
+replaced text the text is drawn and the fields stay where the file has them. The save
+still refuses such a change, in words.
+
+**Measured.** The copy costs 0.7 ms on a 2.9 MB file and 5.5 ms on a 42 MB one (clone
+and write, release build, macOS arm64), once per change in each worker. In the window
+check a strip over the moved field's left line goes from 0.333 dark to 0.000 at the old
+place and from 0.056 to 0.333 at the new one, and undo puts both back.
+
+**Not built.** A field placed in this session is still a mark and is drawn by the
+overlay, as before. A pending answer is drawn by its control and not by the page, so
+while the fields are being changed the page shows the answer the file holds. The
+preview of a text replacement that is still being typed is drawn without the pending
+field changes.
+
 #### Changing the fields a document already has — 2026-10-04
 
 A field could be placed, named, moved and resized until the first save and not after:
@@ -3544,10 +3579,10 @@ objects only for certain kinds of change. The test that removes a field and then
 for it in the written file found the field still there; `field_edits` joined that
 condition the same day.
 
-**Not built.** Changing a field's kind; tab order; a field on a turned page; a signature
-field. (Tooltip, required flag and maximum length were in this list until the properties
-panel below.) Until the save, the page still draws
-each field where the file has it, under the rectangle that shows where it will be.
+**Not built.** Changing a field's kind; a field on a turned page; a signature field.
+(Tooltip, required flag and maximum length were in this list until the properties panel
+below, the tab order until its own section, and "until the save, the page still draws
+each field where the file has it" until *A changed field is drawn where it will be*.)
 
 #### A field's properties — 2026-10-04
 

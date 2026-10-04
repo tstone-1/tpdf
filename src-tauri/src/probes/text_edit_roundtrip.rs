@@ -171,6 +171,7 @@ pub(super) fn run(source: &Path, requests: &Path, directory: &Path) -> Result<()
                     .iter()
                     .map(|edit| edit.change.clone())
                     .collect(),
+                fields: Vec::new(),
                 request: Box::new(request.clone()),
             },
         )?;

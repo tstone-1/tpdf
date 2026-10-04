@@ -1603,6 +1603,7 @@
       formLayer?.update(after);
       formLayer?.layout();
       if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
+      if (viewer?.setFieldEdits(scannedForm?.widgets ?? [], after.fields ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
       textEditor?.update(after);
       // The pending redactions arrive on the same reply and are pushed the same
       // way. Not through `setMarks`: they are a separate list for the reason
@@ -4279,6 +4280,7 @@
       // the rest a few lines up.
       void fetchImportedLinks(opening);
       viewer.setTextEdits(opening.state.text_edits ?? []);
+      viewer.setFieldEdits([], opening.state.fields ?? []);
       viewer.setMarks(shownMarks(opening.state));
       viewer.setRedactions(opening.state.redactions);
       sidebar.thumbnails?.setPages(opening.state.pages.length);

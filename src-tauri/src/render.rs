@@ -1579,7 +1579,7 @@ impl Engine for InProcess {
 
         let docs = self.docs.borrow();
         let result = open_slot(&docs, request.doc).and_then(|doc| {
-            doc.with_text_view(&self.views.changes(request.doc), |view| {
+            doc.with_text_view(&self.views.view(request.doc), |view| {
                 render_tile(self.bindings, view, request, &token)
             })
         });
@@ -1590,7 +1590,7 @@ impl Engine for InProcess {
 
     fn text(&self, doc: u32, page: u32, crop: Option<[f32; 4]>) -> Result<PageText, String> {
         open_slot(&self.docs.borrow(), doc)?
-            .with_text_view(&self.views.changes(doc), |view| run_text(view, page, crop))
+            .with_text_view(&self.views.view(doc), |view| run_text(view, page, crop))
     }
 
     fn search(
@@ -1604,7 +1604,7 @@ impl Engine for InProcess {
     ) -> Result<PageMatches, String> {
         let docs = self.docs.borrow();
         let document = open_slot(&docs, doc)?;
-        document.with_text_view(&self.views.changes(doc), |view| {
+        document.with_text_view(&self.views.view(doc), |view| {
             if pages.is_empty() {
                 return run_search(view, page, query, options, carry);
             }
@@ -1617,7 +1617,7 @@ impl Engine for InProcess {
     }
 
     fn content(&self, doc: u32, page: u32) -> Result<Option<[f64; 4]>, String> {
-        open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.changes(doc), |view| {
+        open_slot(&self.docs.borrow(), doc)?.with_text_view(&self.views.view(doc), |view| {
             run_content(self.bindings, view, page, &CancelToken::default())
         })
     }
@@ -1915,7 +1915,11 @@ pub(crate) fn text_edit_runs(
         }
         return Ok(runs);
     }
-    document.with_text_view(changes, |view| {
+    let proposed = textview::View {
+        changes: changes.to_vec(),
+        fields: Vec::new(),
+    };
+    document.with_text_view(&proposed, |view| {
         if let Some(change) = changes
             .iter()
             .rev()

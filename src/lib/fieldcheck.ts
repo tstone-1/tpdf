@@ -17,8 +17,32 @@ import { SAVED_BASE } from "./savedfields";
 import { DIALOG_CLASS as PROPERTIES_CLASS } from "./fieldprops";
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
+import type { Viewer } from "./viewer";
 
 const SETTLE_MS = 20_000;
+
+/**
+ * The fraction of a rectangle of the page picture that is dark, or `null`
+ * when there is nothing to read. The rectangle is in the surface's own CSS
+ * pixels, as an anchor is.
+ */
+function dark(viewer: Viewer, box: { left: number; top: number; right: number; bottom: number }): number | null {
+  const canvas = viewer.compositedSurface;
+  const ctx = canvas?.getContext("2d", { willReadFrequently: true });
+  if (!canvas || !ctx) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const x0 = Math.max(0, Math.round(box.left * dpr));
+  const y0 = Math.max(0, Math.round(box.top * dpr));
+  const x1 = Math.min(canvas.width, Math.round(box.right * dpr));
+  const y1 = Math.min(canvas.height, Math.round(box.bottom * dpr));
+  if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+  const { data } = ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+  let hit = 0;
+  for (let at = 0; at < data.length; at += 4) {
+    if ((data[at] ?? 255) + (data[at + 1] ?? 255) + (data[at + 2] ?? 255) < 384) hit++;
+  }
+  return hit / (data.length / 4);
+}
 
 /** A press, a move and a release on the page, in client pixels. */
 function drag(root: HTMLElement, from: { x: number; y: number }, to: { x: number; y: number }): void {
@@ -382,12 +406,40 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       `at ${at0}; pages ${JSON.stringify(host.edits()?.state.pages.map((page) => [page.id, page.source]))}; widget pages ${form.widgets.map((w) => w.page).join()}`,
     );
     check("and puts the controls for filling away", filling() === 0, `${filling()} shown`);
+    // The line round the field, on the page picture: a strip over its left
+    // edge where the file has the field, and the same strip where the drag
+    // puts it. The picture and not the overlay, which draws the rectangle a
+    // reader drags and would say yes whatever the page showed.
+    const strip = (dx: number, dy: number) => anchor && {
+      left: anchor.left - 3 + dx, right: anchor.left + 3 + dx, top: anchor.top + 3 + dy, bottom: anchor.bottom - 3 + dy,
+    };
+    const drawn = async (dx: number, dy: number) => {
+      await settle(() => viewer.idle, SETTLE_MS);
+      await pause(300);
+      const at = strip(dx, dy);
+      return at ? dark(viewer, at) : null;
+    };
+    const oldBefore = await drawn(0, 0);
+    const newBefore = await drawn(40, 30);
+    check(
+      "the page picture shows the saved field's line where the file has it",
+      oldBefore !== null && newBefore !== null && oldBefore > 0.05 && oldBefore > newBefore + 0.05,
+      `${oldBefore?.toFixed(3)} at the field, ${newBefore?.toFixed(3)} where it will go`,
+    );
     if (anchor) {
       const from = { x: box.left + (anchor.left + anchor.right) / 2, y: box.top + (anchor.top + anchor.bottom) / 2 };
       drag(root, from, { x: from.x + 40, y: from.y + 30 });
       await settle(() => changed().length === 1, SETTLE_MS);
       await host.idle();
     }
+    const oldMoved = await drawn(0, 0);
+    const newMoved = await drawn(40, 30);
+    check(
+      "a moved field is drawn where it was dropped before it is saved, and no longer where the file has it",
+      oldBefore !== null && newBefore !== null && oldMoved !== null && newMoved !== null
+        && oldMoved < oldBefore - 0.05 && newMoved > newBefore + 0.05,
+      `old place ${oldBefore?.toFixed(3)} to ${oldMoved?.toFixed(3)}, new place ${newBefore?.toFixed(3)} to ${newMoved?.toFixed(3)}`,
+    );
     const to = changed()[0]?.rect ?? [0, 0, 0, 0];
     check(
       "dragging it moves the field, at the size it had",
@@ -398,6 +450,14 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     host.run("edit.undo");
     await host.idle();
     check("undo puts it back", changed().length === 0, String(changed().length));
+    const oldUndone = await drawn(0, 0);
+    const newUndone = await drawn(40, 30);
+    check(
+      "and the page picture with it",
+      oldUndone !== null && newUndone !== null && oldBefore !== null && newBefore !== null
+        && Math.abs(oldUndone - oldBefore) < 0.02 && Math.abs(newUndone - newBefore) < 0.02,
+      `old place ${oldUndone?.toFixed(3)}, new place ${newUndone?.toFixed(3)}`,
+    );
     host.run("edit.redo");
     await host.idle();
     // The moved field's properties, set in the panel the command opens: the

@@ -428,6 +428,7 @@ fn run() -> Result<(), String> {
             .iter()
             .map(|edit| edit.change.clone())
             .collect(),
+        fields: Vec::new(),
         request: Box::new(request),
     };
     let preview = pixels(&mut worker, &view(tile.clone()))?;

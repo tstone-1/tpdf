@@ -1,4 +1,5 @@
 import { changedTextPages, type TextChange } from "./textedit";
+import { redrawn, type FieldEdited } from "./savedfields";
 /**
  * The reading surface: input, a frame loop, and a {@link Scroller} under it.
  *
@@ -5021,6 +5022,33 @@ export class Viewer {
     }
     this.clearSelection();
     if (this.searcher.query) this.search(this.searcher.query);
+    this.wake();
+    return true;
+  }
+
+  private fieldEdits: readonly FieldEdited[] = [];
+
+  /**
+   * Adopts the pending changes to the file's fields, repainting the pages
+   * whose fields changed: the page picture is drawn with a field where a
+   * reader moved it, so a picture drawn before the move is out of date.
+   *
+   * By the page of the file and not by the first slot showing it, because a
+   * copied page is drawn from the same page of the file and shows the same
+   * field. `widgets` is empty until the form has been read, and then the
+   * changes are only remembered: nothing has been drawn without them.
+   */
+  setFieldEdits(
+    widgets: readonly Pick<import("./forms").FormWidget, "widget" | "page">[],
+    fields: readonly FieldEdited[],
+  ): boolean {
+    const pages = redrawn(widgets, this.fieldEdits, fields);
+    this.fieldEdits = fields;
+    if (!pages.length) return false;
+    for (let slot = 0; slot < this.pages.length; slot++) {
+      const source = this.pages.sourceOf(slot);
+      if (source !== undefined && pages.includes(source)) this.scroller.invalidatePage(slot);
+    }
     this.wake();
     return true;
   }

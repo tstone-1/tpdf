@@ -839,6 +839,21 @@ impl Edits {
         Vec::new()
     }
 
+    /// The pending changes to the fields of the document open under the
+    /// render handle `handle`, for drawing its pages before a save.
+    ///
+    /// Only a document the reader opened answers: a field is changed in the
+    /// file it is in, and a file pages were inserted from has no fields that
+    /// this model changes. Every change is given, also one on a page that has
+    /// been deleted since: the view is the opened file with all its pages, and
+    /// which of them are shown is the viewer's business.
+    pub fn render_fields(&self, handle: u32) -> Vec<crate::formedit::FieldEdit> {
+        let docs = self.docs.lock().expect("edits lock");
+        docs.get(&handle)
+            .map(|open| field_edits(&open.model, |_| true))
+            .unwrap_or_default()
+    }
+
     /// Starts a model for a freshly opened document.
     ///
     /// Replaces any model already under that handle. That is not defensive: the
@@ -2648,10 +2663,16 @@ fn planned_sources(model: &Doc, pages: &[PageView]) -> Vec<PlannedSource> {
 /// with no move and no name --- is left out: it asks the writer for nothing.
 fn planned_field_edits(model: &Doc, pages: &[PageView]) -> Vec<crate::formedit::FieldEdit> {
     let kept: Vec<PageId> = pages.iter().map(|view| PageId::from_raw(view.id)).collect();
+    field_edits(model, |page| kept.contains(&page))
+}
+
+/// The model's changes to the file's own fields on the pages `keep` admits,
+/// without the ones that have come back to nothing.
+fn field_edits(model: &Doc, keep: impl Fn(PageId) -> bool) -> Vec<crate::formedit::FieldEdit> {
     model
         .field_changes()
         .into_iter()
-        .filter(|(page, ..)| kept.contains(page))
+        .filter(|(page, ..)| keep(*page))
         .filter(|(_, _, change)| {
             change.removed
                 || change.rect.is_some()
@@ -5710,6 +5731,27 @@ mod tests {
             }]
         );
         assert!(!plan.is_appendable());
+        // The pages are drawn with the same changes, and only this document's.
+        assert_eq!(edits.render_fields(7), plan.field_edits);
+        assert!(edits.render_fields(8).is_empty());
+        // And a read of a page is asked through the view that carries them.
+        let views = crate::textview::Source::default();
+        views.follow(&edits);
+        assert_eq!(views.view(7).fields, plan.field_edits);
+        let read = crate::worker::Request::Text {
+            page: 0,
+            crop: None,
+        };
+        match views.request(7, read.clone()) {
+            crate::worker::Request::TextView { fields, .. } => {
+                assert_eq!(fields, plan.field_edits);
+            }
+            other => panic!("the read went out bare: {other:?}"),
+        }
+        assert!(
+            matches!(views.request(8, read), crate::worker::Request::Text { .. }),
+            "a document with nothing pending is read as it is"
+        );
         // Undo, one change at a time, back to nothing.
         let state = edits.undo(7).expect("undone");
         assert!(!state.fields[0].removed);

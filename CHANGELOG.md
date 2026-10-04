@@ -17,6 +17,16 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.5] - Unreleased
+
+### Changed
+
+- **A changed field is drawn where it will be.** A saved field that is moved, resized,
+  removed or given other properties is drawn that way on the page at once. Before, the
+  page kept drawing it where the file has it until the save, under the rectangle that
+  showed where it would go. A change the save would refuse is still drawn where the
+  file has the field.
+
 ## [26.10.4] - 2026-10-04
 
 ### Added

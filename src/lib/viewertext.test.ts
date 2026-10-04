@@ -314,6 +314,43 @@ describe("Reading a page's text, and asking for it again", () => {
     ]);
   });
 
+  it("repaints every slot drawn from a page whose fields changed, and no other", () => {
+    const viewer = build();
+    // Page 1 of the file twice, around page 0, and a page of another file.
+    viewer.setPages([
+      { id: pageId(4), source: { baseline: 1 }, turns: 0 },
+      { id: pageId(5), source: { baseline: 0 }, turns: 0 },
+      { id: pageId(6), source: { baseline: 1 }, turns: 0 },
+      { id: pageId(9), source: { imported: { source: 1, page: 1 } }, turns: 0, from: 40 },
+    ]);
+    const repainted: number[] = [];
+    const scroller = (viewer as unknown as { scroller: { invalidatePage(slot: number): void } }).scroller;
+    const real = scroller.invalidatePage.bind(scroller);
+    scroller.invalidatePage = (slot) => {
+      repainted.push(slot);
+      real(slot);
+    };
+    const widgets = [
+      { widget: [11, 0] as [number, number], page: 1 },
+      { widget: [12, 0] as [number, number], page: 0 },
+    ];
+    const moved = { object: [11, 0] as [number, number], page: 4, rect: [1, 2, 3, 4] as [number, number, number, number], removed: false };
+
+    expect(viewer.setFieldEdits(widgets, [moved])).toBe(true);
+    expect(repainted).toEqual([0, 2]);
+    // The same changes again are no change.
+    expect(viewer.setFieldEdits(widgets, [moved])).toBe(false);
+    expect(repainted).toEqual([0, 2]);
+    // Undone: the same pages again, as the file has them.
+    expect(viewer.setFieldEdits(widgets, [])).toBe(true);
+    expect(repainted).toEqual([0, 2, 0, 2]);
+    // Before the form is read the changes are remembered and nothing is
+    // repainted, so they are not new when the form arrives.
+    expect(viewer.setFieldEdits([], [moved])).toBe(false);
+    expect(viewer.setFieldEdits(widgets, [moved])).toBe(false);
+    expect(repainted).toEqual([0, 2, 0, 2]);
+  });
+
   it("selects a whole page, after the page above went", async () => {
     const viewer = build();
     deleteFirstPage(viewer);

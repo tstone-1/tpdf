@@ -91,28 +91,26 @@ impl OpenDocument {
         *self.preview.borrow_mut() = None;
     }
 
-    /// Reads one cached rendering of the pending replacements without mutating the source.
+    /// Reads one cached rendering of the pending replacements and field
+    /// changes without mutating the source.
     pub(crate) fn with_text_view<T>(
         &self,
-        changes: &[crate::textedit::Change],
+        view: &crate::textview::View,
         read: impl FnOnce(&Self) -> Result<T, String>,
     ) -> Result<T, String> {
-        if changes.is_empty() {
+        if view.is_empty() {
             self.clear_text_view();
             return read(self);
         }
         let mut cached = self.preview.borrow_mut();
-        if cached.as_ref().is_none_or(|view| view.changes != changes) {
+        if cached.as_ref().is_none_or(|held| &held.view != view) {
             // Release the preceding revision before allocating its replacement.
             *cached = None;
-            *cached = Some(crate::textview::Preview::build(self, changes)?);
+            *cached = Some(crate::textview::Preview::build(self, view)?);
         }
-        read(
-            &cached
-                .as_ref()
-                .ok_or("text preview is unavailable")?
-                .document,
-        )
+        let held = cached.as_ref().ok_or("text preview is unavailable")?;
+        // Field changes that could not be drawn: the source, as the file has it.
+        read(held.document.as_deref().unwrap_or(self))
     }
 
     /// Opens a document from a path, for a caller that has one.

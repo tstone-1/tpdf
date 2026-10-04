@@ -1366,17 +1366,18 @@ impl Workers {
     /// through [`mismatched`] --- the type says a reply arrived, not that it
     /// answers the question asked.
     fn ask(&self, doc: u32, request: &Request) -> Result<Reply, String> {
-        let changes = if request.supports_text_view() {
-            self.views.changes(doc)
+        let view = if request.supports_text_view() {
+            self.views.view(doc)
         } else {
-            Vec::new()
+            crate::textview::View::default()
         };
         let wrapped;
-        let request = if changes.is_empty() {
+        let request = if view.is_empty() {
             request
         } else {
             wrapped = Request::TextView {
-                changes,
+                changes: view.changes,
+                fields: view.fields,
                 request: Box::new(request.clone()),
             };
             &wrapped

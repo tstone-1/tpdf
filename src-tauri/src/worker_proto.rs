@@ -29,9 +29,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Request {
-    /// A read of a worker-owned text revision. Nested views and writers are refused.
+    /// A read of a worker-owned revision holding the pending text and field
+    /// changes. Nested views and writers are refused.
     TextView {
         changes: Vec<crate::textedit::Change>,
+        /// Absent from a request that has none, which is every request made
+        /// before field changes were drawn.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        fields: Vec<crate::formedit::FieldEdit>,
         request: Box<Request>,
     },
     /// Parse the mapped document and report its geometry.
@@ -1111,6 +1116,7 @@ mod tests {
         assert_eq!(tile.tile_rid(), Some(19));
         let view = Request::TextView {
             changes: vec![],
+            fields: vec![],
             request: Box::new(tile),
         };
         assert_eq!(view.tile_rid(), Some(19));
@@ -1118,6 +1124,7 @@ mod tests {
         assert_eq!(
             Request::TextView {
                 changes: vec![],
+                fields: vec![],
                 request: Box::new(view)
             }
             .tile_rid(),
@@ -1139,6 +1146,13 @@ mod tests {
                     operator: 3,
                     original: "ACME original".into(),
                     replacement: "ACME".into(),
+                }],
+                fields: vec![crate::formedit::FieldEdit {
+                    widget: (12, 0),
+                    rect: Some([10., 20., 110., 40.]),
+                    name: None,
+                    remove: false,
+                    props: crate::formedit::Props::default(),
                 }],
                 request: Box::new(Request::Text {
                     page: 0,

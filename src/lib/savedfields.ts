@@ -336,6 +336,30 @@ export function shownAt(widget: FormWidget, state: Pick<EditState, "fields">): R
   return edit?.rect ?? widget.display_rect;
 }
 
+/**
+ * The pages of the opened file that are drawn differently after a change to
+ * its fields: every page with a widget whose pending change is not what it
+ * was. Undoing a change counts, and so does a widget of a renamed field on
+ * another page.
+ *
+ * The page picture is drawn with the pending changes in it, so these are the
+ * pages to draw again. Asked with the widgets and not with the changes alone,
+ * because a change names the page's id and a picture is asked for by the page
+ * of the file, which a deleted page still has.
+ */
+export function redrawn(
+  widgets: readonly Pick<FormWidget, "widget" | "page">[],
+  before: readonly FieldEdited[],
+  after: readonly FieldEdited[],
+): number[] {
+  const of = (edits: readonly FieldEdited[], widget: readonly [number, number]) =>
+    JSON.stringify(edits.find((edit) => same(edit.object, widget)) ?? null);
+  const pages = widgets
+    .filter(({ widget }) => of(before, widget) !== of(after, widget))
+    .map(({ page }) => page);
+  return [...new Set(pages)];
+}
+
 /** The part of an edit model an arrangement of saved fields needs. */
 interface Arranges {
   arrange(moves: { mark: number; rect: Rect }[], sweep: number): Promise<EditState>;

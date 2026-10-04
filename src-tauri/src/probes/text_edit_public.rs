@@ -85,6 +85,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
                 .iter()
                 .map(|edit| edit.change.clone())
                 .collect(),
+            fields: Vec::new(),
             request: Box::new(tile.clone()),
         },
     )?;

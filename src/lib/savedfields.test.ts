@@ -4,7 +4,7 @@ import type { Form, FormWidget } from "./forms";
 import { pageId, type MarkView, type PageView } from "./pages";
 import {
   SAVED_BASE, arrangeBoth, asMarks, isSaved, leafName, moved, placed, properties, propertied, removed, renamed,
-  shownAt, split, standing,
+  redrawn, shownAt, split, standing,
   type FieldEdited,
 } from "./savedfields";
 
@@ -137,6 +137,31 @@ describe("what a change to a saved field asks for", () => {
       marks: [{ mark: 4, rect: [1, 1, 2, 2] }],
       fields: [{ object: [12, 0], page: 5, patch: { rect: [5, 5, 9, 9] } }],
     });
+  });
+});
+
+describe("which pages are drawn again after a change to the fields", () => {
+  const moved: FieldEdited = { object: [11, 0], page: 5, rect: [1, 2, 3, 4], removed: false };
+  const noted: FieldEdited = { object: [13, 0], page: 8, removed: true };
+
+  it("is the page of each widget whose change is new, different or gone", () => {
+    expect(redrawn(FORM.widgets, [], [])).toEqual([]);
+    expect(redrawn(FORM.widgets, [], [moved])).toEqual([0]);
+    // Undone: the page is drawn again as the file has it.
+    expect(redrawn(FORM.widgets, [moved], [])).toEqual([0]);
+    expect(redrawn(FORM.widgets, [moved], [{ ...moved, rect: [1, 2, 3, 5] }])).toEqual([0]);
+    // Standing changes are not new ones, whatever order they come in.
+    expect(redrawn(FORM.widgets, [moved, noted], [noted, moved])).toEqual([]);
+    expect(redrawn(FORM.widgets, [moved], [moved, noted])).toEqual([1]);
+  });
+
+  it("names a page once, and none for a widget the form does not have", () => {
+    const agreed: FieldEdited = { object: [12, 0], page: 5, removed: true };
+    expect(redrawn(FORM.widgets, [], [noted, moved, agreed])).toEqual([0, 1]);
+    expect(redrawn(FORM.widgets, [], [{ object: [99, 0], page: 5, removed: true }])).toEqual([]);
+    // The same number under another generation is another object.
+    expect(redrawn(FORM.widgets, [], [{ ...moved, object: [11, 1] }])).toEqual([]);
+    expect(redrawn([], [], [moved])).toEqual([]);
   });
 });
 

@@ -565,12 +565,20 @@ fn handle(
         document.clear_text_view();
     }
     match request {
-        Request::TextView { changes, request } => {
+        Request::TextView {
+            changes,
+            fields,
+            request,
+        } => {
             if !request.supports_text_view() {
                 return Response::err("text views accept only rendering and text reads");
             }
+            let pending = crate::textview::View {
+                changes: changes.clone(),
+                fields: fields.clone(),
+            };
             document
-                .with_text_view(changes, |view| {
+                .with_text_view(&pending, |view| {
                     Ok(handle(bindings, view, queue, tile, None, None, request))
                 })
                 .unwrap_or_else(Response::err)
