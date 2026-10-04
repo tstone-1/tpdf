@@ -240,6 +240,7 @@ mod tests {
 
     fn edit(widget: (u32, u16)) -> FieldEdit {
         FieldEdit {
+            value: None,
             widget,
             rect: None,
             name: None,

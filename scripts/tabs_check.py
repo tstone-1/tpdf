@@ -284,10 +284,18 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     good = rows >= 1
     ok &= good
     print(f"{'[OK]  ' if good else '[FAIL]'} the page tells a reader to tab through its fields in rows: {rows}")
+    # The second button's value was changed in the window after the group was
+    # saved, so the group is answered with the new value and refuses the old.
     filled = saved.with_name("filled.pdf")
     answers = saved.with_name("answers.json")
+    answers.write_text(json.dumps({"Pay": "Choice 2"}))
+    old = subprocess.run([str(tool), "fill", str(saved), "-o", str(saved.with_name("filled-old.pdf")), "--values", str(answers)],
+                         capture_output=True, text=True, timeout=120, check=False)
+    good = old.returncode != 0
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill refuses the value the button no longer has: {(old.stderr or old.stdout).strip()[:120]}")
     answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True,
-                                   "Dropdown 1": "No, by post", "Pay": "Choice 2"}))
+                                   "Dropdown 1": "No, by post", "Pay": "By post"}))
     done = subprocess.run([str(tool), "fill", str(saved), "-o", str(filled), "--values", str(answers)],
                           capture_output=True, text=True, timeout=120, check=False)
     good = done.returncode == 0

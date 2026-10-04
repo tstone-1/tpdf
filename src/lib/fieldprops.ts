@@ -17,7 +17,7 @@ import type { EditState } from "./edits";
 import type { Form, FormAlign } from "./forms";
 import {
   type FieldProperties, type FieldProps, type FieldTarget,
-  differing, isSaved, placedProperties, propertied, properties,
+  differing, isSaved, placedProperties, propertied, properties, revalued,
 } from "./savedfields";
 
 /** Class on the backdrop, so the check harness can find it. */
@@ -133,8 +133,8 @@ export interface PropertiesDeps {
   state(): Pick<EditState, "fields" | "pages" | "marks"> | null;
   /** Puts the panel to the reader. */
   ask(now: FieldProperties): Promise<FieldProperties | null>;
-  /** Changes a field of the file, as one undoable edit. */
-  refield(target: FieldTarget): void;
+  /** Changes a field of the file, or two of its widgets at once, as one undoable edit. */
+  refield(targets: FieldTarget[]): void;
   /** Changes a field placed in this session, as one undoable edit. */
   refit(mark: number, props: FieldProps): void;
   say(message: string): void;
@@ -191,11 +191,21 @@ export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
     return true;
   }
   const target = form ? propertied(form, state, after.id, to) : null;
-  if (!target) {
+  const button = form ? revalued(form, state, after.id, to) : null;
+  if (typeof button === "string") {
+    deps.say(button);
+    return false;
+  }
+  if (!target && !button) {
     deps.say("Nothing about the field was changed.");
     return false;
   }
-  deps.refield(target);
+  // The group's properties are held under its first button and the value
+  // under the button picked. Where those are one button it is one change.
+  const one = target && button && target.object.join() === button.object.join();
+  deps.refield(one
+    ? [{ ...target, patch: { ...target.patch, ...button.patch } }]
+    : [target, button].filter((made): made is FieldTarget => made !== null));
   return true;
 }
 

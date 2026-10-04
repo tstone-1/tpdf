@@ -405,6 +405,9 @@ pub struct FieldEditView {
     /// The field's properties, each part that is changed.
     #[serde(skip_serializing_if = "crate::formedit::Props::is_empty")]
     pub props: crate::formedit::Props,
+    /// The value a radio button now gives its group.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 /// What a reader asks to change about one field of the file. Each part that
@@ -423,6 +426,9 @@ pub struct FieldPatch {
     /// The field's properties, each part to change.
     #[serde(default)]
     pub props: crate::formedit::Props,
+    /// The value a radio button gives its group.
+    #[serde(default)]
+    pub value: Option<String>,
 }
 
 /// One widget and what to change about it, for a change to several at once.
@@ -2215,6 +2221,7 @@ impl Edits {
                 && patch.name.is_none()
                 && patch.removed.is_none()
                 && patch.props.is_empty()
+                && patch.value.is_none()
             {
                 return Err("that changes nothing about the field".into());
             }
@@ -2238,6 +2245,12 @@ impl Edits {
                 return Err(why);
             }
             change.props.merge(&patch.props);
+            if let Some(value) = &patch.value {
+                if let Some(why) = crate::formedit::button_problem("this button", value) {
+                    return Err(why);
+                }
+                change.value = Some(value.clone());
+            }
             let page = PageId::from_raw(target.page);
             // The page, asked before anything is recorded: the model checks
             // it again on the way in, and by then an earlier target is made.
@@ -2694,6 +2707,7 @@ fn field_edits(model: &Doc, keep: impl Fn(PageId) -> bool) -> Vec<crate::formedi
                 || change.rect.is_some()
                 || change.name.is_some()
                 || !change.props.is_empty()
+                || change.value.is_some()
         })
         .map(|(_, object, change)| crate::formedit::FieldEdit {
             widget: (object.number(), object.generation()),
@@ -2703,6 +2717,7 @@ fn field_edits(model: &Doc, keep: impl Fn(PageId) -> bool) -> Vec<crate::formedi
             name: change.name,
             remove: change.removed,
             props: change.props,
+            value: change.value,
         })
         .collect()
 }
@@ -3648,6 +3663,7 @@ fn snapshot(model: &Doc) -> EditState {
                 name: change.name,
                 removed: change.removed,
                 props: change.props,
+                value: change.value,
             })
             .collect(),
         can_undo: model.can_undo(),
@@ -5716,6 +5732,7 @@ mod tests {
         assert_eq!(
             state.fields,
             vec![FieldEditView {
+                value: None,
                 object: (12, 0),
                 page,
                 rect: Some([10.0, 20.0, 110.0, 40.0]),
@@ -5739,6 +5756,7 @@ mod tests {
         assert_eq!(
             plan.field_edits,
             vec![crate::formedit::FieldEdit {
+                value: None,
                 widget: (12, 0),
                 rect: Some([10.0, 20.0, 110.0, 40.0]),
                 name: Some("Full name".into()),
@@ -5999,6 +6017,7 @@ mod tests {
         assert_eq!(
             plan.field_edits,
             vec![crate::formedit::FieldEdit {
+                value: None,
                 widget: (12, 0),
                 rect: None,
                 name: None,
@@ -6024,6 +6043,60 @@ mod tests {
         let state = edits.undo(7).expect("undone");
         assert_eq!(state.fields[0].props.required, Some(true));
         assert_eq!(state.fields[0].props.align, None);
+        let state = edits.undo(7).expect("undone");
+        assert!(state.fields.is_empty() && !state.dirty);
+    }
+
+    #[test]
+    fn a_radio_buttons_value_is_journalled_reported_and_planned() {
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[0].id;
+        let valued = |value: &str| FieldTarget {
+            object: (12, 0),
+            page,
+            patch: FieldPatch {
+                value: Some(value.into()),
+                ..FieldPatch::default()
+            },
+        };
+        let state = edits
+            .refield(7, vec![valued("Cash")], 0)
+            .expect("a value alone is a change");
+        assert!(state.dirty);
+        assert_eq!(state.fields[0].value.as_deref(), Some("Cash"));
+        // A later value replaces it, and a later change of another part keeps it.
+        edits.refield(7, vec![valued("Card")], 0).expect("changed");
+        let state = edits
+            .refield(
+                7,
+                vec![FieldTarget {
+                    object: (12, 0),
+                    page,
+                    patch: FieldPatch {
+                        name: Some("Pay".into()),
+                        ..FieldPatch::default()
+                    },
+                }],
+                0,
+            )
+            .expect("renamed");
+        assert_eq!(state.fields[0].value.as_deref(), Some("Card"));
+        let plan = edits.plan(7).expect("a plan");
+        assert_eq!(plan.field_edits[0].value.as_deref(), Some("Card"));
+        // What can be refused without the file is, and nothing is recorded.
+        let why = edits
+            .refield(7, vec![valued("Off")], 0)
+            .expect_err("no button is Off");
+        assert!(why.contains("`Off` is what a group holds"), "{why}");
+        assert_eq!(
+            edits.state(7).expect("state").fields[0].value.as_deref(),
+            Some("Card")
+        );
+        edits.undo(7).expect("undone");
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(state.fields[0].value.as_deref(), Some("Cash"));
+        // With the value alone the widget is still one the save changes.
+        assert_eq!(edits.plan(7).expect("a plan").field_edits.len(), 1);
         let state = edits.undo(7).expect("undone");
         assert!(state.fields.is_empty() && !state.dirty);
     }

@@ -3881,10 +3881,26 @@ the first `Choice n` its group does not have, counting the file's buttons too. T
 properties panel reads a placed button's value in the row a dropdown's choices use,
 held to one value that is not `Off`.
 
-**Not built.** Changing the value of a button already in the file, or taking one button
+**A saved button's value.** Added 2026-10-04. The value is the name of the state the
+button has when chosen, so it is the button's and not the group's, and it travels beside
+the rectangle and the name (`FieldEdit::value`, `FieldChange::value`) and not among the
+properties, which a field has one set of. `formedit::revalue` renames the state in each
+look the button has (`/N`, `/D`, `/R`, held in place or as an object), in `/AS` where
+the button is the one chosen, and in the group's `/V` and `/DV` where they name it. An
+answer in the journal is a place among the buttons and is not touched. Refused: a value
+another button of the group has, `Off`, a group with `/Opt` (its state names are places
+in that list and export nothing), and a button that shares its value with another, since
+those are chosen together. In the window the panel shows the value for a saved button as
+it does for a placed one; the group's tooltip and flags go under its first button and
+the value under the one picked, as one gesture (`Viewer.gesture`). The fields phase
+changes a saved button's value and the group's tooltip, undoes both with one undo, saves,
+and the driver's `tpdf fill` is refused the old value and takes the new one.
+
+**Not built.** Taking one button
 out of a saved group and leaving the rest renumbered (removal of a button works, through
 `formedit`); export values that differ from
-the state names (`/Opt` on the group).
+the state names (`/Opt` on the group); a new value from `tpdf form`, which adds fields
+and changes none.
 
 #### Arranging placed rectangles — 2026-10-04
 

@@ -11156,6 +11156,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
     let mut plan = plan_of(&[0, 1]);
     plan.field_edits = vec![
         FieldEdit {
+            value: None,
             widget: widget("KEEP-AND-MOVE"),
             rect: Some([50.0, 30.0, 250.0, 60.0]),
             name: Some("Moved".into()),
@@ -11163,6 +11164,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
             props: Default::default(),
         },
         FieldEdit {
+            value: None,
             widget: widget("REMOVE-ME-FIELD"),
             rect: None,
             name: None,
@@ -11208,6 +11210,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
         value: crate::forms::Value::Text("Ada".into()),
     }];
     set.field_edits = vec![FieldEdit {
+        value: None,
         widget: other.widget,
         rect: None,
         name: None,
@@ -11265,6 +11268,7 @@ fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leave
     // And one that cannot be made writes nothing.
     let mut wrong = plan_of(&[0, 1]);
     wrong.field_edits = vec![FieldEdit {
+        value: None,
         widget: widget("Other"),
         rect: None,
         name: Some("KEEP-AND-MOVE".into()),
@@ -11447,6 +11451,7 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
     // A save that adds nothing leaves it too.
     let mut answered = plan_of(&[0, 0]);
     answered.field_edits = vec![crate::formedit::FieldEdit {
+        value: None,
         widget: crate::forms::scan(&Document::load_mem(&foreign).unwrap())
             .unwrap()
             .widgets[0]
@@ -11467,6 +11472,7 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
     plain.save_to(&mut untold).expect("serialises");
     let mut renamed = plan_of(&[0, 0]);
     renamed.field_edits = vec![crate::formedit::FieldEdit {
+        value: None,
         widget: crate::forms::scan(&plain).unwrap().widgets[0].widget,
         rect: None,
         name: Some("Renamed".into()),

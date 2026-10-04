@@ -565,6 +565,8 @@ pub struct FieldChange {
     pub removed: bool,
     /// The field's properties, each part that is changed.
     pub props: crate::formedit::Props,
+    /// The value a radio button gives its group. `None` leaves it.
+    pub value: Option<String>,
 }
 
 /// A foreign comment the reader has rewritten: which page, and which version.

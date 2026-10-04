@@ -212,7 +212,7 @@
     form: () => (formEditing ? scannedForm : null),
     state: () => edits?.state ?? null,
     ask: (now) => fieldPropertiesDialog?.ask(now) ?? Promise.resolve(null),
-    refield: (target) => changeField(target),
+    refield: (targets) => void applyEdit((e) => e.refield(targets, targets.length > 1 ? viewer?.gesture() ?? 0 : 0)),
     refit: (mark, props) => void applyEdit((e) => e.refit(mark, props)),
     say: (message) => say(message),
   };

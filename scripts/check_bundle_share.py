@@ -68,8 +68,12 @@ ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 # Raised from 245,000 the same day for the rest of the form work: the steps
 # of the fields phase that set properties, place radio buttons, duplicate and
 # nudge took the family from 237,001 to 245,777, none of it in a normal build.
+#
+# Raised from 255,000 the same day for the turned-page phase and three more
+# steps of the fields phase (choices before the save, a saved radio button's
+# value): the family went from 245,777 to 256,079, none of it in a normal build.
 SHARE_CEILING = 40.0
-BYTES_CEILING = 255_000
+BYTES_CEILING = 265_000
 
 BASE64 = {c: i for i, c in enumerate(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

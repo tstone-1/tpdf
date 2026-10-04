@@ -247,7 +247,8 @@
         ],
         "text_size": 10.0,
         "default_value": "Ada"
-      }
+      },
+      "value": "Cash"
     }
   ],
   "dirty": true,

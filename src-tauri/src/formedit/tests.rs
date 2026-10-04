@@ -189,6 +189,7 @@ fn one(doc: &Document, name: &str) -> Widget {
 
 fn to(widget: &Widget, rect: [f32; 4]) -> FieldEdit {
     FieldEdit {
+        value: None,
         widget: widget.widget,
         rect: Some(rect),
         name: None,
@@ -199,6 +200,7 @@ fn to(widget: &Widget, rect: [f32; 4]) -> FieldEdit {
 
 fn named(widget: &Widget, name: &str) -> FieldEdit {
     FieldEdit {
+        value: None,
         widget: widget.widget,
         rect: None,
         name: Some(name.into()),
@@ -209,6 +211,7 @@ fn named(widget: &Widget, name: &str) -> FieldEdit {
 
 fn gone(widget: &Widget) -> FieldEdit {
     FieldEdit {
+        value: None,
         widget: widget.widget,
         rect: None,
         name: None,
@@ -430,6 +433,7 @@ fn a_change_that_cannot_be_made_changes_nothing() {
     let with = |bad: FieldEdit| refused(&[good.clone(), bad]);
 
     let unknown = FieldEdit {
+        value: None,
         widget: (9999, 0),
         rect: None,
         name: None,
@@ -474,6 +478,7 @@ fn a_change_that_cannot_be_made_changes_nothing() {
     // More than one call makes, and none at all.
     let many: Vec<FieldEdit> = (0..=super::MAX_EDITS as u32)
         .map(|n| FieldEdit {
+            value: None,
             widget: (n + 5000, 0),
             rect: None,
             name: None,
@@ -489,6 +494,7 @@ fn a_change_that_cannot_be_made_changes_nothing() {
 
 fn with(widget: &Widget, props: Props) -> FieldEdit {
     FieldEdit {
+        value: None,
         widget: widget.widget,
         rect: None,
         name: None,
@@ -1193,4 +1199,256 @@ fn a_field_with_no_alignment_of_its_own_has_the_forms() {
     f.doc.get_dictionary_mut(name).unwrap().set("Q", 1);
     assert_eq!(one(&f.doc, "Name").align, Align::Center);
     assert_eq!(one(&f.doc, "Notes").align, Align::Right);
+}
+
+/// The fixture with a group `Pay` of three radio buttons, `Card`, `Cash` and
+/// `Later`, the second one chosen.
+fn with_buttons() -> (Document, Vec<Widget>) {
+    let mut doc = fixture().doc;
+    let button = |value: &str, top: f64| NewField {
+        text_size: None,
+        default_value: None,
+        options: vec![value.into()],
+        name: "Pay".into(),
+        kind: Kind::Radio,
+        page: 0,
+        rect: [220.0, top, 12.0, 12.0],
+        tooltip: None,
+        required: false,
+        max_length: None,
+        border: false,
+    };
+    add(
+        &mut doc,
+        &[
+            button("Card", 20.0),
+            button("Cash", 40.0),
+            button("Later", 60.0),
+        ],
+    )
+    .expect("added");
+    let group = widgets(&doc, "Pay")[0].object;
+    write(
+        &mut doc,
+        &[Change {
+            object: group,
+            value: Value::Selection(vec![1]),
+        }],
+    )
+    .expect("chosen");
+    let buttons = widgets(&doc, "Pay");
+    (doc, buttons)
+}
+
+fn valued(widget: &Widget, value: &str) -> FieldEdit {
+    FieldEdit {
+        value: Some(value.into()),
+        widget: widget.widget,
+        rect: None,
+        name: None,
+        remove: false,
+        props: Default::default(),
+    }
+}
+
+/// The names of the states a button has for one of its looks.
+fn looks(doc: &Document, widget: ObjectId, look: &[u8]) -> Vec<String> {
+    let ap = doc.get_dictionary(widget).unwrap().get(b"AP").unwrap();
+    let ap = doc.dereference(ap).unwrap().1.as_dict().unwrap();
+    let Ok(states) = ap.get(look) else {
+        return Vec::new();
+    };
+    let states = doc.dereference(states).unwrap().1.as_dict().unwrap();
+    let mut names: Vec<String> = states
+        .iter()
+        .map(|(name, _)| String::from_utf8_lossy(name).into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+fn name_at(doc: &Document, id: ObjectId, key: &[u8]) -> String {
+    doc.get_dictionary(id)
+        .unwrap()
+        .get(key)
+        .and_then(Object::as_name)
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_radio_buttons_value_is_renamed_in_its_looks_and_in_what_the_group_holds() {
+    let (mut doc, buttons) = with_buttons();
+    let states = |doc: &Document| match &widgets(doc, "Pay")[0].control {
+        crate::forms::Control::Radio { states, .. } => states
+            .iter()
+            .map(|state| String::from_utf8_lossy(state).into_owned())
+            .collect::<Vec<_>>(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(states(&doc), ["Card", "Cash", "Later"]);
+    assert_eq!(name_at(&doc, buttons[0].object, b"V"), "Cash");
+
+    // A second look for the chosen button, held in place where the first is
+    // an object of its own or the other way round: both are renamed.
+    {
+        let ap = doc
+            .get_dictionary(buttons[1].widget)
+            .unwrap()
+            .get(b"AP")
+            .unwrap();
+        let ap = doc.dereference(ap).unwrap().1.as_dict().unwrap();
+        let normal = doc.dereference(ap.get(b"N").unwrap()).unwrap().1.clone();
+        let held_in_place = matches!(ap.get(b"N"), Ok(Object::Dictionary(_)));
+        let down = if held_in_place {
+            Object::Reference(doc.add_object(normal))
+        } else {
+            normal
+        };
+        let ap = match doc
+            .get_dictionary(buttons[1].widget)
+            .unwrap()
+            .get(b"AP")
+            .unwrap()
+            .clone()
+        {
+            Object::Reference(id) => doc.get_dictionary_mut(id).unwrap(),
+            _ => doc
+                .get_dictionary_mut(buttons[1].widget)
+                .unwrap()
+                .get_mut(b"AP")
+                .and_then(Object::as_dict_mut)
+                .unwrap(),
+        };
+        ap.set("D", down);
+    }
+    assert_eq!(looks(&doc, buttons[1].widget, b"D"), ["Cash", "Off"]);
+    // What the group holds after a reset is that button too.
+    doc.get_dictionary_mut(buttons[0].object)
+        .unwrap()
+        .set("DV", Object::Name(b"Cash".to_vec()));
+
+    // The chosen button: its looks, what it shows, and what the group holds.
+    // A button that is not chosen: its looks, and nothing else.
+    apply(
+        &mut doc,
+        &[
+            valued(&buttons[1], "Bank transfer"),
+            valued(&buttons[2], "Never"),
+        ],
+    )
+    .expect("revalued");
+    assert_eq!(states(&doc), ["Card", "Bank transfer", "Never"]);
+    assert_eq!(
+        looks(&doc, buttons[1].widget, b"N"),
+        ["Bank transfer", "Off"]
+    );
+    assert_eq!(
+        looks(&doc, buttons[1].widget, b"D"),
+        ["Bank transfer", "Off"]
+    );
+    assert_eq!(name_at(&doc, buttons[1].widget, b"AS"), "Bank transfer");
+    assert_eq!(name_at(&doc, buttons[0].object, b"V"), "Bank transfer");
+    assert_eq!(name_at(&doc, buttons[0].object, b"DV"), "Bank transfer");
+    assert_eq!(looks(&doc, buttons[2].widget, b"N"), ["Never", "Off"]);
+    assert_eq!(name_at(&doc, buttons[2].widget, b"AS"), "Off");
+    assert_eq!(looks(&doc, buttons[0].widget, b"N"), ["Card", "Off"]);
+    // The group still holds the second button, and takes another answer.
+    let after = widgets(&doc, "Pay");
+    assert_eq!(after[0].value, Value::Selection(vec![1]));
+    assert!(after.iter().all(|w| w.reason.is_none()));
+    write(
+        &mut doc,
+        &[Change {
+            object: buttons[0].object,
+            value: Value::Selection(vec![2]),
+        }],
+    )
+    .expect("answered");
+    assert_eq!(name_at(&doc, buttons[0].object, b"V"), "Never");
+
+    // The value it has already is no change at all.
+    let before = bytes(&doc);
+    apply(&mut doc, &[valued(&buttons[0], "Card")]).expect("nothing to do");
+    assert_eq!(bytes(&doc), before);
+}
+
+#[test]
+fn a_value_a_button_cannot_take_is_refused_and_nothing_is_written() {
+    let (doc, buttons) = with_buttons();
+    let refused = |doc: &Document, edits: &[FieldEdit]| {
+        let mut copy = doc.clone();
+        let why = apply(&mut copy, edits).expect_err("refused");
+        assert_eq!(bytes(&copy), bytes(doc), "{why}");
+        why
+    };
+    assert!(refused(&doc, &[valued(&buttons[0], "Cash")])
+        .contains("already has a button with the value `Cash`"));
+    assert!(refused(&doc, &[valued(&buttons[0], "Off")]).contains("`Off` is what a group holds"));
+    assert!(refused(&doc, &[valued(&buttons[0], "")]).contains("Pay"));
+    let name = one(&doc, "Name");
+    assert!(refused(&doc, &[valued(&name, "x")]).contains("only a radio button has a value"));
+    // With another change beside it, neither is made.
+    assert!(
+        refused(&doc, &[named(&name, "Other"), valued(&buttons[0], "Cash")])
+            .contains("already has")
+    );
+
+    // A group that lists what its buttons export keeps its state names.
+    let mut listed = doc.clone();
+    listed.get_dictionary_mut(buttons[0].object).unwrap().set(
+        "Opt",
+        vec![
+            Object::string_literal("a"),
+            Object::string_literal("b"),
+            Object::string_literal("c"),
+        ],
+    );
+    assert!(
+        refused(&listed, &[valued(&buttons[0], "New")]).contains("lists what its buttons export")
+    );
+
+    // Two buttons with one value are chosen together, and stay so.
+    let mut shared = doc.clone();
+    for look in [b"N".as_slice(), b"D"] {
+        let ap = shared
+            .get_dictionary(buttons[2].widget)
+            .unwrap()
+            .get(b"AP")
+            .unwrap()
+            .clone();
+        let ap = match ap {
+            Object::Reference(id) => shared.get_dictionary_mut(id).unwrap(),
+            _ => shared
+                .get_dictionary_mut(buttons[2].widget)
+                .unwrap()
+                .get_mut(b"AP")
+                .and_then(Object::as_dict_mut)
+                .unwrap(),
+        };
+        let Ok(states) = ap.get_mut(look) else {
+            continue;
+        };
+        let states = match states {
+            Object::Reference(id) => {
+                let id = *id;
+                shared.get_dictionary_mut(id).unwrap()
+            }
+            other => other.as_dict_mut().unwrap(),
+        };
+        let drawing = states.remove(b"Later").unwrap();
+        states.set("Cash", drawing);
+    }
+    assert!(refused(&shared, &[valued(&buttons[1], "New")]).contains("chosen together"));
+    // The value such a button has already is still no change, and no refusal.
+    let before = bytes(&shared);
+    apply(&mut shared, &[valued(&buttons[1], "Cash")]).expect("nothing to do");
+    assert_eq!(bytes(&shared), before);
+
+    // A removed button's value is not looked at.
+    let mut copy = doc.clone();
+    let mut going = valued(&buttons[0], "Cash");
+    going.remove = true;
+    apply(&mut copy, &[going]).expect("removed");
+    assert_eq!(widgets(&copy, "Pay").len(), 2);
 }

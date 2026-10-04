@@ -617,6 +617,59 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       await host.idle();
       check("and a third undo leaves nothing unsaved", host.edits()?.state.dirty === false && chosen() === "Choose an option", `${host.edits()?.state.dirty}; ${chosen()}`);
     }
+
+    // The value a radio button of the file gives its group, changed in the
+    // panel and saved: the driver then answers the group with the new value.
+    {
+      const viewer = host.viewer()!;
+      const sheet = () => document.querySelector<HTMLElement>(`.${PROPERTIES_CLASS}`);
+      const second = after.widgets.findIndex((widget, at) =>
+        widget.name === "Pay" && after.widgets.findIndex((other) => other.name === "Pay") !== at);
+      host.run("edit.formEditOn");
+      await pause(200);
+      viewer.pick([SAVED_BASE + second]);
+      host.run("edit.fieldProperties");
+      await settle(() => sheet()?.style.display === "flex", SETTLE_MS);
+      const value = sheet()?.querySelector<HTMLInputElement>('[aria-label="Choices"]') ?? null;
+      check("the panel shows a saved radio button's value", value?.value === "Choice 2", String(value?.value));
+      if (value) value.value = "By post";
+      const tip = sheet()?.querySelector<HTMLInputElement>('[aria-label="Tooltip"]') ?? null;
+      if (tip) tip.value = "How to pay";
+      [...(sheet()?.querySelectorAll("button") ?? [])].at(-1)?.click();
+      const journalled = () => host.edits()?.state.fields ?? [];
+      await settle(() => journalled().length === 2, SETTLE_MS);
+      await host.idle();
+      const first = after.widgets.find((widget) => widget.name === "Pay")?.widget.join();
+      const by = (object: string | undefined) => journalled().find((edit) => edit.object.join() === object);
+      check(
+        "applying a new value and a tooltip journals the value for that button and the tooltip for the group's first",
+        journalled().length === 2 && by(after.widgets[second]?.widget.join())?.value === "By post"
+          && by(after.widgets[second]?.widget.join())?.props === undefined
+          && by(first)?.props?.tooltip === "How to pay" && by(first)?.value === undefined,
+        JSON.stringify(journalled()),
+      );
+      host.run("edit.undo");
+      await host.idle();
+      const undone = journalled().length;
+      host.run("edit.redo");
+      await host.idle();
+      check("one undo takes back both, and one redo makes both again", undone === 0 && journalled().length === 2, `${undone}, then ${journalled().length}`);
+      host.run("edit.formEditOff");
+      await pause(200);
+      host.run("file.save");
+      await host.idle();
+      await settle(() => host.edits()?.state.dirty === false, SETTLE_MS);
+      const last = host.edits();
+      const group = last ? (await call("document_form", { doc: last.doc })).widgets.filter((widget) => widget.name === "Pay") : [];
+      const control = group[0]?.control;
+      const values = control?.kind === "radio" ? control.states.map((state) => new TextDecoder().decode(new Uint8Array(state))) : [];
+      check(
+        "the save writes the button's new value, and the group can still be answered",
+        values.join("|") === "Choice 1|By post" && group.length === 2 && group.every((widget) => widget.reason === null)
+          && group.every((widget) => widget.tooltip === "How to pay"),
+        `${values.join("|")}; ${group.map((widget) => `${widget.reason} ${widget.tooltip}`).join()}`,
+      );
+    }
   }
 }
 

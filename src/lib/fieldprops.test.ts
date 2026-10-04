@@ -125,14 +125,17 @@ function deps(update: {
   meanwhile?: (world: { form: Form | null; marks: MarkView[] }) => void;
 } = {}): {
   deps: PropertiesDeps; asked: FieldProperties[]; made: FieldTarget[]; fitted: [number, FieldProps][]; said: string[];
+  /** How many widgets each change to the file named. */
+  sent: number[];
 } {
+  const sent: number[] = [];
   const asked: FieldProperties[] = [];
   const made: FieldTarget[] = [];
   const fitted: [number, FieldProps][] = [];
   const said: string[] = [];
   const world = { form: update.form === undefined ? FORM : update.form, marks: update.marks ?? MARKS };
   return {
-    asked, made, fitted, said,
+    asked, made, fitted, said, sent,
     deps: {
       picked: () => update.picked ?? [SAVED_BASE],
       form: () => world.form,
@@ -143,7 +146,7 @@ function deps(update: {
         update.meanwhile?.(world);
         return update.answer ? update.answer(now) : null;
       },
-      refield: (target) => made.push(target),
+      refield: (targets) => { made.push(...targets); sent.push(targets.length); },
       say: (message) => said.push(message),
     },
   };
@@ -279,6 +282,69 @@ describe("changing a placed field's properties", () => {
     run.deps.ask = (now) => { picked = [5]; return ask(now); };
     await expect(changeProperties(run.deps)).resolves.toBe(true);
     expect(run.fitted).toEqual([[3, { required: true }]]);
+  });
+});
+
+describe("a radio button of the file", () => {
+  const bytes = (text: string) => [...new TextEncoder().encode(text)];
+  const states = [bytes("Card"), bytes("Cash"), bytes("Später")];
+  const button = (n: number, index: number): FormWidget => ({
+    ...widget(n, "Pay", { tooltip: "How" }), object: [30, 0], value: [1],
+    control: { kind: "radio", index, states, unison: false, no_toggle_off: true },
+  });
+  const form: Form = { widgets: [widget(11, "Name"), button(31, 0), button(32, 1), button(33, 2)] };
+  const picked = (at: number) => [SAVED_BASE + at];
+
+  it("is asked about with the value it gives its group, read from the state the file has", async () => {
+    const run = deps({ form, picked: picked(3) });
+    await changeProperties(run.deps);
+    expect(run.asked[0]).toMatchObject({ name: "Pay", tooltip: "How", options: ["Später"], single: true, align: null });
+    // And with the value a reader has just given it.
+    const again = deps({ form, picked: picked(3), fields: [{ object: [33, 0], page: 5, removed: false, value: "Later" }] });
+    await changeProperties(again.deps);
+    expect(again.asked[0]?.options).toEqual(["Later"]);
+  });
+
+  it("takes a new value as a change to that button, and the group's properties under its first", async () => {
+    const valued = deps({ form, picked: picked(2), answer: (now) => ({ ...now, options: ["Bank"] }) });
+    await expect(changeProperties(valued.deps)).resolves.toBe(true);
+    expect(valued.made).toEqual([{ object: [32, 0], page: 5, patch: { value: "Bank" } }]);
+    // Both at once are two widgets in one change.
+    const both = deps({ form, picked: picked(2), answer: (now) => ({ ...now, tooltip: "Which", options: ["Bank"] }) });
+    await changeProperties(both.deps);
+    expect(both.made).toEqual([
+      { object: [31, 0], page: 5, patch: { props: { tooltip: "Which" } } },
+      { object: [32, 0], page: 5, patch: { value: "Bank" } },
+    ]);
+    expect(both.sent).toEqual([2]);
+    // On the group's first button they are one widget, changed once.
+    const first = deps({ form, picked: picked(1), answer: (now) => ({ ...now, tooltip: "Which", options: ["Bank"] }) });
+    await changeProperties(first.deps);
+    expect(first.made).toEqual([{ object: [31, 0], page: 5, patch: { props: { tooltip: "Which" }, value: "Bank" } }]);
+    // A tooltip alone names no value, and the value is never sent as choices.
+    const tip = deps({ form, picked: picked(2), answer: (now) => ({ ...now, tooltip: "Which" }) });
+    await changeProperties(tip.deps);
+    expect(tip.made).toEqual([{ object: [31, 0], page: 5, patch: { props: { tooltip: "Which" } } }]);
+  });
+
+  it("is refused a value another button of its group has, as the file or the reader gave it", async () => {
+    const taken = deps({ form, picked: picked(2), answer: (now) => ({ ...now, tooltip: "x", options: ["Card"] }) });
+    await expect(changeProperties(taken.deps)).resolves.toBe(false);
+    expect(taken.made).toEqual([]);
+    expect(taken.said).toEqual(["The group already has a button with the value `Card`"]);
+    const fields: FieldEdited[] = [{ object: [31, 0], page: 5, removed: false, value: "Giro" }];
+    const given = deps({ form, picked: picked(2), fields, answer: (now) => ({ ...now, options: ["Giro"] }) });
+    await expect(changeProperties(given.deps)).resolves.toBe(false);
+    // The value the first button no longer has is free, and so is one of a button taken out.
+    const freed = deps({ form, picked: picked(2), fields, answer: (now) => ({ ...now, options: ["Card"] }) });
+    await expect(changeProperties(freed.deps)).resolves.toBe(true);
+    const gone: FieldEdited[] = [{ object: [31, 0], page: 5, removed: true }];
+    const removed = deps({ form, picked: picked(2), fields: gone, answer: (now) => ({ ...now, options: ["Card"] }) });
+    await expect(changeProperties(removed.deps)).resolves.toBe(true);
+    // The value it has is no change.
+    const same = deps({ form, picked: picked(2), answer: (now) => ({ ...now, options: ["Cash"] }) });
+    await expect(changeProperties(same.deps)).resolves.toBe(false);
+    expect(same.said).toEqual(["Nothing about the field was changed."]);
   });
 });
 

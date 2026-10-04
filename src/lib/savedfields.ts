@@ -53,13 +53,15 @@ export interface FieldEdited {
   name?: string;
   removed: boolean;
   props?: FieldProps;
+  /** The value a radio button now gives its group. */
+  value?: string;
 }
 
 /** One widget to change, as `form_field_edit` takes it. */
 export interface FieldTarget {
   object: [number, number];
   page: number;
-  patch: { rect?: [number, number, number, number]; name?: string; removed?: boolean; props?: FieldProps };
+  patch: { rect?: [number, number, number, number]; name?: string; removed?: boolean; props?: FieldProps; value?: string };
 }
 
 type Rect = [number, number, number, number];
@@ -211,9 +213,9 @@ export interface FieldProperties {
   maxLength: number | null;
   /** Where a text or choice field's text sits. */
   align: FormAlign | null;
-  /** What a choice field offers; for a radio button placed in this session, its one value. */
+  /** What a choice field offers; for a radio button, the one value it gives its group. */
   options: string[] | null;
-  /** Whether `options` is one value and not a list: a placed radio button. */
+  /** Whether `options` is one value and not a list: a radio button. */
   single?: boolean;
   /**
    * The size a text or choice field's text is drawn at where it fits, in
@@ -226,6 +228,17 @@ export interface FieldProperties {
    * for none. Absent or `null` for a field that has none to set.
    */
   defaultValue?: string | null;
+}
+
+/**
+ * The value a radio button of the file gives its group: the one a reader has
+ * just given it, or the name of the state the file has for it being chosen.
+ */
+export function buttonValue(widget: FormWidget, state: Pick<EditState, "fields">): string {
+  const given = editOf(widget, state)?.value;
+  if (given !== undefined) return given;
+  const control = widget.control;
+  return control.kind === "radio" ? new TextDecoder().decode(new Uint8Array(control.states[control.index] ?? [])) : "";
 }
 
 /** The properties of the saved field an id names, or `null` when it names none. */
@@ -252,7 +265,8 @@ export function properties(
     align: kind === "text" || kind === "choice" ? changed("align") ?? widget.align ?? "left" : null,
     options: widget.control.kind === "choice"
       ? changed("options") ?? widget.control.options.map((option) => option.label)
-      : null,
+      : widget.control.kind === "radio" ? [buttonValue(widget, state)] : null,
+    ...(kind === "radio" ? { single: true } : {}),
     textSize: kind === "text" || kind === "choice" ? changed("text_size") ?? widget.text_size ?? 0 : null,
     defaultValue: kind === "text" ? changed("default_value") ?? widget.default_value ?? "" : null,
   };
@@ -316,6 +330,8 @@ export function propertied(
   const now = properties(form, state, id);
   if (!found || !now) return null;
   const props = differing(now, to);
+  // A button's value is its own and not the group's: `revalued` makes that change.
+  if (now.single) delete props.options;
   if (Object.keys(props).length === 0) return null;
   // A field shown in several places has one set of properties, and the save
   // refuses two. So the change is always made under the same widget: the
@@ -325,6 +341,28 @@ export function propertied(
     .map((other) => ({ widget: other, page: pageOf(other, state.pages) }))
     .find((other): other is { widget: FormWidget; page: PageId } => other.page !== undefined);
   return target(first ?? found, { props });
+}
+
+/**
+ * A radio button of the file given a new value: a change to that button, a
+ * sentence when another button of its group has the value, or `null` when the
+ * value is the one it has or the field is not a radio button.
+ */
+export function revalued(
+  form: Form,
+  state: Pick<EditState, "fields" | "pages">,
+  id: number,
+  to: FieldProperties,
+): FieldTarget | string | null {
+  const found = named(form, state, id);
+  const value = to.options?.[0];
+  if (!found || found.widget.control.kind !== "radio" || value === undefined) return null;
+  if (value === buttonValue(found.widget, state)) return null;
+  const taken = form.widgets.some((other) =>
+    same(other.object, found.widget.object)
+    && !editOf(other, state)?.removed && buttonValue(other, state) === value);
+  if (taken) return `The group already has a button with the value \`${value}\``;
+  return target(found, { value });
 }
 
 /**

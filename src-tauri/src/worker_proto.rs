@@ -1148,6 +1148,7 @@ mod tests {
                     replacement: "ACME".into(),
                 }],
                 fields: vec![crate::formedit::FieldEdit {
+                    value: None,
                     widget: (12, 0),
                     rect: Some([10., 20., 110., 40.]),
                     name: None,

@@ -28,6 +28,11 @@ have the binary.)
   holds after a reader resets the form, and a field that holds nothing is answered with
   it at once. `tpdf form` takes both as `text_size` and `default_value`.
 
+- **The value of a saved radio button.** The properties panel shows the value a radio
+  button already in the file gives its group, and takes a new one. Before, the value
+  could be set only until the first save. A value another button of the group has is
+  refused.
+
 - **Fields on a turned page.** A field can be placed, moved and resized on a page the
   document turns, in the window and with `tpdf form`, and on a page you have turned
   yourself. Its text reads upright as the page is displayed. Before, the save and

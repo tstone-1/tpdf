@@ -530,6 +530,7 @@ fn samples() -> BTreeMap<&'static str, String> {
                 page: 2,
             }],
             fields: vec![edits::FieldEditView {
+                value: Some("Cash".into()),
                 object: (14, 0),
                 page: 1,
                 rect: Some([10.0, 20.0, 110.0, 40.0]),

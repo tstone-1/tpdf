@@ -249,7 +249,7 @@ pub struct Form {
     pub widgets: Vec<Widget>,
 }
 
-fn inherited<'a>(doc: &'a Document, start: ObjectId, key: &[u8]) -> Option<&'a Object> {
+pub(crate) fn inherited<'a>(doc: &'a Document, start: ObjectId, key: &[u8]) -> Option<&'a Object> {
     let mut at = start;
     let mut seen = HashSet::new();
     for _ in 0..32 {

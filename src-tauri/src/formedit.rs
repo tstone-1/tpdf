@@ -166,6 +166,166 @@ pub struct FieldEdit {
     /// this changes all of them.
     #[serde(default)]
     pub props: Props,
+    /// The value a radio button gives its group: the name of the state it
+    /// has when it is the one chosen. `None` leaves it. This is the button's
+    /// own and not the field's, so it is not among the properties.
+    #[serde(default)]
+    pub value: Option<String>,
+}
+
+/// What is wrong with `value` as the value of a radio button called `name`,
+/// as far as can be said without the document.
+pub fn button_problem(name: &str, value: &str) -> Option<String> {
+    crate::formfields::options_problem(name, crate::formfields::Kind::Radio, &[value.to_string()])
+}
+
+/// A radio button, the state it has when chosen, and the name that state is
+/// to have.
+struct Revalued<'a> {
+    widget: &'a Widget,
+    was: Vec<u8>,
+    to: Vec<u8>,
+}
+
+/// A radio button and the value it is to give its group, checked against the
+/// group, or `None` where the button has the value already.
+fn revalued<'a>(
+    doc: &Document,
+    widget: &'a Widget,
+    value: &str,
+) -> Result<Option<Revalued<'a>>, String> {
+    let name = &widget.name;
+    let Control::Radio { index, states, .. } = &widget.control else {
+        return Err(format!(
+            "`{name}`: only a radio button has a value it gives its group"
+        ));
+    };
+    if let Some(why) = button_problem(name, value) {
+        return Err(why);
+    }
+    let unanswerable = widget
+        .reason
+        .as_deref()
+        .filter(|why| *why != forms::READ_ONLY);
+    if let Some(reason) = unanswerable {
+        return Err(format!("`{name}` keeps its value: {reason}"));
+    }
+    // With `/Opt` the group exports what that list says and the state names
+    // are only places in it, so a new name would change nothing a recipient reads.
+    if forms::inherited(doc, widget.object, b"Opt").is_some() {
+        return Err(format!(
+            "`{name}` keeps its value: the group lists what its buttons export, which tpdf does not rewrite"
+        ));
+    }
+    let was = states
+        .get(*index)
+        .ok_or("a radio button is not among its group's states")?;
+    let to = value.as_bytes().to_vec();
+    if *was == to {
+        return Ok(None);
+    }
+    let others = || {
+        states
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| at != index)
+            .map(|(_, state)| state)
+    };
+    if others().any(|state| *state == to) {
+        return Err(format!(
+            "`{name}`: the group already has a button with the value `{value}`"
+        ));
+    }
+    // Buttons that share a value are chosen together. Renaming one would
+    // take it out of that, which is a different change from the one asked for.
+    if others().any(|state| state == was) {
+        return Err(format!(
+            "`{name}` keeps its value: another button of the group has the same one, and they are chosen together"
+        ));
+    }
+    Ok(Some(Revalued {
+        widget,
+        was: was.clone(),
+        to,
+    }))
+}
+
+/// Renames the state a radio button has when chosen: in each of its
+/// appearances, in what it is showing now, and in what the group holds and
+/// holds after a reset where that is this button.
+fn revalue(doc: &mut Document, widget: &Widget, was: &[u8], to: &[u8]) -> Result<(), String> {
+    let appearances = match doc
+        .get_dictionary(widget.widget)
+        .map_err(|e| e.to_string())?
+        .get(b"AP")
+    {
+        Ok(Object::Reference(id)) => Some(*id),
+        _ => None,
+    };
+    for look in [b"N".as_slice(), b"D", b"R"] {
+        // The appearances and each look are a dictionary in place or an object of their own.
+        let held = |doc: &Document| -> Option<Object> {
+            let ap = match appearances {
+                Some(id) => doc.get_dictionary(id).ok()?,
+                None => doc
+                    .get_dictionary(widget.widget)
+                    .ok()?
+                    .get(b"AP")
+                    .ok()?
+                    .as_dict()
+                    .ok()?,
+            };
+            ap.get(look).ok().cloned()
+        };
+        let Some(states) = held(doc) else { continue };
+        let rename = |states: &mut lopdf::Dictionary| {
+            if let Some(drawing) = states.remove(was) {
+                states.set(to.to_vec(), drawing);
+            }
+        };
+        match states {
+            Object::Reference(id) => {
+                if let Ok(states) = doc.get_dictionary_mut(id) {
+                    rename(states);
+                }
+            }
+            Object::Dictionary(_) => {
+                let ap = match appearances {
+                    Some(id) => doc.get_dictionary_mut(id).map_err(|e| e.to_string())?,
+                    None => doc
+                        .get_dictionary_mut(widget.widget)
+                        .map_err(|e| e.to_string())?
+                        .get_mut(b"AP")
+                        .and_then(Object::as_dict_mut)
+                        .map_err(|e| e.to_string())?,
+                };
+                if let Ok(states) = ap.get_mut(look).and_then(Object::as_dict_mut) {
+                    rename(states);
+                }
+            }
+            _ => {}
+        }
+    }
+    let renamed = |dict: &mut lopdf::Dictionary, key: &[u8]| {
+        if dict
+            .get(key)
+            .and_then(Object::as_name)
+            .is_ok_and(|now| now == was)
+        {
+            dict.set(key.to_vec(), Object::Name(to.to_vec()));
+        }
+    };
+    renamed(
+        doc.get_dictionary_mut(widget.widget)
+            .map_err(|e| e.to_string())?,
+        b"AS",
+    );
+    let group = doc
+        .get_dictionary_mut(widget.object)
+        .map_err(|e| e.to_string())?;
+    renamed(group, b"V");
+    renamed(group, b"DV");
+    Ok(())
 }
 
 /// The least side a widget of this kind may be given.
@@ -582,6 +742,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
     let mut names: BTreeMap<ObjectId, String> = BTreeMap::new();
     let mut removals: Vec<&Widget> = Vec::new();
     let mut properties: BTreeMap<ObjectId, Propertied> = BTreeMap::new();
+    let mut values: Vec<Revalued> = Vec::new();
     for edit in edits {
         if !seen.insert(edit.widget) {
             return Err("a form field is changed twice".into());
@@ -612,6 +773,9 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         if edit.remove {
             removals.push(widget);
             continue;
+        }
+        if let Some(value) = &edit.value {
+            values.extend(revalued(doc, widget, value)?);
         }
         if let Some(name) = &edit.name {
             if let Some(why) = crate::formfields::name_problem(name) {
@@ -748,6 +912,9 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
         } else if flags != was {
             dict.set("Ff", flags);
         }
+    }
+    for Revalued { widget, was, to } in &values {
+        revalue(doc, widget, was, to)?;
     }
     for widget in removals {
         remove(doc, widget)?;

@@ -3986,6 +3986,11 @@ export class Viewer {
     return found ? this.movePicked(found.placed.map((one) => one.id), found.slot, dx, dy) : false;
   }
 
+  /** A name for one gesture that changes several things, so that one undo takes all of it back. */
+  gesture(): number {
+    return ++this.sweeps;
+  }
+
   /**
    * Where a copy of each picked mark goes: a step down and to the right of
    * the mark it copies, all by the same step, as far as the page lets them.
