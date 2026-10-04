@@ -3490,7 +3490,7 @@
           apply: (run) => applyEdit(run),
           activate: activateTab,
           close: closeTab,
-          run: (id) => { commands.run(id); },
+          run: (id, argument) => { commands.run(id, argument); },
           importPages: (path) => importPagesFrom(path),
           answerSave: (path) => signSaves?.queue(path),
           answerPictures: (paths) => { queuedPictures = paths; },

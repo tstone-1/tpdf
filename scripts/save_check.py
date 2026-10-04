@@ -98,9 +98,12 @@ ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "src-tauri/target/release/bundle/macos/tpdf.app"
 FIXTURE = ROOT / "testdata/outline-simple.pdf"
 
-FILE_MENU = 3
-EDIT_MENU = 4
-PAGE_MENU = 5
+# By name, quoted for AppleScript, and not by position: these were 3, 4 and 5
+# until 2026-10-04, when an Arrange menu went in before Page and this check
+# clicked "Rotate page clockwise" in a menu that does not have it.
+FILE_MENU = '"File"'
+EDIT_MENU = '"Edit"'
+PAGE_MENU = '"Page"'
 
 
 def osa(script: str, timeout: float = 120) -> str:
@@ -140,7 +143,7 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def enabled(menu: int, item: str) -> bool:
+def enabled(menu: str, item: str) -> bool:
     try:
         answer = osa(
             f'tell application "System Events" to tell {APP.process} to return enabled of '
@@ -203,7 +206,7 @@ class MenuGone(Exception):
     """
 
 
-def click(menu: int, item: str, settle: float = 3.0) -> None:
+def click(menu: str, item: str, settle: float = 3.0) -> None:
     APP.activate()
     time.sleep(0.5)
     try:

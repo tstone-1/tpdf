@@ -137,6 +137,7 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     const lefts = () => fields().map((mark) => (mark.quads[0] ?? 0).toFixed(2));
     const widths = () => fields().map((mark) => ((mark.quads[2] ?? 0) - (mark.quads[0] ?? 0)).toFixed(2));
     const was = fields().map((mark) => mark.quads.join());
+    const wide = widths().join(" ");
     const ids = fields().map((mark) => mark.id);
     // The checkbox first, so it is the one the others follow: its left edge
     // is the only one of the three that is not already where the others are.
@@ -145,12 +146,24 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     await host.idle();
     check("an arrangement with nothing picked does nothing", fields().map((mark) => mark.quads.join()).join("|") === was.join("|"), lefts().join(" "));
     // All three with Shift, so no field's name box opens under the check.
-    for (const id of order) press(id, true);
+    // A press on the surface beside the page first: an earlier step pressed
+    // the text field, which picked it, and a press with Shift on a picked
+    // field takes it out.
+    for (const type of ["pointerdown", "pointerup"]) {
+      root.dispatchEvent(new PointerEvent(type, { button: 0, pointerId: 1, bubbles: true, clientX: box.left + 3, clientY: box.top + 3 }));
+    }
+    check("a press beside the fields picks none of them", viewer.pickedCount === 0, viewer.pickedMarks().join());
+    const trail: string[] = [];
+    for (const id of order) {
+      const anchor = viewer.markAnchor(id);
+      press(id, true);
+      trail.push(`${id}@${anchor ? `${anchor.left.toFixed(0)},${anchor.top.toFixed(0)}` : "none"} open ${viewer.markOpen} -> [${viewer.pickedMarks().join()}]`);
+    }
     await pause(100);
     check(
       "three presses with Shift pick three fields, in that order",
       viewer.pickedMarks().join() === order.join(),
-      `${viewer.pickedMarks().join()} against ${order.join()}`,
+      `${viewer.pickedMarks().join()} against ${order.join()}; ${trail.join(" | ")}`,
     );
     check("the reader is told how many are picked and which one leads", told().includes("3 picked"), told());
     const rights = () => fields().map((mark) => (mark.quads[2] ?? 0).toFixed(2));
@@ -161,7 +174,7 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     check(
       "Arrange: align right puts every right edge where the first picked one's is, and keeps each width",
       new Set(rights()).size === 1 && rights()[0] === (lead()?.quads[2] ?? 0).toFixed(2)
-        && lead()?.quads.join() === was[1] && new Set(widths()).size === 3,
+        && lead()?.quads.join() === was[1] && widths().join(" ") === wide,
       `rights ${rights().join(" ")}; widths ${widths().join(" ")}`,
     );
     host.run("edit.undo");
@@ -239,11 +252,40 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         .filter((control) => control.style.display !== "none").length;
     const at0 = form.widgets.findIndex((widget) => widget.name === "Name");
     const was = form.widgets[at0]?.display_rect ?? [0, 0, 0, 0];
+    // The two fields placed since the save are taken back first: the driver
+    // reads the file this block saves and expects the three of the first save.
+    host.run("edit.undo");
+    await host.idle();
+    host.run("edit.undo");
+    await host.idle();
+    check("the two fields placed since the save are taken back", marks().length === 0, `${marks().length} marks`);
+    // The save reopened the document, so the viewer and the surface are new.
+    const viewer = host.viewer()!;
+    const root = document.querySelector<HTMLElement>(".surface")!;
+    const box = root.getBoundingClientRect();
+    // A dropdown, placed through the command that asks for its choices.
+    const at = (x: number, y: number) => ({ x: box.left + box.width * x, y: box.top + box.height * y });
+    host.run("edit.addDropdown", "Yes; No, by post");
+    check("the dropdown command arms the field tool once it has its choices", viewer.drawArmed === "field", String(viewer.drawArmed));
+    drag(root, at(0.3, 0.8), at(0.55, 0.84));
+    await settle(() => fields().length === 1, SETTLE_MS);
+    await host.idle();
+    const chooser = fields()[0];
+    check(
+      "a drag places a dropdown that holds the choices typed, under a name of its own",
+      chooser?.field?.kind === "dropdown" && chooser.field.options?.join("|") === "Yes|No, by post"
+        && chooser.note === "Dropdown 1",
+      `${chooser?.field?.kind}; ${chooser?.field?.options?.join("|")}; ${chooser?.note}`,
+    );
     host.run("edit.formEditOn");
     await pause(200);
     const id = SAVED_BASE + at0;
     const anchor = viewer.markAnchor(id);
-    check("changing the document's fields shows the saved field as a rectangle", anchor !== null, String(at0));
+    check(
+      "changing the document's fields shows the saved field as a rectangle",
+      anchor !== null,
+      `at ${at0}; pages ${JSON.stringify(host.edits()?.state.pages.map((page) => [page.id, page.source]))}; widget pages ${form.widgets.map((w) => w.page).join()}`,
+    );
     check("and puts the controls for filling away", filling() === 0, `${filling()} shown`);
     if (anchor) {
       const from = { x: box.left + (anchor.left + anchor.right) / 2, y: box.top + (anchor.top + anchor.bottom) / 2 };
@@ -272,6 +314,12 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     const now = host.edits();
     const after = now ? await call("document_form", { doc: now.doc }) : { widgets: [] };
     const saved = after.widgets.find((widget) => widget.name === "Name")?.display_rect ?? [0, 0, 0, 0];
+    const listed = after.widgets.find((widget) => widget.name === "Dropdown 1")?.control;
+    check(
+      "the save writes the dropdown as a list of its choices",
+      listed?.kind === "choice" && listed.combo && listed.options.map((o) => o.label).join("|") === "Yes|No, by post",
+      JSON.stringify(listed),
+    );
     check(
       "and the save writes the field where it was dropped",
       Math.abs(saved[0] - to[0]) < 0.01 && Math.abs(saved[1] - to[1]) < 0.01,

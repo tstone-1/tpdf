@@ -95,7 +95,7 @@ export interface OpenCheckHost {
   apply: (run: (edits: Edits) => Promise<EditState>) => Promise<void>;
   activate: (id: number) => Promise<void>;
   close: (id: number) => Promise<void>;
-  run: (id: string) => void;
+  run: (id: string, argument?: string) => void;
   /**
    * `edit.insertPages` past its dialog: the file named rather than picked,
    * opened, and the palette asking which of its pages --- which the phase then

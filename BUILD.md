@@ -370,6 +370,12 @@ cargo run --release --manifest-path src-tauri/Cargo.toml --example progressive-p
 TPDF_FORM_FIXTURE=/tmp/tpdf-form-fixture.pdf TPDF_FORM_PROBE=/tmp/tpdf-filled-form.pdf \
     cargo test --locked --manifest-path src-tauri/Cargo.toml --lib forms::tests::forms_round_trip_values_and_every_shared_widget_appearance
 uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase forms
+
+# Making a form in the window: placing a text field, a checkbox and a dropdown,
+# picking three with Shift and aligning them, one undo for the arrangement, a
+# save, then a saved field dragged and saved again. The driver reads the saved
+# file with the command-line tool and fills it. Any document with a page will do.
+uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase fields
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
@@ -6493,6 +6499,19 @@ substitutes. Also disclose the automatic update check: the Foundation's example
 privacy sentence about network activity only on request does not describe tpdf.
 
 ## Cutting a release
+
+**Window checks after the form work, macOS arm64, 2026-10-04, unreleased tree:** on the
+checks build, `tabs_check.py --phase fields` 36/36 with the driver's read of the saved file,
+`--phase forms` 18/18, `--phase tabs` 21/21, `viewer_check.py` 327/327 on `text-heavy.pdf`
+and 232/232 on `vector-heavy.pdf`, `session_check.py` tabs and places. On the normal bundle
+with the development engine hidden: `menu_check.py` (9 menus, the new Arrange among them)
+and `save_check.py`. Three things in the checks themselves were out of date and are
+corrected, none in the application: `viewer_check.py`'s two tables of which commands a
+document enables had missed four commands registered since it last ran (it was not run
+for 26.10.3) and the fifteen new ones; `save_check.py` addressed menus by position and
+clicked into the wrong one once Arrange went in before Page, so it addresses them by name
+now; and the fields phase had no line in this file, so its first run failed on its
+arguments and was read as a locked screen.
 
 **26.10.3 verification, macOS arm64, 2026-10-03:** all 29 gates passed on the final tree
 (2,650 Rust tests with ten documented ignored, 2,144 frontend tests), and `check_windows.py`

@@ -4568,8 +4568,14 @@ async function appCommandChecks(
   // selection, exactly as `find.inSelection` does, and a check that subtracted
   // a count would have absorbed it in silence.
   const NEEDS_MORE_THAN_A_DOCUMENT = [
+    // No tabs from an earlier launch to reopen, and reopening all of them is
+    // this fixture's launch preference, so its other half is not offered. Both
+    // joined the registry with the tab restore and not this list; the first
+    // run of this check after them, on 2026-10-04, found it.
+    "file.reopenLastTabs",
+    "file.reopenLastDocumentAtLaunch",
     // This fixture's disk-change mode is `ask`, so that choice is the one not
-    // offered. First, because the list is in registry order.
+    // offered. In registry order, as the whole list is.
     "file.onDiskChange.ask",
     // This fixture has automatic checking enabled, so only its disable command
     // is offered. Opening a document does not change that preference.
@@ -4580,6 +4586,27 @@ async function appCommandChecks(
     // the install it follows.
     "app.restartForUpdate",
     "find.inSelection",
+    // New text fields get a line round them here, so turning that on is not
+    // offered. Found missing with the two above.
+    "edit.fieldBorderOn",
+    // The fixture's fake says the document has no form, and no field is being
+    // changed.
+    "edit.formEditOn",
+    "edit.formEditOff",
+    // Nothing is picked.
+    "edit.alignLeft",
+    "edit.alignCenter",
+    "edit.alignRight",
+    "edit.alignTop",
+    "edit.alignMiddle",
+    "edit.alignBottom",
+    "edit.distributeAcross",
+    "edit.distributeDown",
+    "edit.sameWidth",
+    "edit.sameHeight",
+    "edit.sameSize",
+    "edit.centerOnPage",
+    "edit.middleOnPage",
     "edit.highlightSelection",
     "edit.underlineSelection",
     "edit.strikeoutSelection",
@@ -4668,6 +4695,9 @@ async function appCommandChecks(
     // A preference, registered with the tab commands, which come first.
     "file.reopenTabsAtLaunch",
     "file.open",
+    // Makes a document, so it needs none. Missing here from the day it was
+    // registered until this check next ran, 2026-10-04.
+    "file.fromPictures",
     // A preference rather than something done to a document; `ask` is the
     // fixture's mode and so is not among them.
     "file.onDiskChange.reload",

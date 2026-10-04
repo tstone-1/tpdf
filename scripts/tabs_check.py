@@ -255,7 +255,8 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     except (ValueError, KeyError):
         print(f"[FAIL] tpdf fields could not read the saved file: {listed.stderr.strip()}")
         return False
-    wanted = {"Name": ("text", False), "Text 2": ("text", True), "Checkbox 1": ("checkbox", False)}
+    wanted = {"Name": ("text", False), "Text 2": ("text", True), "Checkbox 1": ("checkbox", False),
+              "Dropdown 1": ("choice_combo", False)}
     ok = True
     for name, (kind, multiline) in wanted.items():
         field = fields.get(name)
@@ -266,21 +267,23 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     only = set(fields) == set(wanted)
     ok &= only
     print(f"{'[OK]  ' if only else '[FAIL]'} and no other field: {sorted(fields)}")
-    # One field was placed with a line round it and one with the line turned
-    # off; a checkbox declares none. The file is written without object
-    # streams, so the key a border is declared by can be counted in its bytes.
+    # A text field and the dropdown were placed with a line round them and one
+    # text field with the line turned off; a checkbox declares none. The file
+    # is written without object streams, so the key a border is declared by
+    # can be counted in its bytes.
     declared = saved.read_bytes().count(b"/BC")
-    good = declared == 1
+    good = declared == 2
     ok &= good
-    print(f"{'[OK]  ' if good else '[FAIL]'} one field declares a border, the one placed with it: {declared}")
+    print(f"{'[OK]  ' if good else '[FAIL]'} two fields declare a border, the ones placed with it: {declared}")
     filled = saved.with_name("filled.pdf")
     answers = saved.with_name("answers.json")
-    answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True}))
+    answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True,
+                                   "Dropdown 1": "No, by post"}))
     done = subprocess.run([str(tool), "fill", str(saved), "-o", str(filled), "--values", str(answers)],
                           capture_output=True, text=True, timeout=120, check=False)
     good = done.returncode == 0
     ok &= good
-    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers all three: {(done.stderr or done.stdout).strip()[:200]}")
+    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers all four: {(done.stderr or done.stdout).strip()[:200]}")
     return bool(ok)
 
 
