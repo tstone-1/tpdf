@@ -380,7 +380,8 @@ uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase 
 # right-aligned, a text size and a default value in the properties panel, and
 # saved again; then the saved dropdown answered and given new choices, and the
 # controls read before any save; then a saved radio button given a new value and
-# its group a tooltip, and a third save. The driver reads the saved
+# its group a tooltip, and a third save; an empty signature field is placed on
+# the way, too low a drag for one refused. The driver reads the saved
 # file with the command-line tool and fills it. Any document with a page will do.
 uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase fields
 # A field on a turned page: placed on a page the file turns, saved, the page turned a

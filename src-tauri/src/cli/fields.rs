@@ -200,7 +200,7 @@ pub fn kind(control: &Control) -> FieldKind {
         Control::Radio { .. } => FieldKind::Radio,
         Control::Choice { combo: true, .. } => FieldKind::ChoiceCombo,
         Control::Choice { .. } => FieldKind::ChoiceList,
-        Control::Unsupported => FieldKind::Other,
+        Control::Unsupported | Control::Signature { .. } => FieldKind::Other,
     }
 }
 
@@ -276,7 +276,7 @@ pub fn options(control: &Control, value: &Value) -> Vec<FieldOption> {
 pub fn value_json(control: &Control, value: &Value) -> serde_json::Value {
     use serde_json::Value as J;
     match (control, value) {
-        (Control::Unsupported, _) => J::Null,
+        (Control::Unsupported | Control::Signature { .. }, _) => J::Null,
         (Control::Checkbox, Value::Checked(on)) => J::Bool(*on),
         (Control::Radio { states, .. }, Value::Selection(at)) => at
             .first()

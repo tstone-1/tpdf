@@ -1136,6 +1136,14 @@ export function registerAppCommands(
       run: () => actions.drawField("checkbox"),
     },
     {
+      // An empty signature field: a place somebody signs with a certificate,
+      // here or in another program.
+      id: "edit.addSignatureField",
+      title: "Add a form field: signature...",
+      enabled: withDocument,
+      run: () => actions.drawField("signature"),
+    },
+    {
       // The choices are asked for before the drag: a dropdown with none is
       // not a field, and the name box that opens afterwards has one line.
       id: "edit.addDropdown",

@@ -107,7 +107,10 @@ fn fixture() -> Fixture {
     );
     let signed = widget(
         &mut doc,
-        dictionary! { "FT" => "Sig", "T" => Object::string_literal("Signed") },
+        dictionary! {
+            "FT" => "Sig", "T" => Object::string_literal("Signed"),
+            "V" => dictionary! { "Type" => "Sig" },
+        },
         [150, 60, 250, 80],
         ids[0],
     );
@@ -1451,4 +1454,76 @@ fn a_value_a_button_cannot_take_is_refused_and_nothing_is_written() {
     going.remove = true;
     apply(&mut copy, &[going]).expect("removed");
     assert_eq!(widgets(&copy, "Pay").len(), 2);
+}
+
+#[test]
+fn an_empty_signature_field_is_moved_resized_renamed_and_removed_like_any_field() {
+    let mut doc = fixture().doc;
+    add(
+        &mut doc,
+        &[NewField {
+            text_size: None,
+            default_value: None,
+            options: Vec::new(),
+            name: "Approve".into(),
+            kind: Kind::Signature,
+            page: 0,
+            rect: [20.0, 120.0, 100.0, 30.0],
+            tooltip: None,
+            required: false,
+            max_length: None,
+            border: true,
+        }],
+    )
+    .expect("added");
+    let empty = one(&doc, "Approve");
+    assert!(matches!(
+        empty.control,
+        crate::forms::Control::Signature { signed: false }
+    ));
+    let drawing = |doc: &Document, widget: ObjectId| {
+        let (id, bbox) = appearance(doc, widget);
+        let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+        (bbox, String::from_utf8_lossy(&stream.content).into_owned())
+    };
+    assert_eq!(drawing(&doc, empty.widget).0, [0.0, 0.0, 100.0, 30.0]);
+
+    // Moved: the same drawing, somewhere else.
+    let before = appearance(&doc, empty.widget).0;
+    apply(&mut doc, &[to(&empty, [40.0, 120.0, 140.0, 150.0])]).expect("moved");
+    assert_eq!(
+        one(&doc, "Approve").display_rect,
+        [40.0, 120.0, 140.0, 150.0]
+    );
+    assert_eq!(appearance(&doc, empty.widget).0, before);
+
+    // Resized: its border is drawn for the size it now has.
+    apply(&mut doc, &[to(&empty, [40.0, 120.0, 200.0, 160.0])]).expect("resized");
+    let (bbox, content) = drawing(&doc, empty.widget);
+    assert_eq!(bbox, [0.0, 0.0, 160.0, 40.0]);
+    assert!(content.contains("0.5 0.5 159 39 re S"), "{content}");
+    // Still a place for a signature, and too small a one is refused.
+    assert!(matches!(
+        one(&doc, "Approve").control,
+        crate::forms::Control::Signature { signed: false }
+    ));
+    let why =
+        apply(&mut doc.clone(), &[to(&empty, [40.0, 120.0, 200.0, 140.0])]).expect_err("too small");
+    assert!(why.contains("24"), "{why}");
+
+    apply(&mut doc, &[named(&empty, "Approved by")]).expect("renamed");
+    let renamed = one(&doc, "Approved by");
+    apply(&mut doc, &[gone(&renamed)]).expect("removed");
+    assert!(widgets(&doc, "Approved by").is_empty());
+
+    // The one that holds a signature is none of these.
+    let signed = one(&doc, "Signed");
+    for edit in [
+        to(&signed, [150.0, 60.0, 250.0, 90.0]),
+        named(&signed, "x"),
+        gone(&signed),
+    ] {
+        let why = apply(&mut doc.clone(), &[edit]).expect_err("refused");
+        assert!(why.contains("signed signature field"), "{why}");
+    }
 }

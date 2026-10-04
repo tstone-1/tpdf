@@ -3579,8 +3579,9 @@ objects only for certain kinds of change. The test that removes a field and then
 for it in the written file found the field still there; `field_edits` joined that
 condition the same day.
 
-**Not built.** Changing a field's kind; a signature field. (A field on a turned page
-was in this list until *Fields on a turned page*. Tooltip, required flag and maximum length were in this list until the properties panel
+**Not built.** Changing a field's kind. (A signature field was in this list until
+*Signature fields*, and a field on a turned page
+until *Fields on a turned page*. Tooltip, required flag and maximum length were in this list until the properties panel
 below, the tab order until its own section, and "until the save, the page still draws
 each field where the file has it" until *A changed field is drawn where it will be*.)
 
@@ -3648,6 +3649,24 @@ choices and the journal to carry them across a change and its undo, which one sa
 not justify. In the window: the fields phase answers the saved dropdown, gives it new
 choices and the name field a new alignment, and reads the controls; three broken builds
 (no rebuild, no alignment, a new choice left enabled) each fail one check.
+
+#### Signature fields — 2026-10-04
+
+Decided the same day: an empty signature field is one tpdf places and then signs into
+with a certificate, which is what the field means to every reader. Three stages.
+
+**Stage 1, placing.** `formfields::Kind::Signature` writes a `/Sig` field with no `/V`
+and no `/DA`, with its border as its whole appearance, and sets bit 1 of the form's
+`/SigFlags` (signatures exist); bit 2, append only, stays the signing's. It is at least
+24 points a side, `sign_prepare::appearance::MIN_SIDE`, so that a visible signature can
+be drawn in it, and the journal says so at the drag, where a reader drags a line of
+text's height by habit. It cannot be read-only. `forms::scan` reports it as
+`Control::Signature { signed }`, where `signed` is a `/V` that is a dictionary;
+`tpdf fields` still lists it as `other`. `formedit` moves, resizes, renames and removes
+an empty one and redraws its border for a new size; a signed one is still refused.
+Read by two programs that share no code with this: poppler's `pdfsig` says "The
+signature form field is not signed", and pyHanko lists it among the empty signature
+fields. In the window: *Add a form field: signature*, named `Signature 1`.
 
 #### Fields on a turned page — 2026-10-04
 

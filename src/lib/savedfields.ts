@@ -109,6 +109,7 @@ export function asMarks(form: Form, state: Pick<EditState, "fields" | "pages">):
     if (page === undefined || edit?.removed) return [];
     const kind = widget.control.kind === "checkbox" || widget.control.kind === "radio"
       ? "checkbox"
+      : widget.control.kind === "signature" ? "signature"
       : widget.multiline ? "multiline" : "text";
     return [{
       id: SAVED_BASE + at,

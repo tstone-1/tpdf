@@ -2,7 +2,8 @@
 //!
 //! `forms.rs` reads a form and answers it; nothing there makes a field exist.
 //! This does, for the kinds a form is mostly made of: a text field, on one
-//! line or several, a checkbox, a dropdown and a group of radio buttons.
+//! line or several, a checkbox, a dropdown, a group of radio buttons, and an
+//! empty signature field.
 //!
 //! A field written here is one object that is both the field and its widget,
 //! which is what the specification allows for a field with a single widget and
@@ -43,6 +44,9 @@ pub enum Kind {
     /// group's, and its `options` hold one entry, the value this button gives
     /// the group when it is the one chosen.
     Radio,
+    /// A place for a signature made with a certificate. It holds none until
+    /// somebody signs it, which `sign_prepare` does.
+    Signature,
 }
 
 /// One field to add.
@@ -111,6 +115,9 @@ fn text_problem(
         ));
     }
     let text = matches!(kind, Kind::Text | Kind::Multiline);
+    if text_size.is_some() && kind == Kind::Signature {
+        return Some(format!("`{name}`: a signature field has no text to size"));
+    }
     if text_size.is_some() && !text && kind != Kind::Dropdown {
         return Some(format!("`{name}`: a box or a button has no text to size"));
     }
@@ -265,6 +272,16 @@ impl Placed {
         if matches!(self.kind, Kind::Checkbox | Kind::Radio) && self.align != forms::Align::Left {
             return Some(format!("`{name}`: a box or a button has no text to align"));
         }
+        if self.kind == Kind::Signature && self.align != forms::Align::Left {
+            return Some(format!("`{name}`: a signature field has no text to align"));
+        }
+        // Read-only is what a signature makes of the fields it locks, and an
+        // empty field that refuses a signature is a field nobody can use.
+        if self.kind == Kind::Signature && self.read_only {
+            return Some(format!(
+                "`{name}`: a signature field that is read-only could not be signed"
+            ));
+        }
         text_problem(
             name,
             self.kind,
@@ -307,6 +324,9 @@ pub const MAX_NAME: usize = 255;
 pub const MIN_TEXT: f64 = 8.0;
 /// The smallest side of a checkbox, in points.
 pub const MIN_BOX: f64 = 6.0;
+/// The smallest side of a signature field, in points: the least a visible
+/// signature is drawn in.
+pub const MIN_SIGNATURE: f64 = crate::sign_prepare::appearance::MIN_SIDE;
 
 /// The default appearance every field written here names: Helvetica, sized by
 /// the reader, black. `Helv` is the name producers use for it.
@@ -449,6 +469,7 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
             match field.kind {
                 Kind::Checkbox => "checkbox",
                 Kind::Radio => "radio button",
+                Kind::Signature => "signature field",
                 _ => "text field",
             }
         ));
@@ -537,6 +558,12 @@ pub fn check(
         if field.kind == Kind::Checkbox && field.max_length.is_some() {
             problems.push(format!(
                 "`{}`: a checkbox takes no characters, so it has no most",
+                field.name
+            ));
+        }
+        if field.kind == Kind::Signature && field.max_length.is_some() {
+            problems.push(format!(
+                "`{}`: a signature field takes no characters, so it has no most",
                 field.name
             ));
         }
@@ -826,6 +853,31 @@ fn widget(
                 dictionary! { "N" => dictionary! { "Off" => off, "Yes" => on } },
             );
         }
+        Kind::Signature => {
+            // A signature field with no `/V`: a place for a signature. It has
+            // no text of its own, so no `/DA`. Its appearance is its border
+            // or nothing, and whoever signs it draws the signature's.
+            widget.set("FT", "Sig");
+            widget.remove(b"DA");
+            let mut look = Dictionary::new();
+            let quarters = turns % 4;
+            if quarters > 0 {
+                look.set("R", i64::from(quarters) * 90);
+            }
+            let framed = field.border;
+            if framed {
+                look.set("BC", vec![0.into()]);
+                widget.set(
+                    "BS",
+                    dictionary! { "S" => "S", "W" => Object::Real(BORDER_WIDTH as f32) },
+                );
+            }
+            if !look.is_empty() {
+                widget.set("MK", look);
+            }
+            let empty = signature_appearance(doc, across, up, turns, framed);
+            widget.set("AP", dictionary! { "N" => empty });
+        }
         // A radio button is a widget under its group and is made by `radio`.
         Kind::Radio => unreachable!("a radio button is not a field of its own"),
     }
@@ -1024,6 +1076,9 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
         append(doc, page, b"Annots", id)?;
         append(doc, form, b"Fields", id)?;
         answer_default(doc, id, field)?;
+        if field.kind == Kind::Signature {
+            signatures_exist(doc, form)?;
+        }
     }
     Ok(())
 }
@@ -1031,10 +1086,10 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
 /// The least a side of a field of this kind may be, in points.
 #[must_use]
 pub fn least_side(kind: Kind) -> f64 {
-    if matches!(kind, Kind::Checkbox | Kind::Radio) {
-        MIN_BOX
-    } else {
-        MIN_TEXT
+    match kind {
+        Kind::Checkbox | Kind::Radio => MIN_BOX,
+        Kind::Signature => MIN_SIGNATURE,
+        _ => MIN_TEXT,
     }
 }
 
@@ -1121,7 +1176,81 @@ pub fn place(
         made.set("Ff", flags | 1);
     }
     append(doc, form, b"Fields", id)?;
+    if kind == Kind::Signature {
+        signatures_exist(doc, form)?;
+    }
     Ok(id)
+}
+
+/// What an empty signature field shows: its border, or nothing.
+fn signature_appearance(
+    doc: &mut Document,
+    across: f64,
+    up: f64,
+    turns: u8,
+    border: bool,
+) -> ObjectId {
+    let body = if border {
+        forms::border_path(across, up, "0 G", BORDER_WIDTH).into_bytes()
+    } else {
+        Vec::new()
+    };
+    forms::turned_appearance(doc, across, up, turns, body, Dictionary::new())
+}
+
+/// Draws an empty signature field again for the rectangle it now has, with
+/// the border and the turn it declares.
+///
+/// # Errors
+///
+/// The widget is not a dictionary with a rectangle of four numbers.
+pub(crate) fn redraw_signature(doc: &mut Document, widget: ObjectId) -> Result<(), String> {
+    let dict = doc.get_dictionary(widget).map_err(|e| e.to_string())?;
+    let rect: Vec<f64> = dict
+        .get(b"Rect")
+        .and_then(Object::as_array)
+        .map_err(|e| e.to_string())?
+        .iter()
+        .filter_map(|v| v.as_float().ok().map(f64::from))
+        .collect();
+    let [left, bottom, right, top] = rect[..] else {
+        return Err("a signature field's rectangle is not four numbers".into());
+    };
+    let look = dict
+        .get(b"MK")
+        .ok()
+        .and_then(|mk| doc.dereference(mk).ok())
+        .and_then(|(_, mk)| mk.as_dict().ok());
+    let border = look.is_some_and(|mk| mk.has(b"BC"));
+    let turns = look
+        .and_then(|mk| mk.get(b"R").ok())
+        .and_then(|r| r.as_i64().ok())
+        .filter(|r| r % 90 == 0)
+        .map_or(0, |r| r.rem_euclid(360) / 90) as u8;
+    let (width, height) = (right - left, top - bottom);
+    let on_its_side = turns % 2 == 1;
+    let (across, up) = if on_its_side {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let drawn = signature_appearance(doc, across, up, turns, border);
+    doc.get_dictionary_mut(widget)
+        .map_err(|e| e.to_string())?
+        .set("AP", dictionary! { "N" => drawn });
+    Ok(())
+}
+
+/// Says in the form that it has a signature field: bit 1 of `/SigFlags`
+/// (§12.7.3, `SignaturesExist`), which a reader looks at before it looks for
+/// one. Bit 2, append only, is for a document that is signed, and is left to
+/// the signing.
+fn signatures_exist(doc: &mut Document, form: ObjectId) -> Result<(), String> {
+    let flags = forms::integer(doc, form, b"SigFlags");
+    doc.get_dictionary_mut(form)
+        .map_err(|e| e.to_string())?
+        .set("SigFlags", flags | 1);
+    Ok(())
 }
 
 /// Answers a field [`place`] made with its default value, once the caller

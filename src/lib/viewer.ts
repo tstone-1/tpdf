@@ -158,6 +158,7 @@ import {
   type Quad,
 } from "./text";
 import { ClickCounter } from "./clicks";
+import { leastSide } from "./fieldnames";
 import {
   clampZoom,
   fitZoom,
@@ -4089,7 +4090,7 @@ export class Viewer {
     want: { dx: number; dy: number },
   ): { dx: number; dy: number } {
     const mark = this.markById(id);
-    const least = mark?.kind === "field" ? (mark.field?.kind === "checkbox" || mark.field?.kind === "radio" ? 6 : 8) : 4;
+    const least = mark?.kind === "field" ? leastSide(mark.field?.kind) : 4;
     const next = grown(base, want.dx, want.dy, this.laidSize(slot), least);
     return { dx: next.right - base.right, dy: next.bottom - base.bottom };
   }

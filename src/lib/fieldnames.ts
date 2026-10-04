@@ -17,6 +17,14 @@
 import type { Form } from "./forms";
 import type { FieldKind, MarkView, PlacedField } from "./pages";
 
+/**
+ * The least a side of a field of this kind may be, in points: `formfields.rs`'s
+ * `least_side`. A signature field's is the least a visible signature is drawn in.
+ */
+export function leastSide(kind: FieldKind | undefined): number {
+  return kind === "checkbox" || kind === "radio" ? 6 : kind === "signature" ? 24 : 8;
+}
+
 /** The word a kind's placeholder name begins with. */
 const WORDS: Record<FieldKind, string> = {
   text: "Text",
@@ -28,6 +36,7 @@ const WORDS: Record<FieldKind, string> = {
   // A radio button's name is its group's, which the reader types; this is
   // only what a group is called when nothing asked.
   radio: "Group",
+  signature: "Signature",
 };
 
 /** The most choices a dropdown offers, and the most characters in one. `formfields.rs` holds both. */

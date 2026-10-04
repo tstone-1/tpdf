@@ -50,6 +50,9 @@ function kindOf(control: Form["widgets"][number]["control"], multiline: boolean)
       return control.combo && !control.editable && !control.multiple
         ? "dropdown"
         : "A list, or a dropdown that takes text of its own, cannot be duplicated yet";
+    case "signature":
+      // A copy is a new place for a signature, whether or not this one is signed.
+      return "signature";
     default:
       return "This kind of field cannot be duplicated";
   }
@@ -88,7 +91,7 @@ export function copyOf(
     const found = form ? savedField(form, state, id) : null;
     if (!form || !found) return "That field is no longer in the document";
     const kind = kindOf(found.widget.control, found.widget.multiline);
-    if (kind !== "text" && kind !== "multiline" && kind !== "checkbox" && kind !== "dropdown" && kind !== "radio") return kind;
+    if (kind !== "text" && kind !== "multiline" && kind !== "checkbox" && kind !== "dropdown" && kind !== "radio" && kind !== "signature") return kind;
     if (kind === "radio" && found.widget.name.includes(".")) return "A radio button inside a group of fields cannot be duplicated yet";
     const now = properties(form, state, id);
     const made = placing(

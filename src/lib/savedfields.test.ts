@@ -44,6 +44,9 @@ describe("the saved fields as marks", () => {
     ]);
     expect(marks.every((mark) => mark.kind === "field" && isSaved(mark.id))).toBe(true);
     expect(isSaved(41)).toBe(false);
+    // A signature field is shown as one, so that it is held to the size of one.
+    const signed: Form = { widgets: [widget(15, "Approved", 0, [20, 20, 120, 60], { control: { kind: "signature", signed: false } })] };
+    expect(asMarks(signed, state())[0]?.field?.kind).toBe("signature");
     expect(leafName("a.b.c")).toBe("c");
     expect(leafName("plain")).toBe("plain");
   });

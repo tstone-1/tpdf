@@ -381,15 +381,36 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         && chooser.note === "Dropdown 1",
       `${chooser?.field?.kind}; ${chooser?.field?.options?.join("|")}; ${chooser?.note}`,
     );
+    // A signature field: an empty place for a signature, which has to be
+    // large enough for one. A drag as low as a line of text is refused.
+    host.run("edit.addSignatureField");
+    drag(root, at(0.62, 0.3), at(0.9, 0.312));
+    await settle(() => shown().includes("at least 24"), SETTLE_MS);
+    await host.idle();
+    check(
+      "a signature field dragged lower than a signature needs is refused, and the reader is told",
+      fields().length === 1 && shown().includes("at least 24 by 24"),
+      `${fields().length} fields; shown: ${shown()}`,
+    );
+    host.run("edit.addSignatureField");
+    drag(root, at(0.62, 0.3), at(0.9, 0.38));
+    await settle(() => fields().length === 2, SETTLE_MS);
+    await host.idle();
+    const place = fields().find((mark) => mark.field?.kind === "signature");
+    check(
+      "the signature command places an empty signature field under a name of its own",
+      fields().length === 2 && place?.note === "Signature 1" && place.field?.border === true,
+      `${fields().length} fields; ${place?.note}; ${JSON.stringify(place?.field)}`,
+    );
     // Radio buttons: the command takes the group's name, and the tool stays
     // armed from one button to the next.
     host.run("edit.addRadio", "Pay");
     drag(root, at(0.62, 0.6), at(0.64, 0.62));
-    await settle(() => fields().length === 2, SETTLE_MS);
+    await settle(() => fields().length === 3, SETTLE_MS);
     await host.idle();
     const stillArmed = viewer.drawArmed;
     drag(root, at(0.62, 0.66), at(0.64, 0.68));
-    await settle(() => fields().length === 3, SETTLE_MS);
+    await settle(() => fields().length === 4, SETTLE_MS);
     await host.idle();
     const group = fields().filter((mark) => mark.field?.kind === "radio");
     check(
@@ -435,7 +456,10 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       `${oldBefore?.toFixed(3)} at the field, ${newBefore?.toFixed(3)} where it will go`,
     );
     if (anchor) {
-      const from = { x: box.left + (anchor.left + anchor.right) / 2, y: box.top + (anchor.top + anchor.bottom) / 2 };
+      // Measured now: the sentence a refused drag showed above moved the
+      // surface down the window, and `box` was read before it did.
+      const now = root.getBoundingClientRect();
+      const from = { x: now.left + (anchor.left + anchor.right) / 2, y: now.top + (anchor.top + anchor.bottom) / 2 };
       drag(root, from, { x: from.x + 40, y: from.y + 30 });
       await settle(() => changed().length === 1, SETTLE_MS);
       await host.idle();
@@ -534,6 +558,12 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       JSON.stringify(listed),
     );
     check("after the save the order is no longer something asked for", now?.state.tab_order === false, String(now?.state.tab_order));
+    const toSign = after.widgets.find((widget) => widget.name === "Signature 1");
+    check(
+      "the save writes the signature field as one that holds no signature",
+      toSign?.control.kind === "signature" && toSign.control.signed === false,
+      JSON.stringify(toSign?.control),
+    );
     const buttons = after.widgets.filter((widget) => widget.name === "Pay");
     check(
       "the save writes the two buttons as one group of radio buttons",

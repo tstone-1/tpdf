@@ -5,6 +5,8 @@ import type { FieldEdited, FieldProps } from "./savedfields";
 /** Option indices preserve choices whose export values happen to be equal. */
 export type FormValue = string | boolean | number[];
 export type FormControl = { kind: "text" | "checkbox" | "unsupported" }
+  /** A signature field: a place for a signature while `signed` is false. */
+  | { kind: "signature"; signed: boolean }
   | { kind: "radio"; index: number; states: number[][]; unison: boolean; no_toggle_off: boolean }
   | { kind: "choice"; options: { export: string; label: string }[]; combo: boolean; editable: boolean; multiple: boolean };
 

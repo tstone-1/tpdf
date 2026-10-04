@@ -211,7 +211,14 @@ pub fn read_back(
             Kind::Text | Kind::Multiline => FieldKind::Text,
             Kind::Dropdown => FieldKind::ChoiceCombo,
             Kind::Radio => FieldKind::Radio,
+            // `fields` lists a signature field among the kinds it does not fill.
+            Kind::Signature => FieldKind::Other,
         };
+        let signature = field.kind == Kind::Signature;
+        let unsigned = matches!(
+            widget.control,
+            crate::forms::Control::Signature { signed: false }
+        );
         let got = kind(&widget.control);
         let [left, top, right, bottom] = widget.display_rect;
         let rect = [left, top, right - left, bottom - top];
@@ -221,8 +228,8 @@ pub fn read_back(
             .any(|(got, want)| (f64::from(*got) - want).abs() > 0.01);
         let empty = match field.kind {
             Kind::Checkbox => serde_json::Value::Bool(false),
-            // Nothing chosen yet.
-            Kind::Dropdown => serde_json::Value::Null,
+            // Nothing chosen yet, and nothing signed.
+            Kind::Dropdown | Kind::Signature => serde_json::Value::Null,
             // What the group held before, when the button joined one.
             Kind::Radio => before
                 .widgets
@@ -235,7 +242,10 @@ pub fn read_back(
             _ => serde_json::Value::String(field.default_value.clone().unwrap_or_default()),
         };
         let held = value_json(&widget.control, &widget.value);
-        if got != wanted || widget.multiline != (field.kind == Kind::Multiline) {
+        if got != wanted
+            || widget.multiline != (field.kind == Kind::Multiline)
+            || signature != unsigned
+        {
             problems.push(format!("`{name}` reads back as another kind of field"));
         } else if widget.page != field.page {
             problems.push(format!("`{name}` reads back on page {}", widget.page + 1));
@@ -243,7 +253,7 @@ pub fn read_back(
             problems.push(format!("`{name}` reads back at {rect:?}"));
         } else if held != empty {
             problems.push(format!("`{name}` reads back holding {held}"));
-        } else if let Some(reason) = &widget.reason {
+        } else if let Some(reason) = widget.reason.as_ref().filter(|_| !signature) {
             problems.push(format!(
                 "`{name}` reads back as one that cannot be filled: {reason}"
             ));
@@ -310,6 +320,8 @@ fn plain(report: &report::FormAdded) -> String {
                 (FieldKind::Checkbox, _) => "checkbox",
                 (FieldKind::ChoiceCombo, _) => "dropdown",
                 (FieldKind::Radio, _) => "radio button",
+                // The only kind `form` adds that `fields` does not fill.
+                (FieldKind::Other, _) => "signature, empty",
                 (_, true) => "text, several lines",
                 _ => "text",
             },
@@ -718,11 +730,19 @@ mod tests {
             page: 2,
             rect: [0.0; 4],
         });
+        report.added.push(AddedField {
+            name: "Approved".into(),
+            kind: FieldKind::Other,
+            multiline: false,
+            page: 2,
+            rect: [0.0; 4],
+        });
         report.signatures_unknown = true;
         assert_eq!(
             plain(&report),
-            "b.pdf: 3 fields added, 4 in the form now\n  Name (text), page 1\n  \
-             Notes (text, several lines), page 2\n  Agree (checkbox), page 2\n\
+            "b.pdf: 4 fields added, 4 in the form now\n  Name (text), page 1\n  \
+             Notes (text, several lines), page 2\n  Agree (checkbox), page 2\n  \
+             Approved (signature, empty), page 2\n\
              The rewrite invalidates existing signatures."
         );
     }

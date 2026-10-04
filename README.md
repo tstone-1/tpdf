@@ -296,7 +296,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   ellipse or a text box can be resized by its lower right corner.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
 - **Add form fields** — *Add a form field: text*, *text on several lines*, *checkbox*,
-  *dropdown* or *radio buttons*, then drag the rectangle where it goes. A dropdown asks
+  *dropdown*, *radio buttons* or *signature*, then drag the rectangle where it goes. A dropdown asks
   for its choices first, typed on one line with a semicolon between them. Radio buttons
   ask for the name of their group; each drag then places one more button of it, until
   Escape, and the buttons that share the name are one question of which one answer is
@@ -312,9 +312,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   new text fields* turns that off for the fields placed next, which suits a page that
   already prints its own lines, and tpdf remembers the choice. Filling a field keeps its
   line. A field placed on a page the document turns, or one you have turned, reads
-  upright as the page is displayed. Not yet: list boxes. `tpdf form` adds fields from a list on the command
+  upright as the page is displayed. A signature field is an empty place for a signature
+  made with a certificate, at least 24 points a side; it holds nothing until somebody
+  signs it. Not yet: list boxes. `tpdf form` adds fields from a list on the command
   line.
-  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.addRadio edit.fieldBorderOn edit.fieldBorderOff -->
+  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.addRadio edit.addSignatureField edit.fieldBorderOn edit.fieldBorderOff -->
 - **Change the fields a document already has.** *Form fields: change the document's own
   fields* shows every field of the open form as a named rectangle. Drag one to move it,
   drag its lower right corner to resize it, press it twice to rename it, or pick it and
@@ -1354,7 +1356,8 @@ and answer it had. The list is a JSON array (`--fields -` reads it from standard
 ]
 ```
 
-`kind` is `text` (one line), `multiline`, `checkbox`, `dropdown` or `radio`. A dropdown
+`kind` is `text` (one line), `multiline`, `checkbox`, `dropdown`, `radio` or `signature`
+(an empty place for a signature, at least 24 by 24 points, which `tpdf fields` lists as `other`). A dropdown
 has `options`, the list of its choices. A radio button has one option, the value it gives
 its group, and its `name` is the group's: the buttons of one name are one field, and a
 button whose name is a group the document already has joins it. `page` counts from 1, and `rect`

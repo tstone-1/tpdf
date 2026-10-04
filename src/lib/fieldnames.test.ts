@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Form, FormWidget } from "./forms";
 import {
+  leastSide,
   canOrderTabs, nextFieldName, parseChoices, parseGroup, placing, readFieldBorder, takenNames, writeFieldBorder,
 } from "./fieldnames";
 import { pageId, type MarkView, type PlacedField } from "./pages";
@@ -154,6 +155,14 @@ describe("the field a drag places", () => {
     expect(placing(armed("checkbox"), false, [], [], null)).toEqual({
       field: { kind: "checkbox", border: false }, name: "Checkbox 1",
     });
+  });
+
+  it("is a signature field under the next name of its kind, which is at least 24 points a side", () => {
+    expect(placing(armed("signature"), true, ["Signature 1"], [], null)).toEqual({
+      field: { kind: "signature", border: true }, name: "Signature 2",
+    });
+    expect([leastSide("signature"), leastSide("text"), leastSide("multiline"), leastSide("dropdown"),
+      leastSide("checkbox"), leastSide("radio"), leastSide(undefined)]).toEqual([24, 8, 8, 8, 6, 6, 8]);
   });
 
   it("is a dropdown holding the choices it was armed with", () => {

@@ -1846,3 +1846,156 @@ fn a_button_answered_in_text_reads_as_one_answered_by_name() {
         .iter()
         .all(|w| w.value == Value::Selection(vec![1]) && w.reason.is_none()));
 }
+
+#[test]
+fn a_signature_field_is_made_empty_and_the_form_says_it_has_one() {
+    let mut doc = document(Held::Absent, true);
+    add(
+        &mut doc,
+        &[
+            NewField {
+                border: true,
+                tooltip: Some("Sign here".into()),
+                required: true,
+                ..field("Approved", Kind::Signature, 0, [20.0, 30.0, 160.0, 40.0])
+            },
+            // No border, on the page the document turns a quarter.
+            field("Witness", Kind::Signature, 1, [20.0, 30.0, 160.0, 40.0]),
+        ],
+    )
+    .expect("added");
+    let doc = reloaded(&mut doc);
+    let approved = read_back(&doc, "Approved");
+    assert!(matches!(
+        approved.control,
+        Control::Signature { signed: false }
+    ));
+    assert_eq!(approved.display_rect, [20.0, 30.0, 180.0, 70.0]);
+    assert_eq!(
+        (approved.tooltip.as_str(), approved.required),
+        ("Sign here", true)
+    );
+    let dict = doc.get_dictionary(approved.widget).unwrap();
+    assert_eq!(dict.get(b"FT").unwrap().as_name().unwrap(), b"Sig");
+    // A place for a signature holds none, and has no text to describe.
+    assert!(!dict.has(b"V") && !dict.has(b"DA"));
+    assert!(dict.get(b"MK").unwrap().as_dict().unwrap().has(b"BC"));
+    assert!(appearance_of(&doc, approved.widget).contains("0.5 0.5 159 39 re S"));
+
+    let witness = read_back(&doc, "Witness");
+    assert_eq!(witness.turns, 1);
+    assert_eq!(witness.display_rect, [20.0, 30.0, 180.0, 70.0]);
+    let dict = doc.get_dictionary(witness.widget).unwrap();
+    assert!(!dict.has(b"BS"));
+    assert_eq!(appearance_of(&doc, witness.widget).trim(), "");
+
+    // Signatures exist, and the document is not yet one that is only added to.
+    assert_eq!(form_of(&doc).get(b"SigFlags").unwrap().as_i64().unwrap(), 1);
+    // A flag the form already had is kept.
+    let mut flagged = document(Held::Absent, false);
+    add(&mut flagged, &three()).expect("a form");
+    let form = form_id(&flagged).unwrap();
+    flagged.get_dictionary_mut(form).unwrap().set("SigFlags", 2);
+    add(
+        &mut flagged,
+        &[field("S", Kind::Signature, 0, [20.0, 120.0, 100.0, 30.0])],
+    )
+    .expect("added");
+    assert_eq!(
+        form_of(&flagged)
+            .get(b"SigFlags")
+            .unwrap()
+            .as_i64()
+            .unwrap(),
+        3
+    );
+    // And a form with no signature field is given no flag.
+    let mut plain = document(Held::Absent, false);
+    add(&mut plain, &three()).expect("a form");
+    assert!(!form_of(&plain).has(b"SigFlags"));
+}
+
+#[test]
+fn a_signature_field_is_held_to_a_size_a_signature_fits_and_to_what_its_kind_has() {
+    let doc = document(Held::Absent, false);
+    let problem = |field: NewField| {
+        let mut copy = doc.clone();
+        let why = add(&mut copy, &[field]).expect_err("refused");
+        assert_eq!(copy.objects.len(), doc.objects.len(), "{why}");
+        why
+    };
+    let at = [20.0, 30.0, 160.0, 40.0];
+    assert!(
+        problem(field("S", Kind::Signature, 0, [20.0, 30.0, 160.0, 23.9]))
+            .contains("a signature field needs at least 24 by 24")
+    );
+    add(
+        &mut doc.clone(),
+        &[field("S", Kind::Signature, 0, [20.0, 30.0, 24.0, 24.0])],
+    )
+    .expect("the least size is a size");
+    assert!(problem(NewField {
+        max_length: Some(3),
+        ..field("S", Kind::Signature, 0, at)
+    })
+    .contains("a signature field takes no characters"));
+    assert!(problem(NewField {
+        text_size: Some(9.0),
+        ..field("S", Kind::Signature, 0, at)
+    })
+    .contains("a signature field has no text to size"));
+    assert!(problem(NewField {
+        default_value: Some("x".into()),
+        ..field("S", Kind::Signature, 0, at)
+    })
+    .contains("only a text field has a default value"));
+    assert!(problem(NewField {
+        options: vec!["A".into()],
+        ..field("S", Kind::Signature, 0, at)
+    })
+    .contains("only a dropdown has choices"));
+}
+
+#[test]
+fn a_placed_signature_field_is_listed_and_flagged_and_cannot_be_read_only() {
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let placed = Placed {
+        border: true,
+        ..Placed::from(Kind::Signature)
+    };
+    let id = place(
+        &mut doc,
+        page,
+        [20.0, 100.0, 180.0, 140.0],
+        "Signature 1",
+        &placed,
+    )
+    .expect("placed");
+    append(&mut doc, page, b"Annots", id).expect("attached");
+    let read = read_back(&doc, "Signature 1");
+    assert!(matches!(read.control, Control::Signature { signed: false }));
+    assert_eq!(form_of(&doc).get(b"SigFlags").unwrap().as_i64().unwrap(), 1);
+    let refused = |placed: Placed| {
+        let mut copy = doc.clone();
+        super::place(
+            &mut copy,
+            page,
+            [20.0, 20.0, 180.0, 60.0],
+            "Other",
+            &placed,
+            0,
+        )
+        .expect_err("refused")
+    };
+    assert!(refused(Placed {
+        read_only: true,
+        ..Placed::from(Kind::Signature)
+    })
+    .contains("could not be signed"));
+    assert!(refused(Placed {
+        align: forms::Align::Right,
+        ..Placed::from(Kind::Signature)
+    })
+    .contains("no text to align"));
+}

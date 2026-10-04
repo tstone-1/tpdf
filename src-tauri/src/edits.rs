@@ -1528,6 +1528,19 @@ impl Edits {
             if let Some(why) = placed.problem(&want.note) {
                 return Err(why);
             }
+            // A signature field has to be large enough to hold a signature,
+            // which is taller than a reader drags a line of text. Said at the
+            // drag and not at the save.
+            let least = crate::formfields::MIN_SIGNATURE as f32;
+            if placed.kind == crate::formfields::Kind::Signature
+                && quads
+                    .iter()
+                    .any(|q| q.right - q.left < least || q.bottom - q.top < least)
+            {
+                return Err(format!(
+                    "a signature field is at least {least} by {least} points; drag a larger rectangle"
+                ));
+            }
         }
         model
             .annotate_in(
@@ -6045,6 +6058,49 @@ mod tests {
         assert_eq!(state.fields[0].props.align, None);
         let state = edits.undo(7).expect("undone");
         assert!(state.fields.is_empty() && !state.dirty);
+    }
+
+    #[test]
+    fn a_signature_field_is_placed_at_a_size_a_signature_fits() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("state").pages[0].id;
+        let sized = |name: &str, quads: [f32; 4]| NewMark {
+            quads: quads.to_vec(),
+            ..a_field(page, name, Kind::Signature)
+        };
+        // Eighteen points high, as a line of text is dragged.
+        let why = edits
+            .annotate(
+                7,
+                sized("Signature 1", [72.0, 100.0, 300.0, 118.0]),
+                stamped(),
+            )
+            .expect_err("too small");
+        assert!(why.contains("at least 24 by 24"), "{why}");
+        assert!(edits.state(7).expect("state").marks.is_empty());
+        let state = edits
+            .annotate(
+                7,
+                sized("Signature 1", [72.0, 100.0, 300.0, 124.0]),
+                stamped(),
+            )
+            .expect("placed");
+        assert_eq!(
+            state.marks[0].field.as_ref().map(|f| f.kind),
+            Some(Kind::Signature)
+        );
+        // A text field of the first size is placed, as it always was.
+        edits
+            .annotate(
+                7,
+                NewMark {
+                    quads: vec![72.0, 200.0, 300.0, 218.0],
+                    ..a_field(page, "Text 1", Kind::Text)
+                },
+                stamped(),
+            )
+            .expect("a text field of that size");
     }
 
     #[test]

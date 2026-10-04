@@ -122,7 +122,7 @@ export type MarkKind =
   | "field";
 
 /** Which kind of form field a placed field is. `formfields::Kind`'s wire names. */
-export type FieldKind = "text" | "multiline" | "checkbox" | "dropdown" | "radio";
+export type FieldKind = "text" | "multiline" | "checkbox" | "dropdown" | "radio" | "signature";
 
 /** What a placed field is. `formfields::Placed` on the wire. */
 export interface PlacedField {

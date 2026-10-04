@@ -4013,6 +4013,7 @@ async function appCommandChecks(
     { id: "edit.addCheckbox", ...shell("drawField:checkbox"), read: () => fired.join(",") },
     { id: "edit.addDropdown", argument: "Yes; No", ...shell("drawField:dropdown"), read: () => fired.join(",") },
     { id: "edit.addRadio", argument: "Payment", ...shell("drawRadio:Payment"), read: () => fired.join(",") },
+    { id: "edit.addSignatureField", ...shell("drawField:signature"), read: () => fired.join(",") },
     {
       // The freehand tool, aimed separately for the reason the three mark kinds
       // below are: two commands that arm the same primitive with a different

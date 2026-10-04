@@ -395,7 +395,9 @@ pub fn to_value(group: &Grouped<'_>, answer: &serde_json::Value) -> Result<Value
                 )),
             }
         }
-        Control::Unsupported => Err(problem(name, ProblemKind::NotEditable, forms::UNSUPPORTED)),
+        Control::Unsupported | Control::Signature { .. } => {
+            Err(problem(name, ProblemKind::NotEditable, forms::UNSUPPORTED))
+        }
     }
 }
 

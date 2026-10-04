@@ -332,6 +332,7 @@ fn revalue(doc: &mut Document, widget: &Widget, was: &[u8], to: &[u8]) -> Result
 fn least_side(control: &Control) -> f64 {
     match control {
         Control::Checkbox | Control::Radio { .. } => crate::formfields::MIN_BOX,
+        Control::Signature { .. } => crate::formfields::MIN_SIGNATURE,
         _ => crate::formfields::MIN_TEXT,
     }
 }
@@ -743,6 +744,7 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
     let mut removals: Vec<&Widget> = Vec::new();
     let mut properties: BTreeMap<ObjectId, Propertied> = BTreeMap::new();
     let mut values: Vec<Revalued> = Vec::new();
+    let mut resigned: Vec<ObjectId> = Vec::new();
     for edit in edits {
         if !seen.insert(edit.widget) {
             return Err("a form field is changed twice".into());
@@ -752,9 +754,14 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
             .iter()
             .find(|w| w.widget == edit.widget)
             .ok_or("The form field is no longer in this document")?;
-        if is_signature(doc, widget.object) {
+        // An empty one is a rectangle like any other field. A signed one is
+        // covered by its signature, and a change to it is a change to a
+        // signed document.
+        if is_signature(doc, widget.object)
+            && !matches!(widget.control, Control::Signature { signed: false })
+        {
             return Err(format!(
-                "`{}` is a signature field, which tpdf does not move, rename or remove",
+                "`{}` is a signed signature field, which tpdf does not move, rename or remove",
                 widget.name
             ));
         }
@@ -804,6 +811,10 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
                 }
                 redraw.insert(widget.object, widget.value.clone());
             }
+            // An empty signature field shows its border, drawn for its size.
+            if resized && matches!(widget.control, Control::Signature { signed: false }) {
+                resigned.push(widget.widget);
+            }
             rects.push((widget.widget, to));
         }
     }
@@ -838,6 +849,9 @@ pub fn apply(doc: &mut Document, edits: &[FieldEdit]) -> Result<(), String> {
                     .map(|v| Object::Real(*v as f32))
                     .collect::<Vec<_>>(),
             );
+    }
+    for widget in resigned {
+        crate::formfields::redraw_signature(doc, widget)?;
     }
     for (field, name) in &names {
         doc.get_dictionary_mut(*field)

@@ -341,6 +341,45 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
             && named(&listed(&answered, None), "N")["value"] == "Ada",
         &format!("exit {code}; {stderr}; turn {turn:?}; fill {filled}; {fill_stderr}"),
     );
+    // An empty signature field: a place for a signature, which `fields`
+    // lists among the kinds it does not fill.
+    let to_sign = at("to-sign.pdf");
+    let (code, _, stderr) = tool_with_stdin(
+        &["form", &turned, "-o", &to_sign, "--fields", "-", "--json"],
+        &[],
+        r#"[{"name": "Approved", "kind": "signature", "page": 1, "rect": [72, 100, 200, 40], "border": true}]"#,
+    );
+    let place = named(&listed(&to_sign, None), "Approved").clone();
+    let written = lopdf::Document::load(&to_sign).ok().map(|doc| {
+        let field = doc.objects.values().find_map(|object| {
+            let dict = object.as_dict().ok()?;
+            (dict.get(b"FT").ok()?.as_name().ok()? == b"Sig").then(|| dict.has(b"V"))
+        });
+        let flags = doc
+            .objects
+            .values()
+            .find_map(|object| object.as_dict().ok()?.get(b"SigFlags").ok()?.as_i64().ok());
+        (field, flags)
+    });
+    report.check(
+        "form makes an empty signature field, and the form says it has one",
+        code == 0
+            && place["kind"] == "other"
+            && place["editable"] == false
+            && place["pages"] == serde_json::json!([1])
+            && written == Some((Some(false), Some(1))),
+        &format!("exit {code}; {stderr}; {place}; {written:?}"),
+    );
+    let (code, _, stderr) = tool_with_stdin(
+        &["form", &turned, "-o", &refused, "--fields", "-"],
+        &[],
+        r#"[{"name": "Small", "kind": "signature", "page": 1, "rect": [72, 100, 200, 20]}]"#,
+    );
+    report.check(
+        "a signature field too small for a signature is refused",
+        code == 3 && stderr.contains("a signature field needs at least 24 by 24") && gone(),
+        &format!("exit {code}; {stderr}"),
+    );
     let (code, _, stderr) = tool_with_stdin(
         &["form", &turned, "-o", &refused, "--fields", "-"],
         &[],

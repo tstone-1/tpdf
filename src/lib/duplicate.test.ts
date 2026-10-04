@@ -59,6 +59,7 @@ const FORM: Form = {
     }),
     widget(18, "Group.Inner", { control: { kind: "radio", index: 0, states: [bytes("x")], unison: false, no_toggle_off: true }, value: [] }),
     widget(19, "Sig", { control: { kind: "unsupported" } }),
+    widget(20, "Approved", { control: { kind: "signature", signed: true }, reason: "This field type is not supported yet", tooltip: "Sign here" }),
   ],
 };
 const NAMES = FORM.widgets.map((one) => one.name);
@@ -124,6 +125,10 @@ describe("the copy of a field of the file", () => {
     const got = copyOf(SAVED_BASE, RECT, state(MARKS, edits), FORM, NAMES, false);
     expect(got).toMatchObject({ field: { tooltip: "Changed" } });
     expect((got as Copy).field?.required).toBeUndefined();
+  });
+
+  it("is an empty signature field for a signature field, signed or not", () => {
+    expect(saved(9, true)).toMatchObject({ note: "Signature 1", field: { kind: "signature", border: true, tooltip: "Sign here" } });
   });
 
   it("joins a radio button's group, past the values the file's buttons have", () => {

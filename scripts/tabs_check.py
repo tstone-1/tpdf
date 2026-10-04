@@ -248,6 +248,7 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     file on disk, through `tpdf fields` and then `tpdf fill`, which is what a
     reader does with a form somebody made.
     """
+    import re
     tool = binary.resolve().parent / ("tpdf-cli.exe" if os.name == "nt" else "tpdf-cli")
     print("--- the saved file, read by the command-line tool ---")
     listed = subprocess.run([str(tool), "fields", str(saved), "--json"],
@@ -266,17 +267,25 @@ def placed_fields(saved: Path, binary: Path) -> bool:
                 and field["editable"] is True)
         ok &= good
         print(f"{'[OK]  ' if good else '[FAIL]'} the file has {name!r} as a fillable {kind} field")
+    # The empty signature field is listed among the kinds `fill` does not
+    # answer, and the form says it has one.
+    place = fields.get("Signature 1")
+    flagged = len(re.findall(rb"/SigFlags\s+1\b", saved.read_bytes()))
+    good = place is not None and place["kind"] == "other" and place["editable"] is False and flagged == 1
+    ok &= good
+    print(f"{'[OK]  ' if good else '[FAIL]'} the file has an empty signature field, and its form says so: {place and place['kind']}, flags {flagged}")
+    wanted["Signature 1"] = ("other", False)
     only = set(fields) == set(wanted)
     ok &= only
     print(f"{'[OK]  ' if only else '[FAIL]'} and no other field: {sorted(fields)}")
-    # A text field and the dropdown were placed with a line round them and one
+    # A text field, the dropdown and the signature field were placed with a line round them and one
     # text field with the line turned off; a checkbox declares none. The file
     # is written without object streams, so the key a border is declared by
     # can be counted in its bytes.
     declared = saved.read_bytes().count(b"/BC")
-    good = declared == 2
+    good = declared == 3
     ok &= good
-    print(f"{'[OK]  ' if good else '[FAIL]'} two fields declare a border, the ones placed with it: {declared}")
+    print(f"{'[OK]  ' if good else '[FAIL]'} three fields declare a border, the ones placed with it: {declared}")
     # The page says its fields are tabbed through in rows, which a save that
     # adds a field writes.
     import re

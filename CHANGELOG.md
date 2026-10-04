@@ -28,6 +28,10 @@ have the binary.)
   holds after a reader resets the form, and a field that holds nothing is answered with
   it at once. `tpdf form` takes both as `text_size` and `default_value`.
 
+- **Signature fields.** *Add a form field: signature* places an empty signature field: a
+  place somebody signs with a certificate. It is at least 24 points a side. `tpdf form`
+  makes one with `"kind": "signature"`.
+
 - **A key for duplicate.** ⌘D, or Ctrl+D on Windows, copies what is picked, as *Arrange:
   duplicate* does.
 

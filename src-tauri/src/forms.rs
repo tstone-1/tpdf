@@ -42,6 +42,11 @@ pub enum Control {
         editable: bool,
         multiple: bool,
     },
+    /// A signature field. `signed` is whether it holds a signature; one that
+    /// holds none is a place for one.
+    Signature {
+        signed: bool,
+    },
     Unsupported,
 }
 
@@ -538,6 +543,12 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                     combo: flags & (1 << 17) != 0,
                     editable: flags & (1 << 18) != 0 && flags & (1 << 17) != 0,
                     multiple: flags & (1 << 21) != 0,
+                }
+            } else if kind == Some(b"Sig") {
+                Control::Signature {
+                    signed: inherited(doc, object, b"V")
+                        .and_then(|v| doc.dereference(v).ok())
+                        .is_some_and(|(_, v)| v.as_dict().is_ok()),
                 }
             } else {
                 Control::Unsupported
@@ -2006,7 +2017,11 @@ pub(crate) mod tests {
                 }
                 let form = result.unwrap();
                 let signature = form.widgets.iter().find(|w| w.object == check).unwrap();
-                assert!(matches!(signature.control, Control::Unsupported));
+                // What it holds is a checkbox's answer and no signature.
+                assert!(matches!(
+                    signature.control,
+                    Control::Signature { signed: false }
+                ));
                 assert!(signature.reason.is_some());
                 write(
                     &mut doc,
