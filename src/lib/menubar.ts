@@ -205,8 +205,11 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.addTextField",
       "edit.addMultilineField",
       "edit.addCheckbox",
+      "edit.addDropdown",
       "edit.fieldBorderOn",
       "edit.fieldBorderOff",
+      "edit.formEditOn",
+      "edit.formEditOff",
       "edit.editText",
       "edit.addSignature",
       // The four stamps, immediately after the text box because a stamp is the
@@ -263,6 +266,31 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "edit.selectAll",
       "edit.clearSelection",
+    ],
+  },
+  {
+    // The placed rectangles a reader has picked, against each other. A menu
+    // of its own: thirteen items that all act on one selection are a group a
+    // reader looks for by name, and at the foot of Edit they would double it.
+    title: "Arrange",
+    items: [
+      "edit.alignLeft",
+      "edit.alignCenter",
+      "edit.alignRight",
+      SEPARATOR,
+      "edit.alignTop",
+      "edit.alignMiddle",
+      "edit.alignBottom",
+      SEPARATOR,
+      "edit.distributeAcross",
+      "edit.distributeDown",
+      SEPARATOR,
+      "edit.sameWidth",
+      "edit.sameHeight",
+      "edit.sameSize",
+      SEPARATOR,
+      "edit.centerOnPage",
+      "edit.middleOnPage",
     ],
   },
   {

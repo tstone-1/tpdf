@@ -122,13 +122,15 @@ export type MarkKind =
   | "field";
 
 /** Which kind of form field a placed field is. `formfields::Kind`'s wire names. */
-export type FieldKind = "text" | "multiline" | "checkbox";
+export type FieldKind = "text" | "multiline" | "checkbox" | "dropdown";
 
 /** What a placed field is. `formfields::Placed` on the wire. */
 export interface PlacedField {
   kind: FieldKind;
   /** Whether a text field draws a thin line round itself. A checkbox always draws its box. */
   border: boolean;
+  /** What a dropdown offers, in order. Absent for every other kind. */
+  options?: string[];
 }
 
 /**

@@ -143,6 +143,12 @@
   import {
     nextFieldName, readFieldBorder, takenNames, writeFieldBorder,
   } from "./lib/fieldnames";
+  import { pickedNotice } from "./lib/arrange";
+  import {
+    arrangeBoth, asMarks, isSaved, moved as fieldMoved, placed as fieldPlaced,
+    removed as fieldRemoved, renamed as fieldRenamed, shownAt,
+  } from "./lib/savedfields";
+  import type { Form } from "./lib/forms";
   import {
     TabRecorder, afterReopen, launchPlan, openBehind, tabsToReopen, type TabHost,
   } from "./lib/tabrestore";
@@ -187,8 +193,21 @@
   let formLayer: FormLayer | null = null;
   /** The names in the open document's form, for naming a field placed in it. */
   let formNames: string[] = [];
+  /** The open document's form as the worker scanned it, for changing its fields. */
+  let scannedForm: Form | null = null;
+  /** Whether the document's own fields are shown as rectangles to move, rename and remove. */
+  let formEditing = false;
+  /** The marks the viewer draws: the reader's, and the saved fields while they are being changed. */
+  const shownMarks = (state: EditState) =>
+    formEditing && scannedForm ? [...state.marks, ...asMarks(scannedForm, state)] : state.marks;
+  /** A change to one saved field, or nothing when the viewer named none. */
+  const changeField = (target: ReturnType<typeof fieldMoved>) => {
+    if (target) void applyEdit((e) => e.refield([target]));
+  };
   /** Which kind of form field the armed tool places. */
   let armedField: FieldKind = "text";
+  /** The choices of the dropdown the next drag places. Empty for any other kind. */
+  let armedOptions: string[] = [];
   /** Whether a text field placed from now on gets a line round it. */
   let fieldBorder = readFieldBorder();
   let textEditor: TextEditor | null = null;
@@ -768,7 +787,28 @@
     drawEllipse: () => viewer?.armDraw("ellipse"),
     stamp: (name) => viewer?.armDraw("stamp", name),
     drawTextBox: () => viewer?.armDraw("textbox"),
-    drawField: (kind) => { armedField = kind; viewer?.armDraw("field"); },
+    drawField: (kind, options = []) => {
+      armedField = kind;
+      armedOptions = options;
+      viewer?.armDraw("field");
+    },
+    savedFields: () => scannedForm?.widgets.length ?? 0,
+    formEditing: () => formEditing,
+    setFormEditing: (on) => {
+      formEditing = on;
+      if (edits) viewer?.setMarks(shownMarks(edits.state));
+      formLayer?.layout();
+      notice = on
+        ? "The document's fields can be dragged, resized by a corner, renamed and removed. Finish from the Edit menu."
+        : "";
+      refreshMenu();
+    },
+    pickedMarks: () => viewer?.pickedCount ?? 0,
+    arrange: (how) => {
+      // `false` is too few picked or nothing to move; the command is only
+      // offered with enough picked, so what is left to say is the second.
+      if (viewer && !viewer.arrangePicked(how)) notice = "They are already arranged that way.";
+    },
     fieldBorder: () => fieldBorder,
     setFieldBorder: (border) => {
       fieldBorder = border;
@@ -1022,7 +1062,9 @@
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
     // A field has to have a name the moment it exists. See `fieldnames.ts`.
-    const field = kind === "field" ? { kind: armedField, border: fieldBorder } : undefined;
+    const field = kind === "field"
+      ? { kind: armedField, border: fieldBorder, ...(armedOptions.length > 0 ? { options: armedOptions } : {}) }
+      : undefined;
     const name = field
       ? nextFieldName(field.kind, takenNames(formNames, edits?.state.marks ?? []))
       : "";
@@ -1507,8 +1549,9 @@
       }
       // Any other file whose first pages just arrived has links nobody has read.
       void fetchImportedLinks(model);
-      viewer?.setMarks(after.marks);
+      viewer?.setMarks(shownMarks(after));
       formLayer?.update(after);
+      formLayer?.layout();
       if (viewer?.setTextEdits(after.text_edits ?? [])) sidebar?.thumbnails?.setPages(after.pages.length);
       textEditor?.update(after);
       // The pending redactions arrive on the same reply and are pushed the same
@@ -3830,6 +3873,8 @@
       rawOutline = null;
       // The form's names are a fact about the document that is closing.
       formNames = [];
+      scannedForm = null;
+      formEditing = false;
       sidebar = new Sidebar(sidebarHost, {
         onNavigate: (target, top) => {
           viewer?.goToDestination(target, top);
@@ -4003,7 +4048,12 @@
         // The note the reader typed on one of their own marks, committed when
         // its box closed. A command like any other: it lands in the journal, so
         // undo steps over it and the document is dirty until it is saved.
-        onMarkNote: (mark, note) => void applyEdit((e) => e.renote(mark, note)),
+        onMarkNote: (mark, note) => {
+          if (!isSaved(mark)) return void applyEdit((e) => e.renote(mark, note));
+          const to = scannedForm && edits ? fieldRenamed(scannedForm, edits.state, mark, note) : null;
+          if (typeof to === "string") say(to);
+          else changeField(to);
+        },
         // Somebody else's comment, rewritten. The one edit command addressed by
         // the **object** the file gave the annotation rather than by an id this
         // application issued --- `Comment.id` is a position in one scan, and a
@@ -4044,7 +4094,10 @@
           if (!object || page === undefined) return;
           void applyEdit((e) => e.reply(page, object, comment.rect, body));
         },
-        onMarkRemove: (mark) => void applyEdit((e) => e.unmark(mark)),
+        onMarkRemove: (mark) =>
+          isSaved(mark)
+            ? changeField(scannedForm && edits ? fieldRemoved(scannedForm, edits.state, mark) : null)
+            : void applyEdit((e) => e.unmark(mark)),
         // A colour picked in the swatch row, or by a `Colour:` command with a
         // note open. A command like the note above it, and undone the same way.
         onMarkRecolor: (mark, color) =>
@@ -4068,9 +4121,23 @@
         // rectangle a drag produces is not, so that one has to be converted.
         // A pending redaction is held in exactly the space handed here.
         onRedacted: (page, area) => void applyEdit((e) => e.redact(page, area)),
-        onMarkMoved: (id, dx, dy) => void applyEdit((e) => e.displace(id, dx, dy)),
+        onMarkMoved: (id, dx, dy) =>
+          isSaved(id)
+            ? changeField(scannedForm && edits ? fieldMoved(scannedForm, edits.state, id, dx, dy) : null)
+            : void applyEdit((e) => e.displace(id, dx, dy)),
         onSignatureResize: (id, width) => void applyEdit((e) => e.resizeSignature(id, width)),
-        onMarkResized: (id, rect) => void applyEdit((e) => e.resize(id, rect)),
+        onMarkResized: (id, rect) =>
+          isSaved(id)
+            ? changeField(scannedForm && edits ? fieldPlaced(scannedForm, edits.state, id, rect) : null)
+            : void applyEdit((e) => e.resize(id, rect)),
+        onMarksArranged: (moves, sweep) =>
+          void applyEdit((e) => arrangeBoth(scannedForm, e.state, e, moves, sweep)),
+        // The Arrange commands are offered by how many are picked, and a menu
+        // item's enablement is pushed, so every change is pushed too.
+        onPicked: (count) => {
+          if (count > 1) notice = pickedNotice(count);
+          refreshMenu();
+        },
         onErased: (mark, remove, sweep) =>
           void applyEdit((e) => e.erase(mark, remove, sweep)),
         // The same sweep's other half: a mark with no parts to lose goes whole.
@@ -4160,7 +4227,7 @@
       // the rest a few lines up.
       void fetchImportedLinks(opening);
       viewer.setTextEdits(opening.state.text_edits ?? []);
-      viewer.setMarks(opening.state.marks);
+      viewer.setMarks(shownMarks(opening.state));
       viewer.setRedactions(opening.state.redactions);
       sidebar.thumbnails?.setPages(opening.state.pages.length);
       if (resume) viewer.restore(resume);
@@ -4203,7 +4270,14 @@
       }).then((form) => {
         if (!form || !surface || openDoc !== wanted || viewer !== mounted) return;
         formNames = form.widgets.map((widget) => widget.name);
-        formLayer = new FormLayer(surface, form, (widget) => mounted.formAnchor(widget),
+        scannedForm = form;
+        // A control sits where its field now is, and nowhere while the fields
+        // are being changed: a press on one then picks it and does not type.
+        const anchored = (widget: Form["widgets"][number]) => {
+          const rect = formEditing || !edits ? null : shownAt(widget, edits.state);
+          return rect ? mounted.formAnchor({ page: widget.page, display_rect: rect }) : null;
+        };
+        formLayer = new FormLayer(surface, form, anchored,
           (object, value) => applyEdit((model) => model.fill(object, value)),
           (widget) => mounted.showForm(widget), say);
         if (edits) formLayer.update(edits.state);

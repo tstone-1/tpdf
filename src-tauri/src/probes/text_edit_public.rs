@@ -27,6 +27,7 @@ pub(super) fn run(source: &std::path::Path, dir: &std::path::Path) -> Result<(),
         return Err("unexpected W3C source text fragments".into());
     }
     let mut plan = Plan {
+        field_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),

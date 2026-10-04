@@ -51,6 +51,7 @@ fn turn_plan(page_count: u64) -> tpdf_lib::edits::Plan {
 
     let pages = u32::try_from(page_count).unwrap_or(u32::MAX);
     tpdf_lib::edits::Plan {
+        field_edits: Vec::new(),
         baseline: pages,
         opened_as: None,
         pages: (0..pages)
@@ -95,6 +96,7 @@ fn highlight_plan(page_count: u64) -> tpdf_lib::edits::Plan {
 
     let pages = u32::try_from(page_count).unwrap_or(u32::MAX);
     tpdf_lib::edits::Plan {
+        field_edits: Vec::new(),
         baseline: pages,
         // Never set here, and it could not be: `Plan::opened_as` is
         // `#[serde(skip)]`, so a fingerprint cannot cross this boundary in

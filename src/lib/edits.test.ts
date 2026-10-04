@@ -505,6 +505,22 @@ describe("Edits", () => {
     expect(after.marks).toHaveLength(1);
   });
 
+  it("sends an arrangement as every move and the gesture's name, in one call", async () => {
+    core.invoke.mockResolvedValueOnce(state(3));
+    const edits = new Edits(9);
+    await edits.refresh();
+    core.invoke.mockClear();
+    core.invoke.mockResolvedValueOnce(state(3, {}, [mark(4, 1), mark(5, 1)]));
+    const moves = [
+      { mark: 4, rect: [10, 20, 60, 50] as [number, number, number, number] },
+      { mark: 5, rect: [10, 80, 90, 95] as [number, number, number, number] },
+    ];
+    const after = await edits.arrange(moves, 7);
+    expect(core.invoke).toHaveBeenCalledTimes(1);
+    expect(core.invoke).toHaveBeenLastCalledWith("annot_arrange", { doc: 9, moves, sweep: 7 });
+    expect(after.marks).toHaveLength(2);
+  });
+
   it("sends each kind with its own colour", async () => {
     // The colour is the one thing this side of the boundary decides, and the
     // two lines are deliberately not the wash's yellow: a 1.3 pt yellow rule on

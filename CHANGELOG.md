@@ -19,6 +19,32 @@ have the binary.)
 
 ## [26.10.4] - Unreleased
 
+### Added
+
+- **Dropdowns.** *Add a form field: dropdown* asks for the choices, typed on one line
+  with a semicolon between them, and then for the drag that places it. `tpdf form`
+  takes `"kind": "dropdown"` with an `options` list. It is written as a real choice
+  field that tpdf, Acrobat and Preview offer as a list, with nothing chosen. A dropdown
+  needs at least one choice, and none may be empty or there twice.
+- **The fields a document already has can be moved, resized, renamed and removed.** Until
+  now a field could be changed only before its first save. *Form fields: change the
+  document's own fields* shows every field of the open form as a named rectangle: drag
+  it to move it, drag its lower right corner to resize it, press it to rename or remove
+  it, and pick several with Shift to use the *Arrange* commands on them. Each change is
+  one step of undo and is written by the next save. A resized text field is drawn again
+  at its new size with the answer it holds; a checkbox or a button keeps the appearance
+  its author gave it. A removed field leaves the file, its answer with it. A signature
+  field is not changed, and a field on a page the document turns can be renamed and
+  removed and not moved.
+- **Placed fields and boxes can be aligned, spaced and sized against each other.** Press
+  a form field, a box, an ellipse or a text box to pick it, and press others with Shift
+  held to pick several on the same page. A new *Arrange* menu, and the same commands in
+  the palette, align their left, right, top or bottom edges or their centres, distribute
+  them evenly across or down, give them the same width, height or size, and centre them
+  on the page as a block. The first one picked is the one the others follow. An
+  arrangement is one step of undo, however many it moved, and nothing is moved off the
+  page. On a turned view, left and top are the reader's.
+
 ### Fixed
 
 - **Redaction, and every other rewrite, was refused on a document that keeps a font's

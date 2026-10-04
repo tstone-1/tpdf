@@ -32,6 +32,9 @@ pub enum Kind {
     Multiline,
     /// A box that is ticked or not.
     Checkbox,
+    /// One choice from a list that drops down. The list is the field's
+    /// `options`.
+    Dropdown,
 }
 
 /// One field to add.
@@ -62,18 +65,24 @@ pub struct NewField {
     /// blank area invisible. A checkbox always draws its box and ignores this.
     #[serde(default)]
     pub border: bool,
+    /// What a dropdown offers, in order. Empty for every other kind.
+    #[serde(default)]
+    pub options: Vec<String>,
 }
 
 /// What a field placed in the window is: its kind, and whether it is framed.
 ///
 /// The payload of a `MarkKind::Field` mark. Its name is the mark's note and its
 /// rectangle the mark's quad, so these two are all that is left to say.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Placed {
     pub kind: Kind,
     /// [`NewField::border`].
     #[serde(default)]
     pub border: bool,
+    /// [`NewField::options`]. Left out of a reply when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
 }
 
 impl From<Kind> for Placed {
@@ -83,6 +92,7 @@ impl From<Kind> for Placed {
         Self {
             kind,
             border: false,
+            options: Vec::new(),
         }
     }
 }
@@ -105,8 +115,59 @@ pub const MIN_BOX: f64 = 6.0;
 /// the reader, black. `Helv` is the name producers use for it.
 const DEFAULT_APPEARANCE: &str = "/Helv 0 Tf 0 g";
 
-fn text(value: &str) -> Object {
+pub(crate) fn text(value: &str) -> Object {
     Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal)
+}
+
+/// The most choices one dropdown offers.
+pub const MAX_OPTIONS: usize = 1000;
+/// The most characters one choice has.
+pub const MAX_OPTION: usize = 255;
+
+/// Whether these can be a field's choices, and why not.
+///
+/// A dropdown needs at least one; no other kind takes any. Each is text a
+/// reader will see, so it is not empty, not padded, has no control character
+/// and is not there twice: two choices that read the same cannot be told
+/// apart in the list, and a filled form would not say which was meant.
+pub fn options_problem(name: &str, kind: Kind, options: &[String]) -> Option<String> {
+    if kind != Kind::Dropdown {
+        return (!options.is_empty()).then(|| format!("`{name}`: only a dropdown has choices"));
+    }
+    if options.is_empty() {
+        return Some(format!("`{name}`: a dropdown needs at least one choice"));
+    }
+    if options.len() > MAX_OPTIONS {
+        return Some(format!(
+            "`{name}`: {} choices is more than the {MAX_OPTIONS} a dropdown offers",
+            options.len()
+        ));
+    }
+    let mut seen = HashSet::new();
+    for option in options {
+        if option.trim().is_empty() {
+            return Some(format!("`{name}`: a choice cannot be empty"));
+        }
+        if option != option.trim() {
+            return Some(format!(
+                "`{name}`: the choice `{option}` begins or ends with a space"
+            ));
+        }
+        if option.chars().any(char::is_control) {
+            return Some(format!(
+                "`{name}`: a choice cannot contain a control character"
+            ));
+        }
+        if option.chars().count() > MAX_OPTION {
+            return Some(format!(
+                "`{name}`: a choice is at most {MAX_OPTION} characters"
+            ));
+        }
+        if !seen.insert(option.as_str()) {
+            return Some(format!("`{name}`: the choice `{option}` is there twice"));
+        }
+    }
+    None
 }
 
 /// Whether `name` can be a field's name, and why not.
@@ -253,6 +314,15 @@ pub fn check(
                 "`{}`: a checkbox takes no characters, so it has no most",
                 field.name
             ));
+        }
+        if field.kind == Kind::Dropdown && field.max_length.is_some() {
+            problems.push(format!(
+                "`{}`: a dropdown takes one of its choices, so it has no most characters",
+                field.name
+            ));
+        }
+        if let Some(why) = options_problem(&field.name, field.kind, &field.options) {
+            problems.push(why);
         }
         if field
             .max_length
@@ -429,11 +499,26 @@ fn widget(
         widget.set("TU", forms::pdf_string(tip));
     }
     match field.kind {
-        Kind::Text | Kind::Multiline => {
+        Kind::Text | Kind::Multiline | Kind::Dropdown => {
             if field.kind == Kind::Multiline {
                 flags |= 1 << 12;
             }
-            widget.set("FT", "Tx");
+            if field.kind == Kind::Dropdown {
+                // A choice field shown as a box that drops its list down
+                // (`Combo`, bit 18), with nothing chosen: no `/V`.
+                flags |= 1 << 17;
+                widget.set("FT", "Ch");
+                widget.set(
+                    "Opt",
+                    field
+                        .options
+                        .iter()
+                        .map(|option| forms::pdf_string(option))
+                        .collect::<Vec<_>>(),
+                );
+            } else {
+                widget.set("FT", "Tx");
+            }
             if let Some(most) = field.max_length {
                 widget.set("MaxLen", i64::from(most));
             }
@@ -522,11 +607,14 @@ pub fn place(
     page: ObjectId,
     rect: [f64; 4],
     name: &str,
-    placed: Placed,
+    placed: &Placed,
 ) -> Result<ObjectId, String> {
     let kind = placed.kind;
     forms::scan(doc)?;
     if let Some(why) = name_problem(name) {
+        return Err(why);
+    }
+    if let Some(why) = options_problem(name, kind, &placed.options) {
         return Err(why);
     }
     if taken(doc).contains(name) {
@@ -551,6 +639,7 @@ pub fn place(
         required: false,
         max_length: None,
         border: placed.border,
+        options: placed.options.clone(),
     };
     let id = widget(doc, font, page, rect, &field);
     append(doc, form, b"Fields", id)?;

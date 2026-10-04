@@ -3009,7 +3009,8 @@ is no update channel ... since tpdf ships no updater" until then.
 #### T6.33 — Adding form fields, added 2026-10-03
 
 `tpdf form` and the window's *Add a form field* commands write new AcroForm fields: a text
-field, a text field on several lines, or a checkbox. No new process or authority: the
+field, a text field on several lines, a checkbox, or a dropdown with its list of choices
+(at most 1,000, each at most 255 characters, checked by `formfields::options_problem`). No new process or authority: the
 fields are part of the plan the coordinator's `lopdf` rewrite already carries
 (`formfields::place`). A field's name is checked before anything is written
 (`formfields::name_problem`: not empty, no space at either end, no period, no control
@@ -3020,6 +3021,17 @@ than placed wrongly. What is written is a widget with a default appearance strin
 standard Helvetica resource; no script, action or calculation is ever attached. A document
 that carries a digital signature gets the same warning before the write as any other
 change.
+
+**Changing fields the document already has (2026-10-04).** `formedit::apply` moves or
+resizes a widget, renames a field, or removes a widget, on the same rewrite path and with
+no new process or authority. Every change is checked against the scanned form before the
+first is made: the widget must exist, a name must be one a field may have and one no
+field beside it will have, and a rectangle must fit its page and the least size of its
+kind. A signature field is refused. A removed field is unlinked from its page, the field
+tree and the calculation order, and the rewrite's sweep then takes its objects, its
+answer included; `save/tests.rs` looks for the removed field in the written file. Nothing
+is added to a field: no script, action or calculation is written, and one the field
+already carries is neither read nor changed.
 
 #### T6.34 — Reopening every tab at launch, added 2026-10-03
 

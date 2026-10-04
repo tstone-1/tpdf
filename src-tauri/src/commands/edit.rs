@@ -282,6 +282,33 @@ pub async fn annot_resize(
     edits.reshape(doc, mark, rect)
 }
 
+/// Changes form fields the file already has: moves, resizes, renames,
+/// removes or restores them, as one undoable edit.
+///
+/// See [`edits::Edits::refield`].
+#[tauri::command]
+pub async fn form_field_edit(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    targets: Vec<edits::FieldTarget>,
+    sweep: u64,
+) -> Result<edits::EditState, String> {
+    edits.refield(doc, targets, sweep)
+}
+
+/// Gives several placed rectangles new rectangles as one undoable edit.
+///
+/// See [`edits::Edits::arrange`].
+#[tauri::command]
+pub async fn annot_arrange(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    moves: Vec<edits::Placement>,
+    sweep: u64,
+) -> Result<edits::EditState, String> {
+    edits.arrange(doc, moves, sweep)
+}
+
 /// Sets a placed signature's width, keeping its proportions.
 #[tauri::command]
 pub async fn annot_resize_signature(

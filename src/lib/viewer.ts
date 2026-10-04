@@ -73,6 +73,7 @@ import {
   scrimBands,
   strokeSwept,
 } from "./markband";
+import { Picked, arrange, differs, type Arrangement } from "./arrange";
 import { PointerDrag, type DragPoint } from "./drag";
 
 /**
@@ -554,6 +555,18 @@ export interface ViewerOptions {
    * display space. Optional for {@link onDrawn}'s reason.
    */
   onMarkResized?: (id: number, rect: [number, number, number, number]) => void;
+  /**
+   * Several placed rectangles given new rectangles at once, by an arrangement
+   * of the picked marks: each `rect` is `[left, top, right, bottom]` in the
+   * file's display space. `sweep` names the gesture, as {@link onErased}'s
+   * does, so one undo puts them all back.
+   */
+  onMarksArranged?: (
+    moves: { mark: number; rect: [number, number, number, number] }[],
+    sweep: number,
+  ) => void;
+  /** How many marks are picked for arranging changed. */
+  onPicked?: (count: number) => void;
 
   /**
    * One sweep of the eraser: which drawing, and which of its strokes went.
@@ -1368,6 +1381,12 @@ export class Viewer {
   } | null = null;
 
   private readonly moveDrag: PointerDrag;
+
+  /**
+   * The placed rectangles a reader has picked to arrange. A plain press on
+   * one picks it alone; a press with Shift adds it or takes it out.
+   */
+  private readonly arranging = new Picked();
 
   /**
    * The box's drag, which owns its own listener pair.
@@ -3854,6 +3873,66 @@ export class Viewer {
     return { dx: (to[0] ?? 0) - (at[0] ?? 0), dy: (to[1] ?? 0) - (at[1] ?? 0) };
   }
 
+  /** Tells the host and repaints after the picked marks changed. */
+  private pickedChanged(): void {
+    this.opts.onPicked?.(this.arranging.count);
+    this.wake();
+  }
+
+  /** How many placed rectangles are picked for arranging. */
+  get pickedCount(): number {
+    return this.arranging.count;
+  }
+
+  /** The picked marks' ids, the first picked first. For the window check. */
+  pickedMarks(): readonly number[] {
+    return this.arranging.list();
+  }
+
+  /**
+   * Picks these marks, in this order, as presses with Shift would. For the
+   * window check and for a host that selects from a list; a mark that is not
+   * a placed rectangle on a page in view is left out.
+   */
+  pick(ids: readonly number[]): void {
+    this.arranging.clear();
+    for (const id of ids) {
+      const mark = this.markById(id);
+      const slot = mark && isResizable(mark.kind) ? this.pages.slotOfId(mark.page) : undefined;
+      if (slot !== undefined) this.arranging.toggle(id, slot);
+    }
+    this.pickedChanged();
+  }
+
+  /**
+   * Arranges the picked marks and reports where each one that moved now is.
+   *
+   * Worked out in the page's laid-out space, which is where a reader's left
+   * and top are on a turned view, and handed on in the file's. `false` when
+   * there are too few marks for this arrangement or none of them moved, so a
+   * host can say so and nothing is journalled for an arrangement that is
+   * already in place.
+   */
+  arrangePicked(how: Arrangement): boolean {
+    const placed: { id: number; slot: number; quad: Quad }[] = [];
+    for (const id of this.arranging.list()) {
+      const mark = this.markById(id);
+      const view = mark ? this.viewQuadsOf(mark) : null;
+      const quad = view?.quads[0];
+      if (view && quad && view.quads.length === 1) placed.push({ id, slot: view.slot, quad });
+    }
+    const slot = placed[0]?.slot;
+    if (slot === undefined || placed.some((one) => one.slot !== slot)) return false;
+    const now = arrange(placed.map((one) => one.quad), how, this.laidSize(slot));
+    const moves = placed.flatMap((one, at) => {
+      const to = now[at];
+      return to && differs(one.quad, to) ? [{ mark: one.id, rect: this.fileRectOn(slot, to) }] : [];
+    });
+    if (moves.length === 0) return false;
+    this.opts.onMarksArranged?.(moves, ++this.sweeps);
+    return true;
+  }
+
   /**
    * An offset cut down so the mark it moves stays on its page.
    *
@@ -5289,6 +5368,33 @@ export class Viewer {
       this.closeMark();
     }
 
+    // **Which marks are picked for arranging, decided here for every press.**
+    // Shift on a placed rectangle adds it or takes it out, and does nothing
+    // else: no note opens and nothing moves, because a reader building a
+    // selection is not editing any one of its members. A plain press on one
+    // picks it alone, and a press anywhere else picks nothing.
+    if (own && isResizable(own.kind) && !mark) {
+      const slot = this.pages.slotOfId(own.page);
+      if (slot !== undefined) {
+        if (event.shiftKey) {
+          event.preventDefault();
+          this.arranging.toggle(own.id, slot);
+          this.pickedChanged();
+          return;
+        }
+        // A press on one of several picked marks keeps them: it is how a
+        // reader would start to drag the lot, and dropping the others on a
+        // press would make a slip of the hand lose the selection.
+        if (!(this.arranging.count > 1 && this.arranging.has(own.id))) {
+          this.arranging.only(own.id, slot);
+          this.pickedChanged();
+        }
+      }
+    } else if (this.arranging.count > 0) {
+      this.arranging.clear();
+      this.pickedChanged();
+    }
+
     if (mark) {
       event.preventDefault();
       this.showComment(mark.id, false);
@@ -5812,6 +5918,10 @@ export class Viewer {
     for (const id of this.signatureImages.keys()) if (!live.has(id)) this.signatureImages.delete(id);
     const open = marks.find((mark) => mark.id === this.markNote.openId);
     if (open) this.markNote.syncSignatureSize(open);
+    // A picked mark that was removed or undone is no longer picked.
+    const before = this.arranging.count;
+    this.arranging.keep((id) => live.has(id));
+    if (this.arranging.count !== before) this.opts.onPicked?.(this.arranging.count);
     // `wake` rather than a repaint: the overlay is drawn from the frame loop,
     // which may be idle when a mark is made from the menu bar with nothing
     // scrolling. Painting here as well would draw the same rectangles twice.
@@ -6128,6 +6238,19 @@ export class Viewer {
         const top = (origin.top + band.top * this.zoom - this.scrollTop) * dpr + oy;
         const width = (band.right - band.left) * this.zoom * dpr + gx;
         const height = (band.bottom - band.top) * this.zoom * dpr + gy;
+        if (this.arranging.count > 1 && this.arranging.has(mark.id)) {
+          // Picked for arranging: a dashed line round it, heavier on the first
+          // picked, which is the one the others will follow.
+          const first = this.arranging.list()[0] === mark.id;
+          ctx.save();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.strokeStyle = markInk(mark.color, false);
+          ctx.lineWidth = (first ? 2 : 1) * dpr;
+          ctx.setLineDash(first ? [] : [4 * dpr, 3 * dpr]);
+          const out = 2 * dpr;
+          ctx.strokeRect(left - out, top - out, width + 2 * out, height + 2 * out);
+          ctx.restore();
+        }
         if (isResizable(mark.kind) && this.markNote.openId === mark.id) {
           // The corner a resize is dragged by, shown on the mark whose box is
           // open: that is the one a reader has said they mean.

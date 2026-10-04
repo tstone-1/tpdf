@@ -30,6 +30,12 @@ fuzz_target!(|data: &[u8]| {
             .expect("a discovered run can be deleted");
         let after =
             tpdf_lib::textedit::scan(&document, page).expect("the edited stream remains supported");
-        assert!(after.runs.iter().find(|run| run.operator == operator).unwrap().text.is_empty());
+        assert!(after
+            .runs
+            .iter()
+            .find(|run| run.operator == operator)
+            .unwrap()
+            .text
+            .is_empty());
     }
 });

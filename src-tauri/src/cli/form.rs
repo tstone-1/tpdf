@@ -27,7 +27,7 @@ use crate::save;
 pub const COMMAND: Registered = Registered {
     name: "form",
     usage: "form <in.pdf> -o <out.pdf> --fields <fields.json | ->\n        [--password-env VAR] [--invalidate-signatures] [--force] [--json]",
-    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline or checkbox), a page\n            counted from 1 and a rect [left, top, width, height] in points from\n            the page's top-left corner; tooltip, required and max_length are\n            optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
+    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline, checkbox or dropdown),\n            a page counted from 1 and a rect [left, top, width, height] in points\n            from the page's top-left corner; a dropdown also has options, the\n            list of its choices; tooltip, required and max_length are optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
     parse: |args| parse(args).map(|c| Box::new(c) as Box<dyn Subcommand>),
 };
 
@@ -116,6 +116,8 @@ struct Spec {
     max_length: Option<u32>,
     #[serde(default)]
     border: bool,
+    #[serde(default)]
+    options: Vec<String>,
 }
 
 /// The fields a list asks for, or why it is not a list of fields.
@@ -147,6 +149,7 @@ pub fn fields(text: &str) -> Result<Vec<NewField>, String> {
                 required: spec.required,
                 max_length: spec.max_length,
                 border: spec.border,
+                options: spec.options,
             })
         })
         .collect()
@@ -184,6 +187,7 @@ pub fn read_back(
         let wanted = match field.kind {
             Kind::Checkbox => FieldKind::Checkbox,
             Kind::Text | Kind::Multiline => FieldKind::Text,
+            Kind::Dropdown => FieldKind::ChoiceCombo,
         };
         let got = kind(&widget.control);
         let [left, top, right, bottom] = widget.display_rect;
@@ -194,6 +198,8 @@ pub fn read_back(
             .any(|(got, want)| (f64::from(*got) - want).abs() > 0.01);
         let empty = match field.kind {
             Kind::Checkbox => serde_json::Value::Bool(false),
+            // Nothing chosen yet.
+            Kind::Dropdown => serde_json::Value::Null,
             _ => serde_json::Value::String(String::new()),
         };
         let held = value_json(&widget.control, &widget.value);
@@ -266,6 +272,7 @@ fn plain(report: &report::FormAdded) -> String {
             field.name,
             match (field.kind, field.multiline) {
                 (FieldKind::Checkbox, _) => "checkbox",
+                (FieldKind::ChoiceCombo, _) => "dropdown",
                 (_, true) => "text, several lines",
                 _ => "text",
             },
@@ -477,6 +484,7 @@ mod tests {
 
     fn new(name: &str, kind: Kind, page: u32, rect: [f64; 4]) -> NewField {
         NewField {
+            options: Vec::new(),
             name: name.into(),
             kind,
             page,

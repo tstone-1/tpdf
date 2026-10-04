@@ -293,8 +293,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
   ellipse or a text box can be resized by its lower right corner.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
-- **Add form fields** — *Add a form field: text*, *text on several lines* or *checkbox*,
-  then drag the rectangle where it goes. The field shows as a dashed frame with its name,
+- **Add form fields** — *Add a form field: text*, *text on several lines*, *checkbox* or
+  *dropdown*, then drag the rectangle where it goes. A dropdown asks for its choices first,
+  typed on one line with a semicolon between them. The field shows as a dashed frame with its name,
   `Text 1` or `Checkbox 1` to begin with; press it to rename it, drag it to move it, drag
   its lower right corner to resize it, and remove or undo it like any other mark. Saving
   writes it into the document as a real form field that tpdf, Acrobat and Preview can
@@ -302,10 +303,32 @@ measured the Windows render constants come out 1.5–1.8x worse.
   round it, so that an empty one can be found on the page; *Form fields: no line round
   new text fields* turns that off for the fields placed next, which suits a page that
   already prints its own lines, and tpdf remembers the choice. Filling a field keeps its
-  line. Not yet: dropdowns, radio buttons and list boxes, and a field on a turned page,
+  line. Not yet: radio buttons and list boxes, changing a dropdown's choices once it is
+  placed, and a field on a turned page,
   which the save refuses and says so. `tpdf form` adds fields from a list on the command
   line.
-  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.fieldBorderOn edit.fieldBorderOff -->
+  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.fieldBorderOn edit.fieldBorderOff -->
+- **Change the fields a document already has.** *Form fields: change the document's own
+  fields* shows every field of the open form as a named rectangle. Drag one to move it,
+  drag its lower right corner to resize it, press it to rename it, or remove it from its
+  name box; pick several with Shift and the *Arrange* commands line them up. Each change
+  is undone like any other and is written when you save. While this is on, the fields
+  cannot be filled; *Form fields: finish changing the document's fields* turns it off. A
+  text field that is resized is drawn again at its new size with the answer it holds. A
+  signature field is left alone, and a field on a page the document turns can be renamed
+  and removed and not moved. Until the save, the page still shows each field where the
+  file has it, under the rectangle.
+  <!-- built: edit.formEditOn edit.formEditOff -->
+- **Arrange what you have placed.** Press a form field, a box, an ellipse or a text box
+  to pick it, and press others with Shift held to pick several on the same page; each
+  picked one gets a line round it, solid on the first. The *Arrange* menu, and the same
+  commands in the palette, then align their left, right, top or bottom edges or their
+  centres, space them evenly across or down, give them one width, height or size, or
+  centre them on the page as a block. The first one picked is the one the others follow:
+  *Arrange: align left* moves every left edge to where the first one's is, and *same
+  width* gives every one the first one's width. Spacing needs three; the two outer ones
+  stay and the rest are placed with equal gaps. One undo puts the whole arrangement back.
+  <!-- built: edit.alignLeft edit.alignCenter edit.alignRight edit.alignTop edit.alignMiddle edit.alignBottom edit.distributeAcross edit.distributeDown edit.sameWidth edit.sameHeight edit.sameSize edit.centerOnPage edit.middleOnPage -->
 - **Choose a colour** for a mark — seven of them, the default among them. Chosen with a
   note open it recolours that mark; chosen with none open it sets what the next one will
   be, which is the commoner of the two and is why it is offered either way.

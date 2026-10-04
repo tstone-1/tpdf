@@ -79,6 +79,7 @@ fn reloaded(doc: &mut Document) -> Document {
 
 fn field(name: &str, kind: Kind, page: u32, rect: [f64; 4]) -> NewField {
     NewField {
+        options: Vec::new(),
         name: name.into(),
         kind,
         page,
@@ -684,6 +685,138 @@ fn too_many_fields_and_an_xfa_form_are_refused_whole() {
     assert_eq!(add(&mut doc, &[]), Ok(()));
 }
 
+fn dropdown(name: &str, options: &[&str]) -> NewField {
+    NewField {
+        options: options.iter().map(|o| (*o).to_string()).collect(),
+        ..field(name, Kind::Dropdown, 0, [20.0, 30.0, 120.0, 20.0])
+    }
+}
+
+#[test]
+fn a_dropdown_is_a_choice_field_that_offers_its_list_and_takes_one_of_it() {
+    let mut doc = document(Held::Absent, false);
+    add(
+        &mut doc,
+        &[NewField {
+            border: true,
+            ..dropdown("Country", &["Germany", "France", "Österreich"])
+        }],
+    )
+    .unwrap();
+    let mut doc = reloaded(&mut doc);
+    let form = scan(&doc).unwrap();
+    let widget = &form.widgets[0];
+    let Control::Choice {
+        options,
+        combo,
+        editable,
+        multiple,
+    } = &widget.control
+    else {
+        panic!("not a choice field: {:?}", widget.control);
+    };
+    assert!(*combo && !*editable && !*multiple);
+    assert_eq!(
+        options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(),
+        ["Germany", "France", "Österreich"]
+    );
+    assert_eq!(
+        widget.value,
+        Value::Selection(Vec::new()),
+        "nothing is chosen yet"
+    );
+    assert_eq!(widget.reason, None, "it can be filled");
+    let dict = doc.get_dictionary(widget.object).unwrap();
+    assert_eq!(dict.get(b"FT").unwrap().as_name().unwrap(), b"Ch");
+    assert_eq!(dict.get(b"Ff").unwrap().as_i64().unwrap(), 1 << 17);
+    assert!(dict.get(b"V").is_err());
+    assert!(dict.has(b"MK"), "a border asked for is declared");
+
+    // And it is answered like any other dropdown: by the place in the list.
+    let object = widget.object;
+    write(
+        &mut doc,
+        &[Change {
+            object,
+            value: Value::Selection(vec![2]),
+        }],
+    )
+    .unwrap();
+    let doc = reloaded(&mut doc);
+    assert_eq!(
+        scan(&doc).unwrap().widgets[0].value,
+        Value::Selection(vec![2])
+    );
+}
+
+#[test]
+fn a_dropdowns_choices_are_held_to_what_a_reader_can_tell_apart() {
+    let refused = |field: NewField| {
+        let doc = document(Held::Absent, false);
+        check(&doc, &[field]).expect_err("refused").join("; ")
+    };
+    assert!(refused(dropdown("C", &[])).contains("needs at least one choice"));
+    assert!(refused(dropdown("C", &["a", ""])).contains("cannot be empty"));
+    assert!(refused(dropdown("C", &["a", "  "])).contains("cannot be empty"));
+    assert!(refused(dropdown("C", &["a", " b"])).contains("begins or ends with a space"));
+    assert!(refused(dropdown("C", &["a", "b\u{7}"])).contains("control character"));
+    assert!(refused(dropdown("C", &["a", "b", "a"])).contains("`a` is there twice"));
+    let long = "x".repeat(MAX_OPTION + 1);
+    assert!(refused(dropdown("C", &["a", &long])).contains("at most 255 characters"));
+    let many: Vec<String> = (0..=MAX_OPTIONS).map(|n| n.to_string()).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    assert!(refused(dropdown("C", &many)).contains("more than the 1000"));
+    // The most it may have, at the longest each may be, is taken.
+    let most: Vec<String> = (0..MAX_OPTIONS).map(|n| format!("{n:0>255}")).collect();
+    let most: Vec<&str> = most.iter().map(String::as_str).collect();
+    assert!(check(&document(Held::Absent, false), &[dropdown("C", &most)]).is_ok());
+    // No other kind has choices, and a dropdown has no most characters.
+    let with_choices = NewField {
+        options: vec!["a".into()],
+        ..field("T", Kind::Text, 0, [20.0, 30.0, 120.0, 20.0])
+    };
+    assert!(refused(with_choices).contains("only a dropdown has choices"));
+    let limited = NewField {
+        max_length: Some(5),
+        ..dropdown("C", &["a"])
+    };
+    assert!(refused(limited).contains("no most characters"));
+    // And the door a field placed in the window comes through holds the same.
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let placed = Placed {
+        kind: Kind::Dropdown,
+        border: false,
+        options: vec!["a".into(), "a".into()],
+    };
+    assert!(
+        place(&mut doc, page, [20.0, 30.0, 140.0, 50.0], "C", &placed)
+            .expect_err("refused")
+            .contains("there twice")
+    );
+    let good = Placed {
+        options: vec!["a".into(), "b".into()],
+        ..placed
+    };
+    // `place` makes the field and lists it in the form; the save attaches it
+    // to its page. So it is read here from its own object.
+    let id = place(&mut doc, page, [20.0, 30.0, 140.0, 50.0], "C", &good).expect("placed");
+    let offered: Vec<String> = doc
+        .get_dictionary(id)
+        .unwrap()
+        .get(b"Opt")
+        .and_then(Object::as_array)
+        .expect("a list of choices")
+        .iter()
+        .map(|o| crate::annots::decode_text_string(o.as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        offered,
+        ["a", "b"],
+        "the placed field offers what it was placed with"
+    );
+}
+
 #[test]
 fn the_wire_names_are_the_ones_the_command_reads() {
     let parsed: NewField = serde_json::from_str(
@@ -697,7 +830,7 @@ fn the_wire_names_are_the_ones_the_command_reads() {
             ..field("Name", Kind::Multiline, 0, [1.0, 2.0, 30.0, 40.0])
         }
     );
-    for kind in ["text", "multiline", "checkbox"] {
+    for kind in ["text", "multiline", "checkbox", "dropdown"] {
         assert!(
             serde_json::from_str::<Kind>(&format!("\"{kind}\"")).is_ok(),
             "{kind}"

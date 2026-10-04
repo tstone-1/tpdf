@@ -299,6 +299,7 @@ fn expected_sizes(first: &Path, second: &Path) -> Option<Vec<(f32, f32)>> {
 /// page that was deliberately changed.
 fn whole(pages: u32) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: pages,
         pages: (0..pages)

@@ -143,6 +143,7 @@ fn main() {
         }
     };
     let plan = Plan {
+        field_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),

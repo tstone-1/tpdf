@@ -229,6 +229,7 @@ mod tests {
     impl PlannedSourceForTest {
         fn plan() -> Plan {
             Plan {
+                field_edits: Vec::new(),
                 baseline: 2,
                 opened_as: None,
                 text_layers: Vec::new(),
@@ -296,6 +297,7 @@ mod tests {
     #[test]
     fn maps_reordered_pages_without_reapplying_turns_crops_or_removals() {
         let original = Plan {
+            field_edits: Vec::new(),
             baseline: 3,
             opened_as: None,
             pages: vec![

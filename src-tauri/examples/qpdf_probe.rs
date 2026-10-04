@@ -219,6 +219,7 @@ fn plans(pages: u32) -> Vec<(&'static str, Plan)> {
 /// A plan over a `baseline`-page document keeping `kept`, unturned and uncropped.
 fn keeping(baseline: u32, kept: Vec<u32>) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline,
         pages: kept

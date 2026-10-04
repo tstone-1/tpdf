@@ -146,6 +146,7 @@ fn plan_opened_as(turns: &[u8], source: &Path) -> Plan {
 
 fn plan_of(turns: &[u8]) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: turns.len() as u32,
         pages: turns
@@ -178,6 +179,7 @@ fn plan_of(turns: &[u8]) -> Plan {
 /// come out, which need not be the order the file has them.
 fn keeping(baseline: u32, kept: &[(u32, u8)]) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline,
         pages: kept
@@ -3591,6 +3593,7 @@ fn plan_with_mark(quads: Vec<crate::docmodel::Quad>) -> Plan {
 
 fn plan_of_kind(kind: MarkKind, quads: Vec<crate::docmodel::Quad>) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -3688,6 +3691,7 @@ fn a_comment_out_of_the_file_is_overridden_by_its_object() {
         .expect("the fixture must save");
 
     let plan = Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -7161,6 +7165,7 @@ fn a_mark_on_a_page_two_numbers_share_is_refused() {
     std::fs::write(&source, shared_page_document()).expect("write fixture");
 
     let plan = Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: 2,
         pages: vec![
@@ -7229,6 +7234,7 @@ fn a_mark_on_an_unshared_page_of_a_document_that_has_a_shared_one_is_written() {
     std::fs::write(&source, shared_page_and_a_spare()).expect("write fixture");
 
     let plan = Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: 3,
         pages: (0..3)
@@ -7298,6 +7304,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
     // prints a highlighted document and gets an unhighlighted one -- with
     // nothing failing, because the file it printed is a perfectly good file.
     let plain = Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -7340,6 +7347,7 @@ fn a_plan_carrying_a_mark_is_not_the_file_on_disk() {
 #[test]
 fn a_plan_that_only_redacts_is_neither_the_file_nor_an_append() {
     let mut plan = Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: 1,
         pages: vec![PageView {
@@ -11085,10 +11093,119 @@ fn a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_ot
 }
 
 #[test]
+fn a_planned_change_to_the_files_own_fields_is_written_and_a_removed_field_leaves_the_file() {
+    use crate::formedit::FieldEdit;
+    use crate::formfields::{add, Kind, NewField};
+    let mut doc = Document::load_mem(&two_blank_pages()).expect("loads");
+    let field = |name: &str, top: f64| NewField {
+        options: Vec::new(),
+        name: name.into(),
+        kind: Kind::Text,
+        page: 0,
+        rect: [20.0, top, 100.0, 20.0],
+        tooltip: None,
+        required: false,
+        max_length: None,
+        border: true,
+    };
+    add(
+        &mut doc,
+        &[
+            field("KEEP-AND-MOVE", 20.0),
+            field("REMOVE-ME-FIELD", 60.0),
+            field("Other", 100.0),
+        ],
+    )
+    .expect("added");
+    let mut original = Vec::new();
+    doc.save_to(&mut original).expect("serialises");
+    let before = crate::forms::scan(&doc).expect("a form").widgets;
+    let widget = |name: &str| {
+        before
+            .iter()
+            .find(|w| w.name == name)
+            .expect("the field")
+            .widget
+    };
+    // Whether any object in the file is a field of this name: a name is a
+    // PDF string, which a writer may spell in hex, so the bytes cannot be
+    // searched for it.
+    let holds = |bytes: &[u8], needle: &str| {
+        let doc = Document::load_mem(bytes).expect("loads");
+        doc.objects.values().any(|object| {
+            object
+                .as_dict()
+                .ok()
+                .and_then(|dict| dict.get(b"T").ok())
+                .and_then(|name| name.as_str().ok())
+                .is_some_and(|raw| crate::annots::decode_text_string(raw) == needle)
+        })
+    };
+    assert!(holds(&original, "REMOVE-ME-FIELD") && holds(&original, "KEEP-AND-MOVE"));
+
+    let mut plan = plan_of(&[0, 1]);
+    plan.field_edits = vec![
+        FieldEdit {
+            widget: widget("KEEP-AND-MOVE"),
+            rect: Some([50.0, 30.0, 250.0, 60.0]),
+            name: Some("Moved".into()),
+            remove: false,
+        },
+        FieldEdit {
+            widget: widget("REMOVE-ME-FIELD"),
+            rect: None,
+            name: None,
+            remove: true,
+        },
+    ];
+    assert!(!plan.is_appendable());
+    let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+    let after = crate::forms::scan(&Document::load_mem(&written).expect("loads"))
+        .expect("a form")
+        .widgets;
+    let names: Vec<&str> = after.iter().map(|w| w.name.as_str()).collect();
+    assert_eq!(names, ["Moved", "Other"]);
+    assert_eq!(after[0].display_rect, [50.0, 30.0, 250.0, 60.0]);
+    assert!(
+        !holds(&written, "REMOVE-ME-FIELD"),
+        "the removed field's object is still in the file"
+    );
+    assert!(
+        !holds(&written, "KEEP-AND-MOVE"),
+        "the old name is still in the file"
+    );
+    assert_eq!(crate::verify::structure(&written), Vec::<String>::new());
+
+    // The control: the same plan with no change leaves all three.
+    let untouched =
+        rewrite_update(&original, &plan_of(&[0, 1]), Job::Save, None).expect("rewritten");
+    assert_eq!(
+        crate::forms::scan(&Document::load_mem(&untouched).expect("loads"))
+            .expect("a form")
+            .widgets
+            .len(),
+        3
+    );
+    // And one that cannot be made writes nothing.
+    let mut wrong = plan_of(&[0, 1]);
+    wrong.field_edits = vec![FieldEdit {
+        widget: widget("Other"),
+        rect: None,
+        name: Some("KEEP-AND-MOVE".into()),
+        remove: false,
+    }];
+    assert!(rewrite_update(&original, &wrong, Job::Save, None)
+        .expect_err("refused")
+        .to_string()
+        .contains("another field has this name"));
+}
+
+#[test]
 fn a_plan_that_adds_a_field_is_a_rewrite_and_the_field_lands_on_the_page_it_names() {
     use crate::formfields::{Kind, NewField};
     let original = two_blank_pages();
     let field = NewField {
+        options: Vec::new(),
         name: "Name".into(),
         kind: Kind::Text,
         page: 1,
@@ -11184,6 +11301,7 @@ fn a_field_placed_as_a_mark_is_written_as_a_field_of_the_form() {
     // Asked for a border, it declares one; the field above did not and has none.
     let mut framed = field_plan("Framed", Kind::Text, quad);
     framed.marks[0].field = Some(crate::formfields::Placed {
+        options: Vec::new(),
         kind: Kind::Text,
         border: true,
     });

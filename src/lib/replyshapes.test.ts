@@ -205,6 +205,7 @@ const SCHEMA = {
     redactions: ["array"],
     notes: ["array"],
     discards: ["array"],
+    fields: ["array"],
     dirty: ["boolean"],
     sources: ["array"],
   } satisfies Shape<EditState>,

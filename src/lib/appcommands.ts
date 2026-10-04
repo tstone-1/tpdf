@@ -53,6 +53,8 @@ import {
   rangePreview,
   type PreparedImport,
 } from "./pendingimport";
+import { needs, type Arrangement } from "./arrange";
+import { parseChoices } from "./fieldnames";
 
 /** One title per choice, each a whole sentence so the palette reads it alone. */
 const DISK_CHANGE_TITLES: Record<DiskChangeMode, string> = {
@@ -379,12 +381,22 @@ export interface AppActions {
    *
    * The gesture is {@link drawBox}'s. What it leaves is a field the next save
    * writes into the document's form, named `Text 1` or `Checkbox 1` until the
-   * reader renames it in the box that opens.
+   * reader renames it in the box that opens. `options` are a dropdown's
+   * choices, and are absent for every other kind.
    */
-  drawField(kind: import("./pages").FieldKind): void;
+  drawField(kind: import("./pages").FieldKind, options?: string[]): void;
   /** Whether a text field placed from now on gets a line round it. */
   fieldBorder(): boolean;
   setFieldBorder(border: boolean): void;
+  /** How many fields the open document's own form has. */
+  savedFields(): number;
+  /** Whether the document's own fields are shown for moving, renaming and removing. */
+  formEditing(): boolean;
+  setFormEditing(on: boolean): void;
+  /** How many placed rectangles are picked for arranging. */
+  pickedMarks(): number;
+  /** Arranges the picked rectangles: aligns, spaces or sizes them. */
+  arrange(how: Arrangement): void;
   /** Draw or import a visual signature, then place it on a page. */
   signature(): void;
   editText(): void;
@@ -577,6 +589,11 @@ export function registerAppCommands(
    */
   const available = () => !(actions.busyDocument?.() ?? false);
   const withDocument = () => actions.viewer() !== null && available();
+  /** When an arrangement is offered, and what it runs. */
+  const arranges = (how: Arrangement) => ({
+    enabled: () => withDocument() && actions.pickedMarks() >= needs(how),
+    run: () => actions.arrange(how),
+  });
 
   registry.register(
     {
@@ -1103,6 +1120,32 @@ export function registerAppCommands(
       enabled: withDocument,
       run: () => actions.drawField("checkbox"),
     },
+    {
+      // The choices are asked for before the drag: a dropdown with none is
+      // not a field, and the name box that opens afterwards has one line.
+      id: "edit.addDropdown",
+      title: "Add a form field: dropdown...",
+      enabled: withDocument,
+      argument: {
+        placeholder: "Choices, with a semicolon between them",
+        problem: (raw: string) => {
+          const parsed = parseChoices(raw);
+          return "problem" in parsed ? parsed.problem : null;
+        },
+        preview: (raw: string) => {
+          const parsed = parseChoices(raw);
+          return "options" in parsed
+            ? `${parsed.options.length === 1 ? "1 choice" : `${parsed.options.length} choices`}. Then drag the field onto the page.`
+            : "";
+        },
+        run: (raw: string) => {
+          const parsed = parseChoices(raw);
+          // Unreachable through the palette, which refuses to run a command
+          // whose `problem` answered.
+          if ("options" in parsed) actions.drawField("dropdown", parsed.options);
+        },
+      },
+    },
     // A preference about the fields placed next, in the shape the launch pair
     // has: one command per choice, each offered while it is not the current.
     {
@@ -1117,6 +1160,42 @@ export function registerAppCommands(
       enabled: () => actions.fieldBorder(),
       run: () => actions.setFieldBorder(false),
     },
+    // Changing the fields a document already has. A pair, each offered while
+    // the other state holds, in the shape the line preference above has. On
+    // only for a document with a form: with none there is nothing to change.
+    {
+      id: "edit.formEditOn",
+      title: "Form fields: change the document's own fields",
+      enabled: () => withDocument() && actions.savedFields() > 0 && !actions.formEditing(),
+      run: () => actions.setFormEditing(true),
+    },
+    {
+      id: "edit.formEditOff",
+      title: "Form fields: finish changing the document's fields",
+      enabled: () => withDocument() && actions.formEditing(),
+      run: () => actions.setFormEditing(false),
+    },
+    // Arranging the placed rectangles a reader has picked: form fields, boxes,
+    // ellipses and text boxes. One command per arrangement, each offered when
+    // enough are picked for it to do something. Written out one by one, so
+    // each id is a literal the classification gate can read.
+    //
+    // "Centre" and "middle" are a presentation program's words for the two
+    // directions, used because a reader who has aligned boxes anywhere has met
+    // them there: centre is left to right, middle is top to bottom.
+    { id: "edit.alignLeft", title: "Arrange: align left", ...arranges("left") },
+    { id: "edit.alignCenter", title: "Arrange: align centre", ...arranges("center") },
+    { id: "edit.alignRight", title: "Arrange: align right", ...arranges("right") },
+    { id: "edit.alignTop", title: "Arrange: align top", ...arranges("top") },
+    { id: "edit.alignMiddle", title: "Arrange: align middle", ...arranges("middle") },
+    { id: "edit.alignBottom", title: "Arrange: align bottom", ...arranges("bottom") },
+    { id: "edit.distributeAcross", title: "Arrange: distribute horizontally", ...arranges("distributeAcross") },
+    { id: "edit.distributeDown", title: "Arrange: distribute vertically", ...arranges("distributeDown") },
+    { id: "edit.sameWidth", title: "Arrange: same width", ...arranges("sameWidth") },
+    { id: "edit.sameHeight", title: "Arrange: same height", ...arranges("sameHeight") },
+    { id: "edit.sameSize", title: "Arrange: same size", ...arranges("sameSize") },
+    { id: "edit.centerOnPage", title: "Arrange: centre on the page horizontally", ...arranges("pageCenter") },
+    { id: "edit.middleOnPage", title: "Arrange: centre on the page vertically", ...arranges("pageMiddle") },
     {
       // Beside the box, and everything the entry above says about arming a mode
       // applies here unchanged. No chord for the same reason: a one-shot mode a

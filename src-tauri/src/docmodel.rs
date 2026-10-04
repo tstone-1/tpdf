@@ -542,6 +542,22 @@ pub struct NoteEdit {
     pub made: String,
 }
 
+/// What a reader has changed about one form field the document already has.
+///
+/// The whole of it, not one step: a command that moves a field the reader has
+/// already renamed carries the name too. That is what lets the journal hold
+/// one current version per widget, as it does for an answer, and lets undo
+/// put back the version before without knowing what kind of change it was.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct FieldChange {
+    /// Its new rectangle, in the page's display space. `None` leaves it.
+    pub rect: Option<Quad>,
+    /// The field's new name. `None` leaves it.
+    pub name: Option<String>,
+    /// The widget is taken out of the document.
+    pub removed: bool,
+}
+
 /// A foreign comment the reader has rewritten: which page, and which version.
 ///
 /// The page is here so that deleting a page takes its rewrites with it, the way
@@ -1191,6 +1207,18 @@ pub enum Command {
     },
     /// Replace a shared form field answer, by immutable version.
     Fill { object: ObjectId, version: u32 },
+    /// Change a form field the document already has: where its widget is,
+    /// what the field is called, or whether the widget is there. `object` is
+    /// the widget annotation and `version` names a whole [`FieldChange`].
+    ///
+    /// It carries the page for [`Command::Rewrite`]'s reason: the model has
+    /// never read the file, and the page is what lets a change die with the
+    /// page its widget is on.
+    Refield {
+        object: ObjectId,
+        page: PageId,
+        version: u32,
+    },
     /// Turn a page by `turns` quarter turns clockwise; negative turns the other
     /// way. Relative rather than absolute so that undo of a turn is the turn
     /// back, and so that two turns of the same page compose the way a reader
@@ -1379,6 +1407,7 @@ impl Command {
     pub fn subject(self) -> Option<PageId> {
         match self {
             Command::ReplaceText { page, .. }
+            | Command::Refield { page, .. }
             | Command::Rotate { page, .. }
             | Command::Crop { page, .. }
             | Command::Delete { page }
@@ -1760,6 +1789,9 @@ pub struct Working {
     /// way a rewrite goes is with its page --- where naming it again is refused
     /// by [`Refusal::PageDeleted`], which is the better diagnosis anyway.
     rewrites: BTreeMap<ObjectId, Rewritten>,
+    /// The form fields of the file a reader has changed: the widget, the page
+    /// it is on, and which version of the change is current.
+    refields: BTreeMap<ObjectId, (PageId, u32)>,
     /// The comments **out of the file** a reader has deleted, and the page each
     /// was on.
     ///
@@ -1811,6 +1843,7 @@ impl Working {
             redactions: HashMap::new(),
             redaction_graves: HashSet::new(),
             rewrites: BTreeMap::new(),
+            refields: BTreeMap::new(),
             discards: BTreeMap::new(),
         }
     }
@@ -2141,6 +2174,16 @@ impl Working {
             Command::Fill { object, version } => {
                 self.forms.insert(object, version);
             }
+            Command::Refield {
+                object,
+                page,
+                version,
+            } => {
+                // The page and nothing about the object, as for a rewrite.
+                self.live(page)?;
+                self.opened_files_page(page)?;
+                self.refields.insert(object, (page, version));
+            }
             Command::Rotate { page, turns } => {
                 self.live(page)?;
                 let p = self.pages.get_mut(&page).expect("checked live");
@@ -2199,6 +2242,10 @@ impl Working {
                 // check above. A walk rather than a lookup, since this map is
                 // keyed by the object --- see the field.
                 self.rewrites.retain(|_, held| held.page != page);
+                // The changes to the fields on it are left in `refields`:
+                // they are listed by walking the pages in order, so one on a
+                // page that is not in the order is not listed, and it is
+                // there again when an undo puts the page back.
                 // The same, for the same reason: a discard names a page it can
                 // outlive, and one that did would tell the writer to delete an
                 // object off a page that is not in the plan.
@@ -2527,6 +2574,11 @@ pub struct Doc {
     rewrites: HashMap<RewriteId, NoteEdit>,
     /// The next rewrite id to issue. Only ever counts up.
     next_rewrite: u32,
+    /// Every version of every change to a field of the file, by the version
+    /// a [`Command::Refield`] carries. `forms`' twin.
+    field_changes: HashMap<u32, FieldChange>,
+    /// The next field-change version to issue. Only ever counts up.
+    next_field_change: u32,
     /// The files imports have read, keyed by the id their pages carry.
     ///
     /// **Outside [`Working`], and it has to be**: undo rebuilds the working
@@ -2573,6 +2625,8 @@ impl Doc {
             next_page: u64::from(pages) + 1,
             rewrites: HashMap::new(),
             next_rewrite: 1,
+            field_changes: HashMap::new(),
+            next_field_change: 1,
             sources: BTreeMap::new(),
             next_source: 1,
             selections: HashMap::new(),
@@ -2721,6 +2775,83 @@ impl Doc {
         self.next_form += 1;
         self.forms.insert(version, value);
         self.apply(Command::Fill { object, version })
+    }
+
+    /// Records the whole of what a reader has changed about one field's
+    /// widget as one undoable edit, or as part of a gesture when `sweep`
+    /// names one.
+    ///
+    /// # Errors
+    ///
+    /// The page does not exist, was deleted, or is not one of the opened
+    /// file's: a field of an imported page is not one this document's form
+    /// holds.
+    pub fn refield(
+        &mut self,
+        object: ObjectId,
+        page: PageId,
+        change: FieldChange,
+        sweep: Option<SweepId>,
+    ) -> Result<(), Refusal> {
+        // Before the version is issued, for `rewrite`'s reason: a refusal
+        // leaves the table as it found it.
+        self.now.live(page)?;
+        self.now.opened_files_page(page)?;
+        let version = self.next_field_change;
+        self.next_field_change += 1;
+        self.field_changes.insert(version, change);
+        self.apply_in(
+            Command::Refield {
+                object,
+                page,
+                version,
+            },
+            sweep,
+        )
+    }
+
+    /// Whether [`refield`](Self::refield) would take a change on this page.
+    ///
+    /// # Errors
+    ///
+    /// As [`refield`](Self::refield).
+    pub fn can_refield(&self, page: PageId) -> Result<(), Refusal> {
+        self.now.live(page)?;
+        self.now.opened_files_page(page)
+    }
+
+    /// What a reader has changed about this widget, or `None` for one nobody
+    /// has touched. Reads the working document, so it answers what an undo
+    /// has restored.
+    pub fn field_change_of(&self, object: ObjectId) -> Option<&FieldChange> {
+        self.now
+            .refields
+            .get(&object)
+            .and_then(|(_, version)| self.field_changes.get(version))
+    }
+
+    /// Every changed field of the file, in page order and by object within a
+    /// page, with the page each is on.
+    pub fn field_changes(&self) -> Vec<(PageId, ObjectId, FieldChange)> {
+        self.now
+            .order
+            .iter()
+            .flat_map(|page| {
+                self.now
+                    .refields
+                    .iter()
+                    .filter(move |(_, (on, _))| on == page)
+                    .filter_map(move |(object, (_, version))| {
+                        Some((*page, *object, self.field_changes.get(version)?.clone()))
+                    })
+            })
+            .collect()
+    }
+
+    /// How many versions of field changes are held. The accounting
+    /// observable, for [`note_bodies`](Doc::note_bodies)' reason.
+    pub fn field_change_bodies(&self) -> usize {
+        self.field_changes.len()
     }
 
     /// Current shared-field answers, rebuilt by undo and redo.
@@ -3448,6 +3579,19 @@ impl Doc {
     /// [`Refusal::ShapeMismatch`] for any other kind, [`Refusal::EmptyMark`]
     /// for a rectangle that is not finite or covers nothing.
     pub fn reshape(&mut self, mark: MarkId, quad: Quad) -> Result<(), Refusal> {
+        self.reshape_in(mark, quad, None)
+    }
+
+    /// Whether [`reshape`](Self::reshape) would take this rectangle for this
+    /// mark, without changing anything.
+    ///
+    /// For a caller that reshapes several marks as one gesture and has to
+    /// know that all of them will go before the first does.
+    ///
+    /// # Errors
+    ///
+    /// As [`reshape`](Self::reshape).
+    pub fn can_reshape(&self, mark: MarkId, quad: Quad) -> Result<(), Refusal> {
         self.now.live_mark(mark)?;
         let kind = self.mark(mark).map(|m| m.kind);
         let Some(MarkKind::Square | MarkKind::Ellipse | MarkKind::TextBox | MarkKind::Field) = kind
@@ -3461,11 +3605,28 @@ impl Doc {
         {
             return Err(Refusal::EmptyMark);
         }
+        Ok(())
+    }
+
+    /// [`reshape`](Self::reshape) as part of a gesture: undo and redo cross
+    /// every command carrying the same [`SweepId`] in one step, which is what
+    /// makes an alignment of five fields one press of undo.
+    ///
+    /// # Errors
+    ///
+    /// As [`reshape`](Self::reshape).
+    pub fn reshape_in(
+        &mut self,
+        mark: MarkId,
+        quad: Quad,
+        sweep: Option<SweepId>,
+    ) -> Result<(), Refusal> {
+        self.can_reshape(mark, quad)?;
         let ink = self.issue_ink(Ink {
             strokes: Vec::new(),
             quads: vec![quad],
         });
-        self.apply(Command::Reink { mark, ink })
+        self.apply_in(Command::Reink { mark, ink }, sweep)
     }
 
     pub fn resize_signature(&mut self, mark: MarkId, width: f32) -> Result<(), Refusal> {
@@ -3690,6 +3851,9 @@ impl Doc {
             match discarded.cmd {
                 Command::ReplaceText { version: Some(version), .. } => { self.text_versions.remove(&version); }
                 Command::Fill { version, .. } => { self.forms.remove(&version); }
+                Command::Refield { version, .. } => {
+                    self.field_changes.remove(&version);
+                }
                 Command::Annotate { mark, note, .. } => {
                     self.marks.remove(&mark);
                     self.notes.remove(&note);

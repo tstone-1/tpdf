@@ -385,6 +385,7 @@ fn save_a_mark(service: &RenderService, scratch: &Path) -> Result<String, String
 /// A plan that adds one highlight to page 1 and changes nothing else.
 fn mark_plan(at: &Path, pages: usize) -> Result<Plan, String> {
     Ok(Plan {
+        field_edits: Vec::new(),
         baseline: pages as u32,
         opened_as: Some(Fingerprint::of(at)?),
         pages: (0..pages as u32)

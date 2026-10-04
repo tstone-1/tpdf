@@ -47,8 +47,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::{Deserialize, Serialize};
 
 use crate::docmodel::{
-    Command, Doc, Mark, MarkId, MarkKind, ObjectId, PageId, PageSource, Point, Quad, Rect,
-    Redaction, RedactionId, Refusal, Size, StampName, Stroke, SweepId, INK_WIDTH, NIB_MAX, NIB_MIN,
+    Command, Doc, FieldChange, Mark, MarkId, MarkKind, ObjectId, PageId, PageSource, Point, Quad,
+    Rect, Redaction, RedactionId, Refusal, Size, StampName, Stroke, SweepId, INK_WIDTH, NIB_MAX,
+    NIB_MIN,
 };
 use crate::fingerprint::{Fingerprint, Opened};
 use std::num::NonZeroU64;
@@ -383,6 +384,52 @@ pub struct DiscardView {
     pub page: u64,
 }
 
+/// What a reader has changed about one form field the file already has.
+///
+/// The whole of the change so far, so the window can draw the field where it
+/// now is and under its new name without replaying anything.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+pub struct FieldEditView {
+    /// The widget annotation, as `[number, generation]`.
+    pub object: (u32, u16),
+    /// The page it is on, by [`PageView::id`].
+    pub page: u64,
+    /// Its new rectangle, `[left, top, right, bottom]` in display space.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rect: Option<[f32; 4]>,
+    /// The field's new name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The widget is to be taken out of the document.
+    pub removed: bool,
+}
+
+/// What a reader asks to change about one field of the file. Each part that
+/// is absent is left as it is, including as an earlier change left it.
+#[derive(Clone, PartialEq, Debug, Default, Deserialize)]
+pub struct FieldPatch {
+    /// A new rectangle, `[left, top, right, bottom]` in display space.
+    #[serde(default)]
+    pub rect: Option<[f32; 4]>,
+    /// A new name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Take the widget out, or with `false` put it back.
+    #[serde(default)]
+    pub removed: Option<bool>,
+}
+
+/// One widget and what to change about it, for a change to several at once.
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+pub struct FieldTarget {
+    /// The widget annotation.
+    pub object: (u32, u16),
+    /// The page it is on, by [`PageView::id`].
+    pub page: u64,
+    /// What to change.
+    pub patch: FieldPatch,
+}
+
 /// What the frontend asks for when a reader makes a mark.
 ///
 /// A struct rather than a parameter list, and not only because clippy counts to
@@ -508,6 +555,46 @@ fn nib(value: f64) -> f64 {
 /// looked up by this number and no table is keyed by it. What it buys is that
 /// the model's [`SweepId`] cannot be zero, so *belongs to a gesture* and *is
 /// gesture number nothing* are not the same value.
+/// The most marks one arrangement moves. Nothing selects this many by hand; it
+/// bounds what a webview can ask of one call.
+pub const MAX_ARRANGED: usize = 1000;
+
+/// One mark and the rectangle an arrangement gives it, `[left, top, right,
+/// bottom]` in display space as a mark's quads are.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct Placement {
+    /// The mark's id.
+    pub mark: u64,
+    /// Its new rectangle.
+    pub rect: [f32; 4],
+}
+
+fn quad_of(rect: [f32; 4]) -> Quad {
+    Quad {
+        left: rect[0],
+        top: rect[1],
+        right: rect[2],
+        bottom: rect[3],
+    }
+}
+
+/// Refuses a rectangle smaller than a form field of this mark's kind may be.
+///
+/// `formfields::place` would refuse it at the save, and a reader is better
+/// told while the field is still in their hand. A mark that is not a field
+/// has no such floor.
+fn field_fits(model: &Doc, id: MarkId, rect: [f32; 4]) -> Result<(), String> {
+    if let Some(placed) = model.mark(id).and_then(|m| m.field.as_ref()) {
+        let least = crate::formfields::least_side(placed.kind) as f32;
+        if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
+            return Err(format!(
+                "a field of this kind is at least {least} by {least} points"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn gesture(value: u64) -> Option<SweepId> {
     NonZeroU64::new(value)
 }
@@ -591,6 +678,9 @@ pub struct EditState {
     /// because the rows come from `annots.rs`'s scan of the file, which is
     /// re-read on every open and knows nothing about what a reader has deleted.
     pub discards: Vec<DiscardView>,
+    /// The fields of the file a reader has moved, renamed or removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FieldEditView>,
     /// Whether anything differs from the file on disk.
     ///
     /// Read from the journal cursor rather than by comparing the working
@@ -1386,6 +1476,15 @@ impl Edits {
             if let Some(why) = field_name_problem(model, &want.note, None) {
                 return Err(why);
             }
+            // And its choices, when it is a dropdown: checked while the
+            // reader is placing it and not at the save.
+            if let Some(placed) = &want.field {
+                if let Some(why) =
+                    crate::formfields::options_problem(&want.note, placed.kind, &placed.options)
+                {
+                    return Err(why);
+                }
+            }
         }
         model
             .annotate(
@@ -1797,25 +1896,67 @@ impl Edits {
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
         let id = MarkId::from_raw(mark);
-        if let Some(placed) = model.mark(id).and_then(|m| m.field) {
-            let least = crate::formfields::least_side(placed.kind) as f32;
-            if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
-                return Err(format!(
-                    "a field of this kind is at least {least} by {least} points"
-                ));
-            }
+        field_fits(model, id, rect)?;
+        model.reshape(id, quad_of(rect)).map_err(describe)?;
+        Ok(reply(open))
+    }
+
+    /// Gives several placed rectangles new rectangles as one edit: what
+    /// aligning, distributing or matching the size of a selection comes to.
+    ///
+    /// `sweep` names the gesture, as the eraser's does, and must not be zero:
+    /// it is what makes one press of undo put every mark back. **All or
+    /// none**: every placement is checked before the first is made, so a
+    /// refusal leaves the document as it was.
+    ///
+    /// # Errors
+    ///
+    /// No placement, more than [`MAX_ARRANGED`], a mark named twice, a zero
+    /// `sweep`, and everything [`reshape`](Self::reshape) refuses, for any one
+    /// of them.
+    pub fn arrange(
+        &self,
+        doc: u32,
+        moves: Vec<Placement>,
+        sweep: u64,
+    ) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
+        if moves.is_empty() {
+            return Err("nothing was selected to arrange".into());
         }
-        model
-            .reshape(
-                id,
-                Quad {
-                    left: rect[0],
-                    top: rect[1],
-                    right: rect[2],
-                    bottom: rect[3],
-                },
-            )
-            .map_err(describe)?;
+        if moves.len() > MAX_ARRANGED {
+            return Err(format!(
+                "{} marks is more than the {MAX_ARRANGED} one arrangement moves",
+                moves.len()
+            ));
+        }
+        let Some(joins) = gesture(sweep) else {
+            return Err("an arrangement is one gesture and this one has no name".into());
+        };
+        let mut seen: Vec<u64> = Vec::with_capacity(moves.len());
+        for placement in &moves {
+            if seen.contains(&placement.mark) {
+                return Err(format!("mark {} is placed twice", placement.mark));
+            }
+            seen.push(placement.mark);
+            let id = MarkId::from_raw(placement.mark);
+            field_fits(model, id, placement.rect)?;
+            model
+                .can_reshape(id, quad_of(placement.rect))
+                .map_err(describe)?;
+        }
+        for placement in &moves {
+            model
+                .reshape_in(
+                    MarkId::from_raw(placement.mark),
+                    quad_of(placement.rect),
+                    Some(joins),
+                )
+                .map_err(describe)?;
+        }
         Ok(reply(open))
     }
 
@@ -1894,6 +2035,91 @@ impl Edits {
         Ok(reply(open))
     }
 
+    /// Changes form fields the file already has: moves or resizes a widget,
+    /// renames a field, removes a widget or puts one back. One target is one
+    /// undoable edit; several are one too, when `sweep` names the gesture.
+    ///
+    /// **All or none**: every target is checked before the first is recorded.
+    /// What is checked here is what can be without reading the file: that a
+    /// rectangle covers something and a name is one a field may have. That the
+    /// widget exists, fits its page and keeps a name no other field has is the
+    /// save's to refuse, in `formedit::apply`, and the window asks the scanned
+    /// form first so that a reader is told while the field is in their hand.
+    ///
+    /// # Errors
+    ///
+    /// No target, more than [`MAX_ARRANGED`], a widget named twice, several
+    /// targets with no gesture, a patch that changes nothing, a rectangle that
+    /// is not finite or covers nothing, a name `formfields::name_problem`
+    /// refuses, and a page that is gone or is not the opened file's.
+    pub fn refield(
+        &self,
+        doc: u32,
+        targets: Vec<FieldTarget>,
+        sweep: u64,
+    ) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
+        if targets.is_empty() {
+            return Err("no field was named to change".into());
+        }
+        if targets.len() > MAX_ARRANGED {
+            return Err(format!(
+                "{} fields is more than the {MAX_ARRANGED} one change moves",
+                targets.len()
+            ));
+        }
+        let joins = gesture(sweep);
+        if targets.len() > 1 && joins.is_none() {
+            return Err(
+                "a change to several fields is one gesture and this one has no name".into(),
+            );
+        }
+        let mut changes: Vec<(ObjectId, PageId, FieldChange)> = Vec::with_capacity(targets.len());
+        for target in &targets {
+            if target.object.0 == 0 {
+                return Err("that field has no object to change".into());
+            }
+            let object = ObjectId::new(target.object.0, target.object.1);
+            if changes.iter().any(|(other, _, _)| *other == object) {
+                return Err("a form field is changed twice".into());
+            }
+            let patch = &target.patch;
+            if patch.rect.is_none() && patch.name.is_none() && patch.removed.is_none() {
+                return Err("that changes nothing about the field".into());
+            }
+            let mut change = model.field_change_of(object).cloned().unwrap_or_default();
+            if let Some(rect) = patch.rect {
+                if !rect.iter().all(|v| v.is_finite()) || rect[2] <= rect[0] || rect[3] <= rect[1] {
+                    return Err("that rectangle covers nothing".into());
+                }
+                change.rect = Some(quad_of(rect));
+            }
+            if let Some(name) = &patch.name {
+                if let Some(why) = crate::formfields::name_problem(name) {
+                    return Err(why);
+                }
+                change.name = Some(name.clone());
+            }
+            if let Some(removed) = patch.removed {
+                change.removed = removed;
+            }
+            let page = PageId::from_raw(target.page);
+            // The page, asked before anything is recorded: the model checks
+            // it again on the way in, and by then an earlier target is made.
+            model.can_refield(page).map_err(describe)?;
+            changes.push((object, page, change));
+        }
+        for (object, page, change) in changes {
+            model
+                .refield(object, page, change, joins)
+                .map_err(describe)?;
+        }
+        Ok(reply(open))
+    }
+
     /// Steps back one command.
     ///
     /// Returns the state either way. A reader pressing undo with nothing to undo
@@ -1957,6 +2183,7 @@ impl Edits {
             protection: Default::default(),
             compress: Default::default(),
             new_fields: Vec::new(),
+            field_edits: planned_field_edits(model, &pages),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             // Before `pages`, which the line below moves. Field order in a
@@ -2106,6 +2333,7 @@ impl Edits {
             protection: Default::default(),
             compress: Default::default(),
             new_fields: Vec::new(),
+            field_edits: planned_field_edits(model, &pages),
             baseline: model.baseline(),
             opened_as: opened_as.clone(),
             pages,
@@ -2169,7 +2397,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
                     stamp: body.stamp,
-                    field: body.field,
+                    field: body.field.clone(),
                     image: body.image.clone(),
                     reply_to: body
                         .reply_to
@@ -2287,6 +2515,28 @@ fn planned_sources(model: &Doc, pages: &[PageView]) -> Vec<PlannedSource> {
 ///
 /// [`planned_notes`]' twin, filtered the same way and for the same reason: a
 /// discard is held per object, so the kept pages are a filter rather than a walk.
+/// The changes to the file's own fields, for the pages the plan keeps.
+///
+/// A change that has come back to nothing --- a field removed and put back,
+/// with no move and no name --- is left out: it asks the writer for nothing.
+fn planned_field_edits(model: &Doc, pages: &[PageView]) -> Vec<crate::formedit::FieldEdit> {
+    let kept: Vec<PageId> = pages.iter().map(|view| PageId::from_raw(view.id)).collect();
+    model
+        .field_changes()
+        .into_iter()
+        .filter(|(page, ..)| kept.contains(page))
+        .filter(|(_, _, change)| change.removed || change.rect.is_some() || change.name.is_some())
+        .map(|(_, object, change)| crate::formedit::FieldEdit {
+            widget: (object.number(), object.generation()),
+            rect: change
+                .rect
+                .map(|quad| [quad.left, quad.top, quad.right, quad.bottom]),
+            name: change.name,
+            remove: change.removed,
+        })
+        .collect()
+}
+
 fn planned_discards(model: &Doc, pages: &[PageView]) -> Vec<PlannedDiscard> {
     let kept: Vec<PageId> = pages.iter().map(|view| PageId::from_raw(view.id)).collect();
     model
@@ -2352,6 +2602,11 @@ pub struct Plan {
     /// always `No`: only the command that adds fields sets it.
     #[serde(default)]
     pub new_fields: Vec<crate::formfields::NewField>,
+    /// Changes to form fields the file already has, by widget. Made after the
+    /// answers in [`forms`](Self::forms), so a resized field is redrawn with
+    /// the answer this plan gives it.
+    #[serde(default)]
+    pub field_edits: Vec<crate::formedit::FieldEdit>,
     /// How many pages the file this document was opened from had.
     pub baseline: u32,
     /// What that file looked like, so a writer can tell it has not been replaced.
@@ -2786,6 +3041,7 @@ impl Plan {
             // A new field changes the catalog's form and a page's annotations,
             // which the appender does not write.
             && self.new_fields.is_empty()
+            && self.field_edits.is_empty()
             // And so does one the reader placed, which travels as a mark.
             && !self.marks.iter().any(|mark| mark.kind == MarkKind::Field)
     }
@@ -3093,7 +3349,7 @@ fn snapshot(model: &Doc) -> EditState {
                 // geometry below: a stamp's name is fixed at the moment it is
                 // made, so there is no "what it is now" for the model to answer.
                 stamp: mark.stamp,
-                field: mark.field,
+                field: mark.field.clone(),
                 image: mark.image.clone(),
                 page: page.get(),
                 // **Through the model's accessors, not off the body**, because
@@ -3205,6 +3461,19 @@ fn snapshot(model: &Doc) -> EditState {
         redactions,
         notes,
         discards,
+        fields: model
+            .field_changes()
+            .into_iter()
+            .map(|(page, object, change)| FieldEditView {
+                object: (object.number(), object.generation()),
+                page: page.get(),
+                rect: change
+                    .rect
+                    .map(|quad| [quad.left, quad.top, quad.right, quad.bottom]),
+                name: change.name,
+                removed: change.removed,
+            })
+            .collect(),
         can_undo: model.can_undo(),
         can_redo: model.can_redo(),
         dirty: applied > 0,
@@ -5084,6 +5353,64 @@ mod tests {
     }
 
     #[test]
+    fn a_placed_dropdown_carries_its_choices_and_is_held_to_having_some() {
+        use crate::formfields::{Kind, Placed};
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let dropdown = |options: &[&str]| NewMark {
+            field: Some(Placed {
+                kind: Kind::Dropdown,
+                border: true,
+                options: options.iter().map(|o| (*o).to_string()).collect(),
+            }),
+            ..a_field(page, "Country", Kind::Dropdown)
+        };
+        let state = edits
+            .annotate(7, dropdown(&["Germany", "France"]), stamped())
+            .expect("placed");
+        let placed = state.marks[0].field.clone().expect("a field");
+        assert_eq!(placed.options, ["Germany", "France"]);
+        assert_eq!(edits.plan(7).expect("a plan").marks[0].field, Some(placed));
+        // The choices travel in the reply when there are some and not otherwise.
+        let json = serde_json::to_value(&state.marks[0]).expect("json");
+        assert_eq!(
+            json["field"]["options"],
+            serde_json::json!(["Germany", "France"])
+        );
+        // One with none, or with the same one twice, is refused and not placed.
+        for (bad, why) in [
+            (dropdown(&[]), "needs at least one choice"),
+            (dropdown(&["a", "a"]), "there twice"),
+        ] {
+            let refused = edits
+                .annotate(
+                    7,
+                    NewMark {
+                        note: "Other".into(),
+                        ..bad
+                    },
+                    stamped(),
+                )
+                .expect_err("refused");
+            assert!(refused.contains(why), "{refused}");
+        }
+        // And a text field given choices.
+        let text = NewMark {
+            field: Some(Placed {
+                kind: Kind::Text,
+                border: false,
+                options: vec!["a".into()],
+            }),
+            ..a_field(page, "Other", Kind::Text)
+        };
+        assert!(edits
+            .annotate(7, text, stamped())
+            .expect_err("refused")
+            .contains("only a dropdown has choices"));
+        assert_eq!(edits.state(7).expect("open").marks.len(), 1);
+    }
+
+    #[test]
     fn a_placed_field_carries_its_name_and_kind_to_the_reply_and_the_plan() {
         use crate::formfields::Kind;
         let edits = opened();
@@ -5173,6 +5500,292 @@ mod tests {
             .expect("placed");
         let square = state.marks.last().expect("it").id;
         assert!(edits.reshape(7, square, [10.0, 20.0, 11.0, 21.0]).is_ok());
+    }
+
+    #[test]
+    fn a_change_to_a_field_of_the_file_builds_on_the_one_before_and_undo_takes_it_back() {
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let target = |object: (u32, u16), patch: FieldPatch| FieldTarget {
+            object,
+            page,
+            patch,
+        };
+        let moved = FieldPatch {
+            rect: Some([10.0, 20.0, 110.0, 40.0]),
+            ..FieldPatch::default()
+        };
+        let named = FieldPatch {
+            name: Some("Full name".into()),
+            ..FieldPatch::default()
+        };
+        let removed = |to: bool| FieldPatch {
+            removed: Some(to),
+            ..FieldPatch::default()
+        };
+        // A mark first, so the plan is one an append could write: what then
+        // stops it being appended is the change to the field and nothing else.
+        edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        assert!(edits.plan(7).expect("a plan").is_appendable());
+        let state = edits
+            .refield(7, vec![target((12, 0), moved)], 0)
+            .expect("moved");
+        assert!(state.dirty);
+        assert_eq!(
+            state.fields,
+            vec![FieldEditView {
+                object: (12, 0),
+                page,
+                rect: Some([10.0, 20.0, 110.0, 40.0]),
+                name: None,
+                removed: false,
+            }]
+        );
+        // A rename keeps the move, and a removal keeps both.
+        let state = edits
+            .refield(7, vec![target((12, 0), named)], 0)
+            .expect("renamed");
+        assert_eq!(state.fields[0].rect, Some([10.0, 20.0, 110.0, 40.0]));
+        assert_eq!(state.fields[0].name.as_deref(), Some("Full name"));
+        let state = edits
+            .refield(7, vec![target((12, 0), removed(true))], 0)
+            .expect("removed");
+        assert!(state.fields[0].removed && state.fields[0].name.is_some());
+        // The plan carries the whole of it, and is a rewrite.
+        let plan = edits.plan(7).expect("a plan");
+        assert_eq!(
+            plan.field_edits,
+            vec![crate::formedit::FieldEdit {
+                widget: (12, 0),
+                rect: Some([10.0, 20.0, 110.0, 40.0]),
+                name: Some("Full name".into()),
+                remove: true,
+            }]
+        );
+        assert!(!plan.is_appendable());
+        // Undo, one change at a time, back to nothing.
+        let state = edits.undo(7).expect("undone");
+        assert!(!state.fields[0].removed);
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(state.fields[0].name, None);
+        let state = edits.undo(7).expect("undone");
+        assert!(state.fields.is_empty());
+        assert!(edits.plan(7).expect("a plan").field_edits.is_empty());
+        let state = edits.undo(7).expect("undone");
+        assert!(!state.dirty, "the mark was the first edit");
+        // A field removed and put back, with nothing else changed, asks the
+        // writer for nothing.
+        edits
+            .refield(7, vec![target((12, 0), removed(true))], 0)
+            .expect("removed");
+        edits
+            .refield(7, vec![target((12, 0), removed(false))], 0)
+            .expect("restored");
+        assert!(edits.plan(7).expect("a plan").field_edits.is_empty());
+    }
+
+    #[test]
+    fn several_fields_change_as_one_gesture_and_a_change_that_cannot_be_made_changes_none() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        let page = pages[0].id;
+        let to = |object: (u32, u16), rect: [f32; 4]| FieldTarget {
+            object,
+            page,
+            patch: FieldPatch {
+                rect: Some(rect),
+                ..FieldPatch::default()
+            },
+        };
+        let good = [10.0, 20.0, 110.0, 40.0];
+        let state = edits
+            .refield(
+                7,
+                vec![to((12, 0), good), to((13, 0), good), to((14, 0), good)],
+                9,
+            )
+            .expect("moved");
+        assert_eq!(state.fields.len(), 3);
+        // One press, all three.
+        let state = edits.undo(7).expect("undone");
+        assert!(state.fields.is_empty());
+        assert!(!state.can_undo);
+
+        let refused = |targets: Vec<FieldTarget>, sweep: u64| {
+            let why = edits.refield(7, targets, sweep).expect_err("refused");
+            let state = edits.state(7).expect("open");
+            assert!(state.fields.is_empty() && !state.can_undo, "{why}");
+            why
+        };
+        let named = |object: (u32, u16), name: &str| FieldTarget {
+            object,
+            page,
+            patch: FieldPatch {
+                name: Some(name.into()),
+                ..FieldPatch::default()
+            },
+        };
+        // The good change comes first each time and must not be made.
+        assert!(refused(vec![], 9).contains("no field was named"));
+        assert!(refused(vec![to((12, 0), good), to((13, 0), good)], 0).contains("one gesture"));
+        assert!(refused(vec![to((12, 0), good), to((12, 0), good)], 9).contains("changed twice"));
+        assert!(refused(vec![to((12, 0), good), to((0, 0), good)], 9).contains("no object"));
+        for nothing in [
+            [10.0, 20.0, 10.0, 40.0],
+            [10.0, 20.0, 110.0, 20.0],
+            [10.0, f32::NAN, 110.0, 40.0],
+        ] {
+            assert!(refused(vec![to((12, 0), good), to((13, 0), nothing)], 9)
+                .contains("covers nothing"));
+        }
+        assert!(refused(vec![to((12, 0), good), named((13, 0), "a.b")], 9).contains("period"));
+        let empty = FieldTarget {
+            object: (13, 0),
+            page,
+            patch: FieldPatch::default(),
+        };
+        assert!(refused(vec![to((12, 0), good), empty], 9).contains("changes nothing"));
+        let elsewhere = FieldTarget {
+            page: 9999,
+            ..to((13, 0), good)
+        };
+        assert!(!refused(vec![to((12, 0), good), elsewhere], 9).is_empty());
+        let many: Vec<FieldTarget> = (0..=MAX_ARRANGED as u32)
+            .map(|n| to((n + 100, 0), good))
+            .collect();
+        assert!(refused(many, 9).contains("more than the 1000"));
+    }
+
+    #[test]
+    fn a_change_to_a_field_goes_with_the_page_its_widget_is_on() {
+        let edits = opened();
+        let pages = edits.state(7).expect("open").pages;
+        assert!(pages.len() >= 2, "the fixture has more than one page");
+        let patch = FieldPatch {
+            removed: Some(true),
+            ..FieldPatch::default()
+        };
+        let on = |page: u64, object: (u32, u16)| FieldTarget {
+            object,
+            page,
+            patch: patch.clone(),
+        };
+        edits
+            .refield(7, vec![on(pages[0].id, (12, 0))], 0)
+            .expect("removed");
+        edits
+            .refield(7, vec![on(pages[1].id, (13, 0))], 0)
+            .expect("removed");
+        let state = edits
+            .command(
+                7,
+                Command::Delete {
+                    page: PageId::from_raw(pages[0].id),
+                },
+            )
+            .expect("deleted");
+        assert_eq!(state.fields.len(), 1);
+        assert_eq!(state.fields[0].object, (13, 0));
+        assert_eq!(edits.plan(7).expect("a plan").field_edits.len(), 1);
+        // And comes back with it.
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(state.fields.len(), 2);
+    }
+
+    #[test]
+    fn an_arrangement_moves_every_mark_it_names_and_one_undo_puts_them_all_back() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let mut ids = Vec::new();
+        for name in ["One", "Two", "Three"] {
+            let state = edits
+                .annotate(7, a_field(page, name, Kind::Text), stamped())
+                .expect("placed");
+            ids.push(state.marks.last().expect("it").id);
+        }
+        let quads = |state: &EditState| -> Vec<Vec<f32>> {
+            ids.iter()
+                .map(|id| {
+                    let mark = state.marks.iter().find(|m| m.id == *id).expect("the mark");
+                    mark.quads.clone()
+                })
+                .collect()
+        };
+        let before = quads(&edits.state(7).expect("open"));
+        let placed = |at: usize, rect: [f32; 4]| Placement {
+            mark: ids[at],
+            rect,
+        };
+        let new = [
+            [10.0, 20.0, 110.0, 40.0],
+            [10.0, 60.0, 110.0, 80.0],
+            [10.0, 100.0, 110.0, 120.0],
+        ];
+        let moves: Vec<Placement> = (0..3).map(|at| placed(at, new[at])).collect();
+        let state = edits.arrange(7, moves.clone(), 5).expect("arranged");
+        assert_eq!(quads(&state), new.map(|rect| rect.to_vec()));
+        // One press, all three.
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(quads(&state), before);
+        let state = edits.redo(7).expect("redone");
+        assert_eq!(quads(&state), new.map(|rect| rect.to_vec()));
+        // And the press before it is the last field's placement, not a part of
+        // the arrangement left behind.
+        edits.undo(7).expect("undone");
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(state.marks.len(), 2, "the third field is no longer placed");
+    }
+
+    #[test]
+    fn an_arrangement_that_cannot_be_made_whole_moves_nothing() {
+        use crate::formfields::Kind;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, a_field(page, "One", Kind::Text), stamped())
+            .expect("placed");
+        let field = state.marks.last().expect("it").id;
+        let state = edits
+            .annotate(7, of_kind(MarkKind::Square, page), stamped())
+            .expect("placed");
+        let square = state.marks.last().expect("it").id;
+        let state = edits.annotate(7, a_mark(page), stamped()).expect("marked");
+        let highlight = state.marks.last().expect("it").id;
+        let good = [10.0, 20.0, 110.0, 40.0];
+        let to = |mark: u64, rect: [f32; 4]| Placement { mark, rect };
+        let before = serde_json::to_value(edits.state(7).expect("open").marks).expect("json");
+        let refused = |moves: Vec<Placement>, sweep: u64| {
+            let why = edits.arrange(7, moves, sweep).expect_err("refused");
+            let after = serde_json::to_value(edits.state(7).expect("open").marks).expect("json");
+            assert_eq!(after, before, "{why}");
+            why
+        };
+        // The good placement comes first each time: it must not have been made.
+        assert!(refused(vec![], 5).contains("nothing was selected"));
+        assert!(refused(vec![to(field, good)], 0).contains("one gesture"));
+        assert!(refused(vec![to(field, good), to(field, good)], 5).contains("placed twice"));
+        assert!(refused(
+            vec![to(square, good), to(field, [10.0, 20.0, 17.0, 40.0])],
+            5
+        )
+        .contains("at least 8 by 8"));
+        assert!(refused(vec![to(square, good), to(highlight, good)], 5).contains("Highlight"));
+        assert_eq!(
+            refused(
+                vec![to(field, good), to(square, [10.0, 20.0, 10.0, 40.0])],
+                5
+            ),
+            "that mark covers nothing"
+        );
+        let many: Vec<Placement> = (0..=MAX_ARRANGED as u64)
+            .map(|n| to(n + 1000, good))
+            .collect();
+        assert!(refused(many, 5).contains("more than the 1000"));
+        // The control: the same two, both able to go, go.
+        assert!(edits
+            .arrange(7, vec![to(field, good), to(square, good)], 5)
+            .is_ok());
     }
 
     #[test]

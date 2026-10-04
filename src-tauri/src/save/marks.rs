@@ -271,6 +271,7 @@ pub(super) fn write_marks(
         if mark.kind == MarkKind::Field {
             let placed = mark
                 .field
+                .as_ref()
                 .ok_or("a form field in the save plan names no kind of field")?;
             // The appearance of a field is drawn upright in the page's own
             // space, and `forms::write` draws an answer the same way, so on a

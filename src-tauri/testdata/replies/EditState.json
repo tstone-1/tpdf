@@ -220,6 +220,23 @@
       "page": 2
     }
   ],
+  "fields": [
+    {
+      "object": [
+        14,
+        0
+      ],
+      "page": 1,
+      "rect": [
+        10.0,
+        20.0,
+        110.0,
+        40.0
+      ],
+      "name": "Name",
+      "removed": false
+    }
+  ],
   "dirty": true,
   "sources": [
     {

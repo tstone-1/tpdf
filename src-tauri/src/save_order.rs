@@ -346,6 +346,7 @@ mod tests {
     /// A model with or without unsaved changes, and nothing else in it.
     fn state(dirty: bool) -> EditState {
         EditState {
+            fields: Vec::new(),
             text_edits: Vec::new(),
             pages: Vec::new(),
             can_undo: false,
@@ -363,6 +364,7 @@ mod tests {
     /// A one-page plan carrying a highlight and nothing else: appendable.
     fn marks_only() -> Plan {
         Plan {
+            field_edits: Vec::new(),
             opened_as: None,
             baseline: 1,
             pages: vec![PageView {

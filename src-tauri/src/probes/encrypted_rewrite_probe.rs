@@ -104,6 +104,7 @@ fn pages_with_password(path: &Path, password: &str) -> usize {
 /// A plan that keeps every page but the last.
 fn dropping_last(pages: usize) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: pages as u32,
         pages: (0..pages - 1)

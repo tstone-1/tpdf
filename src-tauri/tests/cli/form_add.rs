@@ -184,6 +184,61 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
             && named(&answered, "Agree")["value"] == true,
         &format!("exit {code}; {stderr}; {answered:?}"),
     );
+    // A dropdown: added with its choices, listed with them, and answered
+    // with one of them and with nothing else.
+    let chooser = at("chooser.pdf");
+    let (code, json, stderr) = tool_with_stdin(
+        &["form", &plain, "-o", &chooser, "--fields", "-", "--json"],
+        &[],
+        r#"[{"name": "Country", "kind": "dropdown", "page": 1, "rect": [72, 100, 160, 20],
+             "options": ["Germany", "France", "Spain"]}]"#,
+    );
+    let listed_now = listed(&chooser, None);
+    let country = named(&listed_now, "Country");
+    report.check(
+        "form adds a dropdown, and fields lists it with its choices and nothing chosen",
+        code == 0
+            && parsed(&json)["added"][0]["kind"] == "choice_combo"
+            && country["value"].is_null()
+            && country.to_string().contains("Germany")
+            && country.to_string().contains("Spain"),
+        &format!("exit {code}; {stderr}; {json}; {country}"),
+    );
+    let chosen = at("chosen.pdf");
+    let (code, _, stderr) = tool_with_stdin(
+        &["fill", &chooser, "-o", &chosen, "--values", "-"],
+        &[],
+        r#"{"Country": "France"}"#,
+    );
+    let after = listed(&chosen, None);
+    report.check(
+        "fill chooses one of them and it reads back",
+        code == 0 && named(&after, "Country")["value"] == "France",
+        &format!("exit {code}; {stderr}; {after:?}"),
+    );
+    let (code, _, stderr) = tool_with_stdin(
+        &["fill", &chooser, "-o", &at("unlisted.pdf"), "--values", "-"],
+        &[],
+        r#"{"Country": "Italy"}"#,
+    );
+    report.check(
+        "an answer that is not one of its choices is refused",
+        code == 3 && !std::path::Path::new(&at("unlisted.pdf")).exists(),
+        &format!("exit {code}; {stderr}"),
+    );
+    let (code, _, stderr) = tool_with_stdin(
+        &["form", &plain, "-o", &at("none.pdf"), "--fields", "-"],
+        &[],
+        r#"[{"name": "Country", "kind": "dropdown", "page": 1, "rect": [72, 100, 160, 20]}]"#,
+    );
+    report.check(
+        "a dropdown with no choices is refused",
+        code == 3
+            && stderr.contains("needs at least one choice")
+            && !std::path::Path::new(&at("none.pdf")).exists(),
+        &format!("exit {code}; {stderr}"),
+    );
+
     let (code, _, stderr) = tool_with_stdin(
         &["fill", &made, "-o", &at("long.pdf"), "--values", "-"],
         &[],

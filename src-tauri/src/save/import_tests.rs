@@ -123,6 +123,7 @@ fn theirs(id: u64, page: u32) -> PageView {
 /// at `other` fingerprinted as it is now.
 fn plan_with(baseline: u32, pages: Vec<PageView>, other: &Path) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),

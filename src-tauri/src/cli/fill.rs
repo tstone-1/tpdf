@@ -536,6 +536,7 @@ pub fn signed_refusal(shown: &str, properties: &Properties) -> Option<String> {
 #[must_use]
 pub fn plan(pages: u32, answers: &[Resolved], opened_as: crate::fingerprint::Fingerprint) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         text_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),

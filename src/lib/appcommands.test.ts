@@ -14,6 +14,7 @@
  * here, and runs on every commit.
  */
 
+import { ARRANGEMENTS } from "./arrange";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -42,7 +43,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean;
+    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; formEditing?: boolean; savedFields?: number;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -78,6 +79,7 @@ function harness(
   let automatic = update.automatic ?? true;
   let restoring = update.restoreTabs ?? false;
   let framing = update.fieldBorder ?? true;
+  let formEditing = update.formEditing ?? false;
   let diskMode: DiskChangeMode = update.disk ?? "ask";
   const actions: AppActions = {
     editText: () => { fired.push("editText"); }, signature: () => { fired.push("signature"); },
@@ -167,9 +169,14 @@ function harness(
     drawEllipse: () => fired.push("drawEllipse"),
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
-    drawField: (kind) => fired.push(`drawField:${kind}`),
+    drawField: (kind, options) => fired.push(`drawField:${kind}${options ? `:${options.join("|")}` : ""}`),
     fieldBorder: () => framing,
     setFieldBorder: (border) => { framing = border; fired.push(`setFieldBorder:${border}`); },
+    pickedMarks: () => update.picked ?? 0,
+    arrange: (how) => fired.push(`arrange:${how}`),
+    savedFields: () => update.savedFields ?? 0,
+    formEditing: () => formEditing,
+    setFormEditing: (on) => { formEditing = on; fired.push(`setFormEditing:${on}`); },
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
     hasSelection: () => selected,
@@ -612,6 +619,89 @@ describe("the commands a document is needed for", () => {
     ]);
   });
 
+  it("asks a dropdown for its choices and arms the drag with them", () => {
+    const { registry, fired } = harness(true);
+    const command = registry.all().find((c) => c.id === "edit.addDropdown");
+    const argument = command?.argument;
+    expect(argument).toBeDefined();
+    expect(argument?.problem("")).toContain("semicolon");
+    expect(argument?.problem("Yes; ; No")).toContain("empty choice");
+    expect(argument?.problem("Yes; No; Yes")).toBe('"Yes" is there twice');
+    expect(argument?.problem("Yes; No")).toBeNull();
+    expect(argument?.preview?.("Yes; No")).toBe("2 choices. Then drag the field onto the page.");
+    expect(argument?.preview?.("Yes")).toBe("1 choice. Then drag the field onto the page.");
+    expect(argument?.preview?.("Yes;;")).toBe("");
+    registry.run("edit.addDropdown", " Yes ; No, by post;");
+    expect(fired.at(-1)).toBe("drawField:dropdown:Yes|No, by post");
+    // Choices that cannot be a list arm nothing.
+    const before = fired.length;
+    registry.run("edit.addDropdown", "Yes; Yes");
+    expect(fired.length).toBe(before);
+    expect(harness(false).registry.all().find((c) => c.id === "edit.addDropdown")?.enabled?.()).toBe(false);
+  });
+
+  it("offers changing the document's fields when it has some, and finishing while that is on", () => {
+    const offered = (open: boolean, update: { formEditing?: boolean; savedFields?: number }) => {
+      const { registry } = harness(open, update);
+      return ["edit.formEditOn", "edit.formEditOff"].filter(
+        (id) => registry.all().find((c) => c.id === id)?.enabled?.() !== false,
+      );
+    };
+    expect(offered(true, { savedFields: 0 })).toEqual([]);
+    expect(offered(true, { savedFields: 3 })).toEqual(["edit.formEditOn"]);
+    expect(offered(true, { savedFields: 3, formEditing: true })).toEqual(["edit.formEditOff"]);
+    expect(offered(false, { savedFields: 3 })).toEqual([]);
+    expect(offered(false, { savedFields: 3, formEditing: true })).toEqual([]);
+    const { registry, fired } = harness(true, { savedFields: 3 });
+    registry.run("edit.formEditOn");
+    expect(fired.at(-1)).toBe("setFormEditing:true");
+    registry.run("edit.formEditOff");
+    expect(fired.at(-1)).toBe("setFormEditing:false");
+  });
+
+  it("offers each arrangement once enough marks are picked for it, and runs that one", () => {
+    const ARRANGE_COMMANDS = [
+      ["left", "edit.alignLeft"],
+      ["center", "edit.alignCenter"],
+      ["right", "edit.alignRight"],
+      ["top", "edit.alignTop"],
+      ["middle", "edit.alignMiddle"],
+      ["bottom", "edit.alignBottom"],
+      ["distributeAcross", "edit.distributeAcross"],
+      ["distributeDown", "edit.distributeDown"],
+      ["sameWidth", "edit.sameWidth"],
+      ["sameHeight", "edit.sameHeight"],
+      ["sameSize", "edit.sameSize"],
+      ["pageCenter", "edit.centerOnPage"],
+      ["pageMiddle", "edit.middleOnPage"],
+    ] as const;
+    const ids = ARRANGE_COMMANDS.map(([, id]) => id);
+    const offered = (picked: number) => {
+      const { registry } = harness(true, { picked });
+      return ids.filter((id) => registry.all().find((c) => c.id === id)?.enabled?.() !== false);
+    };
+    expect(offered(0)).toEqual([]);
+    // One mark can be centred on the page and nothing else.
+    expect(offered(1)).toEqual(["edit.centerOnPage", "edit.middleOnPage"]);
+    // Two can be aligned and sized; spacing needs a third between them.
+    expect(offered(2)).toEqual(ids.filter((id) => !id.startsWith("edit.distribute")));
+    expect(offered(3)).toEqual(ids);
+    // And none without a document, however many a stale count says.
+    const closed = harness(false, { picked: 3 });
+    expect(ids.filter((id) => closed.registry.all().find((c) => c.id === id)?.enabled?.() !== false)).toEqual([]);
+    // Each runs its own arrangement.
+    const { registry, fired } = harness(true, { picked: 3 });
+    for (const [how, id] of ARRANGE_COMMANDS) {
+      const command = registry.all().find((c) => c.id === id);
+      expect(command, id).toBeDefined();
+      if (command && command.argument === undefined) void command.run();
+      expect(fired.at(-1)).toBe(`arrange:${how}`);
+    }
+    // Thirteen commands, thirteen arrangements, each once.
+    expect(ARRANGE_COMMANDS.map(([how]) => how)).toEqual([...ARRANGEMENTS]);
+    expect(new Set(ids).size).toBe(ARRANGEMENTS.length);
+  });
+
   it("makes tpdf the default only when the command is run", () => {
     const { registry, fired } = harness(false);
     expect(fired).toEqual([]);
@@ -676,7 +766,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean;
+      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; formEditing?: boolean; savedFields?: number;
     }) => harness(
       true,
       update,
@@ -706,13 +796,16 @@ describe("every registered command", () => {
       { pending: 1, pages: 3, name: "other.pdf" },
     );
     // With tabs from last time to reopen, or that command is withheld in both.
-    const found = built({ available: true, reopenable: 1 });
+    // And three marks picked, so every arrangement is allowed to run.
+    // And a form with fields, so changing them is on offer.
+    const found = built({ available: true, reopenable: 1, picked: 3, savedFields: 2 });
     // The second state also holds the other disk-change mode, for the reason
     // the update pair needs two: each `file.onDiskChange.*` command is withheld
     // while its mode is the current one, so no single state offers all three.
     // And the launch pair, which is the update pair's shape again.
     const applied = built({
       available: true, ready: true, disk: "reload", restoreTabs: true, fieldBorder: false,
+      formEditing: true,
     });
     const states = [found, applied];
     const shell = found.registry
@@ -1576,6 +1669,11 @@ describe("the window shortcuts for editing", () => {
       drawField: (kind) => fired.push(`drawField:${kind}`),
       fieldBorder: () => true,
       setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
+      pickedMarks: () => 0,
+      arrange: (how) => fired.push(`arrange:${how}`),
+      savedFields: () => 0,
+      formEditing: () => false,
+      setFormEditing: (on) => fired.push(`setFormEditing:${on}`),
     draw: () => fired.push("draw"),
     erase: () => fired.push("erase"),
       hasSelection: () => false,

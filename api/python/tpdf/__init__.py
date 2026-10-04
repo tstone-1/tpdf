@@ -373,9 +373,10 @@ class Tpdf:
     ) -> reports.FormReport:
         """Write a copy with form fields added, which `fill` can then answer.
 
-        Each field is a mapping with `name`, `kind` (`text`, `multiline` or
-        `checkbox`), `page` counted from 1 and `rect` as `[left, top, width,
-        height]` in points from the page's top-left corner; `tooltip`,
+        Each field is a mapping with `name`, `kind` (`text`, `multiline`,
+        `checkbox` or `dropdown`), `page` counted from 1 and `rect` as `[left,
+        top, width, height]` in points from the page's top-left corner; a
+        dropdown also has `options`, the list of its choices; `tooltip`,
         `required` and `max_length` are optional. One field that cannot be
         added means none is, and the error names every problem.
         """

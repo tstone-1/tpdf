@@ -60,8 +60,12 @@ ENTRY_IMPORT = re.compile(r'await import\("\./(\w+)"\)')
 # Raised from 225,000 the same day for the smaller-copy phase: the family
 # stood at 220,404 units and `compresscheck.ts` took it to 227,122, none of it
 # in a normal build.
+#
+# Raised from 235,000 on 2026-10-04 for the arrangement steps of the fields
+# phase: the family stood at 234,237 units and `fieldcheck.ts` with the
+# thirteen classifications took it to 237,001, none of it in a normal build.
 SHARE_CEILING = 40.0
-BYTES_CEILING = 235_000
+BYTES_CEILING = 245_000
 
 BASE64 = {c: i for i, c in enumerate(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

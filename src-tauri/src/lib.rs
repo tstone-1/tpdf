@@ -32,6 +32,7 @@ pub mod encoding;
 pub mod failure;
 pub mod fields;
 pub mod fingerprint;
+pub mod formedit;
 pub mod formfields;
 pub mod forms;
 pub mod imagepages;
@@ -917,6 +918,8 @@ pub fn run() {
             annot_recolor,
             annot_move,
             annot_resize,
+            annot_arrange,
+            form_field_edit,
             annot_resize_signature,
             signature_store,
             edit_undo,
@@ -1355,6 +1358,7 @@ mod tests {
     /// by nothing here and is not worth pretending otherwise.
     fn plan_opened_as(source: &std::path::Path) -> crate::edits::Plan {
         crate::edits::Plan {
+            field_edits: Vec::new(),
             baseline: 1,
             opened_as: Some(
                 crate::fingerprint::Fingerprint::of(source).expect("fingerprint the scratch file"),

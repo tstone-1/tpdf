@@ -43,6 +43,7 @@ fn source() -> Document {
 
 fn plan(turns: u8) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         baseline: 2,
         opened_as: None,
         pages: vec![

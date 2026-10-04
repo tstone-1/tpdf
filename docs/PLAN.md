@@ -3518,6 +3518,60 @@ not verified, and name the drawing left.
 - Shadings (`sh`), drawings inside a Form XObject, and inline images are still reported.
 - The review panel was not driven by a person with a drawing under a region.
 
+#### Changing the fields a document already has — 2026-10-04
+
+A field could be placed, named, moved and resized until the first save and not after:
+saved, it was a field of the document and tpdf could only fill it. A form is rarely right
+the first time, so this was the largest gap in the form tools.
+
+**Three layers, each tested where it lives.** `formedit::apply` changes the document: a
+widget's `/Rect`, a field's `/T`, or a widget's place on its page and in the field tree.
+`Command::Refield` journals it, by widget and page, holding the whole of what a reader
+has changed about that widget so one current version per widget is enough and undo puts
+back the one before. `savedfields.ts` shows each saved field to the viewer as a mark of
+kind `field` under an id of its own (from 2^40), so picking, dragging, the corner, the
+name box and the Arrange commands are the code a placed field already uses; what the
+viewer reports about such an id is turned into a change to the widget.
+
+**What is redrawn.** A text or choice field's appearance is drawn for its size, so a
+resized one is drawn again through `forms::write` with the answer it holds, and a field
+tpdf cannot draw (read-only, comb, password) can be moved and not resized. A checkbox, a
+radio button or a button keeps its author's appearance; a reader scales it to the new
+rectangle (ISO 32000-1 12.5.5).
+
+**The sweep.** A removed field is unlinked, not deleted, and the save swept unreferenced
+objects only for certain kinds of change. The test that removes a field and then looks
+for it in the written file found the field still there; `field_edits` joined that
+condition the same day.
+
+**Not built.** Changing a field's kind, tooltip, required flag or maximum length; tab
+order; a field on a turned page; a signature field. Until the save, the page still draws
+each field where the file has it, under the rectangle that shows where it will be.
+
+#### Arranging placed rectangles — 2026-10-04
+
+Asked for directly: form fields need alignment. It needed something the window did not
+have, a selection of several marks.
+
+**Picking.** A plain press on a placed rectangle picks it alone, as it always opened its
+name box; a press with Shift adds it or takes it out, opens nothing and moves nothing. A
+field, a box, an ellipse and a text box can be picked: the four kinds `isResizable` names,
+because an arrangement reshapes. One page at a time. `arrange.ts` holds the list
+(`Picked`) and the arithmetic (`arrange`), with no window in either.
+
+**The first one picked leads.** Aligning left moves every left edge to the first mark's,
+and one width is the first mark's. The other rule, the outermost edge of the whole
+selection, moves the reference with every mark added and gives a reader no way to say
+which field is already right. Spacing keeps the outer two and equalises the gaps.
+
+**One undo.** `Edits::arrange` checks every placement before making the first and applies
+them under one `SweepId`, the eraser's grouping, so undo and redo cross the whole
+arrangement in one step. The viewer works in the laid-out page, where a reader's left is
+on a turned view, and sends rectangles in the file's space.
+
+**Not built.** Dragging several picked marks together; a rubber band to pick by area;
+aligning to a typed position; snapping while dragging.
+
 #### Drawings inside a block are removed and cut — 2026-10-03
 
 The largest group left after the section below: 630 of 4,616 word-sized regions touched

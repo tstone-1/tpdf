@@ -943,6 +943,7 @@ fn run_gate(
 ) {
     let out = std::env::temp_dir().join(format!("tpdf-reach-{}.pdf", std::process::id()));
     let plan = Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         baseline: opened.page_count as u32,
         pages: (0..opened.page_count)

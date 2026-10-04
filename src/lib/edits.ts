@@ -131,6 +131,8 @@ export interface Split {
 /** Mirrors `edits::EditState`. */
 export interface EditState {
   forms?: import("./forms").FormChange[];
+  /** The fields of the file a reader has moved, renamed or removed. */
+  fields?: import("./savedfields").FieldEdited[];
   text_edits?: import("./textedit").TextChange[];
   pages: PageView[];
   marks: MarkView[];
@@ -555,6 +557,25 @@ export class Edits {
   /** Gives a box, an ellipse, a text box or a form field a new rectangle. */
   async resize(mark: number, rect: [number, number, number, number]): Promise<EditState> {
     return this.adopt(await call("annot_resize", { doc: this.doc, mark, rect }));
+  }
+
+  /**
+   * Changes form fields the file already has: moves, resizes, renames, removes
+   * or restores them. Several at once need a gesture's name in `sweep`.
+   */
+  async refield(targets: import("./savedfields").FieldTarget[], sweep = 0): Promise<EditState> {
+    return this.adopt(await call("form_field_edit", { doc: this.doc, targets, sweep }));
+  }
+
+  /**
+   * Gives several placed rectangles new rectangles as one edit, which one
+   * undo puts back. `sweep` names the gesture and is never zero.
+   */
+  async arrange(
+    moves: { mark: number; rect: [number, number, number, number] }[],
+    sweep: number,
+  ): Promise<EditState> {
+    return this.adopt(await call("annot_arrange", { doc: this.doc, moves, sweep }));
   }
 
   async reply(

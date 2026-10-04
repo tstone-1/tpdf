@@ -522,6 +522,13 @@ fn samples() -> BTreeMap<&'static str, String> {
                 object: (10, 0),
                 page: 2,
             }],
+            fields: vec![edits::FieldEditView {
+                object: (14, 0),
+                page: 1,
+                rect: Some([10.0, 20.0, 110.0, 40.0]),
+                name: Some("Name".into()),
+                removed: false,
+            }],
             dirty: true,
             sources: vec![edits::SourceView { source: 1, doc: 12 }],
         },

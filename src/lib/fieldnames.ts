@@ -23,7 +23,36 @@ const WORDS: Record<FieldKind, string> = {
   // reader would call it.
   multiline: "Text",
   checkbox: "Checkbox",
+  dropdown: "Dropdown",
 };
+
+/** The most choices a dropdown offers, and the most characters in one. `formfields.rs` holds both. */
+const MAX_OPTIONS = 1000;
+const MAX_OPTION = 255;
+
+/**
+ * The choices a reader typed for a dropdown, or why they cannot be its list.
+ *
+ * Typed on one line with semicolons between them, since a comma is ordinary
+ * in a choice ("Yes, by post") and a semicolon rarely is. Space round each is
+ * dropped, and so is a semicolon at the end. The rules are the save's, asked
+ * here first so a reader is told before they have dragged anything: at least
+ * one choice, none empty, none twice.
+ */
+export function parseChoices(raw: string): { options: string[] } | { problem: string } {
+  const typed = raw.trim().replace(/;\s*$/, "");
+  if (typed === "") return { problem: "The choices, with a semicolon between them: Yes; No; Maybe" };
+  const options = typed.split(";").map((part) => part.trim());
+  if (options.some((option) => option === "")) return { problem: "There is an empty choice between two semicolons" };
+  if (options.length > MAX_OPTIONS) return { problem: `A dropdown offers at most ${MAX_OPTIONS} choices` };
+  const long = options.find((option) => [...option].length > MAX_OPTION);
+  if (long !== undefined) return { problem: `A choice is at most ${MAX_OPTION} characters` };
+  // A character a reader cannot see cannot be told apart in a list either.
+  if (options.some((option) => /\p{Cc}/u.test(option))) return { problem: "A choice cannot contain a control character" };
+  const twice = options.find((option, at) => options.indexOf(option) !== at);
+  if (twice !== undefined) return { problem: `"${twice}" is there twice` };
+  return { options };
+}
 
 /**
  * The names a new field may not take.

@@ -419,7 +419,7 @@ class AddedField(TypedDict):
 
     # The name `fill` answers it by.
     name: str
-    # `text` or `checkbox`.
+    # `text`, `checkbox`, or `choice_combo` for a dropdown.
     kind: "FieldKind"
     # Whether a text field wraps over several lines.
     multiline: bool

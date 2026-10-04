@@ -13,6 +13,7 @@
  */
 
 import { call } from "./ipc";
+import { SAVED_BASE } from "./savedfields";
 import type { OpenCheckHost } from "./opencheck";
 import { pause, settle, type Report } from "./checkreport";
 
@@ -118,6 +119,59 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
     names(),
   );
 
+  // Picked with Shift and arranged: every left edge goes to the first one's,
+  // as one edit.
+  {
+    const press = (id: number, shiftKey: boolean) => {
+      const anchor = viewer.markAnchor(id);
+      if (!anchor) return;
+      const point = {
+        clientX: box.left + (anchor.left + anchor.right) / 2,
+        clientY: box.top + (anchor.top + anchor.bottom) / 2,
+      };
+      for (const type of ["pointerdown", "pointerup"]) {
+        root.dispatchEvent(new PointerEvent(type, { button: 0, pointerId: 1, bubbles: true, shiftKey, ...point }));
+      }
+    };
+    const told = () => document.querySelector('[data-testid="notice"]')?.textContent ?? "";
+    const lefts = () => fields().map((mark) => (mark.quads[0] ?? 0).toFixed(2));
+    const widths = () => fields().map((mark) => ((mark.quads[2] ?? 0) - (mark.quads[0] ?? 0)).toFixed(2));
+    const was = fields().map((mark) => mark.quads.join());
+    const ids = fields().map((mark) => mark.id);
+    // The checkbox first, so it is the one the others follow: its left edge
+    // is the only one of the three that is not already where the others are.
+    const order = [ids[1], ids[0], ids[2]].filter((id): id is number => id !== undefined);
+    host.run("edit.alignRight");
+    await host.idle();
+    check("an arrangement with nothing picked does nothing", fields().map((mark) => mark.quads.join()).join("|") === was.join("|"), lefts().join(" "));
+    // All three with Shift, so no field's name box opens under the check.
+    for (const id of order) press(id, true);
+    await pause(100);
+    check(
+      "three presses with Shift pick three fields, in that order",
+      viewer.pickedMarks().join() === order.join(),
+      `${viewer.pickedMarks().join()} against ${order.join()}`,
+    );
+    check("the reader is told how many are picked and which one leads", told().includes("3 picked"), told());
+    const rights = () => fields().map((mark) => (mark.quads[2] ?? 0).toFixed(2));
+    const lead = () => fields().find((mark) => mark.id === order[0]);
+    host.run("edit.alignRight");
+    await settle(() => new Set(rights()).size === 1, SETTLE_MS);
+    await host.idle();
+    check(
+      "Arrange: align right puts every right edge where the first picked one's is, and keeps each width",
+      new Set(rights()).size === 1 && rights()[0] === (lead()?.quads[2] ?? 0).toFixed(2)
+        && lead()?.quads.join() === was[1] && new Set(widths()).size === 3,
+      `rights ${rights().join(" ")}; widths ${widths().join(" ")}`,
+    );
+    host.run("edit.undo");
+    await host.idle();
+    check("one undo puts all three back", fields().map((mark) => mark.quads.join()).join("|") === was.join("|"), rights().join(" "));
+    // Nothing picked, and the journal as it was, for the steps below.
+    viewer.pick([]);
+    check("and nothing is picked afterwards", viewer.pickedCount === 0, String(viewer.pickedCount));
+  }
+
   // Renaming is the mark's note, held to what a field's name may be.
   if (first && lines) {
     await host.apply((edits) => edits.renote(first.id, "Name"));
@@ -175,4 +229,53 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
   check("a field placed on the saved form avoids the names the file now has", names() === "Text 1", names());
   await place("edit.addCheckbox", at(0.3, 0.7), at(0.33, 0.73));
   check("and a checkbox there is the second of its kind", names() === "Text 1, Checkbox 2", names());
+
+  // The fields the file now has, changed in place: shown as rectangles, one
+  // dragged, and the save writes it where it was dropped.
+  {
+    const changed = () => host.edits()?.state.fields ?? [];
+    const filling = () =>
+      [...document.querySelectorAll<HTMLElement>(".form-fields input, .form-fields textarea")]
+        .filter((control) => control.style.display !== "none").length;
+    const at0 = form.widgets.findIndex((widget) => widget.name === "Name");
+    const was = form.widgets[at0]?.display_rect ?? [0, 0, 0, 0];
+    host.run("edit.formEditOn");
+    await pause(200);
+    const id = SAVED_BASE + at0;
+    const anchor = viewer.markAnchor(id);
+    check("changing the document's fields shows the saved field as a rectangle", anchor !== null, String(at0));
+    check("and puts the controls for filling away", filling() === 0, `${filling()} shown`);
+    if (anchor) {
+      const from = { x: box.left + (anchor.left + anchor.right) / 2, y: box.top + (anchor.top + anchor.bottom) / 2 };
+      drag(root, from, { x: from.x + 40, y: from.y + 30 });
+      await settle(() => changed().length === 1, SETTLE_MS);
+      await host.idle();
+    }
+    const to = changed()[0]?.rect ?? [0, 0, 0, 0];
+    check(
+      "dragging it moves the field, at the size it had",
+      changed().length === 1 && to[0] > was[0] && to[1] > was[1]
+        && Math.abs((to[2] - to[0]) - (was[2] - was[0])) < 0.01,
+      `${was.map((v) => v.toFixed(1))} to ${to.map((v) => v.toFixed(1))}`,
+    );
+    host.run("edit.undo");
+    await host.idle();
+    check("undo puts it back", changed().length === 0, String(changed().length));
+    host.run("edit.redo");
+    await host.idle();
+    host.run("edit.formEditOff");
+    await pause(200);
+    check("finishing brings the controls back", filling() > 0, `${filling()} shown`);
+    host.run("file.save");
+    await host.idle();
+    await settle(() => host.edits()?.state.dirty === false, SETTLE_MS);
+    const now = host.edits();
+    const after = now ? await call("document_form", { doc: now.doc }) : { widgets: [] };
+    const saved = after.widgets.find((widget) => widget.name === "Name")?.display_rect ?? [0, 0, 0, 0];
+    check(
+      "and the save writes the field where it was dropped",
+      Math.abs(saved[0] - to[0]) < 0.01 && Math.abs(saved[1] - to[1]) < 0.01,
+      `${saved.map((v) => v.toFixed(1))} against ${to.map((v) => v.toFixed(1))}`,
+    );
+  }
 }

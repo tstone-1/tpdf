@@ -3909,6 +3909,9 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
     // write. Addressed to the file's own pages, like everything above.
     crate::formfields::add(&mut doc, &plan.new_fields)?;
     forms::write(&mut doc, &plan.forms)?;
+    // After the answers, so a resized field is drawn again with the answer
+    // this plan gives it, and a removed field's answer has gone with it.
+    crate::formedit::apply(&mut doc, &plan.field_edits)?;
     // **While `doc` is still the file as it was loaded**, for the reason the
     // text edits above give: a layer names a baseline page, and the order this
     // document will have is not built until `materialise`.
@@ -4099,6 +4102,13 @@ fn rewrite(plan: &Plan, checked: Checked, job: Job) -> Result<Vec<u8>, Refusal> 
         || redacted.images > 0
         || discarded > 0
         || !plan.text_edits.is_empty()
+        // And a change to a field of the file, the same shape a sixth time. A
+        // removed field is taken off its page and out of the form, which
+        // leaves the field, its answer and its appearance reachable from
+        // nothing; a resized one leaves the appearance it was drawn with. The
+        // test that removes a field and then looks for it in the file found
+        // this on the day the removal landed.
+        || !plan.field_edits.is_empty()
     {
         sweep::collect(&mut doc)?;
     }

@@ -369,6 +369,7 @@ fn run() -> Result<(), String> {
         return Err("worker discovered incorrect text runs".into());
     }
     let mut plan = Plan {
+        field_edits: Vec::new(),
         text_layers: Vec::new(),
         protection: Default::default(),
         compress: Default::default(),

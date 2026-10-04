@@ -944,6 +944,7 @@ fn form_plan(
     region: [f32; 4],
 ) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         opened_as: None,
         // Taken from the document rather than written down. It was a literal 2
         // until `form-xobject.pdf` gained a third page, and the save then
@@ -1020,6 +1021,7 @@ fn show_operators(doc: &mut lopdf::Document, page: lopdf::ObjectId) -> usize {
 /// unchanged, so this probe is also the check that a redaction stops it.
 fn plan_for(pages: u32, region: &redact::RegionPlan) -> Plan {
     Plan {
+        field_edits: Vec::new(),
         baseline: pages,
         opened_as: None,
         pages: (0..pages)
