@@ -1,6 +1,18 @@
 use super::*;
 use crate::forms::{scan, write, Change, Control, Value};
 
+/// [`super::place`] on a page that is not turned, which is every page here
+/// but the ones a test turns itself.
+fn place(
+    doc: &mut Document,
+    page: ObjectId,
+    rect: [f64; 4],
+    name: &str,
+    placed: &Placed,
+) -> Result<ObjectId, String> {
+    super::place(doc, page, rect, name, placed, 0)
+}
+
 /// How the document under test holds its form.
 #[derive(Clone, Copy, PartialEq)]
 enum Held {
@@ -525,10 +537,6 @@ fn every_problem_is_named_and_nothing_is_written() {
             "there is no page 3; the document has 2",
         ),
         (
-            field("turned", Kind::Text, 1, [10.0, 10.0, 50.0, 20.0]),
-            "page 2 is turned",
-        ),
-        (
             field("thin", Kind::Text, 0, [10.0, 10.0, 50.0, 7.9]),
             "a text field needs at least 8 by 8",
         ),
@@ -831,6 +839,176 @@ fn a_placed_field_is_answered_with_its_default_once_it_is_on_its_page() {
             .contains("its default value")
     );
     assert_eq!(doc.objects.len(), objects);
+}
+
+/// The numbers of an array entry of a dictionary.
+fn numbers(dict: &Dictionary, key: &[u8]) -> Vec<f32> {
+    dict.get(key)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_float().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_field_on_a_turned_page_is_drawn_as_it_is_read_and_says_its_turn() {
+    for (degrees, turns) in [(90_i64, 1_u8), (180, 2), (270, 3)] {
+        let mut doc = document(Held::Absent, true);
+        let page = crate::pagetree::ordered_pages(&doc)[1];
+        doc.get_dictionary_mut(page).unwrap().set("Rotate", degrees);
+        // Where a reader sees it: 100 across and 20 high, from the corner of
+        // the page as it is displayed.
+        let asked = [10.0, 20.0, 100.0, 20.0];
+        add(
+            &mut doc,
+            &[
+                NewField {
+                    border: true,
+                    default_value: Some("Ada".into()),
+                    ..field("Side", Kind::Text, 1, asked)
+                },
+                field("Empty", Kind::Text, 1, [10.0, 60.0, 100.0, 20.0]),
+                field("Box", Kind::Checkbox, 1, [10.0, 100.0, 12.0, 12.0]),
+                // A default judged in the size it is read in: it fits 100
+                // across, and would not fit the 20 its rectangle is wide on
+                // a page turned a quarter.
+                NewField {
+                    default_value: Some("fits a hundred".into()),
+                    ..field("Wide", Kind::Text, 1, [10.0, 130.0, 100.0, 20.0])
+                },
+            ],
+        )
+        .unwrap_or_else(|why| panic!("{degrees}: {why}"));
+        let side = read_back(&doc, "Side");
+        // Read back through the scan's own mapping, which is another table.
+        assert_eq!(side.display_rect, [10.0, 20.0, 110.0, 40.0], "{degrees}");
+        assert_eq!(side.turns, turns);
+        let (width, height) = (side.rect[2] - side.rect[0], side.rect[3] - side.rect[1]);
+        let on_its_side = turns % 2 == 1;
+        assert_eq!(
+            (width, height),
+            if on_its_side {
+                (20.0, 100.0)
+            } else {
+                (100.0, 20.0)
+            }
+        );
+        // It says how far it is turned, beside the border it declares.
+        let dict = doc.get_dictionary(side.widget).unwrap();
+        let look = dict.get(b"MK").unwrap().as_dict().unwrap();
+        assert_eq!(look.get(b"R").unwrap().as_i64().unwrap(), degrees);
+        assert!(look.has(b"BC"));
+        // Its answer is drawn 100 by 20, at twelve points, and turned by the
+        // stream's matrix: not squeezed into the 20 the rectangle is wide.
+        let stream = |widget: ObjectId| {
+            let normal = doc
+                .get_dictionary(widget)
+                .unwrap()
+                .get(b"AP")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"N")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            doc.get_object(normal)
+                .unwrap()
+                .as_stream()
+                .unwrap()
+                .dict
+                .clone()
+        };
+        let drawn = stream(side.widget);
+        assert_eq!(numbers(&drawn, b"BBox"), [0.0, 0.0, 100.0, 20.0]);
+        let matrix: Vec<f32> = forms::turn_matrix(turns, 100.0, 20.0)
+            .unwrap()
+            .iter()
+            .map(|v| *v as f32)
+            .collect();
+        assert_eq!(numbers(&drawn, b"Matrix"), matrix);
+        let body = appearance_of(&doc, side.widget);
+        assert!(
+            body.contains("/F0 12 Tf") && body.contains("<416461> Tj"),
+            "{body}"
+        );
+        assert!(
+            body.contains("99 19 re S"),
+            "its line, in the box it is drawn in: {body}"
+        );
+        // The empty field is made the same way, before any answer.
+        let empty = read_back(&doc, "Empty");
+        assert_eq!(empty.turns, turns);
+        let made = stream(empty.widget);
+        assert_eq!(numbers(&made, b"BBox"), [0.0, 0.0, 100.0, 20.0]);
+        assert_eq!(numbers(&made, b"Matrix"), matrix);
+        // A checkbox looks the same from every side and says nothing.
+        let tick = read_back(&doc, "Box");
+        assert_eq!(tick.display_rect, [10.0, 100.0, 22.0, 112.0]);
+        assert_eq!(tick.turns, 0);
+        assert!(!doc.get_dictionary(tick.widget).unwrap().has(b"MK"));
+    }
+    // And on a page that is not turned there is no turn to say, and no matrix.
+    let mut doc = document(Held::Absent, true);
+    add(
+        &mut doc,
+        &[field("Up", Kind::Text, 0, [10.0, 20.0, 100.0, 20.0])],
+    )
+    .expect("added");
+    let up = read_back(&doc, "Up");
+    assert_eq!(up.turns, 0);
+    assert!(!doc.get_dictionary(up.widget).unwrap().has(b"MK"));
+    // Off the page as it is displayed, 200 by 300, is still off the page.
+    let mut doc = document(Held::Absent, true);
+    assert!(add(
+        &mut doc,
+        &[field("Out", Kind::Text, 1, [150.0, 20.0, 100.0, 20.0])]
+    )
+    .expect_err("refused")
+    .contains("which is 200 by 300"));
+}
+
+#[test]
+fn a_field_placed_on_a_turned_page_declares_the_turn_it_is_given() {
+    let mut doc = document(Held::Absent, true);
+    let page = crate::pagetree::ordered_pages(&doc)[1];
+    // In the page's own space, as the save hands it over: 20 wide, 100 high.
+    let id = super::place(
+        &mut doc,
+        page,
+        [20.0, 10.0, 40.0, 110.0],
+        "Side",
+        &Kind::Text.into(),
+        1,
+    )
+    .expect("placed");
+    append(&mut doc, page, b"Annots", id).expect("attached");
+    let side = read_back(&doc, "Side");
+    assert_eq!(side.turns, 1);
+    assert_eq!(side.display_rect, [10.0, 20.0, 110.0, 40.0]);
+    // A default is judged in the size it is read in: this one fits 100 across
+    // and would not fit 20.
+    let wide = Placed {
+        default_value: "fits a hundred".into(),
+        ..Kind::Text.into()
+    };
+    let fits =
+        super::place(&mut doc, page, [60.0, 10.0, 80.0, 110.0], "Wide", &wide, 1).expect("placed");
+    append(&mut doc, page, b"Annots", fits).expect("attached");
+    answer_placed(&mut doc, fits, &wide).expect("answered");
+    assert!(appearance_of(&doc, fits).contains("/F0 12 Tf"));
+    assert!(super::place(
+        &mut doc,
+        page,
+        [100.0, 10.0, 120.0, 110.0],
+        "Narrow",
+        &wide,
+        0
+    )
+    .expect_err("refused")
+    .contains("its default value"));
 }
 
 #[test]

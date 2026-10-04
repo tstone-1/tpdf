@@ -445,7 +445,9 @@ fn a_change_that_cannot_be_made_changes_nothing() {
     assert!(with(to(&agree, [20.0, 60.0, 25.0, 72.0])).contains("at least 6 by 6"));
     assert!(with(to(&name, [250.0, 20.0, 350.0, 40.0])).contains("not inside page 1"));
     assert!(with(to(&name, [20.0, f32::NAN, 120.0, 40.0])).contains("not four numbers"));
-    assert!(with(to(&one(&f.doc, "Turned"), [20.0, 20.0, 60.0, 40.0])).contains("turned"));
+    // Off a turned page is off it as it is displayed: 200 across, 300 down.
+    assert!(with(to(&one(&f.doc, "Turned"), [150.0, 20.0, 250.0, 40.0]))
+        .contains("which is 200 by 300"));
     assert!(with(named(&name, "")).contains("needs a name"));
     assert!(with(named(&name, "a.b")).contains("period"));
     assert!(with(named(&name, "Agree")).contains("another field has this name"));
@@ -651,6 +653,59 @@ fn an_alignment_draws_the_field_again_with_its_answer_at_that_side() {
         );
         assert!(body.contains(" re S"), "its line is kept: {body}");
     }
+}
+
+#[test]
+fn a_field_on_a_turned_page_is_moved_and_resized_where_a_reader_sees_it() {
+    let mut f = fixture();
+    let turned = one(&f.doc, "Turned");
+    // The fixture's widget says nothing of a turn; one made for a turned
+    // page does, and that is the one a resize has to draw the right way up.
+    f.doc
+        .get_dictionary_mut(turned.widget)
+        .unwrap()
+        .set("MK", dictionary! { "R" => 90 });
+    // A turn is whole quarters, counted round; anything else is none.
+    for (degrees, turns) in [
+        (135_i64, 0_u8),
+        (-90, 3),
+        (450, 1),
+        (360, 0),
+        (180, 2),
+        (90, 1),
+    ] {
+        f.doc
+            .get_dictionary_mut(turned.widget)
+            .unwrap()
+            .set("MK", dictionary! { "R" => degrees });
+        assert_eq!(one(&f.doc, "Turned").turns, turns, "{degrees}");
+    }
+    let turned = one(&f.doc, "Turned");
+    assert_eq!(turned.turns, 1);
+    // Moved: where it was asked to go, as the page is displayed.
+    let asked = [30.0, 50.0, 130.0, 70.0];
+    apply(&mut f.doc, &[to(&turned, asked)]).expect("moved and resized");
+    let now = one(&f.doc, "Turned");
+    assert_eq!(now.display_rect, asked);
+    // In the page's own space it lies on its side: 20 wide, 100 high.
+    assert_eq!(
+        (now.rect[2] - now.rect[0], now.rect[3] - now.rect[1]),
+        (20.0, 100.0)
+    );
+    // Drawn again 100 by 20, turned by the matrix.
+    let (stream, _) = appearance(&f.doc, now.widget);
+    let dict = &f.doc.get_object(stream).unwrap().as_stream().unwrap().dict;
+    let numbers = |key: &[u8]| -> Vec<f32> {
+        dict.get(key)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_float().unwrap())
+            .collect()
+    };
+    assert_eq!(numbers(b"BBox"), [0.0, 0.0, 100.0, 20.0]);
+    assert_eq!(numbers(b"Matrix"), [0.0, 1.0, -1.0, 0.0, 20.0, 0.0]);
 }
 
 /// The default appearance a field declares for itself.

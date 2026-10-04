@@ -308,15 +308,38 @@ pub(super) fn adds_fields_that_can_be_filled(report: &mut Report) {
     };
     let refused = at("refused.pdf");
     let gone = || !std::path::Path::new(&refused).exists();
+    // A page the document turns takes a field where the list puts it, as the
+    // page is displayed, and the field can be filled.
+    let sideways = at("sideways.pdf");
     let (code, _, stderr) = tool_with_stdin(
-        &["form", &turned, "-o", &refused, "--fields", "-"],
+        &["form", &turned, "-o", &sideways, "--fields", "-", "--json"],
         &[],
         &field(2),
     );
+    let side = listed(&sideways, None);
+    let turn = lopdf::Document::load(&sideways).ok().and_then(|doc| {
+        doc.objects.values().find_map(|object| {
+            let dict = object.as_dict().ok()?;
+            dict.get(b"T").ok()?;
+            let look = dict.get(b"MK").ok()?.as_dict().ok()?;
+            look.get(b"R").ok()?.as_i64().ok()
+        })
+    });
+    let answered = at("sideways-filled.pdf");
+    let (filled, _, fill_stderr) = tool_with_stdin(
+        &["fill", &sideways, "-o", &answered, "--values", "-"],
+        &[],
+        r#"{"N": "Ada"}"#,
+    );
     report.check(
-        "a page the document turns is refused, and says so",
-        code == 3 && stderr.contains("page 2 is turned") && gone(),
-        &format!("exit {code}; {stderr}"),
+        "a page the document turns takes a field that says its turn and can be filled",
+        code == 0
+            && named(&side, "N")["pages"] == serde_json::json!([2])
+            && named(&side, "N")["editable"] == true
+            && turn == Some(90)
+            && filled == 0
+            && named(&listed(&answered, None), "N")["value"] == "Ada",
+        &format!("exit {code}; {stderr}; turn {turn:?}; fill {filled}; {fill_stderr}"),
     );
     let (code, _, stderr) = tool_with_stdin(
         &["form", &turned, "-o", &refused, "--fields", "-"],

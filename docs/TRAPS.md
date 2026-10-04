@@ -270,6 +270,7 @@ hop through the index.
 - A plan measured without being applied called regions removable that the save refused
 - `%%EOF` is also a PostScript comment, so counting its bytes counts every embedded CMap as a revision
 - PDFKit answers a button in text and draws the chosen radio button once, so a form filled in Preview read as unanswered
+- PDFKit draws a text field's answer itself and ignores the turn the field declares, so it cannot check a field on a turned page
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -25650,3 +25651,22 @@ The lesson is about the instrument more than the format. A reader and a writer t
 a model agree with each other about everything the model gets wrong, and the files that
 disagree are written by the programs the form's recipients use. A check of a format needs
 a second implementation on the other side of it, in both directions.
+
+### PDFKit draws a text field's answer itself and ignores the turn the field declares, so it cannot check a field on a turned page
+
+Fields on turned pages were built on 2026-10-04 and rendered with three programs. tpdf's
+own renderer and poppler drew the text upright at twelve points in a box 220 by 24.
+PDFKit drew the same file with the text a few points high and lying on its side.
+
+The file was right. A widget says how far its appearance is turned in `/MK /R`, and the
+appearance stream carries a matrix that turns it. PDFKit uses neither for a text field:
+it draws the answer itself, from `/V`, into the rectangle as the page's own space has
+it. On a page turned a quarter that rectangle is 24 wide and 220 high, so the text is
+shrunk to fit 24 points and runs the wrong way. That is read off the picture and the
+values PDFKit reports; a turned field made by another program was not compared.
+
+So PDFKit, which is the second implementation `scripts/made_form_check.py` reads a made
+form with, can say whether a turned field's answer is **read** and cannot say whether it
+is **drawn** right. For how a field on a turned page looks, the instruments are
+`tpdf render` and `pdftoppm`, and a look at the picture. A renderer that redraws what it
+is given is a check of its own drawing and not of the file's.

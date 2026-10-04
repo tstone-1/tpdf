@@ -267,6 +267,33 @@ pub fn displayed_page(doc: &Document, page: ObjectId) -> DisplayedPage {
     }
 }
 
+/// A rectangle of the page as it is displayed, `[left, top, right, bottom]`
+/// in points from its top-left corner, in the page's own space:
+/// `[left, bottom, right, top]` with y upwards, where an annotation's `/Rect`
+/// is.
+///
+/// `text::from_device` with the box's origin added, and in `f64`: a field's
+/// rectangle is written with the digits it was asked for.
+#[must_use]
+pub fn from_displayed(shown: &DisplayedPage, rect: [f64; 4]) -> [f64; 4] {
+    let [left, top, right, bottom] = rect;
+    let (width, height) = (f64::from(shown.width), f64::from(shown.height));
+    // The page's own size, before the turn.
+    let (w0, h0) = if shown.turns % 2 == 1 {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let [l, b, r, t] = match shown.turns % 4 {
+        0 => [left, h0 - bottom, right, h0 - top],
+        1 => [top, left, bottom, right],
+        2 => [w0 - right, top, w0 - left, bottom],
+        _ => [w0 - bottom, h0 - right, w0 - top, h0 - left],
+    };
+    let (x, y) = (f64::from(shown.origin.0), f64::from(shown.origin.1));
+    [x + l, y + b, x + r, y + t]
+}
+
 /// The box every page is displayed from, in page order.
 ///
 /// **Why this exists at all**: `FPDFPage_GetMediaBox` does not walk `/Parent`,
@@ -974,6 +1001,48 @@ mod tests {
     ///
     /// Its destinations name pages that are no longer in the file, and a
     /// bookmark that goes nowhere is worse than no bookmark.
+
+    #[test]
+    fn a_displayed_rectangle_lands_in_the_page_where_the_text_mapping_puts_it() {
+        // 200 by 300 as displayed, from a box whose corner is not the origin.
+        let rect = [10.0, 20.0, 110.0, 45.0];
+        for turns in 0..4_u8 {
+            let (width, height) = if turns % 2 == 1 {
+                (200.0, 300.0)
+            } else {
+                (300.0, 200.0)
+            };
+            let shown = DisplayedPage {
+                width,
+                height,
+                turns,
+                origin: (7.0, 11.0),
+            };
+            let page = from_displayed(&shown, rect);
+            assert!(page[0] < page[2] && page[1] < page[3], "{turns}: {page:?}");
+            // The table the text layer maps with, which is another one.
+            let other = crate::text::from_device(turns, width, height, rect.map(|v| v as f32));
+            assert_eq!(
+                page,
+                [
+                    other[0] + 7.0,
+                    other[1] + 11.0,
+                    other[2] + 7.0,
+                    other[3] + 11.0
+                ],
+                "{turns}"
+            );
+            // And back, the way the form's scan reads a widget.
+            let back = crate::text::to_device(
+                turns,
+                width,
+                height,
+                [page[0] - 7.0, page[1] - 11.0, page[2] - 7.0, page[3] - 11.0],
+            );
+            assert_eq!(back.map(f64::from), rect, "{turns}");
+        }
+    }
+
     #[test]
     fn materialising_a_deletion_drops_the_outline() {
         let (mut doc, _) = three_pages_with_outline();

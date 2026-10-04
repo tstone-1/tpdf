@@ -63,6 +63,11 @@ pub(super) struct MarkSite {
     pub(super) shown: DisplayedPage,
     /// Where this page keeps its annotation list.
     pub(super) annots: AnnotsSite,
+    /// Quarter turns the reader has given the page in this session, which the
+    /// save applies after the marks are written. Nought on the append path,
+    /// which turns no page. A form field reads it: its text is drawn for the
+    /// page as it will be displayed, which is the file's turn and this one.
+    pub(super) turned_by: u8,
 }
 
 /// The three shapes a page's `/Annots` comes in, and they are not equivalent.
@@ -147,6 +152,7 @@ pub(super) fn mark_sites(
             page,
             shown: displayed_page(read, page),
             annots,
+            turned_by: 0,
         });
     }
     Ok(sites)
@@ -255,6 +261,7 @@ pub(super) fn write_marks(
             page,
             shown,
             annots,
+            turned_by,
         } = site;
         let (page, shown) = (*page, *shown);
         let quads = user_quads(mark, shown);
@@ -273,16 +280,10 @@ pub(super) fn write_marks(
                 .field
                 .as_ref()
                 .ok_or("a form field in the save plan names no kind of field")?;
-            // The appearance of a field is drawn upright in the page's own
-            // space, and `forms::write` draws an answer the same way, so on a
-            // turned page both would lie on their side.
-            if shown.turns != 0 {
-                return Err(format!(
-                    "page {} is turned, and a form field cannot be added to a turned page yet",
-                    mark.at + 1
-                ));
-            }
-            let widget = crate::formfields::place(doc, page, rect, &mark.note, placed)?;
+            // On a turned page the field is drawn as it is read and says how
+            // far it is turned, as a text box of this writer's is.
+            let turns = (shown.turns + turned_by) % 4;
+            let widget = crate::formfields::place(doc, page, rect, &mark.note, placed, turns)?;
             attach(doc, page, annots, widget)?;
             crate::formfields::answer_placed(doc, widget, placed)?;
             continue;

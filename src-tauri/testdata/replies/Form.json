@@ -35,7 +35,8 @@
       "read_only": true,
       "align": "left",
       "text_size": 10.0,
-      "default_value": ""
+      "default_value": "",
+      "turns": 0
     },
     {
       "object": [
@@ -89,7 +90,8 @@
       "read_only": true,
       "align": "left",
       "text_size": 10.0,
-      "default_value": ""
+      "default_value": "",
+      "turns": 0
     },
     {
       "object": [
@@ -137,7 +139,8 @@
       "read_only": true,
       "align": "left",
       "text_size": 10.0,
-      "default_value": ""
+      "default_value": "",
+      "turns": 0
     }
   ]
 }

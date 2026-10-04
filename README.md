@@ -311,8 +311,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   round it, so that an empty one can be found on the page; *Form fields: no line round
   new text fields* turns that off for the fields placed next, which suits a page that
   already prints its own lines, and tpdf remembers the choice. Filling a field keeps its
-  line. Not yet: list boxes, and a field on a turned page, which the save refuses and
-  says so. `tpdf form` adds fields from a list on the command
+  line. A field placed on a page the document turns, or one you have turned, reads
+  upright as the page is displayed. Not yet: list boxes. `tpdf form` adds fields from a list on the command
   line.
   <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.addRadio edit.fieldBorderOn edit.fieldBorderOff -->
 - **Change the fields a document already has.** *Form fields: change the document's own
@@ -322,8 +322,8 @@ measured the Windows render constants come out 1.5–1.8x worse.
   is undone like any other and is written when you save. While this is on, the fields
   cannot be filled; *Form fields: finish changing the document's fields* turns it off. A
   text field that is resized is drawn again at its new size with the answer it holds. A
-  signature field is left alone, and a field on a page the document turns can be renamed
-  and removed and not moved. The page shows each change at once, as the save will write
+  signature field is left alone. A field on a page the document turns is moved and
+  resized where you see it. The page shows each change at once, as the save will write
   it.
   <!-- built: edit.formEditOn edit.formEditOff -->
 - **Set a field's properties.** Press a field you have placed, or one of the document's
@@ -1371,8 +1371,11 @@ a line or a box; a checkbox draws its own box.
 Every field is checked before anything is written, and one problem means no file: a name
 the form already has, a name used twice or containing a period, a rectangle outside the
 page, a page the document does not have, a value a group's buttons already have. All of
-them are named at once. Not supported yet: list boxes; a field on a page the document turns
-(`/Rotate`); calculations and formatting, which are scripts in the document and tpdf runs
+them are named at once. On a page the document turns (`/Rotate`), `rect` is measured on
+the page as it is displayed, like everywhere else, and the field's text reads upright
+there. Preview draws the text of such a field small and on its side, where tpdf and
+poppler draw it upright. Not supported yet: list boxes;
+calculations and formatting, which are scripts in the document and tpdf runs
 none; and an XFA form. The copy is staged and opened again before it is published: each
 field must read back once, of the kind, on the page and at the place asked for, empty or
 holding the default value it was given, and

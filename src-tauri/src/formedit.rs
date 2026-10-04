@@ -208,13 +208,6 @@ fn placed(doc: &Document, widget: &Widget, rect: [f32; 4]) -> Result<[f64; 4], S
         .get(widget.page as usize)
         .ok_or_else(|| format!("`{name}`: its page is no longer in this document"))?;
     let geometry = crate::pagetree::displayed_page(doc, page);
-    if geometry.turns != 0 {
-        return Err(format!(
-            "`{name}`: page {} is turned by the document, and a field on a turned page cannot \
-             be moved yet",
-            widget.page + 1
-        ));
-    }
     let (width, height) = (f64::from(geometry.width), f64::from(geometry.height));
     if left < -0.01 || top < -0.01 || right > width + 0.01 || bottom > height + 0.01 {
         return Err(format!(
@@ -222,9 +215,10 @@ fn placed(doc: &Document, widget: &Widget, rect: [f32; 4]) -> Result<[f64; 4], S
             widget.page + 1
         ));
     }
-    let x = f64::from(geometry.origin.0) + left;
-    let y = f64::from(geometry.origin.1) + height - bottom;
-    Ok([x, y, x + (right - left), y + (bottom - top)])
+    Ok(crate::pagetree::from_displayed(
+        &geometry,
+        [left, top, right, bottom],
+    ))
 }
 
 /// Where a list of references is written: an array object, or a key of a

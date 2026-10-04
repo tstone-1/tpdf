@@ -388,6 +388,7 @@ fn samples() -> BTreeMap<&'static str, String> {
             align: crate::forms::Align::Left,
             text_size: Some(10.0),
             default_value: String::new(),
+            turns: 0,
         };
         let mut radio = text.clone();
         radio.value = crate::forms::Value::Selection(vec![1]);

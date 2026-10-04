@@ -3579,8 +3579,8 @@ objects only for certain kinds of change. The test that removes a field and then
 for it in the written file found the field still there; `field_edits` joined that
 condition the same day.
 
-**Not built.** Changing a field's kind; a field on a turned page; a signature field.
-(Tooltip, required flag and maximum length were in this list until the properties panel
+**Not built.** Changing a field's kind; a signature field. (A field on a turned page
+was in this list until *Fields on a turned page*. Tooltip, required flag and maximum length were in this list until the properties panel
 below, the tab order until its own section, and "until the save, the page still draws
 each field where the file has it" until *A changed field is drawn where it will be*.)
 
@@ -3635,6 +3635,52 @@ opened.
 **Not built.** (Text size and a default value were in this list until *Text size and
 default value* below.) Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
+
+#### Fields on a turned page — 2026-10-04
+
+A page the document turns with `/Rotate` took no new field, and a field on one could be
+renamed and removed and not moved: three refusals, in `formfields::placed`, in
+`formedit::placed` and in the save. A scan stored on its side is the common case.
+
+**The defect underneath was in filling.** `forms::write` drew every answer upright in
+the page's own space and read no turn. A widget's appearance turns with its page, so on
+a page displayed a quarter round an answer written by tpdf lay on its side, and was
+laid out for the rectangle's width in the page's space, which is its height as read.
+The refusals had kept tpdf's own fields off such pages; a form made elsewhere was
+answered that way.
+
+**How a turned field is drawn.** A widget says how far its appearance is turned in
+`/MK /R`, counterclockwise in quarters (ISO 32000-1 12.5.6.19), and a field made for a
+page turned clockwise by `/Rotate` declares the same number so that the two cancel.
+`forms::scan` reads it into `Widget.turns`. The text is laid out and drawn in
+`Widget::drawn_size`, the rectangle's size or that size on its side, in a box of that
+size, and the stream's `/Matrix` turns the box onto the rectangle (`turn_matrix`); a
+reader maps the transformed box to `/Rect` (12.5.5). The matrices are the ones this
+writer's text boxes already use on a turned page.
+
+**New fields.** A rectangle given as the page is displayed is mapped into the page by
+`pagetree::from_displayed`, for `tpdf form` and for a moved field. It is
+`text::from_device` in `f64` with the box's origin, and a test holds the two tables
+against each other at every turn. A field with text is made declaring the page's turn.
+A checkbox and a radio button are drawn the same from every side and declare nothing.
+
+**A page turned in the session.** The save writes marks before it applies the turns a
+reader gave, so the writer saw such a page as upright. Each `MarkSite` is now told the
+turn still to come (`turned_by`), and a placed field declares the file's turn and that
+one together. A mark's rectangle is kept in the page as the file displays it, so the
+field ends where the reader dragged it on the turned page.
+
+**Measured with three renderers**, on `rotated.pdf` with a field on each of its pages
+(0, 90, 180 and 270 degrees), made by `tpdf form` with a default value. tpdf's
+renderer (PDFium) and poppler draw each field where it was asked for with its text
+upright at twelve points. PDFKit, which Preview uses, draws the box in the right place
+and the text small and on its side: it draws a text field's answer itself, from the
+rectangle, and takes no account of `/MK /R`. The answer is still read correctly there.
+
+**Not built.** A field of the file that declares no turn on a turned page stays as its
+author made it, on its side, when it is answered. A field already in the file does not
+turn when a reader turns its page. The window check has no step on a turned page; the
+save path has a test with a page turned by the file and one turned in the session.
 
 #### Text size and default value — 2026-10-04
 
@@ -3816,7 +3862,7 @@ held to one value that is not `Off`.
 
 **Not built.** Changing the value of a button already in the file, or taking one button
 out of a saved group and leaving the rest renumbered (removal of a button works, through
-`formedit`); a group whose buttons are on turned pages; export values that differ from
+`formedit`); export values that differ from
 the state names (`/Opt` on the group).
 
 #### Arranging placed rectangles — 2026-10-04

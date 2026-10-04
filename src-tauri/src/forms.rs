@@ -110,6 +110,42 @@ pub struct Widget {
     /// Empty when it has none.
     #[serde(default)]
     pub default_value: String,
+    /// How many quarter turns counterclockwise the widget says its
+    /// appearance is drawn at, relative to its page: `/MK /R` over ninety.
+    /// A field on a page the document turns declares the page's turn, so
+    /// that its text reads upright as the page is displayed.
+    #[serde(default)]
+    pub turns: u8,
+}
+
+impl Widget {
+    /// The width and height the appearance is drawn in: the rectangle's, or
+    /// the two exchanged for a widget turned a quarter or three.
+    pub(crate) fn drawn_size(&self) -> (f64, f64) {
+        let (width, height) = (self.rect[2] - self.rect[0], self.rect[3] - self.rect[1]);
+        if self.turns % 2 == 1 {
+            (height, width)
+        } else {
+            (width, height)
+        }
+    }
+}
+
+/// The matrix that turns an appearance drawn `width` by `height` through
+/// `turns` quarter turns counterclockwise and puts it back in the positive
+/// quadrant, or `None` for no turn.
+///
+/// §12.5.5: a reader maps the appearance's box, as its matrix transforms it,
+/// onto the annotation's rectangle. So this is what stands the text of a
+/// field upright on a page displayed turned: the box is drawn as it is read
+/// and the matrix lays it on its side in the page's own space.
+pub(crate) fn turn_matrix(turns: u8, width: f64, height: f64) -> Option<[f64; 6]> {
+    match turns % 4 {
+        0 => None,
+        1 => Some([0.0, 1.0, -1.0, 0.0, height, 0.0]),
+        2 => Some([-1.0, 0.0, 0.0, -1.0, width, height]),
+        _ => Some([0.0, -1.0, 1.0, 0.0, 0.0, width]),
+    }
 }
 
 /// The smallest text size a field is given, which is the smallest an answer
@@ -591,6 +627,17 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 return Err("This form exceeds the text limit".into());
             }
             let annotation_flags = w.get(b"F").and_then(Object::as_i64).unwrap_or(0);
+            // A turn that is not a whole number of quarters is not one the
+            // specification allows, and is read as none.
+            let turns = w
+                .get(b"MK")
+                .ok()
+                .and_then(|mk| doc.dereference(mk).ok())
+                .and_then(|(_, mk)| mk.as_dict().ok())
+                .and_then(|mk| mk.get(b"R").ok())
+                .and_then(|r| r.as_i64().ok())
+                .filter(|r| r % 90 == 0)
+                .map_or(0, |r| r.rem_euclid(360) / 90) as u8;
             let reason = if !text && !checkbox && !radio && !choice {
                 Some(UNSUPPORTED.into())
             } else if flags & 1 != 0 {
@@ -669,6 +716,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 align,
                 text_size,
                 default_value,
+                turns,
             });
             if result.widgets.len() > 4096 {
                 return Err("This form exceeds the widget limit".into());
@@ -936,7 +984,7 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
     // A list remains a list on paper, with selected rows shaded. TI names the
     // first visible row so another editor starts at the same place.
     let top = indices.first().copied().unwrap_or(0);
-    let height = widget.rect[3] - widget.rect[1];
+    let (_, height) = widget.drawn_size();
     let size = widget
         .text_size
         .map_or(AUTO_TEXT_SIZE, f64::from)
@@ -959,8 +1007,7 @@ fn choice_layout(widget: &Widget, indices: &[usize]) -> Result<(f64, Vec<String>
 
 /// Layout is validated before journalling as well as immediately before writing.
 fn text_layout(widget: &Widget, text: &str) -> Result<(f64, Vec<String>), String> {
-    let width = widget.rect[2] - widget.rect[0];
-    let height = widget.rect[3] - widget.rect[1];
+    let (width, height) = widget.drawn_size();
     // The size the field declares, or twelve points for one that declares
     // none, or less where the field is too low for it: two points of
     // inset either side, and a line needs 1.2 of its size inside the field's
@@ -1005,14 +1052,34 @@ pub(crate) fn appearance(
     body: Vec<u8>,
     resources: Dictionary,
 ) -> ObjectId {
-    doc.add_object(Stream::new(
-        dictionary! {
-            "Type" => "XObject", "Subtype" => "Form", "FormType" => 1,
-            "BBox" => vec![0.into(), 0.into(), width.into(), height.into()],
-            "Resources" => resources,
-        },
-        body,
-    ))
+    turned_appearance(doc, width, height, 0, body, resources)
+}
+
+/// [`appearance`], drawn `width` by `height` and turned `turns` quarter turns
+/// counterclockwise by its matrix.
+pub(crate) fn turned_appearance(
+    doc: &mut Document,
+    width: f64,
+    height: f64,
+    turns: u8,
+    body: Vec<u8>,
+    resources: Dictionary,
+) -> ObjectId {
+    let mut dict = dictionary! {
+        "Type" => "XObject", "Subtype" => "Form", "FormType" => 1,
+        "BBox" => vec![0.into(), 0.into(), width.into(), height.into()],
+        "Resources" => resources,
+    };
+    if let Some(matrix) = turn_matrix(turns, width, height) {
+        dict.set(
+            "Matrix",
+            matrix
+                .iter()
+                .map(|v| Object::Real(*v as f32))
+                .collect::<Vec<_>>(),
+        );
+    }
+    doc.add_object(Stream::new(dict, body))
 }
 
 fn write_text_appearance(
@@ -1022,8 +1089,7 @@ fn write_text_appearance(
     lines: &[String],
     selected: &[usize],
 ) -> Result<(), String> {
-    let width = widget.rect[2] - widget.rect[0];
-    let height = widget.rect[3] - widget.rect[1];
+    let (width, height) = widget.drawn_size();
     let font = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding" });
     let mut body = format!("q 1 1 1 rg 0 0 {width} {height} re f ");
     // The field's own border, redrawn over the fill that would otherwise paint
@@ -1057,10 +1123,11 @@ fn write_text_appearance(
         ));
     }
     body.push('Q');
-    let ap = appearance(
+    let ap = turned_appearance(
         doc,
         width,
         height,
+        widget.turns,
         body.into_bytes(),
         dictionary! { "Font" => dictionary! { "F0" => font } },
     );
@@ -1481,12 +1548,51 @@ pub(crate) mod tests {
             align: Align::Left,
             text_size,
             default_value: String::new(),
+            turns: 0,
         };
         assert_eq!(choice_layout(&list(None), &[0]).unwrap().0, 12.0);
         assert_eq!(choice_layout(&list(Some(8.0)), &[0]).unwrap().0, 8.0);
         // More than the list is high enough for: what fits.
         let (size, _) = choice_layout(&list(Some(72.0)), &[0]).unwrap();
         assert!((size - 58.0 / 1.2).abs() < 1e-9, "{size}");
+    }
+
+    #[test]
+    fn a_turn_lays_the_drawn_box_on_the_rectangle_with_its_text_the_right_way() {
+        let (width, height) = (100.0, 20.0);
+        let at =
+            |m: [f64; 6], x: f64, y: f64| (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]);
+        assert_eq!(turn_matrix(0, width, height), None);
+        assert_eq!(turn_matrix(4, width, height), None);
+        // Which way the text runs in the page's own space, per quarter turn
+        // counterclockwise, and the corner of the rectangle the box's far
+        // corner lands on.
+        for (turns, runs, far) in [
+            (1_u8, (0.0, 1.0), (0.0, 100.0)),
+            (2, (-1.0, 0.0), (0.0, 0.0)),
+            (3, (0.0, -1.0), (20.0, 0.0)),
+            (5, (0.0, 1.0), (0.0, 100.0)),
+        ] {
+            let m = turn_matrix(turns, width, height).expect("a turn");
+            let origin = at(m, 0.0, 0.0);
+            let along = at(m, 1.0, 0.0);
+            assert_eq!((along.0 - origin.0, along.1 - origin.1), runs, "{turns}");
+            assert_eq!(at(m, width, height), far, "{turns}");
+            // Every corner of the box stays in the rectangle, which is the
+            // box's size, or that size on its side.
+            let (wide, high) = if turns % 2 == 1 {
+                (height, width)
+            } else {
+                (width, height)
+            };
+            for (x, y) in [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)] {
+                let (px, py) = at(m, x, y);
+                assert!(
+                    (0.0..=wide).contains(&px) && (0.0..=high).contains(&py),
+                    "{turns}: {px}, {py}"
+                );
+            }
+        }
     }
 
     #[test]

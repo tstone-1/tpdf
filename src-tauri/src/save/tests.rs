@@ -11785,6 +11785,55 @@ fn a_field_placed_as_a_mark_is_written_as_a_field_of_the_form() {
 }
 
 #[test]
+fn a_field_placed_on_a_turned_page_is_saved_where_it_was_placed_and_reads_upright() {
+    use crate::formfields::Kind;
+    let original = two_blank_pages();
+    let quad = crate::docmodel::Quad {
+        left: 20.0,
+        top: 30.0,
+        right: 220.0,
+        bottom: 50.0,
+    };
+    let read = |bytes: &[u8]| {
+        let doc = Document::load_mem(bytes).expect("the copy parses");
+        let form = crate::forms::scan(&doc).expect("a form");
+        let field = form.widgets[0].clone();
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        let rotate = doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Rotate")
+            .and_then(Object::as_i64)
+            .unwrap_or(0);
+        (field, rotate)
+    };
+    // A page the reader has turned in this session: the turn and the field
+    // are written by the same save.
+    let mut turned = field_plan("Name", Kind::Text, quad);
+    turned.pages[0].turns = 1;
+    let (field, rotate) =
+        read(&rewrite_update(&original, &turned, Job::Save, None).expect("saved"));
+    assert_eq!(rotate, 90);
+    assert_eq!(field.turns, 1);
+    // A mark's rectangle is kept in the page as the file displays it, which
+    // is upright here: 200 across, 30 from the top of a page 600 by 800. The
+    // turn carries it to the right edge, 20 across and 200 down, and that is
+    // where the reader saw it when they dragged it on the turned page.
+    assert_eq!(field.display_rect, [750.0, 20.0, 770.0, 220.0]);
+    assert_eq!(field.reason, None);
+    // A page the file itself turns.
+    let mut turn = plan_of(&[0, 0]);
+    turn.pages[0].turns = 1;
+    let turned_file = rewrite_update(&original, &turn, Job::Save, None).expect("turned");
+    let plan = field_plan("Name", Kind::Text, quad);
+    let (field, rotate) =
+        read(&rewrite_update(&turned_file, &plan, Job::Save, None).expect("saved"));
+    assert_eq!(rotate, 90);
+    assert_eq!(field.turns, 1);
+    assert_eq!(field.display_rect, [20.0, 30.0, 220.0, 50.0]);
+}
+
+#[test]
 fn a_placed_field_the_save_cannot_write_is_refused_and_says_why() {
     use crate::formfields::Kind;
     let original = two_blank_pages();
@@ -11803,18 +11852,6 @@ fn a_placed_field_the_save_cannot_write_is_refused_and_says_why() {
     let mut kindless = field_plan("Name", Kind::Text, quad);
     kindless.marks[0].field = None;
     assert!(refused(&kindless, &original).contains("names no kind of field"));
-    // A page the reader has turned.
-    let mut turned = field_plan("Name", Kind::Text, quad);
-    turned.pages[0].turns = 1;
-    assert!(refused(&turned, &original).contains("page 1 is turned"));
-    // A page the file itself turns, which is a different check in a different
-    // place: the first is the plan's, this one is the page's own `/Rotate`.
-    let mut turn = plan_of(&[0, 0]);
-    turn.pages[0].turns = 1;
-    let turned_file = rewrite_update(&original, &turn, Job::Save, None).expect("turned");
-    assert!(
-        refused(&field_plan("Name", Kind::Text, quad), &turned_file).contains("page 1 is turned")
-    );
     // Too small to hold type.
     let thin = field_plan(
         "Name",

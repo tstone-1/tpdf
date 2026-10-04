@@ -28,6 +28,11 @@ have the binary.)
   holds after a reader resets the form, and a field that holds nothing is answered with
   it at once. `tpdf form` takes both as `text_size` and `default_value`.
 
+- **Fields on a turned page.** A field can be placed, moved and resized on a page the
+  document turns, in the window and with `tpdf form`, and on a page you have turned
+  yourself. Its text reads upright as the page is displayed. Before, the save and
+  `tpdf form` refused it.
+
 ### Changed
 
 - **A field's own text size is used.** A form made elsewhere that declares a text size
@@ -39,6 +44,19 @@ have the binary.)
   page kept drawing it where the file has it until the save, under the rectangle that
   showed where it would go. A change the save would refuse is still drawn where the
   file has the field.
+
+### Fixed
+
+- **An answer in a field that says it is turned was written on its side.** A form made
+  for a page displayed a quarter or a half turn round declares that turn on each field.
+  tpdf ignored it, laid the answer out for the wrong side of the rectangle and drew it
+  lying down. The answer is now drawn the way the field is read.
+
+### Known limits
+
+- Preview draws the text of a field on a turned page small and on its side, where tpdf
+  and poppler draw it upright. The answer itself is read correctly there. A turned
+  field made by another program has not been compared.
 
 ## [26.10.4] - 2026-10-04
 

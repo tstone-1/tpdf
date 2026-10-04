@@ -14,9 +14,11 @@
 //! is a field `forms::scan` refuses.
 //!
 //! What is deliberately not here: calculations and formatting, which are
-//! JavaScript in the document and tpdf runs none; and a field on a page the
-//! document turns with `/Rotate`, whose appearance would have to be turned to
-//! match and which `forms::write` does not turn either.
+//! JavaScript in the document and tpdf runs none.
+//!
+//! A field on a page the document turns with `/Rotate` is drawn as it is read
+//! and declares the page's turn, which `forms::write` reads when it draws an
+//! answer; see [`widget`].
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId};
 use serde::{Deserialize, Serialize};
@@ -132,7 +134,7 @@ fn text_problem(
 
 /// Why a field's default value would not be drawn in a field of this
 /// rectangle, as the answer it is.
-fn default_problem(field: &NewField, rect: [f64; 4]) -> Option<String> {
+fn default_problem(field: &NewField, rect: [f64; 4], turns: u8) -> Option<String> {
     let default = field.default_value.as_deref().filter(|d| !d.is_empty())?;
     let would_be = forms::Widget {
         object: (0, 0),
@@ -152,6 +154,7 @@ fn default_problem(field: &NewField, rect: [f64; 4]) -> Option<String> {
         align: forms::Align::Left,
         text_size: field.text_size,
         default_value: String::new(),
+        turns,
     };
     forms::validate(&would_be, &forms::Value::Text(default.to_string()))
         .err()
@@ -179,7 +182,7 @@ impl Placed {
             text_size: self.text_size,
             default_value: Some(self.default_value.clone()),
         };
-        default_problem(&field, [0.0, 0.0, width, height])
+        default_problem(&field, [0.0, 0.0, width, height], 0)
     }
 }
 
@@ -451,13 +454,6 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
         ));
     }
     let geometry = crate::pagetree::displayed_page(doc, page);
-    if geometry.turns != 0 {
-        return Err(format!(
-            "`{name}`: page {} is turned by the document, and a field cannot be added to a \
-             turned page yet",
-            field.page + 1
-        ));
-    }
     let (page_width, page_height) = (f64::from(geometry.width), f64::from(geometry.height));
     // A hundredth of a point of slack, so a rectangle computed to the page's
     // edge is not refused over the last digit.
@@ -472,9 +468,10 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
             field.page + 1
         ));
     }
-    let x = f64::from(geometry.origin.0) + left;
-    let y = f64::from(geometry.origin.1) + page_height - top - height;
-    Ok([x, y, x + width, y + height])
+    Ok(crate::pagetree::from_displayed(
+        &geometry,
+        [left, top, left + width, top + height],
+    ))
 }
 
 /// Every reason `fields` cannot be added, or their rectangles in page space.
@@ -593,7 +590,8 @@ pub fn check(
             // Kept whether or not this field has another problem: the list is
             // only handed back when no field has any.
             Ok(rect) => {
-                if let Some(why) = default_problem(field, rect) {
+                let turns = crate::pagetree::displayed_page(doc, *page).turns;
+                if let Some(why) = default_problem(field, rect, turns) {
                     problems.push(why);
                 }
                 placed_at.push((*page, rect));
@@ -716,14 +714,26 @@ fn append(doc: &mut Document, owner: ObjectId, key: &[u8], item: ObjectId) -> Re
 /// `rect` is in the page's own space. The object is not yet in the page's
 /// annotations or the form's field list; a field in one and not the other is
 /// one `forms::scan` refuses, so every caller does both.
+/// `turns` is how far the page is displayed turned. A field with text is
+/// drawn as it is read and declares that turn in `/MK /R`, so that the
+/// reader's answer stands upright as the page is displayed and every reader
+/// that draws the field again knows which way up it is. A checkbox is drawn
+/// the same from every side and declares nothing.
 fn widget(
     doc: &mut Document,
     font: ObjectId,
     page: ObjectId,
     rect: [f64; 4],
     field: &NewField,
+    turns: u8,
 ) -> ObjectId {
     let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
+    // The size the text is read in: the rectangle's, as the page is displayed.
+    let (across, up) = if turns % 2 == 1 {
+        (height, width)
+    } else {
+        (width, height)
+    };
     let mut flags = 0_i64;
     if field.required {
         flags |= 1 << 1;
@@ -778,21 +788,29 @@ fn widget(
             // declared in `/MK` and `/BS` as well: a reader that redraws the
             // field, `forms::write` among them, reads it from there.
             let mut body = Vec::new();
+            let mut look = Dictionary::new();
+            if turns % 4 != 0 {
+                look.set("R", i64::from(turns % 4) * 90);
+            }
             if field.border {
-                widget.set("MK", dictionary! { "BC" => vec![Object::Integer(0)] });
+                look.set("BC", vec![Object::Integer(0)]);
                 widget.set(
                     "BS",
                     dictionary! { "W" => Object::Real(BORDER_WIDTH as f32), "S" => "S" },
                 );
                 body.extend_from_slice(
-                    forms::border_path(width, height, "0 G", BORDER_WIDTH).as_bytes(),
+                    forms::border_path(across, up, "0 G", BORDER_WIDTH).as_bytes(),
                 );
             }
+            if !look.is_empty() {
+                widget.set("MK", look);
+            }
             body.extend_from_slice(b"/Tx BMC EMC");
-            let empty = forms::appearance(
+            let empty = forms::turned_appearance(
                 doc,
-                width,
-                height,
+                across,
+                up,
+                turns,
                 body,
                 dictionary! { "Font" => dictionary! { "Helv" => font } },
             );
@@ -1001,7 +1019,8 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
             append(doc, page, b"Annots", id)?;
             continue;
         }
-        let id = widget(doc, font, page, rect, field);
+        let turns = crate::pagetree::displayed_page(doc, page).turns;
+        let id = widget(doc, font, page, rect, field, turns);
         append(doc, page, b"Annots", id)?;
         append(doc, form, b"Fields", id)?;
         answer_default(doc, id, field)?;
@@ -1039,6 +1058,7 @@ pub fn place(
     rect: [f64; 4],
     name: &str,
     placed: &Placed,
+    turns: u8,
 ) -> Result<ObjectId, String> {
     let kind = placed.kind;
     forms::scan(doc)?;
@@ -1086,10 +1106,10 @@ pub fn place(
         text_size: placed.text_size,
         default_value: (!placed.default_value.is_empty()).then(|| placed.default_value.clone()),
     };
-    if let Some(why) = default_problem(&field, rect) {
+    if let Some(why) = default_problem(&field, rect, turns) {
         return Err(why);
     }
-    let id = widget(doc, font, page, rect, &field);
+    let id = widget(doc, font, page, rect, &field, turns);
     // The two a field made by `tpdf form` does not have. The empty appearance
     // holds no text, so an alignment changes nothing that is drawn yet.
     let made = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;
