@@ -661,12 +661,14 @@ describe("the commands a document is needed for", () => {
     expect(fired.at(-1)).toBe("setFormEditing:false");
   });
 
-  it("offers a field's properties for one field of the file picked while the fields are being changed", () => {
+  it("offers a field's properties while one field is picked", () => {
     const offered = (open: boolean, update: { formEditing?: boolean; fieldPicked?: boolean }) =>
       harness(open, { savedFields: 3, ...update }).registry.all().find((c) => c.id === "edit.fieldProperties")?.enabled?.();
     expect(offered(true, { formEditing: true, fieldPicked: true })).toBe(true);
     expect(offered(true, { formEditing: true })).toBe(false);
-    expect(offered(true, { fieldPicked: true })).toBe(false);
+    // A field placed in this session is picked with the mode off.
+    expect(offered(true, { fieldPicked: true })).toBe(true);
+    expect(offered(true, {})).toBe(false);
     expect(offered(false, { formEditing: true, fieldPicked: true })).toBe(false);
     const { registry, fired } = harness(true, { savedFields: 3, formEditing: true, fieldPicked: true });
     registry.run("edit.fieldProperties");

@@ -210,6 +210,39 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
   await host.idle();
   check("redo brings both back", fields().length === 3 && names().includes("Name"), names());
 
+  // A field that is still a mark takes its properties from the same panel.
+  {
+    const placed = fields().find((mark) => mark.field?.kind === "multiline");
+    const sheet = () => document.querySelector<HTMLElement>(`.${PROPERTIES_CLASS}`);
+    viewer.pick(placed ? [placed.id] : []);
+    host.run("edit.fieldProperties");
+    const opened = await settle(() => sheet()?.style.display === "flex", SETTLE_MS);
+    const most = sheet()?.querySelector<HTMLInputElement>('[aria-label="Most characters"]') ?? null;
+    const tip = sheet()?.querySelector<HTMLInputElement>('[aria-label="Tooltip"]') ?? null;
+    check(
+      "the properties command opens the panel for a field placed and not yet saved",
+      opened && sheet()?.querySelector("h2")?.textContent === `Properties of ${placed?.note}`,
+      `${sheet()?.querySelector("h2")?.textContent}`,
+    );
+    if (most) most.value = "40";
+    if (tip) tip.value = "Notes";
+    [...(sheet()?.querySelectorAll("button") ?? [])].at(-1)?.click();
+    const now = () => fields().find((mark) => mark.id === placed?.id)?.field;
+    await settle(() => now()?.max_length === 40, SETTLE_MS);
+    await host.idle();
+    check(
+      "applying it changes the placed field",
+      now()?.max_length === 40 && now()?.tooltip === "Notes" && now()?.kind === "multiline",
+      JSON.stringify(now()),
+    );
+    host.run("edit.undo");
+    await host.idle();
+    check("undo takes the properties back", now()?.max_length === undefined && now()?.tooltip === undefined, JSON.stringify(now()));
+    host.run("edit.redo");
+    await host.idle();
+    viewer.pick([]);
+  }
+
   host.run("file.save");
   await host.idle();
   const saved = await settle(
@@ -227,6 +260,12 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       && form.widgets.find((widget) => widget.name === "Text 2")?.multiline === true
       && form.widgets.every((widget) => widget.reason === null),
     written,
+  );
+  const lined = form.widgets.find((widget) => widget.name === "Text 2");
+  check(
+    "and the field placed with properties is saved with them",
+    lined?.max_length === 40 && lined.tooltip === "Notes",
+    `${lined?.max_length}; ${lined?.tooltip}`,
   );
   const controls = await settle(
     () => document.querySelectorAll(".form-fields input, .form-fields textarea").length >= 3,

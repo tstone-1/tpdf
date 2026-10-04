@@ -3042,7 +3042,9 @@ and both are written as PDF text strings, never into a content stream. A choice'
 does reach the appearance stream when the field is redrawn, through the same hex-string
 path an answer takes, which admits only characters of the font's encoding. The scan now
 also reads `/TU` (held to 16 KB before decoding) and `/Q`, and the window shows the
-tooltip through an element's `title`, which is text.
+tooltip through an element's `title`, which is text. A field placed in the session
+carries the same parts in the journal (`annot_field_props`), held to the same bounds
+when they are set and again when the save writes the field.
 
 #### T6.34 — Reopening every tab at launch, added 2026-10-03
 

@@ -212,6 +212,7 @@
     state: () => edits?.state ?? null,
     ask: (now) => fieldPropertiesDialog?.ask(now) ?? Promise.resolve(null),
     refield: (target) => changeField(target),
+    refit: (mark, props) => void applyEdit((e) => e.refit(mark, props)),
     say: (message) => say(message),
   };
   /** Which kind of form field the armed tool places. */

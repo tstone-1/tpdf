@@ -232,6 +232,43 @@ export function properties(
 }
 
 /**
+ * The parts of `to` that differ from `now`, among the parts the field's kind
+ * has. Empty when none does.
+ */
+export function differing(now: FieldProperties, to: FieldProperties): FieldProps {
+  const props: FieldProps = {};
+  if (to.tooltip !== now.tooltip) props.tooltip = to.tooltip;
+  if (to.required !== now.required) props.required = to.required;
+  if (to.readOnly !== now.readOnly) props.read_only = to.readOnly;
+  if (now.maxLength !== null && to.maxLength !== null && to.maxLength !== now.maxLength) props.max_length = to.maxLength;
+  if (now.align !== null && to.align !== null && to.align !== now.align) props.align = to.align;
+  if (now.options !== null && to.options !== null
+    && (to.options.length !== now.options.length || to.options.some((option, at) => option !== now.options![at]))) {
+    props.options = [...to.options];
+  }
+  return props;
+}
+
+/**
+ * The properties of a field placed in this session, or `null` for a mark
+ * that is not a field.
+ */
+export function placedProperties(mark: MarkView | undefined): FieldProperties | null {
+  const field = mark?.kind === "field" ? mark.field : undefined;
+  if (!mark || !field) return null;
+  const text = field.kind === "text" || field.kind === "multiline";
+  return {
+    name: mark.note,
+    tooltip: field.tooltip ?? "",
+    required: field.required ?? false,
+    readOnly: field.read_only ?? false,
+    maxLength: text ? field.max_length ?? 0 : null,
+    align: field.kind === "checkbox" ? null : field.align ?? "left",
+    options: field.kind === "dropdown" ? [...(field.options ?? [])] : null,
+  };
+}
+
+/**
  * A saved field given new properties: a change naming only the parts that
  * differ from what the field now has, or `null` when none does.
  */
@@ -244,16 +281,7 @@ export function propertied(
   const found = named(form, state, id);
   const now = properties(form, state, id);
   if (!found || !now) return null;
-  const props: FieldProps = {};
-  if (to.tooltip !== now.tooltip) props.tooltip = to.tooltip;
-  if (to.required !== now.required) props.required = to.required;
-  if (to.readOnly !== now.readOnly) props.read_only = to.readOnly;
-  if (now.maxLength !== null && to.maxLength !== null && to.maxLength !== now.maxLength) props.max_length = to.maxLength;
-  if (now.align !== null && to.align !== null && to.align !== now.align) props.align = to.align;
-  if (now.options !== null && to.options !== null
-    && (to.options.length !== now.options.length || to.options.some((option, at) => option !== now.options![at]))) {
-    props.options = [...to.options];
-  }
+  const props = differing(now, to);
   if (Object.keys(props).length === 0) return null;
   // A field shown in several places has one set of properties, and the save
   // refuses two. So the change is always made under the same widget: the

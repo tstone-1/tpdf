@@ -11368,9 +11368,8 @@ fn a_field_placed_as_a_mark_is_written_as_a_field_of_the_form() {
     // Asked for a border, it declares one; the field above did not and has none.
     let mut framed = field_plan("Framed", Kind::Text, quad);
     framed.marks[0].field = Some(crate::formfields::Placed {
-        options: Vec::new(),
-        kind: Kind::Text,
         border: true,
+        ..Kind::Text.into()
     });
     let bordered = rewrite_update(&original, &framed, Job::Save, None).expect("rewritten");
     let with = Document::load_mem(&bordered).expect("the copy parses");

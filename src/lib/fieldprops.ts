@@ -15,7 +15,10 @@
 import { parseChoices } from "./fieldnames";
 import type { EditState } from "./edits";
 import type { Form, FormAlign } from "./forms";
-import { type FieldProperties, type FieldTarget, propertied, properties } from "./savedfields";
+import {
+  type FieldProperties, type FieldProps, type FieldTarget,
+  differing, isSaved, placedProperties, propertied, properties,
+} from "./savedfields";
 
 /** Class on the backdrop, so the check harness can find it. */
 export const DIALOG_CLASS = "tpdf-field-properties";
@@ -92,47 +95,67 @@ export interface PropertiesDeps {
   picked(): readonly number[];
   /** The open document's form, while its own fields are being changed. */
   form(): Form | null;
-  state(): Pick<EditState, "fields" | "pages"> | null;
+  state(): Pick<EditState, "fields" | "pages" | "marks"> | null;
   /** Puts the panel to the reader. */
   ask(now: FieldProperties): Promise<FieldProperties | null>;
-  /** Makes the change, as one undoable edit. */
+  /** Changes a field of the file, as one undoable edit. */
   refield(target: FieldTarget): void;
+  /** Changes a field placed in this session, as one undoable edit. */
+  refit(mark: number, props: FieldProps): void;
   say(message: string): void;
 }
 
+type Subject = Pick<PropertiesDeps, "picked" | "form" | "state">;
+
 /**
- * The one saved field the panel would be about: exactly one rectangle is
- * picked and it is a field of the file that is still there.
+ * What the one picked field's properties are: a field of the file while those
+ * are being changed, or a field placed in this session. `null` with none
+ * picked, several picked, or a mark that is not a field.
  */
-export function pickedField(deps: Pick<PropertiesDeps, "picked" | "form" | "state">): number | null {
+function subject(deps: Subject): { id: number; now: FieldProperties } | null {
   const picked = deps.picked();
-  const form = deps.form();
   const state = deps.state();
-  // A placed mark's id names no saved field, so `properties` answers nothing for it.
   const id = picked.length === 1 ? picked[0]! : null;
-  if (id === null || !form || !state) return null;
-  return properties(form, state, id) ? id : null;
+  if (id === null || !state) return null;
+  const form = deps.form();
+  const now = isSaved(id)
+    ? form && properties(form, state, id)
+    : placedProperties(state.marks.find((mark) => mark.id === id));
+  return now ? { id, now } : null;
+}
+
+/** The one field the panel would be about, by the id the viewer has for it. */
+export function pickedField(deps: Subject): number | null {
+  return subject(deps)?.id ?? null;
 }
 
 /**
  * Asks for the picked field's properties and makes the change. Resolves with
  * whether anything was changed.
  *
- * The form and the state are asked again after the panel closes: a panel can
- * stay open across an undo or a closed tab, and the change is made to the
- * field as it then is, or not at all.
+ * The field is asked for again after the panel closes: a panel can stay open
+ * across an undo or a closed tab, and the change is made to the field as it
+ * then is, or not at all.
  */
 export async function changeProperties(deps: PropertiesDeps): Promise<boolean> {
-  const id = pickedField(deps);
-  const form = deps.form();
-  const state = deps.state();
-  const now = id !== null && form && state ? properties(form, state, id) : null;
-  if (id === null || !now) return false;
-  const to = await deps.ask(now);
+  const before = subject(deps);
+  if (!before) return false;
+  const to = await deps.ask(before.now);
   if (!to) return false;
-  const after = { form: deps.form(), state: deps.state() };
-  if (!after.form || !after.state) return false;
-  const target = propertied(after.form, after.state, id, to);
+  const after = subject({ ...deps, picked: () => [before.id] });
+  const state = deps.state();
+  const form = deps.form();
+  if (!after || !state) return false;
+  if (!isSaved(after.id)) {
+    const props = differing(after.now, to);
+    if (Object.keys(props).length === 0) {
+      deps.say("Nothing about the field was changed.");
+      return false;
+    }
+    deps.refit(after.id, props);
+    return true;
+  }
+  const target = form ? propertied(form, state, after.id, to) : null;
   if (!target) {
     deps.say("Nothing about the field was changed.");
     return false;

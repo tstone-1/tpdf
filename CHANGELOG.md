@@ -26,14 +26,14 @@ have the binary.)
   takes `"kind": "dropdown"` with an `options` list. It is written as a real choice
   field that tpdf, Acrobat and Preview offer as a list, with nothing chosen. A dropdown
   needs at least one choice, and none may be empty or there twice.
-- **A field's properties can be set.** With the document's own fields shown for
-  changing, press one and choose *Form fields: properties of the picked field...*. The
+- **A field's properties can be set.** Press a field placed in this session, or one of
+  the document's own while those are shown for changing, and choose *Form fields:
+  properties of the picked field...*. The
   panel sets the tooltip, required and read-only for any field; the most characters and
   the alignment for a text field; the alignment and the choices for a dropdown or a
   list. Alignment and choices change how the field looks, so it is drawn again with its
   answer; a choice that stays keeps its export value, and an answer whose choice is
-  gone is cleared. The change is one step of undo and is written by the next save. A
-  field placed in this session takes properties after its first save.
+  gone is cleared. The change is one step of undo and is written by the next save.
 - **A field's text is drawn where the document aligns it.** A text or choice field that
   the document centres or aligns right (`/Q`, on the field or on the form) was always
   drawn at the left when tpdf wrote its answer. It is now drawn at its side, and the

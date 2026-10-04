@@ -920,6 +920,7 @@ pub fn run() {
             annot_resize,
             annot_arrange,
             form_field_edit,
+            annot_field_props,
             annot_resize_signature,
             signature_store,
             edit_undo,

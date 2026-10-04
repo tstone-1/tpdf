@@ -296,6 +296,19 @@ pub async fn form_field_edit(
     edits.refield(doc, targets, sweep)
 }
 
+/// Changes the properties of a form field placed in this session.
+///
+/// See [`edits::Edits::refit`].
+#[tauri::command]
+pub async fn annot_field_props(
+    edits: tauri::State<'_, edits::Edits>,
+    doc: u32,
+    mark: u64,
+    props: crate::formedit::Props,
+) -> Result<edits::EditState, String> {
+    edits.refit(doc, mark, props)
+}
+
 /// Gives several placed rectangles new rectangles as one undoable edit.
 ///
 /// See [`edits::Edits::arrange`].

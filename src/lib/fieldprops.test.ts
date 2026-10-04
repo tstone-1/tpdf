@@ -5,8 +5,8 @@ import {
   type PropertiesDeps, type Typed,
 } from "./fieldprops";
 import type { Form, FormWidget } from "./forms";
-import { pageId, type PageView } from "./pages";
-import { SAVED_BASE, type FieldEdited, type FieldProperties, type FieldTarget } from "./savedfields";
+import { pageId, type MarkView, type PageView, type PlacedField } from "./pages";
+import { SAVED_BASE, type FieldEdited, type FieldProperties, type FieldProps, type FieldTarget } from "./savedfields";
 import { installFakeDom, type FakeDom, type FakeElement } from "./testdom";
 
 const TEXT: FieldProperties = {
@@ -79,24 +79,44 @@ function widget(n: number, name: string, extra: Partial<FormWidget> = {}): FormW
 const FORM: Form = { widgets: [widget(11, "Name", { tooltip: "Your name" }), widget(12, "Other")] };
 const PAGES: PageView[] = [{ id: pageId(5), source: { baseline: 0 }, turns: 0 }];
 
+/** A mark as the model reports one, a field when it is given what the field is. */
+function mark(id: number, note: string, field?: PlacedField): MarkView {
+  return {
+    id, kind: field ? "field" : "square", stamp: null, page: pageId(5), quads: [20, 20, 120, 40], strokes: [],
+    color: [0, 0, 0], width: 1, note, lines: [], ...(field ? { field } : {}),
+  } as MarkView;
+}
+
+const MARKS: MarkView[] = [
+  mark(3, "Placed", { kind: "text", border: true, tooltip: "Tip", max_length: 9 }),
+  mark(4, "A box"),
+  mark(5, "Pick", { kind: "dropdown", border: false, options: ["A", "B"], align: "center" }),
+  mark(6, "Tick", { kind: "checkbox", border: false, required: true, read_only: true }),
+];
+
 function deps(update: {
   picked?: number[];
   form?: Form | null;
+  marks?: MarkView[];
   fields?: FieldEdited[];
   answer?: (now: FieldProperties) => FieldProperties | null;
   /** What happens to the window while the panel is open. */
-  meanwhile?: (world: { form: Form | null }) => void;
-} = {}): { deps: PropertiesDeps; asked: FieldProperties[]; made: FieldTarget[]; said: string[] } {
+  meanwhile?: (world: { form: Form | null; marks: MarkView[] }) => void;
+} = {}): {
+  deps: PropertiesDeps; asked: FieldProperties[]; made: FieldTarget[]; fitted: [number, FieldProps][]; said: string[];
+} {
   const asked: FieldProperties[] = [];
   const made: FieldTarget[] = [];
+  const fitted: [number, FieldProps][] = [];
   const said: string[] = [];
-  const world = { form: update.form === undefined ? FORM : update.form };
+  const world = { form: update.form === undefined ? FORM : update.form, marks: update.marks ?? MARKS };
   return {
-    asked, made, said,
+    asked, made, fitted, said,
     deps: {
       picked: () => update.picked ?? [SAVED_BASE],
       form: () => world.form,
-      state: () => ({ fields: update.fields ?? [], pages: PAGES }),
+      state: () => ({ fields: update.fields ?? [], pages: PAGES, marks: world.marks }),
+      refit: (id, props) => fitted.push([id, props]),
       ask: async (now) => {
         asked.push(now);
         update.meanwhile?.(world);
@@ -114,12 +134,19 @@ describe("the picked field", () => {
     expect(pickedField(deps({ picked: [SAVED_BASE + 1] }).deps)).toBe(SAVED_BASE + 1);
   });
 
-  it("is none with nothing picked, several picked, a placed mark, or a field that is gone", () => {
+  it("is none with nothing picked, several picked, a mark that is no field, or a field that is gone", () => {
     expect(pickedField(deps({ picked: [] }).deps)).toBeNull();
     expect(pickedField(deps({ picked: [SAVED_BASE, SAVED_BASE + 1] }).deps)).toBeNull();
+    expect(pickedField(deps({ picked: [3, 5] }).deps)).toBeNull();
+    expect(pickedField(deps({ picked: [4] }).deps)).toBeNull();
     expect(pickedField(deps({ picked: [7] }).deps)).toBeNull();
     expect(pickedField(deps({ picked: [SAVED_BASE + 9] }).deps)).toBeNull();
     expect(pickedField(deps({ form: null }).deps)).toBeNull();
+  });
+
+  it("is a field placed in this session, whether or not the file's fields are being changed", () => {
+    expect(pickedField(deps({ picked: [3] }).deps)).toBe(3);
+    expect(pickedField(deps({ picked: [3], form: null }).deps)).toBe(3);
   });
 });
 
@@ -164,6 +191,63 @@ describe("changing the picked field's properties", () => {
     });
     await expect(changeProperties(run.deps)).resolves.toBe(false);
     expect(run.made).toEqual([]);
+  });
+});
+
+describe("changing a placed field's properties", () => {
+  it("asks with what the field was placed with, by its kind", async () => {
+    const asked = async (id: number) => {
+      const run = deps({ picked: [id] });
+      await changeProperties(run.deps);
+      return run.asked[0];
+    };
+    await expect(asked(3)).resolves.toEqual({
+      name: "Placed", tooltip: "Tip", required: false, readOnly: false, maxLength: 9, align: "left", options: null,
+    });
+    await expect(asked(5)).resolves.toEqual({
+      name: "Pick", tooltip: "", required: false, readOnly: false, maxLength: null, align: "center", options: ["A", "B"],
+    });
+    await expect(asked(6)).resolves.toEqual({
+      name: "Tick", tooltip: "", required: true, readOnly: true, maxLength: null, align: null, options: null,
+    });
+    const lines = deps({ picked: [8], marks: [mark(8, "Lines", { kind: "multiline", border: false })] });
+    await changeProperties(lines.deps);
+    expect(lines.asked[0]).toMatchObject({ maxLength: 0, align: "left", options: null });
+  });
+
+  it("changes the mark, with the parts that differ, and not a field of the file", async () => {
+    const run = deps({ picked: [3], answer: (now) => ({ ...now, tooltip: "", maxLength: 0, align: "right" }) });
+    await expect(changeProperties(run.deps)).resolves.toBe(true);
+    expect(run.fitted).toEqual([[3, { tooltip: "", max_length: 0, align: "right" }]]);
+    expect(run.made).toEqual([]);
+    const choices = deps({ picked: [5], answer: (now) => ({ ...now, options: ["A", "B", "C"] }) });
+    await changeProperties(choices.deps);
+    expect(choices.fitted).toEqual([[5, { options: ["A", "B", "C"] }]]);
+  });
+
+  it("says so when nothing was changed, and makes nothing for a mark removed meanwhile", async () => {
+    const same = deps({ picked: [3], answer: (now) => now });
+    await expect(changeProperties(same.deps)).resolves.toBe(false);
+    expect(same.fitted).toEqual([]);
+    expect(same.said).toEqual(["Nothing about the field was changed."]);
+    const gone = deps({
+      picked: [3],
+      answer: (now) => ({ ...now, required: true }),
+      meanwhile: (world) => { world.marks = []; },
+    });
+    await expect(changeProperties(gone.deps)).resolves.toBe(false);
+    expect(gone.fitted).toEqual([]);
+    expect(gone.said).toEqual([]);
+  });
+
+  it("changes the field that was picked when the panel opened, whatever is picked when it closes", async () => {
+    let picked = [3];
+    const run = deps({ answer: (now) => ({ ...now, required: true }) });
+    const ask = run.deps.ask;
+    run.deps.picked = () => picked;
+    run.deps.ask = (now) => { picked = [5]; return ask(now); };
+    await expect(changeProperties(run.deps)).resolves.toBe(true);
+    expect(run.fitted).toEqual([[3, { required: true }]]);
   });
 });
 

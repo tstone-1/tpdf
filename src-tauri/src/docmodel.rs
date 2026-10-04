@@ -475,6 +475,13 @@ pub struct InkId(u32);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct ColorId(u32);
 
+/// One version of what a placed form field is.
+///
+/// [`ColorId`]'s twin for [`Mark::field`]: a [`Command::Refit`] names a whole
+/// [`Placed`](crate::formfields::Placed), so undo is the version before.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct FitId(u32);
+
 /// An annotation in the file the document was opened from, as its object number
 /// and generation.
 ///
@@ -1326,6 +1333,9 @@ pub enum Command {
     /// each of them --- so this is the only member of the family whose subject
     /// is not narrowed by a kind check.
     Recolor { mark: MarkId, color: ColorId },
+    /// Replace what a placed form field is: its tooltip, flags, limit,
+    /// alignment and choices. A field's alone, and its kind stays.
+    Refit { mark: MarkId, fit: FitId },
     /// Replace what a comment **out of the file** says.
     ///
     /// [`Command::Renote`]'s counterpart for an annotation the model did not
@@ -1426,6 +1436,7 @@ impl Command {
             | Command::Renote { .. }
             | Command::Reink { .. }
             | Command::Recolor { .. }
+            | Command::Refit { .. }
             | Command::Unredact { .. }
             | Command::Fill { .. } => None,
         }
@@ -1764,6 +1775,8 @@ pub struct Working {
     /// common case and means the colour the mark was made with, still in the
     /// body table. Only a mark somebody has recoloured has an entry here.
     colors: HashMap<MarkId, ColorId>,
+    /// Which version of what a placed field is is current, for a field that has been changed.
+    fits: HashMap<MarkId, FitId>,
     /// The pending redactions on each page, in the order they were made.
     ///
     /// `marks` above in every structural respect --- absent rather than empty,
@@ -1842,6 +1855,7 @@ impl Working {
             notes: HashMap::new(),
             inks: HashMap::new(),
             colors: HashMap::new(),
+            fits: HashMap::new(),
             redactions: HashMap::new(),
             redaction_graves: HashSet::new(),
             rewrites: BTreeMap::new(),
@@ -1974,6 +1988,7 @@ impl Working {
         self.notes.remove(&mark);
         self.inks.remove(&mark);
         self.colors.remove(&mark);
+        self.fits.remove(&mark);
     }
 
     /// Refuses unless the id names a mark on a page, naming which of the two it
@@ -2001,6 +2016,11 @@ impl Working {
     /// Which version of a mark's colour is current.
     pub fn color_of(&self, mark: MarkId) -> Option<ColorId> {
         self.colors.get(&mark).copied()
+    }
+
+    /// Which version of what a placed field is is current.
+    pub fn fit_of(&self, mark: MarkId) -> Option<FitId> {
+        self.fits.get(&mark).copied()
     }
 
     /// Which version of a mark's note is current.
@@ -2404,6 +2424,10 @@ impl Working {
                 self.live_mark(mark)?;
                 self.colors.insert(mark, color);
             }
+            Command::Refit { mark, fit } => {
+                self.live_mark(mark)?;
+                self.fits.insert(mark, fit);
+            }
             Command::Rewrite { object, page, edit } => {
                 // The page, and nothing about the object: this layer cannot ask
                 // whether the file holds it. See [`ObjectId`].
@@ -2549,8 +2573,11 @@ pub struct Doc {
     /// What each version of each mark's colour is, keyed by the id its command
     /// carries. `notes`' third twin, and keyed by the version for its reason.
     colors: HashMap<ColorId, [f32; 3]>,
+    /// Every version of a placed field the journal names.
+    fits: HashMap<FitId, crate::formfields::Placed>,
     /// The next colour id to issue. Only ever counts up.
     next_color: u32,
+    next_fit: u32,
     /// What each pending redaction is, keyed by the id its command carries.
     ///
     /// `marks`' twin and outside [`Working`] for its reason: a redaction's body
@@ -2621,7 +2648,9 @@ impl Doc {
             inks: HashMap::new(),
             next_ink: 1,
             colors: HashMap::new(),
+            fits: HashMap::new(),
             next_color: 1,
+            next_fit: 1,
             redactions: HashMap::new(),
             next_redaction: 1,
             next_page: u64::from(pages) + 1,
@@ -3682,6 +3711,43 @@ impl Doc {
         self.apply(Command::Recolor { mark, color })
     }
 
+    /// Replaces what a placed form field is, as one undoable edit.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::NoSuchMark`] and [`Refusal::MarkRemoved`] as for a colour, and
+    /// [`Refusal::ShapeMismatch`] for a mark that is not a field or a version
+    /// of another kind: a field's kind is fixed when it is placed.
+    pub fn refit(&mut self, mark: MarkId, to: crate::formfields::Placed) -> Result<(), Refusal> {
+        self.now.live_mark(mark)?;
+        if self.field_of(mark).is_none_or(|now| now.kind != to.kind) {
+            return Err(Refusal::ShapeMismatch(MarkKind::Field));
+        }
+        let fit = FitId(self.next_fit);
+        self.fits.insert(fit, to);
+        self.next_fit += 1;
+        self.apply(Command::Refit { mark, fit })
+    }
+
+    /// What a placed form field is now, after any change to it. `None` for a
+    /// mark that is not a field.
+    ///
+    /// The one accessor every reader of [`Mark::field`] goes through, for
+    /// [`color_of`](Doc::color_of)'s reason: the body holds what the field was
+    /// placed as.
+    pub fn field_of(&self, mark: MarkId) -> Option<&crate::formfields::Placed> {
+        self.now
+            .fit_of(mark)
+            .and_then(|fit| self.fits.get(&fit))
+            .or_else(|| self.mark(mark).and_then(|m| m.field.as_ref()))
+    }
+
+    /// How many versions of placed fields are held. The accounting observable,
+    /// as [`color_bodies`](Doc::color_bodies) is for colours.
+    pub fn fit_bodies(&self) -> usize {
+        self.fits.len()
+    }
+
     /// Records a colour and returns the id that names it.
     fn issue_color(&mut self, color: [f32; 3]) -> ColorId {
         let id = ColorId(self.next_color);
@@ -3868,6 +3934,9 @@ impl Doc {
                 }
                 Command::Recolor { color, .. } => {
                     self.colors.remove(&color);
+                }
+                Command::Refit { fit, .. } => {
+                    self.fits.remove(&fit);
                 }
                 Command::Rewrite { edit, .. } => {
                     self.rewrites.remove(&edit);
@@ -5382,6 +5451,61 @@ mod tests {
         real.field = Some(Kind::Text.into());
         assert!(doc.annotate(real, "Name".into()).is_ok());
         assert_eq!(doc.marks_issued(), 1, "a refused mark spent an id");
+    }
+
+    #[test]
+    fn a_placed_field_is_refitted_and_undo_puts_back_what_it_was() {
+        use crate::formfields::{Kind, Placed};
+        let mut doc = Doc::open(1);
+        let page = doc.working().order()[0];
+        let mut field = mark_on(page);
+        field.kind = MarkKind::Field;
+        field.field = Some(Kind::Text.into());
+        let id = doc.annotate(field, "Name".into()).expect("placed");
+        let plain = doc.annotate(mark_on(page), String::new()).expect("marked");
+        assert_eq!(doc.field_of(id), Some(&Kind::Text.into()));
+        assert_eq!(doc.field_of(plain), None);
+        let required = Placed {
+            required: true,
+            ..Kind::Text.into()
+        };
+        doc.refit(id, required.clone()).expect("refitted");
+        assert_eq!(doc.field_of(id), Some(&required));
+        // The body holds what it was placed as, which is why there is an accessor.
+        assert_eq!(doc.mark(id).expect("body").field, Some(Kind::Text.into()));
+        assert!(doc.undo());
+        assert_eq!(doc.field_of(id), Some(&Kind::Text.into()));
+        assert!(doc.redo());
+        assert_eq!(doc.field_of(id), Some(&required));
+        // Refused, and no version spent: another kind, a mark that is no
+        // field, an id nobody issued.
+        let held = doc.fit_bodies();
+        assert_eq!(
+            doc.refit(id, Kind::Checkbox.into()),
+            Err(Refusal::ShapeMismatch(MarkKind::Field))
+        );
+        assert_eq!(
+            doc.refit(plain, Kind::Text.into()),
+            Err(Refusal::ShapeMismatch(MarkKind::Field))
+        );
+        assert_eq!(
+            doc.refit(MarkId(9999), Kind::Text.into()),
+            Err(Refusal::NoSuchMark(MarkId(9999)))
+        );
+        assert_eq!(doc.fit_bodies(), held);
+        // A version undone and then overwritten by another command is dropped.
+        assert!(doc.undo());
+        doc.recolor(id, [0.0, 0.5, 0.0]).expect("recoloured");
+        assert_eq!(doc.fit_bodies(), held - 1);
+        // A removed field forgets which version it was on, and is refused.
+        doc.refit(id, required).expect("refitted");
+        doc.apply(Command::Unannotate { mark: id })
+            .expect("removed");
+        assert_eq!(doc.working().fit_of(id), None);
+        assert_eq!(
+            doc.refit(id, Kind::Text.into()),
+            Err(Refusal::MarkRemoved(id))
+        );
     }
 
     #[test]

@@ -131,6 +131,13 @@ export interface PlacedField {
   border: boolean;
   /** What a dropdown offers, in order. Absent for every other kind. */
   options?: string[];
+  /** What a reader shows when the pointer rests on the field. Absent for none. */
+  tooltip?: string;
+  required?: boolean;
+  read_only?: boolean;
+  /** The most characters a text field takes. Absent for no limit. */
+  max_length?: number;
+  align?: import("./forms").FormAlign;
 }
 
 /**

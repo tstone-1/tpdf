@@ -788,6 +788,7 @@ fn a_dropdowns_choices_are_held_to_what_a_reader_can_tell_apart() {
         kind: Kind::Dropdown,
         border: false,
         options: vec!["a".into(), "a".into()],
+        ..Kind::Dropdown.into()
     };
     assert!(
         place(&mut doc, page, [20.0, 30.0, 140.0, 50.0], "C", &placed)
@@ -815,6 +816,96 @@ fn a_dropdowns_choices_are_held_to_what_a_reader_can_tell_apart() {
         ["a", "b"],
         "the placed field offers what it was placed with"
     );
+}
+
+#[test]
+fn a_placed_field_is_written_with_its_properties_and_held_to_the_ones_its_kind_has() {
+    use crate::forms::Align;
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let rect = [20.0, 30.0, 140.0, 50.0];
+    let full = Placed {
+        tooltip: "Your name".into(),
+        required: true,
+        read_only: true,
+        max_length: Some(30),
+        align: Align::Right,
+        ..Kind::Text.into()
+    };
+    let id = place(&mut doc, page, rect, "Name", &full).expect("placed");
+    let made = doc.get_dictionary(id).unwrap();
+    assert_eq!(
+        crate::annots::decode_text_string(made.get(b"TU").unwrap().as_str().unwrap()),
+        "Your name"
+    );
+    assert_eq!(made.get(b"Ff").unwrap().as_i64().unwrap(), 1 | (1 << 1));
+    assert_eq!(made.get(b"MaxLen").unwrap().as_i64().unwrap(), 30);
+    assert_eq!(made.get(b"Q").unwrap().as_i64().unwrap(), 2);
+    // And one with none of them has none of the keys.
+    let id = place(&mut doc, page, rect, "Plain", &Kind::Text.into()).expect("placed");
+    let made = doc.get_dictionary(id).unwrap();
+    assert!(!made.has(b"TU") && !made.has(b"MaxLen") && !made.has(b"Q"));
+    assert_eq!(made.get(b"Ff").unwrap().as_i64().unwrap(), 0);
+
+    let refused = |placed: Placed| {
+        let mut doc = document(Held::Absent, false);
+        let page = crate::pagetree::ordered_pages(&doc)[0];
+        place(&mut doc, page, rect, "F", &placed).expect_err("refused")
+    };
+    assert!(refused(Placed {
+        max_length: Some(5),
+        ..Kind::Checkbox.into()
+    })
+    .contains("only a text field has a most"));
+    assert!(refused(Placed {
+        max_length: Some(5),
+        options: vec!["a".into()],
+        ..Kind::Dropdown.into()
+    })
+    .contains("only a text field has a most"));
+    assert!(refused(Placed {
+        max_length: Some(0),
+        ..Kind::Text.into()
+    })
+    .contains("from 1 to 16384"));
+    assert!(refused(Placed {
+        max_length: Some(16385),
+        ..Kind::Multiline.into()
+    })
+    .contains("up to 16384"));
+    assert!(refused(Placed {
+        align: Align::Center,
+        ..Kind::Checkbox.into()
+    })
+    .contains("no text to align"));
+    assert!(refused(Placed {
+        tooltip: "x".repeat(1025),
+        ..Kind::Text.into()
+    })
+    .contains("at most 1024"));
+    // A dropdown is aligned, and a field of several lines is limited.
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let aligned = Placed {
+        align: Align::Center,
+        options: vec!["a".into()],
+        ..Kind::Dropdown.into()
+    };
+    let id = place(&mut doc, page, rect, "D", &aligned).expect("placed");
+    assert_eq!(
+        doc.get_dictionary(id)
+            .unwrap()
+            .get(b"Q")
+            .unwrap()
+            .as_i64()
+            .unwrap(),
+        1
+    );
+    let limited = Placed {
+        max_length: Some(16384),
+        ..Kind::Multiline.into()
+    };
+    assert!(place(&mut doc, page, [20.0, 60.0, 140.0, 120.0], "M", &limited).is_ok());
 }
 
 #[test]

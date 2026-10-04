@@ -83,6 +83,54 @@ pub struct Placed {
     /// [`NewField::options`]. Left out of a reply when there are none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
+    /// [`NewField::tooltip`]. Empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tooltip: String,
+    /// [`NewField::required`].
+    #[serde(default)]
+    pub required: bool,
+    /// Whether the field refuses an answer.
+    #[serde(default)]
+    pub read_only: bool,
+    /// [`NewField::max_length`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    /// Where a text field's or a dropdown's text sits.
+    #[serde(default)]
+    pub align: forms::Align,
+}
+
+impl Placed {
+    /// What is wrong with this as a field called `name`, of what can be said
+    /// without the document: its choices, its tooltip, and a limit or an
+    /// alignment its kind does not have.
+    pub fn problem(&self, name: &str) -> Option<String> {
+        if let Some(why) = options_problem(name, self.kind, &self.options) {
+            return Some(why);
+        }
+        let props = crate::formedit::Props {
+            tooltip: Some(self.tooltip.clone()),
+            max_length: self.max_length,
+            ..Default::default()
+        };
+        if let Some(why) = props.problem(name) {
+            return Some(why);
+        }
+        if let Some(most) = self.max_length {
+            if !matches!(self.kind, Kind::Text | Kind::Multiline) {
+                return Some(format!("`{name}`: only a text field has a most characters"));
+            }
+            if most == 0 {
+                return Some(format!(
+                    "`{name}`: the most characters is a number from 1 to 16384"
+                ));
+            }
+        }
+        if self.kind == Kind::Checkbox && self.align != forms::Align::Left {
+            return Some(format!("`{name}`: a checkbox has no text to align"));
+        }
+        None
+    }
 }
 
 impl From<Kind> for Placed {
@@ -93,6 +141,11 @@ impl From<Kind> for Placed {
             kind,
             border: false,
             options: Vec::new(),
+            tooltip: String::new(),
+            required: false,
+            read_only: false,
+            max_length: None,
+            align: forms::Align::Left,
         }
     }
 }
@@ -614,7 +667,7 @@ pub fn place(
     if let Some(why) = name_problem(name) {
         return Err(why);
     }
-    if let Some(why) = options_problem(name, kind, &placed.options) {
+    if let Some(why) = placed.problem(name) {
         return Err(why);
     }
     if taken(doc).contains(name) {
@@ -635,13 +688,23 @@ pub fn place(
         kind,
         page: 0,
         rect,
-        tooltip: None,
-        required: false,
-        max_length: None,
+        tooltip: (!placed.tooltip.is_empty()).then(|| placed.tooltip.clone()),
+        required: placed.required,
+        max_length: placed.max_length,
         border: placed.border,
         options: placed.options.clone(),
     };
     let id = widget(doc, font, page, rect, &field);
+    // The two a field made by `tpdf form` does not have. The empty appearance
+    // holds no text, so an alignment changes nothing that is drawn yet.
+    let made = doc.get_dictionary_mut(id).map_err(|e| e.to_string())?;
+    if placed.align != forms::Align::Left {
+        made.set("Q", placed.align.quadding());
+    }
+    if placed.read_only {
+        let flags = made.get(b"Ff").and_then(Object::as_i64).unwrap_or(0);
+        made.set("Ff", flags | 1);
+    }
     append(doc, form, b"Fields", id)?;
     Ok(id)
 }

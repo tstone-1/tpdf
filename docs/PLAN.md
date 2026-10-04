@@ -3587,9 +3587,17 @@ document with aligned fields, not only for ones changed in the panel.
 judged against the answer typed in the same session, and a pending answer by index is
 written against the old choices and then carried to the new ones by label.
 
-**Not built.** Properties for a field placed in this session and not yet saved: the
-panel is offered for fields of the file, and a placed field carries only its kind,
-border and choices. Text size (the writer picks at most twelve points and shrinks to
+**A field that is still a mark.** Added the same day. A placed field's kind, border and
+choices are in `Mark::field`, which is fixed when the mark is made, so its properties
+are versions beside it: `Command::Refit` names a whole `formfields::Placed`
+(`Doc::field_of` answers the current one, as `color_of` does for a colour), and the
+view and the plan read through that accessor. `Edits::refit` lays a `Props` over the
+current version; `Placed::problem` holds it to what its kind has, at the change and
+again in `formfields::place`. The panel's join (`subject` in `fieldprops.ts`) takes
+either a saved id or a mark's, and changes the field that was picked when the panel
+opened.
+
+**Not built.** Text size (the writer picks at most twelve points and shrinks to
 fit). A default value, which matters only to a form that resets, and tpdf has no reset.
 Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.

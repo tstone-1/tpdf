@@ -567,6 +567,11 @@ export class Edits {
     return this.adopt(await call("form_field_edit", { doc: this.doc, targets, sweep }));
   }
 
+  /** Changes the properties of a form field placed in this session. */
+  async refit(mark: number, props: import("./savedfields").FieldProps): Promise<EditState> {
+    return this.adopt(await call("annot_field_props", { doc: this.doc, mark, props }));
+  }
+
   /**
    * Gives several placed rectangles new rectangles as one edit, which one
    * undo puts back. `sweep` names the gesture and is never zero.

@@ -590,7 +590,7 @@ fn quad_of(rect: [f32; 4]) -> Quad {
 /// told while the field is still in their hand. A mark that is not a field
 /// has no such floor.
 fn field_fits(model: &Doc, id: MarkId, rect: [f32; 4]) -> Result<(), String> {
-    if let Some(placed) = model.mark(id).and_then(|m| m.field.as_ref()) {
+    if let Some(placed) = model.field_of(id) {
         let least = crate::formfields::least_side(placed.kind) as f32;
         if rect[2] - rect[0] < least || rect[3] - rect[1] < least {
             return Err(format!(
@@ -1485,9 +1485,7 @@ impl Edits {
             // And its choices, when it is a dropdown: checked while the
             // reader is placing it and not at the save.
             if let Some(placed) = &want.field {
-                if let Some(why) =
-                    crate::formfields::options_problem(&want.note, placed.kind, &placed.options)
-                {
+                if let Some(why) = placed.problem(&want.note) {
                     return Err(why);
                 }
             }
@@ -1845,6 +1843,54 @@ impl Edits {
         model
             .recolor(MarkId::from_raw(mark), color.map(channel))
             .map_err(describe)?;
+        Ok(reply(open))
+    }
+
+    /// Changes the properties of a form field placed in this session, as one
+    /// undoable edit. Each part of `props` that is absent is left as it is;
+    /// an empty tooltip takes the tooltip off and a limit of nought takes the
+    /// limit off, as for a field of the file.
+    ///
+    /// # Errors
+    ///
+    /// The handle names no open document; the mark is not a live form field;
+    /// nothing is changed; or the field would have a property its kind does
+    /// not, choices that cannot be a list, or a tooltip or limit out of range.
+    pub fn refit(
+        &self,
+        doc: u32,
+        mark: u64,
+        props: crate::formedit::Props,
+    ) -> Result<EditState, String> {
+        self.wake(doc);
+        let mut docs = self.docs.lock().expect("edits lock");
+        let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
+        let model = &mut open.model;
+        let id = MarkId::from_raw(mark);
+        let mut placed = model
+            .field_of(id)
+            .cloned()
+            .ok_or("that is not a form field placed in this document")?;
+        let was = placed.clone();
+        if let Some(tooltip) = props.tooltip {
+            placed.tooltip = tooltip;
+        }
+        placed.required = props.required.unwrap_or(placed.required);
+        placed.read_only = props.read_only.unwrap_or(placed.read_only);
+        if let Some(most) = props.max_length {
+            placed.max_length = (most > 0).then_some(most);
+        }
+        placed.align = props.align.unwrap_or(placed.align);
+        if let Some(options) = props.options {
+            placed.options = options;
+        }
+        if placed == was {
+            return Err("that changes nothing about the field".into());
+        }
+        if let Some(why) = placed.problem("this field") {
+            return Err(why);
+        }
+        model.refit(id, placed).map_err(describe)?;
         Ok(reply(open))
     }
 
@@ -2411,7 +2457,7 @@ fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
                     quads: model.quads_of(*mark).to_vec(),
                     strokes: model.strokes_of(*mark).to_vec(),
                     stamp: body.stamp,
-                    field: body.field.clone(),
+                    field: model.field_of(*mark).cloned(),
                     image: body.image.clone(),
                     reply_to: body
                         .reply_to
@@ -3369,7 +3415,7 @@ fn snapshot(model: &Doc) -> EditState {
                 // geometry below: a stamp's name is fixed at the moment it is
                 // made, so there is no "what it is now" for the model to answer.
                 stamp: mark.stamp,
-                field: mark.field.clone(),
+                field: model.field_of(id).cloned(),
                 image: mark.image.clone(),
                 page: page.get(),
                 // **Through the model's accessors, not off the body**, because
@@ -5383,6 +5429,7 @@ mod tests {
                 kind: Kind::Dropdown,
                 border: true,
                 options: options.iter().map(|o| (*o).to_string()).collect(),
+                ..Kind::Dropdown.into()
             }),
             ..a_field(page, "Country", Kind::Dropdown)
         };
@@ -5421,6 +5468,7 @@ mod tests {
                 kind: Kind::Text,
                 border: false,
                 options: vec!["a".into()],
+                ..Kind::Text.into()
             }),
             ..a_field(page, "Other", Kind::Text)
         };
@@ -5462,7 +5510,10 @@ mod tests {
         let json = serde_json::to_value(&state.marks[0]).expect("json");
         assert_eq!(
             json["field"],
-            serde_json::json!({"kind": "checkbox", "border": false})
+            serde_json::json!({
+                "kind": "checkbox", "border": false,
+                "required": false, "read_only": false, "align": "left"
+            })
         );
     }
 
@@ -5605,6 +5656,137 @@ mod tests {
             .refield(7, vec![target((12, 0), removed(false))], 0)
             .expect("restored");
         assert!(edits.plan(7).expect("a plan").field_edits.is_empty());
+    }
+
+    #[test]
+    fn a_placed_fields_properties_are_changed_part_by_part_and_planned() {
+        use crate::formedit::Props;
+        use crate::formfields::Kind;
+        use crate::forms::Align;
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let state = edits
+            .annotate(7, a_field(page, "Name", Kind::Text), stamped())
+            .expect("placed");
+        let id = state.marks[0].id;
+        let state = edits
+            .refit(
+                7,
+                id,
+                Props {
+                    tooltip: Some("Your name".into()),
+                    required: Some(true),
+                    max_length: Some(30),
+                    ..Props::default()
+                },
+            )
+            .expect("set");
+        let placed = state.marks[0].field.clone().expect("a field");
+        assert_eq!(
+            (placed.tooltip.as_str(), placed.required, placed.max_length),
+            ("Your name", true, Some(30))
+        );
+        // A later change names its parts and the earlier ones stay; nought
+        // lifts the limit and an empty tooltip takes the tooltip off.
+        let state = edits
+            .refit(
+                7,
+                id,
+                Props {
+                    max_length: Some(0),
+                    read_only: Some(true),
+                    align: Some(Align::Right),
+                    ..Props::default()
+                },
+            )
+            .expect("changed");
+        let placed = state.marks[0].field.clone().expect("a field");
+        assert_eq!(
+            (
+                placed.tooltip.as_str(),
+                placed.required,
+                placed.read_only,
+                placed.max_length,
+                placed.align
+            ),
+            ("Your name", true, true, None, Align::Right)
+        );
+        assert_eq!(placed.kind, Kind::Text);
+        // What is written is what the field now is, not what it was placed as.
+        assert_eq!(edits.plan(7).expect("a plan").marks[0].field, Some(placed));
+        // The floor of its kind is still asked of the field as it now is.
+        assert!(edits.reshape(7, id, [10.0, 20.0, 14.0, 24.0]).is_err());
+        // Refused, and nothing recorded: no change, a property the kind does
+        // not have, and a mark that is not a field.
+        let refused = |mark: u64, props: Props| edits.refit(7, mark, props).expect_err("refused");
+        assert!(refused(
+            id,
+            Props {
+                required: Some(true),
+                ..Props::default()
+            }
+        )
+        .contains("changes nothing"));
+        assert!(refused(id, Props::default()).contains("changes nothing"));
+        assert!(refused(
+            id,
+            Props {
+                options: Some(vec!["A".into()]),
+                ..Props::default()
+            }
+        )
+        .contains("only a dropdown has choices"));
+        assert!(refused(
+            id,
+            Props {
+                tooltip: Some("x".repeat(1025)),
+                ..Props::default()
+            }
+        )
+        .contains("at most 1024"));
+        let state = edits
+            .annotate(7, a_field(page, "Agree", Kind::Checkbox), stamped())
+            .expect("placed");
+        let checkbox = state.marks.last().expect("it").id;
+        assert!(refused(
+            checkbox,
+            Props {
+                max_length: Some(5),
+                ..Props::default()
+            }
+        )
+        .contains("only a text field has a most"));
+        assert!(refused(
+            checkbox,
+            Props {
+                align: Some(Align::Center),
+                ..Props::default()
+            }
+        )
+        .contains("no text to align"));
+        let state = edits
+            .annotate(7, of_kind(MarkKind::Square, page), stamped())
+            .expect("placed");
+        let square = state.marks.last().expect("it").id;
+        assert!(refused(
+            square,
+            Props {
+                required: Some(true),
+                ..Props::default()
+            }
+        )
+        .contains("not a form field"));
+        // Back over the two marks, then one undo per change to the field.
+        edits.undo(7).expect("undone");
+        edits.undo(7).expect("undone");
+        let state = edits.undo(7).expect("undone");
+        let placed = state.marks[0].field.clone().expect("a field");
+        assert_eq!(
+            (placed.max_length, placed.read_only, placed.align),
+            (Some(30), false, Align::Left)
+        );
+        let state = edits.undo(7).expect("undone");
+        assert_eq!(state.marks[0].field, Some(Kind::Text.into()));
     }
 
     #[test]
