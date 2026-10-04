@@ -7938,6 +7938,16 @@ def main() -> int:
     # `finally` and a `finally` does not survive a kill. See
     # `mutation_resume.py` for what makes a stored verdict reusable, and note
     # that the recovery half runs whether or not this flag is passed.
+    # The release's selection since 2026-10-04: a mutation whose target is
+    # within a few lines of a change, or whose test changed. `--since` reruns
+    # every mutation in a changed file and is what runs outside the release.
+    # See `mutation_since.py` for what each gives up.
+    parser.add_argument(
+        "--near",
+        default="",
+        metavar="REF",
+        help="only mutations near a line changed since REF, or whose test changed",
+    )
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -7973,6 +7983,10 @@ def main() -> int:
         # an empty selection as "proved nothing"; so the flag was useless here
         # rather than misleading, which is the difference that guard makes.
         chosen, code = mutation_since.apply(chosen, args.since, "src-tauri/")
+        if code:
+            return code
+    if args.near:
+        chosen, code = mutation_since.apply_near(chosen, args.near, "src-tauri/")
         if code:
             return code
     # Mutations for another platform. `--list` still shows them, marked: the

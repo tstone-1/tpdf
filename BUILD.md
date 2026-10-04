@@ -7325,8 +7325,22 @@ starts at 0 and increments within the month.
    feature lists, against what you know shipped this cycle. Do not put a count in the prose:
    every one that was there had drifted, and the files they describe carry their own.
 7. Run mutations for the changed behaviour, including new failure cases for a new
-   capability. Start with `--since <last tag>` and add affected callers or runners
-   when a shared contract changes. Always run the full quality gates once, and
+   capability. Start with `--near <last tag>` and add affected callers or runners
+   when a shared contract changes.
+
+   **`--near` and not `--since`, from 2026-10-04.** `--since` reruns every mutation in a
+   file one line of which changed. Three files hold hundreds each, so the 26.10.4 release
+   reran 981 Rust mutations in 85 minutes and 495 frontend ones in ten, half of the whole
+   release, and found one blunted test, a few lines from the change that blunted it.
+   `--near` selects a mutation whose target is within 25 lines of a changed line, or whose
+   test changed: 381 Rust and 260 frontend on that same tree, the blunted one among them.
+   `scripts/mutation_since.py --self-test` is its control.
+
+   **What that gives up is run afterwards, not dropped.** A change far from a mutation, in
+   the same file, can still blunt the test for it, and only the file rule finds that. So
+   once the release is out, run `--since <the tag before>` with `--resume` on all three
+   harnesses, with nobody waiting on it; a survivor there is a defect fixed in the next
+   commit, and is written beside this release's record. Always run the full quality gates once, and
    the relevant native checks. Record the selected mutation count and any gaps.
 
    **No full GUI mutation table is required for an ordinary release.** A dependency

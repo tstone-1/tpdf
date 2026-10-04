@@ -7638,6 +7638,16 @@ def main() -> int:
     # `mutation_resume.py`, and the recovery half runs whether or not this flag
     # is passed --- a mutated tree is a defect regardless of what the next run
     # means to do.
+    # The release's selection since 2026-10-04: a mutation whose target is
+    # within a few lines of a change, or whose test changed. `--since` reruns
+    # every mutation in a changed file and is what runs outside the release.
+    # See `mutation_since.py` for what each gives up.
+    parser.add_argument(
+        "--near",
+        default="",
+        metavar="REF",
+        help="only mutations near a line changed since REF, or whose test changed",
+    )
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -7654,6 +7664,10 @@ def main() -> int:
     if args.since:
         # No prefix: this table names paths from the repository root already.
         chosen, code = mutation_since.apply(chosen, args.since)
+        if code:
+            return code
+    if args.near:
+        chosen, code = mutation_since.apply_near(chosen, args.near)
         if code:
             return code
 
