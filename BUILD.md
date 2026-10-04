@@ -381,6 +381,12 @@ uv run scripts/tabs_check.py <checks-binary> testdata/text-base14.pdf --phase fi
 # macOS independent reader; the optional directory receives page PNGs.
 swift scripts/form_pdfkit_check.swift /tmp/tpdf-filled-form.pdf /tmp/tpdf-form-render
 
+# A form made by tpdf against PDFKit, the engine Preview reads and saves with,
+# in both directions: PDFKit reads the form and the answers tpdf wrote, then
+# answers the form itself and tpdf reads that back. macOS only. The optional
+# directory keeps the three files and PDFKit's drawing of two of them.
+uv run scripts/made_form_check.py /tmp/tpdf-made-form
+
 # pypdf on what `tpdf redact` writes: matched strings absent from page text, form values,
 # appearances and orphan objects, with the controls kept. Prove the independent checker first.
 uv run --with pypdf scripts/redact_pdf_check.py --self-test

@@ -3602,6 +3602,28 @@ fit). A default value, which matters only to a form that resets, and tpdf has no
 Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
 
+#### A made form against another reader — 2026-10-04
+
+Six pieces of form work in one day, each verified by tpdf reading its own output. The
+recipients of a form use Preview and Acrobat, so `scripts/made_form_check.py` puts
+PDFKit on the other side: a form of every kind tpdf makes, placed out of reading order,
+written and answered through the save.
+
+**What PDFKit reads.** All of it as intended: the kinds, three radio buttons as one
+group with their values, the limit, the alignment, the tooltip, the page's fields in
+reading order, and each answer tpdf wrote. Its drawing of the answered form was looked
+at once and is right: text at its side, the dot in the chosen ring.
+
+**What tpdf read back, and did not.** PDFKit then answered the empty form and saved it.
+Text and the dropdown came back; the checkbox came back empty and the radio group
+unreadable. The cause is PDFKit's and is written up in `docs/TRAPS.md`; `forms::scan`
+reads both shapes now. This was a defect for every form filled in Preview and opened
+in tpdf, whoever made the form.
+
+**Not measured.** Acrobat, which needs a person: whether it tabs in the order written,
+what it writes when it answers a group. And the Tab key itself in Preview, which the
+order of the page's list stands in for.
+
 #### Tab order — 2026-10-04
 
 The one remaining defect of a form made here that its recipient sees: Tab went through

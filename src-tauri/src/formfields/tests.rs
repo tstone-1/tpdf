@@ -1287,3 +1287,160 @@ fn a_placed_radio_button_makes_its_group_or_joins_it_and_gives_it_its_flags() {
             .contains("no text to align")
     );
 }
+
+/// What PDFKit does to a button it answers: one drawing where the two states
+/// were, `/AS` left at `/Off`.
+fn fix_drawing(doc: &mut Document, widget: ObjectId) {
+    let drawing = forms::appearance(doc, 12.0, 12.0, b"q Q".to_vec(), Dictionary::new());
+    let dict = doc.get_dictionary_mut(widget).unwrap();
+    dict.set("AP", dictionary! { "N" => drawing });
+    dict.set("AS", "Off");
+}
+
+#[test]
+fn a_group_another_reader_answered_by_fixing_one_button_is_read_and_not_changed() {
+    let made = || {
+        let mut doc = document(Held::Absent, false);
+        add(
+            &mut doc,
+            &[
+                button("Pay", "Card", 20.0),
+                button("Pay", "Cash", 40.0),
+                button("Pay", "Bank transfer", 60.0),
+            ],
+        )
+        .expect("added");
+        let group = buttons(&doc, "Pay");
+        (doc, group)
+    };
+    let text = |value: &str| Object::string_literal(value);
+    // The third button answered: its states gone, the answer on the group as text.
+    let (mut doc, group) = made();
+    fix_drawing(&mut doc, group[2].widget);
+    doc.get_dictionary_mut(group[0].object)
+        .unwrap()
+        .set("V", text("Bank transfer"));
+    let read = buttons(&reread(&doc), "Pay");
+    assert_eq!(values(&doc, "Pay"), ["Card", "Cash", "Bank transfer"]);
+    assert!(read.iter().all(|w| w.value == Value::Selection(vec![2])));
+    assert!(read
+        .iter()
+        .all(|w| w.reason.as_deref() == Some(forms::FIXED_BUTTON)));
+    // It is not changed: the fixed button cannot be drawn as not chosen.
+    assert!(write(
+        &mut doc,
+        &[Change {
+            object: group[0].object,
+            value: Value::Selection(vec![0]),
+        }]
+    )
+    .is_err());
+
+    // Not read as an answer, each for its own reason, and the group says
+    // what `button_state` says of a button with no states.
+    let unread = |doc: &Document| {
+        let read = buttons(doc, "Pay");
+        assert!(read.iter().all(|w| w.value == Value::Selection(Vec::new())));
+        read[0].reason.clone().expect("a reason")
+    };
+    // Two buttons fixed: which one was chosen is not known.
+    let (mut doc, group) = made();
+    fix_drawing(&mut doc, group[1].widget);
+    fix_drawing(&mut doc, group[2].widget);
+    doc.get_dictionary_mut(group[0].object)
+        .unwrap()
+        .set("V", text("Cash"));
+    assert!(unread(&doc).contains("no appearance states"));
+    // One fixed and no answer on the group.
+    let (mut doc, group) = made();
+    fix_drawing(&mut doc, group[2].widget);
+    assert!(unread(&doc).contains("no appearance states"));
+    // One fixed and the group says `Off`, or nothing.
+    for held in ["Off", ""] {
+        let (mut doc, group) = made();
+        fix_drawing(&mut doc, group[2].widget);
+        doc.get_dictionary_mut(group[0].object)
+            .unwrap()
+            .set("V", text(held));
+        assert!(unread(&doc).contains("no appearance states"), "{held:?}");
+    }
+    // One fixed and the answer names a button that still has its states: the
+    // fixed one's value is then not known.
+    let (mut doc, group) = made();
+    fix_drawing(&mut doc, group[2].widget);
+    doc.get_dictionary_mut(group[0].object)
+        .unwrap()
+        .set("V", text("Card"));
+    assert!(unread(&doc).contains("no appearance states"));
+    // A button that has states, and too many to say which is its own, is
+    // not one a reader fixed either.
+    let (mut doc, group) = made();
+    let extra = forms::appearance(&mut doc, 12.0, 12.0, b"q Q".to_vec(), Dictionary::new());
+    let normal = doc
+        .get_dictionary(group[2].widget)
+        .unwrap()
+        .get(b"AP")
+        .and_then(Object::as_dict)
+        .unwrap()
+        .get(b"N")
+        .and_then(Object::as_dict)
+        .unwrap()
+        .clone();
+    let mut two = normal;
+    two.set("Other", extra);
+    doc.get_dictionary_mut(group[2].widget)
+        .unwrap()
+        .set("AP", dictionary! { "N" => two });
+    doc.get_dictionary_mut(group[0].object)
+        .unwrap()
+        .set("V", text("Something"));
+    assert!(unread(&doc).contains("ambiguous appearance states"));
+    // A button with no appearance at all is not one a reader fixed.
+    let (mut doc, group) = made();
+    doc.get_dictionary_mut(group[2].widget)
+        .unwrap()
+        .remove(b"AP");
+    doc.get_dictionary_mut(group[0].object)
+        .unwrap()
+        .set("V", text("Bank transfer"));
+    assert!(unread(&doc).contains("no appearance states"));
+}
+
+#[test]
+fn a_button_answered_in_text_reads_as_one_answered_by_name() {
+    let text = |value: &str| Object::string_literal(value);
+    let mut doc = document(Held::Absent, false);
+    add(
+        &mut doc,
+        &[
+            field("Agree", Kind::Checkbox, 0, [20.0, 100.0, 12.0, 12.0]),
+            button("Pay", "Card", 20.0),
+            button("Pay", "Cash", 40.0),
+        ],
+    )
+    .expect("added");
+    let agree = buttons(&doc, "Agree")[0].object;
+    let ticked = |doc: &Document| buttons(doc, "Agree")[0].value.clone();
+    assert_eq!(ticked(&doc), Value::Checked(false));
+    for (held, is) in [
+        (text("Yes"), true),
+        (Object::Name(b"Yes".to_vec()), true),
+        (text("Off"), false),
+        (Object::Name(b"Off".to_vec()), false),
+        (text(""), false),
+        (Object::Integer(1), false),
+    ] {
+        doc.get_dictionary_mut(agree)
+            .unwrap()
+            .set("V", held.clone());
+        assert_eq!(ticked(&doc), Value::Checked(is), "{held:?}");
+    }
+    // A group whose answer is text, with every button's states in place and
+    // none switched on: the answer is the group's.
+    let pay = buttons(&doc, "Pay")[0].object;
+    doc.get_dictionary_mut(pay).unwrap().set("V", text("Cash"));
+    let read = buttons(&doc, "Pay");
+    assert!(read
+        .iter()
+        .all(|w| w.value == Value::Selection(vec![1]) && w.reason.is_none()));
+}

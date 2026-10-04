@@ -11491,6 +11491,135 @@ fn fields_are_listed_in_reading_order_when_added_and_when_asked_and_not_otherwis
     assert_eq!(crate::verify::structure(&ordered), Vec::<String>::new());
 }
 
+/// A form with one field of every kind tpdf makes, placed out of reading
+/// order, written by the save and then answered by it.
+///
+/// With `TPDF_MADE_FORM` naming a directory, both files are left there for a
+/// reader that shares no code with this one: `scripts/made_form_check.py`.
+#[test]
+fn a_form_of_every_kind_is_made_and_answered_and_left_for_another_reader() {
+    use crate::formfields::{Kind, Placed};
+    use crate::forms::{Align, Change, Value};
+    let at = |left: f32, top: f32, width: f32, height: f32| crate::docmodel::Quad {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+    };
+    let field = |name: &str, placed: Placed, quad| {
+        let mut mark = field_plan(name, placed.kind, quad).marks.remove(0);
+        mark.field = Some(placed);
+        mark
+    };
+    let button = |value: &str, left: f32| {
+        field(
+            "Pay",
+            Placed {
+                options: vec![value.into()],
+                required: value == "Cash",
+                ..Kind::Radio.into()
+            },
+            at(left, 300.0, 14.0, 14.0),
+        )
+    };
+    let mut plan = plan_of(&[0, 0]);
+    // Bottom to top, so the reading order is the save's doing.
+    plan.marks = vec![
+        button("Bank transfer", 220.0),
+        button("Cash", 120.0),
+        button("Card", 20.0),
+        field(
+            "Colour",
+            Placed {
+                options: vec!["Red".into(), "Green".into(), "Blue".into()],
+                border: true,
+                align: Align::Center,
+                ..Kind::Dropdown.into()
+            },
+            at(20.0, 240.0, 160.0, 22.0),
+        ),
+        field("Agree", Kind::Checkbox.into(), at(20.0, 200.0, 14.0, 14.0)),
+        field(
+            "Notes",
+            Placed {
+                border: true,
+                ..Kind::Multiline.into()
+            },
+            at(20.0, 100.0, 300.0, 80.0),
+        ),
+        field(
+            "Name",
+            Placed {
+                border: true,
+                tooltip: "Your full name".into(),
+                required: true,
+                max_length: Some(30),
+                align: Align::Right,
+                ..Kind::Text.into()
+            },
+            at(20.0, 50.0, 300.0, 24.0),
+        ),
+    ];
+    let made = rewrite_update(&two_blank_pages(), &plan, Job::Save, None).expect("made");
+    let form = crate::forms::scan(&Document::load_mem(&made).expect("parses")).expect("a form");
+    let names: Vec<&str> = form.widgets.iter().map(|w| w.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Name", "Notes", "Agree", "Colour", "Pay", "Pay", "Pay"]
+    );
+    assert!(form.widgets.iter().all(|w| w.reason.is_none()));
+    let of = |name: &str| {
+        form.widgets
+            .iter()
+            .find(|w| w.name == name)
+            .expect("it")
+            .object
+    };
+    let mut answers = plan_of(&[0, 0]);
+    answers.forms = vec![
+        Change {
+            object: of("Name"),
+            value: Value::Text("Ada".into()),
+        },
+        Change {
+            object: of("Notes"),
+            value: Value::Text("one\ntwo".into()),
+        },
+        Change {
+            object: of("Agree"),
+            value: Value::Checked(true),
+        },
+        Change {
+            object: of("Colour"),
+            value: Value::Selection(vec![1]),
+        },
+        // The buttons in the order the group holds them: Bank transfer, Cash, Card.
+        Change {
+            object: of("Pay"),
+            value: Value::Selection(vec![1]),
+        },
+    ];
+    let filled = rewrite_update(&made, &answers, Job::Save, None).expect("answered");
+    let read = crate::forms::scan(&Document::load_mem(&filled).expect("parses")).expect("a form");
+    let held = |name: &str| {
+        read.widgets
+            .iter()
+            .find(|w| w.name == name)
+            .expect("it")
+            .value
+            .clone()
+    };
+    assert_eq!(held("Name"), Value::Text("Ada".into()));
+    assert_eq!(held("Colour"), Value::Selection(vec![1]));
+    assert_eq!(held("Pay"), Value::Selection(vec![1]));
+    if let Ok(dir) = std::env::var("TPDF_MADE_FORM") {
+        let dir = std::path::Path::new(&dir);
+        std::fs::create_dir_all(dir).expect("the directory");
+        std::fs::write(dir.join("made.pdf"), &made).expect("written");
+        std::fs::write(dir.join("made-filled.pdf"), &filled).expect("written");
+    }
+}
+
 #[test]
 fn radio_buttons_placed_as_marks_are_written_as_one_group() {
     use crate::formfields::{Kind, Placed};

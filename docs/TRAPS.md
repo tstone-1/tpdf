@@ -269,6 +269,7 @@ hop through the index.
 - `lopdf` writes a crypt filter without its key length, and two readers that both assume it agreed the file was fine
 - A plan measured without being applied called regions removable that the save refused
 - `%%EOF` is also a PostScript comment, so counting its bytes counts every embedded CMap as a revision
+- PDFKit answers a button in text and draws the chosen radio button once, so a form filled in Preview read as unanswered
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -25623,3 +25624,29 @@ reports that case as before, which is the safe direction.
 The general shape: a byte pattern counted over a whole file counts stream data too,
 and stream data is whatever the document's author put there. Either anchor the
 pattern to syntax a stream cannot be mistaken for, or walk the objects.
+
+### PDFKit answers a button in text and draws the chosen radio button once, so a form filled in Preview read as unanswered
+
+Every check of a form was tpdf reading what tpdf wrote, until `scripts/made_form_check.py`
+had PDFKit answer a form and tpdf read it back (2026-10-04). Two of five answers came back
+wrong: the ticked checkbox read as empty, and the radio group as unreadable, *"A radio
+button has no appearance states"*.
+
+PDFKit, which is what Preview saves with, does two things the specification does not
+describe. A button field's `/V` is a name (ISO 32000-1 12.7.4.2.3); PDFKit writes a text
+string, `(Yes)` and not `/Yes`, and leaves `/AS` at `/Off`. And the widget it changed
+loses its appearance states: `/AP /N` was a dictionary of `/Off` and the on state, and
+is afterwards one stream that draws the button as chosen. For a checkbox that costs
+nothing here, since the answer is in `/V`. For a radio group the chosen button is then
+the only one with no state to name it.
+
+`forms::scan` now reads a button's `/V` as a name or as text (`button_value`), and reads
+a group in which exactly one button has a single drawing as answered with the group's
+`/V`, when that answer is not `Off`, not empty and not the state of a button that still
+has its states. Such a group can be read and not changed (`FIXED_BUTTON`): the fixed
+button can no longer be drawn as not chosen.
+
+The lesson is about the instrument more than the format. A reader and a writer that share
+a model agree with each other about everything the model gets wrong, and the files that
+disagree are written by the programs the form's recipients use. A check of a format needs
+a second implementation on the other side of it, in both directions.

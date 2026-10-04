@@ -132,6 +132,10 @@ pub const COMB: &str = "Comb fields are not supported yet";
 pub const RICH_TEXT: &str = "Rich-text fields are not supported yet";
 /// The widget's `/F` says hidden, invisible or no-view.
 pub const HIDDEN: &str = "This field is hidden";
+/// A group of radio buttons one of whose buttons has a single drawing where
+/// its two states were. See [`scan`].
+pub const FIXED_BUTTON: &str =
+    "Another program saved this group with its answer drawn in, so it can be read and not changed";
 
 /// A complete scan or an error; never a silently truncated list.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -279,6 +283,35 @@ fn choice_value(
     Ok(Value::Selection(selected))
 }
 
+/// What `/V` says a button field holds: the name of a state, or the same as
+/// text.
+///
+/// The specification has a name there (§12.7.4.2.3). Apple's PDFKit, which
+/// is what Preview saves with, writes a text string: a checkbox it ticked
+/// holds `(Yes)` and not `/Yes`, with `/AS` left at `/Off`. Read as a name
+/// alone, a box ticked in Preview read as empty here; measured 2026-10-04
+/// with `scripts/made_form_check.py`.
+fn button_value(doc: &Document, id: ObjectId) -> Option<Vec<u8>> {
+    match inherited(doc, id, b"V")? {
+        Object::Name(name) => Some(name.clone()),
+        Object::String(raw, _) => Some(crate::annots::decode_text_string(raw).into_bytes()),
+        _ => None,
+    }
+}
+
+/// Whether a widget's normal appearance is one drawing and not a drawing for
+/// each state.
+fn one_drawing(doc: &Document, widget: ObjectId) -> bool {
+    doc.get_dictionary(widget)
+        .ok()
+        .and_then(|w| w.get(b"AP").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_dict().ok())
+        .and_then(|a| a.get(b"N").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .is_some_and(|(_, o)| o.as_stream().is_ok())
+}
+
 fn button_state(doc: &Document, id: ObjectId) -> Result<Vec<u8>, String> {
     let normal = doc
         .get_dictionary(id)
@@ -418,9 +451,8 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 Value::Selection(Vec::new())
             } else if checkbox {
                 Value::Checked(
-                    inherited(doc, object, b"V")
-                        .and_then(|v| v.as_name().ok())
-                        .is_some_and(|n| n != b"Off"),
+                    button_value(doc, object)
+                        .is_some_and(|held| held != b"Off" && !held.is_empty()),
                 )
             } else {
                 Value::Text(
@@ -569,10 +601,37 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
     for group in groups.values_mut() {
         // Page moves must not change the meaning of an answer already journalled.
         group.sort_by_key(|i| result.widgets[*i].widget);
-        let states = group
+        let found: Vec<Result<Vec<u8>, String>> = group
             .iter()
             .map(|i| button_state(doc, result.widgets[*i].widget))
-            .collect::<Result<Vec<_>, _>>();
+            .collect();
+        // **A group PDFKit answered.** It replaces the chosen button's two
+        // states with one drawing of the button chosen, leaves `/AS` at
+        // `/Off`, and writes the answer as text on the group. The one button
+        // with no states is then the one chosen, and its state is the answer:
+        // enough to say what the group holds, and not enough to change it,
+        // since that button can no longer be drawn as not chosen.
+        let held = button_value(doc, result.widgets[group[0]].object);
+        let stateless: Vec<usize> = (0..found.len()).filter(|at| found[*at].is_err()).collect();
+        let fixed = match (stateless.as_slice(), &held) {
+            ([at], Some(value))
+                if one_drawing(doc, result.widgets[group[*at]].widget)
+                    && value != b"Off"
+                    && !value.is_empty()
+                    && !found.iter().any(|state| state.as_ref() == Ok(value)) =>
+            {
+                Some((*at, value.clone()))
+            }
+            _ => None,
+        };
+        let states: Result<Vec<Vec<u8>>, String> = found
+            .into_iter()
+            .enumerate()
+            .map(|(at, state)| match &fixed {
+                Some((fixed, value)) if *fixed == at => Ok(value.clone()),
+                _ => state,
+            })
+            .collect();
         let states = match states {
             Ok(states) => states,
             Err(reason) => {
@@ -582,6 +641,11 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 continue;
             }
         };
+        if fixed.is_some() {
+            for i in group.iter() {
+                result.widgets[*i].reason = Some(FIXED_BUTTON.into());
+            }
+        }
         text_bytes += group.len() * states.iter().map(|s| s.len() * 4 + 16).sum::<usize>();
         if text_bytes > 1_048_576 {
             return Err("This form exceeds the text limit".into());
@@ -601,9 +665,7 @@ pub fn scan(doc: &Document) -> Result<Form, String> {
                 (state == states[index]).then_some(index)
             })
             .or_else(|| {
-                let value = inherited(doc, result.widgets[group[0]].object, b"V")?
-                    .as_name()
-                    .ok()?;
+                let value = held.as_ref()?;
                 states.iter().position(|s| s == value)
             });
         for (index, i) in group.iter().enumerate() {

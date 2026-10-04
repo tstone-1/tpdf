@@ -81,6 +81,16 @@ have the binary.)
 
 ### Fixed
 
+- **A form filled in Preview read as partly unanswered.** A checkbox ticked there showed
+  as empty in tpdf, and a group of radio buttons answered there could not be read at
+  all. Preview writes a button's answer as text where the format has a name, and
+  replaces the chosen radio button's two looks with one. tpdf reads both now: the box
+  is ticked, and the group shows its answer. Such a group cannot be changed in tpdf,
+  because the chosen button can no longer be drawn as not chosen, and tpdf says so.
+  Found by having Preview's engine answer a form made in tpdf and reading it back.
+- **Printing after changing a field of the document printed the file as it was.** A
+  move, rename, removal or change of properties of a field already in the file was not
+  counted as a change for printing.
 - **Redaction, and every other rewrite, was refused on a document that keeps a font's
   character map uncompressed.** Such a map is a PostScript resource and ends with the
   comment `%%EOF`, which is also how a PDF revision ends. tpdf checks that a file it
