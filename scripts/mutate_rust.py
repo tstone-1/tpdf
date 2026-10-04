@@ -844,6 +844,14 @@ MUTATIONS = [
     Mutation("block drawing: plan the change and not make it", "src/save.rs", "        for at in with_drawings {", "        for at in Vec::<usize>::new() {", "a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_other"),
     Mutation("block drawing: take one block's removals out of every block", "src/save.rs", "                .filter(|(form, _)| *form == at)", "                .filter(|_| true)", "a_planned_removal_takes_and_cuts_drawings_in_each_block_it_names_and_in_no_other"),
     Mutation("block drawing: ask the fill pass to make the change again", "src/redaction_fill.rs", "                mapped.form_paths = crate::redact::FormPathsPlanned::default();\n", "", "maps_reordered_pages_without_reapplying_turns_crops_or_removals"),
+    Mutation("revisions: count a marker that follows no startxref", "src/verify.rs", "space > 0 && before[..keyword_end].ends_with(START) {", "space > 0 {", "a_revision_ends_with_startxref_an_offset_and_the_marker_and_with_nothing_less"),
+    Mutation("revisions: count a marker with no space before it", "src/verify.rs", "        if digits_end < before.len() && space > 0", "        if space > 0", "a_revision_ends_with_startxref_an_offset_and_the_marker_and_with_nothing_less"),
+    Mutation("revisions: count a marker whose offset runs into the keyword", "src/verify.rs", "        if digits_end < before.len() && space > 0 &&", "        if digits_end < before.len() &&", "a_revision_ends_with_startxref_an_offset_and_the_marker_and_with_nothing_less"),
+    Mutation("revisions: stop at the first marker", "src/verify.rs", "        from = at + MARK.len();\n", "        from = bytes.len();\n", "a_revision_ends_with_startxref_an_offset_and_the_marker_and_with_nothing_less"),
+    Mutation("revisions: refuse output by the raw count of the marker's bytes", "src/verify.rs", "    match revision_ends(bytes) {\n        0 if", "    match count(bytes, b\"%%EOF\") {\n        0 if", "the_same_bytes_inside_a_stream_end_no_revision"),
+    Mutation("revisions: call a scan blind by the raw count of the marker's bytes", "src/verify.rs", "        eofs: revision_ends(bytes),", "        eofs: count(bytes, b\"%%EOF\"),", "the_same_bytes_inside_a_stream_end_no_revision"),
+    Mutation("revisions: call a file whose marker ends nothing a file with no marker", "src/verify.rs", "        0 if count(bytes, b\"%%EOF\") == 0 => {", "        0 if true => {", "a_revision_ends_with_startxref_an_offset_and_the_marker_and_with_nothing_less"),
+    Mutation("revisions: show a reader the raw count of the marker's bytes", "src/docinfo.rs", "    crate::verify::revision_ends(bytes)\n", "    bytes.windows(5).filter(|w| *w == b\"%%EOF\").count()\n", "a_marker_inside_a_stream_is_not_a_revision_a_reader_is_shown"),
     Mutation("gate: call a control one rounding step under the floor short", "src/ocr_gate.rs", "    px >= MIN_CONTROL_PX * (1.0 - 1e-5)", "    px >= MIN_CONTROL_PX", "a_control_the_scale_rule_sized_is_at_the_floor_whatever_the_rounding"),
     Mutation("gate: call a control a hundredth short of the floor at it", "src/ocr_gate.rs", "    px >= MIN_CONTROL_PX * (1.0 - 1e-5)", "    px >= MIN_CONTROL_PX * (1.0 - 1e-3)", "a_control_the_scale_rule_sized_is_at_the_floor_whatever_the_rounding"),
     Mutation("block picture: count a picture two regions touch twice", "src/redact.rs", "    form_images.sort_unstable();\n    form_images.dedup();\n    total += form_images.len();", "    form_images.sort_unstable();\n    total += form_images.len();", "the_pages_plan_carries_the_pictures_of_every_region_once"),
@@ -3291,8 +3299,8 @@ MUTATIONS = [
         # Accept a file with no %%EOF at all.
         "verify: let a file with no %%EOF pass the structural check",
         "src/verify.rs",
-        "        0 => wrong.push(\"the file has no %%EOF marker\".to_string()),",
-        "        0 => {}",
+        "            wrong.push(\"the file has no %%EOF marker\".to_string());\n",
+        "",
         "a_file_with_no_eof_marker_is_refused",
     ),
     Mutation(
@@ -3301,8 +3309,8 @@ MUTATIONS = [
         # addressable by nothing and invisible to a graph walk.
         "verify: let a rewrite hold more than one revision",
         "src/verify.rs",
-        "    let eofs = count(bytes, b\"%%EOF\");",
-        "    let eofs = count(bytes, b\"%%EOF\").min(1);",
+        "    match revision_ends(bytes) {\n        0 if",
+        "    match revision_ends(bytes).min(1) {\n        0 if",
         "a_second_revision_is_refused_and_the_count_is_reported",
     ),
     Mutation(

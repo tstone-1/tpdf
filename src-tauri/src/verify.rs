@@ -582,7 +582,8 @@ pub struct Report {
     pub deferred: Vec<String>,
     /// How many objects the graph walk reached.
     pub objects: usize,
-    /// `%%EOF` markers, so more than one revision is visible.
+    /// `%%EOF` markers that end a revision, as [`revision_ends`] counts them,
+    /// so more than one revision is visible.
     pub eofs: usize,
     /// Non-whitespace bytes after the last `%%EOF`.
     pub trailing: usize,
@@ -708,9 +709,15 @@ pub fn structure(bytes: &[u8]) -> Vec<String> {
         wrong.push("the file does not begin with a PDF header".to_string());
     }
 
-    let eofs = count(bytes, b"%%EOF");
-    match eofs {
-        0 => wrong.push("the file has no %%EOF marker".to_string()),
+    match revision_ends(bytes) {
+        0 if count(bytes, b"%%EOF") == 0 => {
+            wrong.push("the file has no %%EOF marker".to_string());
+        }
+        0 => wrong.push(
+            "the file has a %%EOF marker and none that ends a revision: none follows a \
+             startxref and its offset"
+                .to_string(),
+        ),
         1 => {}
         many => wrong.push(format!(
             "the file has {many} %%EOF markers, so it holds more than one revision \u{2014} a rewrite writes exactly one, and an earlier revision is content no parser will show and no scan can decode"
@@ -784,7 +791,7 @@ fn start_offset(after: &[u8]) -> Option<usize> {
 /// it is a blind spot, reported as one, which is the whole point of the type.
 pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report {
     let mut report = Report {
-        eofs: count(bytes, b"%%EOF"),
+        eofs: revision_ends(bytes),
         bytes: bytes.len() as u64,
         ..Default::default()
     };
@@ -977,6 +984,52 @@ pub fn scan(bytes: &[u8], needles: &[String], password: Option<&str>) -> Report 
 }
 
 /// How many times `needle` occurs in `haystack`.
+/// How many revisions a file ends: `%%EOF` markers that follow a `startxref`
+/// and its offset, with white space between the three.
+///
+/// **Not how many times the bytes `%%EOF` occur**, which is what this counted
+/// until 2026-10-04. `%%EOF` is also a PostScript comment, and an embedded
+/// CMap is a PostScript resource that ends `%%EndResource %%EOF`. A document
+/// that keeps such a CMap uncompressed has the bytes once per CMap, in stream
+/// data, where they end nothing. Counted raw, a rewrite of such a document was
+/// refused as holding several revisions, and a redaction of it could not be
+/// verified: 2 of 59 real documents, each with three CMaps.
+///
+/// A revision's last lines are fixed by the format (ISO 32000-1 7.5.5):
+/// `startxref`, the offset, `%%EOF`. That is what is counted. A stream that
+/// holds a whole PDF uncompressed still counts, and is still reported: this
+/// does not read stream lengths, so it cannot tell that case from a second
+/// revision, and saying *not verified* there is the safe answer.
+pub(crate) fn revision_ends(bytes: &[u8]) -> usize {
+    const MARK: &[u8] = b"%%EOF";
+    const START: &[u8] = b"startxref";
+    let mut ends = 0;
+    let mut from = 0;
+    while let Some(found) = bytes[from..].windows(MARK.len()).position(|w| w == MARK) {
+        let at = from + found;
+        from = at + MARK.len();
+        // Backwards from the marker: white space, digits, white space, keyword.
+        let before = &bytes[..at];
+        let digits_end = before.len() - trailing(before, u8::is_ascii_whitespace);
+        let digits = trailing(&before[..digits_end], u8::is_ascii_digit);
+        let space_end = digits_end - digits;
+        let space = trailing(&before[..space_end], u8::is_ascii_whitespace);
+        let keyword_end = space_end - space;
+        // No test for `digits > 0`: with no digits the white space before
+        // them was already taken as the white space before the marker, so
+        // `space` is zero.
+        if digits_end < before.len() && space > 0 && before[..keyword_end].ends_with(START) {
+            ends += 1;
+        }
+    }
+    ends
+}
+
+/// How many bytes at the end of `bytes` satisfy `is`.
+fn trailing(bytes: &[u8], is: fn(&u8) -> bool) -> usize {
+    bytes.iter().rev().take_while(|byte| is(byte)).count()
+}
+
 fn count(haystack: &[u8], needle: &[u8]) -> usize {
     if needle.is_empty() || haystack.len() < needle.len() {
         return 0;
@@ -1114,6 +1167,61 @@ mod tests {
         let wrong = structure(&bytes);
         assert!(
             wrong.iter().any(|why| why.contains("2 %%EOF markers")),
+            "{wrong:?}"
+        );
+    }
+
+    /// The defect this rule had until 2026-10-04: an embedded CMap is a
+    /// PostScript resource, and PostScript ends a file with the same comment.
+    #[test]
+    fn the_same_bytes_inside_a_stream_end_no_revision() {
+        let cmap = b"2 0 obj\n<</Length 44>>\nstream\nend\nend\n%%EndResource\n%%EOF\n\nendstream\nendobj\n";
+        let mut bytes = b"%PDF-1.7\n1 0 obj\n<</Type/Catalog>>\nendobj\n".to_vec();
+        for _ in 0..3 {
+            bytes.extend_from_slice(cmap);
+        }
+        let start = bytes.len();
+        bytes.extend_from_slice(
+            b"xref\n0 1\n0000000000 65535 f \ntrailer\n<</Size 3/Root 1 0 R>>\n",
+        );
+        bytes.extend_from_slice(format!("startxref\n{start}\n%%EOF\n").as_bytes());
+        assert_eq!(
+            super::count(&bytes, b"%%EOF"),
+            4,
+            "the fixture holds the bytes four times"
+        );
+        assert_eq!(super::revision_ends(&bytes), 1);
+        assert_eq!(structure(&bytes), Vec::<String>::new());
+        let report = super::scan(&bytes, &[], None);
+        assert_eq!(report.eofs, 1);
+        assert!(
+            !report.blind.iter().any(|why| why.contains("%%EOF markers")),
+            "{:?}",
+            report.blind
+        );
+    }
+
+    #[test]
+    fn a_revision_ends_with_startxref_an_offset_and_the_marker_and_with_nothing_less() {
+        let ends = |tail: &str| super::revision_ends(tail.as_bytes());
+        assert_eq!(ends("startxref\n123\n%%EOF\n"), 1);
+        assert_eq!(ends("startxref\r\n123\r\n%%EOF"), 1);
+        assert_eq!(ends("startxref 123 %%EOF"), 1);
+        assert_eq!(ends("startxref\n1\n%%EOF\nstartxref\n2\n%%EOF\n"), 2);
+        // The marker alone, the marker after a number alone, no offset, no
+        // space before the marker, and a keyword that is only the end of one.
+        assert_eq!(ends("%%EOF"), 0);
+        assert_eq!(ends("123\n%%EOF"), 0);
+        assert_eq!(ends("startxref\n%%EOF"), 0);
+        assert_eq!(ends("startxref\n123%%EOF"), 0);
+        assert_eq!(ends("startxref123\n%%EOF"), 0);
+        assert_eq!(ends("xref\n123\n%%EOF"), 0);
+        // A file whose only marker ends nothing says so.
+        let wrong = structure(b"%PDF-1.7\n%%EOF\n");
+        assert!(
+            wrong
+                .iter()
+                .any(|why| why.contains("none that ends a revision")),
             "{wrong:?}"
         );
     }

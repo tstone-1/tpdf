@@ -268,6 +268,7 @@ hop through the index.
 - A swept extract still held the dropped pages' pictures, because every page named one resource dictionary
 - `lopdf` writes a crypt filter without its key length, and two readers that both assume it agreed the file was fine
 - A plan measured without being applied called regions removable that the save refused
+- `%%EOF` is also a PostScript comment, so counting its bytes counts every embedded CMap as a revision
 
 ## Tauri, the webview and startup
 - `AppHandle::exit` does not set the process's exit code
@@ -25599,3 +25600,26 @@ same rectangle is cut, in PDFium, at a resolution where the edges were aligned. 
 half a point at 144 dpi and it is not ink the redaction removed. A pixel comparison
 around a cut needs a margin of one device pixel around the whole cut shape, not only
 around the region.
+
+### `%%EOF` is also a PostScript comment, so counting its bytes counts every embedded CMap as a revision
+
+`verify::structure` checks a file tpdf has just written: one header, one revision,
+nothing after the end. It counted revisions as occurrences of the five bytes `%%EOF`,
+and so did `verify::scan` and the revision count in *Document properties*. A comment
+in `docinfo.rs` even said a stream holding those bytes would inflate the number and
+that this was tolerable.
+
+Two of 59 real documents were refused by it, on every rewrite: *"tpdf built the
+document and then found it malformed ... the file has 4 %%EOF markers"*. Each has one
+`startxref` and three uncompressed CMap streams, and a CMap is a PostScript resource
+that ends `%%EndResource` `%%EOF`. Nothing was malformed. The fixtures never showed
+it because every CMap in them is compressed.
+
+A revision's end is fixed by the format: `startxref`, the offset, `%%EOF`.
+`verify::revision_ends` counts that. It still cannot tell a stream that holds a whole
+uncompressed PDF from a second revision, because it does not read stream lengths; it
+reports that case as before, which is the safe direction.
+
+The general shape: a byte pattern counted over a whole file counts stream data too,
+and stream data is whatever the document's author put there. Either anchor the
+pattern to syntax a stream cannot be mistaken for, or walk the objects.

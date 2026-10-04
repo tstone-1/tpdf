@@ -17,6 +17,20 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.4] - Unreleased
+
+### Fixed
+
+- **Redaction, and every other rewrite, was refused on a document that keeps a font's
+  character map uncompressed.** Such a map is a PostScript resource and ends with the
+  comment `%%EOF`, which is also how a PDF revision ends. tpdf checks that a file it
+  has just written holds exactly one revision, counted those bytes wherever they
+  stood, and refused its own output as *"the file has 4 %%EOF markers"*. A revision
+  end is now counted where the format puts one: after `startxref` and its offset. On
+  59 of the author's documents a redaction of the whole first page is written for all
+  59, where it was written for 57. *Document properties* counted the same way and
+  showed such a document as having four revisions; it shows one.
+
 ## [26.10.3] - 2026-10-03
 
 ### Added

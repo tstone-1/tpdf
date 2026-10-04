@@ -841,14 +841,16 @@ fn version_of(document: &Document, bytes: &[u8]) -> String {
 
 /// How many revisions the file holds.
 ///
-/// Counted as end-of-file markers, which real writers emit exactly once per
-/// revision. It is a count of those five bytes and nothing stronger: a content
-/// stream that happens to contain them inflates it. That is tolerable here
-/// because nothing decides anything on this number --- the question it hints at,
-/// *was this appended to after signing*, is answered properly and separately by
-/// [`Signature::covers_whole_file`].
+/// [`crate::verify::revision_ends`]: an end-of-file marker that follows a
+/// `startxref` and its offset. Until 2026-10-04 this counted the five bytes
+/// `%%EOF` wherever they stood and said a stream holding them would inflate
+/// it. One did: an uncompressed CMap ends with that PostScript comment, and a
+/// real document of one revision with three such CMaps was shown as four.
+/// Nothing decides anything on this number --- *was this appended to after
+/// signing* is answered by [`Signature::covers_whole_file`] --- but a reader
+/// is shown it.
 fn revisions_in(bytes: &[u8]) -> usize {
-    bytes.windows(5).filter(|w| *w == b"%%EOF").count()
+    crate::verify::revision_ends(bytes)
 }
 
 /// Reads what `lopdf` recorded when it decrypted the document.
@@ -3112,6 +3114,17 @@ mod tests {
     /// Two fixtures because one cannot discriminate: `-open` is the case the
     /// trailer route cannot see, `-pw` is the case it can, and a version that
     /// dropped either route would still pass on the other one.
+    #[test]
+    fn a_marker_inside_a_stream_is_not_a_revision_a_reader_is_shown() {
+        // An uncompressed CMap ends with the PostScript comment `%%EOF`.
+        let bytes = b"%PDF-1.7\n1 0 obj\n<</Length 20>>\nstream\n%%EndResource\n%%EOF\n\nendstream\nendobj\nstartxref\n9\n%%EOF\n";
+        assert_eq!(super::revisions_in(bytes), 1);
+        // The control: a second revision is a second one.
+        let mut twice = bytes.to_vec();
+        twice.extend_from_slice(b"startxref\n120\n%%EOF\n");
+        assert_eq!(super::revisions_in(&twice), 2);
+    }
+
     #[test]
     fn an_encrypted_document_reports_its_encryption_either_way() {
         let mut examined = 0;
