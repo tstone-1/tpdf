@@ -155,6 +155,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // somewhere, and this one adds a signature to it --- the one write whose
       // result a reader will hand to somebody else as proof.
       "file.signDocument",
+      "file.signField",
       SEPARATOR,
       "file.print",
       SEPARATOR,

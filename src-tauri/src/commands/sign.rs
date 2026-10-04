@@ -435,8 +435,8 @@ pub async fn sign_identities() -> Result<sign_cms::Choices, String> {
 /// for none --- in which case no request is made to anybody. It is judged here
 /// before anything else is asked. `long_term` asks for long-term validation
 /// data as well, and is refused without a timestamp.
-// Ten because a Tauri command's arguments are its IPC shape: three are the
-// states Tauri injects, and bundling the seven the frontend sends into a struct
+// Eleven because a Tauri command's arguments are its IPC shape: three are the
+// states Tauri injects, and bundling the eight the frontend sends into a struct
 // would change `ipc.ts`'s mirror for no reader's benefit.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -451,6 +451,7 @@ pub async fn sign_document(
     placement: Option<Placement>,
     timestamp: Option<String>,
     long_term: Option<bool>,
+    field: Option<String>,
 ) -> Result<Signing, String> {
     let authority = authority_of(timestamp.as_deref())?;
     let long_term = long_term_of(long_term.unwrap_or(false), authority.as_ref())?;
@@ -487,7 +488,10 @@ pub async fn sign_document(
         }
     };
     let (reply, rx) = reply_channel();
-    service.prepare_signature(doc, at, visible, reply);
+    // An empty signature field the document has, when the reader chose one:
+    // the worker finds it by this name and signs it, and a placement beside
+    // it is drawn in the field's rectangle whatever rectangle it names.
+    service.prepare_signature(doc, at, visible, field.unwrap_or_default(), reply);
     let unsigned = await_reply("sign_document", rx).await?;
 
     let checking = outside_of(&app, service.backend());

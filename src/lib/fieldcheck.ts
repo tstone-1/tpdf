@@ -701,6 +701,48 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         `${values.join("|")}; ${group.map((widget) => `${widget.reason} ${widget.tooltip}`).join()}`,
       );
     }
+
+    // The empty signature field in the saved file: a button over it, which
+    // starts the signing with that field. The signing itself needs a key and
+    // a person, and is `--phase sign`'s; this is the press reaching it.
+    {
+      const button = () => document.querySelector<HTMLButtonElement>('.form-fields button[aria-label="Sign Signature 1"]');
+      const said = () => `${document.querySelector('[data-testid="notice"]')?.textContent ?? ""} ${shown()}`;
+      const chooser = () => document.querySelector<HTMLDialogElement>(".sign-identity-dialog[open]");
+      await settle(() => button()?.style.display === "block", SETTLE_MS);
+      check("the window offers the empty signature field a Sign button, over the field", button()?.style.display === "block", String(button()?.style.display));
+      host.run("edit.formEditOn");
+      await pause(200);
+      const hidden = button()?.style.display;
+      host.run("edit.formEditOff");
+      await pause(200);
+      check("which is put away while the fields are being changed", hidden === "none" && button()?.style.display === "block", `${hidden}, then ${button()?.style.display}`);
+      // With an answer not yet saved, the press is refused in words.
+      const select = document.querySelector<HTMLSelectElement>('.form-fields select[aria-label="Dropdown 1"]');
+      if (select) { select.value = "0"; select.dispatchEvent(new Event("change", { bubbles: true })); }
+      await settle(() => host.edits()?.state.dirty === true, SETTLE_MS);
+      await host.idle();
+      button()?.click();
+      await settle(() => said().includes("Save your changes first"), SETTLE_MS);
+      check("a press with changes not yet saved says to save first, and opens nothing", said().includes("Save your changes first") && chooser() === null, said());
+      host.run("edit.undo");
+      await host.idle();
+      // With nothing unsaved the command starts the signing in that field: the
+      // chooser, with a visible signature offered first and the field named,
+      // or the sentence for a machine with no certificate to sign with.
+      host.run("file.signField");
+      await settle(() => chooser() !== null || /certificate/i.test(said()), SETTLE_MS);
+      const open = chooser();
+      const visible = open?.querySelector<HTMLInputElement>('input[name="sign-appearance"][value="visible"]');
+      check(
+        "the sign-in-the-field command opens the signing for that field",
+        open ? visible?.checked === true && (visible.parentElement?.textContent ?? "").includes("the field Signature 1") : /certificate/i.test(said()),
+        open ? `chooser: ${visible?.parentElement?.textContent}` : `no chooser: ${said()}`,
+      );
+      [...(open?.querySelectorAll("button") ?? [])].find((one) => one.textContent === "Cancel")?.click();
+      await settle(() => chooser() === null, SETTLE_MS);
+      check("and Cancel signs nothing", chooser() === null && host.edits()?.state.dirty === false, String(host.edits()?.state.dirty));
+    }
   }
 }
 

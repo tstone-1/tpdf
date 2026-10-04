@@ -304,6 +304,14 @@ MUTATIONS = [
     Mutation("signature field: let one be dragged as small as a text field", "src/lib/fieldnames.ts", "kind === \"signature\" ? 24 : 8;", "8;", "is a signature field under the next name of its kind, which is at least 24 points a side"),
     Mutation("signature field: show a saved one as a text field", "src/lib/savedfields.ts", "      : widget.control.kind === \"signature\" ? \"signature\"\n", "", "shows each field on the page it is on, under an id of its own, with its kind and name"),
     Mutation("signature field: refuse to copy one", "src/lib/duplicate.ts", "    case \"signature\":\n      // A copy is a new place for a signature, whether or not this one is signed.\n      return \"signature\";\n", "", "is an empty signature field for a signature field, signed or not"),
+    Mutation("sign a field: offer a field that holds a signature", "src/lib/signfield.ts", "  return widget.control.kind === \"signature\" && !widget.control.signed;", "  return widget.control.kind === \"signature\";", "are the ones that hold no signature, in the form's order, each in one place"),
+    Mutation("sign a field: offer a field shown in several places", "src/lib/signfield.ts", ".length === 1);", ".length >= 1);", "are the ones that hold no signature, in the form's order, each in one place"),
+    Mutation("sign a field: sign a field of another kind where it is", "src/lib/signfield.ts", "  if (page === undefined || !isEmptySignature(widget)) return null;", "  if (page === undefined) return null;", "are not offered on a page the file does not show, nor when signed or of another kind"),
+    Mutation("sign a field: ask for a drag beside the field", "src/lib/signing.ts", "    const placed = field ? { page: field.page, rect: field.rect } : await shell.place();", "    const placed = await shell.place();", "draws a visible one in the field, where the field is, and drags nothing"),
+    Mutation("sign a field: sign without naming the field", "src/lib/signing.ts", "    chosen.identity, path, placement, chosen.timestamp, longTerm, field?.name ?? null,", "    chosen.identity, path, placement, chosen.timestamp, longTerm, null,", "draws a visible one in the field, where the field is, and drags nothing"),
+    Mutation("sign a field: open the chooser without the field", "src/lib/signing.ts", "  const chosen = await shell.choose(choices.usable, field?.name ?? null);", "  const chosen = await shell.choose(choices.usable, null);", "draws a visible one in the field, where the field is, and drags nothing"),
+    Mutation("sign a field: offer an invisible signature first in a field", "src/lib/signing.ts", "    field !== null,\n  );", "    false,\n  );", "offers a visible signature first when a signature field is being signed"),
+    Mutation("sign a field: offer the command with no field to sign", "src/lib/appcommands.ts", "      enabled: () => withDocument() && actions.signableFields() >= 1,", "      enabled: withDocument,", "signs a signature field through its own command, offered only while the document has an empty one"),
     Mutation("placed properties: give a placed dropdown no text size", "src/lib/savedfields.ts", "    textSize: text || field.kind === \"dropdown\" ? field.text_size ?? 0 : null,", "    textSize: text ? field.text_size ?? 0 : null,", "asks with what the field was placed with, by its kind"),
     Mutation("placed properties: show no text size for the one it has", "src/lib/savedfields.ts", "    textSize: text || field.kind === \"dropdown\" ? field.text_size ?? 0 : null,", "    textSize: text || field.kind === \"dropdown\" ? 0 : null,", "asks with what the field was placed with, by its kind"),
     Mutation("placed properties: give a placed dropdown a default", "src/lib/savedfields.ts", "    defaultValue: text ? field.default_value ?? \"\" : null,", "    defaultValue: field.default_value ?? \"\",", "asks with what the field was placed with, by its kind"),
@@ -6182,6 +6190,9 @@ TEST_FILES = [
     # Eleventh time this list has grown, and the guard has caught the omission
     # every time.
     "src/lib/viewermove.test.ts",
+    # Added 2026-10-04 with signing into a signature field, after the run
+    # refused its three mutations.
+    "src/lib/signfield.test.ts",
     # Added 2026-08-23 while cutting 26.8.8, and *after* the mutations: the run
     # refused all seven of them --- three under `unlock.ts` and four under
     # `passworddialog.ts` --- with "no test here is named ...", for tests both
@@ -8867,7 +8878,7 @@ MUTATIONS += [
         "        visible: true,\n        timestamp,\n",
         "answers an invisible signature unless the reader picks a visible one"),
     Mutation("signing: open the chooser with neither appearance picked", "src/lib/signing.ts",
-        '  appearance("invisible", "Invisible — the signature is in the file, not on a page", true);',
+        '  appearance("invisible", "Invisible — the signature is in the file, not on a page", field === null);',
         '  appearance("invisible", "Invisible — the signature is in the file, not on a page", false);',
         "answers an invisible signature unless the reader picks a visible one"),
     Mutation("viewer: leave a placement waiting when the tool is taken", "src/lib/viewer.ts",
@@ -9017,8 +9028,8 @@ MUTATIONS += [
         '  if (typeof server !== "string") return noStamp();',
         "falls back to none, whole, for anything tpdf did not write"),
     Mutation("timestamp: hand the backend no authority", "src/lib/signing.ts",
-        "  let outcome = await shell.sign(chosen.identity, path, placement, chosen.timestamp, longTerm);",
-        "  let outcome = await shell.sign(chosen.identity, path, placement, null, longTerm);",
+        "    chosen.identity, path, placement, chosen.timestamp, longTerm, field?.name ?? null,",
+        "    chosen.identity, path, placement, null, longTerm, field?.name ?? null,",
         "is asked of the chosen authority, and the closing sentence says what it attests"),
     Mutation("timestamp: leave the attested time out of the closing sentence",
         "src/lib/signing.ts",

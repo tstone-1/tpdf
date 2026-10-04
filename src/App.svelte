@@ -78,6 +78,7 @@
   import type { DocumentInfo, PageSize } from "./lib/ipc";
   import { call, isOpenRefusal } from "./lib/ipc";
   import * as signing from "./lib/signing";
+  import { emptySignatureFields, signTarget, type SignTarget } from "./lib/signfield";
   import { openWithPassword } from "./lib/unlock";
   import { isMac, label, setPrintedKeys } from "./lib/keys";
   import { buildMenu, menuEnablement, runMenuCommand } from "./lib/menubar";
@@ -897,6 +898,12 @@
     mergeDocuments: () => void mergeDocuments(),
     fromPictures: () => void fromPictures(),
     signDocument: () => void signDocument(),
+    signableFields: () => emptySignatureFields(scannedForm).length,
+    signField: () => {
+      const first = emptySignatureFields(scannedForm)[0];
+      const target = first && edits ? signTarget(first, edits.state.pages) : null;
+      if (target) void signDocument(target);
+    },
     showProperties: () => void showProperties(),
   };
 
@@ -2496,7 +2503,7 @@
    * file. The sequence, its refusals and every sentence are `signing.ts`'s; this
    * supplies the chooser, the save panel, the command and the message area.
    */
-  async function signDocument(): Promise<void> {
+  async function signDocument(field: SignTarget | null = null): Promise<void> {
     if (opening) return;
     return documentTasks.run(async () => {
       if (!edits || !openPathName || openDoc < 0) return;
@@ -2507,7 +2514,7 @@
           dirty: () => dirty,
           openPath: source,
           list: () => call("sign_identities"),
-          choose: (choices) => signing.askIdentity(choices),
+          choose: (choices, into) => signing.askIdentity(choices, undefined, into),
           savedImage: () => loadSignature(),
           // The preview is drawn in this document's worker by the signing's
           // own code; the drawing dialog is Phase 4's, named for this use.
@@ -2536,8 +2543,8 @@
               ? await signSaves.ask(suggested, panel)
               : await panel();
           },
-          sign: (identity, path, placement, timestamp, longTerm) =>
-            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm }),
+          sign: (identity, path, placement, timestamp, longTerm, into) =>
+            call("sign_document", { doc, source, identity, path, placement, timestamp, longTerm, field: into }),
           // A timestamp or long-term data that did not come: the question, then
           // the signature the backend is holding written or dropped. The OS is
           // not asked again.
@@ -2546,7 +2553,7 @@
           resume: (pending, timestamp, longTerm) =>
             call("sign_resume", { pending, timestamp, longTerm }),
           discard: (pending) => call("sign_discard", { pending }),
-        });
+        }, field);
         if (said) say(said);
       } catch (e) {
         say(String(e));
@@ -4333,7 +4340,8 @@
         };
         formLayer = new FormLayer(surface, form, anchored,
           (object, value) => applyEdit((model) => model.fill(object, value)),
-          (widget) => mounted.showForm(widget), say);
+          (widget) => mounted.showForm(widget), say,
+          (widget) => void signDocument(edits ? signTarget(widget, edits.state.pages) : null));
         if (edits) formLayer.update(edits.state);
         formLayer.setBusy(documentBusy);
       }).catch((error) => { if (openDoc === wanted && viewer === mounted) say(String(error)); });

@@ -410,6 +410,12 @@ export interface Commands {
       timestamp: string | null;
       /** Long-term validation data as well; refused without `timestamp`. */
       longTerm: boolean;
+      /**
+       * The empty signature field to sign, by its full name, or `null` for a
+       * field of the signature's own. With one, `placement` is drawn in the
+       * field's rectangle.
+       */
+      field: string | null;
     };
     reply: SignOutcome;
   };

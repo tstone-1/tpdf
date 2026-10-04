@@ -43,7 +43,7 @@ function harness(
   hasDocument = true,
   update: {
     available?: boolean; ready?: boolean; automatic?: boolean; disk?: DiskChangeMode;
-    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean;
+    restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
   } = {},
   journal: { undo?: boolean; redo?: boolean } = {},
   selected = false,
@@ -181,6 +181,8 @@ function harness(
     fieldProperties: () => fired.push("fieldProperties"),
     arrange: (how) => fired.push(`arrange:${how}`),
     savedFields: () => update.savedFields ?? 0,
+    signableFields: () => update.signable ?? 0,
+    signField: () => fired.push("signField"),
     formEditing: () => formEditing,
     setFormEditing: (on) => { formEditing = on; fired.push(`setFormEditing:${on}`); },
     draw: () => fired.push("draw"),
@@ -825,7 +827,7 @@ describe("every registered command", () => {
     // themselves are asserted above in both directions.
     const built = (update: {
       available?: boolean; ready?: boolean; disk?: DiskChangeMode;
-      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean;
+      restoreTabs?: boolean; reopenable?: number; fieldBorder?: boolean; picked?: number; fieldPicked?: boolean; formEditing?: boolean; savedFields?: number; canOrderTabs?: boolean; signable?: number;
     }) => harness(
       true,
       update,
@@ -857,7 +859,8 @@ describe("every registered command", () => {
     // With tabs from last time to reopen, or that command is withheld in both.
     // And three marks picked, so every arrangement is allowed to run.
     // And a form with fields, so changing them is on offer.
-    const found = built({ available: true, reopenable: 1, picked: 3, savedFields: 2 });
+    // And an empty signature field, so signing in it is.
+    const found = built({ available: true, reopenable: 1, picked: 3, savedFields: 2, signable: 1 });
     // The second state also holds the other disk-change mode, for the reason
     // the update pair needs two: each `file.onDiskChange.*` command is withheld
     // while its mode is the current one, so no single state offers all three.
@@ -1117,6 +1120,17 @@ describe("the page operations", () => {
     const { registry, fired } = harness();
     expect(registry.run("file.mergeDocuments")).toBe(true);
     expect(fired).toEqual(["mergeDocuments"]);
+  });
+
+  it("signs a signature field through its own command, offered only while the document has an empty one", () => {
+    const none = harness();
+    expect(none.registry.run("file.signField")).toBe(false);
+    expect(none.fired).toEqual([]);
+    const one = harness(true, { signable: 1 });
+    expect(one.registry.all().find((entry) => entry.id === "file.signField")?.title).toBe("Sign in the signature field\u2026");
+    expect(one.registry.run("file.signField")).toBe(true);
+    expect(one.fired).toEqual(["signField"]);
+    expect(harness(false, { signable: 1 }).registry.run("file.signField")).toBe(false);
   });
 
   it("signs the document through its own command, offered with or without edits", () => {
@@ -1732,6 +1746,8 @@ describe("the window shortcuts for editing", () => {
       setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
       pickedMarks: () => 0,
       duplicatePicked: () => fired.push("duplicatePicked"),
+      signableFields: () => 0,
+      signField: () => fired.push("signField"),
       canOrderTabs: () => false,
       orderTabs: () => fired.push("orderTabs"),
       fieldPicked: () => false,

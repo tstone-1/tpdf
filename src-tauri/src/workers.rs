@@ -2010,11 +2010,15 @@ impl Engine for Workers {
         doc: u32,
         at: u64,
         visible: Option<&crate::sign_prepare::Visible>,
+        field: &str,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
         let request = Request::PrepareSignature {
             at,
             visible: visible.cloned().map(Box::new),
-            notes: crate::sign_prepare::Notes::default(),
+            notes: crate::sign_prepare::Notes {
+                field: field.to_string(),
+                ..Default::default()
+            },
         };
         match self.ask(doc, &request)? {
             Reply::PreparedSignature(unsigned) => Ok(unsigned),

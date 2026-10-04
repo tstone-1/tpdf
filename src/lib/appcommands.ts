@@ -572,6 +572,10 @@ export interface AppActions {
    * written.
    */
   signDocument(): void;
+  /** How many empty signature fields the open document has to sign. */
+  signableFields(): number;
+  /** Signs the first of them, as a press on it does. */
+  signField(): void;
   /** Show what the document says about itself. */
   showProperties(): void;
 }
@@ -1768,6 +1772,14 @@ export function registerAppCommands(
       title: "Sign document\u2026",
       enabled: withDocument,
       run: () => actions.signDocument(),
+    },
+    {
+      // The same signing, into a signature field the document has: the first
+      // empty one. A press on a field on its page signs that one.
+      id: "file.signField",
+      title: "Sign in the signature field\u2026",
+      enabled: () => withDocument() && actions.signableFields() >= 1,
+      run: () => actions.signField(),
     },
     {
       // "and save as", for `file.redactCopy`'s reason: the open document is not

@@ -266,6 +266,50 @@ describe("the order the questions are asked in", () => {
   });
 });
 
+describe("signing a signature field the document has", () => {
+  const field = { name: "Approved", page: 9 as PageId, rect: [40, 50, 240, 110] as [number, number, number, number] };
+  /** A shell that also records the field each question was asked about. */
+  function inField(visible: boolean) {
+    const into: (string | null)[] = [];
+    const made = shell({
+      choose: async (_choices, name) => {
+        into.push(name);
+        return { identity: "abc", visible, timestamp: null };
+      },
+      sign: async (_identity, _path, placement, _timestamp, _longTerm, name) => {
+        into.push(name);
+        made.placements.push(placement);
+        return { signed: { path: "/docs/report-signed.pdf", field: "Approved", signatures: [] }, unstamped: null };
+      },
+    });
+    return { ...made, into };
+  }
+
+  it("draws a visible one in the field, where the field is, and drags nothing", async () => {
+    const { asked, placements, into, shell: s } = inField(true);
+    await signDocument(s, field);
+    expect(asked).toEqual(["list", "savedImage", "appearance:abc:saved", "saveAs:report-signed.pdf"]);
+    expect(placements).toEqual([{ page: 9, rect: [40, 50, 240, 110], image: saved, options: chosenLook.options }]);
+    // The chooser is told which field, and so is the signing.
+    expect(into).toEqual(["Approved", "Approved"]);
+  });
+
+  it("writes an invisible one into the field all the same", async () => {
+    const { asked, placements, into, shell: s } = inField(false);
+    await signDocument(s, field);
+    expect(asked).toEqual(["list", "saveAs:report-signed.pdf"]);
+    expect(placements).toEqual([null]);
+    expect(into).toEqual(["Approved", "Approved"]);
+  });
+
+  it("names no field, and asks for the drag, when none was given", async () => {
+    const { asked, into, shell: s } = inField(true);
+    await signDocument(s);
+    expect(asked).toContain("place");
+    expect(into).toEqual([null, null]);
+  });
+});
+
 describe("the words", () => {
   it("suggests a -signed name beside the original, whatever its case", () => {
     expect(signedName("/docs/report.pdf")).toBe("report-signed.pdf");
@@ -370,7 +414,7 @@ describe("the words", () => {
 
 describe("the chooser", () => {
   /** Opens the chooser on a fake DOM and hands back its controls. */
-  function open(choices: Choice[], storage?: () => Pick<Storage, "getItem" | "setItem">) {
+  function open(choices: Choice[], storage?: () => Pick<Storage, "getItem" | "setItem">, into: string | null = null) {
     const dom = installFakeDom();
     const body = new FakeElement("body");
     Object.assign(globalThis.document, { body, activeElement: null });
@@ -388,7 +432,7 @@ describe("the chooser", () => {
         });
       return node as unknown as HTMLElement;
     }) as typeof document.createElement);
-    const answer = askIdentity(choices, storage);
+    const answer = askIdentity(choices, storage, into);
     const nodes = (root: FakeElement): FakeElement[] =>
       root.children.flatMap((child) => [child, ...nodes(child)]);
     const all = nodes(body) as (FakeElement & { checked: boolean; value: string; name: string })[];
@@ -404,6 +448,15 @@ describe("the chooser", () => {
     const alert = () => all.find((node) => node.attributes.get("role") === "alert")!;
     return { answer, radio, button, field, alert, done };
   }
+
+  it("offers a visible signature first when a signature field is being signed", async () => {
+    const pressed = open([choice], undefined, "Approved");
+    expect(pressed.radio("sign-appearance", "visible").checked).toBe(true);
+    expect(pressed.radio("sign-appearance", "invisible").checked).toBe(false);
+    pressed.button("Sign…").dispatch("click", {});
+    expect(await pressed.answer).toEqual({ identity: "abc", visible: true, timestamp: null, longTerm: false });
+    pressed.done();
+  });
 
   it("answers an invisible signature unless the reader picks a visible one", async () => {
     const first = open([choice]);

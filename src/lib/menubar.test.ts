@@ -248,7 +248,8 @@ describe("buildMenu", () => {
       "command",
       "command",
       "separator",
-      // Sign document, alone.
+      // Sign document, and Sign in the signature field.
+      "command",
       "command",
       "separator",
       "command",

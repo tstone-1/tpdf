@@ -1,6 +1,7 @@
 import type { EditState } from "./edits";
 import type { Anchor } from "./popup";
 import type { FieldEdited, FieldProps } from "./savedfields";
+import { isEmptySignature } from "./signfield";
 
 /** Option indices preserve choices whose export values happen to be equal. */
 export type FormValue = string | boolean | number[];
@@ -180,6 +181,8 @@ export function sameAnswer(a: FormValue, b: FormValue): boolean {
 export class FormLayer {
   private readonly node = document.createElement("div");
   private readonly controls: Mounted[] = [];
+  /** A button over each empty signature field, which signs it. */
+  private readonly places: { widget: FormWidget; button: HTMLButtonElement }[] = [];
   private changes: readonly FormChange[] = [];
   private fields: readonly FieldEdited[] = [];
   private disposed = false;
@@ -190,11 +193,28 @@ export class FormLayer {
     private readonly change: (object: [number, number], value: FormValue) => Promise<void>,
     private readonly reveal: (widget: FormWidget) => void,
     private readonly error: (message: string) => void,
+    /** Signs an empty signature field. Without it such a field is offered nothing. */
+    private readonly sign?: (widget: FormWidget) => void,
   ) {
     this.node.className = "form-fields";
     this.node.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:3";
     host.append(this.node);
     for (const widget of form.widgets) {
+      // A place for a signature is pressed, not typed into.
+      if (this.sign && isEmptySignature(widget)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "form-sign";
+        button.textContent = "Sign";
+        button.setAttribute("aria-label", `Sign ${widget.name || "the signature field"}`);
+        button.title = widget.tooltip || `Sign ${widget.name} with a certificate`;
+        button.style.cssText = "position:absolute;box-sizing:border-box;margin:0;pointer-events:auto;cursor:pointer;border:1px dashed #4674be;border-radius:1px;background:#4674be1f;color:#27508f;font:12px Helvetica,Arial,sans-serif;min-width:0;min-height:0;overflow:hidden";
+        button.addEventListener("pointerdown", (event) => event.stopPropagation());
+        button.addEventListener("click", () => { if (!this.disposed) this.sign?.(widget); });
+        this.places.push({ widget, button });
+        this.node.append(button);
+        continue;
+      }
       if (widget.reason) continue;
       const kind = widget.control;
       const input = kind.kind === "choice" && !kind.editable ? document.createElement("select") : widget.multiline ? document.createElement("textarea") : document.createElement("input");
@@ -342,6 +362,7 @@ export class FormLayer {
 
   /** Freeze editing during file writes without blurring an uncommitted draft. */
   setBusy(busy: boolean): void {
+    for (const { button } of this.places) button.disabled = busy;
     for (const { widget, input } of this.controls) {
       if (input instanceof HTMLSelectElement || widget.control.kind === "radio" || widget.control.kind === "checkbox") input.disabled = busy;
       else input.readOnly = busy;
@@ -385,6 +406,14 @@ export class FormLayer {
       if (control.input.style.display !== display) control.input.style.display = display;
       if (!box || !visible) continue;
       Object.assign(control.input.style, { fontSize: `${12 * (box.scale ?? 1)}px`, padding: `${2 * (box.scale ?? 1)}px`, clipPath: box.clip ?? "none", left: `${box.left}px`, top: `${box.top}px`, width: `${box.right - box.left}px`, height: `${box.bottom - box.top}px` });
+    }
+    for (const { widget, button } of this.places) {
+      const box = this.anchor(widget);
+      const visible = box && box.bottom >= 0 && box.top <= height;
+      const display = visible ? "block" : "none";
+      if (button.style.display !== display) button.style.display = display;
+      if (!box || !visible) continue;
+      Object.assign(button.style, { fontSize: `${12 * (box.scale ?? 1)}px`, clipPath: box.clip ?? "none", left: `${box.left}px`, top: `${box.top}px`, width: `${box.right - box.left}px`, height: `${box.bottom - box.top}px` });
     }
   }
 

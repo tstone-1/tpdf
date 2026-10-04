@@ -242,7 +242,11 @@ measured the Windows render constants come out 1.5–1.8x worse.
   open is checked, in the document's properties. Documents with unsaved edits, encrypted documents and
   documents certified against any change are refused. The same signing and checking is
   available from a terminal: see [Command-line tool](#command-line-tool).
-  <!-- built: file.signDocument -->
+  A document that has an empty signature field shows a *Sign* button over it: press it, or
+  run *Sign in the signature field…*, which takes the first empty one, and the signature
+  goes into that field. A visible signature is then drawn in the field's rectangle, so
+  nothing is dragged. *Add a form field: signature* makes such a field.
+  <!-- built: file.signDocument file.signField -->
 
 - **Saving signed or certified documents requires confirmation.** The current writer
   may invalidate their cryptographic signatures, including when filling permitted

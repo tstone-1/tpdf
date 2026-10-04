@@ -513,6 +513,9 @@ pub(crate) enum Job {
         /// Where a visible signature goes and what it shows; `None` for an
         /// invisible one. Boxed for `Append`'s reason: it carries pixels.
         visible: Option<Box<crate::sign_prepare::Visible>>,
+        /// The empty signature field to sign, by its full name; empty for a
+        /// field of the signature's own. [`crate::sign_prepare::Notes::field`].
+        field: String,
         reply: Reply<crate::sign_prepare::Unsigned>,
     },
     /// A visible signature's appearance, drawn. See
@@ -1110,6 +1113,7 @@ impl RenderService {
         doc: u32,
         at: u64,
         visible: Option<crate::sign_prepare::Visible>,
+        field: String,
         reply: Reply<crate::sign_prepare::Unsigned>,
     ) {
         if self
@@ -1118,6 +1122,7 @@ impl RenderService {
                 doc,
                 at,
                 visible: visible.map(Box::new),
+                field,
                 reply,
             })
             .is_err()
@@ -1314,6 +1319,7 @@ pub(crate) trait Engine {
         doc: u32,
         at: u64,
         visible: Option<&crate::sign_prepare::Visible>,
+        field: &str,
     ) -> Result<crate::sign_prepare::Unsigned, String>;
     fn signature_preview(
         &self,
@@ -1408,8 +1414,9 @@ pub(crate) fn dispatch(job: Job, engine: &dyn Engine) {
             doc,
             at,
             visible,
+            field,
             reply,
-        } => reply(engine.prepare_signature(doc, at, visible.as_deref())),
+        } => reply(engine.prepare_signature(doc, at, visible.as_deref(), &field)),
         Job::SignaturePreview {
             doc,
             at,
@@ -1696,12 +1703,16 @@ impl Engine for InProcess {
         doc: u32,
         at: u64,
         visible: Option<&crate::sign_prepare::Visible>,
+        field: &str,
     ) -> Result<crate::sign_prepare::Unsigned, String> {
         run_prepare_signature(
             open_slot(&self.docs.borrow(), doc)?,
             at,
             visible,
-            &crate::sign_prepare::Notes::default(),
+            &crate::sign_prepare::Notes {
+                field: field.to_string(),
+                ..Default::default()
+            },
         )
     }
 

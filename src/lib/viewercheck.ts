@@ -3278,6 +3278,8 @@ async function appCommandChecks(
     mergeDocuments: () => fired.push("mergeDocuments"),
     fromPictures: () => fired.push("fromPictures"),
     signDocument: () => fired.push("signDocument"),
+    signableFields: () => 1,
+    signField: () => fired.push("signField"),
     showProperties: () => fired.push("showProperties"),
   };
 
@@ -4288,6 +4290,13 @@ async function appCommandChecks(
       // `signing.test.ts`, and the real window is `tabs_check.py`'s to drive.
       id: "file.signDocument",
       ...shell("signDocument"),
+      read: () => fired.join(","),
+    },
+    {
+      // The same, into a signature field: reaching the action is what is
+      // covered here, and the field it signs is `signfield.test.ts`'s.
+      id: "file.signField",
+      ...shell("signField"),
       read: () => fired.join(","),
     },
     {

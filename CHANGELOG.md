@@ -32,7 +32,9 @@ have the binary.)
   place somebody signs with a certificate. It is at least 24 points a side. `tpdf form`
   makes one with `"kind": "signature"`. `tpdf sign --field NAME` signs such a field, in
   a form tpdf made or any other: the signature goes into that field, and with
-  `--visible` it is drawn in the field's rectangle.
+  `--visible` it is drawn in the field's rectangle. In the window an empty signature
+  field has a *Sign* button over it, and *Sign in the signature field…* signs the first
+  empty one: a visible signature is drawn in the field, so nothing is dragged.
 
 - **A key for duplicate.** ⌘D, or Ctrl+D on Windows, copies what is picked, as *Arrange:
   duplicate* does.

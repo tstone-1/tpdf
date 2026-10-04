@@ -3687,6 +3687,25 @@ intact and valid and the second signing as form filling, which a signature permi
 Not measured: a certified document (a visible signature is still refused there, as it
 was), and Acrobat.
 
+**Stage 3, the window.** An empty signature field has a *Sign* button over it
+(`FormLayer`, beside the controls a field is filled in), put away while the fields are
+being changed. A press starts the signing for that field, and *Sign in the signature
+field…* starts it for the first empty one (`signfield.ts` says which those are and
+where). `signing.signDocument` then asks for no drag: a visible signature is the first
+choice in the chooser, which names the field, and it is drawn in the field's rectangle;
+an invisible one is written into the field all the same. `sign_document` takes the
+field's name and the render service carries it to the worker. That last hop had no
+automated test for any signing, so the command-line suite now sends the service's own
+request through a pooled worker: it signs the field named, makes a field of its own
+with none named, and passes on the worker's refusal; with the name dropped in
+`workers.rs` two of those three fail. In the window, the fields phase finds the button
+over the saved field, sees it hidden while fields are changed, is told to save first
+when an answer is unsaved, and opens the chooser from the command, with the field
+named and a visible signature first; with the join taken out of `App.svelte` four
+checks fail. **Not run:** a signing in the window into a field, to the written file. It
+needs the key and a person at the keychain prompt, as `--phase sign` does, and that
+phase has no step for a field yet.
+
 #### Fields on a turned page — 2026-10-04
 
 A page the document turns with `/Rotate` took no new field, and a field on one could be

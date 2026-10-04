@@ -165,6 +165,78 @@ pub fn signs_the_field(report: &mut Report) {
         &format!("exit {code}; {stderr}; {read:?}"),
     );
 
+    // The window's own path to the worker: the render service's request, which
+    // the application's signing command makes with the field a reader pressed.
+    // The command-line tool above asks a worker of its own another way.
+    {
+        use tpdf_lib::render::{Backend, RenderService};
+        let service = RenderService::start_with(super::library_dir(), Backend::Worker);
+        let (tx, rx) = std::sync::mpsc::channel();
+        service.open_handed(
+            form.clone(),
+            None,
+            true,
+            None,
+            Box::new(move |opened| {
+                let _ = tx.send(opened.map(|info| info.id).map_err(|why| why.reason));
+            }),
+        );
+        let opened = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("opened");
+        let ask = |field: &str| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            match &opened {
+                Ok(doc) => service.prepare_signature(
+                    *doc,
+                    now,
+                    None,
+                    field.to_string(),
+                    Box::new(move |made| {
+                        let _ = tx.send(made);
+                    }),
+                ),
+                Err(why) => {
+                    let _ = tx.send(Err(why.clone()));
+                }
+            }
+            rx.recv_timeout(std::time::Duration::from_secs(60))
+                .expect("answered")
+        };
+        let original = std::fs::read(&form).expect("form");
+        let fields_after = |update: &[u8]| {
+            let whole = dir.join("prepared.pdf");
+            std::fs::write(&whole, [original.as_slice(), update].concat()).expect("written");
+            signature_fields(&whole)
+        };
+        let into = ask("Witness");
+        report.check(
+            "the window's request signs the field it names, through a pooled worker",
+            into.as_ref().is_ok_and(|unsigned| {
+                unsigned.field == "Witness"
+                    && fields_after(&unsigned.update)
+                        == [("Approved".into(), false), ("Witness".into(), true)]
+            }),
+            &format!("{:?}", into.as_ref().map(|u| u.field.clone())),
+        );
+        let own = ask("");
+        report.check(
+            "and with no field named it makes one of its own",
+            own.as_ref().is_ok_and(|unsigned| {
+                unsigned.field == "Signature1" && fields_after(&unsigned.update).len() == 3
+            }),
+            &format!("{:?}", own.as_ref().map(|u| u.field.clone())),
+        );
+        let missing = ask("Nobody");
+        report.check(
+            "and a name the document does not have is the worker's refusal",
+            missing
+                .as_ref()
+                .is_err_and(|why| why.contains("has no field called `Nobody`")),
+            &format!("{:?}", missing.as_ref().map(|u| u.field.clone())),
+        );
+    }
+
     // Refusals: 3 for what the document says, 2 for a line that contradicts
     // itself, and no file either way.
     let refused = dir.join("refused.pdf");

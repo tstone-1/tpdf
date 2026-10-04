@@ -69,6 +69,7 @@ import type { Timestamp } from "./properties";
 import type { PageId } from "./pages";
 import type { SignatureImage } from "./signature";
 import type { Appearance, AppearanceOptions } from "./signappearance";
+import type { SignTarget } from "./signfield";
 import {
   SERVERS,
   addressProblem,
@@ -317,8 +318,11 @@ export interface SigningShell {
   openPath: string;
   /** `sign_identities`. */
   list(): Promise<Choices>;
-  /** The chooser: the certificate and the appearance, or `null` for Cancel. */
-  choose(choices: Choice[]): Promise<Chosen | null>;
+  /**
+   * The chooser: the certificate and the appearance, or `null` for Cancel.
+   * `field` is the signature field being signed, when there is one.
+   */
+  choose(choices: Choice[], field: string | null): Promise<Chosen | null>;
   /** The reader's saved visual signature, or `null` when there is none. */
   savedImage(): Promise<SignatureImage | null>;
   /** The appearance panel for `identity`: the choices, or `null` for Cancel. */
@@ -337,6 +341,7 @@ export interface SigningShell {
     placement: Placement | null,
     timestamp: string | null,
     longTerm: boolean,
+    field: string | null,
   ): Promise<SignOutcome>;
   /** The question after a timestamp did not come, with the reason. */
   stampFailed(why: string): Promise<AfterStamp>;
@@ -357,12 +362,16 @@ export interface SigningShell {
  * Answers the sentence to show, or `null` when the reader cancelled --- which
  * is an answer and not an event worth a message. A refusal from the backend is
  * thrown on, for the caller to show as it shows every other.
+ *
+ * With `field`, an empty signature field of the document, the signature goes
+ * into that field: a visible one is drawn in the field's rectangle, so nothing
+ * is dragged, and an invisible one is written into it all the same.
  */
-export async function signDocument(shell: SigningShell): Promise<string | null> {
+export async function signDocument(shell: SigningShell, field: SignTarget | null = null): Promise<string | null> {
   if (shell.dirty()) return UNSAVED;
   const choices = await shell.list();
   if (choices.usable.length === 0) return nothingToChoose(choices);
-  const chosen = await shell.choose(choices.usable);
+  const chosen = await shell.choose(choices.usable, field?.name ?? null);
   if (chosen === null) return null;
   let placement: Placement | null = null;
   if (chosen.visible) {
@@ -371,7 +380,7 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
     const saved = await shell.savedImage();
     const appearance = await shell.appearance(chosen.identity, saved);
     if (appearance === null) return null;
-    const placed = await shell.place();
+    const placed = field ? { page: field.page, rect: field.rect } : await shell.place();
     if (placed === null) return null;
     placement = { ...placed, image: appearance.image, options: appearance.options };
   }
@@ -380,7 +389,9 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
   // Long-term data only ever with a timestamp: the backend refuses it without
   // one, and this never asks.
   const longTerm = chosen.longTerm === true && chosen.timestamp !== null;
-  let outcome = await shell.sign(chosen.identity, path, placement, chosen.timestamp, longTerm);
+  let outcome = await shell.sign(
+    chosen.identity, path, placement, chosen.timestamp, longTerm, field?.name ?? null,
+  );
   // A timestamp or long-term data that did not come: nothing is written until
   // the reader says what to do, and signing without either is only ever that
   // answer.
@@ -416,6 +427,7 @@ export async function signDocument(shell: SigningShell): Promise<string | null> 
 export function askIdentity(
   choices: Choice[],
   storage?: () => Pick<Storage, "getItem" | "setItem">,
+  field: string | null = null,
 ): Promise<Chosen | null> {
   const previous = document.activeElement as HTMLElement | null;
   const dialog = document.createElement("dialog");
@@ -462,11 +474,15 @@ export function askIdentity(
     shows.append(label);
     return radio;
   };
-  appearance("invisible", "Invisible — the signature is in the file, not on a page", true);
+  // In a signature field the field is where it shows, so visible is what a
+  // reader who pressed the field expects and nothing is dragged.
+  appearance("invisible", "Invisible — the signature is in the file, not on a page", field === null);
   const visible = appearance(
     "visible",
-    "Visible — choose what it shows, with a preview, then drag a rectangle on a page",
-    false,
+    field === null
+      ? "Visible — choose what it shows, with a preview, then drag a rectangle on a page"
+      : `Visible — choose what it shows, with a preview; it is drawn in the field ${field}`,
+    field !== null,
   );
   // The timestamp: as last chosen, and none until a reader chooses one. No
   // server is ever preselected --- choosing one is what lets tpdf ask it.
