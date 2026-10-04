@@ -293,9 +293,14 @@ measured the Windows render constants come out 1.5–1.8x worse.
   you have drawn can be dragged to somewhere else on its page afterwards, and a box, an
   ellipse or a text box can be resized by its lower right corner.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
-- **Add form fields** — *Add a form field: text*, *text on several lines*, *checkbox* or
-  *dropdown*, then drag the rectangle where it goes. A dropdown asks for its choices first,
-  typed on one line with a semicolon between them. The field shows as a dashed frame with its name,
+- **Add form fields** — *Add a form field: text*, *text on several lines*, *checkbox*,
+  *dropdown* or *radio buttons*, then drag the rectangle where it goes. A dropdown asks
+  for its choices first, typed on one line with a semicolon between them. Radio buttons
+  ask for the name of their group; each drag then places one more button of it, until
+  Escape, and the buttons that share the name are one question of which one answer is
+  chosen. A button's value, `Choice 1` to begin with, is set in its properties. Running
+  the command again with the same name adds buttons to that group, also to one the
+  document already has. The field shows as a dashed frame with its name,
   `Text 1` or `Checkbox 1` to begin with; press it to rename it, drag it to move it, drag
   its lower right corner to resize it, and remove or undo it like any other mark. Saving
   writes it into the document as a real form field that tpdf, Acrobat and Preview can
@@ -303,11 +308,10 @@ measured the Windows render constants come out 1.5–1.8x worse.
   round it, so that an empty one can be found on the page; *Form fields: no line round
   new text fields* turns that off for the fields placed next, which suits a page that
   already prints its own lines, and tpdf remembers the choice. Filling a field keeps its
-  line. Not yet: radio buttons and list boxes, changing a dropdown's choices once it is
-  placed, and a field on a turned page,
-  which the save refuses and says so. `tpdf form` adds fields from a list on the command
+  line. Not yet: list boxes, and a field on a turned page, which the save refuses and
+  says so. `tpdf form` adds fields from a list on the command
   line.
-  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.fieldBorderOn edit.fieldBorderOff -->
+  <!-- built: edit.addTextField edit.addMultilineField edit.addCheckbox edit.addDropdown edit.addRadio edit.fieldBorderOn edit.fieldBorderOff -->
 - **Change the fields a document already has.** *Form fields: change the document's own
   fields* shows every field of the open form as a named rectangle. Drag one to move it,
   drag its lower right corner to resize it, press it to rename it, or remove it from its
@@ -1323,21 +1327,25 @@ and answer it had. The list is a JSON array (`--fields -` reads it from standard
 ]
 ```
 
-`kind` is `text` (one line), `multiline` or `checkbox`. `page` counts from 1, and `rect`
+`kind` is `text` (one line), `multiline`, `checkbox`, `dropdown` or `radio`. A dropdown
+has `options`, the list of its choices. A radio button has one option, the value it gives
+its group, and its `name` is the group's: the buttons of one name are one field, and a
+button whose name is a group the document already has joins it. `page` counts from 1, and `rect`
 is `[left, top, width, height]` in points from the top-left corner of the page as it is
 displayed, the way `tpdf crop --rect` measures. `tooltip`, `required`, `max_length` and
-`border` are optional; `"border": true` draws a thin black line round a text field. A text field is at least 8 by 8 points and a checkbox 6 by 6. An empty text
+`border` are optional; `"border": true` draws a thin black line round a text field. A text field is at least 8 by 8 points and a checkbox or a radio button 6 by 6. An empty text
 field draws nothing on the page, as in most forms, so put it where the page already shows
 a line or a box; a checkbox draws its own box.
 
 Every field is checked before anything is written, and one problem means no file: a name
 the form already has, a name used twice or containing a period, a rectangle outside the
-page, a page the document does not have. All of them are named at once. Not supported
-yet: dropdowns, radio buttons and list boxes; a field on a page the document turns
+page, a page the document does not have, a value a group's buttons already have. All of
+them are named at once. Not supported yet: list boxes; a field on a page the document turns
 (`/Rotate`); calculations and formatting, which are scripts in the document and tpdf runs
 none; and an XFA form. The copy is staged and opened again before it is published: each
 field must read back once, of the kind, on the page and at the place asked for, empty and
-fillable, and every field the source had must still hold what it held. A signed document
+fillable (a radio button as a button of its group with its value), and every field the
+source had must still hold what it held. A signed document
 needs `--invalidate-signatures`, an existing output needs `--force`, and the input is
 never replaced. The JSON report carries `schema`, `command`, `input`, `output`, `pages`,
 `added` (each field's `name`, `kind`, `multiline`, `page` and `rect` as read back from

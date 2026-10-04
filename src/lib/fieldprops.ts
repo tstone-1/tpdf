@@ -83,10 +83,15 @@ export function read(now: FieldProperties, typed: Typed): FieldProperties | { pr
   let options: string[] | null = null;
   if (now.options !== null) {
     const parsed = parseChoices(typed.options);
-    if ("problem" in parsed) return parsed;
+    if ("problem" in parsed) return now.single ? { problem: "The value this button gives its group" } : parsed;
+    if (now.single && parsed.options.length !== 1) return { problem: "A radio button has one value, with no semicolon in it" };
+    if (now.single && parsed.options[0] === "Off") return { problem: "Off is what a group holds when nothing is chosen" };
     options = parsed.options;
   }
-  return { name: now.name, tooltip, required: typed.required, readOnly: typed.readOnly, maxLength, align, options };
+  return {
+    name: now.name, tooltip, required: typed.required, readOnly: typed.readOnly, maxLength, align, options,
+    ...(now.single ? { single: true } : {}),
+  };
 }
 
 /** What {@link changeProperties} needs from the window around it. */
@@ -182,6 +187,8 @@ export class FieldPropertiesDialog {
   private readonly options: HTMLInputElement;
   /** The rows a field's kind may not have, hidden for it. */
   private readonly rows: { maxLength: HTMLElement; align: HTMLElement; options: HTMLElement };
+  /** The caption over the choices, which a radio button reads as its value. */
+  private readonly optionsCaption: HTMLElement;
   private returnFocus: HTMLElement | null = null;
   private pending: ((to: FieldProperties | null) => void) | null = null;
   private now: FieldProperties | null = null;
@@ -230,6 +237,7 @@ export class FieldPropertiesDialog {
       align: this.row("Alignment", this.align),
       options: this.row("Choices, with a semicolon between them", this.options),
     };
+    this.optionsCaption = this.rows.options.children[0] as HTMLElement;
 
     this.problem = document.createElement("p");
     this.problem.setAttribute("role", "alert");
@@ -291,6 +299,10 @@ export class FieldPropertiesDialog {
     this.rows.maxLength.style.display = now.maxLength === null ? "none" : "block";
     this.rows.align.style.display = now.align === null ? "none" : "block";
     this.rows.options.style.display = now.options === null ? "none" : "block";
+    this.optionsCaption.textContent = now.single
+      ? "Value this button gives its group"
+      : "Choices, with a semicolon between them";
+    this.options.placeholder = now.single ? "" : "Yes; No; Maybe";
     const active = document.activeElement as { focus?: () => void } | null;
     this.returnFocus = typeof active?.focus === "function" ? (active as HTMLElement) : null;
     this.open = true;

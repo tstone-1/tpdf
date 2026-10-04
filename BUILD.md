@@ -371,7 +371,8 @@ TPDF_FORM_FIXTURE=/tmp/tpdf-form-fixture.pdf TPDF_FORM_PROBE=/tmp/tpdf-filled-fo
     cargo test --locked --manifest-path src-tauri/Cargo.toml --lib forms::tests::forms_round_trip_values_and_every_shared_widget_appearance
 uv run scripts/tabs_check.py <checks-binary> /tmp/tpdf-form-fixture.pdf --phase forms
 
-# Making a form in the window: placing a text field, a checkbox and a dropdown,
+# Making a form in the window: placing a text field, a checkbox, a dropdown and
+# two radio buttons of one group,
 # picking three with Shift and aligning them, one undo for the arrangement, a
 # save, then a saved field dragged, given a tooltip, required and right-aligned
 # in the properties panel, and saved again. The driver reads the saved

@@ -170,6 +170,7 @@ function harness(
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     drawField: (kind, options) => fired.push(`drawField:${kind}${options ? `:${options.join("|")}` : ""}`),
+    drawRadio: (group) => fired.push(`drawRadio:${group}`),
     fieldBorder: () => framing,
     setFieldBorder: (border) => { framing = border; fired.push(`setFieldBorder:${border}`); },
     pickedMarks: () => update.picked ?? 0,
@@ -619,6 +620,22 @@ describe("the commands a document is needed for", () => {
       // off is the one of its pair on offer.
       "edit.fieldBorderOff",
     ]);
+  });
+
+  it("asks radio buttons for their group and arms the drag with it", () => {
+    const { registry, fired } = harness(true);
+    const argument = registry.all().find((c) => c.id === "edit.addRadio")?.argument;
+    expect(argument?.problem("  ")).toContain("name of the group");
+    expect(argument?.problem("a.b")).toContain("period");
+    expect(argument?.problem("Payment")).toBeNull();
+    expect(argument?.preview?.(" Payment ")).toContain("a button of Payment");
+    expect(argument?.preview?.("")).toBe("");
+    registry.run("edit.addRadio", " Payment ");
+    expect(fired.at(-1)).toBe("drawRadio:Payment");
+    const before = fired.length;
+    registry.run("edit.addRadio", "a.b");
+    expect(fired.length).toBe(before);
+    expect(harness(false).registry.all().find((c) => c.id === "edit.addRadio")?.enabled?.()).toBe(false);
   });
 
   it("asks a dropdown for its choices and arms the drag with them", () => {
@@ -1683,6 +1700,7 @@ describe("the window shortcuts for editing", () => {
       stamp: (name: StampName) => fired.push(`stamp:${name}`),
       drawTextBox: () => fired.push("drawTextBox"),
       drawField: (kind) => fired.push(`drawField:${kind}`),
+      drawRadio: (group) => fired.push(`drawRadio:${group}`),
       fieldBorder: () => true,
       setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
       pickedMarks: () => 0,

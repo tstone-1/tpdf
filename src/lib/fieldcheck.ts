@@ -317,6 +317,29 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
         && chooser.note === "Dropdown 1",
       `${chooser?.field?.kind}; ${chooser?.field?.options?.join("|")}; ${chooser?.note}`,
     );
+    // Radio buttons: the command takes the group's name, and the tool stays
+    // armed from one button to the next.
+    host.run("edit.addRadio", "Pay");
+    drag(root, at(0.62, 0.6), at(0.64, 0.62));
+    await settle(() => fields().length === 2, SETTLE_MS);
+    await host.idle();
+    const stillArmed = viewer.drawArmed;
+    drag(root, at(0.62, 0.66), at(0.64, 0.68));
+    await settle(() => fields().length === 3, SETTLE_MS);
+    await host.idle();
+    const group = fields().filter((mark) => mark.field?.kind === "radio");
+    check(
+      "two drags place two radio buttons of the group named, each with a value of its own",
+      group.length === 2 && group.every((mark) => mark.note === "Pay")
+        && group.map((mark) => mark.field?.options?.[0]).join("|") === "Choice 1|Choice 2",
+      group.map((mark) => `${mark.note}:${mark.field?.options?.join()}`).join("; "),
+    );
+    check("and the tool stays armed between them", stillArmed === "field", String(stillArmed));
+    // On the page, which is where the viewer listens and where the pointer
+    // has just been.
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await pause(100);
+    check("Escape puts the tool down", viewer.drawArmed === null, String(viewer.drawArmed));
     host.run("edit.formEditOn");
     await pause(200);
     const id = SAVED_BASE + at0;
@@ -388,6 +411,13 @@ export async function fieldCheck(host: OpenCheckHost, expected: string, report: 
       "the save writes the dropdown as a list of its choices",
       listed?.kind === "choice" && listed.combo && listed.options.map((o) => o.label).join("|") === "Yes|No, by post",
       JSON.stringify(listed),
+    );
+    const buttons = after.widgets.filter((widget) => widget.name === "Pay");
+    check(
+      "the save writes the two buttons as one group of radio buttons",
+      buttons.length === 2 && buttons.every((widget) => widget.control.kind === "radio" && widget.reason === null)
+        && buttons[0]?.object.join() === buttons[1]?.object.join(),
+      JSON.stringify(buttons.map((widget) => [widget.object, widget.control.kind, widget.reason])),
     );
     const named = after.widgets.find((widget) => widget.name === "Name");
     check(

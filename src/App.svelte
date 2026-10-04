@@ -142,7 +142,7 @@
     type Session,
   } from "./lib/session";
   import {
-    nextFieldName, readFieldBorder, takenNames, writeFieldBorder,
+    placing, readFieldBorder, writeFieldBorder,
   } from "./lib/fieldnames";
   import { pickedNotice } from "./lib/arrange";
   import {
@@ -217,6 +217,8 @@
   };
   /** Which kind of form field the armed tool places. */
   let armedField: FieldKind = "text";
+  /** The group the radio buttons placed next belong to. */
+  let armedGroup = "";
   /** The choices of the dropdown the next drag places. Empty for any other kind. */
   let armedOptions: string[] = [];
   /** Whether a text field placed from now on gets a line round it. */
@@ -804,6 +806,12 @@
       armedOptions = options;
       viewer?.armDraw("field");
     },
+    drawRadio: (group) => {
+      armedField = "radio";
+      armedOptions = [];
+      armedGroup = group;
+      viewer?.armDraw("field");
+    },
     savedFields: () => scannedForm?.widgets.length ?? 0,
     formEditing: () => formEditing,
     setFormEditing: (on) => {
@@ -1076,12 +1084,14 @@
   ): Promise<void> {
     const before = new Set((edits?.state.marks ?? []).map((mark) => mark.id));
     // A field has to have a name the moment it exists. See `fieldnames.ts`.
-    const field = kind === "field"
-      ? { kind: armedField, border: fieldBorder, ...(armedOptions.length > 0 ? { options: armedOptions } : {}) }
+    const placed = kind === "field"
+      ? placing(
+        { kind: armedField, options: armedOptions, group: armedGroup },
+        fieldBorder, formNames, edits?.state.marks ?? [], scannedForm,
+      )
       : undefined;
-    const name = field
-      ? nextFieldName(field.kind, takenNames(formNames, edits?.state.marks ?? []))
-      : "";
+    const field = placed?.field;
+    const name = placed?.name ?? "";
     await applyEdit((e) =>
       e.mark(
         kind,
@@ -1105,7 +1115,10 @@
       ),
     );
     const made = (edits?.state.marks ?? []).find((mark) => !before.has(mark.id));
-    if (made) viewer?.showMark(made.id);
+    // A group is several buttons, so the tool stays armed for the next one
+    // and no name box opens over the place it would go; Escape puts it down.
+    if (field?.kind === "radio") viewer?.armDraw("field");
+    else if (made) viewer?.showMark(made.id);
   }
 
   /**

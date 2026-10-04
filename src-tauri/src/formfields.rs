@@ -1,12 +1,14 @@
 //! Adding fields to a document's form, or giving it one.
 //!
 //! `forms.rs` reads a form and answers it; nothing there makes a field exist.
-//! This does, for the two kinds a form is mostly made of: a text field, on one
-//! line or several, and a checkbox.
+//! This does, for the kinds a form is mostly made of: a text field, on one
+//! line or several, a checkbox, a dropdown and a group of radio buttons.
 //!
 //! A field written here is one object that is both the field and its widget,
 //! which is what the specification allows for a field with a single widget and
-//! what most producers write. It carries its own appearance, so a reader shows
+//! what most producers write. A group of radio buttons is the exception: it
+//! is one field with a widget for each button, and each button is added to
+//! the group of its name, which is made when its first button is. It carries its own appearance, so a reader shows
 //! it without regenerating anything, and it is added to the page's annotations
 //! and to the form's field list together --- a widget in one and not the other
 //! is a field `forms::scan` refuses.
@@ -35,6 +37,10 @@ pub enum Kind {
     /// One choice from a list that drops down. The list is the field's
     /// `options`.
     Dropdown,
+    /// One button of a group of which one is chosen. The field's name is the
+    /// group's, and its `options` hold one entry, the value this button gives
+    /// the group when it is the one chosen.
+    Radio,
 }
 
 /// One field to add.
@@ -126,8 +132,8 @@ impl Placed {
                 ));
             }
         }
-        if self.kind == Kind::Checkbox && self.align != forms::Align::Left {
-            return Some(format!("`{name}`: a checkbox has no text to align"));
+        if matches!(self.kind, Kind::Checkbox | Kind::Radio) && self.align != forms::Align::Left {
+            return Some(format!("`{name}`: a box or a button has no text to align"));
         }
         None
     }
@@ -184,7 +190,17 @@ pub const MAX_OPTION: usize = 255;
 /// and is not there twice: two choices that read the same cannot be told
 /// apart in the list, and a filled form would not say which was meant.
 pub fn options_problem(name: &str, kind: Kind, options: &[String]) -> Option<String> {
-    if kind != Kind::Dropdown {
+    if kind == Kind::Radio {
+        if options.len() != 1 {
+            return Some(format!("`{name}`: a radio button has one value"));
+        }
+        // `/Off` is the state every button has for not being the one chosen.
+        if options[0] == "Off" {
+            return Some(format!(
+                "`{name}`: `Off` is what a group holds when nothing is chosen, so no button can have it as its value"
+            ));
+        }
+    } else if kind != Kind::Dropdown {
         return (!options.is_empty()).then(|| format!("`{name}`: only a dropdown has choices"));
     }
     if options.is_empty() {
@@ -292,10 +308,10 @@ fn placed(doc: &Document, page: ObjectId, field: &NewField) -> Result<[f64; 4], 
         return Err(format!(
             "`{name}`: {width} by {height} points is too small --- a {} needs at least {least} \
              by {least}",
-            if field.kind == Kind::Checkbox {
-                "checkbox"
-            } else {
-                "text field"
+            match field.kind {
+                Kind::Checkbox => "checkbox",
+                Kind::Radio => "radio button",
+                _ => "text field",
             }
         ));
     }
@@ -349,18 +365,42 @@ pub fn check(
     }
     let pages = crate::pagetree::ordered_pages(doc);
     let existing = taken(doc);
-    let mut seen = HashSet::new();
+    let mut seen: std::collections::HashMap<&str, Kind> = std::collections::HashMap::new();
+    let mut values: HashSet<(&str, Vec<u8>)> = HashSet::new();
     let mut placed_at = Vec::new();
     for field in fields {
+        // A radio button shares its name with the other buttons of its group,
+        // in this call and in the form; nothing else shares a name.
+        let radio = field.kind == Kind::Radio;
+        let group = radio.then(|| radio_group(doc, &field.name)).flatten();
         if let Some(why) = name_problem(&field.name) {
             problems.push(why);
-        } else if existing.contains(&field.name) {
+        } else if existing.contains(&field.name) && group.is_none() {
             problems.push(format!(
                 "`{}`: the form already has a field of this name",
                 field.name
             ));
-        } else if !seen.insert(field.name.as_str()) {
+        } else if seen
+            .insert(field.name.as_str(), field.kind)
+            .is_some_and(|before| !(radio && before == Kind::Radio))
+        {
             problems.push(format!("`{}` is named more than once", field.name));
+        }
+        if let (true, Some(value)) = (radio, field.options.first()) {
+            let held = group
+                .is_some_and(|group| radio_values(doc, group).contains(&value.as_bytes().to_vec()));
+            if held || !values.insert((field.name.as_str(), value.as_bytes().to_vec())) {
+                problems.push(format!(
+                    "`{}`: the group already has a button with the value `{value}`",
+                    field.name
+                ));
+            }
+        }
+        if field.kind == Kind::Radio && field.max_length.is_some() {
+            problems.push(format!(
+                "`{}`: a radio button takes no characters, so it has no most",
+                field.name
+            ));
         }
         if field.kind == Kind::Checkbox && field.max_length.is_some() {
             problems.push(format!(
@@ -610,9 +650,176 @@ fn widget(
                 dictionary! { "N" => dictionary! { "Off" => off, "Yes" => on } },
             );
         }
+        // A radio button is a widget under its group and is made by `radio`.
+        Kind::Radio => unreachable!("a radio button is not a field of its own"),
     }
     widget.set("Ff", flags);
     doc.add_object(widget)
+}
+
+/// `/Ff` of a group of radio buttons: bit 16 says radio, and bit 15 that a
+/// press on the chosen button does not leave the group with none chosen.
+const RADIO_FLAGS: i64 = (1 << 15) | (1 << 14);
+
+/// The top-level field called `name`, when it is a group of radio buttons.
+fn radio_group(doc: &Document, name: &str) -> Option<ObjectId> {
+    let fields = doc
+        .catalog()
+        .ok()
+        .and_then(|catalog| catalog.get(b"AcroForm").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_dict().ok())
+        .and_then(|form| form.get(b"Fields").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_array().ok())?;
+    fields
+        .iter()
+        .filter_map(|field| field.as_reference().ok())
+        .find(|id| {
+            doc.get_dictionary(*id).is_ok_and(|dict| {
+                let named = dict
+                    .get(b"T")
+                    .and_then(Object::as_str)
+                    .is_ok_and(|raw| crate::annots::decode_text_string(raw) == name);
+                let flags = forms::integer(doc, *id, b"Ff");
+                named
+                    && dict.get(b"FT").and_then(Object::as_name).ok() == Some(b"Btn")
+                    && flags & (1 << 15) != 0
+                    && flags & (1 << 16) == 0
+            })
+        })
+}
+
+/// The names of the states a group's buttons have: the value each gives the
+/// group, and `Off`, which no button may have as its value.
+fn radio_values(doc: &Document, group: ObjectId) -> Vec<Vec<u8>> {
+    let kids = doc
+        .get_dictionary(group)
+        .ok()
+        .and_then(|dict| dict.get(b"Kids").ok())
+        .and_then(|o| doc.dereference(o).ok())
+        .and_then(|(_, o)| o.as_array().ok());
+    kids.into_iter()
+        .flatten()
+        .filter_map(|kid| doc.dereference(kid).ok()?.1.as_dict().ok())
+        .filter_map(|kid| doc.dereference(kid.get(b"AP").ok()?).ok()?.1.as_dict().ok())
+        .filter_map(|ap| doc.dereference(ap.get(b"N").ok()?).ok()?.1.as_dict().ok())
+        .flat_map(|normal| {
+            normal
+                .iter()
+                .map(|(state, _)| state.clone())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// A circle of radius `r` about `(x, y)`, as four curves.
+fn circle(x: f64, y: f64, r: f64) -> String {
+    // The distance of a control point that makes a quarter circle of a curve.
+    let k = r * 0.552_284_75;
+    format!(
+        "{} {y} m {} {} {} {} {x} {} c {} {} {} {} {} {y} c {} {} {} {} {x} {} c {} {} {} {} {} {y} c h ",
+        x + r,
+        x + r, y + k, x + k, y + r, y + r,
+        x - k, y + r, x - r, y + k, x - r,
+        x - r, y - k, x - k, y - r, y - r,
+        x + k, y - r, x + r, y - k, x + r,
+    )
+}
+
+/// A radio button's two looks: a ring, and the ring with a dot in it.
+fn radio_appearances(doc: &mut Document, width: f64, height: f64) -> (ObjectId, ObjectId) {
+    let (x, y) = (width / 2.0, height / 2.0);
+    let r = (width.min(height) / 2.0 - 0.5).max(0.5);
+    let ring = format!(
+        "q 1 1 1 rg {}f 0 0 0 RG 1 w {}S ",
+        circle(x, y, r),
+        circle(x, y, r)
+    );
+    let off = forms::appearance(
+        doc,
+        width,
+        height,
+        format!("{ring}Q").into_bytes(),
+        Dictionary::new(),
+    );
+    let on = forms::appearance(
+        doc,
+        width,
+        height,
+        format!("{ring}0 0 0 rg {}f Q", circle(x, y, r * 0.5)).into_bytes(),
+        Dictionary::new(),
+    );
+    (off, on)
+}
+
+/// What a group of radio buttons is given by a button added to it.
+struct Grouped<'a> {
+    name: &'a str,
+    value: &'a str,
+    tooltip: Option<&'a str>,
+    required: bool,
+    read_only: bool,
+}
+
+/// Adds one radio button, to the group of its name or to a new one.
+///
+/// The group's tooltip and its two flags are the group's and not a button's:
+/// a button that is required or read-only makes the group so, and a tooltip
+/// is taken by a group that has none. `rect` is in the page's own space, and
+/// the button is not yet in its page's annotations.
+///
+/// # Errors
+///
+/// The group already has a button with this value.
+fn radio(
+    doc: &mut Document,
+    form: ObjectId,
+    page: ObjectId,
+    rect: [f64; 4],
+    to: &Grouped,
+) -> Result<ObjectId, String> {
+    let group = match radio_group(doc, to.name) {
+        Some(group) => group,
+        None => {
+            let group = doc.add_object(dictionary! {
+                "FT" => "Btn", "T" => forms::pdf_string(to.name),
+                "Ff" => RADIO_FLAGS, "Kids" => Vec::<Object>::new(),
+            });
+            append(doc, form, b"Fields", group)?;
+            group
+        }
+    };
+    if radio_values(doc, group).contains(&to.value.as_bytes().to_vec()) {
+        return Err(format!(
+            "`{}`: the group already has a button with the value `{}`",
+            to.name, to.value
+        ));
+    }
+    let mut flags = forms::integer(doc, group, b"Ff");
+    if to.required {
+        flags |= 1 << 1;
+    }
+    if to.read_only {
+        flags |= 1;
+    }
+    let dict = doc.get_dictionary_mut(group).map_err(|e| e.to_string())?;
+    dict.set("Ff", flags);
+    if let Some(tip) = to.tooltip.filter(|tip| !tip.is_empty() && !dict.has(b"TU")) {
+        dict.set("TU", forms::pdf_string(tip));
+    }
+    let (width, height) = (rect[2] - rect[0], rect[3] - rect[1]);
+    let (off, on) = radio_appearances(doc, width, height);
+    let mut normal = dictionary! { "Off" => off };
+    normal.set(to.value.as_bytes().to_vec(), on);
+    let button = doc.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget", "Parent" => group,
+        "Rect" => rect.iter().map(|v| Object::Real(*v as f32)).collect::<Vec<_>>(),
+        "P" => page, "F" => 4, "AS" => "Off",
+        "AP" => dictionary! { "N" => normal },
+    });
+    append(doc, group, b"Kids", button)?;
+    Ok(button)
 }
 
 /// Adds `fields` to the document, all of them or none.
@@ -624,6 +831,18 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
     let form = ensure_form(doc)?;
     let font = ensure_font(doc, form)?;
     for (field, (page, rect)) in fields.iter().zip(placed) {
+        if field.kind == Kind::Radio {
+            let to = Grouped {
+                name: &field.name,
+                value: field.options.first().map_or("", String::as_str),
+                tooltip: field.tooltip.as_deref(),
+                required: field.required,
+                read_only: false,
+            };
+            let id = radio(doc, form, page, rect, &to)?;
+            append(doc, page, b"Annots", id)?;
+            continue;
+        }
         let id = widget(doc, font, page, rect, field);
         append(doc, page, b"Annots", id)?;
         append(doc, form, b"Fields", id)?;
@@ -634,7 +853,7 @@ pub fn add(doc: &mut Document, fields: &[NewField]) -> Result<(), String> {
 /// The least a side of a field of this kind may be, in points.
 #[must_use]
 pub fn least_side(kind: Kind) -> f64 {
-    if kind == Kind::Checkbox {
+    if matches!(kind, Kind::Checkbox | Kind::Radio) {
         MIN_BOX
     } else {
         MIN_TEXT
@@ -670,7 +889,9 @@ pub fn place(
     if let Some(why) = placed.problem(name) {
         return Err(why);
     }
-    if taken(doc).contains(name) {
+    // A radio button joins the group of its name; anything else needs a
+    // name the form does not have.
+    if taken(doc).contains(name) && !(kind == Kind::Radio && radio_group(doc, name).is_some()) {
         return Err(format!(
             "`{name}`: the form already has a field of this name"
         ));
@@ -682,6 +903,16 @@ pub fn place(
         ));
     }
     let form = ensure_form(doc)?;
+    if kind == Kind::Radio {
+        let to = Grouped {
+            name,
+            value: placed.options.first().map_or("", String::as_str),
+            tooltip: Some(placed.tooltip.as_str()),
+            required: placed.required,
+            read_only: placed.read_only,
+        };
+        return radio(doc, form, page, rect, &to);
+    }
     let font = ensure_font(doc, form)?;
     let field = NewField {
         name: name.to_string(),

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { nextFieldName, parseChoices, readFieldBorder, takenNames, writeFieldBorder } from "./fieldnames";
+import type { Form, FormWidget } from "./forms";
+import {
+  nextFieldName, parseChoices, parseGroup, placing, readFieldBorder, takenNames, writeFieldBorder,
+} from "./fieldnames";
+import { pageId, type MarkView, type PlacedField } from "./pages";
 
 describe("the name a placed form field starts with", () => {
   it("counts from one, by the kind's word", () => {
@@ -105,5 +109,76 @@ describe("a dropdown's placeholder name", () => {
   it("is counted on its own, like a checkbox's", () => {
     expect(nextFieldName("dropdown", new Set())).toBe("Dropdown 1");
     expect(nextFieldName("dropdown", new Set(["Dropdown 1", "Text 1"]))).toBe("Dropdown 2");
+  });
+});
+
+describe("the group typed for radio buttons", () => {
+  it("is the name with the space round it dropped", () => {
+    expect(parseGroup("  Payment ")).toEqual({ group: "Payment" });
+    expect(parseGroup("How you pay")).toEqual({ group: "How you pay" });
+  });
+
+  it("is held to what a field's name may be", () => {
+    const problem = (raw: string) => {
+      const parsed = parseGroup(raw);
+      return "problem" in parsed ? parsed.problem : null;
+    };
+    expect(problem("")).toContain("name of the group");
+    expect(problem("   ")).toContain("name of the group");
+    expect(problem("a.b")).toContain("period");
+    expect(problem("a\tb")).toContain("control character");
+    expect(problem("x".repeat(256))).toContain("at most 255");
+    expect(problem("x".repeat(255))).toBeNull();
+  });
+});
+
+describe("the field a drag places", () => {
+  const mark = (id: number, note: string, field?: PlacedField): MarkView => ({
+    id, kind: field ? "field" : "square", stamp: null, page: pageId(5), quads: [0, 0, 10, 10], strokes: [],
+    color: [0, 0, 0], width: 1, note, lines: [], ...(field ? { field } : {}),
+  } as MarkView);
+  const radio = (id: number, group: string, value: string) => mark(id, group, { kind: "radio", border: false, options: [value] });
+  const bytes = (text: string) => [...new TextEncoder().encode(text)];
+  const saved = (name: string, states: string[]): FormWidget => ({
+    object: [9, 0], widget: [10, 0], page: 0, rect: [0, 0, 0, 0], display_rect: [0, 0, 10, 10], name, value: [],
+    control: { kind: "radio", index: 0, states: states.map(bytes), unison: false, no_toggle_off: true },
+    multiline: false, max_length: null, reason: null,
+  });
+  const armed = (kind: PlacedField["kind"], extra: { options?: string[]; group?: string } = {}) =>
+    ({ kind, options: extra.options ?? [], group: extra.group ?? "" });
+
+  it("is a text field or a checkbox under a name no field has, with the line asked for", () => {
+    expect(placing(armed("text"), true, ["Text 1"], [mark(1, "Text 2", { kind: "text", border: true })], null)).toEqual({
+      field: { kind: "text", border: true }, name: "Text 3",
+    });
+    expect(placing(armed("checkbox"), false, [], [], null)).toEqual({
+      field: { kind: "checkbox", border: false }, name: "Checkbox 1",
+    });
+  });
+
+  it("is a dropdown holding the choices it was armed with", () => {
+    expect(placing(armed("dropdown", { options: ["A", "B"] }), true, [], [], null)).toEqual({
+      field: { kind: "dropdown", border: true, options: ["A", "B"] }, name: "Dropdown 1",
+    });
+  });
+
+  it("is a radio button named for its group, with the first value the group does not have", () => {
+    expect(placing(armed("radio", { group: "Pay" }), true, [], [], null)).toEqual({
+      field: { kind: "radio", border: false, options: ["Choice 1"] }, name: "Pay",
+    });
+    const marks = [radio(1, "Pay", "Choice 1"), radio(2, "Pay", "Choice 3"), radio(3, "Send", "Choice 2")];
+    expect(placing(armed("radio", { group: "Pay" }), true, [], marks, null).field.options).toEqual(["Choice 2"]);
+    // A name that only reads like the group's holds no value of it: a text
+    // field, and a mark that is no field.
+    const others = [mark(4, "Pay", { kind: "text", border: false, options: ["Choice 1"] }), mark(5, "Pay")];
+    expect(placing(armed("radio", { group: "Pay" }), true, [], others, null).field.options).toEqual(["Choice 1"]);
+  });
+
+  it("counts the values the file's group has as well", () => {
+    const form: Form = { widgets: [saved("Pay", ["Choice 1", "Choice 2"]), saved("Send", ["Choice 4"])] };
+    expect(placing(armed("radio", { group: "Pay" }), true, [], [radio(1, "Pay", "Choice 3")], form).field.options)
+      .toEqual(["Choice 4"]);
+    const text: Form = { widgets: [{ ...saved("Pay", []), control: { kind: "text" } }] };
+    expect(placing(armed("radio", { group: "Pay" }), true, [], [], text).field.options).toEqual(["Choice 1"]);
   });
 });

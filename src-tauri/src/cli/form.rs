@@ -27,7 +27,7 @@ use crate::save;
 pub const COMMAND: Registered = Registered {
     name: "form",
     usage: "form <in.pdf> -o <out.pdf> --fields <fields.json | ->\n        [--password-env VAR] [--invalidate-signatures] [--force] [--json]",
-    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline, checkbox or dropdown),\n            a page counted from 1 and a rect [left, top, width, height] in points\n            from the page's top-left corner; a dropdown also has options, the\n            list of its choices; tooltip, required and max_length are optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
+    summary: "Adds form fields from a JSON array (read from stdin for -). Each is\n            an object with a name, a kind (text, multiline, checkbox, dropdown or radio),\n            a page counted from 1 and a rect [left, top, width, height] in points\n            from the page's top-left corner; a dropdown also has options, the\n            list of its choices, and a radio button one option, its value, and\n            the name of its group; tooltip, required and max_length are optional. Every field is checked first, and one problem means\n            nothing is written; the copy is read back before success is reported.",
     parse: |args| parse(args).map(|c| Box::new(c) as Box<dyn Subcommand>),
 };
 
@@ -177,17 +177,34 @@ pub fn read_back(
             ));
             continue;
         };
-        let [widget] = group.widgets.as_slice() else {
-            problems.push(format!(
-                "`{name}` reads back with {} boxes",
-                group.widgets.len()
-            ));
+        // A group of radio buttons is one field with a box for each button;
+        // the one asked for is the box that gives the group its value.
+        let radio = field.kind == Kind::Radio;
+        let value = field.options.first().map_or("", String::as_str);
+        let widget = if radio {
+            group.widgets.iter().find(|w| {
+                matches!(&w.control, crate::forms::Control::Radio { index, states, .. }
+                    if states.get(*index).is_some_and(|state| state == value.as_bytes()))
+            })
+        } else {
+            match group.widgets.as_slice() {
+                [widget] => Some(widget),
+                _ => None,
+            }
+        };
+        let Some(widget) = widget else {
+            problems.push(if radio {
+                format!("`{name}` reads back with no button of the value `{value}`")
+            } else {
+                format!("`{name}` reads back with {} boxes", group.widgets.len())
+            });
             continue;
         };
         let wanted = match field.kind {
             Kind::Checkbox => FieldKind::Checkbox,
             Kind::Text | Kind::Multiline => FieldKind::Text,
             Kind::Dropdown => FieldKind::ChoiceCombo,
+            Kind::Radio => FieldKind::Radio,
         };
         let got = kind(&widget.control);
         let [left, top, right, bottom] = widget.display_rect;
@@ -200,6 +217,14 @@ pub fn read_back(
             Kind::Checkbox => serde_json::Value::Bool(false),
             // Nothing chosen yet.
             Kind::Dropdown => serde_json::Value::Null,
+            // What the group held before, when the button joined one.
+            Kind::Radio => before
+                .widgets
+                .iter()
+                .find(|was| &was.name == name)
+                .map_or(serde_json::Value::Null, |was| {
+                    value_json(&was.control, &was.value)
+                }),
             _ => serde_json::Value::String(String::new()),
         };
         let held = value_json(&widget.control, &widget.value);
@@ -273,6 +298,7 @@ fn plain(report: &report::FormAdded) -> String {
             match (field.kind, field.multiline) {
                 (FieldKind::Checkbox, _) => "checkbox",
                 (FieldKind::ChoiceCombo, _) => "dropdown",
+                (FieldKind::Radio, _) => "radio button",
                 (_, true) => "text, several lines",
                 _ => "text",
             },
@@ -450,7 +476,7 @@ mod tests {
                 "counted from 1",
             ),
             (
-                r#"[{"name":"N","kind":"radio","page":1,"rect":[1,2,30,40]}]"#,
+                r#"[{"name":"N","kind":"listbox","page":1,"rect":[1,2,30,40]}]"#,
                 "not a JSON array",
             ),
             (
@@ -498,6 +524,58 @@ mod tests {
             max_length: None,
             border: false,
         }
+    }
+
+    #[test]
+    fn radio_buttons_read_back_as_boxes_of_one_group_each_by_its_value() {
+        use lopdf::{dictionary, Document, Object};
+        let mut doc = Document::with_version("1.7");
+        let pages = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages,
+            "MediaBox" => vec![0.into(), 0.into(), 300.into(), 200.into()],
+        });
+        doc.objects.insert(
+            pages,
+            dictionary! { "Type" => "Pages", "Count" => 1, "Kids" => vec![Object::Reference(page)] }
+                .into(),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        let button = |value: &str, top: f64| NewField {
+            options: vec![value.into()],
+            ..new("Pay", Kind::Radio, 0, [20.0, top, 12.0, 12.0])
+        };
+        let empty = crate::forms::scan(&doc).unwrap();
+        let first = [button("Card", 20.0), button("Cash", 40.0)];
+        crate::formfields::add(&mut doc, &first).unwrap();
+        let two = crate::forms::scan(&doc).unwrap();
+        let added = read_back(&first, &empty, &two).expect("reads back");
+        assert_eq!(added.len(), 2);
+        assert!(added
+            .iter()
+            .all(|f| f.name == "Pay" && f.kind == FieldKind::Radio));
+        assert_eq!(added[1].rect, [20.0, 40.0, 12.0, 12.0]);
+        // A third joins the group, which holds an answer by then.
+        crate::forms::write(
+            &mut doc,
+            &[crate::forms::Change {
+                object: two.widgets[0].object,
+                value: Value::Selection(vec![0]),
+            }],
+        )
+        .unwrap();
+        let answered = crate::forms::scan(&doc).unwrap();
+        let third = [button("Cheque", 60.0)];
+        crate::formfields::add(&mut doc, &third).unwrap();
+        let three = crate::forms::scan(&doc).unwrap();
+        assert!(read_back(&third, &answered, &three).is_ok());
+        // Broken: asked for a value the group does not have, and for a
+        // button somewhere it is not.
+        let why = read_back(&[button("Other", 60.0)], &answered, &three).unwrap_err();
+        assert!(why[0].contains("no button of the value `Other`"), "{why:?}");
+        let why = read_back(&[button("Cheque", 80.0)], &answered, &three).unwrap_err();
+        assert!(why[0].contains("reads back at"), "{why:?}");
     }
 
     #[test]

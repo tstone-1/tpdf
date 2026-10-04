@@ -21,6 +21,14 @@ have the binary.)
 
 ### Added
 
+- **Radio buttons.** *Add a form field: radio buttons* asks for the name of the group,
+  and each drag then places one more button of it until Escape. The buttons of one name
+  are written as one field of which one is chosen, each drawn as a ring that holds a dot
+  when it is the one. A button's value starts as `Choice 1`, `Choice 2` and is set in
+  its properties; a group's tooltip, required and read-only can be set on any of its
+  buttons. A button placed under the name of a group the document already has joins
+  that group and leaves its answer. `tpdf form` takes `"kind": "radio"` with the
+  group's name and one option, the button's value.
 - **Dropdowns.** *Add a form field: dropdown* asks for the choices, typed on one line
   with a semicolon between them, and then for the drag that places it. `tpdf form`
   takes `"kind": "dropdown"` with an `options` list. It is written as a real choice

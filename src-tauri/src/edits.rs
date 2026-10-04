@@ -1478,16 +1478,14 @@ impl Edits {
         let mut docs = self.docs.lock().expect("edits lock");
         let open = docs.get_mut(&doc).ok_or_else(|| unknown(doc))?;
         let model = &mut open.model;
-        if want.kind == MarkKind::Field {
-            if let Some(why) = field_name_problem(model, &want.note, None) {
+        // A field's name, and its choices when it is a dropdown: checked
+        // while the reader is placing it and not at the save.
+        if let (MarkKind::Field, Some(placed)) = (want.kind, &want.field) {
+            if let Some(why) = field_name_problem(model, &want.note, placed, None) {
                 return Err(why);
             }
-            // And its choices, when it is a dropdown: checked while the
-            // reader is placing it and not at the save.
-            if let Some(placed) = &want.field {
-                if let Some(why) = placed.problem(&want.note) {
-                    return Err(why);
-                }
+            if let Some(why) = placed.problem(&want.note) {
+                return Err(why);
             }
         }
         model
@@ -1716,8 +1714,8 @@ impl Edits {
             );
         }
         // A field's note is its name, so a rename is held to what a name is.
-        if model.mark(id).is_some_and(|m| m.kind == MarkKind::Field) {
-            if let Some(why) = field_name_problem(model, &note, Some(id)) {
+        if let Some(placed) = model.field_of(id).cloned() {
+            if let Some(why) = field_name_problem(model, &note, &placed, Some(id)) {
                 return Err(why);
             }
         }
@@ -1888,6 +1886,11 @@ impl Edits {
             return Err("that changes nothing about the field".into());
         }
         if let Some(why) = placed.problem("this field") {
+            return Err(why);
+        }
+        // A radio button given a new value must not take a sibling's.
+        let name = model.note_of(id).to_string();
+        if let Some(why) = field_name_problem(model, &name, &placed, Some(id)) {
             return Err(why);
         }
         model.refit(id, placed).map_err(describe)?;
@@ -2420,16 +2423,40 @@ impl Edits {
 /// fields placed and not yet saved. A name the *file's* form already has is
 /// refused at the save, by `formfields::place`, which is the first point the
 /// file's form and the placed fields are in one document.
-fn field_name_problem(model: &Doc, name: &str, except: Option<MarkId>) -> Option<String> {
+///
+/// A radio button is the exception to a name being one field's: the buttons
+/// of a group share the group's name. What they may not share is a value.
+fn field_name_problem(
+    model: &Doc,
+    name: &str,
+    placed: &crate::formfields::Placed,
+    except: Option<MarkId>,
+) -> Option<String> {
+    use crate::formfields::Kind;
     if let Some(why) = crate::formfields::name_problem(name) {
         return Some(why);
     }
-    let taken = model.working().all_marks().into_iter().any(|(_, id)| {
-        Some(id) != except
-            && model.mark(id).is_some_and(|m| m.kind == MarkKind::Field)
-            && model.note_of(id) == name
-    });
-    taken.then(|| format!("`{name}`: another field placed here has this name"))
+    let others: Vec<&crate::formfields::Placed> = model
+        .working()
+        .all_marks()
+        .into_iter()
+        .filter(|(_, id)| Some(*id) != except && model.note_of(*id) == name)
+        .filter_map(|(_, id)| model.field_of(id))
+        .collect();
+    let radio = placed.kind == Kind::Radio;
+    if others
+        .iter()
+        .any(|other| !(radio && other.kind == Kind::Radio))
+    {
+        return Some(format!("`{name}`: another field placed here has this name"));
+    }
+    let twice = radio && others.iter().any(|other| other.options == placed.options);
+    twice.then(|| {
+        format!(
+            "`{name}`: another button of this group has the value `{}`",
+            placed.options.first().map_or("", String::as_str)
+        )
+    })
 }
 
 fn planned_marks(model: &Doc, pages: &[PageView]) -> Vec<PlannedMark> {
@@ -6175,6 +6202,73 @@ mod tests {
         assert!(edits
             .annotate(7, a_field(page, "Fresh", Kind::Text), stamped())
             .is_ok());
+    }
+
+    #[test]
+    fn radio_buttons_share_their_groups_name_and_not_a_value() {
+        use crate::formedit::Props;
+        use crate::formfields::{Kind, Placed};
+        let edits = opened();
+        let page = edits.state(7).expect("open").pages[0].id;
+        let button = |group: &str, value: &str| NewMark {
+            field: Some(Placed {
+                options: vec![value.into()],
+                ..Kind::Radio.into()
+            }),
+            ..a_field(page, group, Kind::Radio)
+        };
+        let placed = |mark: NewMark| edits.annotate(7, mark, stamped());
+        let id_of = |state: EditState| state.marks.last().expect("it").id;
+        let card = id_of(placed(button("Pay", "Card")).expect("the first"));
+        let cash = id_of(placed(button("Pay", "Cash")).expect("the same name, another value"));
+        assert!(placed(button("Pay", "Card"))
+            .expect_err("a value twice")
+            .contains("another button of this group has the value `Card`"));
+        // The same value in another group is that group's own.
+        let other = id_of(placed(button("Send", "Card")).expect("another group"));
+        // Nothing but a radio button shares a name, either way round.
+        assert!(placed(a_field(page, "Pay", Kind::Text))
+            .expect_err("a text field named as the group")
+            .contains("another field placed here has this name"));
+        placed(a_field(page, "Name", Kind::Text)).expect("a text field");
+        assert!(placed(button("Name", "A"))
+            .expect_err("a button named as a text field")
+            .contains("another field placed here has this name"));
+        // One value, and never `Off`.
+        assert!(placed(a_field(page, "Pay", Kind::Radio))
+            .expect_err("no value")
+            .contains("a radio button has one value"));
+        assert!(placed(button("Pay", "Off"))
+            .expect_err("Off")
+            .contains("when nothing is chosen"));
+        // A new value must not be a sibling's, and a move into a group must
+        // not bring one it has.
+        let value = |to: &str| Props {
+            options: Some(vec![to.into()]),
+            ..Props::default()
+        };
+        assert!(edits
+            .refit(7, cash, value("Card"))
+            .expect_err("a sibling's value")
+            .contains("has the value `Card`"));
+        let state = edits.refit(7, cash, value("Cheque")).expect("a free value");
+        let now = state.marks.iter().find(|m| m.id == cash).expect("it");
+        assert_eq!(now.field.as_ref().expect("a field").options, ["Cheque"]);
+        assert!(edits
+            .renote(7, other, "Pay".into())
+            .expect_err("it would bring Card into a group that has it")
+            .contains("has the value `Card`"));
+        edits.refit(7, card, value("Visa")).expect("freed");
+        assert!(edits.renote(7, other, "Pay".into()).is_ok());
+        // The plan carries three buttons of one name.
+        let plan = edits.plan(7).expect("a plan");
+        let group: Vec<&str> = plan
+            .marks
+            .iter()
+            .filter(|m| m.note == "Pay")
+            .map(|m| m.field.as_ref().expect("a field").options[0].as_str())
+            .collect();
+        assert_eq!(group, ["Visa", "Cheque", "Card"]);
     }
 
     #[test]

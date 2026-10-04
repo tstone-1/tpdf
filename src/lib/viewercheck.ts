@@ -3159,6 +3159,7 @@ async function appCommandChecks(
     stamp: (name: StampName) => fired.push(`stamp:${name}`),
     drawTextBox: () => fired.push("drawTextBox"),
     drawField: (kind) => fired.push(`drawField:${kind}`),
+    drawRadio: (group) => fired.push(`drawRadio:${group}`),
     fieldBorder: () => true,
     setFieldBorder: (border) => fired.push(`setFieldBorder:${border}`),
     pickedMarks: () => viewer.pickedCount,
@@ -4008,6 +4009,7 @@ async function appCommandChecks(
     { id: "edit.addMultilineField", ...shell("drawField:multiline"), read: () => fired.join(",") },
     { id: "edit.addCheckbox", ...shell("drawField:checkbox"), read: () => fired.join(",") },
     { id: "edit.addDropdown", argument: "Yes; No", ...shell("drawField:dropdown"), read: () => fired.join(",") },
+    { id: "edit.addRadio", argument: "Payment", ...shell("drawRadio:Payment"), read: () => fired.join(",") },
     {
       // The freehand tool, aimed separately for the reason the three mark kinds
       // below are: two commands that arm the same primitive with a different

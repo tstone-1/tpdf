@@ -251,6 +251,40 @@ describe("changing a placed field's properties", () => {
   });
 });
 
+describe("a placed radio button's properties", () => {
+  const BUTTON = mark(9, "Pay", { kind: "radio", border: false, options: ["Card"], required: true });
+  const NOW: FieldProperties = {
+    name: "Pay", tooltip: "", required: true, readOnly: false, maxLength: null, align: null, options: ["Card"], single: true,
+  };
+
+  it("are the group's name, its flags, and the one value the button gives", async () => {
+    const run = deps({ picked: [9], marks: [BUTTON] });
+    await changeProperties(run.deps);
+    expect(run.asked).toEqual([NOW]);
+    expect(shown(NOW).options).toBe("Card");
+    expect(read(NOW, shown(NOW))).toEqual(NOW);
+  });
+
+  it("take one value, which is not Off and has no semicolon", () => {
+    const problem = (options: string) => {
+      const got = read(NOW, { ...shown(NOW), options });
+      return "problem" in got ? got.problem : null;
+    };
+    expect(problem("Cash")).toBeNull();
+    expect(problem("")).toBe("The value this button gives its group");
+    expect(problem("Card; Cash")).toContain("one value");
+    expect(problem("Off")).toContain("nothing is chosen");
+    // A dropdown takes all three.
+    expect(read(CHOICE, { ...shown(CHOICE), options: "Off; On" })).toMatchObject({ options: ["Off", "On"] });
+  });
+
+  it("send the new value as the button's one choice", async () => {
+    const run = deps({ picked: [9], marks: [BUTTON], answer: (now) => ({ ...now, options: ["Cash"] }) });
+    await expect(changeProperties(run.deps)).resolves.toBe(true);
+    expect(run.fitted).toEqual([[9, { options: ["Cash"] }]]);
+  });
+});
+
 describe("FieldPropertiesDialog", () => {
   let dom: FakeDom;
   beforeEach(() => { dom = installFakeDom(); });
@@ -298,6 +332,15 @@ describe("FieldPropertiesDialog", () => {
     expect(rows()).toMatchObject({ "Most characters": "block", Alignment: "block", Choices: "none" });
     void dialog.ask(CHOICE);
     expect(rows()).toMatchObject({ "Most characters": "none", Alignment: "block", Choices: "block" });
+  });
+
+  it("captions the choices as a value for a radio button, and as choices again after", () => {
+    const { dialog, panel } = open();
+    const caption = () => panel.children.filter((c) => c.tagName === "label").at(-1)!.children[0]!.textContent;
+    void dialog.ask({ ...CHOICE, name: "Pay", align: null, options: ["Card"], single: true });
+    expect(caption()).toBe("Value this button gives its group");
+    void dialog.ask(CHOICE);
+    expect(caption()).toBe("Choices, with a semicolon between them");
   });
 
   it("stays open and says why when a value cannot be the field's, then takes the correction", async () => {

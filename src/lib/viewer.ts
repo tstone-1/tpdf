@@ -3986,7 +3986,7 @@ export class Viewer {
     want: { dx: number; dy: number },
   ): { dx: number; dy: number } {
     const mark = this.markById(id);
-    const least = mark?.kind === "field" ? (mark.field?.kind === "checkbox" ? 6 : 8) : 4;
+    const least = mark?.kind === "field" ? (mark.field?.kind === "checkbox" || mark.field?.kind === "radio" ? 6 : 8) : 4;
     const next = grown(base, want.dx, want.dy, this.laidSize(slot), least);
     return { dx: next.right - base.right, dy: next.bottom - base.bottom };
   }
@@ -6382,7 +6382,7 @@ export class Viewer {
           ctx.setLineDash([4 * dpr, 3 * dpr]);
           ctx.strokeRect(left, top, width, height);
           ctx.setLineDash([]);
-          if (mark.field?.border && mark.field.kind !== "checkbox") {
+          if (mark.field?.border && mark.field.kind !== "checkbox" && mark.field.kind !== "radio") {
             // The line the saved field will draw round itself, inside the
             // dashed frame: solid, black and one point, as `formfields.rs`
             // writes it.

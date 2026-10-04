@@ -933,3 +933,357 @@ fn the_wire_names_are_the_ones_the_command_reads() {
     )
     .is_err());
 }
+
+fn button(group: &str, value: &str, top: f64) -> NewField {
+    NewField {
+        options: vec![value.into()],
+        ..field(group, Kind::Radio, 0, [20.0, top, 12.0, 12.0])
+    }
+}
+
+/// The document written out and read in again, as a reader would have it.
+fn reread(doc: &Document) -> Document {
+    let mut bytes = Vec::new();
+    doc.clone().save_to(&mut bytes).expect("serialises");
+    Document::load_mem(&bytes).expect("loads")
+}
+
+fn buttons(doc: &Document, group: &str) -> Vec<crate::forms::Widget> {
+    scan(doc)
+        .expect("a form")
+        .widgets
+        .into_iter()
+        .filter(|w| w.name == group)
+        .collect()
+}
+
+/// The values a group's buttons give it, in the order the scan holds them.
+fn values(doc: &Document, group: &str) -> Vec<String> {
+    match &buttons(doc, group)[0].control {
+        Control::Radio { states, .. } => states
+            .iter()
+            .map(|state| String::from_utf8_lossy(state).into_owned())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn radio_buttons_of_one_name_are_one_group_that_takes_one_of_their_values() {
+    let mut doc = document(Held::Absent, false);
+    add(
+        &mut doc,
+        &[
+            button("Pay", "Card", 20.0),
+            button("Pay", "Cash", 40.0),
+            // A value with a space, which a name in a file spells with `#20`.
+            button("Pay", "Bank transfer", 60.0),
+            field("Name", Kind::Text, 0, [20.0, 90.0, 100.0, 20.0]),
+        ],
+    )
+    .expect("added");
+    let doc = reread(&doc);
+    let group = buttons(&doc, "Pay");
+    assert_eq!(group.len(), 3);
+    assert!(
+        group.iter().all(|w| w.object == group[0].object),
+        "one field"
+    );
+    assert!(group.iter().all(|w| w.reason.is_none()));
+    assert_eq!(values(&doc, "Pay"), ["Card", "Cash", "Bank transfer"]);
+    assert_eq!(group[0].value, Value::Selection(Vec::new()));
+    assert!(matches!(
+        group[0].control,
+        Control::Radio {
+            no_toggle_off: true,
+            unison: false,
+            ..
+        }
+    ));
+    assert_eq!(group[1].display_rect, [20.0, 40.0, 32.0, 52.0]);
+    // The form lists the group once, and the text field beside it.
+    let form = doc.catalog().unwrap().get(b"AcroForm").unwrap();
+    let form = doc.dereference(form).unwrap().1.as_dict().unwrap();
+    let listed = doc.dereference(form.get(b"Fields").unwrap()).unwrap().1;
+    assert_eq!(listed.as_array().unwrap().len(), 2);
+
+    // Answered, the group holds the value and that button alone is on.
+    let mut doc = doc;
+    write(
+        &mut doc,
+        &[Change {
+            object: group[0].object,
+            value: Value::Selection(vec![2]),
+        }],
+    )
+    .expect("chosen");
+    let doc = reread(&doc);
+    let held = doc.get_dictionary(group[0].object).unwrap().get(b"V");
+    assert_eq!(held.unwrap().as_name().unwrap(), b"Bank transfer");
+    let on: Vec<Vec<u8>> = buttons(&doc, "Pay")
+        .iter()
+        .map(|w| {
+            doc.get_dictionary(w.widget)
+                .unwrap()
+                .get(b"AS")
+                .unwrap()
+                .as_name()
+                .unwrap()
+                .to_vec()
+        })
+        .collect();
+    assert_eq!(
+        on,
+        [b"Off".to_vec(), b"Off".to_vec(), b"Bank transfer".to_vec()]
+    );
+    assert_eq!(buttons(&doc, "Pay")[0].value, Value::Selection(vec![2]));
+}
+
+#[test]
+fn a_radio_button_is_drawn_as_a_ring_and_as_a_ring_with_a_dot() {
+    let mut doc = document(Held::Absent, false);
+    add(&mut doc, &[button("Pay", "Card", 20.0)]).expect("added");
+    let widget = buttons(&doc, "Pay")[0].widget;
+    let normal = doc
+        .get_dictionary(widget)
+        .unwrap()
+        .get(b"AP")
+        .and_then(Object::as_dict)
+        .unwrap()
+        .get(b"N")
+        .and_then(Object::as_dict)
+        .unwrap()
+        .clone();
+    let body = |state: &[u8]| {
+        let id = normal.get(state).unwrap().as_reference().unwrap();
+        String::from_utf8_lossy(&doc.get_object(id).unwrap().as_stream().unwrap().content)
+            .into_owned()
+    };
+    let (off, on) = (body(b"Off"), body(b"Card"));
+    // A ring is filled once and stroked once; the dot is one more fill.
+    assert_eq!(off.matches(" c h f").count(), 1, "{off}");
+    assert_eq!(off.matches(" c h S").count(), 1, "{off}");
+    assert_eq!(on.matches(" c h f").count(), 2, "{on}");
+    assert!(on.starts_with(off.trim_end_matches('Q')), "{on}");
+    // A 12 point button: a ring of radius 5.5 about its middle, a dot of half that.
+    assert!(off.contains("11.5 6 m"), "{off}");
+    assert!(on.contains("8.75 6 m"), "{on}");
+}
+
+#[test]
+fn a_radio_button_joins_the_group_the_form_already_has() {
+    let mut doc = document(Held::Indirect, false);
+    add(
+        &mut doc,
+        &[button("Pay", "Card", 20.0), button("Pay", "Cash", 40.0)],
+    )
+    .expect("added");
+    let group = buttons(&doc, "Pay")[0].object;
+    write(
+        &mut doc,
+        &[Change {
+            object: group,
+            value: Value::Selection(vec![1]),
+        }],
+    )
+    .expect("chosen");
+    add(&mut doc, &[button("Pay", "Cheque", 60.0)]).expect("joined");
+    let doc = reread(&doc);
+    let now = buttons(&doc, "Pay");
+    assert_eq!(now.len(), 3);
+    assert!(now.iter().all(|w| w.object == group), "still one field");
+    assert_eq!(values(&doc, "Pay"), ["Card", "Cash", "Cheque"]);
+    assert_eq!(now[0].value, Value::Selection(vec![1]), "its answer stays");
+}
+
+#[test]
+fn radio_buttons_are_held_to_one_value_each_and_a_name_only_a_group_shares() {
+    let refused = |fields: &[NewField]| {
+        let mut doc = document(Held::Indirect, false);
+        add(
+            &mut doc,
+            &[
+                button("Pay", "Card", 20.0),
+                field("Name", Kind::Text, 0, [20.0, 90.0, 100.0, 20.0]),
+                field("Agree", Kind::Checkbox, 0, [20.0, 120.0, 12.0, 12.0]),
+            ],
+        )
+        .expect("added");
+        let before = reread(&doc);
+        let why = add(&mut doc, fields).expect_err("refused");
+        assert_eq!(
+            scan(&doc).unwrap().widgets.len(),
+            scan(&before).unwrap().widgets.len(),
+            "{why}"
+        );
+        why
+    };
+    assert!(refused(&[button("Pay", "Card", 40.0)])
+        .contains("already has a button with the value `Card`"));
+    assert!(
+        refused(&[button("Pay", "A", 40.0), button("Pay", "A", 60.0)])
+            .contains("already has a button with the value `A`")
+    );
+    // Refused before the button beside it is written: all or none.
+    assert!(
+        refused(&[button("Pay", "New", 40.0), button("Pay", "Card", 60.0)])
+            .contains("already has a button with the value `Card`")
+    );
+    // A checkbox is a button too, and is no group.
+    assert!(refused(&[button("Agree", "A", 40.0)]).contains("already has a field of this name"));
+    // The same value in another group is that group's own.
+    let mut doc = document(Held::Absent, false);
+    add(
+        &mut doc,
+        &[button("Pay", "A", 20.0), button("Send", "A", 40.0)],
+    )
+    .expect("two groups");
+    assert_eq!(buttons(&doc, "Send").len(), 1);
+    assert!(refused(&[button("Name", "A", 40.0)]).contains("already has a field of this name"));
+    assert!(
+        refused(&[field("Pay", Kind::Text, 0, [20.0, 120.0, 100.0, 20.0])])
+            .contains("already has a field of this name")
+    );
+    assert!(refused(&[
+        button("New", "A", 40.0),
+        field("New", Kind::Checkbox, 0, [20.0, 60.0, 12.0, 12.0])
+    ])
+    .contains("named more than once"));
+    assert!(refused(&[
+        field("New", Kind::Checkbox, 0, [20.0, 60.0, 12.0, 12.0]),
+        button("New", "A", 40.0),
+    ])
+    .contains("named more than once"));
+    assert!(refused(&[button("Pay", "Off", 40.0)]).contains("when nothing is chosen"));
+    assert!(
+        refused(&[field("Pay", Kind::Radio, 0, [20.0, 40.0, 12.0, 12.0])])
+            .contains("a radio button has one value")
+    );
+    assert!(refused(&[NewField {
+        options: vec!["A".into(), "B".into()],
+        ..button("Pay", "A", 40.0)
+    }])
+    .contains("a radio button has one value"));
+    assert!(refused(&[NewField {
+        max_length: Some(3),
+        ..button("Pay", "A", 40.0)
+    }])
+    .contains("a radio button takes no characters"));
+    assert!(
+        refused(&[field("R", Kind::Radio, 0, [20.0, 40.0, 5.0, 5.0])])
+            .contains("radio button needs at least 6")
+    );
+}
+
+#[test]
+fn a_placed_radio_button_makes_its_group_or_joins_it_and_gives_it_its_flags() {
+    let mut doc = document(Held::Absent, false);
+    let page = crate::pagetree::ordered_pages(&doc)[0];
+    let placed = |value: &str| Placed {
+        options: vec![value.into()],
+        ..Kind::Radio.into()
+    };
+    let first = place(
+        &mut doc,
+        page,
+        [20.0, 30.0, 32.0, 42.0],
+        "Pay",
+        &placed("Card"),
+    )
+    .expect("placed");
+    let group = doc
+        .get_dictionary(first)
+        .unwrap()
+        .get(b"Parent")
+        .and_then(Object::as_reference)
+        .expect("a button under its group");
+    let flags = |doc: &Document| {
+        doc.get_dictionary(group)
+            .unwrap()
+            .get(b"Ff")
+            .unwrap()
+            .as_i64()
+            .unwrap()
+    };
+    assert_eq!(flags(&doc), (1 << 15) | (1 << 14));
+    assert!(!doc.get_dictionary(group).unwrap().has(b"TU"));
+    // A second, required and with a tooltip: the group takes both.
+    let second = Placed {
+        required: true,
+        tooltip: "How you pay".into(),
+        ..placed("Cash")
+    };
+    let id = place(&mut doc, page, [20.0, 50.0, 32.0, 62.0], "Pay", &second).expect("joined");
+    assert_eq!(
+        doc.get_dictionary(id)
+            .unwrap()
+            .get(b"Parent")
+            .and_then(Object::as_reference)
+            .unwrap(),
+        group
+    );
+    assert_eq!(flags(&doc), (1 << 15) | (1 << 14) | (1 << 1));
+    // A third, read-only, with another tooltip: the flag is added, and the
+    // tooltip the group has stays.
+    let third = Placed {
+        read_only: true,
+        tooltip: "Other".into(),
+        ..placed("Cheque")
+    };
+    place(&mut doc, page, [20.0, 70.0, 32.0, 82.0], "Pay", &third).expect("joined");
+    assert_eq!(flags(&doc), (1 << 15) | (1 << 14) | (1 << 1) | 1);
+    let tip = doc
+        .get_dictionary(group)
+        .unwrap()
+        .get(b"TU")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    assert_eq!(crate::annots::decode_text_string(tip), "How you pay");
+    // Refused: a value the group has, a name a field that is no group has,
+    // and an alignment.
+    assert!(place(
+        &mut doc,
+        page,
+        [20.0, 90.0, 32.0, 102.0],
+        "Pay",
+        &placed("Card")
+    )
+    .expect_err("refused")
+    .contains("already has a button with the value `Card`"));
+    place(
+        &mut doc,
+        page,
+        [60.0, 30.0, 160.0, 50.0],
+        "Name",
+        &Kind::Text.into(),
+    )
+    .expect("placed");
+    assert!(place(
+        &mut doc,
+        page,
+        [20.0, 90.0, 32.0, 102.0],
+        "Name",
+        &placed("A")
+    )
+    .expect_err("refused")
+    .contains("already has a field of this name"));
+    assert!(place(
+        &mut doc,
+        page,
+        [60.0, 60.0, 160.0, 80.0],
+        "Pay",
+        &Kind::Text.into()
+    )
+    .expect_err("refused")
+    .contains("already has a field of this name"));
+    let aligned = Placed {
+        align: crate::forms::Align::Center,
+        ..placed("A")
+    };
+    assert!(
+        place(&mut doc, page, [20.0, 90.0, 32.0, 102.0], "Pay", &aligned)
+            .expect_err("refused")
+            .contains("no text to align")
+    );
+}

@@ -3602,6 +3602,39 @@ fit). A default value, which matters only to a form that resets, and tpdf has no
 Export values that differ from labels for new choices. Until the save, the fill box
 still offers the old choices and the old alignment.
 
+#### Radio button groups — 2026-10-04
+
+The one common kind tpdf could fill and not make.
+
+**A button is a mark, a group is a name.** Every other field is one object that is both
+field and widget, and one mark. A radio group is one field with a widget for each
+button, and the buttons are placed one at a time, so each button is a mark of kind
+`Radio` whose name is its group's and whose one option is its value. The rule that no
+two fields share a name has one exception, in the journal (`field_name_problem`) and in
+the writer (`formfields::check`, `place`): radio buttons share their group's, and may
+not share a value. `formfields::radio` makes the group with its first button and adds
+each later one to its `/Kids`, also for a group the file already has.
+
+**What is written.** The group: `/FT /Btn`, `/Ff` Radio and NoToggleToOff, `/T`, `/Kids`.
+Each button: a widget with `/Parent`, `/AS /Off` and two appearances, `/Off` and one
+named for its value, a ring and a ring with a dot. The value is the state's name, which
+is what most producers write and what a recipient reads from `/V`; `forms::write` already
+answers such a group by flipping `/AS`, and keeps the artwork. A group's tooltip and its
+two flags belong to the group: a button that is required or read-only makes the group
+so, and a group with no tooltip takes the first one a button brings.
+
+**In the window.** The command asks for the group and the tool stays armed after each
+drag, since a group of one is not a question; the name box does not open, because it
+would cover where the next button goes. `fieldnames.ts` (`placing`) gives each button
+the first `Choice n` its group does not have, counting the file's buttons too. The
+properties panel reads a placed button's value in the row a dropdown's choices use,
+held to one value that is not `Off`.
+
+**Not built.** Changing the value of a button already in the file, or taking one button
+out of a saved group and leaving the rest renumbered (removal of a button works, through
+`formedit`); a group whose buttons are on turned pages; export values that differ from
+the state names (`/Opt` on the group).
+
 #### Arranging placed rectangles — 2026-10-04
 
 Asked for directly: form fields need alignment. It needed something the window did not

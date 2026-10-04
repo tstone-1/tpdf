@@ -54,7 +54,7 @@ import {
   type PreparedImport,
 } from "./pendingimport";
 import { needs, type Arrangement } from "./arrange";
-import { parseChoices } from "./fieldnames";
+import { parseChoices, parseGroup } from "./fieldnames";
 
 /** One title per choice, each a whole sentence so the palette reads it alone. */
 const DISK_CHANGE_TITLES: Record<DiskChangeMode, string> = {
@@ -385,6 +385,8 @@ export interface AppActions {
    * choices, and are absent for every other kind.
    */
   drawField(kind: import("./pages").FieldKind, options?: string[]): void;
+  /** Arm the drag that places radio buttons of the group `group`, one for each drag. */
+  drawRadio(group: string): void;
   /** Whether a text field placed from now on gets a line round it. */
   fieldBorder(): boolean;
   setFieldBorder(border: boolean): void;
@@ -1178,6 +1180,28 @@ export function registerAppCommands(
       title: "Form fields: finish changing the document's fields",
       enabled: () => withDocument() && actions.formEditing(),
       run: () => actions.setFormEditing(false),
+    },
+    {
+      // The group is asked for before the drag: it is what makes several
+      // buttons one question, and it is each button's name.
+      id: "edit.addRadio",
+      title: "Add a form field: radio buttons...",
+      enabled: withDocument,
+      argument: {
+        placeholder: "The name of the group, such as Payment",
+        problem: (raw: string) => {
+          const parsed = parseGroup(raw);
+          return "problem" in parsed ? parsed.problem : null;
+        },
+        preview: (raw: string) => {
+          const parsed = parseGroup(raw);
+          return "group" in parsed ? `Drag a button of ${parsed.group} onto the page, and another for each choice. Escape finishes.` : "";
+        },
+        run: (raw: string) => {
+          const parsed = parseGroup(raw);
+          if ("group" in parsed) actions.drawRadio(parsed.group);
+        },
+      },
     },
     // Offered for one field: one placed in this session, or one of the file
     // picked while those are being changed. A panel about several fields

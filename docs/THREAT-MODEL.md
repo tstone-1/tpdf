@@ -3046,6 +3046,13 @@ tooltip through an element's `title`, which is text. A field placed in the sessi
 carries the same parts in the journal (`annot_field_props`), held to the same bounds
 when they are set and again when the save writes the field.
 
+**Radio buttons (2026-10-04).** A button's value becomes a PDF name, the key of its
+appearance state, and later the group's `/V`. It is a reader's text held to the rules of
+a dropdown's choice (255 characters, no control character, not `Off`), and `lopdf`
+writes a name with every character outside the regular set escaped; a test writes a
+value with a space and reads the file back. The appearances are fixed drawings of a
+ring and a dot, with no text in them.
+
 #### T6.34 — Reopening every tab at launch, added 2026-10-03
 
 Off unless the reader turns it on. When on, the session record holds the paths of the

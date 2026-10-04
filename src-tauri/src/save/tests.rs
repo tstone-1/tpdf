@@ -11328,6 +11328,59 @@ fn field_plan(name: &str, kind: crate::formfields::Kind, quad: crate::docmodel::
 }
 
 #[test]
+fn radio_buttons_placed_as_marks_are_written_as_one_group() {
+    use crate::formfields::{Kind, Placed};
+    let original = two_blank_pages();
+    let at = |top: f32| crate::docmodel::Quad {
+        left: 20.0,
+        top,
+        right: 32.0,
+        bottom: top + 12.0,
+    };
+    let button = |value: &str, top: f32| {
+        let mut mark = field_plan("Pay", Kind::Radio, at(top)).marks.remove(0);
+        mark.field = Some(Placed {
+            options: vec![value.into()],
+            ..Kind::Radio.into()
+        });
+        mark
+    };
+    let mut plan = plan_of(&[0, 0]);
+    plan.marks = vec![button("Card", 30.0), button("Cash", 50.0)];
+    let written = rewrite_update(&original, &plan, Job::Save, None).expect("rewritten");
+    let doc = Document::load_mem(&written).expect("the copy parses");
+    let form = crate::forms::scan(&doc).expect("a form");
+    assert_eq!(form.widgets.len(), 2);
+    assert!(form
+        .widgets
+        .iter()
+        .all(|w| w.name == "Pay" && w.object == form.widgets[0].object && w.reason.is_none()));
+    let crate::forms::Control::Radio { states, .. } = &form.widgets[0].control else {
+        panic!("a radio group");
+    };
+    assert_eq!(states, &[b"Card".to_vec(), b"Cash".to_vec()]);
+    assert_eq!(form.widgets[1].display_rect, [20.0, 50.0, 32.0, 62.0]);
+    assert_eq!(crate::verify::structure(&written), Vec::<String>::new());
+    // Saved again with a third button of that name, the group has three.
+    let mut more = plan_of(&[0, 0]);
+    more.marks = vec![button("Cheque", 70.0)];
+    let again = rewrite_update(&written, &more, Job::Save, None).expect("rewritten");
+    let form = crate::forms::scan(&Document::load_mem(&again).expect("parses")).expect("a form");
+    assert_eq!(form.widgets.len(), 3);
+    assert!(form
+        .widgets
+        .iter()
+        .all(|w| w.object == form.widgets[0].object));
+    // And one whose value the group has is refused, and says which.
+    let mut twice = plan_of(&[0, 0]);
+    twice.marks = vec![button("Card", 70.0)];
+    assert!(rewrite_update(&written, &twice, Job::Save, None)
+        .expect_err("refused")
+        .to_string()
+        .contains("already has a button with the value `Card`"));
+}
+
+#[test]
 fn a_field_placed_as_a_mark_is_written_as_a_field_of_the_form() {
     use crate::formfields::Kind;
     let original = two_blank_pages();

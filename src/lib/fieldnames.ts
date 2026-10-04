@@ -14,7 +14,8 @@
  * clashes with neither, so that neither refusal is what a reader meets.
  */
 
-import type { FieldKind, MarkView } from "./pages";
+import type { Form } from "./forms";
+import type { FieldKind, MarkView, PlacedField } from "./pages";
 
 /** The word a kind's placeholder name begins with. */
 const WORDS: Record<FieldKind, string> = {
@@ -24,6 +25,9 @@ const WORDS: Record<FieldKind, string> = {
   multiline: "Text",
   checkbox: "Checkbox",
   dropdown: "Dropdown",
+  // A radio button's name is its group's, which the reader types; this is
+  // only what a group is called when nothing asked.
+  radio: "Group",
 };
 
 /** The most choices a dropdown offers, and the most characters in one. `formfields.rs` holds both. */
@@ -103,6 +107,69 @@ export function writeFieldBorder(
   } catch {
     return false;
   }
+}
+
+/**
+ * The name a reader typed for a group of radio buttons, or why it cannot be
+ * one. The rules are `formfields.rs`'s for any field's name.
+ */
+export function parseGroup(raw: string): { group: string } | { problem: string } {
+  const group = raw.trim();
+  if (group === "") return { problem: "The name of the group this button belongs to, such as Payment" };
+  if (group.includes(".")) return { problem: "A field's name cannot contain a period" };
+  if (/\p{Cc}/u.test(group)) return { problem: "A field's name cannot contain a control character" };
+  if ([...group].length > 255) return { problem: "A field's name is at most 255 characters" };
+  return { group };
+}
+
+/**
+ * The values a group's buttons already have: the ones placed in this session
+ * and the ones the file's form has under that name.
+ */
+function radioValues(group: string, marks: readonly MarkView[], form: Form | null): Set<string> {
+  const values = new Set<string>();
+  for (const mark of marks) {
+    if (mark.kind === "field" && mark.note === group && mark.field?.kind === "radio") {
+      for (const value of mark.field.options ?? []) values.add(value);
+    }
+  }
+  for (const widget of form?.widgets ?? []) {
+    if (widget.name !== group || widget.control.kind !== "radio") continue;
+    for (const state of widget.control.states) values.add(new TextDecoder().decode(new Uint8Array(state)));
+  }
+  return values;
+}
+
+/** What the field tool is armed with: a kind, a dropdown's choices, a radio button's group. */
+export interface ArmedField {
+  kind: FieldKind;
+  options: string[];
+  group: string;
+}
+
+/**
+ * The field a drag places and the name it gets.
+ *
+ * A radio button is named for its group and given the first `Choice n` no
+ * button of that group has; every other kind gets a name no field has.
+ */
+export function placing(
+  armed: ArmedField,
+  border: boolean,
+  formNames: readonly string[],
+  marks: readonly MarkView[],
+  form: Form | null,
+): { field: PlacedField; name: string } {
+  if (armed.kind === "radio") {
+    const taken = radioValues(armed.group, marks, form);
+    let n = 1;
+    while (taken.has(`Choice ${n}`)) n += 1;
+    return { field: { kind: "radio", border: false, options: [`Choice ${n}`] }, name: armed.group };
+  }
+  return {
+    field: { kind: armed.kind, border, ...(armed.options.length > 0 ? { options: armed.options } : {}) },
+    name: nextFieldName(armed.kind, takenNames(formNames, marks)),
+  };
 }
 
 /** The first `Text n` or `Checkbox n`, counting from 1, that is not taken. */

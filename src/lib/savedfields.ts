@@ -199,8 +199,10 @@ export interface FieldProperties {
   maxLength: number | null;
   /** Where a text or choice field's text sits. */
   align: FormAlign | null;
-  /** What a choice field offers. */
+  /** What a choice field offers; for a radio button placed in this session, its one value. */
   options: string[] | null;
+  /** Whether `options` is one value and not a list: a placed radio button. */
+  single?: boolean;
 }
 
 /** The properties of the saved field an id names, or `null` when it names none. */
@@ -263,8 +265,9 @@ export function placedProperties(mark: MarkView | undefined): FieldProperties | 
     required: field.required ?? false,
     readOnly: field.read_only ?? false,
     maxLength: text ? field.max_length ?? 0 : null,
-    align: field.kind === "checkbox" ? null : field.align ?? "left",
-    options: field.kind === "dropdown" ? [...(field.options ?? [])] : null,
+    align: field.kind === "checkbox" || field.kind === "radio" ? null : field.align ?? "left",
+    options: field.kind === "dropdown" || field.kind === "radio" ? [...(field.options ?? [])] : null,
+    ...(field.kind === "radio" ? { single: true } : {}),
   };
 }
 

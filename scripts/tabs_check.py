@@ -256,7 +256,7 @@ def placed_fields(saved: Path, binary: Path) -> bool:
         print(f"[FAIL] tpdf fields could not read the saved file: {listed.stderr.strip()}")
         return False
     wanted = {"Name": ("text", False), "Text 2": ("text", True), "Checkbox 1": ("checkbox", False),
-              "Dropdown 1": ("choice_combo", False)}
+              "Dropdown 1": ("choice_combo", False), "Pay": ("radio", False)}
     ok = True
     for name, (kind, multiline) in wanted.items():
         field = fields.get(name)
@@ -278,12 +278,12 @@ def placed_fields(saved: Path, binary: Path) -> bool:
     filled = saved.with_name("filled.pdf")
     answers = saved.with_name("answers.json")
     answers.write_text(json.dumps({"Name": "Ada", "Text 2": "one\ntwo", "Checkbox 1": True,
-                                   "Dropdown 1": "No, by post"}))
+                                   "Dropdown 1": "No, by post", "Pay": "Choice 2"}))
     done = subprocess.run([str(tool), "fill", str(saved), "-o", str(filled), "--values", str(answers)],
                           capture_output=True, text=True, timeout=120, check=False)
     good = done.returncode == 0
     ok &= good
-    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers all four: {(done.stderr or done.stdout).strip()[:200]}")
+    print(f"{'[OK]  ' if good else '[FAIL]'} tpdf fill answers all five: {(done.stderr or done.stdout).strip()[:200]}")
     return bool(ok)
 
 

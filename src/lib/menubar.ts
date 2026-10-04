@@ -206,6 +206,7 @@ export const MENU_LAYOUT: LayoutSection[] = [
       "edit.addMultilineField",
       "edit.addCheckbox",
       "edit.addDropdown",
+      "edit.addRadio",
       "edit.fieldBorderOn",
       "edit.fieldBorderOff",
       "edit.formEditOn",
