@@ -8510,6 +8510,39 @@ MUTATIONS += [
         "waits for a flushed write to be answered, so a relaunch cannot outrun it"),
 ]
 
+# The note box is dragged aside by its heading (2026-10-05): it opens beside its
+# mark and can cover the next field. Each entry is one rule of `markpopup.ts`.
+MUTATIONS += [
+    Mutation('note box: keep a drag for the next mark', "src/lib/markpopup.ts",
+        '    if (was !== mark.id) this.moved = { x: 0, y: 0 };\n',
+        '',
+        'opens beside the next mark, and beside the same one after it was closed'),
+    Mutation('note box: place the box where its mark is, drag or none', "src/lib/markpopup.ts",
+        '    };\n    this.settle();\n  }\n',
+        '    };\n  }\n',
+        'is dragged aside by its heading, and goes on following its mark from there'),
+    Mutation('note box: keep the part of a drag that left the window', "src/lib/markpopup.ts",
+        '    this.moved = { x: left - this.placed.left, y: top - this.placed.top };\n',
+        '',
+        'stays inside the window however far it is dragged, and comes straight back'),
+    Mutation('note box: let a drag take the box out of the window', "src/lib/markpopup.ts",
+        '      Math.max(DRAG_MARGIN, Math.min(value, Math.max(DRAG_MARGIN, room - size - DRAG_MARGIN)));',
+        '      value + 0 * (size + room);',
+        'stays inside the window however far it is dragged, and comes straight back'),
+    Mutation('note box: keep a drag the browser took away', "src/lib/markpopup.ts",
+        '        if (committed) return;\n        this.moved = from.moved;',
+        '        if (committed) return;',
+        'goes back where the drag found it when the pointer is taken away'),
+    Mutation('note box: start every drag from where the box is placed', "src/lib/markpopup.ts",
+        '        from = { pointer: at, moved: this.moved };',
+        '        from = { pointer: at, moved: { x: 0, y: 0 } };',
+        'is dragged aside by its heading, and goes on following its mark from there'),
+    Mutation('note box: a heading that drags nothing', "src/lib/markpopup.ts",
+        '      drag.start(event);\n',
+        '',
+        'is dragged aside by its heading, and goes on following its mark from there'),
+]
+
 # --- signing with a certificate the reader has (Phase 6 step 2, 2026-09-26) ---
 # The command-line tool restates the application's verdict sentences in Rust
 # (`src-tauri/src/words.rs`) and writes every case to

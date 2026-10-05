@@ -347,6 +347,100 @@ describe("MarkPopup", () => {
     expect(field.focused).toBe(true);
   });
 
+  /** The heading, which is the handle the box is dragged by. */
+  function heading(note: MarkPopup): { dispatch: (t: string, e: object) => void } {
+    const rows = note.node as unknown as {
+      children: {
+        children: { tagName: string; dispatch: (t: string, e: object) => void }[];
+      }[];
+    };
+    for (const row of rows.children) {
+      const found = (row.children ?? []).find((child) => child.tagName === "strong");
+      if (found) return found;
+    }
+    throw new Error("the box has no heading");
+  }
+
+  /** Where the box is drawn. */
+  function drawn(note: MarkPopup): [number, number] {
+    const style = (note.node as unknown as { style: Record<string, string> }).style;
+    return [Number.parseFloat(style.left ?? ""), Number.parseFloat(style.top ?? "")];
+  }
+
+  /** Presses the heading at one point and moves to another; `up` lets go there. */
+  function drag(note: MarkPopup, from: [number, number], to: [number, number], end = "pointerup") {
+    const handle = heading(note);
+    handle.dispatch("pointerdown", { pointerId: 1, clientX: from[0], clientY: from[1] });
+    handle.dispatch("pointermove", { pointerId: 1, clientX: to[0], clientY: to[1] });
+    if (end) handle.dispatch(end, { pointerId: 1, clientX: to[0], clientY: to[1] });
+  }
+
+  it("is dragged aside by its heading, and goes on following its mark from there", () => {
+    const note = popup();
+    note.show(mark({ id: 7, kind: "field" }), anchor(), false);
+    // Beside the mark: right of it by the gap, at its top.
+    expect(drawn(note)).toEqual([310, 200]);
+
+    drag(note, [400, 210], [520, 150]);
+    expect(drawn(note)).toEqual([430, 140]);
+
+    // The page scrolls 60 px: the box is placed again and keeps its distance.
+    note.place(anchor({ top: 260, bottom: 278 }));
+    expect(drawn(note)).toEqual([430, 200]);
+
+    // A second drag starts from where the first left it.
+    drag(note, [0, 0], [-30, 10]);
+    expect(drawn(note)).toEqual([400, 210]);
+    // Dragging sends nothing and closes nothing.
+    expect(sent).toEqual([]);
+    expect(closed).toBe(0);
+  });
+
+  it("stays inside the window however far it is dragged, and comes straight back", () => {
+    const note = popup();
+    note.show(mark({ id: 7 }), anchor(), false);
+
+    drag(note, [0, 0], [5000, 5000]);
+    // 900 wide less the box's 280 and the margin; 700 high less the margin.
+    expect(drawn(note)).toEqual([612, 692]);
+    // One pixel back moves it one pixel: the overshoot was not kept.
+    drag(note, [0, 0], [-1, -1]);
+    expect(drawn(note)).toEqual([611, 691]);
+
+    drag(note, [0, 0], [-5000, -5000]);
+    expect(drawn(note)).toEqual([8, 8]);
+    drag(note, [0, 0], [1, 1]);
+    expect(drawn(note)).toEqual([9, 9]);
+  });
+
+  it("goes back where the drag found it when the pointer is taken away", () => {
+    const note = popup();
+    note.show(mark({ id: 7 }), anchor(), false);
+    drag(note, [0, 0], [40, 40]);
+    expect(drawn(note)).toEqual([350, 240]);
+
+    drag(note, [0, 0], [100, 100], "pointercancel");
+    expect(drawn(note)).toEqual([350, 240]);
+  });
+
+  it("opens beside the next mark, and beside the same one after it was closed", () => {
+    const note = popup();
+    note.show(mark({ id: 7 }), anchor(), false);
+    drag(note, [0, 0], [40, 40]);
+
+    // The same mark shown again, as a redraw does, stays where it was put.
+    note.show(mark({ id: 7 }), anchor(), false);
+    expect(drawn(note)).toEqual([350, 240]);
+
+    note.show(mark({ id: 8 }), anchor(), false);
+    expect(drawn(note)).toEqual([310, 200]);
+
+    drag(note, [0, 0], [40, 40]);
+    note.hide();
+    note.show(mark({ id: 8 }), anchor(), false);
+    expect(drawn(note)).toEqual([310, 200]);
+  });
+
   it("asks to be closed rather than closing itself", () => {
     // Escape and the close button both report; what actually closes the popup is
     // the viewer, which also has to put the keyboard back on the page. A popup

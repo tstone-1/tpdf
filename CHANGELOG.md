@@ -33,6 +33,11 @@ have the binary.)
 
 ### Changed
 
+- **The box beside a mark can be dragged aside.** The box that opens beside a form field,
+  a note or any other mark, with its name or note, its colours and its Remove button,
+  could cover the next field or the text being worked from. Its heading now drags it. It
+  stays inside the window, goes on following its mark when the page scrolls, and opens
+  beside the mark again the next time.
 - **Text in a table that states its bounds can be edited.** LibreOffice writes the
   bounds of every table into the document, and so does Acrobat for some. Until now that
   kept the text of every cell in such a table read-only. It is now edited like any other

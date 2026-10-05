@@ -52,6 +52,7 @@
 
 import type { MarkKind, MarkView } from "./pages";
 import { message } from "./i18n";
+import { PointerDrag, type DragPoint } from "./drag";
 import { place, POPUP_WIDTH, type Anchor } from "./popup";
 import {
   cssColor,
@@ -178,6 +179,9 @@ export function nameOf(kind: MarkKind): string {
   return NAMES[kind];
 }
 
+/** The least room kept between a dragged box and the host's edge, in pixels. */
+const DRAG_MARGIN = 8;
+
 /** The note editor for one mark the reader made. */
 export class MarkPopup {
   private readonly signatureSize = document.createElement("div");
@@ -187,6 +191,18 @@ export class MarkPopup {
   private readonly input: HTMLTextAreaElement;
   private readonly opts: MarkPopupOptions;
   private shown: number | null = null;
+  /**
+   * How far the reader has dragged the box from where it is placed.
+   *
+   * The box sits beside its mark and can cover the next field or the line a
+   * reader is working from, so its heading drags it aside. Kept as an offset
+   * and not as a position, because the box is placed again on every frame
+   * while it is open: a position would be overwritten by the next scroll, and
+   * an offset goes with the mark. It is for one opening of one mark.
+   */
+  private moved = { x: 0, y: 0 };
+  /** Where the box was last placed, before {@link moved}. */
+  private placed = { left: 0, top: 0 };
   /** The header's word, and the button's, both of which name the kind. */
   private readonly title: HTMLElement;
   private readonly remove: HTMLButtonElement;
@@ -308,6 +324,7 @@ export class MarkPopup {
     if (this.shown !== null && this.shown !== mark.id) this.commit();
     const was = this.shown;
     this.shown = mark.id;
+    if (was !== mark.id) this.moved = { x: 0, y: 0 };
     // Both labels follow the mark, because the box is the one place that knows
     // which mark a reader means --- the Edit menu's item says "Remove mark",
     // since it is chosen with the pointer somewhere else entirely and cannot.
@@ -369,6 +386,32 @@ export class MarkPopup {
   place(at: Anchor): void {
     if (this.shown === null) return;
     place(this.host, this.element, at);
+    this.placed = {
+      left: Number.parseFloat(this.element.style.left) || 0,
+      top: Number.parseFloat(this.element.style.top) || 0,
+    };
+    this.settle();
+  }
+
+  /**
+   * Puts the box where it was placed plus where it was dragged, inside the host.
+   *
+   * Held to the host's edges by the offset itself and not only by what is
+   * drawn: an offset left pointing past an edge would have to be dragged back
+   * through before the box moved again.
+   */
+  private settle(): void {
+    const within = (value: number, size: number, room: number): number =>
+      Math.max(DRAG_MARGIN, Math.min(value, Math.max(DRAG_MARGIN, room - size - DRAG_MARGIN)));
+    const left = within(this.placed.left + this.moved.x, POPUP_WIDTH, this.host.clientWidth);
+    const top = within(
+      this.placed.top + this.moved.y,
+      this.element.offsetHeight || 0,
+      this.host.clientHeight,
+    );
+    this.moved = { x: left - this.placed.left, y: top - this.placed.top };
+    this.element.style.left = `${Math.round(left)}px`;
+    this.element.style.top = `${Math.round(top)}px`;
   }
 
   /**
@@ -460,7 +503,34 @@ export class MarkPopup {
       "display:flex;gap:0.5rem;align-items:baseline;margin-bottom:0.35rem;";
 
     const kind = this.title;
-    kind.style.cssText = "flex:1;min-width:0;";
+    kind.style.cssText = "flex:1;min-width:0;cursor:move;";
+    // The heading is the handle. An Escape or a pointer the browser takes away
+    // puts the box back where the drag found it.
+    let from = { pointer: { clientX: 0, clientY: 0 } as DragPoint, moved: this.moved };
+    const drag = new PointerDrag(kind, {
+      begin: (at) => {
+        from = { pointer: at, moved: this.moved };
+        return true;
+      },
+      move: (at) => {
+        this.moved = {
+          x: from.moved.x + at.clientX - from.pointer.clientX,
+          y: from.moved.y + at.clientY - from.pointer.clientY,
+        };
+        this.settle();
+      },
+      end: (_at, committed) => {
+        if (committed) return;
+        this.moved = from.moved;
+        this.settle();
+      },
+    });
+    kind.addEventListener("pointerdown", (event) => {
+      // Prevented so that the press selects no text and takes no focus from
+      // the field being typed in.
+      event.preventDefault();
+      drag.start(event);
+    });
 
     const close = document.createElement("button");
     close.type = "button";
