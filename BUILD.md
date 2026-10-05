@@ -6544,6 +6544,27 @@ which follows the records of past releases and carries the reasons and the comma
 11. [Publish the draft, and check it from outside the account](#release-step-11)
 12. [Apply the update from the previous release, by hand](#release-step-12)
 
+**26.10.5 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
+(2,806 Rust tests with ten documented ignored, 2,321 frontend tests), and `check_windows.py`
+type-checked the Windows tree after it found one `mut` that only a Unix build changes. Every
+Rust and frontend mutation selected `--near v26.10.4` ran: 853 Rust, of which one was not
+caught, and 266 frontend, all caught. The one was `tpdf text -o` checking for an existing
+output twice; the older check is gone and the entry is aimed at the one that remains. The
+selection itself was corrected in the same step (step 7 has it). `worker-probe` 48/48;
+`backend-probe` 41/44 on `text-heavy.pdf`, the three skipped being the withdrawal checks,
+which ask for `vector-heavy.pdf` and were not rerun on it. `sign-probe` 18/18 and 20/20 with
+the pinned pyHanko. The unit tests and the command-line suite passed on Windows 11 through
+`scripts/run_on_windows.py` (2,830 unit tests, 515 command-line checks), on the tree before
+the duplicate check was removed and before the version bump. The normal bundle, with the
+development engine hidden: the bundled `tpdf-cli` answered `--version` with 26.10.5,
+`verify` with the new *Appended* row, and a text extract; with real pointer and key events
+(`cliclick`), ⌘C over a selected error message reached the clipboard and *Place signature
+image* is set in the system font. `menu_check.py`, `save_check.py` and the checks build's
+window phases were not run. The scrollbar under *Place signature image* on Windows was not
+looked at before this commit and is checked on the release installer. `docs/THREAT-MODEL.md`
+already stated the redaction sweep and the certificate reader's new module. The release
+notes in `release.yml` were rewritten and lead with the redaction fix.
+
 **26.10.4 verification, macOS arm64, 2026-10-04:** all 29 gates passed on the release tree
 (2,706 Rust tests with ten documented ignored, 2,270 frontend tests), and `check_windows.py`
 type-checked the Windows tree. Every Rust and frontend mutation selected `--since v26.10.3`

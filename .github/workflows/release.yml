@@ -507,25 +507,27 @@ jobs:
           workers cannot read arbitrary user files or access the network;
           Windows workers use low integrity and resource-limited jobs.
 
-          **New in 26.10.4.** Forms can be made in full. Besides text
-          fields and checkboxes there are dropdowns and groups of radio
-          buttons. A field's tooltip, required, read-only, most characters,
-          alignment and choices are set in a properties panel, before or
-          after its first save. The fields a document already has can be
-          moved, resized, renamed and removed.
+          **Fixed in 26.10.5, and the reason to update.** A redaction could
+          leave the removed text in the file and still be reported as
+          verified, on a page whose content is stored in several parts.
+          Every redaction now rewrites the whole page content, and the
+          check afterwards also reads text stored in other encodings and
+          the notes and bookmarks. If you redacted a document with an
+          earlier version, open the result and search it for the words
+          you removed.
 
-          Placed fields and boxes can be picked, several with Shift, and
-          then aligned, spaced evenly, given one size, dragged together,
-          moved with the arrow keys and duplicated. One press picks a
-          field and a second opens its name. Saving a form lists its
-          fields in reading order, so the Tab key moves through them the
-          way they are read.
+          Also fixed: a form field renamed to a name with characters
+          outside ASCII was stored unreadably. Signing from the menu could
+          sign the file without an answer still being typed. Text in a
+          LibreOffice document that contains a table could not be edited.
+          An error message could be selected and not copied.
 
-          Fixed: a form filled in Preview read as partly unanswered, with a
-          ticked checkbox shown empty and a group of radio buttons
-          unreadable. A field's text is now drawn where the form aligns
-          it. Redaction and every other rewrite were refused on documents
-          that keep a font's character map uncompressed.
+          **New in 26.10.5.** A form can hold an empty signature field,
+          and a certificate signature can be placed in one. A field's text
+          size and default value are set in its properties panel. Fields
+          can be placed on a turned page. `tpdf verify` reports what was
+          added to a document after each signature, and `--strict` fails
+          a document whose pages were rewritten after the last one.
 
           **Editing existing text.** Text can be edited in place in ordinary
           Word, Acrobat, LibreOffice, LiveCycle and PowerPoint exports, LaTeX
