@@ -747,6 +747,37 @@ start a subpath that draws nothing (TikZ's `m m ... h m S`) as long as the path
 draws a segment. Clips under a non-diagonal CTM remain refused. See `textedit/patterns.rs` and
 `textedit/preserved_tests.rs`; private-document checks stay in ignored directories.
 
+## Where the page scan lives
+
+The page scan is `inspect_pinning` in `textedit.rs`, which owns the operator dispatch. The state
+it carries and each operator's work are in `textedit/inspect.rs`: `Graphics` (what `q` saves and
+`Q` restores), `TextObject` (what `BT` resets), `Marked` (marked-content sequences), `Checked`
+(the page's validated resources) and `Found` (the result being built). A new construct usually
+adds one arm to the dispatch and one method there.
+
+## LibreOffice 26.2 tables
+
+Measured 2026-10-05 on a three-page Writer export (LibreOffice 26.2.4.2) with one table,
+three links and a signature image, every page of which had been refused as *unsupported or
+inconsistent tagged text structure*. Six shapes are read since then, each held as tightly as
+its neighbours (`tagging.rs`, `tagging/tables.rs`):
+
+- A `TR` whose only attribute is `/O /Layout /Placement /Block`. Any other attribute on a row
+  is refused with the containers'.
+- A cell's own `/Layout` object beside its `/Table` one: `Placement` (Inline or Block), `Width`
+  and `Height` (a number >= 0 or Auto), given once. They are the cell's allocation and not the
+  ink of its text.
+- A paragraph in a cell under a name the RoleMap makes a text block (`Standard`, a paragraph
+  style's name). A standard name keeps its own meaning whatever the RoleMap says of it.
+- `TextDecorationType` on a link, a figure, a field or a table (None, Underline, Overline,
+  LineThrough). The text it describes is read-only.
+- A `Span` in a `Span`. The inner one is a leaf of its own and pinned; any other element in a
+  Span is refused.
+- A `Figure` in a paragraph goes back to the walk, read-only, like a figure in a figure.
+
+A table that states a `BBox` still makes its cells read-only, so on that document the text
+beside the table is editable and the table's is not.
+
 ## PowerPoint for Microsoft 365
 
 Measured on the unchanged EC consumer factsheet (`testdata/textedit-public-corpus.json`),

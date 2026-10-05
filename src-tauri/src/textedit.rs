@@ -18,6 +18,7 @@ mod forms;
 mod graphics;
 mod grouping;
 mod images;
+mod inspect;
 mod kerning;
 mod layout;
 mod patterns;
@@ -908,402 +909,55 @@ fn inspect_pinning(
     // Discovery promises that deletion can use the byte-preserving writer too.
     streams::rewrite(&bytes, &content, &BTreeSet::new())?;
     let resources = resources(doc, id)?;
-    let mut fill_components =
-        patterns::Colour::Solid(colors::named(doc, resources, b"DeviceGray")?);
-    let mut colour_spaces = BTreeMap::new();
-    let mut shading_patterns = BTreeSet::new();
-    // Each validated state and the line width it sets, if any.
-    let mut graphics_states = BTreeMap::new();
-    let mut image_names = BTreeSet::new();
-    let mut stencils: BTreeSet<Vec<u8>> = BTreeSet::new();
-    let mut form_bounds = BTreeMap::new();
-    let mut image_bytes = 0;
-    let mut result = PageRuns {
-        page,
-        // The scan holds one document and cannot name it; the command that
-        // chose which document to ask fills this in. See the field.
-        source: None,
-        revision: Sha256::digest(&bytes).to_vec(),
-        runs: Vec::new(),
-        preview: None,
-    };
+    let mut state = inspect::Graphics::new(patterns::Colour::Solid(colors::named(
+        doc,
+        resources,
+        b"DeviceGray",
+    )?));
+    let mut saved = Vec::new();
+    let mut checked = inspect::Checked::new(doc, resources);
+    let sheet = crate::pagetree::displayed_page(doc, id);
+    let mut found = inspect::Found::new(page, Sha256::digest(&bytes).to_vec(), sheet);
+    let mut object = inspect::TextObject::new();
+    let mut marked = inspect::Marked::new(tags);
+    let mut path_until = 0;
     // Never skip unknown operators: graphics and text state can change a Tj's
     // meaning without changing its string. Tf and TL persist across BT/ET;
     // the text/line matrices reset at BT. Keep the line matrix separate from
     // the cursor advanced by each show. A shorter edit must compensate that
     // advance whenever another show depends on it.
-    let mut inside = false;
-    let mut positioned = false;
-    let mut cursor = 0.0;
-    let mut previous_show = None;
-    // Where the current text line matrix was last set (the BT or Tm), and the
-    // leading then in effect: a layout restores the line by replaying from here.
-    let mut line_origin = (0_usize, 0.0_f64);
-    let mut spacer: Option<spacers::Spacer> = None;
-    // An empty spacer outside a text object: open until its EMC.
-    let mut empty_spacer = false;
-    let mut actual: Option<actual::Span> = None;
-    // Inside an optional-content (layer) sequence: its text may be hidden.
-    let mut layer = false;
-    // Open placed-artwork sequences (`placed_content`): one, or one with its
-    // metadata sequence inside. Text in them is kept read-only.
-    let mut placed = 0_u8;
-    let mut actual_spans = Vec::new();
-    let mut continued = BTreeSet::new();
-    let mut selected_font = None;
-    let mut font_metrics = BTreeMap::new();
-    let mut font_boxes = BTreeMap::new();
-    // Why the first font the editor cannot write with was kept read-only: the
-    // refusal a page gets when that leaves it nothing to edit.
-    let mut unusable_font: Option<String> = None;
-    let mut leading = 0.0;
-    let mut spacing = 0.0;
-    let mut word_spacing = 0.0;
-    // ISO 32000-1 9.3.6 and 8.4.3.2: the text render mode and the line width
-    // are graphics state, saved and restored with it. Modes 1 and 2 stroke the
-    // glyphs, so their ink reaches half the line width beyond the outlines.
-    let mut render = 0_i64;
-    let mut line_width = 1.0_f64;
-    let mut stroke_components = patterns::Colour::Solid(1);
-    let mut states = Vec::new();
-    let mut clip = None;
-    let mut compound_clips: Vec<clipping::Region> = Vec::new();
-    // Whether a clip the axis-aligned model cannot hold is in force
-    // (`clipping::quadrilateral`): text drawn under it is kept read-only.
-    let mut turned_clip = false;
-    let mut path_until = 0;
-    let mut page_transform = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-    let mut font_operators = BTreeMap::new();
-    let mut horizontal_bounds = BTreeMap::new();
-    let mut blocks = BTreeMap::new();
-    let mut text_spacing = BTreeMap::new();
-    let mut leads = BTreeMap::new();
-    let mut gaps = BTreeMap::new();
-    let mut compound_run_clips = BTreeMap::new();
-    let mut contexts = BTreeMap::new();
-    // Each structure Span with rewritable ActualText: its shows, and whether
-    // none of them is inside an ActualText span of its own. A read-only or
-    // spacer show never becomes a run, which the comparison below sees.
-    let mut span_shows: BTreeMap<ObjectId, (Vec<u32>, bool)> = BTreeMap::new();
-    let mut preserved = Vec::new();
-    let mut centred = BTreeSet::new();
-    let mut form_text_bounds = Vec::new();
-    let mut graphics: Vec<[f32; 4]> = Vec::new();
-    let mut paths = BTreeMap::new();
-    // What each named XObject paints, in its own space: the unit square for an
-    // image (ISO 32000-1 8.9.5.2 maps every image onto it) and the BBox for a
-    // preserved form. A name is checked once and drawn many times, each time
-    // under its own CTM, so the rectangle is kept and transformed per use.
-    let mut drawn_bounds: BTreeMap<Vec<u8>, [f64; 4]> = BTreeMap::new();
-    let sheet = crate::pagetree::displayed_page(doc, id);
-    let (sox, soy) = (f64::from(sheet.origin.0), f64::from(sheet.origin.1));
-    let to_display = |bounds: [f64; 4]| {
-        crate::text::to_device(
-            sheet.turns,
-            sheet.width,
-            sheet.height,
-            [
-                bounds[0] - sox,
-                bounds[1] - soy,
-                bounds[2] - sox,
-                bounds[3] - soy,
-            ],
-        )
-    };
-    let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-    // Whether the marked-content sequence opened at `index` closes at once,
-    // with no operator inside it.
-    let closes = |index: usize| {
-        content
-            .operations
-            .get(index + 1)
-            .is_some_and(|next| next.operator == "EMC" && next.operands.is_empty())
-    };
     for (index, op) in content.operations.iter().enumerate() {
         if index < path_until {
             continue;
         }
-        if let Some(spacer) = &mut spacer {
+        if let Some(spacer) = &mut marked.spacer {
             spacer.step(&op.operator)?;
         }
-        if actual.is_some() && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("nested ActualText marked content is not editable yet".into());
-        }
-        if layer && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("marked content inside optional content is not editable yet".into());
-        }
-        let metadata = placed == 1
-            && op.operator == "BDC"
-            && op.operands.first().and_then(|tag| tag.as_name().ok()) == Some(b"Metadata");
-        if placed > 0 && !metadata && matches!(op.operator.as_str(), "BDC" | "BMC") {
-            return Err("marked content inside placed artwork is not editable yet".into());
-        }
         match (op.operator.as_str(), op.operands.as_slice()) {
-            // Marked content and text objects are independently balanced (ISO
-            // 32000-1, 14.6.1). MCIDs use the same ownership checks inside BT;
-            // only the narrow ActualText spacer grammar has a separate path.
-            // Artifacts balance independently of BT/ET too; PDFMaker opens
-            // running headers inside the text object.
-            // ISO 32000-1 8.11.3.2: content that belongs to a layer. PowerPoint
-            // puts each slide's background in one. The editor never resolves
-            // the layer state, so text inside is kept read-only, and nothing
-            // may open inside it, which lets the next EMC close it.
-            ("BDC", [tag, Object::Name(resource)]) if tag.as_name().ok() == Some(b"OC") => {
-                optional_content(doc, resources, resource)?;
-                layer = true;
+            ("BDC" | "BMC" | "EMC", _) => {
+                marked.sequence(op, index, &content, &object, &checked)?
             }
-            ("EMC", []) if layer => layer = false,
-            ("BDC", [tag, Object::Name(resource)])
-                if metadata
-                    || (!inside
-                        && matches!(tag.as_name().ok(), Some(b"PlacedPDF" | b"PlacedGraphic"))) =>
-            {
-                placed_content(doc, resources, resource)?;
-                placed += 1;
-            }
-            ("EMC", []) if placed > 0 => placed -= 1,
-            ("BDC", [tag, properties])
-                if tag.as_name().ok() == Some(b"Artifact")
-                    && !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
-            {
-                tags.artifact(properties)?
-            }
-            ("BDC", [tag, properties])
-                if !properties.as_dict().is_ok_and(|dict| dict.has(b"MCID")) =>
-            {
-                let separator = spacers::Spacer::new(tag, properties).ok();
-                // InDesign writes a tab stop as an empty span of this kind
-                // between text objects, where nothing can be shown: it holds
-                // only its ActualText, and there is nothing in it to edit or
-                // move.
-                let empty = !inside && closes(index);
-                if let Some(value) = separator.filter(|_| inside || empty) {
-                    if inside {
-                        spacer = Some(value);
-                    } else {
-                        empty_spacer = true;
-                    }
-                } else {
-                    actual = Some(actual::Span::new(tag, properties, index)?);
-                }
-            }
-            ("EMC", []) if actual.is_some() => {
-                if actual_spans.len() >= 128 {
-                    return Err("too many ActualText spans".into());
-                }
-                actual_spans.push(actual.take().unwrap());
-            }
-            ("EMC", []) if inside && spacer.is_some() => {
-                spacer = None;
-            }
-            ("EMC", []) if empty_spacer => empty_spacer = false,
-            // An artifact needs no properties, inside a text object or out:
-            // LibreOffice marks table-of-contents dot leaders `/Artifact BMC`.
-            ("BMC", [tag]) if !inside || tag.as_name().ok() == Some(b"Artifact") => {
-                tags.begin(tag, None)?
-            }
-            ("BDC", [tag, properties]) => {
-                tags.begin(tag, Some(properties))?;
-                if closes(index) {
-                    tags.empty();
-                }
-            }
-            ("EMC", []) => tags.end()?,
             // ISO 32000-1, 8.4.2: font, size and leading are graphics state.
             // Only accept saves outside BT/ET. Preserve every accepted state
             // component; the next BT resets both text matrices.
-            ("q", []) if !inside => {
-                if states.len() >= 64 {
-                    return Err("text graphics-state stack exceeds its limit".into());
-                }
-                states.push((
-                    selected_font,
-                    leading,
-                    page_transform,
-                    fill_components,
-                    clip,
-                    spacing,
-                    word_spacing,
-                    stroke_components,
-                    compound_clips.clone(),
-                    (render, line_width),
-                    turned_clip,
-                ));
+            ("q", []) if !object.inside => state.save(&mut saved)?,
+            ("Q", []) if !object.inside => state.restore(&mut saved)?,
+            ("re", _) if !object.inside => {
+                path_until = state.rectangle(&content, index, &mut marked.tags, &mut found)?
             }
-            ("Q", []) if !inside => {
-                (
-                    selected_font,
-                    leading,
-                    page_transform,
-                    fill_components,
-                    clip,
-                    spacing,
-                    word_spacing,
-                    stroke_components,
-                    compound_clips,
-                    (render, line_width),
-                    turned_clip,
-                ) = states.pop().ok_or("unmatched graphics-state restore")?;
-            }
-            ("re", _) if !inside => {
-                if let Some(rectangles_consumed) =
-                    clipping::painted(&content.operations[index..], page_transform)?
-                {
-                    patterns::paint(
-                        &content.operations[index + rectangles_consumed - 1].operator,
-                        fill_components,
-                        stroke_components,
-                    )?;
-                    if content.operations[index + rectangles_consumed - 1].operator != "n" {
-                        tags.paint();
-                    }
-                    if let Some(bounds) = clipping::drawn(
-                        &content.operations[index..],
-                        rectangles_consumed,
-                        page_transform,
-                    )? {
-                        paths.insert(
-                            graphics.len(),
-                            DrawnPath {
-                                operations: (index, index + rectangles_consumed - 1),
-                                transform: page_transform,
-                            },
-                        );
-                        graphics.push(to_display(bounds));
-                    }
-                    path_until = index + rectangles_consumed;
-                } else if !diagonal(page_transform) {
-                    return Err("non-diagonal clips are not editable yet".into());
-                } else {
-                    clip = Some(clipping::apply(
-                        clip,
-                        &content.operations[index..],
-                        page_transform,
-                    )?);
-                    path_until = index + 3;
-                }
-            }
-            ("m", _) if !inside => {
-                // A rotated or skewed path may be painted; clipping with one
-                // stays refused, because the clip model is axis-aligned.
-                if let Some((consumed, region)) = diagonal(page_transform)
-                    .then(|| clipping::compound(&content.operations[index..], page_transform))
-                    .transpose()?
-                    .flatten()
-                {
-                    if compound_clips.len() >= 32 {
-                        return Err("too many compound clipping intersections".into());
-                    }
-                    compound_clips.push(region);
-                    path_until = index + consumed;
-                    continue;
-                }
-                if let Some(consumed) = diagonal(page_transform)
-                    .then(|| clipping::quadrilateral(&content.operations[index..], page_transform))
-                    .transpose()?
-                    .flatten()
-                {
-                    turned_clip = true;
-                    path_until = index + consumed;
-                    continue;
-                }
-                let consumed = clipping::path(&content.operations[index..], page_transform)?;
-                patterns::paint(
-                    &content.operations[index + consumed - 1].operator,
-                    fill_components,
-                    stroke_components,
-                )?;
-                if content.operations[index + consumed - 1].operator != "n" {
-                    tags.paint();
-                }
-                if let Some(bounds) =
-                    clipping::drawn(&content.operations[index..], consumed, page_transform)?
-                {
-                    paths.insert(
-                        graphics.len(),
-                        DrawnPath {
-                            operations: (index, index + consumed - 1),
-                            transform: page_transform,
-                        },
-                    );
-                    graphics.push(to_display(bounds));
-                }
-                path_until = index + consumed;
+            ("m", _) if !object.inside => {
+                path_until = state.path(&content, index, &mut marked.tags, &mut found)?
             }
             // Every accepted path is consumed as a complete sequence, so an
             // isolated n outside BT has no pending path or clip to apply.
-            ("n", []) if !inside => {}
-            ("Do", [Object::Name(name)]) if !inside => {
-                if !image_names.contains(name) {
-                    if image_names.len() >= 32 {
-                        return Err("too many images on an editable page".into());
-                    }
-                    if let Some(form) =
-                        forms::check(doc, resources, name, MAX_IMAGES - image_bytes)?
-                    {
-                        image_bytes += form.bytes;
-                        form_bounds.insert(name.clone(), form.text_bounds);
-                        drawn_bounds.insert(name.clone(), form.bounds);
-                    } else {
-                        let image = images::check(doc, resources, name, MAX_IMAGES - image_bytes)?;
-                        image_bytes += image.bytes;
-                        if image.stencil {
-                            stencils.insert(name.clone());
-                        }
-                        drawn_bounds.insert(name.clone(), [0., 0., 1., 1.]);
-                    }
-                    image_names.insert(name.clone());
-                }
-                // Where this use of it lands, clipped as its text bounds are.
-                if let Some(&painted) = drawn_bounds.get(name) {
-                    let mut bounds = text_bounds(page_transform, painted);
-                    if let Some(clip) = clip {
-                        bounds = [
-                            bounds[0].max(clip[0]),
-                            bounds[1].max(clip[1]),
-                            bounds[2].min(clip[2]),
-                            bounds[3].min(clip[3]),
-                        ];
-                    }
-                    if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
-                        graphics.push(to_display(bounds));
-                    }
-                }
-                // A stencil mask paints the fill colour current at each use.
-                if stencils.contains(name) {
-                    patterns::paint("f", fill_components, stroke_components)?;
-                }
-                if let Some(Some(bounds)) = form_bounds.get(name) {
-                    let mut bounds = text_bounds(page_transform, *bounds);
-                    if let Some(clip) = clip {
-                        bounds = [
-                            bounds[0].max(clip[0]),
-                            bounds[1].max(clip[1]),
-                            bounds[2].min(clip[2]),
-                            bounds[3].min(clip[3]),
-                        ];
-                    }
-                    if bounds[0] < bounds[2] && bounds[1] < bounds[3] {
-                        let geometry = crate::pagetree::displayed_page(doc, id);
-                        let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
-                        form_text_bounds.push(crate::text::to_device(
-                            geometry.turns,
-                            geometry.width,
-                            geometry.height,
-                            [
-                                bounds[0] - ox,
-                                bounds[1] - oy,
-                                bounds[2] - ox,
-                                bounds[3] - oy,
-                            ],
-                        ));
-                    }
-                }
-                tags.paint();
+            ("n", []) if !object.inside => {}
+            ("Do", [Object::Name(name)]) if !object.inside => {
+                checked.draw(name, &state, &mut found)?;
+                marked.tags.paint();
             }
             ("w", [value]) => {
                 clipping::line_width(value)?;
-                line_width = number(value)?;
+                state.line_width = number(value)?;
             }
             ("J" | "j" | "M" | "d", values) => graphics::stroke(&op.operator, values)?,
             ("i", [value]) => graphics::tolerance(b"FL", value)?,
@@ -1312,421 +966,78 @@ fn inspect_pinning(
             // first in the block and every reader applies it. Geometry is
             // taken from the CTM at each show, so a cm before the block's first
             // show changes nothing already measured; one between shows would.
-            ("cm", values) if (!inside || previous_show.is_none()) && values.len() == 6 => {
-                let mut next = [0.0; 6];
-                for (dest, value) in next.iter_mut().zip(values) {
-                    *dest = number(value)?;
-                }
-                page_transform = compose_affine(page_transform, next)?;
+            ("cm", values)
+                if (!object.inside || object.previous_show.is_none()) && values.len() == 6 =>
+            {
+                state.concatenate(values)?
             }
-            ("BT", []) if !inside => {
-                inside = true;
-                positioned = false;
-                cursor = 0.0;
-                previous_show = None;
-                matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-                line_origin = (index, leading);
-            }
-            ("ET", []) if inside => inside = false,
+            ("BT", []) if !object.inside => object.begin(index, state.leading),
+            ("ET", []) if object.inside => object.inside = false,
             // Explicit defaults have the same semantics as an omitted setting.
             // Text state can be set outside BT/ET and persists across blocks.
             // Text spacing is saved by q/Q and checked against the active
             // font at each show. Other nondefault text state remains refused.
-            ("Tc", [value]) => spacing = number(value)?,
-            ("Tw", [value]) => word_spacing = number(value)?,
+            ("Tc", [value]) => state.spacing = number(value)?,
+            ("Tw", [value]) => state.word_spacing = number(value)?,
             ("Ts", [value]) if number(value)? == 0.0 => {}
             ("Tz", [value]) if number(value)? == 100.0 => {}
             // Fill, stroke, both, or neither. Modes 4 to 7 add the glyphs to
             // the clipping path and change what later content shows.
-            ("Tr", [Object::Integer(mode @ 0..=3)]) => render = *mode,
+            ("Tr", [Object::Integer(mode @ 0..=3)]) => state.render = *mode,
             ("ri", [Object::Name(name)]) => colors::intent(name)?,
-            ("gs", [Object::Name(name)]) => {
-                if !graphics_states.contains_key(name) {
-                    if graphics_states.len() >= 32 {
-                        return Err("too many external text graphics states".into());
-                    }
-                    let width = graphics::normal(doc, resources, name)?;
-                    graphics_states.insert(name.clone(), width);
-                }
-                if let Some(width) = graphics_states[name] {
-                    line_width = width;
-                }
-            }
-            ("cs" | "CS", [Object::Name(name)]) => {
-                if !colour_spaces.contains_key(name) {
-                    if colour_spaces.len() >= 32 {
-                        return Err("too many text colour spaces".into());
-                    }
-                    colour_spaces.insert(
-                        name.clone(),
-                        if name == b"Pattern" {
-                            patterns::Colour::Pattern { selected: false }
-                        } else {
-                            patterns::Colour::Solid(colors::named(doc, resources, name)?)
-                        },
-                    );
-                }
-                if op.operator == "cs" {
-                    fill_components = colour_spaces[name];
-                } else {
-                    stroke_components = colour_spaces[name];
-                }
-            }
-            ("sc" | "scn", values) => {
-                fill_components.set(doc, resources, &op.operator, values, &mut shading_patterns)?
-            }
-            ("SC" | "SCN", values) => stroke_components.set(
-                doc,
-                resources,
-                &op.operator,
-                values,
-                &mut shading_patterns,
-            )?,
-            ("g" | "rg" | "k", values) => {
-                let components = match op.operator.as_str() {
-                    "g" => 1,
-                    "rg" => 3,
-                    _ => 4,
-                };
-                fill_components = patterns::Colour::Solid(components);
-                colors::values(values, components)?;
-            }
-            ("G" | "RG" | "K", values) => {
-                // Filled text cannot use stroke colour; preserve the validated
-                // setter without changing the independently tracked fill space.
-                let components = match op.operator.as_str() {
-                    "G" => 1,
-                    "RG" => 3,
-                    _ => 4,
-                };
-                stroke_components = patterns::Colour::Solid(components);
-                colors::values(values, components)?;
-            }
+            ("gs", [Object::Name(name)]) => state.external(name, &mut checked)?,
+            ("cs" | "CS", [Object::Name(name)]) => state.colour_space(op, name, &mut checked)?,
+            ("sc" | "scn", values) => checked.colour(&mut state.fill_components, op, values)?,
+            ("SC" | "SCN", values) => checked.colour(&mut state.stroke_components, op, values)?,
+            ("g" | "rg" | "k", values) => state.fill(op, values)?,
+            ("G" | "RG" | "K", values) => state.stroke(op, values)?,
             // ISO 32000-1 Table 51: font and leading are text state, which the
             // page may set before BT (Typst does); q/Q save both.
-            ("Tf", [name, size]) => {
-                let name = name.as_name().map_err(|e| e.to_string())?;
-                if !font_metrics.contains_key(name) {
-                    if font_metrics.len() >= 32 {
-                        return Err("too many fonts on an editable page".into());
-                    }
-                    // A simple font the editor cannot write with keeps its
-                    // text read-only (`fonts::read_only`) rather than refusing
-                    // the page; when even that cannot measure it, the page is
-                    // refused with the font's own reason.
-                    let metrics = match font(doc, resources, name) {
-                        Ok(metrics) => metrics,
-                        Err(error) => {
-                            let metrics = read_only_font(doc, resources, name).ok_or(&error)?;
-                            unusable_font.get_or_insert(error);
-                            metrics
-                        }
-                    };
-                    font_metrics.insert(name.to_vec(), metrics);
-                    if let Some(bounds) = standard_box(doc, resources, name) {
-                        font_boxes.insert(name.to_vec(), bounds);
-                    }
-                }
-                let size = number(size)?;
-                if !(0.0..=1000.0).contains(&size) || size == 0.0 {
-                    return Err("unsupported text size".into());
-                }
-                selected_font = Some((name, size, index));
+            ("Tf", [name, size]) => state.font(name, size, index, &mut checked)?,
+            ("TL", [value]) => state.leading = number(value)?,
+            ("Tm", values) if object.inside && values.len() == 6 => {
+                object.set_matrix(values, index, state.leading)?
             }
-            ("TL", [value]) => leading = number(value)?,
-            ("Tm", values) if inside && values.len() == 6 => {
-                for (dest, value) in matrix.iter_mut().zip(values) {
-                    *dest = number(value)?;
-                }
-                compose_affine([1., 0., 0., 1., 0., 0.], matrix)?;
-                positioned = true;
-                cursor = 0.0;
-                line_origin = (index, leading);
-            }
-            ("Td" | "TD", [x, y]) if inside => {
-                let (x, y) = (number(x)?, number(y)?);
-                // TD is exactly -ty TL followed by tx ty Td. Both move the
-                // line matrix, independently of the preceding show's advance.
-                if op.operator == "TD" {
-                    leading = -y;
-                }
-                move_line(&mut matrix, x, y)?;
-                positioned = true;
-                cursor = 0.0;
-            }
-            ("T*", []) if inside => {
-                move_line(&mut matrix, 0.0, -leading)?;
-                positioned = true;
-                cursor = 0.0;
-            }
+            ("Td" | "TD", [x, y]) if object.inside => object.move_by(op, x, y, &mut state)?,
+            ("T*", []) if object.inside => object.next_line(state.leading)?,
             ("Tj", [_]) | ("TJ", [Object::Array(_)])
-                if inside && (positioned || previous_show.is_some()) =>
+                if object.inside && (object.positioned || object.previous_show.is_some()) =>
             {
-                tags.text()?;
-                if let Some(block) = tags.block() {
-                    blocks.insert(index as u32, block);
-                }
+                found.show(index, op, &state, &mut object, &mut marked, &checked)?
             }
             _ => {
                 return Err(refusal::operation(
                     &op.operator,
                     &op.operands,
-                    inside,
-                    positioned || previous_show.is_some(),
+                    object.inside,
+                    object.positioned || object.previous_show.is_some(),
                 ))
             }
         }
-        if !matches!(op.operator.as_str(), "Tj" | "TJ") {
-            continue;
-        }
-        let (name, size, font_operator) = selected_font.ok_or("text has no explicit font")?;
-        if !positioned {
-            continued.insert(previous_show.ok_or("text has no preceding position")?);
-        }
-        positioned = false;
-        previous_show = Some(index as u32);
-        let geometry = crate::pagetree::displayed_page(doc, id);
-        let metrics = font_metrics.get(name).ok_or("missing text font")?;
-        let mut backtracks = false;
-        let (text, advance, horizontal) = if op.operator == "TJ" {
-            let (text, advance, horizontal, lead, found, back) = array_text(
-                op.operands[0].as_array().map_err(|e| e.to_string())?,
-                metrics,
-                size,
-                spacing,
-                word_spacing,
-            )?;
-            backtracks = back;
-            if found.count > 0 {
-                gaps.insert(index as u32, found.total / f64::from(found.count));
-            }
-            if let Some(lead) = lead {
-                cursor -= number(lead)? * size / 1000.0;
-                if !cursor.is_finite() || cursor.abs() > 1_000_000.0 {
-                    return Err("kerning position exceeds its limit".into());
-                }
-                leads.insert(index as u32, lead.clone());
-            }
-            (text, advance, horizontal)
-        } else {
-            metrics.source_layout(
-                op.operands[0].as_str().map_err(|e| e.to_string())?,
-                size,
-                spacing,
-                word_spacing,
-            )?
-        };
-        let mut shown_matrix = matrix;
-        shift_position(&mut shown_matrix, cursor * matrix[0], cursor * matrix[1])?;
-        let page_matrix = if diagonal(page_transform) && orthogonal(shown_matrix) {
-            compose_orthogonal(page_transform, shown_matrix)?
-        } else {
-            compose_affine(page_transform, shown_matrix)?
-        };
-        // A glyph whose text the editor cannot write keeps its whole run.
-        let read_only = tags.read_only()
-            || layer
-            || turned_clip
-            || backtracks
-            || text.contains(fonts::OPAQUE)
-            || !diagonal(page_transform)
-            || !orthogonal(page_matrix)
-            || page_matrix[0] * page_matrix[3] - page_matrix[1] * page_matrix[2] <= 0.0
-            || !matches!(fill_components, patterns::Colour::Solid(_))
-            || (matches!(render, 1 | 2)
-                && !matches!(stroke_components, patterns::Colour::Solid(_)));
-        let read_only = read_only || placed > 0;
-        // The colours the mode paints with; an invisible run paints nothing.
-        if let Some(paint) = [Some("f"), Some("S"), Some("B"), None][render as usize] {
-            patterns::paint(paint, fill_components, stroke_components)?;
-        }
-        // Half the line width, in page units, around stroked glyphs.
-        let stroke = if matches!(render, 1 | 2) {
-            line_width / 2.
-                * (page_transform[0].abs() + page_transform[2].abs())
-                    .max(page_transform[1].abs() + page_transform[3].abs())
-        } else {
-            0.
-        };
-        cursor += advance;
-        if !cursor.is_finite() || cursor > 1_000_000.0 {
-            return Err("continued text advance exceeds its limit".into());
-        }
-        let mut bounds = text_bounds(
-            page_matrix,
-            [horizontal[0], -size * 0.25, horizontal[1], size],
-        );
-        if (read_only || metrics.vertical_bounds.is_some()) && !text.is_empty() {
-            let (reach, bottom, top) = match (metrics.vertical_bounds, font_boxes.get(name)) {
-                (Some([bottom, top]), _) => (0., bottom, top),
-                // A standard font has no outlines here, but its FontBBox holds
-                // every glyph: read-only text in it (arXiv's rotated stamp)
-                // reserves that box, widened by its larger side at both ends.
-                (None, Some(&[left, bottom, right, top])) => {
-                    (left.abs().max(right.abs()), bottom, top)
-                }
-                (None, None) => {
-                    return Err("read-only text requires validated glyph outlines".into())
-                }
-            };
-            let reach = reach * size / 1000.;
-            let ink = text_bounds(
-                page_matrix,
-                [
-                    horizontal[0].min(horizontal[1]) - reach,
-                    bottom * size / 1000.,
-                    horizontal[0].max(horizontal[1]) + reach,
-                    top * size / 1000.,
-                ],
-            );
-            bounds = [
-                bounds[0].min(ink[0]),
-                bounds[1].min(ink[1]),
-                bounds[2].max(ink[2]),
-                bounds[3].max(ink[3]),
-            ];
-        }
-        bounds = [
-            bounds[0] - stroke,
-            bounds[1] - stroke,
-            bounds[2] + stroke,
-            bounds[3] + stroke,
-        ];
-        // Include actual horizontal overhang in hit boxes and clipping. The
-        // vertical union covers every offered glyph. Writing additionally keeps
-        // replacement ink inside these unrounded original horizontal bounds.
-        // Standard-font widths cannot prove substituted glyph ink bounds.
-        if !text.is_empty() && (clip.is_some() || !compound_clips.is_empty()) {
-            let [bottom, top] = metrics
-                .vertical_bounds
-                .ok_or("clipped text requires validated embedded glyph outlines")?;
-            let ink_bounds = text_bounds(
-                page_matrix,
-                [
-                    horizontal[0],
-                    bottom * size / 1000.,
-                    horizontal[1],
-                    top * size / 1000.,
-                ],
-            );
-            let ink_bounds = [
-                ink_bounds[0] - stroke,
-                ink_bounds[1] - stroke,
-                ink_bounds[2] + stroke,
-                ink_bounds[3] + stroke,
-            ];
-            // A rectangular clip remains in the saved stream and in the worker
-            // preview. Partly clipped source text is still editable; rejecting
-            // it here would disable every other text object on the page.
-            if clipping::contains(clip, ink_bounds).is_err() {
-                let rect = clip.unwrap();
-                bounds = [
-                    bounds[0].clamp(rect[0], rect[2]),
-                    bounds[1].clamp(rect[1], rect[3]),
-                    bounds[2].clamp(rect[0], rect[2]),
-                    bounds[3].clamp(rect[1], rect[3]),
-                ];
-            }
-            for region in &compound_clips {
-                region.contains(ink_bounds)?;
-            }
-            if !compound_clips.is_empty() {
-                compound_run_clips.insert(index as u32, (compound_clips.clone(), ink_bounds));
-            }
-        }
-        let [left, bottom, right, top] = bounds;
-        let (ox, oy) = (f64::from(geometry.origin.0), f64::from(geometry.origin.1));
-        let display_rect = crate::text::to_device(
-            geometry.turns,
-            geometry.width,
-            geometry.height,
-            [left - ox, bottom - oy, right - ox, top - oy],
-        );
-        if display_rect.iter().any(|v| !v.is_finite()) {
-            return Err("text bounds exceed the display range".into());
-        }
-        if let Some(span) = tags.actual() {
-            let (shows, plain) = span_shows.entry(span).or_insert((Vec::new(), true));
-            shows.push(index as u32);
-            *plain &= actual.is_none();
-        }
-        if let Some(spacer) = &spacer {
-            spacer.text(&text)?;
-            continue;
-        }
-        if let Some(span) = &mut actual {
-            span.show(index as u32, &text, metrics.vertical_bounds.is_some())?;
-        }
-        if read_only {
-            preserved.push(Run {
-                display_rect,
-                minimum_height: None,
-                operator: index as u32,
-                text,
-                font: String::from_utf8_lossy(name).into_owned(),
-                size,
-                matrix: page_matrix,
-                advance,
-            });
-            continue;
-        }
-        font_operators.insert(index as u32, font_operator);
-        horizontal_bounds.insert(index as u32, horizontal);
-        text_spacing.insert(index as u32, (spacing, word_spacing));
-        contexts.insert(
-            index as u32,
-            layout::Context {
-                line_origin,
-                shown: shown_matrix,
-                cursor_after: cursor,
-                clip,
-                regions: compound_clips.clone(),
-                stroke,
-                size,
-                scale: page_matrix[0].hypot(page_matrix[1]),
-                transform: page_transform,
-            },
-        );
-        if tags.centred() {
-            centred.insert(index as u32);
-        }
-        result.runs.push(Run {
-            display_rect,
-            minimum_height: metrics
-                .vertical_bounds
-                .filter(|bounds| bounds[0] < -250.)
-                .map(|bounds| {
-                    size * page_matrix[2].hypot(page_matrix[3]) * (1. - bounds[0] / 1000.)
-                }),
-            operator: index as u32,
-            text,
-            font: String::from_utf8_lossy(name).into_owned(),
-            size,
-            matrix: page_matrix,
-            advance,
-        });
     }
-    if actual.is_some() || spacer.is_some() {
+    if marked.actual.is_some() || marked.spacer.is_some() {
         return Err("unterminated ActualText marked content".into());
     }
-    if placed > 0 {
+    if marked.placed > 0 {
         return Err("unterminated placed-artwork marked content".into());
     }
-    if inside {
+    if object.inside {
         return Err("unterminated text block".into());
     }
-    if !states.is_empty() {
+    if !saved.is_empty() {
         return Err("unterminated graphics-state save".into());
     }
-    tags.finish()?;
-    if result.runs.is_empty() && !preserved.is_empty() {
+    marked.tags.finish()?;
+    if found.runs.runs.is_empty() && !found.preserved.is_empty() {
         // Transformed, pattern-filled and tagged read-only text all land here.
-        return Err(unusable_font.unwrap_or_else(|| "page contains only read-only text".into()));
+        return Err(checked
+            .unusable_font
+            .unwrap_or_else(|| "page contains only read-only text".into()));
     }
     // Discovery promises that every offered run can be deleted. Check the
     // actual f32 TJ compensation before offering implicit-advance text.
-    for run in &result.runs {
-        if continued.contains(&run.operator) {
+    for run in &found.runs.runs {
+        if found.continued.contains(&run.operator) {
             continuation_adjustment(run, 0.)?;
         }
     }
@@ -1735,32 +1046,32 @@ fn inspect_pinning(
         content,
         bytes,
         patched: BTreeSet::new(),
-        runs: result,
-        preserved,
-        form_text_bounds,
-        graphics,
-        paths,
+        runs: found.runs,
+        preserved: found.preserved,
+        form_text_bounds: found.form_text_bounds,
+        graphics: found.graphics,
+        paths: found.paths,
         actual_text: BTreeMap::new(),
-        font_operators,
-        horizontal_bounds,
-        text_spacing,
-        leads,
-        gaps,
-        continued,
+        font_operators: found.font_operators,
+        horizontal_bounds: found.horizontal_bounds,
+        text_spacing: found.text_spacing,
+        leads: found.leads,
+        gaps: found.gaps,
+        continued: found.continued,
         groups: BTreeMap::new(),
-        compound_run_clips,
-        contexts,
+        compound_run_clips: found.compound_run_clips,
+        contexts: found.contexts,
         expanded: BTreeMap::new(),
-        blocks,
+        blocks: found.blocks,
         lowered: BTreeMap::new(),
         annotations: annotation_rects(doc, id).ok(),
         links: BTreeMap::new(),
         structure_actual: BTreeMap::new(),
         span_texts: BTreeMap::new(),
         demote: BTreeSet::new(),
-        centred,
+        centred: found.centred,
     };
-    for span in actual_spans {
+    for span in marked.actual_spans {
         span.finish(&mut inspection)?;
     }
     centred::settle(
@@ -1768,53 +1079,15 @@ fn inspect_pinning(
         crate::pagetree::displayed_page(doc, id).turns % 2 == 1,
     );
     if inspection.runs.runs.is_empty() && !inspection.preserved.is_empty() {
-        return Err(unusable_font.unwrap_or_else(|| "page contains only read-only text".into()));
+        return Err(checked
+            .unusable_font
+            .unwrap_or_else(|| "page contains only read-only text".into()));
     }
     grouping::collect(&mut inspection);
     if inspection.blocks.is_empty() || blocks::FORCE.load(std::sync::atomic::Ordering::Relaxed) {
         inspection.blocks = blocks::geometric(&inspection, &sheet);
     }
-    // A Span's ActualText is rewritten with its run only where it is that
-    // run's text: every show of the Span plain text in one run, and nothing
-    // else in the run, with the texts equal but for spaces at either end.
-    for (span, (shows, plain)) in span_shows {
-        let owner = |run: &Run| {
-            std::iter::once(run.operator)
-                .chain(
-                    inspection
-                        .groups
-                        .get(&run.operator)
-                        .into_iter()
-                        .flatten()
-                        .copied(),
-                )
-                .collect::<BTreeSet<_>>()
-        };
-        let touching: Vec<&Run> = inspection
-            .runs
-            .runs
-            .iter()
-            .filter(|run| owner(run).iter().any(|show| shows.contains(show)))
-            .collect();
-        let element = match touching.as_slice() {
-            [run] if plain && shows.iter().all(|show| owner(run).contains(show)) => doc
-                .get_dictionary(span)
-                .ok()
-                .and_then(|dict| dict.get(b"ActualText").ok())
-                .and_then(|value| actual::logical(value).ok())
-                .and_then(|text| actual::Edges::of(&text, &run.text))
-                .map(|edges| (run.operator, actual::Element { span, edges })),
-            _ => None,
-        };
-        match element {
-            Some((operator, element)) => {
-                inspection.structure_actual.insert(operator, element);
-            }
-            None => {
-                inspection.demote.insert(span);
-            }
-        }
-    }
+    inspect::settle_spans(doc, &mut inspection, found.span_shows);
     Ok(inspection)
 }
 

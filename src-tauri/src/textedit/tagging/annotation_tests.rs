@@ -335,6 +335,15 @@ fn textedit_read_only_owners_keep_their_layout_attributes() {
             false,
         ),
         (dictionary! { "O" => "Layout", "Width" => "Wide" }, false),
+        // LibreOffice says how every link is decorated (Table 343).
+        (
+            dictionary! { "O" => "Layout", "TextDecorationType" => "Underline" },
+            true,
+        ),
+        (
+            dictionary! { "O" => "Layout", "TextDecorationType" => "Wavy" },
+            false,
+        ),
     ] {
         let (mut doc, ids) = linked("Link", "Link");
         doc.get_dictionary_mut(ids[6]).unwrap().set("A", attributes);

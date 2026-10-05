@@ -90,9 +90,10 @@ MUTATIONS = [
     Mutation('icons: redraw a vendored icon in place', 'src/lib/icons.ts', '{ d: "m15 18-6-6 6-6" }', '{ d: "m15 18-6-6 6-5" }', 'draws every vendored file exactly as it is vendored'),
     Mutation('icons: name a file that is not vendored', 'src/lib/icons.ts', 'source: "printer",', 'source: "print",', 'draws every vendored file exactly as it is vendored'),
     Mutation('icons: take the picture off a tool', 'src/lib/toolbar.ts', '{ id: "edit.editText", label: "Edit text", icon: "editText" }', '{ id: "edit.editText", label: "Edit text" }', 'gives every button on the tool row a picture of its own'),
-    Mutation('error copying: intercept selected interface text', 'src/lib/appcommands.ts', '  if (nativeCopy(event)) return;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
+    Mutation('error copying: intercept selected interface text', 'src/lib/appcommands.ts', '  if (copyInterfaceText(event, async (text) => navigator.clipboard.writeText(text))) return;', '', 'copies selected error text itself, but still copies PDF text without it'),
+    Mutation('error copying: hand selected interface text back to the web view', 'src/lib/keys.ts', '    event.preventDefault();\n    void write(text).catch(() => {});', '', 'writes selected interface text to the clipboard and takes the chord'),
     Mutation('error copying: viewer intercepts native copy', 'src/lib/viewer.ts', '    if (inTextField(event) || nativeCopy(event)) return;', '    if (inTextField(event)) return;', 'does not steal native copying when focus remains on the PDF surface'),
-    Mutation('error copying: treat every shortcut as copy', 'src/lib/keys.ts', '  if (!matches("edit.copy", event)) return false;', '', 'lets the webview copy selected error text, but still copies PDF text without it'),
+    Mutation('error copying: treat every shortcut as copy', 'src/lib/keys.ts', '  if (!matches("edit.copy", event)) return false;', '', 'copies selected error text itself, but still copies PDF text without it'),
     Mutation('descender layout: discard validated height', 'src/lib/textlayout.ts', 'run.minimum_height ?? 0', '0', 'keeps the validated descender height when sizing and rounding the default box'),
     # The box the editor opens carries `grow`, which is what lets the worker
     # size it to the typed text up to the room after the line.
@@ -8530,6 +8531,13 @@ MUTATIONS += [
         "Read back after writing, the signature is intact.`;",
         "Read back, the signature is intact.`;",
         "closes a signing as the signing panel does"),
+    # 2026-10-05: `tpdf verify` restates the dialog's Appended row
+    # (`appendix_sentence` in `src-tauri/src/cli/verify.rs`).
+    Mutation("cli wording: the application names another signature differently",
+        "src/lib/properties.ts",
+        '    return "another signature";',
+        '    return "a further signature";',
+        "says what was appended after a signature as the properties dialog does"),
 ]
 
 # `tpdf redact` restates the window's route from a search hit to the regions it

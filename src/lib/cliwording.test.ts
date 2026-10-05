@@ -7,7 +7,8 @@
  * verdict is worded, so the tool can never say *verified* more strongly than
  * the window does. The tool is Rust and has
  * no webview to ask, so `src-tauri/src/words.rs` restates the functions
- * below --- and a restatement is a second copy, which drifts. So Rust writes
+ * below, and `cli/verify.rs` the Appended row (`appendix_sentence`) --- and
+ * a restatement is a second copy, which drifts. So Rust writes
  * every case it can produce to `src-tauri/testdata/cli/wording.json`
  * (`TPDF_CLI_SAMPLES=write`), and this file asks the originals the same
  * questions and compares. A word changed on either side is a red test here.
@@ -35,6 +36,7 @@ import {
   type Revocation,
   type Trust,
 } from "./integrity";
+import { appendixRow, type Signature } from "./properties";
 import { afterRedaction } from "./recovery";
 import { afterSigning, type Signed } from "./signing";
 
@@ -78,6 +80,21 @@ describe("the command-line tool's wording", () => {
     expect(wording.after_redaction.filter((c) => c.sentence.includes(" Note: ")).length).toBe(4);
     expect(wording.after_redaction.some((c) => c.applied.verified)).toBe(true);
     expect(wording.after_redaction.some((c) => !c.applied.verified)).toBe(true);
+    // An appendix that could not be read, and 7 things an appendix is called
+    // x 9 things it does to pages.
+    expect(wording.appended.length).toBe(1 + 7 * 9);
+    expect(wording.appended.filter((c) => c.appendix.unread).length).toBe(1);
+    // Validation data is called the same beside a signature, and three pages
+    // of which one lists a field are said as three rewritten are.
+    expect(new Set(wording.appended.map((c) => c.sentence)).size).toBe(1 + 6 * 8);
+  });
+
+  it("says what was appended after a signature as the properties dialog does", () => {
+    for (const c of wording.appended) {
+      const row = appendixRow({ appendix: c.appendix } as Signature);
+      expect(row?.value, JSON.stringify(c)).toBe(c.sentence);
+    }
+    expect(appendixRow({ appendix: null } as Signature)).toBeNull();
   });
 
   it("says each integrity verdict as the properties dialog does", () => {

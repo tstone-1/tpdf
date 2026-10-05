@@ -13,6 +13,9 @@
 //!    are the shipped ones. Control: the fixtures' verdicts are required to
 //!    include intact, altered, broken and weak, so a tool that answered one
 //!    word for everything cannot agree.
+//!    **And what was appended after each signature** (`cli/verify_appendix.rs`):
+//!    the `appendix` key against the in-process reader, on the two-signer
+//!    fixture as generated and with a page rewritten after both signatures.
 //! 2. **A signature made through `cli::run` with a software key is intact** when
 //!    the built binary reads it back, invisible and visible, on a document with
 //!    an earlier signature too. The key is this file's; nothing touches a
@@ -113,6 +116,8 @@ mod sign_field;
 mod sign_image;
 #[path = "cli/sign_text.rs"]
 mod sign_text;
+#[path = "cli/verify_appendix.rs"]
+mod verify_appendix;
 // `redact`, for the same reason.
 #[cfg(target_os = "macos")]
 #[path = "cli/image_log.rs"]
@@ -138,8 +143,12 @@ fn main() {
     run_outside_cargo_deps(&argv);
     // The order is load-bearing: never_maps_pdfium asserts this process has
     // not mapped PDFium, so it must precede the in-process PDFium readers.
-    let checks: [Check; 33] = [
+    let checks: [Check; 34] = [
         ("verify agrees with the in-process reader", verify_agrees),
+        (
+            "verify reports what was appended after each signature",
+            verify_appendix::says_what_was_appended,
+        ),
         (
             "a signature made through the tool reads back intact",
             sign_reads_back,

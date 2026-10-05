@@ -464,6 +464,23 @@ fn element(
     Ok((page, pins))
 }
 
+// A table row whose only attribute says it is placed as a block, which
+// LibreOffice 26.2 writes on every TR. It is the placement a row has anyway
+// (ISO 32000-1 Table 343) and says nothing about the text of its cells, so it
+// is kept; any other attribute on a row stays refused with the containers'.
+// `element` has already held the object to the layout rules.
+fn placed_as_a_block(doc: &Document, row: &Dictionary) -> bool {
+    row.get(b"A").is_ok_and(|value| {
+        crate::encoding::resolve(doc, value)
+            .as_dict()
+            .is_ok_and(|attributes| {
+                attributes.len() == 2
+                    && attributes.get(b"O").and_then(Object::as_name).ok() == Some(b"Layout")
+                    && attributes.get(b"Placement").and_then(Object::as_name).ok() == Some(b"Block")
+            })
+    })
+}
+
 // One attribute object belonging to an element with this standard tag. Returns
 // whether the object pins the element's content (see `element`).
 fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String> {
@@ -519,9 +536,20 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
                 b"SpaceBefore",
                 b"SpaceAfter",
                 b"WritingMode",
+                b"TextDecorationType",
             ],
             "bounded attributes",
         )?;
+        // Table 343: how the element's text is decorated. LibreOffice writes
+        // Underline on every link. The text it describes is read-only here.
+        if attributes.get(b"TextDecorationType").is_ok_and(|value| {
+            !matches!(
+                value.as_name(),
+                Ok(b"None" | b"Underline" | b"Overline" | b"LineThrough")
+            )
+        }) {
+            return Err(INVALID.into());
+        }
         for key in [
             b"StartIndent".as_slice(),
             b"EndIndent",
@@ -784,6 +812,10 @@ fn groups<'a>(
         .rev()
         .map(|item| (item, paragraph.id, false))
         .collect();
+    // LibreOffice anchors a picture as a Figure inside its paragraph. Like a
+    // figure in a figure, it goes back to the walk, which keeps it read-only.
+    let in_paragraph = text_block(plain.tag)
+        || (!standard_role(plain.tag) && text_block(role(scope.roles, plain.tag)?));
     while let Some((item, parent, lifted_pins)) = work.pop() {
         if let Object::Reference(id) = item {
             // Word and Acrobat nest a sublist inside the list body rather than
@@ -793,9 +825,9 @@ fn groups<'a>(
             // PowerPoint nests the pictures of a grouped drawing as figures in
             // a figure; each goes back to the walk the same way, read-only.
             if node(doc, *id).is_ok_and(|child| {
-                get(child, b"S")
-                    .and_then(name)
-                    .is_ok_and(|tag| goes_back_to_the_walk(plain.tag, tag))
+                get(child, b"S").and_then(name).is_ok_and(|tag| {
+                    goes_back_to_the_walk(plain.tag, tag) || (in_paragraph && tag == b"Figure")
+                })
             }) {
                 nested.push((item, parent, plain.pinned || lifted_pins));
                 continue;
@@ -843,6 +875,12 @@ fn groups<'a>(
                 name(get(child, b"S")?)?,
             )?;
             let tag = name(get(child, b"S")?)?;
+            // A paragraph under a name of the producer's own, which the
+            // RoleMap makes a text block (LibreOffice's Standard, and the
+            // paragraph styles of a document, in every table cell). A standard
+            // name keeps its own meaning whatever the RoleMap says of it.
+            let block =
+                text_block(tag) || (!standard_role(tag) && text_block(role(scope.roles, tag)?));
             // PowerPoint tags the text of a shape as a Span inside the
             // shape's Figure. The words belong to the drawing, so they are
             // kept, pinned, and the rest of the page stays editable.
@@ -851,8 +889,7 @@ fn groups<'a>(
                 || (!matches!(tag, b"NonStruct" | b"Span")
                     && !annotation_owner(tag)
                     && !(plain.tag == b"LI" && matches!(tag, b"Lbl" | b"LBody"))
-                    && !(matches!(plain.tag, b"TD" | b"TH")
-                        && (text_block(tag) || tag == b"Figure")))
+                    && !(matches!(plain.tag, b"TD" | b"TH") && (block || tag == b"Figure")))
             {
                 return Err(INVALID.into());
             }
@@ -872,6 +909,33 @@ fn groups<'a>(
                     own.push(item);
                     continue;
                 };
+                // LibreOffice nests a Span in a Span where a character style
+                // sits inside another (a link's words in a formatted run). The
+                // inner one is a leaf of its own, kept and pinned like the Span
+                // of a link below: its words are not the outer Span's to edit.
+                if tag == b"Span"
+                    && node(doc, *kid)
+                        .is_ok_and(|inner| get(inner, b"S").and_then(name) == Ok(b"Span"))
+                {
+                    if !ids.insert(*kid) || ids.len() > MAX_NODES {
+                        return Err(INVALID.into());
+                    }
+                    let inner = node(doc, *kid)?;
+                    let (span_page, _) = element(doc, inner, *id, scope, true, b"Span")?;
+                    let words = kids(doc, inner)?;
+                    if words.is_empty() || words.len() > MAX_NODES {
+                        return Err(INVALID.into());
+                    }
+                    groups.push(Group {
+                        id: *kid,
+                        page: span_page,
+                        tag: b"Span",
+                        items: words.iter().collect(),
+                        pinned: true,
+                        actual: false,
+                    });
+                    continue;
+                }
                 if !annotation_owner(tag) {
                     own.push(item);
                     continue;
@@ -935,7 +999,7 @@ fn groups<'a>(
             // branch recurses, so this adds one bounded level, not arbitrary trees.
             // LI -> LBody -> optional Link/Form leaf is the same single extra
             // level; LBody is a leaf target, so this cannot recurse further.
-            if (matches!(plain.tag, b"TD" | b"TH") && text_block(tag))
+            if (matches!(plain.tag, b"TD" | b"TH") && block)
                 || (plain.tag == b"LI" && tag == b"LBody")
             {
                 groups.extend(self::groups(doc, group, scope, ids, nested)?);
@@ -1347,7 +1411,9 @@ impl Tags {
                 }
                 if depth >= MAX_CONTAINER_DEPTH
                     || containers > MAX_CONTAINERS
-                    || (!matches!(role, b"L" | b"Table") && child.has(b"A"))
+                    || (!matches!(role, b"L" | b"Table")
+                        && child.has(b"A")
+                        && !(role == b"TR" && placed_as_a_block(doc, child)))
                 {
                     return Err(INVALID.into());
                 }

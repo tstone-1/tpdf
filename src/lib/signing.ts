@@ -448,6 +448,7 @@ export function askIdentity(
   dialog.setAttribute("aria-label", "Sign document");
   dialog.style.cssText =
     "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
+    "font:13px/1.55 system-ui,-apple-system,sans-serif;" +
     "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
   heading.textContent = "Sign document";
@@ -671,6 +672,7 @@ function askAfter(question: AfterQuestion): Promise<AfterStamp> {
   dialog.setAttribute("aria-label", question.label);
   dialog.style.cssText =
     "max-width:560px;padding:22px;border:1px solid #8885;border-radius:12px;" +
+    "font:13px/1.55 system-ui,-apple-system,sans-serif;" +
     "background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2");
   heading.textContent = question.heading;

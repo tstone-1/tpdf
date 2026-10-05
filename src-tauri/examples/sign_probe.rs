@@ -107,6 +107,8 @@
 //!       [--timestamp digicert|sectigo|globalsign|URL [--long-term]]
 //!
 //! Needs `openssl` (3.x) and `uv`. Either missing is `[FAIL]`, never a pass.
+//! `TPDF_PYHANKO_PYTHON=<interpreter>` runs pyHanko under an interpreter that
+//! already has it, in place of `uv`; the CI step sets it.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -798,14 +800,27 @@ fn tpdf_verdicts(bytes: &[u8]) -> Result<Vec<(String, Verdict)>, String> {
         .collect())
 }
 
+/// The interpreter pyHanko runs under.
+///
+/// `uv` fetches pyHanko on a developer machine. A CI runner has no `uv` and
+/// has already installed the pinned pyHanko of `scripts/fixture-tools.txt`
+/// into its own interpreter, so `TPDF_PYHANKO_PYTHON` names that interpreter
+/// and the probe then reads with the same version that wrote the fixtures.
+fn python() -> Command {
+    match std::env::var_os("TPDF_PYHANKO_PYTHON") {
+        Some(interpreter) => Command::new(interpreter),
+        None => {
+            let mut uv = Command::new("uv");
+            uv.args(["run", "--with", "pyhanko", "--quiet", "python3"]);
+            uv
+        }
+    }
+}
+
 /// What pyHanko concludes about each signature in `file`.
 fn pyhanko(file: &Path) -> Result<Vec<serde_json::Value>, String> {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/check_signature.py");
-    let out = run(Command::new("uv")
-        .args(["run", "--with", "pyhanko", "--quiet", "python3"])
-        .arg(&script)
-        .arg("--json")
-        .arg(file))?;
+    let out = run(python().arg(&script).arg("--json").arg(file))?;
     let found: Vec<serde_json::Value> = out
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -820,11 +835,7 @@ fn pyhanko(file: &Path) -> Result<Vec<serde_json::Value>, String> {
 /// pyHanko's one-line summary, for the modification level it reports.
 fn pyhanko_summary(file: &Path) -> String {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/check_signature.py");
-    run(Command::new("uv")
-        .args(["run", "--with", "pyhanko", "--quiet", "python3"])
-        .arg(&script)
-        .arg(file))
-    .unwrap_or_else(|e| e)
+    run(python().arg(&script).arg(file)).unwrap_or_else(|e| e)
 }
 
 /// `openssl cms -verify` over the signature whose value sits at `range`.

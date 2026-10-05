@@ -339,6 +339,34 @@ jobs:
       - name: The worker boundary, including the rewrite's output channel
         run: cargo run --manifest-path src-tauri/Cargo.toml --locked --example worker-probe -- testdata/text-wide.pdf
 
+      # What tpdf signs, judged by two readers that share no code with it. The
+      # unit tests check tpdf's signatures with tpdf's own `integrity.rs`, so a
+      # defect the writer and the reader share stays green there. `sign-probe`
+      # signs through the production path with a key `openssl` holds, then asks
+      # pyHanko and `openssl cms -verify`, and three controls must turn each
+      # reader. It ran only by hand until 2026-10-05.
+      #
+      # One RSA and one P-256 key, over fixtures this job already generates;
+      # locally 18/18 and 20/20 in under four seconds each. `text-base14.pdf`,
+      # which `BUILD.md`'s own loop starts with, cannot exist on a runner.
+      #
+      # macOS only: the code under test is the same on both platforms, and the
+      # Windows image promises no `openssl` on the default shell's PATH.
+      # `TPDF_PYHANKO_PYTHON` makes the probe use the interpreter that holds the
+      # pinned pyHanko of `scripts/fixture-tools.txt`; without it the probe asks
+      # for `uv`, which a runner does not have. `openssl version` is printed so
+      # that a LibreSSL on the PATH is readable in the log.
+      - name: Signatures, read by pyHanko and OpenSSL
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TPDF_PYHANKO_PYTHON: python
+        run: |
+          set -euo pipefail
+          openssl version
+          cargo run --manifest-path src-tauri/Cargo.toml --locked --example sign-probe -- testdata/incr-signed.pdf "$RUNNER_TEMP/sign-probe-rsa" --key rsa
+          cargo run --manifest-path src-tauri/Cargo.toml --locked --example sign-probe -- testdata/incr-two-signers.pdf "$RUNNER_TEMP/sign-probe-p256" --key p256
+
       - name: Windows worker-exit observer controls
         if: runner.os == 'Windows'
         run: python scripts/win_worker_exit.py --self-test

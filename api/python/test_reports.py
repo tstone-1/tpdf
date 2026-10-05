@@ -179,6 +179,25 @@ class ReportsMatchSamples(unittest.TestCase):
         )
         self.assertEqual(unseen, [])
 
+    def test_the_verify_sample_holds_an_appendix_and_a_signature_without_one(self) -> None:
+        # A key that may be null is checked as an object only where a sample
+        # has it as one; `appendix` is null exactly when nothing was appended.
+        report: reports.VerifyReport = json.loads(
+            (SAMPLES / "verify.json").read_text(encoding="utf-8")
+        )
+        signatures = [s for f in report["files"] for s in f["signatures"]]
+        with_one = [s["appendix"] for s in signatures if s["appendix"] is not None]
+        self.assertEqual(
+            [s["appended_bytes"] == 0 for s in signatures],
+            [s["appendix"] is None for s in signatures],
+        )
+        self.assertTrue(with_one)
+        self.assertLess(len(with_one), len(signatures))
+        listed = [page for appendix in with_one for page in appendix["pages_listing"]]
+        self.assertTrue(listed)
+        for appendix in with_one:
+            self.assertLessEqual(len(appendix["pages_listing"]), appendix["pages_touched"])
+
     def test_no_reachable_type_is_any(self) -> None:
         # `Any` fits every value, so a key typed with it is checked by nothing.
         shapes: dict[str, Any] = {}

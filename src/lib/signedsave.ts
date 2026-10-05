@@ -32,7 +32,7 @@ export function askSignatureSave(message: string): Promise<boolean> {
   const dialog = document.createElement("dialog");
   dialog.className = "signed-save-dialog";
   dialog.setAttribute("role", "alertdialog"); dialog.setAttribute("aria-label", "Digital signatures");
-  dialog.style.cssText = "max-width:480px;padding:22px;border:1px solid #8885;border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
+  dialog.style.cssText = "max-width:480px;padding:22px;border:1px solid #8885;border-radius:12px;font:13px/1.55 system-ui,-apple-system,sans-serif;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
   const heading = document.createElement("h2"); heading.textContent = "Digital signatures";
   const text = document.createElement("p"); text.textContent = message; text.id = "tpdf-signed-save-message";
   dialog.setAttribute("aria-describedby", text.id);

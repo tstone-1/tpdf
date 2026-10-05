@@ -1735,6 +1735,1305 @@
       }
     }
   ],
+  "appended": [
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 0,
+        "unread": true
+      },
+      "sentence": "something, but its contents could not be read"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "VRI",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 14,
+        "catalog_gained": [
+          "DSS"
+        ],
+        "kinds": [
+          "Catalog",
+          "Sig",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "the certificates and revocation records a signature needs to be checked later, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 4,
+        "catalog_gained": [],
+        "kinds": [
+          "Annot/Widget",
+          "Page",
+          "Sig"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "another signature, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 2,
+        "catalog_gained": [
+          "Metadata"
+        ],
+        "kinds": [
+          "Page",
+          "stream"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "3 objects: Page, stream, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [
+          "Page"
+        ],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object: Page, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 0,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "1 object, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 0,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and no page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and 1 page was rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and 3 pages were rewritten"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and a signature field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 1,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and a timestamp field was added to page 2's annotations (the page's content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and a signature field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": true
+          }
+        ],
+        "pages_touched": 2,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and a timestamp field was added to the annotations of pages 1 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": false
+          },
+          {
+            "page": 2,
+            "timestamp": true
+          },
+          {
+            "page": 4,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and a signature or timestamp field was added to the annotations of pages 1, 2 and 4 (their content is unchanged)"
+    },
+    {
+      "appendix": {
+        "added": 1,
+        "catalog_gained": [],
+        "kinds": [],
+        "pages_listing": [
+          {
+            "page": 2,
+            "timestamp": false
+          }
+        ],
+        "pages_touched": 3,
+        "replaced": 1,
+        "unread": false
+      },
+      "sentence": "2 objects, and 3 pages were rewritten"
+    }
+  ],
   "authority": [
     {
       "from": "",

@@ -81,6 +81,9 @@ use x509_cert::crl::CertificateList;
 use x509_cert::Certificate;
 use x509_ocsp::{BasicOcspResponse, CertStatus, OcspResponse, OcspResponseStatus, ResponderId};
 
+// The one date format, kept beside the certificate dates it matches and
+// below [`crate::trust`], which states a moment in it too.
+pub use crate::certificate::format_time;
 use crate::integrity::Hash;
 
 pub mod chain;
@@ -425,7 +428,7 @@ impl Material {
         else {
             return out;
         };
-        for certificate in crate::docinfo::certificates_of(&signed) {
+        for certificate in crate::certificate::certificates_of(&signed) {
             match certificate.to_der() {
                 Ok(der) => out.certificate(der),
                 Err(_) => out.unread += 1,
@@ -778,23 +781,6 @@ fn seconds(time: x509_cert::time::Time) -> u64 {
 
 fn general_seconds(time: der::asn1::GeneralizedTime) -> u64 {
     time.to_unix_duration().as_secs()
-}
-
-/// A time, formatted as every date in `docinfo` is.
-#[must_use]
-pub fn format_time(at: u64) -> String {
-    match der::DateTime::from_unix_duration(std::time::Duration::from_secs(at)) {
-        Ok(at) => format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-            at.year(),
-            at.month(),
-            at.day(),
-            at.hour(),
-            at.minutes(),
-            at.seconds()
-        ),
-        Err(_) => String::new(),
-    }
 }
 
 /// What the responses in one OCSP response say about `subject`.

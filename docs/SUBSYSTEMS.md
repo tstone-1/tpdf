@@ -307,7 +307,7 @@ destination array itself. That is the drift trap this file's index names, so `li
 gives its outline entries the same destinations as its links and `links-probe --mode agree`
 compares them, both against the manifest rather than against each other. The properties
 readout in `docinfo.rs` takes the `lopdf` route too, and since 2026-08-21 also parses the signer's
-certificate — a second ASN.1 parser on attacker-chosen bytes, bounded and sandboxed
+certificate (`certificate.rs`) — a second ASN.1 parser on attacker-chosen bytes, bounded and sandboxed
 accordingly (`docs/THREAT-MODEL.md` §T6.8). `examples/signature_probe.rs` is the differential
 against PDFium's own reading of the same file; `BUILD.md` has the invocations.
 

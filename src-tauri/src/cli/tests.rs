@@ -14,6 +14,7 @@ use super::report::{self, ErrorKind};
 use super::sign::{Lines, Placement};
 use super::verify::{verified, verify_exit};
 use super::*;
+use crate::docinfo::Appendix;
 use crate::integrity::{Integrity, Verdict, Why};
 use crate::sign_cms;
 use crate::sign_cms::testkeys::{certificate, Soft, Spec, NOW};
@@ -853,6 +854,7 @@ fn signature(verdict: Verdict, standing: Option<Standing>) -> report::Signature 
         claimed_time: String::new(),
         covers_whole_file: true,
         appended_bytes: 0,
+        appendix: None,
         integrity: report::IntegrityReport {
             verdict,
             why: None,
@@ -940,6 +942,167 @@ fn a_document_that_could_not_be_read_outranks_every_verdict() {
         file(Vec::new(), Some(ErrorKind::Failed)),
     ]);
     assert_eq!(verify_exit(&both, false), Exit::Internal);
+}
+
+/// An appendix that touches this many pages, the listed ones only to list a
+/// field: `(page, whether every field it gained is a timestamp's)`.
+fn touching(pages_touched: usize, listed: &[(u32, bool)]) -> Appendix {
+    let mut appendix = Appendix {
+        pages_touched,
+        ..Appendix::default()
+    };
+    appendix
+        .pages_listing
+        .resize_with(listed.len(), Default::default);
+    for (entry, (page, timestamp)) in appendix.pages_listing.iter_mut().zip(listed) {
+        entry.page = *page;
+        entry.timestamp = *timestamp;
+    }
+    appendix
+}
+
+/// A signed field as a worker reads it, with this appendix after its range.
+fn appended_to(appendix: Option<Appendix>) -> crate::docinfo::Signature {
+    crate::docinfo::Signature {
+        field: "Signature1".into(),
+        signed: true,
+        appended_bytes: if appendix.is_some() { 900 } else { 0 },
+        appendix,
+        ..Default::default()
+    }
+}
+
+/// The report says of each appendix what the worker read, count for count:
+/// nothing appended is `null`, and an appendix that touches no page is not.
+#[test]
+fn a_signature_reports_what_was_appended_after_it() {
+    use super::verify::signature_report;
+    assert_eq!(signature_report(&appended_to(None)).appendix, None);
+
+    // Two pages list a field and a third was rewritten for more.
+    let read = Appendix {
+        added: 5,
+        replaced: 3,
+        kinds: vec!["Annot/Widget".into(), "Page".into(), "Sig".into()],
+        catalog_gained: vec!["Perms".into()],
+        ..touching(3, &[(2, false), (7, true)])
+    };
+    let said = signature_report(&appended_to(Some(read)))
+        .appendix
+        .expect("an appendix");
+    assert_eq!(
+        (said.unread, said.added, said.replaced, said.pages_touched),
+        (false, 5, 3, 3)
+    );
+    assert_eq!(said.kinds, ["Annot/Widget", "Page", "Sig"]);
+    assert_eq!(said.catalog_gained, ["Perms"]);
+    let listed: Vec<(u32, bool)> = said
+        .pages_listing
+        .iter()
+        .map(|listed| (listed.page, listed.timestamp))
+        .collect();
+    assert_eq!(listed, [(2, false), (7, true)]);
+    assert_eq!(
+        said.sentence,
+        "another signature, and 3 pages were rewritten"
+    );
+    // What `--strict` judges is read off the two keys.
+    assert_eq!(said.pages_touched - said.pages_listing.len(), 1);
+}
+
+/// An appendix that could not be read says so, and is neither `null` nor an
+/// appendix that holds nothing: `unread` is the one key that tells them apart.
+#[test]
+fn an_appendix_that_could_not_be_read_is_reported_as_unread() {
+    use super::verify::signature_report;
+    let unread = signature_report(&appended_to(Some(Appendix {
+        unread: true,
+        ..Appendix::default()
+    })))
+    .appendix
+    .expect("an appendix");
+    assert!(unread.unread);
+    assert_eq!(
+        (unread.added, unread.replaced, unread.pages_touched),
+        (0, 0, 0)
+    );
+    assert_eq!(
+        unread.sentence,
+        "something, but its contents could not be read"
+    );
+
+    let nothing = signature_report(&appended_to(Some(Appendix::default())))
+        .appendix
+        .expect("an appendix");
+    assert!(!nothing.unread);
+    assert_ne!(nothing.sentence, unread.sentence);
+}
+
+/// What tpdf's own long-term signing appends: validation data, which reaches
+/// no page, and an archive timestamp, whose field one page lists. Both are
+/// reported as what they are, and neither is more than `--strict` lets pass.
+#[test]
+fn tpdfs_own_long_term_revisions_are_reported_and_touch_no_page_for_more() {
+    use super::verify::{after_last_signature, signature_report, After};
+    let intact = |appendix: Appendix| crate::docinfo::Signature {
+        integrity: Some(integrity(Verdict::Intact, None, "SHA-256", "RSA")),
+        ..appended_to(Some(appendix))
+    };
+    let validation = intact(Appendix {
+        added: 8,
+        replaced: 1,
+        kinds: vec!["Catalog".into(), "VRI".into(), "stream".into()],
+        catalog_gained: vec!["DSS".into()],
+        ..Appendix::default()
+    });
+    let said = signature_report(&validation).appendix.expect("an appendix");
+    assert_eq!((said.added, said.replaced, said.pages_touched), (8, 1, 0));
+    assert!(said.pages_listing.is_empty());
+    assert_eq!(said.catalog_gained, ["DSS"]);
+    assert_eq!(
+        said.sentence,
+        "the certificates and revocation records a signature needs to be checked later, \
+         and no page was rewritten"
+    );
+    assert_eq!(after_last_signature(&[validation]), After::Unchanged);
+
+    let archived = intact(Appendix {
+        added: 12,
+        replaced: 2,
+        kinds: vec!["DocTimeStamp".into(), "Page".into()],
+        catalog_gained: vec!["DSS".into()],
+        ..touching(1, &[(1, true)])
+    });
+    let said = signature_report(&archived).appendix.expect("an appendix");
+    assert_eq!(said.pages_touched, 1);
+    assert_eq!(said.pages_listing.len(), 1);
+    assert!(said.pages_listing[0].timestamp);
+    assert_eq!(
+        said.sentence,
+        "the certificates and revocation records a signature needs to be checked later, \
+         and a timestamp field was added to page 1's annotations (the page's content is \
+         unchanged)"
+    );
+    assert_eq!(after_last_signature(&[archived]), After::Unchanged);
+}
+
+/// `verify` without `--json` says the row under the signature it belongs to,
+/// directly under Integrity, and says nothing for a signature with none.
+#[test]
+fn the_text_names_what_was_appended_under_its_signature() {
+    use super::verify::{signature_report, signature_text};
+    let with = signature_text(&signature_report(&appended_to(Some(touching(2, &[])))));
+    let lines: Vec<&str> = with.lines().collect();
+    let integrity = lines
+        .iter()
+        .position(|line| line.starts_with("    Integrity: "))
+        .expect("an integrity row");
+    assert_eq!(
+        lines[integrity + 1],
+        "    Appended: 0 objects, and 2 pages were rewritten"
+    );
+    let without = signature_text(&signature_report(&appended_to(None)));
+    assert!(!without.contains("Appended"), "{without}");
 }
 
 /// A store holding P-256 keys made from seeds, and no saved image.
@@ -1351,6 +1514,61 @@ fn wording() -> serde_json::Value {
         }));
     }
 
+    // The Appended row: an appendix that could not be read, and each thing
+    // an appendix is called over each thing it does to pages.
+    let mut appended = vec![Appendix {
+        unread: true,
+        ..Appendix::default()
+    }];
+    let called = |added: usize, kinds: &[&str], catalog_gained: &[&str]| Appendix {
+        added,
+        replaced: 1,
+        kinds: kinds.iter().map(|kind| (*kind).to_string()).collect(),
+        catalog_gained: catalog_gained
+            .iter()
+            .map(|key| (*key).to_string())
+            .collect(),
+        ..Appendix::default()
+    };
+    for what in [
+        called(14, &["Catalog", "VRI", "stream"], &["DSS"]),
+        // Validation data and a signature: the validation data is named.
+        called(14, &["Catalog", "Sig", "stream"], &["DSS"]),
+        called(4, &["Annot/Widget", "Page", "Sig"], &[]),
+        called(2, &["Page", "stream"], &["Metadata"]),
+        called(0, &["Page"], &[]),
+        called(0, &[], &[]),
+        called(1, &[], &[]),
+    ] {
+        for pages in [
+            touching(0, &[]),
+            touching(1, &[]),
+            touching(3, &[]),
+            touching(1, &[(2, false)]),
+            touching(1, &[(2, true)]),
+            touching(2, &[(1, false), (4, false)]),
+            touching(2, &[(1, true), (4, true)]),
+            touching(3, &[(1, false), (2, true), (4, false)]),
+            // One page lists a field and two were rewritten for more.
+            touching(3, &[(2, false)]),
+        ] {
+            appended.push(Appendix {
+                pages_touched: pages.pages_touched,
+                pages_listing: pages.pages_listing,
+                ..what.clone()
+            });
+        }
+    }
+    let appended: Vec<serde_json::Value> = appended
+        .iter()
+        .map(|appendix| {
+            serde_json::json!({
+                "appendix": appendix,
+                "sentence": super::verify::appendix_sentence(appendix),
+            })
+        })
+        .collect();
+
     // Every shape `afterRedaction` has: verified or not, one or several of
     // each count, one reason or several, changed or not.
     let mut after_redaction = Vec::new();
@@ -1670,6 +1888,7 @@ fn wording() -> serde_json::Value {
         "chain": chains,
         "after_signing": after,
         "after_redaction": after_redaction,
+        "appended": appended,
         "pades": pades,
         // The window offers these by name and the tool takes their names:
         // `signtimestamp.test.ts` holds its list to this one.
@@ -1693,6 +1912,25 @@ fn full_signature() -> report::Signature {
         claimed_time: "2026-09-26 20:20:13 +02:00".into(),
         covers_whole_file: false,
         appended_bytes: 9_101,
+        // What long-term signing appends: validation data, and an archive
+        // timestamp whose field the first page lists.
+        appendix: Some(super::verify::appendix_report(&Appendix {
+            added: 12,
+            replaced: 2,
+            kinds: [
+                "Annot/Widget",
+                "Catalog",
+                "DocTimeStamp",
+                "Page",
+                "VRI",
+                "stream",
+                "untyped",
+            ]
+            .map(String::from)
+            .to_vec(),
+            catalog_gained: vec!["DSS".into()],
+            ..touching(1, &[(1, true)])
+        })),
         integrity: report::IntegrityReport {
             verdict: integrity.verdict,
             why: None,
@@ -1819,6 +2057,7 @@ fn bare_signature() -> report::Signature {
         claimed_time: String::new(),
         covers_whole_file: true,
         appended_bytes: 0,
+        appendix: None,
         integrity: report::IntegrityReport {
             verdict: integrity.verdict,
             why: integrity.why,
@@ -2198,7 +2437,8 @@ fn every_json_shape_and_the_wording_match_their_committed_samples() {
         wrong.is_empty(),
         "{} sample(s) disagree. A changed JSON sample is a changed schema: add a field \
          freely, but a renamed or removed one moves `report::SCHEMA`. A changed wording \
-         sample must agree with `src/lib/integrity.ts`, `signing.ts` and `recovery.ts`, \
+         sample must agree with `src/lib/integrity.ts`, `properties.ts`, `signing.ts` and \
+         `recovery.ts`, \
          which `cliwording.test.ts` checks, and the regions sample with the viewer's \
          search, text and selection code, which `cliregions.test.ts` checks. \
          Regenerate with TPDF_CLI_SAMPLES=write.\n\n{}",

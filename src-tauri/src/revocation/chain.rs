@@ -316,9 +316,9 @@ pub fn combine(certificates: Vec<Judged>, dropped: usize, end: End) -> Chain {
 fn judged(certificate: &Certificate, revocation: Revocation) -> Judged {
     let subject = &certificate.tbs_certificate.subject;
     Judged {
-        subject: crate::docinfo::distinguished_name(subject),
-        subject_cn: crate::docinfo::common_name(subject),
-        serial: crate::docinfo::hex_of(certificate.tbs_certificate.serial_number.as_bytes()),
+        subject: crate::certificate::distinguished_name(subject),
+        subject_cn: crate::certificate::common_name(subject),
+        serial: crate::certificate::hex_of(certificate.tbs_certificate.serial_number.as_bytes()),
         revocation,
     }
 }

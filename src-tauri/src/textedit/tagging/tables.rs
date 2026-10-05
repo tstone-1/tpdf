@@ -64,6 +64,32 @@ impl Tables {
         let mut seen = BTreeSet::new();
         for value in attributes {
             let value = resolve(doc, value).as_dict().map_err(|_| INVALID)?;
+            // ISO 32000-1 Table 343: a cell's authored size and its placement
+            // in the row, which LibreOffice 26.2 writes beside the Table
+            // object. They are the cell's allocation and not the ink of its
+            // text, so an edit inside the cell leaves them true.
+            if value.get(b"O").and_then(Object::as_name).ok() == Some(b"Layout") {
+                keys(
+                    value,
+                    &[b"O", b"Placement", b"Width", b"Height"],
+                    "table cell layout attributes",
+                )?;
+                if !seen.insert(b"Layout".as_slice())
+                    || value.get(b"Placement").is_ok_and(|placement| {
+                        !matches!(placement.as_name(), Ok(b"Inline" | b"Block"))
+                    })
+                    || [b"Width".as_slice(), b"Height"].iter().any(|key| {
+                        value.get(key).is_ok_and(|size| {
+                            size.as_name().ok() != Some(b"Auto")
+                                && !super::super::number(size)
+                                    .is_ok_and(|size| size.is_finite() && size >= 0.0)
+                        })
+                    })
+                {
+                    return Err(INVALID.into());
+                }
+                continue;
+            }
             keys(
                 value,
                 &[b"O", b"RowSpan", b"ColSpan", b"Headers", b"Scope"],

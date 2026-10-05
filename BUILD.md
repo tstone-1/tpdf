@@ -1115,6 +1115,12 @@ openssl ts -verify -data "$T/data.bin" -in "$T/no-purpose.tst" -token_in \
 # check, which is asserted to refuse it too), and one covered byte changed.
 # Needs `openssl` 3.x and `uv`; either missing is [FAIL]. The second argument is
 # a scratch directory it writes the key, the certificate and the outputs into.
+# Both workflows run the incr-signed:rsa and incr-two-signers:p256 rows on the
+# macOS leg since 2026-10-05, with TPDF_PYHANKO_PYTHON naming the interpreter
+# that holds the pinned pyHanko, which the probe then uses in place of `uv`.
+# The other rows, and everything below with --visible or --timestamp, still run
+# by hand: text-base14.pdf cannot exist on a runner, and a timestamp needs a
+# network authority.
 # macOS arm64, 2026-09-27, all green (one check more than 2026-09-26's run:
 # every signature's pyHanko summary line must now say docmdp=ok, which the probe
 # had printed and not asserted --- see the trap "A verdict the probe printed and
@@ -6044,7 +6050,8 @@ interaction or a newly packaged installer.
   fixtures. Then run the ordinary gates and read the diff: a changed JSON sample
   is a changed schema (a renamed or removed key moves
   `report::SCHEMA`), and a changed `wording.json` must still pass `src/lib/cliwording.test.ts`,
-  which holds it to `integrity.ts` and `signing.ts`. `reading.json` is the same arrangement for
+  which holds it to `integrity.ts`, `signing.ts` and, for what was appended after a signature,
+  `properties.ts`. `reading.json` is the same arrangement for
   `tpdf text`'s reading order: `reading::tests::cases` with the order `src/reading.rs` gives
   each, which `src/lib/clireading.test.ts` holds to `reading.ts`. A change to either file's
   ordering rules is a change to both, or one of those two tests goes red. `regions.json` is the

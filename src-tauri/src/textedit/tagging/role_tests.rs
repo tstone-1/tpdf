@@ -1,6 +1,6 @@
 use super::tests::{fixture, CONTENT};
 use crate::textedit::{self, Change};
-use lopdf::{dictionary, Dictionary, Object};
+use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 #[test]
 fn textedit_figure_ownership_preserves_paragraph_markers_without_admitting_text() {
@@ -306,4 +306,56 @@ fn textedit_role_map_blocks_disguised_standard_content_but_preserves_custom_alia
             .unwrap()
             .contains(&format!("/{role}")));
     }
+}
+
+// LibreOffice anchors a picture as a Figure inside the paragraph it sits in.
+fn figure_in_the_first_paragraph() -> (Document, [ObjectId; 6], ObjectId) {
+    let (mut doc, ids) = fixture(CONTENT);
+    let figure = doc.add_object(
+        dictionary! { "Type" => "StructElem", "S" => "Figure", "P" => ids[3], "Pg" => ids[0], "K" => 2,
+        "A" => dictionary! { "O" => "Layout", "Placement" => "Block" } },
+    );
+    doc.get_dictionary_mut(ids[3])
+        .unwrap()
+        .set("K", vec![0.into(), Object::Reference(figure)]);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![
+            0.into(),
+            Object::Array(vec![ids[3].into(), ids[4].into(), figure.into()]),
+        ],
+    );
+    let source = String::from_utf8(CONTENT.to_vec()).unwrap();
+    let source = format!("/Figure <</MCID 2>> BDC 40 120 100 1 re f EMC {source}");
+    let stream = doc.add_object(Stream::new(Dictionary::new(), source.into_bytes()));
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("Contents", stream);
+    (doc, ids, figure)
+}
+
+#[test]
+fn textedit_a_figure_in_a_paragraph_is_kept_and_the_paragraph_stays_editable() {
+    let (mut doc, _, figure) = figure_in_the_first_paragraph();
+    let runs = textedit::scan(&doc, 0).unwrap();
+    let texts: Vec<&str> = runs.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(texts, ["FIRST", "SECOND"]);
+    let kept = doc.objects[&figure].clone();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: "FIRST".into(),
+            replacement: "IN".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(doc.objects[&figure], kept);
+    // The figure is the paragraph's: one that names another parent is refused.
+    let (mut doc, ids, figure) = figure_in_the_first_paragraph();
+    doc.get_dictionary_mut(figure).unwrap().set("P", ids[4]);
+    assert!(textedit::scan(&doc, 0).is_err());
 }

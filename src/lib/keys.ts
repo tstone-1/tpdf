@@ -475,9 +475,37 @@ export function inTextField(event: KeyboardEvent): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-/** Leave copying selected interface text (including errors) to the webview. */
+/**
+ * Whether the copy chord was pressed over selected interface text: an error
+ * message, a line of a dialog. The page's own selection is not the web view's,
+ * so the surface and the window both step aside for this one.
+ */
 export function nativeCopy(event: KeyboardEvent): boolean {
   if (!matches("edit.copy", event)) return false;
   const target = event.target as Node | null;
   return target?.ownerDocument?.getSelection()?.type === "Range";
+}
+
+/**
+ * Copies selected interface text when {@link nativeCopy} says the chord is
+ * for it, and answers whether it was.
+ *
+ * **Written out, where it used to be left to the web view.** On macOS a web
+ * view copies its selection only when a menu item bound to the system's copy
+ * action receives the chord, and this application's Copy item carries no
+ * accelerator (`NO_ACCELERATOR` in `menubar.ts`). So the chord arrived here,
+ * was handed back, and nothing copied it: an error message could be selected
+ * and not copied. Reported from use.
+ */
+export function copyInterfaceText(
+  event: KeyboardEvent,
+  write: (text: string) => Promise<void>,
+): boolean {
+  if (!nativeCopy(event)) return false;
+  const text = (event.target as Node).ownerDocument?.getSelection()?.toString() ?? "";
+  if (text) {
+    event.preventDefault();
+    void write(text).catch(() => {});
+  }
+  return true;
 }

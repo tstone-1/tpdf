@@ -1811,12 +1811,15 @@ describe("the window shortcuts for editing", () => {
     expect(press("c").prevented).toBe(1);
   });
 
-  it("lets the webview copy selected error text, but still copies PDF text without it", () => {
+  it("copies selected error text itself, but still copies PDF text without it", () => {
     for (const type of ["Range", "Caret", "None"]) {
-      const target = { tagName: "PRE", ownerDocument: { getSelection: () => ({ type }) } };
+      const selection = { type, toString: () => (type === "Range" ? "Cannot edit this text" : "") };
+      const target = { tagName: "PRE", ownerDocument: { getSelection: () => selection } };
       const result = press("c", {}, target);
       expect(result.fired).toEqual(type === "Range" ? [] : ["copySelection"]);
-      expect(result.prevented).toBe(type === "Range" ? 0 : 1);
+      // Taken either way: the page's copy is this handler's, and the selected
+      // words are written out here because the web view does not copy them.
+      expect(result.prevented).toBe(1);
       expect(press("s", {}, target).fired).toEqual(["saveDocument"]);
     }
   });

@@ -406,7 +406,8 @@ pub struct Verified {
     /// `revoked` other than after an attested moment, and nothing appended
     /// after a document's last intact signature that touches a page other
     /// than to list a signature or timestamp field, or that could not be
-    /// read. Present whether or not `--strict` was given.
+    /// read ([`Signature::appendix`] holds what was). Present whether or not
+    /// `--strict` was given.
     pub strict_passed: bool,
     /// One entry per document, in the order given.
     pub files: Vec<File>,
@@ -469,6 +470,12 @@ pub struct Signature {
     pub covers_whole_file: bool,
     /// How many bytes were written after the signed range ends.
     pub appended_bytes: u64,
+    /// What those bytes hold; `null` exactly when `appended_bytes` is 0.
+    /// `--strict` reads this of the `intact` signature with the fewest
+    /// `appended_bytes`, and fails on `unread` or on more `pages_touched`
+    /// than `pages_listing` has entries. Added to schema 1 on 2026-10-05, a
+    /// new key.
+    pub appendix: Option<AppendixReport>,
     /// Whether the signature still covers the bytes it was made over.
     pub integrity: IntegrityReport,
     /// Whether the OS trust store vouches for the signer; `null` unless
@@ -493,6 +500,49 @@ pub struct Signature {
     pub pades_level: Option<crate::pades::Level>,
     /// That level as the properties dialog words it; `null` when the level is.
     pub pades: Option<String>,
+}
+
+/// `docinfo::Appendix`, with the sentence the application shows: what the
+/// revisions written after a signature's range changed, by the names the file
+/// itself uses. A reading and never a verdict --- nothing here says a change
+/// was permitted, or that it was not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppendixReport {
+    /// The appendix could not be read: every count below is then 0 and every
+    /// list empty, and they say nothing. Never the same as an appendix that
+    /// holds nothing.
+    pub unread: bool,
+    /// Objects written after the signed range that the signed revision did
+    /// not have.
+    pub added: usize,
+    /// Objects it had, written again differently.
+    pub replaced: usize,
+    /// What the file calls those objects: `/Type`, with `/Subtype` where
+    /// there is one, such as `Sig` and `Annot/Widget`. Sorted, each once.
+    pub kinds: Vec<String>,
+    /// Keys the document catalog gained; `DSS` is validation data.
+    pub catalog_gained: Vec<String>,
+    /// How many pages were touched: the page object, or anything the page
+    /// draws from, was added or replaced, or the page is no longer where it
+    /// was. A count and not a verdict: a page can be touched and look the
+    /// same.
+    pub pages_touched: usize,
+    /// The touched pages rewritten for one thing only, to list a new
+    /// signature or timestamp field among their annotations. Counted in
+    /// `pages_touched` too, and in page order.
+    pub pages_listing: Vec<ListedPage>,
+    /// The properties dialog's Appended row, word for word.
+    pub sentence: String,
+}
+
+/// One entry of [`AppendixReport::pages_listing`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListedPage {
+    /// The page, counted from 1.
+    pub page: u32,
+    /// Whether every field the page gained holds a document timestamp rather
+    /// than a signature.
+    pub timestamp: bool,
 }
 
 /// `docinfo::Timestamp`, with the sentences the application shows.

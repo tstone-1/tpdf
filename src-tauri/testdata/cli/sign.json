@@ -50,6 +50,31 @@
       "claimed_time": "2026-09-26 20:20:13 +02:00",
       "covers_whole_file": false,
       "appended_bytes": 9101,
+      "appendix": {
+        "unread": false,
+        "added": 12,
+        "replaced": 2,
+        "kinds": [
+          "Annot/Widget",
+          "Catalog",
+          "DocTimeStamp",
+          "Page",
+          "VRI",
+          "stream",
+          "untyped"
+        ],
+        "catalog_gained": [
+          "DSS"
+        ],
+        "pages_touched": 1,
+        "pages_listing": [
+          {
+            "page": 1,
+            "timestamp": true
+          }
+        ],
+        "sentence": "the certificates and revocation records a signature needs to be checked later, and a timestamp field was added to page 1's annotations (the page's content is unchanged)"
+      },
       "integrity": {
         "verdict": "intact",
         "why": null,
@@ -191,6 +216,7 @@
       "claimed_time": "",
       "covers_whole_file": true,
       "appended_bytes": 0,
+      "appendix": null,
       "integrity": {
         "verdict": "unchecked",
         "why": "format",

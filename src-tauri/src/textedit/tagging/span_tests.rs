@@ -115,3 +115,67 @@ fn textedit_spans_refuse_overrides_layout_nesting_and_wrong_owners_atomically() 
         assert_eq!(doc.objects, original);
     }
 }
+
+// LibreOffice nests a Span in a Span, and anchors a picture as a Figure inside
+// its paragraph. Each was refused, and with it every page of the document.
+fn nested_in_the_first_paragraph(inner: &str) -> (Document, ObjectId) {
+    let (mut doc, ids) = super::tests::fixture(super::tests::CONTENT);
+    let outer = doc.new_object_id();
+    let leaf = doc.add_object(
+        dictionary! { "Type" => "StructElem", "S" => inner, "P" => outer, "Pg" => ids[0], "K" => 0 },
+    );
+    doc.objects.insert(
+        outer,
+        dictionary! { "Type" => "StructElem", "S" => "Span", "P" => ids[3], "Pg" => ids[0], "K" => leaf }
+            .into(),
+    );
+    doc.get_dictionary_mut(ids[3]).unwrap().set("K", outer);
+    doc.get_dictionary_mut(ids[5]).unwrap().set(
+        "Nums",
+        vec![0.into(), Object::Array(vec![leaf.into(), ids[4].into()])],
+    );
+    let source = String::from_utf8(doc.get_page_content(ids[0]))
+        .unwrap()
+        .replacen("/Standard << /MCID 0", "/Span << /MCID 0", 1);
+    let stream = doc.add_object(Stream::new(Dictionary::new(), source.into_bytes()));
+    doc.get_dictionary_mut(ids[0])
+        .unwrap()
+        .set("Contents", stream);
+    (doc, leaf)
+}
+
+#[test]
+fn textedit_a_span_in_a_span_is_kept_read_only_and_the_page_stays_editable() {
+    let (mut doc, _) = nested_in_the_first_paragraph("Span");
+    let runs = textedit::scan(&doc, 0).unwrap();
+    let texts: Vec<&str> = runs.runs.iter().map(|run| run.text.as_str()).collect();
+    assert_eq!(texts, ["SECOND"], "the inner Span's words are not offered");
+    let before = doc.objects.clone();
+    textedit::write(
+        &mut doc,
+        &[Change {
+            layout: None,
+            page: 0,
+            revision: runs.revision,
+            operator: runs.runs[0].operator,
+            original: "SECOND".into(),
+            replacement: "OTHER".into(),
+        }],
+    )
+    .unwrap();
+    let structure = |objects: &std::collections::BTreeMap<ObjectId, Object>| {
+        objects
+            .iter()
+            .filter(|(_, object)| {
+                object
+                    .as_dict()
+                    .is_ok_and(|dict| dict.has(b"S") && dict.has(b"P"))
+            })
+            .map(|(id, object)| (*id, object.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(structure(&doc.objects), structure(&before));
+    // Only a Span nests this way: any other element inside a Span is refused.
+    let (other, _) = nested_in_the_first_paragraph("NonStruct");
+    assert!(textedit::scan(&other, 0).is_err());
+}

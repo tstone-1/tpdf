@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use super::args::unknown;
 use super::report::{
-    self, ChainCertificate, ChainReport, ErrorKind, FileError, IntegrityReport, RevocationReport,
-    TrustReport, SCHEMA,
+    self, AppendixReport, ChainCertificate, ChainReport, ErrorKind, FileError, IntegrityReport,
+    ListedPage, RevocationReport, TrustReport, SCHEMA,
 };
 use super::{json, say, words, Env, Exit, Failure, Registered, Subcommand};
 use crate::docinfo;
@@ -118,6 +118,7 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
         claimed_time: signature.when.clone(),
         covers_whole_file: signature.covers_whole_file,
         appended_bytes: signature.appended_bytes,
+        appendix: signature.appendix.as_ref().map(appendix_report),
         integrity: IntegrityReport {
             verdict: integrity.verdict,
             why: integrity.why,
@@ -146,6 +147,98 @@ pub fn signature_report(signature: &docinfo::Signature) -> report::Signature {
             .map(|c| chain_report(c, document_timestamp)),
         pades_level: signature.pades,
         pades: signature.pades.map(words::pades_sentence),
+    }
+}
+
+/// What was appended after one signature, as the report shows it: every
+/// count and name the worker read, and the dialog's sentence over them.
+#[must_use]
+pub fn appendix_report(appendix: &docinfo::Appendix) -> AppendixReport {
+    AppendixReport {
+        unread: appendix.unread,
+        added: appendix.added,
+        replaced: appendix.replaced,
+        kinds: appendix.kinds.clone(),
+        catalog_gained: appendix.catalog_gained.clone(),
+        pages_touched: appendix.pages_touched,
+        pages_listing: appendix
+            .pages_listing
+            .iter()
+            .map(|listed| ListedPage {
+                page: listed.page,
+                timestamp: listed.timestamp,
+            })
+            .collect(),
+        sentence: appendix_sentence(appendix),
+    }
+}
+
+/// The Appended row's value: `properties.ts`'s `appendixRow(signature).value`,
+/// restated as `words.rs` restates `integrity.ts` and held to it the same
+/// way --- `wording.json`'s `appended` cases, which `cliwording.test.ts` asks
+/// the original.
+///
+/// What arrived comes first, most specific reading first: validation data
+/// when the catalog gained `/DSS`, another signature when a `/Sig` is among
+/// the objects, otherwise the file's own names for them. Then the pages.
+#[must_use]
+pub fn appendix_sentence(appendix: &docinfo::Appendix) -> String {
+    if appendix.unread {
+        return "something, but its contents could not be read".into();
+    }
+    let what = if appendix.catalog_gained.iter().any(|key| key == "DSS") {
+        "the certificates and revocation records a signature needs to be checked later".to_string()
+    } else if appendix.kinds.iter().any(|kind| kind == "Sig") {
+        "another signature".to_string()
+    } else {
+        let objects = match appendix.added + appendix.replaced {
+            1 => "1 object".to_string(),
+            n => format!("{n} objects"),
+        };
+        if appendix.kinds.is_empty() {
+            objects
+        } else {
+            format!("{objects}: {}", appendix.kinds.join(", "))
+        }
+    };
+    format!("{what}, and {}", appendix_pages(appendix))
+}
+
+/// What the append did to pages: `properties.ts`'s `describePages`.
+///
+/// Only when every touched page was rewritten to list a field does the
+/// sentence say so and name the pages. A mix keeps the bare count, so "pages
+/// were rewritten" still means a page changed and tpdf does not know why.
+fn appendix_pages(appendix: &docinfo::Appendix) -> String {
+    let touched = appendix.pages_touched;
+    let listing = &appendix.pages_listing;
+    if touched == 0 {
+        return "no page was rewritten".into();
+    }
+    let numbers: Vec<String> = listing.iter().map(|l| l.page.to_string()).collect();
+    let Some((last, before)) = numbers.split_last().filter(|_| listing.len() == touched) else {
+        return match touched {
+            1 => "1 page was rewritten".into(),
+            n => format!("{n} pages were rewritten"),
+        };
+    };
+    let field = if listing.iter().all(|listed| listed.timestamp) {
+        "timestamp field"
+    } else if listing.iter().any(|listed| listed.timestamp) {
+        "signature or timestamp field"
+    } else {
+        "signature field"
+    };
+    if before.is_empty() {
+        format!(
+            "a {field} was added to page {last}'s annotations (the page's content is unchanged)"
+        )
+    } else {
+        format!(
+            "a {field} was added to the annotations of pages {} and {last} \
+             (their content is unchanged)",
+            before.join(", ")
+        )
     }
 }
 
@@ -580,6 +673,11 @@ pub(crate) fn signature_text(signature: &report::Signature) -> String {
         lines.push(format!("    Date given: {}", signature.claimed_time));
     }
     lines.push(format!("    Integrity: {}", signature.integrity.sentence));
+    // Under Integrity, whose sentence says something was appended: this row
+    // says what.
+    if let Some(appendix) = &signature.appendix {
+        lines.push(format!("    Appended: {}", appendix.sentence));
+    }
     if let Some(trust) = &signature.trust {
         let name = if document {
             "Timestamp authority"

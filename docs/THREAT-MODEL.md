@@ -1086,7 +1086,7 @@ claims and hiding it would be its own lie; what is prevented is tpdf appearing t
 
 **A fourth route, and this one changed what parses hostile bytes rather than what displays
 them: tpdf reads certificates as of 2026-08-21.** A signature's `/Contents` is a DER blob the
-document chose, and `docinfo::parse_certificate` now hands it to `cms` and `x509-cert`. So
+document chose, and `certificate::parse_certificate` hands it to `cms` and `x509-cert`. So
 there is a second ASN.1 parser in the trust boundary beside PDFium's, on input just as
 attacker-controlled, and three things bound it rather than one.
 

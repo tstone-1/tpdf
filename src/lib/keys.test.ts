@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   accelerator,
   BINDINGS,
+  copyInterfaceText,
   inTextField,
   label,
   setMacSpelling,
@@ -517,5 +518,52 @@ describe("inTextField", () => {
     // which is what it did before this guard existed.
     expect(inTextField(at(null))).toBe(false);
     expect(inTextField(at(undefined))).toBe(false);
+  });
+});
+
+describe("copyInterfaceText", () => {
+  // The copy chord over a web-view selection of this kind and these words.
+  function pressed(type: string, words: string, key = "c") {
+    const prevented: string[] = [];
+    const selection = { type, toString: () => words };
+    return {
+      prevented,
+      event: {
+        ...event(key, { accel: true }),
+        target: { ownerDocument: { getSelection: () => selection } },
+        preventDefault: () => prevented.push("default"),
+      } as unknown as KeyboardEvent,
+    };
+  }
+
+  it("writes selected interface text to the clipboard and takes the chord", () => {
+    const written: string[] = [];
+    const { event: chord, prevented } = pressed("Range", "Cannot edit this text");
+    const taken = copyInterfaceText(chord, async (text) => {
+      written.push(text);
+    });
+    expect(taken).toBe(true);
+    expect(written).toEqual(["Cannot edit this text"]);
+    expect(prevented).toEqual(["default"]);
+  });
+
+  it("leaves the chord to the page's own copy when no interface text is selected", () => {
+    const written: string[] = [];
+    for (const type of ["Caret", "None"]) {
+      const { event: chord, prevented } = pressed(type, "");
+      expect(copyInterfaceText(chord, async (text) => void written.push(text))).toBe(false);
+      expect(prevented).toEqual([]);
+    }
+    expect(written).toEqual([]);
+  });
+
+  it("is about the copy chord only", () => {
+    const { event: chord } = pressed("Range", "words", "v");
+    expect(copyInterfaceText(chord, async () => {})).toBe(false);
+  });
+
+  it("does not let a clipboard that refuses become an unhandled rejection", () => {
+    const { event: chord } = pressed("Range", "words");
+    expect(copyInterfaceText(chord, () => Promise.reject(new Error("denied")))).toBe(true);
   });
 });

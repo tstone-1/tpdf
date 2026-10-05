@@ -20,6 +20,7 @@ __all__ = [
     "HitRect",
     "PadesLevel",
     "Appearance",
+    "AppendixReport",
     "ChainCertificate",
     "ChainEnd",
     "ChainReport",
@@ -60,6 +61,7 @@ __all__ = [
     "IntegrityReport",
     "IntegrityVerdict",
     "IntegrityWhy",
+    "ListedPage",
     "MetadataField",
     "NotEditable",
     "NotUsableIdentity",
@@ -758,6 +760,38 @@ class TimestampReport(TypedDict):
     revocation_chain: ChainReport | None
 
 
+class ListedPage(TypedDict):
+    """A page rewritten only to list a new signature or timestamp field."""
+
+    # The page, counted from 1.
+    page: int
+    # Whether every field the page gained is a document timestamp's.
+    timestamp: bool
+
+
+class AppendixReport(TypedDict):
+    """What was written after a signature's range, by the file's own names."""
+
+    # tpdf could not read it: the counts are 0, the lists empty, and they
+    # say nothing.
+    unread: bool
+    # Objects the signed revision did not have.
+    added: int
+    # Objects it had, written again differently.
+    replaced: int
+    # What the file calls those objects, such as "Sig" and "Annot/Widget".
+    kinds: list[str]
+    # Keys the document catalog gained; "DSS" is validation data.
+    catalog_gained: list[str]
+    # Pages whose object, or anything they draw from, was added or replaced,
+    # or that are no longer where they were.
+    pages_touched: int
+    # The touched pages rewritten only to list a field, in page order.
+    pages_listing: list[ListedPage]
+    # The properties dialog's Appended row, word for word.
+    sentence: str
+
+
 class Signature(TypedDict):
     """One signature, as the properties dialog reports it."""
 
@@ -775,6 +809,10 @@ class Signature(TypedDict):
     covers_whole_file: bool
     # Bytes written after the signed range ends.
     appended_bytes: int
+    # None exactly when `appended_bytes` is 0. `--strict` fails the intact
+    # signature with the fewest `appended_bytes` when this is `unread` or has
+    # more `pages_touched` than `pages_listing` has entries.
+    appendix: AppendixReport | None
     integrity: IntegrityReport
     # None unless integrity.verdict is "intact" or "weak".
     trust: TrustReport | None

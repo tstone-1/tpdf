@@ -353,11 +353,11 @@ fn certificates_with(blob: &[u8], extra: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<Vec
 
     let info = ContentInfo::from_der(blob).ok()?;
     let signed: SignedData = info.content.decode_as().ok()?;
-    let (signer, matched) = crate::docinfo::signer_certificate(&signed)?;
+    let (signer, matched) = crate::certificate::signer_certificate(&signed)?;
     if !matched {
         return None;
     }
-    let all = crate::docinfo::certificates_of(&signed);
+    let all = crate::certificate::certificates_of(&signed);
     if all.len() > MAX_CERTIFICATES {
         return None;
     }
@@ -505,7 +505,7 @@ pub fn judge_at(
         standing,
         why,
         store: platform::STORE,
-        attested_at: crate::revocation::format_time(at),
+        attested_at: crate::certificate::format_time(at),
     };
     let Some(serves) = serves(signer, purpose) else {
         return Trust::unchecked(Doubt::Certificate);

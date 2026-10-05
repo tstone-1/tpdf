@@ -250,13 +250,19 @@ fn textedit_tables_refuse_invalid_hierarchy_and_container_text() {
         doc.get_dictionary_mut(ids[index]).unwrap().set("S", role);
         refused(doc);
     }
-    // A row's layout attributes are still refused. A table's are not; the two
-    // tests below own that case.
-    let (mut doc, ids) = table();
-    doc.get_dictionary_mut(ids[7])
-        .unwrap()
-        .set("A", dictionary! { "O" => "Layout", "Placement" => "Block" });
-    refused(doc);
+    // A row's layout attributes are refused, all but the one that says it is
+    // placed as a block; the test below owns that case. A table's are not
+    // refused, and the two tests after it own that one.
+    for attributes in [
+        dictionary! { "O" => "Layout", "Placement" => "Inline" },
+        dictionary! { "O" => "Layout", "Placement" => "Block", "TextAlign" => "Center" },
+        dictionary! { "O" => "Layout", "Placement" => "Block", "SpaceBefore" => 4 },
+        dictionary! { "O" => "Layout" },
+    ] {
+        let (mut doc, ids) = table();
+        doc.get_dictionary_mut(ids[7]).unwrap().set("A", attributes);
+        refused(doc);
+    }
     let (mut doc, ids) = table();
     let text = doc.get_page_content(ids[0]);
     let text = String::from_utf8(text)
@@ -448,4 +454,84 @@ fn textedit_bounded_tables_refuse_malformed_bounds_and_placements() {
     // Block indents and spacing are allocation, accepted here as on a paragraph.
     let (doc, _) = bounded(dictionary! { "O" => "Layout", "StartIndent" => 12, "SpaceAfter" => 6 });
     assert!(textedit::scan(&doc, 0).is_ok());
+}
+
+// LibreOffice 26.2 writes a placement on every row and a Layout object on every
+// cell, beside the cell's Table object. Refusing them refused every page of a
+// document with one table in it.
+#[test]
+fn textedit_tables_keep_a_row_placed_as_a_block_and_a_cells_own_size() {
+    let (mut doc, ids) = table();
+    for row in [ids[7], ids[8]] {
+        doc.get_dictionary_mut(row)
+            .unwrap()
+            .set("A", dictionary! { "O" => "Layout", "Placement" => "Block" });
+    }
+    let size = dictionary! { "O" => "Layout", "Placement" => "Inline", "Width" => 9.326, "Height" => 2.438 };
+    doc.get_dictionary_mut(ids[3]).unwrap().set(
+        "A",
+        vec![
+            Object::Dictionary(size.clone()),
+            Object::Dictionary(dictionary! { "O" => "Table", "ColSpan" => 2 }),
+        ],
+    );
+    doc.get_dictionary_mut(ids[4]).unwrap().set("A", size);
+    let before = doc.objects.clone();
+    assert_eq!(offered(&doc), ["FIRST", "SECOND"]);
+    assert_eq!(doc.objects, before, "reading changes nothing");
+
+    // What a cell's Layout object may say is held as tightly as its Table one.
+    for attributes in [
+        dictionary! { "O" => "Layout", "Width" => -1 },
+        dictionary! { "O" => "Layout", "Height" => "Tall" },
+        dictionary! { "O" => "Layout", "Placement" => "Before" },
+        dictionary! { "O" => "Layout", "TextAlign" => "Center" },
+        dictionary! { "O" => "Layout", "BBox" => rectangle() },
+    ] {
+        let (mut doc, ids) = table();
+        doc.get_dictionary_mut(ids[3]).unwrap().set("A", attributes);
+        refused(doc);
+    }
+    // And it is given once.
+    let (mut doc, ids) = table();
+    doc.get_dictionary_mut(ids[3]).unwrap().set(
+        "A",
+        vec![
+            Object::Dictionary(dictionary! { "O" => "Layout", "Width" => 1 }),
+            Object::Dictionary(dictionary! { "O" => "Layout", "Height" => 1 }),
+        ],
+    );
+    refused(doc);
+}
+
+// A paragraph in a cell under a name of the producer's own: LibreOffice tags it
+// Standard, or with the paragraph style's name, and the RoleMap makes it a P.
+#[test]
+fn textedit_tables_read_a_cells_paragraph_through_the_role_map() {
+    let aliased = |tag: &str| {
+        let (mut doc, ids) = table();
+        let cell = ids[3];
+        let paragraph =
+            doc.add_object(dictionary! { "S" => tag, "P" => cell, "Pg" => ids[0], "K" => 0 });
+        doc.get_dictionary_mut(cell).unwrap().set("K", paragraph);
+        doc.get_dictionary_mut(ids[5]).unwrap().set(
+            "Nums",
+            vec![
+                0.into(),
+                Object::Array(vec![paragraph.into(), ids[4].into(), ids[6].into()]),
+            ],
+        );
+        let bytes = String::from_utf8(doc.get_page_content(ids[0])).unwrap();
+        let bytes = bytes.replacen("/TD << /MCID 0", &format!("/{tag} << /MCID 0"), 1);
+        let stream = doc.add_object(Stream::new(Dictionary::new(), bytes.into_bytes()));
+        doc.get_dictionary_mut(ids[0])
+            .unwrap()
+            .set("Contents", stream);
+        doc
+    };
+    // The control: a literal P has always been read.
+    assert_eq!(offered(&aliased("P")), ["FIRST", "SECOND"]);
+    assert_eq!(offered(&aliased("Standard")), ["FIRST", "SECOND"]);
+    // A name the RoleMap does not make a text block is not one.
+    refused(aliased("Information"));
 }

@@ -39,6 +39,19 @@ have the binary.)
 - **A key for duplicate.** ⌘D, or Ctrl+D on Windows, copies what is picked, as *Arrange:
   duplicate* does.
 
+- **CI reads what tpdf signs with pyHanko and OpenSSL.** `sign-probe` ran only by hand, so
+  the pipelines checked tpdf's signatures with tpdf's own reader. Both workflows now run it
+  on the macOS leg for one RSA and one P-256 key; `TPDF_PYHANKO_PYTHON` points the probe at
+  an interpreter that already holds pyHanko.
+- **`tpdf verify` says what was appended after each signature.** `--json` gives every
+  signature an `appendix`: how many objects were added and replaced, what the file calls
+  them, how many pages were touched and which of those only list a new signature or
+  timestamp field, and whether tpdf could read it at all. It is `null` when nothing was
+  appended. A script can now see why `--strict` failed a document whose signatures all
+  hold. `info --json` and `sign --json` carry it with their signatures. Plain `verify`
+  and `info` print the same as an *Appended* row under the signature, in the properties
+  dialog's words.
+
 - **The value of a saved radio button.** The properties panel shows the value a radio
   button already in the file gives its group, and takes a new one. Before, the value
   could be set only until the first save. A value another button of the group has is
@@ -175,6 +188,24 @@ have the binary.)
 
 - **A malformed range from the worker while adding an archive timestamp** stopped the
   application. It is now a refusal.
+
+- **Text in a LibreOffice document with a table could not be edited.** LibreOffice 26.2
+  writes a placement on every table row, a size on every cell, the paragraph style's
+  name on a cell's paragraphs, an underline on every link, and nests one run of
+  formatted text in another and a picture in its paragraph. Each was refused as
+  *unsupported or inconsistent tagged text structure*, and with it every page of the
+  document. All are now read. The words of a nested run stay read-only, and so does
+  the text of a table that states its own bounds.
+
+- **An error message could be selected and not copied.** ⌘C over selected words of a
+  message now puts them on the clipboard.
+
+- **The signing windows were set in a serif font.** *Place signature image*, the
+  certificate chooser, the signature appearance and the two signing prompts are now in
+  the application's font, like every other window.
+
+- **A scrollbar under *Place signature image* on Windows.** The drawing area was two
+  pixels wider than the window that holds it.
 
 - **A smaller copy could garble a picture.** A deflated picture whose predictor is
   declared in an array or by reference was scaled from the wrong samples. Such a

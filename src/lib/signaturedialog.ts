@@ -30,7 +30,7 @@ export class SignatureDialog {
     void prepareSignatureStorage().catch((error: unknown) => { this.message.textContent = String(error); });
     this.dialog.className = "signature-dialog";
     this.dialog.setAttribute("aria-label", "Place signature image");
-    this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;"
+    this.dialog.style.cssText = "width:min(580px,90vw);padding:22px;border:1px solid #8885;font:13px/1.55 system-ui,-apple-system,sans-serif;"
       + "border-radius:12px;background:Canvas;color:CanvasText;box-shadow:0 15px 70px #0005";
     const heading = this.heading;
     heading.textContent = PLACE_WORDS.title;
@@ -41,7 +41,7 @@ export class SignatureDialog {
     notice.textContent = "Visual mark only. This does not verify your identity or create a "
       + "certificate-based digital signature.";
     this.canvas.width = 1024; this.canvas.height = 400;
-    this.canvas.style.cssText = "width:100%;height:auto;aspect-ratio:1024/400;display:block;"
+    this.canvas.style.cssText = "box-sizing:border-box;width:100%;height:auto;aspect-ratio:1024/400;display:block;"
       + "background:white;border:1px solid #999;border-radius:6px;touch-action:none;cursor:crosshair";
     this.canvas.setAttribute("aria-label", "Draw your signature");
     const tools = document.createElement("div"); tools.style.cssText = "display:flex;gap:8px;margin:12px 0;flex-wrap:wrap";

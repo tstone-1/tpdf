@@ -10,6 +10,7 @@
 
 pub mod annots;
 pub mod ber;
+pub mod certificate;
 /// `tpdf sign`, `tpdf verify` and `tpdf identities`: the command-line tool,
 /// whose `main` is `src/bin/tpdf-cli.rs`. The application's own signing and
 /// verifying, through the same workers, writer and key store.

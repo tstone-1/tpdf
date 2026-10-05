@@ -140,7 +140,7 @@ mod platform_tests {
             outcomes.push(format!(
                 "{label} ROOT: {} certificates, {accepted} trusted for documents; outcomes {}",
                 candidates.len(),
-                crate::docinfo::hex_of(&digest.finalize())
+                crate::certificate::hex_of(&digest.finalize())
             ));
             assert!(accepted > 0, "no usable trusted root in {label} ROOT store");
         }

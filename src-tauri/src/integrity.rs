@@ -507,7 +507,7 @@ impl Signer {
             (_, _, claimed) => claimed,
         };
 
-        let named = crate::docinfo::signer_certificate(&signed)
+        let named = crate::certificate::signer_certificate(&signed)
             .filter(|(_, matched)| *matched)
             .map(|(certificate, _)| certificate);
         let key = named.ok_or(Why::Certificate).and_then(read_key);

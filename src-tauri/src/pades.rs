@@ -22,9 +22,16 @@
 //! rung whose evidence is absent or could not be judged stops the climb: an
 //! archive timestamp over a signature whose revocation data is missing is
 //! B-T, not B-LTA.
+//!
+//! **Read through [`Evidence`], not from a report.** A level needs six facts
+//! about a signature, and this module asks for those six rather than naming
+//! the type that happens to carry them: `docinfo::Signature` holds a
+//! [`Level`], so naming it here would make each module a part of the other.
+//! `docinfo` implements the trait for its own type, and nothing in this file
+//! knows what a properties report is.
 
-use crate::docinfo::Signature;
-use crate::integrity::Verdict;
+use crate::integrity::{Integrity, Verdict};
+use crate::revocation::chain::Chain;
 use crate::revocation::Status;
 
 /// `/SubFilter` of a CAdES signature in a PDF, which is what PAdES is.
@@ -68,11 +75,44 @@ impl Level {
     }
 }
 
+/// What a level is read from: one signature field's verdicts, as whatever
+/// carries them reports them.
+///
+/// Every method is a fact the worker already reached. Nothing here is
+/// computed, and an implementation that derives an answer rather than handing
+/// over a field has moved a rule out of this module.
+pub trait Evidence {
+    /// Whether the field carries a signature at all.
+    fn signed(&self) -> bool;
+    /// `/SubFilter`.
+    fn kind(&self) -> &str;
+    /// Whether the signature holds over its bytes, when that was asked.
+    fn integrity(&self) -> Option<&Integrity>;
+    /// How many bytes of the file follow the signature's covered range.
+    fn appended_bytes(&self) -> u64;
+    /// The timestamp token the signature carries --- or, for a document
+    /// timestamp, is.
+    fn token(&self) -> Option<Token<'_>>;
+    /// What the document's revocation data says about the signer's chain.
+    fn revocation_chain(&self) -> Option<&Chain>;
+    /// Records the level [`assign`] reached.
+    fn set_level(&mut self, level: Option<Level>);
+}
+
+/// A timestamp token, as much of it as a level depends on.
+#[derive(Clone, Copy, Debug)]
+pub struct Token<'a> {
+    /// Whether the token's time is attested: it checks out over what it is
+    /// attached to.
+    pub attested: bool,
+    /// What the document's revocation data says about its authority's chain.
+    pub revocation_chain: Option<&'a Chain>,
+}
+
 /// Whether a verdict leaves something to be at a level of.
-fn holds(signature: &Signature) -> bool {
+fn holds<S: Evidence>(signature: &S) -> bool {
     signature
-        .integrity
-        .as_ref()
+        .integrity()
         .is_some_and(|i| matches!(i.verdict, Verdict::Intact | Verdict::Weak))
 }
 
@@ -80,33 +120,30 @@ fn holds(signature: &Signature) -> bool {
 ///
 /// `appended_bytes` is the file's size less that end, so of two signatures the
 /// one with **fewer** appended bytes reaches further.
-fn reaches_past(later: &Signature, earlier: &Signature) -> bool {
-    later.appended_bytes < earlier.appended_bytes
+fn reaches_past<S: Evidence>(later: &S, earlier: &S) -> bool {
+    later.appended_bytes() < earlier.appended_bytes()
 }
 
 /// Document timestamps that are attested and reach past `signature`'s range.
-fn sealing<'a>(
-    signature: &'a Signature,
-    all: &'a [Signature],
-) -> impl Iterator<Item = &'a Signature> {
+fn sealing<'a, S: Evidence>(signature: &'a S, all: &'a [S]) -> impl Iterator<Item = &'a S> {
     all.iter().filter(move |other| {
-        other.kind == DOCUMENT_TIMESTAMP
-            && holds(other)
-            && other.timestamp.as_ref().is_some_and(|t| t.attested)
-            && reaches_past(other, signature)
+        other.kind() == DOCUMENT_TIMESTAMP
+            && holds(*other)
+            && other.token().is_some_and(|t| t.attested)
+            && reaches_past(*other, signature)
     })
 }
 
 /// The level `signature` has the parts of, among `all` the document's
 /// signatures, or `None` when it is not a PAdES signature that holds.
 #[must_use]
-pub fn level(signature: &Signature, all: &[Signature]) -> Option<Level> {
-    if !signature.signed || signature.kind != CADES || !holds(signature) {
+pub fn level<S: Evidence>(signature: &S, all: &[S]) -> Option<Level> {
+    if !signature.signed() || signature.kind() != CADES || !holds(signature) {
         return None;
     }
     // B-T: a time somebody else attests --- the signature's own timestamp
     // token, or a document timestamp made over it afterwards.
-    let own = signature.timestamp.as_ref().filter(|t| t.attested);
+    let own = signature.token().filter(|t| t.attested);
     if own.is_none() && sealing(signature, all).next().is_none() {
         return Some(Level::B);
     }
@@ -114,41 +151,83 @@ pub fn level(signature: &Signature, all: &[Signature]) -> Option<Level> {
     // signer's chain and the chain of the authority that dated it. `Good` is
     // the only answer that counts: `none` is no data and `unchecked` is data
     // nothing could be concluded from.
-    let good = |chain: Option<&crate::revocation::chain::Chain>| {
-        chain.is_some_and(|c| c.standing == Status::Good && c.dropped == 0)
-    };
+    let good =
+        |chain: Option<&Chain>| chain.is_some_and(|c| c.standing == Status::Good && c.dropped == 0);
     let dated_by_good_authority = match own {
-        Some(token) => good(token.revocation_chain.as_ref()),
-        None => sealing(signature, all).any(|stamp| good(stamp.revocation_chain.as_ref())),
+        Some(token) => good(token.revocation_chain),
+        None => sealing(signature, all).any(|stamp| good(stamp.revocation_chain())),
     };
-    if !good(signature.revocation_chain.as_ref()) || !dated_by_good_authority {
+    if !good(signature.revocation_chain()) || !dated_by_good_authority {
         return Some(Level::T);
     }
     // B-LTA: a document timestamp, itself answered for, over all of that.
-    if sealing(signature, all).any(|stamp| good(stamp.revocation_chain.as_ref())) {
+    if sealing(signature, all).any(|stamp| good(stamp.revocation_chain())) {
         Some(Level::Lta)
     } else {
         Some(Level::Lt)
     }
 }
 
-/// Sets [`Signature::pades`] on every signature of a document.
-pub fn assign(signatures: &mut [Signature]) {
+/// Sets the level on every signature of a document.
+pub fn assign<S: Evidence>(signatures: &mut [S]) {
     let levels: Vec<Option<Level>> = signatures
         .iter()
         .map(|signature| level(signature, signatures))
         .collect();
     for (signature, level) in signatures.iter_mut().zip(levels) {
-        signature.pades = level;
+        signature.set_level(level);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docinfo::Timestamp;
-    use crate::integrity::Integrity;
-    use crate::revocation::chain::Chain;
+
+    /// A signature as these tests build one: the fields a level reads, under
+    /// the names `docinfo::Signature` gives them, and no others.
+    #[derive(Clone, Debug, Default)]
+    struct Signature {
+        signed: bool,
+        kind: String,
+        integrity: Option<Integrity>,
+        appended_bytes: u64,
+        timestamp: Option<Timestamp>,
+        revocation_chain: Option<Chain>,
+        pades: Option<Level>,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct Timestamp {
+        attested: bool,
+        revocation_chain: Option<Chain>,
+    }
+
+    impl Evidence for Signature {
+        fn signed(&self) -> bool {
+            self.signed
+        }
+        fn kind(&self) -> &str {
+            &self.kind
+        }
+        fn integrity(&self) -> Option<&Integrity> {
+            self.integrity.as_ref()
+        }
+        fn appended_bytes(&self) -> u64 {
+            self.appended_bytes
+        }
+        fn token(&self) -> Option<Token<'_>> {
+            self.timestamp.as_ref().map(|t| Token {
+                attested: t.attested,
+                revocation_chain: t.revocation_chain.as_ref(),
+            })
+        }
+        fn revocation_chain(&self) -> Option<&Chain> {
+            self.revocation_chain.as_ref()
+        }
+        fn set_level(&mut self, level: Option<Level>) {
+            self.pades = level;
+        }
+    }
 
     fn chain(standing: Status) -> Option<Chain> {
         Some(Chain {
@@ -168,7 +247,6 @@ mod tests {
         Some(Timestamp {
             attested,
             revocation_chain: chain(authority),
-            ..Timestamp::default()
         })
     }
 
@@ -225,36 +303,6 @@ mod tests {
         assert_eq!(of(&dated, &[stamp(Status::Good)]), Some(Level::T));
         // And one whose own authority is not answered for does not seal.
         assert_eq!(of(&checkable, &[stamp(Status::None)]), Some(Level::Lt));
-    }
-
-    /// The level is the document's parts, not this computer's opinion of who
-    /// made them: a token that checks out from an authority the store does not
-    /// trust is still the part B-T names, and the trust row says the rest.
-    #[test]
-    fn a_token_from_an_authority_this_computer_does_not_trust_is_still_the_part() {
-        use crate::trust::{Doubt, Standing, Trust};
-        let standing = |standing, why| {
-            Some(Trust {
-                standing,
-                why,
-                ..Trust::default()
-            })
-        };
-        for trust in [
-            standing(Standing::Trusted, None),
-            standing(Standing::Untrusted, Some(Doubt::Root)),
-            standing(Standing::Unchecked, Some(Doubt::Unavailable)),
-            None,
-        ] {
-            let dated = Signature {
-                timestamp: Some(Timestamp {
-                    trust: trust.clone(),
-                    ..token(true, Status::None).expect("a token")
-                }),
-                ..signed()
-            };
-            assert_eq!(of(&dated, &[]), Some(Level::T), "{trust:?}");
-        }
     }
 
     #[test]

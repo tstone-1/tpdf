@@ -936,7 +936,9 @@ the page as it is displayed:
   read, or touches a page other than by listing a signature or timestamp field among that
   page's annotations. Validation data and an archive timestamp are not such a change. Without
   `--json`, `verify` prints a line beginning *After the last signature:* under such a
-  document.
+  document. Under every signature that something was appended after, it prints the properties
+  dialog's *Appended* row: what arrived, and what it did to pages. `--json` carries the same
+  as each signature's `appendix`.
 - **`info <file.pdf>...`** describes each document as the properties dialog does: its pages
   and their sizes, PDF version, the metadata in its `/Info` dictionary, encryption and what it
   permits, whether it is tagged, the conformance its XMP metadata claims (PDF/A, PDF/UA, PDF/X
@@ -1590,6 +1592,19 @@ it with `[Console]::OutputEncoding = [Text.Encoding]::UTF8` set if a name may ca
   timestamp, `false` for a document signature, including one with an attached timestamp); `signer` and `issuer` (from its certificate, empty when none could
   be read); `claimed_time` (the time the signer's computer gave; not checked);
   `covers_whole_file`; `appended_bytes` (bytes written after the signed range);
+  `appendix`, `null` exactly when `appended_bytes` is 0, what those bytes changed, by the
+  names the file uses and never as a verdict: `unread` (`true` when tpdf could not read it;
+  the counts are then 0, the lists empty, and they say nothing), `added` and `replaced`
+  (objects the signed revision did not have, and objects written again differently), `kinds`
+  (what the file calls those objects, such as `Sig` and `Annot/Widget`), `catalog_gained`
+  (keys new in the document catalog; `DSS` is validation data), `pages_touched` (pages whose
+  object or anything they draw from was added or replaced, or that are no longer where they
+  were; a touched page can look the same), `pages_listing` (the touched pages rewritten only
+  to list a new signature or timestamp field among their annotations, each with its `page`,
+  counted from 1, and `timestamp`, `true` when every field it gained is a document
+  timestamp's) and `sentence`. This is what `--strict` reads: of the `intact` signature
+  with the fewest `appended_bytes`, it fails an `appendix` that is `unread` or has more
+  `pages_touched` than entries in `pages_listing`;
   `integrity` with `verdict` (`intact`, `weak`, `altered`, `broken`, `unchecked`), `why`
   (for `unchecked`, else `null`), `digest`, `method` and `sentence`; and `trust`, `null`
   unless the verdict is `intact` or `weak` (for a document timestamp it is the timestamp

@@ -204,8 +204,8 @@ A subcommand is one module and one line in `COMMANDS` (`cli.rs`, *Adding a comma
 command reaches a document through a sandboxed worker (`Env::worker`) and never parses
 in-process. `--json` output is a contract, `report::SCHEMA`: the samples in
 `src-tauri/testdata/cli/`, regenerated with `TPDF_CLI_SAMPLES=write`, are held against
-`README.md` and the Python types (`api/python/test_reports.py`). Three algorithms exist in Rust
-and TypeScript (`words.rs`, `reading.rs`, `cli/regions.rs`), and
+`README.md` and the Python types (`api/python/test_reports.py`). Four rules exist in Rust and
+TypeScript (`words.rs`, `cli/verify.rs`, `reading.rs`, `cli/regions.rs`), and
 `src/lib/cli{wording,reading,regions}.test.ts` hold each to its original through the samples.
 Commands: `BUILD.md`, *The command-line tool*.
 
