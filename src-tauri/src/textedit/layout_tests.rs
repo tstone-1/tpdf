@@ -853,7 +853,7 @@ fn the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour() {
         let (zero, one, page) = box_edges(direction, lead);
         let (own, neighbour) = own_and_neighbour(direction, lead, 40.);
         assert_eq!(
-            layout::room((zero, one), 1., page, None, own, [].into_iter(), 0.),
+            layout::room((zero, one), 1., page, (None, None), own, [].into_iter(), 0.),
             (200., layout::Room::Page),
             "direction {direction}, nothing in the way"
         );
@@ -862,7 +862,7 @@ fn the_room_after_a_run_reaches_the_page_edge_and_stops_short_of_a_neighbour() {
                 (zero, one),
                 1.,
                 page,
-                None,
+                (None, None),
                 own,
                 [neighbour].into_iter(),
                 0.
@@ -882,7 +882,7 @@ fn the_room_after_a_run_stops_two_points_short_of_a_close_neighbour() {
             (zero, one),
             1.,
             page,
-            None,
+            (None, None),
             own,
             [neighbour].into_iter(),
             0.
@@ -897,7 +897,7 @@ fn the_room_after_a_run_stops_at_a_clip_and_a_nearer_neighbour_wins() {
     let (own, neighbour) = own_and_neighbour(0, 100., 40.);
     let clip = Some([0., 40., 180., 70.]);
     assert_eq!(
-        layout::room((zero, one), 1., page, clip, own, [].into_iter(), 0.),
+        layout::room((zero, one), 1., page, (clip, None), own, [].into_iter(), 0.),
         (80., layout::Room::Clip)
     );
     assert_eq!(
@@ -905,11 +905,30 @@ fn the_room_after_a_run_stops_at_a_clip_and_a_nearer_neighbour_wins() {
             (zero, one),
             1.,
             page,
-            clip,
+            (clip, None),
             own,
             [neighbour].into_iter(),
             0.
         ),
+        (40., layout::Room::Line)
+    );
+}
+
+// The bounds a table states end the line as a clip does, and whichever of the
+// two is nearer is the one the refusal names.
+#[test]
+fn the_room_after_a_run_stops_at_the_bounds_its_table_states() {
+    let (zero, one, page) = box_edges(0, 100.);
+    let (own, neighbour) = own_and_neighbour(0, 100., 40.);
+    let (near, far) = (Some([0., 40., 160., 70.]), Some([0., 40., 180., 70.]));
+    let room = |held, obstacles: Vec<[f64; 4]>| {
+        layout::room((zero, one), 1., page, held, own, obstacles.into_iter(), 0.)
+    };
+    assert_eq!(room((None, near), vec![]), (60., layout::Room::Table));
+    assert_eq!(room((far, near), vec![]), (60., layout::Room::Table));
+    assert_eq!(room((near, far), vec![]), (60., layout::Room::Clip));
+    assert_eq!(
+        room((None, near), vec![neighbour]),
         (40., layout::Room::Line)
     );
 }
@@ -927,7 +946,15 @@ fn the_room_after_a_run_ignores_what_is_not_on_its_line() {
         [140., 55.5, 180., 70.5],
     ] {
         assert_eq!(
-            layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
+            layout::room(
+                (zero, one),
+                1.,
+                page,
+                (None, None),
+                own,
+                [other].into_iter(),
+                0.
+            ),
             (200., layout::Room::Page),
             "{other:?}"
         );
@@ -935,7 +962,15 @@ fn the_room_after_a_run_ignores_what_is_not_on_its_line() {
     // A tenth of a point past half, and a superscript wholly inside the box.
     for other in [[140., 55.4, 180., 70.4], [140., 50., 180., 56.]] {
         assert_eq!(
-            layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
+            layout::room(
+                (zero, one),
+                1.,
+                page,
+                (None, None),
+                own,
+                [other].into_iter(),
+                0.
+            ),
             (40., layout::Room::Line),
             "{other:?}"
         );
@@ -948,7 +983,16 @@ fn the_room_after_a_run_is_never_less_than_the_box_it_was_given() {
     let (own, neighbour) = own_and_neighbour(0, 100., 40.);
     // A box already past the page edge keeps its width; growth only ever adds.
     assert_eq!(
-        layout::room((zero, one), 1., page, None, own, [].into_iter(), 250.).0,
+        layout::room(
+            (zero, one),
+            1.,
+            page,
+            (None, None),
+            own,
+            [].into_iter(),
+            250.
+        )
+        .0,
         250.
     );
     // A neighbour already inside the box does not pull the box back over it.
@@ -957,7 +1001,7 @@ fn the_room_after_a_run_is_never_less_than_the_box_it_was_given() {
             (zero, one),
             1.,
             page,
-            None,
+            (None, None),
             own,
             [neighbour].into_iter(),
             60.
@@ -1142,7 +1186,15 @@ fn the_room_after_a_run_counts_a_neighbour_its_own_glyphs_reach() {
         ([20., 30., 100., 63.], [140., 38., 180., 50.]),
     ] {
         assert_eq!(
-            layout::room((zero, one), 1., page, None, own, [other].into_iter(), 0.),
+            layout::room(
+                (zero, one),
+                1.,
+                page,
+                (None, None),
+                own,
+                [other].into_iter(),
+                0.
+            ),
             (40., layout::Room::Line),
             "{own:?} beside {other:?}"
         );
@@ -1152,7 +1204,7 @@ fn the_room_after_a_run_counts_a_neighbour_its_own_glyphs_reach() {
                 (zero, one),
                 1.,
                 page,
-                None,
+                (None, None),
                 [20., 48., 100., 63.],
                 [other].into_iter(),
                 0.

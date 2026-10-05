@@ -435,8 +435,9 @@ metadata describing that content as it stands: `/Alt` or `/ActualText` on any
 element (each covers every descendant; InDesign sets ActualText on the Span of a
 forced line break; a Span whose ActualText is its own words is rewritten instead,
 *PowerPoint for Microsoft 365* below), a non-empty `/T` on an element owning text, being a child of a
-Figure, a
-`TextAlign` of End or Justify, or a table `/BBox`. `element()` returns the pin with the
+Figure, or a
+`TextAlign` of End or Justify. A table's `/BBox` pinned its cells until 2026-10-05 and
+holds their text inside it since (*Tables that state their bounds* below). `element()` returns the pin with the
 page; the walk ORs it into `bounded` and `Group::pinned` carries it through
 `groups` and deferred sublists. Pinned text still needs bounded glyphs
 (`read-only text requires validated glyph outlines`): outlines, a descriptor's
@@ -461,10 +462,11 @@ refused.
 Layout attributes are also accepted on Figure, Link, Form and Table, where
 `/BBox` is optional and `/Placement` may be any of the five standard names.
 ISO 32000-1 Table 344 makes `/BBox` the element's own ink rather than an
-authored allocation, so keeping one is only sound while the content it
-describes cannot move: a figure, link and field are read-only already, and a
-table that declares bounds makes its own cells read-only too. `Tags::bounded`
-carries those MCIDs, and text beside such a table stays editable. A table that
+authored allocation, so keeping one is only sound while it still encloses the
+content it describes: a figure, link and field are read-only already, and a
+table's cells are edited only inside the bounds it states (*Tables that state
+their bounds* below; until 2026-10-05 they were read-only). Text beside such a
+table is edited as it is anywhere. A table that
 declares only a placement changes nothing. A list may be nested inside an
 `LBody` as well as beside it, which is what Word and Acrobat export; the
 sublist goes back to the walk that owns the depth and container bounds rather
@@ -775,8 +777,62 @@ its neighbours (`tagging.rs`, `tagging/tables.rs`):
   Span is refused.
 - A `Figure` in a paragraph goes back to the walk, read-only, like a figure in a figure.
 
-A table that states a `BBox` still makes its cells read-only, so on that document the text
-beside the table is editable and the table's is not.
+LibreOffice writes a `BBox` on every table. Until 2026-10-05 that made the cells read-only,
+so on that document the text beside the table was editable and the table's was not; the next
+section is what replaced it.
+
+## Tables that state their bounds
+
+Decided 2026-10-05. A cell's text in a table whose layout attributes carry `/BBox` is offered
+for editing, and an edit is accepted only when the stated bounds still enclose the table's
+content afterwards. The structure tree, bounds included, is written back as it was; the bounds
+are never rewritten or grown. Only a Table is treated this way: a figure's, link's and field's
+text is read-only as before, and a list label's `BBox` still pins it.
+
+**The rule.** With `B` the stated rectangle (default user space, either corner order) and `I`
+the run's own ink in the source, the run is held to `B` widened on each side to `I` where `I`
+already reaches past it (`layout::Context::table`, built in `inspect::Found::record`). So:
+
+- a replacement's ink must stay inside that rectangle on all four sides
+  (`clipping::contains` in `layout::prepare`, beside the clip's own check);
+- along the line the bounds end the room as a clip does (`layout::Axis::ahead`,
+  `Room::Table`), so a box the editor opened stops growing there;
+- a run an edit pushes along its line is held to its own table's bounds (`layout::reach`),
+  whether the edit is in the table or beside it, and so is a line a wrap moves
+  (`layout::wrap_room`);
+- ink the source already had outside the bounds refuses nothing: the text may not reach past
+  them further than it did. A replacement that keeps the source's own positions and stays
+  within its ink is not asked at all, exactly as it is not held to a clip the source had.
+
+Ink is measured as the layout measures a replacement's: the font's own vertical extent where it
+has outlines, otherwise a quarter em below the baseline to an em above, across the run's
+horizontal ink, widened by half the line width for stroked text. No tolerance of its own was
+added. The comparison is exact, and the only allowance in play is the existing 1e-6 on the
+source's own advance and right ink edge, which decides whether a replacement at the source's
+positions counts as within the source's ink. A line a wrap moves is compared by its hit
+rectangle, as for a clip, which is at least as large as its ink, so such a line is refused a
+little before its ink would leave the bounds and never after.
+
+A table that states bounds more than once, in an attribute array or through `/C` classes,
+keeps its text inside every one of them (`tagging::table_bounds`). A table cannot hold a table,
+so the nearest one above the content is the only one.
+
+A change without a layout (the command line's, without `font`) must fit the source's own
+advance and ink already, so it never meets the bounds. Refusals: *There is no room for more
+text on this line: the table states its bounds, and the text would leave them.* for growth
+along the line, and *The table states its bounds, and this text would leave them.* for a
+further line, another size, or a line a wrap would move.
+
+Nothing grows a row: a wrapped line needs room inside the bounds below it, and a table whose
+last row sits on the bottom of its bounds has none. `tagging/table_tests.rs` holds the
+synthetic fixtures (`textedit_bounded_*`); `python3 scripts/mutate_rust.py --only 'bounded
+table:'` is the mutation set.
+
+Measured on the Writer export of the section above (its one table states 466.3 x 150.4 pt and
+holds ten runs on seven lines, all with outlines): no run's ink crosses the bounds; the nearest ink is
+0.100 pt inside on the left, 0.041 pt at the bottom, 5.70 pt at the top and 111.7 pt on the
+right, and every run has at least that 111.7 pt to grow into. The page went from 41 offered
+runs to 51.
 
 ## PowerPoint for Microsoft 365
 
@@ -799,7 +855,7 @@ them on one original page.
   held to the ordinary ownership rules.
 - **Element bounds.** A layout `/BBox` may name either pair of opposite corners (ISO 32000-1
   7.9.5; InDesign writes its top first, the Logitech guide). It must still be four numbers,
-  and it still pins what it describes.
+  and it still pins what it describes, or for a table holds its cells' text inside it.
 - **The page clip.** `m l l l W* n`, with no closing segment: clipping closes the subpath
   (ISO 32000-1 8.5.3.3), and such an implicit close is accepted only when `W`/`W*`
   follows at once. PowerPoint's corners are off the axis by float noise, up to 0.0002 pt.

@@ -1022,6 +1022,26 @@ impl Found {
                 cursor_after: object.cursor,
                 clip: state.clip,
                 regions: state.compound_clips.clone(),
+                table: marked.tags.table().map(|stated| {
+                    // The run's ink as `layout::prepare` measures a
+                    // replacement's, so the two compare like with like.
+                    let [bottom, top] = metrics.vertical_bounds.unwrap_or([-250., 1000.]);
+                    let ink = text_bounds(
+                        page_matrix,
+                        [
+                            horizontal[0],
+                            bottom * size / 1000.,
+                            horizontal[1],
+                            top * size / 1000.,
+                        ],
+                    );
+                    [
+                        stated[0].min(ink[0] - stroke),
+                        stated[1].min(ink[1] - stroke),
+                        stated[2].max(ink[2] + stroke),
+                        stated[3].max(ink[3] + stroke),
+                    ]
+                }),
                 stroke,
                 size,
                 scale: page_matrix[0].hypot(page_matrix[1]),

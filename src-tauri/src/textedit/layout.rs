@@ -14,6 +14,12 @@ pub(super) struct Context {
     pub cursor_after: f64,
     pub clip: Option<[f64; 4]>,
     pub regions: Vec<clipping::Region>,
+    // The bounds the table around the run states for its own ink (ISO 32000-1
+    // Table 344), in page space, widened on each side to the run's own ink
+    // where that already reaches past them. The structure tree keeps the
+    // stated bounds, so a replacement, and any run an edit moves, stays inside
+    // this: no further out of the table's bounds than the source already was.
+    pub table: Option<[f64; 4]>,
     // Half the stroke width around text drawn in render mode 1 or 2, in page
     // units; a replacement inherits the mode and reaches as far.
     pub stroke: f64,
@@ -137,6 +143,11 @@ fn restore_line(
     Ok(restored)
 }
 
+/// The refusal for text that would leave the bounds its table states any other
+/// way than by growing along its line, which `Room::Table` names: a further
+/// line, another size, or a run the edit moves (`Context::table`).
+const TABLE_BOUNDS: &str = "The table states its bounds, and this text would leave them. Reduce the box or font size to keep the text inside.";
+
 /// What stops the editing box from growing, and so what to say when the text
 /// the reader typed no longer fits the room after the run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +165,8 @@ pub(super) enum Room {
     Page,
     /// A clip the document has in force over the space after the run.
     Clip,
+    /// The bounds the table around the run states (`Context::table`).
+    Table,
     /// The next column of prose across a gutter ([`column_runs`]), or the
     /// gutter before it ([`gutter`]). The wrap treats it as it treats the page
     /// edge.
@@ -170,6 +183,7 @@ impl Room {
             Room::Drawn => "There is no room for more text on this line: a picture or a drawing follows it. Shorten the text or reduce the font size.",
             Room::Page => "There is no room for more text on this line: it reaches the edge of the page. Shorten the text or reduce the font size.",
             Room::Clip => "There is no room for more text on this line: the document clips the space after it. Shorten the text or reduce the font size.",
+            Room::Table => "There is no room for more text on this line: the table states its bounds, and the text would leave them. Shorten the text or reduce the font size.",
             Room::Column => "There is no room for more text on this line: it reaches the next column. Shorten the text or reduce the font size.",
         }
     }
@@ -223,7 +237,8 @@ impl Around<'_> {
 /// Pure geometry in the displayed page's own space, so that the rule can be
 /// stated and tested without a document: `zero` and `wide` are the box's display
 /// rectangle at width 0 and at width `probe`, `page` is the displayed page's
-/// size, `clip` the clip in force, `own` the run's own hit rectangle and
+/// size, `clip` the clip in force, `table` the bounds the run's table states
+/// (`Context::table`), `own` the run's own hit rectangle and
 /// `obstacles` every other hit rectangle on the page. `width` is the box the
 /// reader already has, and the answer is never smaller than it -- growth adds
 /// room, it never takes any away.
@@ -236,8 +251,8 @@ impl Around<'_> {
 /// scale is.
 ///
 /// The rule: **the box grows along the run's own text axis until it meets the
-/// first thing on its line, and no further than the page's edge or the clip in
-/// force.**
+/// first thing on its line, and no further than the page's edge, the clip in
+/// force or the bounds its table states.**
 ///
 /// - The *direction* is read off the two mapped rectangles rather than derived
 ///   from the page's quarter turns. An editable run's matrix is a quarter-turn
@@ -263,7 +278,7 @@ pub(super) fn room(
     edges: ([f64; 4], [f64; 4]),
     probe: f64,
     page: [f64; 2],
-    clip: Option<[f64; 4]>,
+    (clip, table): (Option<[f64; 4]>, Option<[f64; 4]>),
     own: [f64; 4],
     obstacles: impl Iterator<Item = [f64; 4]>,
     width: f64,
@@ -271,7 +286,7 @@ pub(super) fn room(
     let Some(axis) = Axis::of(edges, probe) else {
         return (width, Room::Page);
     };
-    let (mut free, mut stop) = axis.ahead([0., 0., page[0], page[1]], clip);
+    let (mut free, mut stop) = axis.ahead([0., 0., page[0], page[1]], clip, table);
     let band = axis.band(edges.0, own);
     for other in obstacles {
         if !axis.beside(band, other) {
@@ -379,25 +394,37 @@ impl Axis {
         shared > 0.1 && shared > shorter / 2.
     }
 
-    /// How far along the axis the page, and a clip if there is one, allow.
-    fn ahead(&self, page: [f64; 4], clip: Option<[f64; 4]>) -> (f64, Room) {
+    /// How far along the axis the page allows, and a clip and the bounds a
+    /// table states if there are any; the nearest is what stops the line.
+    fn ahead(
+        &self,
+        page: [f64; 4],
+        clip: Option<[f64; 4]>,
+        table: Option<[f64; 4]>,
+    ) -> (f64, Room) {
         let mut free = self.at(self.edge(page, true));
         let mut stop = Room::Page;
-        if let Some(clip) = clip {
-            let limit = self.at(self.edge(clip, true));
-            if limit < free {
-                free = limit;
-                stop = Room::Clip;
+        for (held, kind) in [(clip, Room::Clip), (table, Room::Table)] {
+            if let Some(held) = held {
+                let limit = self.at(self.edge(held, true));
+                if limit < free {
+                    free = limit;
+                    stop = kind;
+                }
             }
         }
         (free, stop)
     }
 }
 
+/// A run the push would move: its hit rectangle, the clip in force over it, and
+/// the bounds its table states (`Context::table`).
+type Pushed = ([f64; 4], Option<[f64; 4]>, Option<[f64; 4]>);
+
 /// How far the text after a run may be pushed along its line, and what stops it.
 ///
-/// `pushed` is every run the writer would rewrite, as its hit rectangle and the
-/// clip in force over it; `fixed` is everything on the page that stays where it
+/// `pushed` is every run the writer would rewrite, each a [`Pushed`]; `fixed` is
+/// everything on the page that stays where it
 /// is, each with what it is. The answer is the **smallest** room any one of them
 /// has, because they all move together: a line half pushed is worse than one not
 /// pushed, so the whole set is refused or none of it is.
@@ -413,15 +440,15 @@ impl Axis {
 fn reach(
     axis: &Axis,
     page: [f64; 2],
-    pushed: &[([f64; 4], Option<[f64; 4]>)],
+    pushed: &[Pushed],
     fixed: &[([f64; 4], Room)],
 ) -> (f64, Room) {
     let sheet = [0., 0., page[0], page[1]];
     let mut shift = f64::INFINITY;
     let mut stop = Room::Page;
-    for (rect, clip) in pushed {
+    for (rect, clip, table) in pushed {
         let far = axis.at(axis.edge(*rect, true));
-        let (limit, kind) = axis.ahead(sheet, *clip);
+        let (limit, kind) = axis.ahead(sheet, *clip, *table);
         let mut best = (limit - far, kind);
         let span = (rect[axis.cross()], rect[axis.cross() + 2]);
         for (other, kind) in fixed {
@@ -579,7 +606,10 @@ fn free_width(
     // About a page point of box, whatever the run's own scale; see `room`.
     let probe = 1. / xscale.max(1e-9);
     let sheet = [f64::from(geometry.width), f64::from(geometry.height)];
-    let clip = context.clip.map(|clip| display(clip).map(f64::from));
+    let held = (
+        context.clip.map(|clip| display(clip).map(f64::from)),
+        context.table.map(|table| display(table).map(f64::from)),
+    );
     let edges = (mapped(0.), mapped(probe));
     // The same displacement, in the displayed page's own space, so that the
     // rectangles of the runs it also moved can be put where they now are.
@@ -676,7 +706,7 @@ fn free_width(
         edges,
         probe,
         sheet,
-        clip,
+        held,
         own,
         hits.iter().map(|(rect, _)| *rect),
         width,
@@ -689,7 +719,7 @@ fn free_width(
             edges,
             probe,
             sheet,
-            clip,
+            held,
             own,
             obstacles(page, run)
                 .zip(&hits)
@@ -731,7 +761,7 @@ fn free_width(
         edges,
         probe,
         sheet,
-        clip,
+        held,
         own,
         hits.iter()
             .filter(|(_, id)| id.is_none())
@@ -765,11 +795,11 @@ fn free_width(
         if !axis.beside(band, rect) || near >= hard || near + 0.1 < own_far {
             continue;
         }
+        let theirs = &page.contexts[&other.operator];
         pushed.push((
             rect,
-            page.contexts[&other.operator]
-                .clip
-                .map(|clip| display(clip).map(f64::from)),
+            theirs.clip.map(|clip| display(clip).map(f64::from)),
+            theirs.table.map(|table| display(table).map(f64::from)),
         ));
         line.extend(shows_of(page, other.operator));
         carry.extend(shows_of(page, other.operator));
@@ -833,7 +863,7 @@ fn free_width(
     // that space before the push starts.
     let near = pushed
         .iter()
-        .map(|(rect, _)| axis.at(axis.edge(*rect, false)))
+        .map(|(rect, ..)| axis.at(axis.edge(*rect, false)))
         .fold(f64::INFINITY, f64::min);
     let space = page
         .gaps
@@ -1821,26 +1851,33 @@ fn wrap_room(
         .iter()
         .zip(reach)
         .map(|((operator, rect, by), reach)| {
+            let context = &page.contexts[operator];
             (
                 *operator,
                 *rect,
                 *by,
                 *reach,
-                page.contexts[operator]
-                    .clip
-                    .map(|clip| display(clip).map(f64::from)),
+                context.clip.map(|clip| display(clip).map(f64::from)),
+                context.table.map(|table| display(table).map(f64::from)),
             )
         })
         .collect();
     let (width, depth) = (f64::from(geometry.width), f64::from(geometry.height));
     let mut placed = Vec::new();
-    for (operator, old, by, reach, clip) in &moving {
+    for (operator, old, by, reach, clip, table) in &moving {
         let new = shift(*old, *by);
         if new[0] < -0.001 || new[1] < -0.001 || new[2] > width + 0.001 || new[3] > depth + 0.001 {
             return Err(wrap::NO_ROOM.into());
         }
         if clip.is_some_and(|clip| !wrap::holds(clip, new)) {
             return Err(wrap::NO_ROOM.into());
+        }
+        // The hit rectangle and not the ink, as for the clip: it reaches a
+        // quarter em below the baseline and an em above, so a moved line is
+        // refused a little before its ink would leave the bounds its table
+        // states, never after.
+        if table.is_some_and(|table| !wrap::holds(table, new)) {
+            return Err(TABLE_BOUNDS.into());
         }
         if hits
             .iter()
@@ -1875,7 +1912,7 @@ fn wrap_room(
     }
     let swept: Vec<[f64; 4]> = moving
         .iter()
-        .map(|(_, old, by, _, _)| {
+        .map(|(_, old, by, ..)| {
             let new = shift(*old, *by);
             [
                 old[0].min(new[0]),
@@ -2442,6 +2479,9 @@ pub(super) fn prepare(
             if !text.is_empty() {
                 if !kept.is_some_and(|(_, _, _, inside)| *inside) {
                     clipping::contains(context.clip, ink).map_err(|_| "The document clips this area. Reduce the box or font size to keep the text visible.")?;
+                    // Ink within the source's own is within `table` as well,
+                    // which is the stated bounds and that ink.
+                    clipping::contains(context.table, ink).map_err(|_| TABLE_BOUNDS)?;
                 }
                 for region in &context.regions {
                     region.contains(ink)?;

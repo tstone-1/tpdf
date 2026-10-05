@@ -515,10 +515,10 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
         return Ok(false);
     }
     // ISO 32000-1 Table 344: BBox is the element's own ink, not an authored
-    // allocation, so retaining one is only sound while the content it
-    // describes cannot move. A figure, link and field are already read-only;
-    // a table that declares bounds makes its own text read-only too, which
-    // is what the returned pin and `Tags::bounded` carry out.
+    // allocation, so retaining one is only sound while it still encloses the
+    // content it describes. A figure, link and field are already read-only.
+    // A table's cells are edited inside the bounds it states, so it pins
+    // nothing here: `table_bounds` reads them and `Tags::table` carries them.
     if matches!(tag, b"Figure" | b"Link" | b"Form" | b"Table") {
         let attributes = value.as_dict().map_err(|_| INVALID)?;
         // PowerPoint also writes the block indents and spacing on figures.
@@ -581,9 +581,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
         }) {
             return Err(INVALID.into());
         }
-        if bounding_box(doc, attributes)? {
-            return Ok(tag == b"Table");
-        }
+        bounding_box(doc, attributes)?;
         return Ok(false);
     }
     if tag == b"L" {
@@ -641,7 +639,7 @@ fn attributes(doc: &Document, tag: &[u8], value: &Object) -> Result<bool, String
     if tag != b"Lbl" && attributes.has(b"BBox") {
         return Err("unsupported BBox metadata in tagged layout attributes".into());
     }
-    let bounded = bounding_box(doc, attributes)?;
+    let bounded = bounding_box(doc, attributes)?.is_some();
     // Table 343: a list label sits inline beside its body (PowerPoint says
     // so explicitly); every other block is placed as a block.
     let placement: &[u8] = if tag == b"Lbl" { b"Inline" } else { b"Block" };
@@ -1016,22 +1014,72 @@ fn groups<'a>(
     Ok(groups)
 }
 
-// Table 344: an element's ink bounds, a rectangle. Whether it is present
-// decides whether the element's content has to stay where it is. ISO 32000-1
-// 7.9.5 lets a rectangle name either pair of opposite corners, and a reader
-// normalises it; the Logitech M185 guide's InDesign export gives its top first.
-fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<bool, String> {
+// Table 344: an element's ink bounds, a rectangle in default user space.
+// Whether it is present decides whether the element's content has to stay
+// where it is, or for a table inside it. ISO 32000-1 7.9.5 lets a rectangle
+// name either pair of opposite corners, and a reader normalises it, as this
+// does; the Logitech M185 guide's InDesign export gives its top first.
+fn bounding_box(doc: &Document, attributes: &Dictionary) -> Result<Option<[f64; 4]>, String> {
     let Ok(bounds) = attributes.get(b"BBox") else {
-        return Ok(false);
+        return Ok(None);
     };
-    let bounds = array(crate::encoding::resolve(doc, bounds))?;
-    if bounds.len() != 4 {
+    let [a, b, c, d] = array(crate::encoding::resolve(doc, bounds))? else {
         return Err(INVALID.into());
+    };
+    let (a, b, c, d) = (
+        super::number(a)?,
+        super::number(b)?,
+        super::number(c)?,
+        super::number(d)?,
+    );
+    Ok(Some([a.min(c), b.min(d), a.max(c), b.max(d)]))
+}
+
+// The bounds the table around `id` states for its own ink, where it states
+// any: content `id` claims is edited only inside them, so that they go on
+// enclosing the table and are written back as they were (`Tags::table`). A
+// table cannot hold a table, so the nearest one is the only one. One that
+// states bounds more than once, in its attributes or its classes, keeps its
+// content inside every one of them. Each object here has passed `attributes`,
+// and each parent the walk, which bounds how far up a table can be.
+fn table_bounds(
+    doc: &Document,
+    classes: Option<&Dictionary>,
+    mut id: ObjectId,
+) -> Option<[f64; 4]> {
+    for _ in 0..64 {
+        let element = node(doc, id).ok()?;
+        if element.get(b"S").and_then(Object::as_name).ok() != Some(b"Table") {
+            id = reference(element.get(b"P").ok()?).ok()?;
+            continue;
+        }
+        let listed = |value: &Object| match crate::encoding::resolve(doc, value) {
+            Object::Array(objects) => objects.clone(),
+            object => vec![object.clone()],
+        };
+        let own = element.get(b"A").ok().map(listed).unwrap_or_default();
+        let named = element.get(b"C").ok().map(listed).unwrap_or_default();
+        let classed = named
+            .iter()
+            .filter_map(|name| classes?.get(name.as_name().ok()?).ok())
+            .flat_map(listed);
+        return own
+            .into_iter()
+            .chain(classed)
+            .filter_map(|object| {
+                let attributes = crate::encoding::resolve(doc, &object).as_dict().ok()?;
+                bounding_box(doc, attributes).ok().flatten()
+            })
+            .reduce(|held, next| {
+                [
+                    held[0].max(next[0]),
+                    held[1].max(next[1]),
+                    held[2].min(next[2]),
+                    held[3].min(next[3]),
+                ]
+            });
     }
-    for bound in bounds {
-        super::number(bound)?;
-    }
-    Ok(true)
+    None
 }
 
 // Table 343: LrTb (left to right, lines top to bottom) is the default writing
@@ -1121,9 +1169,14 @@ pub(super) struct Tags {
     // it. Two runs with the same entry are lines of one block, which is the
     // one thing a wrap needs that geometry cannot say (`layout::wrap`).
     blocks: Vec<Option<ObjectId>>,
-    // MCIDs under an element whose authored ink bounds are kept on save, so
-    // their text must stay where the bounds say it is (ISO 32000-1 Table 344).
+    // MCIDs under an element that keeps metadata describing its content as it
+    // stands (`element`), a list label's ink bounds among it, so their text
+    // must stay as it is.
     bounded: BTreeSet<usize>,
+    // MCIDs under a table that states its ink bounds, with those bounds. They
+    // are kept on save, so the text is edited only inside them (ISO 32000-1
+    // Table 344, `table_bounds`).
+    tables: BTreeMap<usize, [f64; 4]>,
     // MCIDs of content set centred, which an edit keeps centred (`centred`).
     centred: BTreeSet<usize>,
     // MCIDs of a Span pinned only by its own ActualText, with that Span. The
@@ -1359,6 +1412,7 @@ impl Tags {
             .collect();
         let mut bounded_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
         let mut centred_slots: BTreeMap<ObjectId, BTreeSet<usize>> = BTreeMap::new();
+        let mut table_slots: BTreeMap<ObjectId, BTreeMap<usize, [f64; 4]>> = BTreeMap::new();
         let mut actual_slots: BTreeMap<ObjectId, BTreeMap<usize, ObjectId>> = BTreeMap::new();
         let mut containers = 0;
         while let Some((child, parent_id, depth, bounded)) = pending.pop() {
@@ -1374,7 +1428,7 @@ impl Tags {
                 || matches!(role, b"Document" | b"Figure" | b"L" | b"Table" | b"TR"));
             let (paragraph_page, pins) = element(doc, child, parent_id, &scope, owns_text, role)?;
             // Metadata that describes this element's content as it stands
-            // (a table's ink bounds, alternate text, a title, a centred line)
+            // (alternate text, a title, a line set to the end or justified)
             // makes that content and everything below it read-only.
             let bounded = bounded || pins;
             let items = kids(doc, child)?;
@@ -1473,9 +1527,6 @@ impl Tags {
                 }
                 // Container Pg never supplies a descendant's page. Its own
                 // identity is the immediate parent checked on every child.
-                // A table that keeps its own ink bounds makes every descendant
-                // read-only: an edit inside a cell would leave those bounds
-                // describing content that is no longer there.
                 pending.extend(
                     items
                         .iter()
@@ -1620,6 +1671,9 @@ impl Tags {
                     if actual {
                         actual_slots.entry(owner).or_default().insert(mcid, id);
                     }
+                    if let Some(bounds) = table_bounds(doc, classes, id) {
+                        table_slots.entry(owner).or_default().insert(mcid, bounds);
+                    }
                 }
             }
         }
@@ -1655,6 +1709,7 @@ impl Tags {
             blocks,
             bounded: bounded_slots.remove(&page).unwrap_or_default(),
             centred: centred_slots.remove(&page).unwrap_or_default(),
+            tables: table_slots.remove(&page).unwrap_or_default(),
             actual: actual_slots.remove(&page).unwrap_or_default(),
             ..Self::default()
         })
@@ -1855,6 +1910,14 @@ impl Tags {
         self.active
             .flatten()
             .is_some_and(|mcid| self.centred.contains(&mcid))
+    }
+
+    /// The bounds the table around the marked content now open states for its
+    /// own ink, in default user space, where it states any (`table_bounds`).
+    pub(super) fn table(&self) -> Option<[f64; 4]> {
+        self.active
+            .flatten()
+            .and_then(|mcid| self.tables.get(&mcid).copied())
     }
 
     pub(super) fn finish(&self) -> Result<(), String> {

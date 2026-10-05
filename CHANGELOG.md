@@ -17,6 +17,20 @@ as *downloadable*, while the release sat as a draft that GitHub showed to nobody
 are given now because they are different facts, and only the second one means a reader can
 have the binary.)
 
+## [26.10.6] - Unreleased
+
+### Changed
+
+- **Text in a table that states its bounds can be edited.** LibreOffice writes the
+  bounds of every table into the document, and so does Acrobat for some. Until now that
+  kept the text of every cell in such a table read-only. It is now edited like any other
+  text, as long as it stays inside those bounds, which are kept as they are: longer text
+  has the room up to the edge of the table. An edit that would leave the bounds is
+  refused and says so: *the table states its bounds, and the text would leave them*.
+  Nothing grows a row or the table, so text that needs another line is refused where the
+  table has no room below it. Text beside the table is edited as before. With `tpdf
+  edit`, a `replace_text` that names a `font` can grow in the same way.
+
 ## [26.10.5] - 2026-10-05
 
 ### Added
