@@ -194,6 +194,17 @@ export const ICONS = {
       { d: "M5 7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 1.732-1" },
     ],
   },
+  // Lines with a tick before two of them: the things a form asks for.
+  form: {
+    source: "list-checks",
+    parts: [
+      { d: "M13 5h8" },
+      { d: "M13 12h8" },
+      { d: "M13 19h8" },
+      { d: "m3 17 2 2 4-4" },
+      { d: "m3 7 2 2 4-4" },
+    ],
+  },
   document: {
     source: "file-text",
     parts: [

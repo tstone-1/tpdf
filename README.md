@@ -310,6 +310,9 @@ measured the Windows render constants come out 1.5–1.8x worse.
   ellipse or a text box can be resized by its lower right corner. The words of a text box
   are typed in the box beside it and appear on the page as you type them.
   <!-- built: edit.draw edit.drawBox edit.drawEllipse edit.addTextBox edit.addComment -->
+- **Everything about a form is in the *Form* menu**, and under the *Form* button in the
+  tool row: filling one in, adding fields, changing the fields a document already has,
+  their properties and their tab order. The command palette has the same commands.
 - **Add form fields** — *Add a form field: text*, *text on several lines*, *checkbox*,
   *dropdown*, *radio buttons* or *signature*, then drag the rectangle where it goes. A dropdown asks
   for its choices first, typed on one line with a semicolon between them. Radio buttons
@@ -346,7 +349,7 @@ measured the Windows render constants come out 1.5–1.8x worse.
   <!-- built: edit.formEditOn edit.formEditOff -->
 - **Set a field's properties.** Press a field you have placed, or one of the document's
   own while those are being changed, and choose *Form fields: properties of the picked
-  field...* from the Edit menu or the palette. The panel sets its tooltip, whether it is required and whether it is
+  field...* from the Form menu or the palette. The panel sets its tooltip, whether it is required and whether it is
   read-only; for a text field also the most characters it takes and whether its text is
   at the left, the centre or the right; for a dropdown or a list its alignment and its
   choices. It also sets the text size of a text field or a dropdown, in points or left

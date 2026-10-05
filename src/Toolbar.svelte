@@ -37,7 +37,7 @@
     ["highlight", "draw"].includes(group.id),
   );
   const otherGroups = TOOL_GROUPS.filter((group) =>
-    ["pages", "redact"].includes(group.id),
+    ["form", "pages", "redact"].includes(group.id),
   );
   const options = TOOL_GROUPS.filter((group) =>
     ["color", "width"].includes(group.id),
@@ -294,7 +294,7 @@
 
 <style>
   .tools { display: flex; align-items: center; gap: 3px; min-height: 40px; padding: 3px 10px; box-sizing: border-box; flex-wrap: wrap; flex: none; border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent); background: Canvas; color: CanvasText; font: 13px/1.4 system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
-  button { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 4px; min-height: 32px; padding: 4px 9px; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  button { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 4px; min-height: 32px; padding: 4px 7px; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
   button:hover:not(:disabled), .pressed { background: color-mix(in srgb, CanvasText 9%, Canvas); }
   button:focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
   button:disabled { opacity: .45; cursor: default; }
@@ -323,6 +323,6 @@
   .tool-state span { min-width: 0; overflow-wrap: anywhere; }
   .tool-state > button, .tool-state .dropdown > button { flex-shrink: 0; border-color: color-mix(in srgb, CanvasText 20%, Canvas); }
   .finish { color: HighlightText; background: Highlight; }
-  @media (max-width: 1180px) { .secondary { display: none; } .compact { display: block; } }
+  @media (max-width: 1195px) { .secondary { display: none; } .compact { display: block; } }
   @media (max-width: 680px) { .tools { gap: 1px; padding-inline: 5px; } button { padding-inline: 6px; } .options { margin-left: 0; } .popup { position: fixed; top: auto; left: 8px; right: 8px; min-width: 0; max-width: none; } .options .popup, .more { left: 8px; right: 8px; } }
 </style>

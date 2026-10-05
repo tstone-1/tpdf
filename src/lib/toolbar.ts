@@ -15,7 +15,7 @@ export interface ToolItem {
 
 export interface ToolGroup {
   /** Stable identity: translated labels must never decide behavior. */
-  id: "document" | "highlight" | "draw" | "pages" | "redact" | "color" | "width";
+  id: "document" | "highlight" | "draw" | "form" | "pages" | "redact" | "color" | "width";
   label: string;
   /** Drawn beside the label on the group's own button. */
   icon?: IconName;
@@ -66,6 +66,28 @@ export const TOOL_GROUPS: ToolGroup[] = [
       { id: "edit.stamp.draft", label: "Draft stamp" },
       { id: "edit.stamp.final", label: "Final stamp" },
       { id: "edit.erase", label: "Erase marks" },
+    ],
+  },
+  {
+    // The menu bar's Form menu, in its order. Both border commands are listed
+    // because only one of the two is enabled at a time, and the other is greyed.
+    id: "form",
+    label: "Form",
+    icon: "form",
+    items: [
+      { id: "edit.fillForm", label: "Fill form" },
+      { id: "edit.addTextField", label: "Add a text field" },
+      { id: "edit.addMultilineField", label: "Add a text field on several lines" },
+      { id: "edit.addCheckbox", label: "Add a checkbox" },
+      { id: "edit.addDropdown", label: "Add a dropdown..." },
+      { id: "edit.addRadio", label: "Add radio buttons..." },
+      { id: "edit.addSignatureField", label: "Add a signature field" },
+      { id: "edit.fieldBorderOn", label: "Draw a line round new text fields" },
+      { id: "edit.fieldBorderOff", label: "No line round new text fields" },
+      { id: "edit.formEditOn", label: "Change the document's own fields" },
+      { id: "edit.formEditOff", label: "Finish changing the document's fields" },
+      { id: "edit.fieldProperties", label: "Properties of the picked field..." },
+      { id: "edit.tabOrder", label: "Tab through fields in reading order" },
     ],
   },
   {

@@ -3,9 +3,20 @@ import { registerAppCommands, type AppActions } from "./appcommands";
 import { CommandRegistry } from "./commands";
 import { POPUP_MARGIN, TOOL_ACTIONS, TOOL_GROUPS, popupShift, styleOptions, toolbarState, type ArmedTool } from "./toolbar";
 import { cssColor, MARK_COLORS, PALETTE, swatchBackground } from "./markcolors";
+import { MENU_LAYOUT, SEPARATOR } from "./menubar";
+
+/**
+ * Every button that is live, by command id.
+ *
+ * The line round a new text field is a stored preference and not a fact about
+ * a document, so one of its two commands is live in an empty window too.
+ */
+function live(snapshot: ReturnType<typeof toolbarState>): string[] {
+  return Object.keys(snapshot).filter((id) => snapshot[id]!.enabled);
+}
 
 function harness() {
-  const state = { open: false, selected: false, dirty: false, undo: false, redo: false, matches: 0 };
+  const state = { open: false, selected: false, dirty: false, undo: false, redo: false, matches: 0, border: false };
   // Only guards are called here. Missing action methods must fail if the
   // snapshot starts executing commands instead of describing them.
   const actions = {
@@ -15,6 +26,11 @@ function harness() {
     canUndo: () => state.undo,
     canRedo: () => state.redo,
     matchCount: () => state.matches,
+    fieldBorder: () => state.border,
+    savedFields: () => 0,
+    formEditing: () => false,
+    canOrderTabs: () => false,
+    fieldPicked: () => false,
   } as AppActions;
   const registry = new CommandRegistry();
   registerAppCommands(registry, actions);
@@ -37,6 +53,14 @@ describe("toolbar command surface", () => {
     }
   });
 
+  it("lists under Form what the Form menu lists, in its order", () => {
+    const menu = MENU_LAYOUT.find((section) => section.title === "Form")!;
+    const commands = menu.items.filter((entry) => entry !== SEPARATOR);
+    expect(commands.length).toBe(13);
+    const group = TOOL_GROUPS.find((group) => group.id === "form")!;
+    expect(group.items.map((item) => item.id)).toEqual(commands);
+  });
+
   it("resolves every visible action against the real application registry", () => {
     const { registry } = harness();
     const snapshot = toolbarState(registry);
@@ -51,7 +75,9 @@ describe("toolbar command surface", () => {
 
   it("updates selection, save, undo, redo and search guards in both directions", () => {
     const { state, registry } = harness();
-    expect(Object.values(toolbarState(registry)).every((item) => !item.enabled)).toBe(true);
+    expect(live(toolbarState(registry))).toEqual(["edit.fieldBorderOn"]);
+    state.border = true;
+    expect(live(toolbarState(registry))).toEqual(["edit.fieldBorderOff"]);
     state.open = true;
     let snapshot = toolbarState(registry);
     expect(snapshot["edit.addComment"]!.enabled).toBe(true);
@@ -65,7 +91,7 @@ describe("toolbar command surface", () => {
     snapshot = toolbarState(registry);
     for (const id of guarded) expect(snapshot[id]!.enabled, id).toBe(false);
     state.open = false;
-    expect(Object.values(toolbarState(registry)).every((item) => !item.enabled)).toBe(true);
+    expect(live(toolbarState(registry))).toEqual(["edit.fieldBorderOff"]);
   });
 
   it("uses current command titles and refuses commands absent from a registry", () => {

@@ -74,7 +74,7 @@ describe("icons", () => {
       ...TOOL_ACTIONS,
       ...TOOL_GROUPS.filter((group) => group.id !== "color"),
     ];
-    expect(row.length).toBe(10);
+    expect(row.length).toBe(11);
     for (const entry of row) expect(entry.icon, entry.id).toBeDefined();
     const drawn = row.map((entry) => entry.icon);
     expect(new Set(drawn).size).toBe(drawn.length);

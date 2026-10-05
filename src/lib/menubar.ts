@@ -171,7 +171,6 @@ export const MENU_LAYOUT: LayoutSection[] = [
     items: [
       "edit.undo",
       "edit.redo",
-      "edit.fillForm",
       SEPARATOR,
       "edit.copy",
       SEPARATOR,
@@ -202,20 +201,6 @@ export const MENU_LAYOUT: LayoutSection[] = [
       // After the two shapes, because it is the third thing a drag can place and
       // a reader choosing between them is choosing what appears.
       "edit.addTextBox",
-      // The form fields, after the text box because they are the other
-      // rectangles a drag places that a reader then types a name into.
-      "edit.addTextField",
-      "edit.addMultilineField",
-      "edit.addCheckbox",
-      "edit.addDropdown",
-      "edit.addRadio",
-      "edit.addSignatureField",
-      "edit.fieldBorderOn",
-      "edit.fieldBorderOff",
-      "edit.formEditOn",
-      "edit.formEditOff",
-      "edit.fieldProperties",
-      "edit.tabOrder",
       "edit.editText",
       "edit.addSignature",
       // The four stamps, immediately after the text box because a stamp is the
@@ -298,6 +283,37 @@ export const MENU_LAYOUT: LayoutSection[] = [
       SEPARATOR,
       "edit.centerOnPage",
       "edit.middleOnPage",
+    ],
+  },
+  {
+    // Everything about a form in one place. These thirteen sat in Edit, the
+    // first under Redo and the rest in the middle of a run of sixty, and a
+    // reader who had just placed a field looked along the bar for a menu
+    // called Form and found none. After Arrange, because lining fields up is
+    // what follows placing them. Signing in a signature field stays in File,
+    // beside the other signature.
+    title: "Form",
+    items: [
+      "edit.fillForm",
+      SEPARATOR,
+      // The six kinds a drag places, in the order a paper form uses them.
+      "edit.addTextField",
+      "edit.addMultilineField",
+      "edit.addCheckbox",
+      "edit.addDropdown",
+      "edit.addRadio",
+      "edit.addSignatureField",
+      SEPARATOR,
+      // What the next field looks like: a setting, and only one of the two is
+      // offered at a time.
+      "edit.fieldBorderOn",
+      "edit.fieldBorderOff",
+      SEPARATOR,
+      // The fields the file already has.
+      "edit.formEditOn",
+      "edit.formEditOff",
+      "edit.fieldProperties",
+      "edit.tabOrder",
     ],
   },
   {

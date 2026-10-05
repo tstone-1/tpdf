@@ -71,6 +71,13 @@ have the binary.)
 
 ### Changed
 
+- **The form commands have a menu and a button of their own.** Filling a form, the six
+  kinds of field to add, the line round new text fields, changing a document's own
+  fields, a field's properties and the tab order were thirteen items spread through the
+  Edit menu, and the tool row had none of them. They are now a *Form* menu between
+  *Arrange* and *Page*, and a *Form* button in the tool row with the same list. In a
+  narrow window the button's commands are under *More*. *Sign in the signature field*
+  stays in the File menu.
 - **The box beside a mark can be dragged aside.** The box that opens beside a form field,
   a note or any other mark, with its name or note, its colours and its Remove button,
   could cover the next field or the text being worked from. Its heading now drags it. It

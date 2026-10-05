@@ -204,7 +204,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## Bundled icons
 
-23 toolbar icons are taken from Lucide (1.49.0), distributed under the ISC licence; those Lucide derived from Feather are under the MIT licence reproduced with it.
+24 toolbar icons are taken from Lucide (1.49.0), distributed under the ISC licence; those Lucide derived from Feather are under the MIT licence reproduced with it.
 
 ```
 ISC License
