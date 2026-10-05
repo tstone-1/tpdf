@@ -19,6 +19,15 @@ have the binary.)
 
 ## [26.10.6] - Unreleased
 
+### Fixed
+
+- **Recognising text failed on a page where a line ends in a hyphen.** `tpdf ocr` and
+  *Recognise text and save as* write the recognised words and read the page back before
+  they publish it. PDFium reads a hyphen that ends a line as a mark of its own, the check
+  dropped the mark, and the page came back one character short: no copy was written, with
+  "did not read back with the text that was recognised". Hyphenated line ends are common
+  in justified text and in German; 9 of 46 real picture pages measured failed this way.
+
 ### Changed
 
 - **Text in a table that states its bounds can be edited.** LibreOffice writes the

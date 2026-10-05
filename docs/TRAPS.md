@@ -58,6 +58,7 @@ hop through the index.
 - The page break is whitespace, and concatenating two pages loses it
 - A pattern over folded text has no lines, so `^` means the page
 - `FPDFText_GetText` drops characters, so it cannot be indexed alongside boxes
+- PDFium reads a hyphen that ends a line as U+0002, and a filter for control characters drops it
 - A page carries `/Rotate`, and PDFium answers in two coordinate systems at once
 - PDFium lays a page out from its `/CropBox`, and everything else here read `/MediaBox`
 - A line-grouping rule assumes an axis, and the axis is not always vertical
@@ -25670,3 +25671,33 @@ form with, can say whether a turned field's answer is **read** and cannot say wh
 is **drawn** right. For how a field on a turned page looks, the instruments are
 `tpdf render` and `pdftoppm`, and a look at the picture. A renderer that redraws what it
 is given is a check of its own drawing and not of the file's.
+
+### PDFium reads a hyphen that ends a line as U+0002, and a filter for control characters drops it
+
+`tpdf ocr` writes a text layer and reads the page back before it publishes: the characters
+written and the characters read must be the same, counted, with white space and control
+characters left out. On 2026-10-05 that check refused 9 of 46 real picture pages, each with
+*"did not read back with the text that was recognised"*, and the layer on each was right.
+
+Where a line ends in a hyphen and the word goes on in the next line, PDFium's text page
+returns **U+0002** for the hyphen. The page content holds `-`. U+0002 is a control character,
+so the filter that was there to drop a stray `\r` or a form feed dropped it too, and the page
+read back one character short. `ocr_layer::LINE_END_HYPHEN` counts it as the hyphen.
+
+Three things about how it stayed hidden:
+
+- **The fixtures have no hyphenated line end.** `text-base14.pdf` and the German control word
+  end no line in a hyphen, so 30 of 30 words read back in every run. Justified text and German
+  hyphenate at line ends all the time.
+- **The failure is fail-closed and therefore quiet.** No wrong file is written, so nothing
+  downstream goes red; a reader sees one sentence and no copy.
+- **It was found by counting the diff, not by reading the code.** A temporary line printed
+  the characters wanted and not read, by code point: `U+002D:+1` on four pages out of five,
+  with one `U+0002` among the read codes on each.
+
+**The fifth page is not explained.** It read back five letters short (`e e f o r`) with no
+control character among the codes, no word doubled and no box under a point wide. A word the
+engine reported is not coming back from the page, and why is not known.
+
+Anything else that compares PDFium's characters with characters written has the same mark to
+account for. Search folds text before matching and was not measured against it.

@@ -109,6 +109,13 @@ pub fn layer_of(page: u32, items: Vec<RecognisedItem>) -> Option<Layer> {
     (!words.is_empty()).then_some(Layer { page, words })
 }
 
+/// What PDFium reads in place of a hyphen that ends a line when the word goes
+/// on in the next: U+0002, its mark for a break inside a word. The page holds
+/// the hyphen. Dropped with the other control characters, it made every such
+/// page read back one character short, and the layer was refused: 9 of 46
+/// picture pages measured on 2026-10-05.
+const LINE_END_HYPHEN: u32 = 2;
+
 /// Whether a written page reads back with the characters its layer was given.
 ///
 /// Compared as the two sets of characters with their counts, white space left
@@ -118,6 +125,9 @@ pub fn layer_of(page: u32, items: Vec<RecognisedItem>) -> Option<Layer> {
 /// having been lost. What this does catch is what can go wrong in the
 /// writing --- a layer that is not there, on the wrong page, or in a font
 /// whose codes do not map back to the characters.
+///
+/// A hyphen that ends a line is read as [`LINE_END_HYPHEN`] and counted as
+/// the hyphen it is.
 #[must_use]
 pub fn reads_back(written: &Layer, read: &PageText) -> bool {
     let mut wanted: Vec<char> = written
@@ -129,7 +139,14 @@ pub fn reads_back(written: &Layer, read: &PageText) -> bool {
     let mut got: Vec<char> = read
         .codes
         .iter()
-        .filter_map(|code| char::from_u32(*code))
+        .map(|code| {
+            if *code == LINE_END_HYPHEN {
+                u32::from('-')
+            } else {
+                *code
+            }
+        })
+        .filter_map(char::from_u32)
         .filter(|c| !c.is_whitespace() && !c.is_control())
         .collect();
     wanted.sort_unstable();
@@ -217,6 +234,17 @@ mod tests {
         let layer = layer_of(0, vec![item("black"), item("quartz")]).expect("words");
         assert!(reads_back(&layer, &page("blackquartz")));
         assert!(reads_back(&layer, &page("quartz\r\nblack")));
+    }
+
+    #[test]
+    fn a_hyphen_that_ends_a_line_reads_back_as_the_hyphen_it_is() {
+        let layer = layer_of(0, vec![item("quar-"), item("tz")]).expect("words");
+        assert!(reads_back(&layer, &page("quar\u{2}\r\ntz")));
+        // The mark stands for one hyphen and for nothing else.
+        assert!(!reads_back(&layer, &page("quar\r\ntz")));
+        assert!(!reads_back(&layer, &page("quar-\u{2}\r\ntz")));
+        let plain = layer_of(0, vec![item("quartz")]).expect("words");
+        assert!(!reads_back(&plain, &page("quartz\u{2}")));
     }
 
     #[test]
