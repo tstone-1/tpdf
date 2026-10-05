@@ -6571,6 +6571,17 @@ now comes last there.
 `docs/THREAT-MODEL.md` already stated the three new commands (T6.35, T6.36). The release
 notes in `release.yml` were rewritten.
 
+**26.10.6 publication, 2026-10-05:** `Audit` and CI were green on the release commit
+`a3a39e7a`, both legs, and the tag sits on it. Only the text of the release notes had
+changed in `release.yml`, so no rehearsal tag was cut; the `Release` run for `v26.10.6`
+skipped its gates on CI's account and both platform jobs passed at the first attempt. The
+draft held 8 assets and `scripts/publish_release.py v26.10.6 --publish` published it.
+Without authentication the `.dmg`, the `.msi`, the `-setup.exe` and the updater archive
+answer 200 and `latest.json` offers 26.10.6 for `darwin-aarch64` and `windows-x86_64`. The
+downloaded `.dmg` staples and Gatekeeper reads it as Notarized Developer ID. The Homebrew
+cask was set to 26.10.6; `brew audit --cask --online` passed and `brew livecheck` reads
+26.10.6. The update from 26.10.5 (step 12) was not applied by hand before this was written.
+
 **26.10.5 verification, macOS arm64, 2026-10-05:** all 30 gates passed on the release tree
 (2,806 Rust tests with ten documented ignored, 2,321 frontend tests), and `check_windows.py`
 type-checked the Windows tree after it found one `mut` that only a Unix build changes. Every
